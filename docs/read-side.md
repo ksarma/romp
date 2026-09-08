@@ -101,7 +101,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   2026-09-02).
 - **Liveness is a keepalive, and staleness is event-keyed.** The kernel sends a
   `ka` frame to every socket every 10 s; the pane shim abandons a socket that has
-  gone 30 s without any frame and redials at once. After a reconnect the shim
+  gone 30 s without any frame and redials at once, the silence measured from the
+  later of the last frame and a Chromium `resume` (the thaw of a frozen tab) on a
+  still-open socket. A socket kept on the strength of that stamp is provisional:
+  if no frame confirms it within 15 s (1.5 keepalive periods) the watchdog puts
+  it down there instead, a socket already 30 s overdue when the tab froze is not
+  stamped and is redialed at the return, and a browser without `resume` behaves
+  as before. After a reconnect the shim
   raises the "what you see may be stale" prompt only on the SECOND `ka` arriving
   before the resync frame — one full heartbeat period, bracketed by two kernel
   heartbeats on that socket with no resync between them (a single `ka` can be a
@@ -116,13 +122,20 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   push did; and a row in the dashboard's bell (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close the
   browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
-  reason, socket age) in `client-diag.jsonl`; a socket the shim abandons leaves
-  none — the watchdog's own `watchdog-close` row went down the quiet socket
-  before the abandon (the foreground path's abandon sends none), so an armed
-  socket's raise, `reconnect-quiet` or `foreground-quiet`, queued for the redial,
-  is the record that survives; the redials an outage refuses are counted and
-  reported as one `wsconnfail` row on the next open, and at most 20 breadcrumbs
-  wait in the shim's queue for it.
+  reason, socket age) in `client-diag.jsonl` (rotated to `.1` at 8 MB); a socket
+  the shim abandons leaves none — the watchdog's own `watchdog-close` row went
+  down the quiet socket before the abandon (the foreground path's abandon sends
+  none, but its `return` row queues for the redial), so an armed socket's raise,
+  `reconnect-quiet` or `foreground-quiet`, queued for the redial, is the record
+  that survives; the redials an outage refuses are counted and reported as one
+  `wsconnfail` row on the next open, and at most 20 breadcrumbs wait in the
+  shim's queue for it.
+  Every return to the tab leaves its own rows: `return` with the decision
+  (`keep`, `redial-closed` or `redial-stale`) and the hidden, frozen and quiet
+  gaps, `return-fresh` with the wait for the first fresh frame, and `page-load`
+  for a reload or a tab the browser discarded; a `resent: true` copy of the
+  `return` row means the kept socket proved dead and the row was re-filed onto
+  the redial.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
@@ -261,17 +274,72 @@ into a running turn that record is the `queued_command` attachment the CLI write
 when it splices the message in at its next tool boundary. On the SDK route no floor
 retires an echo: it retires only when its text lands in a record stamped at or after
 the send (a user record or that attachment), or when the CLI dies holding it
-(`dropped`). The CLI extracts no image paths on the stream-json route (its only
-image-path test belongs to the interactive composer's paste handler), so an image
-path in an SDK send lands as typed and the echo's text matches. `_path_bearing` and
-the extension set it tests (png, jpe?g, gif, webp, case-insensitive: the CLI bundle's
-single image-path test, pinned equal between kernel and backend) remain for the tmux
-settle path only, where the paste hook does run and rewrites the path to
+(`dropped`: the echo is flagged `undelivered`, and the chat shows it as never
+delivered, with copy-to-composer and dismiss). The client keeps its own pending
+bubble (dashed, "sending…") from the press until the kernel's payload accounts for
+the text (`ui/webview/send-pending.ts`). The bubble has no lifetime either: it ends
+on the same events, read from the events after the send (a landing of the text, the
+kernel's never-delivered verdict, or the user's ✕). At the press the bubble is
+anchored to the last stable kernel event, and the user events that already carry
+its text are recorded as background. Only a user atom that lands after that anchor,
+with exactly the sent text, ends the bubble, and a record the CLI wrote from several
+back-to-back sends retires one bubble per text block (`blocks` on the user event);
+the scan runs from the anchor to the end of the resident events, never over a fixed
+number of tail events, so an absorbed atom placed a hundred events above the tail
+still ends it. One landing ends one bubble: two identical sends in flight end in
+send order, and a landing of "test the continue button" leaves a pending "test"
+alone. The `undelivered` verdict ends the bubble on the same terms, so resending a
+never-delivered message is not ended by the old bubble's verdict. The kernel's echo
+atom or queued copy is attributed per send, as a landing is: the k-th copy of the
+text after the anchor (an echo no earlier bubble claimed, or a queued copy beyond
+the count the press saw) hides the k-th bubble with that text for that push and
+proves the kernel received that one send. A claimed echo is background for every
+later bubble with the text, so one echo confirms one send. Identical texts carry no
+identity of their own, so which copy is whose goes by send order, as it does for
+landings. A connection drop relabels the bubble "not confirmed" until a copy
+attributed to it appears or the message lands. The label is per bubble, so a group
+holding one dropped send and one in flight reads "not confirmed · sending…". ✕
+removes the bubble it sits on: the entry's press time rides the button as
+`data-qts`, and `dropPending` removes that entry rather than the first entry with
+the same text. The chat repaints only when a bubble's state changed (a redial loop
+while the kernel is down repaints nothing). A send pressed while its tab is still a
+placeholder, with no resident frame, is stamped at the first frame instead. That
+stamp reads the events' own kernel stamps: only an event stamped before the press's
+second is the anchor or background, so the frame's copy of this send (its echo, or
+its landed atom when the CLI was idle) is read as the send's own and not as an
+older message. The comparison assumes that the client's clock and the kernel host's
+agree to the second; `stampBase` states the assumption. The kernel's queued bubble
+carries no stamp, so a late stamp presumes that the frame's newest queued copy of
+the text is this send's own (one copy per identical send pressed against the same
+placeholder frame); without that, a send into a busy or held queue whose first
+frame already listed it sat as a second bubble beside the kernel's copy for the
+whole wait, and its ✕ would have cancelled the real queued send. The presumption
+misreads one case, stated in `stampBase`: an older identical message already in the
+queue, with this send not yet received when the frame was built, is read as this
+send's copy. A press-time stamp reads no stamp, since its frame predates the press.
+An absorbed atom sits at its send time, above the steps that were already running,
+so its event carries `absorbed` and `landedAt`, the time the CLI took it: the
+repaired timestamp of the attachment's file-order predecessor (the boundary record
+the splice waited for), clamped to the send time when it would be earlier. `landedT`
+is never before `t`, with no tolerance window: real transcripts invert only by clock
+granularity, and anything larger is a shape the CLI does not write. Each clamp is
+counted as `landedT-clamp` in the event model's assembly stats, served beside
+`ts-repair` in the version route's `parse` dict. The chat shows the time to the
+minute. The bubble wears "joined mid-turn", and when the landing retired a pending
+bubble at the tail, a cue stays where the bubble was ("delivered into the running
+turn at HH:MM", with a jump) until jump or ✕. The cue hangs under the last event the
+chat draws in its current mode; compact mode hides thinking, so a thinking record at
+the tail is skipped. The CLI extracts no image paths on the stream-json route (its
+only image-path test belongs to the interactive composer's paste handler), so an
+image path in an SDK send lands as typed and the echo's text matches. `_path_bearing`
+and the extension set it tests (png, jpe?g, gif, webp, case-insensitive: the CLI
+bundle's single image-path test, pinned equal between kernel and backend) remain for
+the tmux settle path only, where the paste hook does run and rewrites the path to
 `[Image #N]`. The chat's own image previews (`_user_images`) use a separate set,
 built from the served MIME table (`_IMG_MIME`, svg and bmp included), so a preview is
-never proposed for a file the image route cannot serve. If the CLI dies holding the
-message, the echo is flagged `undelivered` and the chat offers copy-to-composer and
-dismiss. A kernel restart does not re-run a mid-turn send: the boot duplicate guard
+never proposed for a file the image route cannot serve.
+
+**A kernel restart does not re-run a mid-turn send.** The boot duplicate guard
 (`_text_landed`) reads the `queued_command` attachment too, and it scans from the
 transcript's byte size at the moment of the send (recorded on the echo as `_echo_off`
 with the file id `_echo_fsid`, mirrored in the registry as `off` and `fsid`) to the end
@@ -290,57 +358,7 @@ user-todo answer's landed check (`_paste_landed_texts`, the match set
 `session_backend.py` (outer whitespace stripped, nothing else). The scan used to
 collapse inner whitespace while the prune compared raw text against stripped keys, so
 a send with a trailing newline was found, hence neither re-fed nor flagged, and yet
-never pruned or dismissable. The client keeps its own pending
-bubble (dashed, "sending…") from the press until the kernel's payload accounts for
-the text (`ui/webview/send-pending.ts`). At the press the bubble is anchored to the
-last stable kernel event, and the user events that already carry its text are
-recorded as background. Only a user atom that lands after that anchor, with exactly
-the sent text, ends the bubble; the scan runs from the anchor to the end of the
-resident events, never over a fixed number of tail events, so an absorbed atom placed
-a hundred events above the tail still ends it. One landing ends one bubble: two
-identical sends in flight end in send order, and a landing of "test the continue
-button" leaves a pending "test" alone. The `undelivered` verdict ends the bubble on
-the same terms, so resending a never-delivered message is not ended by the old
-bubble's verdict. The kernel's echo atom or queued copy is attributed per send, as a
-landing is: the k-th copy of the text after the anchor (an echo no earlier bubble
-claimed, or a queued copy beyond the count the press saw) hides the k-th bubble with
-that text for that push and proves the kernel received that one send. A claimed echo
-is background for every later bubble with the text, so one echo confirms one send.
-Identical texts carry no identity of their own, so which copy is whose goes by send
-order, as it does for landings. The bubble has no lifetime. A connection drop relabels
-it "not confirmed" until a copy attributed to it appears or the message lands. The
-label is per bubble, so a group holding one dropped send and one in flight reads "not
-confirmed · sending…". ✕ removes the bubble it sits on: the entry's press time rides
-the button as `data-qts`, and `dropPending` removes that entry rather than the first
-entry with the same text. The chat repaints only when a bubble's state changed (a
-redial loop while the kernel is down repaints nothing). A send pressed while its tab
-is still a placeholder, with no resident frame, is stamped at the first frame instead.
-That stamp reads the events' own kernel stamps: only an event stamped before the
-press's second is the anchor or background, so the frame's copy of this send (its
-echo, or its landed atom when the CLI was idle) is read as the send's own and not as
-an older message. The comparison assumes that the client's clock and the kernel
-host's agree to the second; `stampBase` states the assumption. The kernel's queued
-bubble carries no stamp, so a late stamp presumes that the frame's newest queued copy
-of the text is this send's own (one copy per identical send pressed against the same
-placeholder frame); without that, a send into a busy or held queue whose first frame
-already listed it sat as a second bubble beside the kernel's copy for the whole wait,
-and its ✕ would have cancelled the real queued send. The presumption misreads one
-case, stated in `stampBase`: an older identical message already in the queue, with
-this send not yet received when the frame was built, is read as this send's copy. A
-press-time stamp reads no stamp, since its frame predates the press. An
-absorbed atom sits at its send time, above the steps that were already
-running, so its event carries `absorbed` and `landedAt`, the time the CLI took it:
-the repaired timestamp of the attachment's file-order predecessor (the boundary
-record the splice waited for), clamped to the send time when it would be earlier.
-`landedT` is never before `t`, with no tolerance window: real transcripts invert only
-by clock granularity, and anything larger is a shape the CLI does not write. Each
-clamp is counted as `landedT-clamp` in the event model's assembly stats, served
-beside `ts-repair` in the version route's `parse` dict. The chat shows the time to
-the minute. The bubble wears "joined mid-turn", and when the landing retired a pending
-bubble at the tail, a cue stays where the bubble was ("delivered into the running
-turn at HH:MM", with a jump) until jump or ✕. The cue hangs under the last event the
-chat draws in its current mode; compact mode hides thinking, so a thinking record at
-the tail is skipped.
+never pruned or dismissable.
 
 **The ledger is a table of contents** (pure projection of captions + archive):
 - top: the archiver's one-sentence headline for the session,

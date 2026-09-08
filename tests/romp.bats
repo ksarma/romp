@@ -186,7 +186,7 @@ _stub_curl() {
 echo "curl $*" >> "$MOCK_LOG"
 # drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
 # it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+# as a false "not reachable" — one random kernel-API test failed per run
 [[ " $* " == *" --config - "* ]] && cat >/dev/null
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
@@ -266,10 +266,7 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
-# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
-# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
-[[ " $* " == *" --config - "* ]] && cat >/dev/null
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ "$url" == */new ]]; then
@@ -339,10 +336,7 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
-# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
-# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
-[[ " $* " == *" --config - "* ]] && cat >/dev/null
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 echo '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "queued": true, "dir": "/srv/notes-api/web"}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -1460,6 +1454,26 @@ _stale_server_globals() {
     grep -qE 'tmux respawn-pane -k -t myproject-2 exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="myproject-2" claude --resume abc123-uuid --name "myproject-2"' "$MOCK_LOG"
 }
 
+@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
+    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
+    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
+    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
+    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
+    # state dir alone; a recording one for this test shows the resume path reaching the seam —
+    # the call is detached, so the check waits (bounded) for its record instead of racing it.
+    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
+    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$HOME/.local/state/romp" ]
+
+    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
+    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
+}
+
 # ─── Detach tests ────────────────────────────────────────────────────
 
 @test "detach: new -t --detach creates the session but does not attach" {
@@ -1482,26 +1496,6 @@ _stale_server_globals() {
     [[ "$output" == *"(detached)"* ]]
     run grep -q 'tmux attach-session' "$MOCK_LOG"
     [ "$status" -ne 0 ]
-}
-
-@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
-    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
-    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
-    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
-    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
-    # state dir alone; a recording one for this test shows the resume path reaching the seam —
-    # the call is detached, so the check waits (bounded) for its record instead of racing it.
-    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
-    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ ! -e "$HOME/.local/state/romp" ]
-
-    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
-    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
 }
 
 # ─── Misc ────────────────────────────────────────────────────────────

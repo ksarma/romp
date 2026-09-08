@@ -62,10 +62,12 @@ _keysrc = sys.modules.get("romp_keysource") or load_source("romp_keysource", _HE
 _envsrc = load_source("romp_envsource", _HERE / "envsource.py")
 # The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
 # text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
-# scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
-# the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
+# scan below can never find what prune_live cannot retire. The kernel's own copy of that module when it
+# is loaded (the same idiom as _keysrc above); otherwise the file is loaded under its OWN module name:
+# the kernel loads it as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
 # re-executing the source into that module object would rebind the class out from under the subclass.
-echo_text_key = load_source("romp_session_backend_keys", _HERE / "session_backend.py").echo_text_key
+echo_text_key = (sys.modules.get("romp_session_backend")
+                 or load_source("romp_session_backend_keys", _HERE / "session_backend.py")).echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -3760,10 +3762,11 @@ def work_api_key_source():
                        if source.kind == "file" and os.environ.get("ROMP_SUPERVISED") == "1"
                        else "%s selects the 1Password source" % _keysrc.REF_VAR if source.kind == "op"
                        else "the env file's key line is empty")
-                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. Sessions without an "
-                                 "explicit Billing pick %s.\n"
-                                 % (_keysrc.fingerprint(startup), why,
-                                    "launch on the login" if not source.configured else "use that source"))
+                tail = ("Sessions launch with nothing of romp's injected, whatever their Billing pick (Claude "
+                        "Code's own credential pays)." if not source.configured
+                        else "Sessions without an explicit Billing pick use that source.")
+                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. %s\n"
+                                 % (_keysrc.fingerprint(startup), why, tail))
             _WORK_KEY = ""
         # "error" (an unreadable or undecodable file) is not a selection: it fails the operation that asked
         # while it lasts, and the startup key stays claimed so a transient permission blemish cannot
@@ -3796,8 +3799,9 @@ def work_api_key() -> str:
 def _note_key_file_gone(live: str) -> None:
     """Say ONCE, on stderr, when the env file's static key line is REMOVED while this process runs. The
     file stays authoritative (select_source returns an empty file source, never the startup key), so
-    every session without an explicit Billing pick quietly starts launching on the login — a change of
-    who pays with nothing in the log to find it by (review find, 2026-09-06). Fingerprint and path only.
+    every session — whatever its Billing pick (2026-09-07) — quietly starts launching with nothing of
+    romp's injected, and Claude Code's own credential pays: a change of who pays with nothing in the
+    log to find it by (review find, 2026-09-06). Fingerprint and path only.
     A line that comes back re-arms the notice, so a second removal is said too."""
     global _FILE_KEY_SEEN_FP
     if live:
@@ -3806,8 +3810,8 @@ def _note_key_file_gone(live: str) -> None:
     if not _FILE_KEY_SEEN_FP:
         return
     sys.stderr.write("work key: the %s line (sha256:%s) is GONE from %s — the file stays authoritative, so "
-                     "sessions without an explicit Billing pick now launch on the login. Restore the line or "
-                     "select a source with `romp keyswap`.\n"
+                     "sessions now launch with nothing of romp's injected, whatever their Billing pick (Claude "
+                     "Code's own credential pays). Restore the line or select a source with `romp keyswap`.\n"
                      % (_keysrc.KEY_VAR, _FILE_KEY_SEEN_FP, _keysrc.service_env_path()))
     _FILE_KEY_SEEN_FP = ""
 
@@ -3909,13 +3913,14 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
     """Say ONCE, on stderr (the kernel's log wire), whether the file this process reads holds the
     same key its environment was started with. Both sides are fingerprints, never values.
 
-    Worth the six lines: this is the one way the live read can go quietly wrong. The launchers do
-    not parse identically to each other — systemd's EnvironmentFile strips one layer of quotes, the
-    macOS launcher's `export` does not — so a quoted value, a stray duplicate line, or a key that
-    reaches the manager some other way makes the file disagree with the environment, and every
-    session would then launch on a key nobody chose. Disagreement at startup is a configuration
-    fact the operator can fix in a minute, and silence about it would surface hours later as
-    inexplicable 401s."""
+    Worth the six lines: this is the one way the live read can go quietly wrong. Three readers each
+    parse the file themselves — systemd's EnvironmentFile, the macOS launcher (bin/romp-node-launch)
+    and keysource._assignments — and all strip one layer of matching quotes and the whitespace around a
+    value, but a backslash escape inside quotes (systemd interprets some, the other two none), a stray
+    duplicate line, or a key that reaches the manager some other way makes the file disagree with the
+    environment, and every session would then launch on a key nobody chose.
+    Disagreement at startup is a configuration fact the operator can fix in a minute, and silence
+    about it would surface hours later as inexplicable 401s."""
     global _KEY_FILE_CHECKED
     if _KEY_FILE_CHECKED:
         return
@@ -3927,7 +3932,7 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
     sys.stderr.write(
         "work key: the manager env file sets a DIFFERENT key than this process started with "
         "(file sha256:%s, startup sha256:%s) — sessions launch on the file's. If that is not what "
-        "you meant, check %s for a quoted or duplicated %s line.\n"
+        "you meant, check %s for a duplicated %s line or a backslash escape inside its quotes.\n"
         % (_keysrc.fingerprint(live), _keysrc.fingerprint(startup),
            _keysrc.service_env_path(), _keysrc.KEY_VAR))
 
@@ -4677,6 +4682,9 @@ class SdkSession:
         #   _note_auth_source compares the init's apiKeySource against THIS, so a CLI that lands on
         #   the other auth (a stale login, a key found via apiKeyHelper) is flagged loudly instead
         #   of silently billing the wrong account
+        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched with NOTHING injected
+        #   because romp holds no key source (_options): Claude Code's own credential — its apiKeyHelper
+        #   or its login — is what pays, said once per process in the log
         self._last_cost_total = 0.0   # the CLI's totalCostUSD is CUMULATIVE per process (verified in
         #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
@@ -4831,8 +4839,8 @@ class SdkSession:
         """The texts FED to the current client whose ResultMessage has not landed (`_inflight_texts`,
         oldest first); thread-safe. A mid-turn send lives here from the inputs() pop until the turn
         settles: the CLI holds it, queued behind the running turn, to splice at the next tool boundary.
-        The observable twin of `inflight`, for diagnostics and tests; prune_live read it for one day as a
-        floor guard, until the floor itself went (no SDK echo is floored — its docstring)."""
+        The observable twin of `inflight`, for diagnostics and tests; nothing gates on it (prune_live
+        floors no echo, so there is nothing to shield a fed echo from — its docstring)."""
         with self._lock:
             return list(self._inflight_texts)
 
@@ -5383,9 +5391,12 @@ class SdkSession:
     def effective_auth(self, key=None) -> str:
         """Billing intent, without retrieving credentials for repeated UI snapshots.
 
-        An explicit key pick stays keyed even when retrieval fails: launch must report
-        the missing credential instead of billing the login. `key` permits callers
-        holding an already-resolved credential to avoid a second source read.
+        An explicit key pick stays keyed while a source is CONFIGURED, even when its
+        retrieval fails: the launch must then report the missing credential instead of
+        billing the login. With no source selected romp injects nothing for any pick and
+        Claude Code's own credential decides (the maintainer 2026-09-07); _options owns
+        that rule. `key` permits callers holding an already-resolved credential to avoid a
+        second source read.
         """
         if self.auth == "login":
             return "login"
@@ -5536,7 +5547,7 @@ class SdkSession:
                     # this hold the feeder ran first and fed a message gate-held behind an interrupted
                     # turn to the dying client; the teardown stranded it in flight and
                     # _reconcile_stranded, on a resumable conversation, flagged it 'never delivered'
-                    # (round-3 review, 2026-09-06). The same hold covers the idle arm in
+                    # (2026-09-06). The same hold covers the idle arm in
                     # _do_request_reconnect racing a send that lands before the waker runs. The loop's
                     # top clears _reconnect before the new client's inputs() is created.
                     blocked = blocked or self._reconnect
@@ -6088,12 +6099,17 @@ class SdkSession:
             return False
 
     def _note_message_failure(self, msg, e) -> None:
-        """One problem line per failure, with enough to fix by: the exception type, the message's type
-        and subtype (never its content), the exception's own text (uuid-shaped ids shortened, clipped —
-        _mask_ids), what that message losing its handling cost (_failure_consequence — for a
-        ResultMessage read from whether the settle's finally ran for it, never assumed), and the frame
-        chain (file:line function, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'` with
-        none of this is what the last such failure left to diagnose from.
+        """One problem line per failure, with enough to fix by: the exception type and the FAILING SITE
+        (the innermost frame of a real function, file:line function — _failing_site; a comprehension's
+        or lambda's own frame is skipped, so the site reads the same on every interpreter), the
+        message's type and subtype (never its content), what that message losing its handling cost
+        (_failure_consequence — for a ResultMessage read from whether the settle's finally ran for it,
+        never assumed), the exception's own text (uuid-shaped ids shortened, clipped — _mask_ids), and
+        the frame chain (innermost first, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'`
+        with none of this is what the last such failure left to diagnose from. The site LEADS the line,
+        right after the type: the error center shows a row's first 240 characters (the kernel feed caps
+        the text at 400), and with the chain at the end of ~335 characters of prose a user never saw
+        where a handler failed (2026-09-07 review). The full chain stays at the tail for the kernel log.
 
         Repeats: a signature is (session, exception type, the failing frame as file/line/function —
         _failing_frame, read from the traceback itself, so the chain's length cap cannot change it).
@@ -6103,7 +6119,7 @@ class SdkSession:
         log gets one short counted line per repeat. Once the ring has evicted the entry, the next
         repeat re-enters it with the FULL line — chain, consequence and the count — because the short
         form's "logged with the first" points at a kernel log that may have rotated, and a ring row
-        built from it named no site to fix by (round-2 review, 2026-09-06)."""
+        built from it named no site to fix by (2026-09-06)."""
         kind = _describe_msg(msg)
         sig = (self.sid, type(e).__name__, _failing_frame(e))
         with SdkSession._stream_fail_lock:
@@ -6117,9 +6133,10 @@ class SdkSession:
             return
         settled = getattr(self, "_settled_msg", None) is msg   # getattr: __new__-built test doubles
         again = "" if n == 1 else " (repeat %d this kernel life; its earlier error-center entry was evicted)" % n
-        self.backend._log("sdk session %s: %s while handling a %s message%s; that message's handling "
-                          "stopped there (%s) and the stream continues. %s: %s, at %s"
-                          % (self.name, type(e).__name__, kind, again, _failure_consequence(msg, settled=settled),
+        self.backend._log("sdk session %s: %s at %s while handling a %s message%s; that message's handling "
+                          "stopped there (%s) and the stream continues. %s: %s. Frames, innermost first: %s"
+                          % (self.name, type(e).__name__, _failing_site(e), kind, again,
+                             _failure_consequence(msg, settled=settled),
                              type(e).__name__, _mask_ids(e), _compact_tb(e)), problem=True, key=key)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
@@ -6382,11 +6399,50 @@ class SdkSession:
                 # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
                 self._ah_note_result(msg)
                 # (This try is the whole branch: its body is the result's BOOKKEEPING, its finally is
-                # THE SETTLE — the finally's comment has the rule.)
+                # THE SETTLE — the finally's comment has the rule. The spend accounting runs LAST in the
+                # body: it is the step most likely to raise on data (a NaN usage field, a failing spend
+                # write), and ahead of the others it skipped the rewind consumption and the live-tail
+                # sweep — 2026-09-07 review.)
+                if self._rewind_to and getattr(self, "_rewind_wait", False):
+                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                    # ResultMessage).
+                    try:
+                        self.backend._complete_rewind_wait(self)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                          "settle: %s" % (self.name, e))
+                elif self._rewind_to and self._rewind_armed:
+                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
+                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
+                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                    # running turn before, so armed-only is byte-identical for the idle paths.
+                    self._rewind_to = self._rewind_leaf = ""
+                    self._rewind_bare = False
+                    self._rewind_armed = False
+                    self._rewind_wait = False
+                    try:
+                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                                 rewindWait=False)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
+                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
+                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
+                    self.backend._rewind_resolved(self.sid, "taken")
+                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
+                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
+                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
+                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
                 # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
                 # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
                 # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
                 # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
+                # (The scheduled refreshes above cannot run before this synchronous step: nothing yields.)
                 total = getattr(msg, "total_cost_usd", None)
                 if isinstance(total, (int, float)) and total > 0:
                     delta = total - self._last_cost_total if total >= self._last_cost_total else total
@@ -6431,46 +6487,11 @@ class SdkSession:
                     #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                     #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                     #   honest on a mixed host (see _record_spend)
-                if self._rewind_to and getattr(self, "_rewind_wait", False):
-                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
-                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
-                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
-                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
-                    # ResultMessage).
-                    try:
-                        self.backend._complete_rewind_wait(self)
-                    except Exception as e:
-                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
-                                          "settle: %s" % (self.name, e))
-                elif self._rewind_to and self._rewind_armed:
-                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
-                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
-                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
-                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
-                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
-                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
-                    # running turn before, so armed-only is byte-identical for the idle paths.
-                    self._rewind_to = self._rewind_leaf = ""
-                    self._rewind_bare = False
-                    self._rewind_armed = False
-                    self._rewind_wait = False
-                    try:
-                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
-                                                 rewindWait=False)
-                    except Exception as e:
-                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
-                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
-                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
-                    self.backend._rewind_resolved(self.sid, "taken")
-                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
-                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
-                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
-                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
             finally:
                 # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
-                # bookkeeping above did (api-health, the spend fold, the rewind flags, the live-tail
-                # sweep, the refreshes: any step may raise and stop the rest). The rule (round-2 review,
-                # 2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
+                # bookkeeping above did (api-health, the rewind flags, the live-tail sweep, the refreshes,
+                # the spend accounting last: any step may raise and stop the rest). The rule
+                # (2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
                 # while filing it must never leave the session reading 'working' with its queue parked.
                 # The first cut opened the try only ahead of the rewind steps, so a raise in the spend
                 # fold (a NaN usage field — json.loads accepts the token and int() refuses it — or a
@@ -6524,7 +6545,7 @@ class SdkSession:
                     self._reconnect = True     # inputs() holds the queue from here: the wake above cannot feed
                     self._wake_set()           #   the head to THIS client — the new one takes it (see inputs)
                 for what, err in failed:
-                    # The report is guarded too (round-3 review): _log runs the kernel's log callback
+                    # The report is guarded too: _log runs the kernel's log callback
                     # bare, and a callback raising here (a closed stderr under a service restart) would
                     # propagate out of this finally and REPLACE the bookkeeping's exception, so the
                     # containment reported the callback's fault and the bookkeeping's site never
@@ -7585,14 +7606,16 @@ LIVE_TAIL_CAP = 100
 # handler — which reads a pasted path wearing one of those extensions and rewrites the token in the
 # submitted text to "[Image #N]", so the picture lands as an image block and the path is gone from the
 # record's text (the user 2026-06-25, the screenshots-piling-up bug) — and two attachment uploaders'
-# isImage. No bmp, no svg: the set this carried until 2026-09-06 had both, so a `.svg` path echo was
-# classed as an extraction the CLI never performs (adversarial review, F2).
+# isImage. No bmp, no svg: the wider set this carried until 2026-09-06 (any absolute or ~-rooted path,
+# then an image set with both) classed a `.svg` path echo, or a quote chip's `path:line` label, as an
+# extraction the CLI never performs.
 # WHO READS IT. The kernel's _tmux_echo_settle borrows _path_bearing for the TMUX route, where a send
 # IS a paste into the composer and the hook runs. The SDK route never reaches it: its input is
-# stream-json and the CLI takes the text as typed (counts over 71 SDK sessions' transcripts, 2026-09-06:
-# 0 image blocks in 8,569 user records; every image-path text landed verbatim), which is why prune_live
-# below floors NO echo — see its docstring. Twin of the kernel's _IMG_PATH_RE (_injected_img_paths
-# waits on the CLI's rewrite and _paste_landed_texts reads it back; the kernel's bare-path PREVIEW,
+# stream-json and the CLI takes the text as typed (a count over one installation's SDK transcripts,
+# 2026-09-06: 0 image blocks in 8,569 user records across 71 sessions; every image-path text landed
+# verbatim), which is why prune_live below floors NO echo — see its docstring. Twin of the kernel's
+# _IMG_PATH_RE (_injected_img_paths waits on the CLI's rewrite and _paste_landed_texts reads it
+# back; the kernel's bare-path PREVIEW,
 # _user_images, is romp's own feature on its own set, _PREVIEW_IMG_RE — not bound to the CLI's);
 # tests/test_kernel_fed_echo_absorbed.py pins both twins to the CLI's set.
 _IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp))\b", re.I)
@@ -7672,28 +7695,49 @@ def _frame_step(f) -> str:
 
 
 def _failing_frame(exc):
-    """The exception's innermost frame — where it was raised — as (file basename, line, function),
-    read from the traceback itself. This is the recurring-failure dedupe key (_note_message_failure):
-    taken from the frame and not from the rendered chain, so no rendering bound can change it. None
-    when the exception carries no traceback."""
+    """The exception's failing frame — the innermost frame of a REAL function — as (file basename,
+    line, function), read from the traceback itself. This is the recurring-failure dedupe key
+    (_note_message_failure) and the site the problem line names (_failing_site): taken from the frame
+    and not from the rendered chain, so no rendering bound can change it. None when the exception
+    carries no traceback.
+
+    Synthetic scopes are skipped: a frame whose code name is angle-bracketed (`<dictcomp>`,
+    `<listcomp>`, `<setcomp>`, `<genexpr>`, `<lambda>`, `<module>`) is not a function a reader can look
+    up by name, and whether one exists at all depends on the interpreter — before Python 3.12
+    (PEP 709) a comprehension runs in its own frame, so a raise inside one named `<dictcomp>` on 3.10
+    and 3.11 while 3.12 and 3.13 named the enclosing function, and the site (the dedupe key with it)
+    differed by interpreter (upstream CI on the 2026-09-07 review: the NaN-usage settle test). The
+    site is the innermost frame whose name is a function's, at the line that frame reports (for a
+    comprehension, the line the comprehension is on); when every frame is synthetic (a raise caught at
+    the top level of an exec'd string) the innermost one stands. The rendered chain (_compact_tb)
+    keeps every frame, synthetic ones included."""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
     if not frames:
         return None
-    f = frames[-1]
+    f = next((f for f in reversed(frames) if not f.name.startswith("<")), frames[-1])
     return (os.path.basename(f.filename), f.lineno or 0, f.name)
 
 
+def _failing_site(exc) -> str:
+    """The failing frame rendered as the chain renders a step (`file:line function`), or "?" when the
+    exception carries no traceback — what the problem line names right after the exception type."""
+    site = _failing_frame(exc)
+    return "%s:%d %s" % site if site else "?"
+
+
 def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_CHARS) -> str:
-    """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
-    source lines: enough to name the site on the next occurrence, small enough for one log line.
-    BOUNDED FROM THE OUTER END: at most the innermost `max_frames` frames, then outer frames dropped
-    one at a time until the chain fits `cap` characters, with a prefix saying how many were dropped
-    in all. The innermost frame — the failing site — is always kept; if it alone overflows the cap,
-    its function name is clipped and its file:line stands. (A RecursionError's chain ran to 18 KB
-    before any bound, into the error-center ring and every feed payload that carries it; the first
-    bound then clipped the chain's TAIL, which is the innermost frame, so a chain through long-named
-    frames lost its failing site, and a dedupe key read off the rendering became the literal '…' —
-    every long-chained failure of one type folded into one ring entry. 2026-09-06.)"""
+    """The exception's frame chain as `file:line function` steps, INNERMOST FIRST — the failing site
+    leads, and each ` < ` step is the caller of the one before it — no locals, no source lines: enough
+    to name the site on the next occurrence, small enough for one log line. BOUNDED FROM THE OUTER
+    END: at most the innermost `max_frames` frames, then outer frames dropped one at a time until the
+    chain fits `cap` characters, with a suffix saying how many were dropped in all. The innermost
+    frame — the failing site — is always kept; if it alone overflows the cap, its function name is
+    clipped and its file:line stands. (A RecursionError's chain ran to 18 KB before any bound, into
+    the error-center ring and every feed payload that carries it; the first bound then clipped the
+    chain's TAIL, which was the innermost frame, so a chain through long-named frames lost its failing
+    site, and a dedupe key read off the rendering became the literal '…' — every long-chained failure
+    of one type folded into one ring entry. 2026-09-06. Innermost first since 2026-09-07: the chain
+    sits at the end of a line the error center clips, so what survives the clip must be the site.)"""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
     if not frames:
         return "?"
@@ -7701,21 +7745,21 @@ def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_
 
     def render(kept):
         dropped = total - len(kept)
-        s = " > ".join(kept)
-        return "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s) if dropped else s
+        s = " < ".join(kept)
+        return "%s < …%d outer frame%s dropped…" % (s, dropped, "" if dropped == 1 else "s") if dropped else s
 
-    steps = [_frame_step(f) for f in frames[-max(1, max_frames):]]
-    kept = steps[-1:]                        # the innermost frame, unconditionally
-    for step in reversed(steps[:-1]):        # then outward, one frame at a time, while the whole fits
-        if len(render([step] + kept)) > cap:
+    steps = [_frame_step(f) for f in reversed(frames[-max(1, max_frames):])]   # innermost first
+    kept = steps[:1]                         # the innermost frame, unconditionally
+    for step in steps[1:]:                   # then outward, one frame at a time, while the whole fits
+        if len(render(kept + [step])) > cap:
             break
-        kept = [step] + kept
+        kept = kept + [step]
     s = render(kept)
     if len(s) > cap:                         # the innermost frame alone overflows: clip its function name
         site, _, func = kept[0].partition(" ")
-        head = render([site + " "])          # the prefix and the file:line — never clipped
-        room = cap - len(head) - 1
-        s = (head + func[:room] + "…") if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
+        bare = render([site + " "])          # the file:line and the drop suffix — never clipped
+        room = cap - len(bare) - 1
+        s = render([site + " " + func[:room] + "…"]) if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
     return s
 
 
@@ -7749,7 +7793,7 @@ def _is_command_stdout(msg) -> bool:
 def _failure_consequence(msg, settled: bool = True) -> str:
     """What the kernel lost when this message's handler failed, by the message's SHAPE — the problem
     line's reassurance has to be true for the message it is about, so the class name alone is not
-    enough (round-2 review, 2026-09-06). An assistant message, and a user message that is a real
+    enough (2026-09-06). An assistant message, and a user message that is a real
     turn, are also transcript records, so the chat rebuilds them from disk — but a user message
     carrying a command's `<local-command-stdout>` has a record only when the command was TYPED: a
     control request (client.set_model, a permission-mode set) streams the same line and the CLI
@@ -7857,6 +7901,11 @@ class SdkBackend:
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
+        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
+        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
+        #                                           — the chat-build signature's live component (2026-09-03; the
+        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
+        #                                           never read as a value beyond equality
         # THE LIVE-TAIL LOCK (2026-09-06). `_live` and every per-sid dict inside it are shared by the
         # kernel thread (send, recall, dismiss_echo, the pusher's live_atoms/prune_live) and each
         # session's loop thread (_forward, the settle's retire_live_work, _mark_dropped_echoes at
@@ -7872,11 +7921,6 @@ class SdkBackend:
         # so a locked site may call a helper that locks. The class attribute below is the default
         # for __new__-built test doubles.
         self._live_lock = threading.RLock()
-        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
-        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
-        #                                           — the chat-build signature's live component (2026-09-03; the
-        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
-        #                                           never read as a value beyond equality
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
@@ -7899,6 +7943,8 @@ class SdkBackend:
         #   EVERY session whatever its pick. The VALUE is read per launch off `work_key` below, live,
         #   so a keyswap needs no kernel restart (the user 2026-09-04).
         self._key_fp_said = None                  # last key fingerprint written to the log (change-only)
+        self._unkeyed_pick_said = False           # the "launching on Claude Code's own credential" row: once per process
+        self._seed_skip_said = False              # the "remembered key pick set aside, no key source" row: once per process
         # Backend PROBLEMS, kept in a bounded ring so the dashboard can show them (see _log): until
         # 2026-07-28 every SDK failure went to the kernel log alone, which nobody tails, so a session
         # whose stream died or whose model switch was refused just looked odd with no way to find out.
@@ -8182,6 +8228,32 @@ class SdkBackend:
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
+
+    def _note_unkeyed_pick(self) -> None:
+        """Said ONCE per process, as a problem row: a session picked for API-key billing is launching with
+        nothing of romp's injected, because romp holds no key source — Claude Code's own credential (its
+        apiKeyHelper or its login) is what pays. That is how these boxes ran before #932 and it works; but
+        it is a key romp cannot see, swap or fingerprint, so the row names what puts romp in charge of it."""
+        if self._unkeyed_pick_said:
+            return
+        self._unkeyed_pick_said = True
+        self._log("sessions picked for API-key billing launch on Claude Code's own credential (its apiKeyHelper "
+                  "or login) because romp holds no key source — add ROMP_API_KEY_REF=op://vault/item/field or "
+                  "ANTHROPIC_API_KEY to %s if romp should manage the key" % _keysrc.service_env_path(),
+                  problem=True)
+
+    def _note_seed_skipped(self) -> None:
+        """Said ONCE per process, as a problem row: the remembered Billing default is the API key, but romp holds
+        no key source, so new sessions are left unpicked (spawn) — they launch the same way either pick would
+        here (nothing of romp's injected; Claude Code's own credential pays), but their badge, judge billing and
+        cycling read an unpicked session, and a pick the user made is being set aside without a word otherwise."""
+        if self._seed_skip_said:
+            return
+        self._seed_skip_said = True
+        self._log("the remembered Billing pick is the API key but romp holds no key source, so new sessions start "
+                  "unpicked and launch on Claude Code's own credential (its apiKeyHelper or login) — add "
+                  "ROMP_API_KEY_REF=op://vault/item/field or ANTHROPIC_API_KEY to %s to apply the pick"
+                  % _keysrc.service_env_path(), problem=True)
 
     def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
         """Log what the command source is handing launches, change-only, from its value-free record:
@@ -8503,6 +8575,12 @@ class SdkBackend:
                 return "cycle"
         else:
             source = self._work_key_source()
+            if not source.configured:
+                # romp holds no key source: every session launched with nothing of romp's injected, whatever its
+                # pick (Claude Code's own credential pays), so there is no key to re-present — the row reads
+                # `login`, as for a login pick, not the refusal it answered until 2026-09-07 (review find; the
+                # PR that made the launch un-injected had left --cycle on the old error)
+                return "login"
             if s.effective_auth(source.configured) != "key":
                 return "login"
             if working():
@@ -9417,8 +9495,14 @@ class SdkBackend:
         # the box's UNPICKED design, while set_auth's contract is that the next init confirms the
         # PICK — judged (and worded) against what the pick launched, so a landing honoring the pick
         # stays quiet whatever the box declares, and one contradicting it still rings.
+        # An explicit API-key pick that launched with NOTHING injected (romp holds no key source, so
+        # Claude Code's own resolution decides — the maintainer's direction, 2026-09-07) MEANT the key:
+        # a keyed landing (the CLI's apiKeyHelper) is what the pick wanted and stays quiet, a login
+        # landing is the pick contradicted and rings. Before this the row rang on every init of such a
+        # session — the same false alarm ROMP_EXPECTED_AUTH was introduced to end for unpicked ones.
+        meant_key = sess._launched_keyed or sess._launched_unkeyed_pick
         exp, exp_src = ("", "") if sess.auth in ("login", "key") else _declared_auth(self.state_dir)
-        if keyed != ((exp == "key") if exp else sess._launched_keyed):
+        if keyed != ((exp == "key") if exp else meant_key):
             if exp:
                 what = ("ROMP_EXPECTED_AUTH=%s" % exp) if exp_src == "env" \
                     else ("the remembered Billing pick is %s" % exp)
@@ -9427,11 +9511,17 @@ class SdkBackend:
                           "(or service.env, where your installation allows a key in a file)."
                           % (sess.name, what, source, "API key" if keyed else "login"), problem=True)
             else:
-                self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
-                          "is billing the %s. Check the login (claude /login) and the manager's environment "
+                # an explicit key pick that launched with nothing injected landed on the login: the key it
+                # meant was Claude Code's own (apiKeyHelper), so that is what to check — not romp's login
+                remedy = ("Check Claude Code's apiKeyHelper (romp injected nothing) and the manager's environment "
                           "(or service.env, where your installation allows a key in a file)."
-                          % (sess.name, "the API key" if sess._launched_keyed else "the login", source,
-                             "API key" if keyed else "login"), problem=True)
+                          if getattr(sess, "_launched_unkeyed_pick", False) and not keyed
+                          else "Check the login (claude /login) and the manager's environment (or service.env, "
+                               "where your installation allows a key in a file).")
+                self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
+                          "is billing the %s. %s"
+                          % (sess.name, "the API key" if meant_key else "the login", source,
+                             "API key" if keyed else "login", remedy), problem=True)
         sess.auth_live = "key" if keyed else "login"   # the CLI's own report, for the Billing row
         if keyed == sess.api_key_auth:
             return
@@ -10010,13 +10100,21 @@ class SdkBackend:
         role_vars.pop(_envsrc.KEY_VAR, None)
         if role_vars:
             kw["env"] = {**role_vars, **kw["env"]}
-        # Authentication is resolved only for a launch that selects API-key billing. For the file and
-        # 1Password sources, source presence is metadata and a provider failure cannot turn a keyed
-        # launch into a login one (upstream, 2026-09-05): a key pick with no key source raises, and
-        # _record_launch_error reports it on the session. In COMMAND mode (fork-only) the launch is never
-        # refused: the set is read once, a key pick with no key in the set launches without one (the
-        # apiKeyHelper or the login bills), said as a problem, and cycle_key converges on the helper's
-        # fingerprint instead (the key-free install's design, 2026-09-05).
+        # Authentication is resolved only for a launch that selects API-key billing AND has a source to
+        # bill. An explicit API-key pick with NO key source configured (an empty supervised service.env,
+        # nothing anywhere) launches like an unpicked session: romp injects nothing, and Claude Code's
+        # own credential resolution applies — its apiKeyHelper if one is configured, else its login.
+        # That is how such boxes ran before #932; the hard refusal #932 put here took every one of their
+        # sessions down, with no way back until an operator rewrote service.env and restarted the
+        # service (the maintainer's direction, 2026-09-07: given no key, romp defers to Claude Code's
+        # default). Said once per process, as a problem row, when an explicit pick launched this way.
+        # A CONFIGURED source that fails to resolve stays the hard failure below: source presence is
+        # metadata, and a provider failure cannot turn it into login.
+        # In COMMAND mode (fork-only) the set is read once and the launch is never refused either: a key
+        # pick with no key in the set launches without one, the same un-injected launch, said per launch
+        # as the command's own problem line (the once-per-process no-source row is for a box with no
+        # source at all; the command is a source, one that printed no key), and cycle_key converges on
+        # the helper's fingerprint instead (the key-free install's design, 2026-09-05).
         work_key = ""
         if _envsrc.configured():
             work_key, key_src = self._work_key_and_source(key_source, cred)
@@ -10026,7 +10124,7 @@ class SdkBackend:
                           "ANTHROPIC_API_KEY — launching without one (the apiKeyHelper or the login bills)"
                           % sess.name, problem=True)
         else:
-            launch_keyed = sess.auth == "key" or (sess.auth != "login" and key_source.configured)
+            launch_keyed = key_source.configured and sess.auth != "login"
             if launch_keyed:
                 work_key, key_src = self._work_key_and_source(key_source)
                 if not work_key:
@@ -10037,7 +10135,10 @@ class SdkBackend:
                              **key_fast_org_env(work_key, self._log))
         else:
             kw["env"] = dict(kw["env"], **startup_auth_env())
+            if sess.auth == "key" and not _envsrc.configured():
+                self._note_unkeyed_pick()   # no source at all; the command case said its own line above
         sess._launched_keyed = launch_keyed
+        sess._launched_unkeyed_pick = sess.auth == "key" and not launch_keyed
         # The stamps cycle_key converges on: the credential (the injected key's fingerprint; in
         # command mode with nothing injected, the apiKeyHelper output's — envsource runs it and hashes
         # inside, cached until an invalidation) and the role variables injected.
@@ -10091,6 +10192,17 @@ class SdkBackend:
         # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
         # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
         a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
+        if a == "key" and not auth and not self.work_key_configured:
+            # A REMEMBERED key default on a box with no key source seeds nothing. Not because of the launch
+            # or the per-init check: both come out the same either way (nothing of romp's injected, and a
+            # login landing rings through the remembered pick in _declared_auth just as it would through a
+            # seeded one). Because the picker offers no key choice on this box (_auth_avail shows login), so
+            # a re-seed would apply a pick the user cannot make here, and because what the session SAYS
+            # about itself — Billing badge, judge billing, cycling — should read what it is: unpicked. A
+            # remembered pick set aside is said once, as a problem row (review find, 2026-09-07). A re-seed
+            # is never an explicit pick (_declared_auth); an EXPLICIT `auth` from the picker still lands.
+            a = ""
+            self._note_seed_skipped()
         if a:
             reg["auth"] = a
         # Per-session env is a per-spawn ask, never a remembered default (a var one session needed is
@@ -10789,9 +10901,9 @@ class SdkBackend:
                     continue
                 if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
                     live.pop(k, None)
+                    self._touch_live(sid)
                     if not live and self._live.get(sid) is live:
                         self._live.pop(sid, None)
-                    self._touch_live(sid)
                     hit = a
                     break
         if hit is None:
@@ -12179,8 +12291,8 @@ class SdkBackend:
         (retire_live_work), the kernel thread pruned landed ones during a chat build (prune_live), and
         each sweep walked a stale key list and read `d[k]` — so when the kernel thread pruned a
         just-landed reply while the settle sweep still held its uuid, `KeyError: '<message uuid>'`
-        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (a peer
-        session lost its turn, a Workflow run and a background agent to it). The lock (`_live_lock`,
+        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (the in-flight
+        turn, its subagents and its background tasks went with it). The lock (`_live_lock`,
         see __init__) is the fix; the sweeps still walk a snapshot and pop with a default, so a key
         that vanishes anyway costs nothing — and it is reported, ONCE per site per kernel life, because
         under the lock it can only mean a mutator changed the tail without taking it: a fix that made
@@ -12304,17 +12416,16 @@ class SdkBackend:
         The floor this replaces: `human_floor` (the newest genuine-human atom's time) once retired every
         echo it postdated, was narrowed to path-bearing echoes (the user 2026-07-20) — the image-
         extraction case, where the CLI's composer paste hook rewrites a pasted image path to "[Image #N]"
-        and the echo's text can never match — and narrowed again to image paths (2026-09-06) after it
+        and the echo's text can never match — and that predicate matched far more than image paths: it
         retired a staged comment whose quote chip carried a `path:line` label while the CLI still held
-        the message. The review of that change found the remaining rule had no true positives here: the
-        hook runs only in the terminal composer, and an SDK session's input is stream-json, so the CLI
-        takes the text as typed (0 image blocks in 8,569 user records over 71 sessions; every image-path
-        text landed verbatim). Its only effect was the false kind — a `.png` echo retired while its text
-        sat in the CLI's queue, or in the gap between the turn's ResultMessage and the next turn's record,
-        so the message blinked out of every client but the sender's. The fed-texts guard that shielded a
-        fed echo from the floor went with it (nothing left to shield from; `SdkSession.fed_texts` stays
-        as the observable twin of `inflight`). The tmux route keeps its own floor in
-        kernel._tmux_echo_settle, borrowing _path_bearing: there a send is a paste into the composer.
+        the message, so nothing showed the message until the splice. Narrowing it to image paths left a
+        rule with no true positives here: the hook runs only in the terminal composer, and an SDK
+        session's input is stream-json, so the CLI takes the text as typed (0 image blocks in 8,569 user
+        records over 71 sessions of one installation; every image-path text landed verbatim). Its only
+        effect was the false kind — a `.png` echo retired while its text sat in the CLI's queue, or in
+        the gap between the turn's ResultMessage and the next turn's record, so the message blinked out
+        of every client but the sender's. The tmux route keeps its own floor in kernel._tmux_echo_settle,
+        borrowing _path_bearing: there a send is a paste into the composer.
 
         The by-text comparison is keyed by echo_text_key on BOTH sides (2026-09-06): the kernel builds
         `tx_user_texts` from _atom_user_texts, and the echo's text is keyed the same way here — before,

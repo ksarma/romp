@@ -708,8 +708,10 @@ reference, upstream's second source, described next. The kernel reads such a
 line in file mode the same way it reads a key line, at every launch. The
 reference is not a key, but the route needs 1Password's own service-account
 token in `service.env` for a headless service, which is a credential in a
-file; where that is the rule you are avoiding, use command mode instead (the
-next section).
+file; where that is the rule you are avoiding, use command mode instead (see
+[Installing without keys on disk](#installing-without-keys-on-disk)), or hold
+no key in Romp at all (see [A key from a secret manager, with none held by
+Romp](#a-key-from-a-secret-manager-with-none-held-by-romp)).
 
 #### API keys from 1Password at runtime
 
@@ -723,6 +725,16 @@ same file. An empty or invalid reference is an error, not a request to use the
 legacy key. Remove competing plaintext assignments when migrating; on this
 fork you edit the line yourself, since `romp keyswap <name>` does not rewrite
 the file.
+
+With no key source selected — the env file has no `ROMP_API_KEY_REF=` line
+and no `ANTHROPIC_API_KEY=` line with a value, and no reference was selected
+earlier (a removed reference stays an error until another source is
+configured; see below) — Romp injects nothing, and Claude Code's own
+credential resolution applies: its `apiKeyHelper`, which can fetch a key from
+any secrets manager, or its login. A session's API-key Billing pick then only
+takes effect once a source exists; until one does, the kernel says so once in
+its log. A reference or key line in `service.env` is for boxes where Romp
+should manage the key — swap it, fingerprint it, cycle sessions onto it.
 
 Romp runs [`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
 for each Claude SDK session launch or reconnect, each API-key-billed judge
@@ -836,11 +848,66 @@ key inherited when the kernel started. After removing a selected reference,
 API-key operations fail until a valid source is selected; choose **Login**
 explicitly to use that mode. Removing a static `ANTHROPIC_API_KEY=` line
 while the kernel runs is different: the file stays authoritative and
-sessions without an explicit Billing pick launch on the login, and the
-kernel log says so once, with the removed key's fingerprint and the file's
-path. Removing a source does not revoke a credential already held by a
+sessions launch with nothing of Romp's injected, whatever their Billing
+pick, so Claude Code's own credential (its `apiKeyHelper` or login) applies;
+the kernel log says so once, with the removed key's fingerprint and the
+file's path. Removing a source does not revoke a credential already held by a
 running Claude process; reconnect or end those sessions too. Rotate a
 previously exposed key with its issuer as appropriate.
+
+#### A key from a secret manager, with none held by Romp
+
+If your key lives in a secret manager and you would rather Romp not hold it,
+configure no key source in Romp and point Claude Code's
+[`apiKeyHelper`](https://code.claude.com/docs/en/settings-reference#apikeyhelper)
+at the secret manager instead. Romp passes a key to a session only when it has
+one itself, so with no source configured every session and every API-key-billed
+judge call uses Claude Code's own authentication. Romp cannot see that key: the
+Billing picker offers no API-key choice, a session's Billing row reads
+`Login (CLI reports API key)`, and `romp keyswap --cycle` skips every session
+as billing the login.
+
+1. Write a script that prints the key from your secret manager, and make it
+   executable. With 1Password, for example:
+
+        #!/bin/sh
+        exec op read --no-newline "op://<vault>/<item>/credential"
+
+    The helper runs inside each session's Claude Code process (and each judge
+    call), a child of the service, so the secret manager's CLI needs a
+    credential that works without a desktop app: for 1Password,
+    `OP_SERVICE_ACCOUNT_TOKEN=` in `service.env`, scoped to the one vault. With
+    no reference configured Romp leaves that token in the sessions'
+    environment, where the helper needs it and where an agent's shell can read
+    it. Any secret manager whose CLI can print the key works the same way.
+
+2. Point Claude Code at the script in `~/.claude/settings.json`:
+
+        { "apiKeyHelper": "/path/to/anthropic-key.sh" }
+
+3. Leave `service.env` with no `ANTHROPIC_API_KEY`, no `ROMP_API_KEY_REF` and
+   no `ROMP_CREDENTIAL_COMMAND` line, and set `ROMP_EXPECTED_AUTH=key` so the
+   per-init auth check knows the key arrives through the helper and stays quiet
+   (see [Per-session billing](#per-session-billing-login-vs-api-key)). If a
+   1Password reference was ever selected on this box, also remove the
+   `service.env.source` marker beside the file: with it in place the removed
+   reference stays an error rather than an absent source (see [API keys from
+   1Password at runtime](#api-keys-from-1password-at-runtime)).
+4. Restart the service once.
+
+Rotating the key is then a change in the secret manager alone: Claude Code
+re-runs the helper on its own refresh interval
+(`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`), so running sessions pick up the new key
+with no Romp restart and no `romp keyswap`.
+
+The model-catalog refresh is the one call Romp makes itself rather than
+through a session. It reads only a key source Romp holds (or an
+`ANTHROPIC_AUTH_TOKEN` in the service's environment, which would also change
+what the sessions bill), so on a helper-only box it has no credential. Romp
+then serves its built-in list, or the last one it fetched and cached, and the
+kernel log says so at each refresh attempt (boot, and once per model id it does
+not know); the pickers still work, and Claude Code's own alias table still
+tracks each family's newest. Nothing else Romp does on such a box needs a key.
 
 ### Installing without keys on disk
 
@@ -1205,23 +1272,27 @@ children and other processes that outlive their shell.
 
 A message the kernel cannot handle does not end the session's CLI. The kernel
 handles each streamed message on its own: when a handler raises, it logs the
-exception type, the message's type and subtype, the exception's own text
-(uuid-shaped ids shortened to eight characters, clipped to 160 characters; it
-carries whatever the raising code put in it, never the message's content), what
-that message lost (an assistant or user message is also a transcript record, so
-the chat rebuilds it from disk — a compaction boundary is one too, while a model
-or mode change's confirmation line is not; a turn result still settles its turn,
-and the line says so only when the settle ran; a stream-only frame's content is
-gone until the next such frame), and a compact frame chain (file, line and
-function for at most the innermost eight frames, no locals, at most 600
-characters, dropping outer frames first so the failing frame is always named) to
-the kernel log and the dashboard's error center, then goes on to the next
-message. A failure while filing a turn result — its spend, its API-health note,
-its live-tail sweep — still settles the turn: the session reads waiting, its
-queue moves, and a reconnect that waited for the turn's end runs. A handler that
-fails on every message is one error-center entry with a repeat count; every
-repeat is still a kernel log line, and an entry the ring has since dropped
-re-enters with its full detail.
+exception type and the failing frame (file, line and function, first on the line
+so the error center's clipped row still shows it), the message's type and
+subtype, what that message lost (an assistant or user message is also a
+transcript record, so the chat rebuilds it from disk — a compaction boundary is
+one too, while a model or mode change's confirmation line is not; a turn result
+still settles its turn, and the line says so only when the settle ran; a
+stream-only frame's content is gone until the next such frame), the exception's
+own text (uuid-shaped ids shortened to eight characters, clipped to 160
+characters; it carries whatever the raising code put in it, never the message's
+content), and a compact frame chain (innermost first: file, line and function
+for at most the innermost eight frames, no locals, at most 600 characters,
+dropping outer frames first so the failing frame is always named) to the kernel
+log and the dashboard's error center, then goes on to the next message. A
+failure while filing a turn result — its spend, its API-health note, its
+live-tail sweep — still settles the turn: the session reads waiting, its queue
+moves, and a reconnect that waited for the turn's end runs; the spend accounting
+runs last among the result's bookkeeping, so its failure skips nothing else. A
+handler that fails on every message is one error-center entry, showing its first
+occurrence: the repeat count is kept on the kernel's problem ring (appended to
+the row's text, past what the error center displays), every repeat is a kernel
+log line, and an entry the ring has since dropped re-enters with its full detail.
 Before 2026-09-06 one such exception ended the receive loop, which closed the
 CLI in the middle of its work (the in-flight turn, its subagents, its background
 tasks) and resumed the session as after a crash. A fault of the stream itself,
@@ -1966,7 +2037,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 
 - `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
   seconds since the process started, and whether the `romp-perf` log is on.
-- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`, and the exact memory gauges:
+- `process`: `rss_kb` (resident set size in KB: the current size on Linux, read
+  from `/proc`; the peak, `ru_maxrss`, on macOS, which has no `/proc`), `threads`,
+  `cpu_s`, `pid`, and the exact memory gauges:
   `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
   `/proc/self/status`; null with `source` "unavailable" where `/proc` is
   absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
@@ -2237,7 +2310,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   turns scanned, plus the gauge `entries` (sessions held).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
-  `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
+  `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
   fold into `other`. A WebSocket upgrade is counted when it arrives and not
   timed, since its handler runs for the life of the socket.
 
@@ -2264,12 +2337,17 @@ frames it received is measured in the panes themselves, by
 
 - The feed, Outline, Waiting on you and chat bundles wrap their window
   `message` handler, so each frame's synchronous handling time is recorded by
-  frame type (`feed`, `chatTail`, `session`, `tabOrder`, `bars`, a shell
-  message as `shell`, a raw delta as `delta:<slot>`, anything else as `other`;
-  frames the handler ignores count too). The federation layer, which every
-  kernel page loads, times its own prefixing, delta application and merge of
-  each frame as `fed:<type>`, nested outside the pane's handler; each level
-  records its own time, so `fed:feed` and `feed` add up to the frame's cost.
+  frame type: the frame's `type` string as it is (`feed`, `chatTail`, `session`,
+  `tabOrder`, `bars`, or any other type that is a short identifier: letters,
+  digits, `_ . : -`, at most 32 characters), a raw delta as `delta:<slot>`
+  (`delta:other` when the slot is not such an identifier), a shell message (a
+  `romp` field and no `type`) as `shell`, and `other` for a frame with neither,
+  a `type` that is not a short identifier, or any type past the 32 distinct
+  types a minute the pane tracks; frames the handler ignores count too. The
+  federation layer, which every kernel page loads, times its own prefixing,
+  delta application and merge of each frame as `fed:<type>`, nested outside the
+  pane's handler; each level records its own time, so `fed:feed` and `feed` add
+  up to the frame's cost.
   The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
   `bars`) to the pane's handler by direct call once the pane has registered it
   (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
@@ -2304,8 +2382,9 @@ frames it received is measured in the panes themselves, by
   function, so a key is `<file>:<function>@<character position>`
   (`feed.js:render@1200`, `feed.js:(anonymous)@48213`), and an inline page
   script (the pane shim, whose socket callback runs for every frame) is
-  `page:<function>@<position>`. The release build keeps identifiers so a key
-  means the same thing after a rebuild; whitespace and syntax are still
+  `page:<function>@<position>`. The release build keeps identifiers, which
+  keeps the function name in a key readable across rebuilds (the position
+  still moves with any edit to the bundle); whitespace and syntax are still
   minified.
 - Once a minute the pane posts ONE `clientDiag` row on the socket it already
   uses for breadcrumbs, only when something happened that minute (a frame
@@ -2384,6 +2463,19 @@ into the pane.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+Three small files there hold settings you set by hand: `session-flags.json`
+(per-session flags, the postal isolation switch among them), `session-order.json`
+(the saved tab and lane order) and `notify-cards.json` (the bell overrides). A
+change to one of them is refused, never written over an empty, when the file
+exists but cannot be read; the refusal reaches the dashboard's error center
+under the `not saved` kind, with the reason, and the same change can be tried
+again. A file whose bytes cannot be parsed (a torn write) is moved aside, never
+deleted, to `<file>.corrupt-<UTC stamp>` in the same directory (a `-1`, `-2`
+suffix when two land in the same second), the store starts over empty, and an
+entry under the same kind says so. A file that cannot be read at all keeps
+showing its last-read values until it can. Nothing here needs a restart; the
+sidecars are yours to inspect or delete.
 
 Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
 whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart

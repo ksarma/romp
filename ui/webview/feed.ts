@@ -11,6 +11,7 @@
 // aged it. Its column and order are re-applied on every render regardless.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
+import { paintHeld, paintReleased } from "./paint-gate";
 import { spinFor, awaitWord, groupRows, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
@@ -4709,8 +4710,42 @@ function ensureHostLoad(list: HTMLElement): void {
   }));
 }
 
+// ── HIDDEN-PAINT HOLD (the user 2026-09-07, whose dashboard froze on the return to its browser tab) ──
+// Every payload is APPLIED the moment it arrives — applyFeedPayload's bookkeeping (mirrorBadges feeds the
+// shell's bell, clearUndoBusy, pendingCleared/pendingRestored, reconcileFollowMove and the follow-move
+// backstops it retires) never waits — but the PAINT is owed while nobody can see it, and settled once,
+// synchronously, on the event that makes the pane visible again: the tab's visibilitychange, or the
+// observer's callback for a display:none pane (each is blind to the other's case; paint-gate.ts). Before
+// this, a hidden tab rendered every payload in full — the FLIP pass pinned two forced layouts and a
+// double rAF per moved card onto the return frame — and the hidden-tab pile-up was the freeze. NOT the
+// hover-freeze queue below: that holder withholds the payload itself, and a confirming payload held back
+// lets the follow-move backstop revert a move the kernel had already confirmed.
+let feedIntersecting = true;   // #feed-list on screen by the observer's measure; true where there is no observer
+let paintDirty = false;        // a render was withheld while the pane could not be seen
+let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
+let feedWatching = false;
+function watchFeedVisibility(list: HTMLElement): void {
+  if (typeof IntersectionObserver === "undefined") return;   // no observer → the tab's visibility alone gates
+  new IntersectionObserver((entries) => {
+    feedIntersecting = entries.some((e) => e.isIntersecting);
+    releasePaint();
+  }).observe(list);
+}
+// The owed paint, settled the moment both measures say the pane can be seen. Synchronous on purpose (no
+// requestAnimationFrame hop): on a tab switch the compositor shows the cached frame until the page paints,
+// so a paint inside the event handler is the earliest fresh frame.
+function releasePaint(): void {
+  if (!paintReleased(paintDirty, document.hidden, feedIntersecting)) return;
+  paintDirty = false;
+  skipFlipOnce = true;
+  render();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
+
 function render() {
   const list = document.getElementById("feed-list")!;
+  if (!feedWatching) { feedWatching = true; watchFeedVisibility(list); }
+  if (paintHeld(document.hidden, feedIntersecting, list.childElementCount > 0)) { paintDirty = true; return; }
   pruneTip();   // drop the styled tip only if the render tore its hovered anchor out (tip.ts pruneTip)
   applyFollowMove(asks);   // keep optimistically-moved follow-up cards in Working until the kernel confirms (or reverts)
   paintJudgeLimit();   // the usage-limit banner above the columns (build-once; hidden when unlatched)
@@ -4732,6 +4767,7 @@ function render() {
     //                     wordmark never rendered (the user 2026-07-08; payload-audit fallout). Goal cards are
     //                     the only feed unit now, so an empty asks list IS an empty feed.
     askEls.clear(); groupEls.clear();
+    skipFlipOnce = false;   // this IS the release paint when the board emptied while away — the snap is spent
     // inbox zero → the romp wordmark (a CSS background). role/aria-label + title keep the meaning for hover /
     // screen readers, since a background image carries no accessible text. Created ONCE (idempotent): on the
     // transition from cards→empty we mint it (its CSS fade-in plays once, the user 2026-06-25), and every
@@ -4827,8 +4863,14 @@ function render() {
   // so a card leaving one section shifts every card in the sections below it: when a column's membership
   // or order changed there, every column is read, as before. (A content-height change alone still
   // captures nothing, in either layout — see the FLIP block.)
+  // The release paint after a hidden stretch SNAPS (skipFlipOnce, 2026-09-07): a card that moved while nobody
+  // watched has no old spot in the user's eye to glide from (motion on return is motion without new
+  // information, the 2026-07-29 rule), and the two forced layouts plus a double rAF per moved card are what
+  // the return frame cannot afford. No column differs for that paint; the key sequences reconcileCol writes
+  // then record the painted columns, so the NEXT move glides.
   const gprefs = feedPrefs();
-  const differing = FLY_COLS.filter((k) => !sameKeySeq(childKeys(cols[k]), buckets[k].map((e) => entryKey(e, cols[k]))));
+  const differing = skipFlipOnce ? [] : FLY_COLS.filter((k) => !sameKeySeq(childKeys(cols[k]), buckets[k].map((e) => entryKey(e, cols[k]))));
+  skipFlipOnce = false;
   const flipCols = differing.length && (stackForced || gprefs.stacked) ? FLY_COLS : differing;
   const flipFirst = captureCardRects(cols, flipCols);
 
@@ -5527,6 +5569,11 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // FOLDED thread has no element yet — unfold first (the same rule revealCards follows: the navigation wins
     // over the disclosure). A card that no longer exists under its own key (cleared, or folded into a group)
     // falls back to opening the session.
+    // The shell shows this pane and posts the jump in the SAME task, before the observer has re-measured
+    // the list (its callback waits for a rendering step): a paint owed from a hidden stretch is settled
+    // here on the shell's word, or a card added while away is not there to find (2026-09-07). The
+    // observer's next callback re-measures, so a wrong word costs one unseen paint, never a stale pane.
+    if (paintDirty) { feedIntersecting = true; releasePaint(); }
     const key = "a:" + String(m.itemId || "");
     unfoldThreadsFor(new Set([key]));
     // Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value
@@ -5621,6 +5668,19 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     renderModal();
     applyExtHover();
     if (extHoverEid) document.querySelector(".dot-hl[data-eid]")?.scrollIntoView({ block: "center" });
+  } else if (m.type === "settingRefused" && typeof m.text === "string" && m.text) {
+    // the kernel refused a bell toggle this page posted (its store could not be read): end the optimistic
+    // state ON THIS EVENT — the card's sticky latch drops and the bell repaints to what the payload holds
+    // (the paint key reads the latch) — and say why. A SOFT refusal: nothing typed was lost, so the fading
+    // toast (the chat's weight for the same class), never the must-dismiss dialog; the shell's bell keeps the
+    // durable record under its own `refused` kind, so muting judge warnings never mutes these. A `warn`
+    // frame had no handler on this page, so the bell stayed painted as if the click had landed until a reload.
+    if (m.gesture === "bell" && typeof m.itemId === "string" && m.itemId) pendingNotify.delete(m.itemId);
+    render();
+    window.parent?.postMessage({ romp: "notify", kind: "refused", text: m.text,
+                                 sid: typeof m.sid === "string" ? m.sid : "",
+                                 itemId: typeof m.itemId === "string" ? m.itemId : "" }, "*");
+    feedToast(m.text);
   } else if (m.type === "err" && typeof m.text === "string" && m.text) {
     // the dialog interrupts; the bell KEEPS it (the user 2026-07-29) — dismissing the modal must not erase
     // the fact that a message never landed. Same {romp:'notify'} bridge the card-badge mirror below uses.

@@ -5,10 +5,16 @@ process environment, or a credential-shaped token from anywhere.
 The assertion rule the suite follows (never render an environment mapping, never compare a
 credential's value in a message) is what keeps a live key off a terminal; the hook is the safety net
 for the assertion nobody wrote that way. Pinned here:
-  RedactionRule: the value set (16 characters or more; path-valued shell names exempt unless the
-    name is credential-shaped) and the replacement (every occurrence, longest value first, and each
+  RedactionRule: the value set (16 characters or more; exempt, never when the name is
+    credential-shaped: path-valued names, the shell's and the ones GitHub Actions exports, the names
+    whose values are public, the ones GitHub Actions describes a run in and the conftest's own
+    synthetic git identity, the XDG_* and PYTEST_* families, and any value that is an absolute path
+    this machine has) and the replacement (every occurrence, longest value first, each
     whitespace-separated chunk of a value that is 16 characters or more, because pprint renders a
-    value with spaces as adjacent literals on separate lines and a whole-value replace misses them).
+    value with spaces as adjacent literals on separate lines and a whole-value replace misses them,
+    and each piece of a value left beside a cut pytest or unittest made, `'<head>...<tail>'` and
+    `[N chars]`, when it is a substring of a value: pytest keeps 12 and 13 characters of a failed
+    `==`'s operands, so most of a 30-character value stood on the assert line).
   WriteTimeCapture: a value is noted the moment it is written into os.environ (a plain assignment,
     update, setdefault, os.putenv, os.environb, mock.patch.dict), so a value present only between the
     per-test samples is redacted too.
@@ -24,22 +30,27 @@ for the assertion nobody wrote that way. Pinned here:
     limit past it); the dotted rest of a token that qualifies; the head of a cut
     key bounded at the widest cut a tool makes, and a wider head taken with its cut and tail by the
     format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class and its cost;
-    and the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
-    redacted, a Capitalised word or a single-case identifier is not).
+    the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
+    redacted, a Capitalised word or a single-case identifier is not); and the two shapes the generic
+    rule fires on but leaves alone, a named git sha and a dated Anthropic model id.
   ScrubCost: the scrub is linear: a 200 KB adversarial line (a run of repeated prefixes, of one case,
     of digits, of dashes, of dots) is scrubbed within a generous budget; the first of them took 80
     seconds before the cut-key rule's head was bounded.
   ReportShapes: the hook's work on a report object of each outcome (a failure's longrepr, a skip's
-    tuple, a passed test's sections).
+    tuple, a passed test's sections); a changed failure keeps its crash location, its message scrubbed
+    in pytest's E-marked rendering, through xdist's serialization round trip.
   HookEndToEnd: subprocess pytest runs against a copy of the conftest. A test that fails with a probe
-    value in its message and on its stdout prints the marker, never the value; the same for a value
+    value in its message and on its stdout prints the marker, never the value, and its short summary
+    line still ends in the assertion message; the same for a value
     set inside mock.patch.dict and gone before the assertion, a header-shaped value split by
     assertDictEqual, a pattern-shaped token with no provenance, a passed test's captured output
     under -rA, a collection error, a failed comparison of two unknown-format tokens under
     --showlocals (pytest's diff lines, its assert line and the locals all show the marker), and the
     where/and/in/not-found/Lists-differ/Tuples-differ renderings of two such tokens at default
     verbosity, and the ellipsized renderings of two keys and two 64-character tokens compared with
-    `==` (as strings, in a list, in a tuple, and through unittest's `[N chars]` shortening).
+    `==` (as strings, in a list, in a tuple, and through unittest's `[N chars]` shortening); a cut
+    comparison of a 30-character environment value shows the marker for both of its pieces; and a
+    comparison of a GitHub Actions variable, or of the conftest's own git identity, shows the value.
 
 Every probe value is synthetic and assembled at run time ("romp-test-fixture-" + a uuid; a
 pattern-shaped probe is a public key prefix joined to uuids), so no literal in this file is a
@@ -112,6 +123,17 @@ def _jwt_header_of(width):
     return hdr
 
 
+def _letters(n):
+    """`n` lower-case letters from uuid bytes: a token with no digit and one case, which the pattern
+    net's fragment rule (a digit, or mixed case) never takes, so what catches its pieces is the
+    environment net alone. Assembled at run time."""
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while len(out) < n:
+        out += "".join(alphabet[b % 26] for b in uuid.uuid4().bytes)
+    return out[:n]
+
+
 def _copy_hook(d):
     """The conftest and the pattern module it loads by path, as a subprocess pytest run sees them."""
     shutil.copy(CONFTEST, os.path.join(d, "conftest.py"))
@@ -138,14 +160,105 @@ class RedactionRule(_WithConftest):
 
     def test_path_valued_shell_names_are_exempt_unless_credential_shaped(self):
         p = "/some/where/deep/enough/to/count"
+        self.assertFalse(os.path.exists(p), "by NAME: the path rule below does not apply to a path that is not there")
         env = {"PWD": p, "HOME": p, "XDG_STATE_HOME": p, "PATH": p, "CLAUDE_CONFIG_DIR": p,
+               "TMUX_TMPDIR": p, "ROMP_TESTS_SYSTEM_TMPDIR": p,
+               # GitHub Actions: the runner's dirs and the six names setup-python exports the
+               # interpreter prefix under, which every stdlib and site-packages frame of a CI
+               # traceback quotes
+               "GITHUB_WORKSPACE": p, "RUNNER_TEMP": p, "RUNNER_TOOL_CACHE": p, "pythonLocation": p,
+               "Python_ROOT_DIR": p, "Python3_ROOT_DIR": p, "LD_LIBRARY_PATH": p, "PKG_CONFIG_PATH": p,
+               "XDG_DATA_DIRS": p + os.pathsep + p,
+               # this conftest's own floors: the pre-floor Claude settings dir the live move test reads,
+               # and the selector path under the state root that is never created
                "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": p, "ROMP_CREDENTIAL_SELECTOR_FILE": p}
         self.assertEqual(self.cf.env_values_to_redact(env), set(), "a traceback quotes these paths")
         env = {"PWD_TOKEN": p, "ANTHROPIC_PWD": p, "MY_SECRET_PATH": p}
         self.assertEqual(self.cf.env_values_to_redact(env), {p}, "a credential-shaped name is never exempt")
         self.assertTrue(self.cf.env_value_qualifies("SOME_TOKEN", p))
+        self.assertFalse(self.cf.env_value_qualifies("TMUX_TMPDIR", p),
+                         "the private tmux socket dir conftest mints is a path a failure may quote")
         self.assertFalse(self.cf.env_value_qualifies("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", p),
                          "the pre-floor settings dir is a path the live test's skip reason quotes")
+        self.assertFalse(self.cf.env_value_qualifies("ROMP_CREDENTIAL_SELECTOR_FILE", p),
+                         "the selector floor names a path that is never created, so the path rule alone would take it")
+
+    def test_pytests_own_bookkeeping_names_are_exempt(self):
+        # pytest writes PYTEST_CURRENT_TEST (`<node id> (setup|call|teardown)`) for every phase of
+        # every test. Noted, it grew the set by one value per test (23,000 over a full run, 99% of the
+        # set), slowed every report's scrub in step, and made the node id of every test already run a
+        # target in later reports (a quoted child pytest line rendered `FAILED [REDACTED-ENV-VALUE]`).
+        nodeid = "tests/test_x.py::Case::test_method (call)"
+        env = {"PYTEST_CURRENT_TEST": nodeid, "PYTEST_VERSION": "9.1.1-" + "x" * 16,
+               "PYTEST_XDIST_TESTRUNUID": uuid.uuid4().hex, "PYTEST_XDIST_WORKER": "gw" + "0" * 16,
+               "PYTEST_ADDOPTS": "-p no:cacheprovider --strict-markers"}
+        self.assertEqual(self.cf.env_values_to_redact(env), set())
+        self.assertFalse(self.cf.note_env_value("PYTEST_CURRENT_TEST", nodeid), "the write hook applies the same rule")
+        self.assertFalse(nodeid in self.cf._ENV_VALUES_SEEN)
+        live = os.environ.get("PYTEST_CURRENT_TEST")
+        self.assertTrue(live, "pytest sets it for the running test")
+        self.assertFalse(live in self.cf._ENV_VALUES_SEEN, "the running test's own node id was not noted at its write")
+        self.assertTrue(self.cf.env_value_qualifies("PYTEST_API_KEY", probe_value()), "a credential-shaped name is never exempt")
+
+    def test_a_value_that_is_a_path_this_machine_has_is_exempt_under_any_name(self):
+        # a traceback quotes the interpreter's prefix on every stdlib and site-packages frame, and a
+        # developer's shell names that prefix under any variable (a pyenv root, a conda prefix), as
+        # setup-python does on CI; a PATH-style list of existing dirs (LD_LIBRARY_PATH) is the same
+        d = tempfile.mkdtemp(prefix="romp-test-path-value-")
+        try:
+            lib = os.path.join(d, "lib")
+            os.mkdir(lib)
+            self.assertGreaterEqual(len(d), self.cf.ENV_VALUE_MIN_LEN)
+            env = {"PYENV_ROOT": d, "CONDA_PREFIX": lib, "SOME_LIBRARY_PATH": lib + os.pathsep + d}
+            self.assertEqual(self.cf.env_values_to_redact(env), set(), "a path this machine has is not a value")
+            self.assertFalse(self.cf.note_env_value("PYENV_ROOT", d))
+            self.assertFalse(d in self.cf._ENV_VALUES_SEEN)
+            missing = os.path.join(d, "no-such-" + uuid.uuid4().hex)
+            self.assertTrue(self.cf.env_value_qualifies("PYENV_ROOT", missing), "a path that does not exist is a value")
+            self.assertTrue(self.cf.env_value_qualifies("SOME_LIBRARY_PATH", d + os.pathsep + missing),
+                            "every chunk of a list must exist")
+            self.assertTrue(self.cf.env_value_qualifies("PYENV_ROOT", os.path.basename(d) + "/lib"),
+                            "a relative path is a value: its existence depends on the cwd")
+            self.assertTrue(self.cf.env_value_qualifies("MY_API_KEY", d), "a credential-shaped name is never exempt")
+            self.assertTrue(self.cf.env_value_qualifies("PYENV_ROOT", probe_value()), "no token is a path that exists")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_names_whose_values_are_public_are_exempt_unless_credential_shaped(self):
+        # GitHub Actions describes a run in variables no secret ever sits in (the server URLs, the sha,
+        # the ref, the workflow and job names, the repository, the actor, the runner), and the conftest
+        # writes a synthetic git identity at import; the length rule alone made every one of them a
+        # marker in a CI failure report (`assert '[REDACTED-ENV-VALUE]' == 'x'` where a test compared
+        # the ref, 2026-09-07). Exempt by NAME, each listed rather than the GITHUB_ prefix, and consulted
+        # after the credential-shaped check, so the tokens GitHub exports still qualify
+        q = self.cf.env_value_qualifies
+        sha = hashlib.sha1(b"romp-test-fixture-head").hexdigest()
+        public = {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_API_URL": "https://api.github.com",
+                  "GITHUB_GRAPHQL_URL": "https://api.github.com/graphql", "GITHUB_SHA": sha, "GITHUB_WORKFLOW_SHA": sha,
+                  "GITHUB_REF": "refs/pull/1005/merge", "GITHUB_REF_NAME": "1005/merge-of-a-long-name",
+                  "GITHUB_HEAD_REF": "feature/a-long-branch-name", "GITHUB_BASE_REF": "main-of-a-long-name",
+                  "GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_WORKFLOW": "Python tests on Linux",
+                  "GITHUB_WORKFLOW_REF": "notes-api/notes-api/.github/workflows/tests.yml@refs/pull/1005/merge",
+                  "GITHUB_JOB": "tests-python-3-12", "GITHUB_ACTION": "__notes-api_setup-tests",
+                  "GITHUB_ACTION_REF": "v4-with-a-long-tag", "GITHUB_ACTION_REPOSITORY": "notes-api/setup-tests",
+                  "GITHUB_REPOSITORY": "notes-api/notes-api", "GITHUB_REPOSITORY_OWNER": "notes-api-organisation",
+                  "GITHUB_ACTOR": "notes-api-contributor", "GITHUB_TRIGGERING_ACTOR": "notes-api-maintainer",
+                  "RUNNER_NAME": "GitHub Actions 1000000001", "RUNNER_ARCH": "X64-of-a-long-name",
+                  "GIT_AUTHOR_NAME": "romp tests of a long name", "GIT_AUTHOR_EMAIL": "tests@example.invalid",
+                  "GIT_COMMITTER_NAME": "romp tests of a long name", "GIT_COMMITTER_EMAIL": "tests@example.invalid"}
+        for name, value in public.items():
+            self.assertGreaterEqual(len(value), self.cf.ENV_VALUE_MIN_LEN, "%s: at the floor, so the name is what exempts it" % name)
+            self.assertFalse(q(name, value), name)
+        self.assertEqual(self.cf.env_values_to_redact(public), set())
+        self.assertEqual(set(public), set(self.cf._ENV_VALUE_PUBLIC_NAMES), "every name in the set is pinned here")
+        tok = uuid.uuid4().hex
+        for name in ("GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "INPUT_GITHUB_TOKEN"):
+            self.assertTrue(q(name, tok), "%s: credential-shaped, never exempt" % name)
+        self.assertTrue(q("GITHUB_SOMETHING_ELSE", tok), "a GITHUB_ name the list does not know is a value")
+        self.assertFalse(self.cf.note_env_value("GITHUB_REF", "refs/pull/1005/merge"), "the write hook applies the same rule")
+        self.assertFalse("refs/pull/1005/merge" in self.cf._ENV_VALUES_SEEN)
+        self.assertEqual(os.environ.get("GIT_AUTHOR_EMAIL"), "tests@example.invalid", "the conftest set it at import")
+        self.assertFalse("tests@example.invalid" in self.cf._ENV_VALUES_SEEN, "and the import-time sample did not note it")
 
     def test_the_replacement_covers_every_occurrence_longest_first(self):
         a = probe_value("a")
@@ -175,6 +288,43 @@ class RedactionRule(_WithConftest):
         self.assertEqual(self.cf.redact_env_values("h=" + v + ";", {v}), "h=" + self.cf.ENV_VALUE_REDACTED + ";")
         # a value without whitespace gains no chunks; a short chunk of a long value is not a value
         self.assertEqual(self.cf.redact_env_values("keep ab cd", {"ab cd " + tok}), "keep ab cd")
+
+    def test_a_piece_of_a_value_beside_a_cut_is_redacted_when_it_is_a_substring(self):
+        # pytest renders a failed `==` at default verbosity with each operand cut to 12 and 13 characters
+        # around `...`, so most of a 30-character value stood on the assert line and in the short summary
+        # while its whole form on the diff line was replaced (2026-09-07); its saferepr of a local keeps
+        # 117 on each side, the short summary and a long explanation are cut with `...` appended, and
+        # unittest shortens a container repr with `[N chars]`. A run of 8 or more token characters against
+        # a cut is replaced when it is a substring of a noted value (or of a chunk of one): exact, never a
+        # guess from its shape. The value is digit-free and single-case, so the pattern net's fragment
+        # rule, which needs a digit or mixed case, cannot be what catches the pieces
+        red, R = self.cf.redact_env_values, self.cf.ENV_VALUE_REDACTED
+        self.assertEqual(self.cf.ENV_CUT_FRAGMENT_MIN_LEN, 8)
+        v = _letters(30)
+        self.assertTrue(v.isalpha() and v.islower() and len(v) == 30)
+        for text, want in (("assert '%s...%s' == 'something else'" % (v[:12], v[-13:]), "assert '%s...%s' == 'something else'" % (R, R)),
+                           ("FAILED t.py::t - AssertionError: assert '%s...%s..." % (v[:12], v[-13:-5]),
+                            "FAILED t.py::t - AssertionError: assert '%s...%s..." % (R, R)),
+                           ("v          = '%s...%s'" % (v[:20], v[-9:]), "v          = '%s...%s'" % (R, R)),
+                           ("['%s[5 chars]%s']" % (v[:12], v[-13:]), "['%s[5 chars]%s']" % (R, R)),
+                           ("'[13 chars]%s[3 chars]%s'" % (v[5:15], v[-9:]), "'[13 chars]%s[3 chars]%s'" % (R, R)),
+                           ("E         + %s..." % v[:20], "E         + %s..." % R),
+                           ("{'X': '%s..." % v[:11], "{'X': '%s..." % R)):
+            out = red(text, {v})
+            self.assertEqual(out, want, text)
+            for i in range(0, len(v) - 8 + 1):
+                self.assertFalse(v[i:i + 8] in out, "a piece of the value reached the output")
+        hv = "Authorization: Bearer " + v                          # a chunk's piece is a value's piece too
+        self.assertEqual(red("'Bearer %s...%s'" % (v[:12], v[-13:]), {hv}), "'Bearer %s...%s'" % (R, R))
+        # what stays: a run under the floor, a run that is a piece of no value (a word before a sentence's
+        # ellipsis, a piece of another token), a piece with no cut beside it (pytest renders none; a test
+        # that slices a value itself is not this net's business), and any text when no value is noted
+        other = _letters(30)
+        for text in ("x = '%s...%s'" % (v[:7], v[-7:]), "'Connecting...' and loading... done",
+                     "'%s...%s'" % (other[:12], other[-13:]), "'%s'" % v[:12], "the word %s here" % v[:12]):
+            self.assertEqual(red(text, {v}), text, text)
+        self.assertEqual(red("'%s...'" % v[:12], set()), "'%s...'" % v[:12])
+        self.assertEqual(red("'%s...'" % v[:12], {""}), "'%s...'" % v[:12])
 
     def test_the_process_environment_is_what_the_hook_reads_by_default(self):
         v = probe_value("live")
@@ -316,6 +466,27 @@ class CredentialPattern(_WithConftest):
         # a 40-hex token that is not a sha's alphabet (upper case, a '-') is not exempted by the commit word
         other = "A1" * 20
         self.assertEqual(red("commit=%s" % other), "commit=" + self.cf.CREDENTIAL_REDACTED)
+
+    def test_a_dated_model_id_is_kept_whole_and_taken_with_anything_attached(self):
+        # a dated Anthropic model id is 24 or more token characters with digits, the generic rule's shape,
+        # so a failing comparison of two rendered as one marker against another on the assert line and on
+        # both diff lines, the one thing the failure was about (2026-09-07). A token that is exactly that
+        # shape stays on every rendering; one with a dotted rest or a longer tail attached is taken as
+        # before, and so is any other token of the generic rule's shape
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        ids = ("claude-haiku-4-5-20251001", "claude-opus-4-5-20251101", "claude-3-5-sonnet-20241022", "claude-sonnet-4-20250514")
+        for mid in ids:
+            self.assertGreaterEqual(len(mid), 24, "the generic rule's floor: the exemption is what keeps it")
+            for text in ("assert '%s' == 'x'" % mid, "E         - %s" % mid, "E         + %s" % mid, "model=%s" % mid,
+                         "{'model': '%s'}" % mid, mid, "E        +  where '%s' = f()" % mid, "['%s', 'x']" % mid, "E       '%s'" % mid):
+                self.assertEqual(red(text), text, text)
+        a, b = ids[0], ids[1]
+        text = "E       AssertionError: assert '%s' == '%s'\nE         \nE         - %s\nE         + %s" % (a, b, b, a)
+        self.assertEqual(red(text), text, "pytest's rendering of the failed comparison, whole")
+        for text, want in (("model=%s.json" % a, "model=" + R), ("model=%sabcdef" % a, "model=" + R), ("model=%s99" % a, "model=" + R),
+                           ("E         - %s.x1" % a, "E         - " + R), ("KEY=%s" % ("aB" * 20), "KEY=" + R),
+                           ("model=%s" % uuid.uuid4().hex, "model=" + R), ("model=claude-%s" % uuid.uuid4().hex[:20], "model=" + R)):
+            self.assertEqual(red(text), want, text)
 
     def test_pytests_own_renderings_of_a_failed_comparison_are_value_positions(self):
         # a compared token slipped the net: pytest's diff lines, its assert line and a --showlocals line
@@ -644,7 +815,7 @@ class CredentialPattern(_WithConftest):
         self.assertEqual(red("log: %s" % tok), "log: %s...%s" % (R, wide[-40:]))
         self.assertEqual(red("'%s'" % tok), "'%s...%s'" % (R, R))
 
-    def test_the_two_nets_are_applied_in_order_and_share_one_pattern_list(self):
+    def test_the_two_nets_are_applied_in_order_and_the_conftest_loads_the_pattern_file(self):
         v = probe_value("env")
         tok = patterned_probe()
         text = "env %s and token %s" % (v, tok)
@@ -735,6 +906,63 @@ class ReportShapes(_WithConftest):
         self.cf._redact_report(rep)
         self.assertEqual(rep.longrepr, "the child printed " + self.cf.CREDENTIAL_REDACTED, "the pattern net runs here too")
 
+    def test_a_changed_failures_longrepr_keeps_its_crash_location(self):
+        # the short test summary ends in reprcrash.message, junitxml's message attribute reads it, and
+        # xdist serializes a longrepr with a traceback and a crash structurally; a plain str has
+        # neither, so a scrubbed failure's summary line showed the traceback's first line instead
+        # (`def test_x():`, `self = <Case testMethod=...>`) and lost the message under -n
+        import pytest
+        tok = patterned_probe()
+        try:
+            raise AssertionError("the message carries " + tok)
+        except AssertionError:
+            lr = pytest.ExceptionInfo.from_current().getrepr(style="long")
+        self.assertTrue(tok in str(lr) and tok in lr.reprcrash.message, "the shape under test")
+        rep = SimpleNamespace(failed=True, longrepr=lr, sections=[])
+        self.cf._redact_report(rep)
+        self.assertIsNot(rep.longrepr, lr)
+        self.assertFalse(isinstance(rep.longrepr, str), "a longrepr, not plain text")
+        text = str(rep.longrepr)
+        self.assertFalse(tok in text)
+        self.assertEqual(text, self.cf.redact_report_text(str(lr)), "rendered as the scrubbed text, as is")
+        crash = rep.longrepr.reprcrash
+        self.assertEqual((crash.path, crash.lineno), (lr.reprcrash.path, lr.reprcrash.lineno))
+        self.assertEqual(crash.message, "AssertionError: the message carries " + self.cf.CREDENTIAL_REDACTED)
+        # xdist's round trip, the one a worker's report takes to the controller
+        report = pytest.TestReport("tests/test_x.py::test_x", ("tests/test_x.py", 3, "test_x"), {}, "failed",
+                                   rep.longrepr, "call")
+        back = pytest.TestReport._from_json(report._to_json())
+        self.assertEqual(back.longrepr.reprcrash.message, crash.message, "the message reaches the controller")
+        self.assertEqual(str(back.longrepr), text)
+        self.assertFalse(tok in str(back.longrepr))
+        # the message of a failed comparison carries pytest's diff without the `E` marker the pattern
+        # net's diff-line rule is keyed on; under CI the short summary prints every line of it
+        x, y = uuid.uuid4().hex * 2, uuid.uuid4().hex * 2
+        try:
+            assert x == y
+        except AssertionError:
+            lr = pytest.ExceptionInfo.from_current().getrepr(style="long")
+        self.assertTrue(any(line.lstrip().startswith("- ") for line in lr.reprcrash.message.split("\n")),
+                        "the shape under test: a diff line in the message, unmarked")
+        rep = SimpleNamespace(failed=True, longrepr=lr, sections=[])
+        self.cf._redact_report(rep)
+        for v in (x, y):
+            for i in range(0, len(v) - 8 + 1):
+                self.assertFalse(v[i:i + 8] in rep.longrepr.reprcrash.message, "a piece reached the crash message")
+                self.assertFalse(v[i:i + 8] in str(rep.longrepr))
+        self.assertFalse(any(line.startswith("E") for line in rep.longrepr.reprcrash.message.split("\n")),
+                         "unwrapped: the marker is not left in")
+        self.assertTrue(rep.longrepr.reprcrash.message.lstrip().startswith(("assert '", "AssertionError: assert '")))
+        self.assertGreaterEqual(rep.longrepr.reprcrash.message.count(self.cf.CREDENTIAL_REDACTED), 4,
+                                "both operands and both diff lines")
+        # a longrepr with no crash location (a collection error's) is the plain text, as before
+        class _CollectErrorRepr:
+            def __str__(self):
+                return "the child printed " + tok
+        rep = SimpleNamespace(failed=True, longrepr=_CollectErrorRepr(), sections=[])
+        self.cf._redact_report(rep)
+        self.assertEqual(rep.longrepr, "the child printed " + self.cf.CREDENTIAL_REDACTED)
+
     def test_both_hooks_are_declared(self):
         self.assertTrue(callable(getattr(self.cf, "pytest_runtest_makereport", None)))
         self.assertTrue(callable(getattr(self.cf, "pytest_collectreport", None)))
@@ -751,6 +979,10 @@ class HookEndToEnd(unittest.TestCase):
         for name in ("CI", "BUILD_NUMBER"):
             child.pop(name, None)
         child.update(env or {})
+        # The copied conftest mints its own private temp root under TMPDIR and removes it at run end;
+        # pointed at `d`, that root and the state dir inside it go with the scratch dir even when the
+        # child is killed before its unconfigure runs (the timeout below).
+        child["TMPDIR"] = d
         r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + list(args),
                            cwd=d, env=child, capture_output=True, text=True, timeout=180)
         return r.returncode, r.stdout + r.stderr
@@ -771,6 +1003,66 @@ class HookEndToEnd(unittest.TestCase):
             self.assertTrue("1 failed" in out, "the run reports the failure")
             self.assertFalse(v in out, "the probe value reached no line of the report")
             self.assertGreaterEqual(out.count("[REDACTED-ENV-VALUE]"), 2, "the message and the captured stdout both show the marker")
+            self.assertTrue("FAILED test_probe_leak.py::test_leak - AssertionError: the message carries" in out,
+                            "the short test summary still ends in the assertion message, not the traceback's first line")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_cut_comparison_of_an_environment_value_prints_the_marker_on_both_pieces(self):
+        # a plain `assert v == 'something else'` on a 30-character value from the environment: at default
+        # verbosity pytest cuts each operand of the assert line to 12 and 13 characters around `...`, and
+        # the short summary repeats that line; the whole value on the diff line was replaced and the two
+        # pieces were not (2026-09-07). The value is digit-free and single-case, so the pattern net's
+        # fragment rule cannot be what catches them. No 8-character piece survives on any line
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            with open(os.path.join(d, "test_probe_cut.py"), "w") as fh:
+                fh.write("import os\n\n"
+                         "def test_cut():\n"
+                         "    v = os.environ['ROMP_TEST_REDACTION_PROBE']\n"
+                         "    assert v == 'something else'\n")
+            v = _letters(30)
+            rc, out = self._run(d, "test_probe_cut.py", env={"ROMP_TEST_REDACTION_PROBE": v})
+            self.assertNotEqual(rc, 0, "the probe test fails by design")
+            self.assertTrue("1 failed" in out, out[-600:])
+            for i in range(0, len(v) - 8 + 1):
+                self.assertFalse(v[i:i + 8] in out, "a piece of the value reached the report")
+            self.assertTrue("assert '[REDACTED-ENV-VALUE]...[REDACTED-ENV-VALUE]' == 'something else'" in out,
+                            "the assert line: pytest's cut, a marker on each side of it")
+            self.assertTrue("FAILED test_probe_cut.py::test_cut - AssertionError: assert '[REDACTED-ENV-VA" in out,
+                            "the short summary repeats the assert line, cut at the terminal's width")
+            self.assertGreaterEqual(out.count("[REDACTED-ENV-VALUE]"), 3, "both pieces and the diff line")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_github_actions_value_and_the_conftests_git_identity_print_in_the_clear(self):
+        # the variables GitHub Actions exports to describe a run, and the synthetic git identity the
+        # conftest itself writes at import, are exempt by name: a failed comparison of one shows the
+        # value, where a CI failure read `assert '[REDACTED-ENV-VALUE]' == 'x'` (2026-09-07). The child's
+        # environment carries synthetic values under two of the names; the identity is the copied
+        # conftest's own. GITHUB_TOKEN is credential-shaped and still redacted (28 characters, so
+        # pytest renders its operand whole)
+        d = tempfile.mkdtemp()
+        try:
+            _copy_hook(d)
+            tok = uuid.uuid4().hex[:28]
+            with open(os.path.join(d, "test_probe_public.py"), "w") as fh:
+                fh.write("import os\n\n"
+                         "def test_url():\n    assert os.environ['GITHUB_SERVER_URL'] == 'x'\n\n"
+                         "def test_ref():\n    assert os.environ['GITHUB_REF'] == 'x'\n\n"
+                         "def test_identity():\n    assert os.environ['GIT_AUTHOR_EMAIL'] == 'x'\n\n"
+                         "def test_token():\n    assert os.environ['GITHUB_TOKEN'] == 'x'\n")
+            rc, out = self._run(d, "test_probe_public.py",
+                                env={"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REF": "refs/pull/1005/merge", "GITHUB_TOKEN": tok})
+            self.assertNotEqual(rc, 0)
+            self.assertTrue("4 failed" in out, out[-600:])
+            for value in ("https://github.com", "refs/pull/1005/merge", "tests@example.invalid"):
+                self.assertTrue("assert '%s' == 'x'" % value in out, "%s: the value, not the marker" % value)
+            self.assertFalse(tok in out, "the token reached the report")
+            self.assertTrue("assert '[REDACTED-ENV-VALUE]' == 'x'" in out, "the token's assert line")
+            self.assertEqual(out.count("[REDACTED-ENV-VALUE]"), out.count("[REDACTED-ENV-VALUE]", out.index("test_token")),
+                             "no marker before the token test's report")
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -957,14 +1249,15 @@ class HookEndToEnd(unittest.TestCase):
             # Lists differ line (2) and two element lines (its diff is over maxDiff and not shown)
             self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17, out[-2500:])
             # the untruncated rendering: the same lines, whole, and the short summary's repeat of each failure's
-            # message (the captured print is a section, not part of it): the JWT test's assert line (2), diff
-            # lines (2) and locals (2), the hex test's (4 + 2), the unittest one's (2 + 2)
+            # message (the captured print is a section and the locals are the traceback's, so neither is in
+            # it): the JWT test's assert line (2) and diff lines (2), the hex test's (4 + 2), the unittest
+            # one's (2 + 2)
             rc, out = self._run(d, "--showlocals", "test_probe_jwt.py", env={"CI": "1"})
             self.assertNotEqual(rc, 0)
             self.assertTrue("3 failed" in out, out[-600:])
             no_piece(out)
             self.assertFalse("Full output truncated" in out, "with CI set pytest shows the whole diff")
-            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17 + 16, out[-2500:])
+            self.assertGreaterEqual(out.count("[REDACTED-CREDENTIAL]"), 17 + 14, out[-2500:])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

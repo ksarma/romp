@@ -151,6 +151,8 @@ def _set_perf_log(on):
     return _PERF
 
 
+
+
 # glibc's mallinfo2 through ctypes (perf round 4, M1-lite, 2026-09-07): the large-object half of the heap.
 # The return type MUST be the struct: without `.restype` ctypes returns an int and the first field read
 # segfaults the process (the refuted M1 crashed the kernel on its first report, exit 139). Resolved once
@@ -329,13 +331,14 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb, threads, cpu_s (time.process_time), pid, and the exact
-                                   memory gauges (perf round 4, M1-lite): rss_anon_kb / hwm_kb (RssAnon
-                                   and VmHWM from /proc; null with source "unavailable" where /proc is
-                                   absent), allocated_blocks (sys.getallocatedblocks), gc_gen2
-                                   (generation-2 collections) and malloc {arena, hblkhd, uordblks,
-                                   fordblks} (glibc mallinfo2 in bytes, the malloc half of the heap;
-                                   null where glibc 2.33+ is absent)
+      process                      rss_kb (the CURRENT resident size on Linux, from /proc; the PEAK,
+                                   ru_maxrss, on macOS: _process_stats), threads, cpu_s
+                                   (time.process_time), pid, and the exact memory gauges (perf round 4,
+                                   M1-lite): rss_anon_kb / hwm_kb (RssAnon and VmHWM from /proc; null
+                                   with source "unavailable" where /proc is absent), allocated_blocks
+                                   (sys.getallocatedblocks), gc_gen2 (generation-2 collections) and
+                                   malloc {arena, hblkhd, uordblks, fordblks} (glibc mallinfo2 in
+                                   bytes, the malloc half of the heap; null where glibc 2.33+ is absent)
       caches                       one block per cache the kernel, the judge and the event model keep,
                                    each an EXACT occupancy (a len() or a sum of len()s under the
                                    cache's lock, nothing estimated): jsonl {entries, file_bytes,
@@ -397,9 +400,12 @@ class _PerfStats:
                                    evaluated because the store, its override journal or its archive
                                    changed or was new)
                                    unreadable_stores: a gauge, not a counter: the goals files in a
-                                   read-failure episode (the file exists and did not read or parse on
-                                   its last read; load_goals answers a fallback, the stages stand down
-                                   and save_goals refuses to publish over it until it reads);
+                                   store-fault episode (the file exists and did not read on a read or
+                                   publish through the per-session boundary, jd.load_goals_or_fault /
+                                   load_goals_shared_or_fault / save_goals_or_fault, which filed the
+                                   episode's one judge-errors row; the next good read or publish
+                                   through it ends the episode, and the readers render that session
+                                   without goal-derived content meanwhile);
                                    lineage_reads: judge.resume_lineage calls, each a read and parse of
                                    a session's whole states file (the episode-boundary check's guard
                                    for an unrecorded head; a recorded head returns on the episode
@@ -534,7 +540,12 @@ class _PerfStats:
                                    no ms: its handler returns when the socket closes, which is a
                                    connection's lifetime, not a request's."""
     RING = 256
-    HTTP_PATHS = 64
+    # The kernel's own route table is 88 fixed "METHOD /path" pairs (35 GET, 1 HEAD and 52 POST literals in
+    # the do_* dispatches, counted 2026-09-07), plus the collapsed /dist/*, /media/* and /remote/*/… families
+    # and an OPTIONS preflight per cross-origin POST route. The cap has to clear all of that with room, or
+    # routes that first arrive after it land in "other" for the kernel's lifetime (the first cap, 64, was
+    # below the table itself). test_perf_stats pins it at 1.5x the literal count.
+    HTTP_PATHS = 256
     SLOTS = 32
     STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
     BUILDS = ("chat", "feed", "timeline")
@@ -769,6 +780,8 @@ class _CountedEvent(threading.Event):
             _PERF_STATS.wake()
         else:
             self._on_set()
+
+
 
 
 def _perf_http_key(method, path):
@@ -1421,19 +1434,35 @@ def _version_info():
 # are ever kept; `romp perf client` reads both. Checked on every append: one stat, under one lock.
 CLIENT_DIAG_MAX_BYTES = 8 * 1024 * 1024
 _client_diag_lock = threading.Lock()
+# Set once a rotation rename has been refused, so the stderr line in _client_diag_append is written once per
+# kernel: a rename that stays refused (an unwritable state directory, a directory sitting at the .1 name) would
+# otherwise say so on every row, a line a minute per pane.
+_client_diag_rotate_failed = False
 
 
 def _client_diag_append(fp, line):
     """Append one row to client-diag.jsonl, rotating it first once it is at the cap. One lock across the size
     check, the rename and the write: every pane's socket is its own handler thread, so rows arrive
     concurrently, and two threads finding the file at the cap at once would both rename, the second moving
-    the file the first had just started over the run the first had just rotated, and that run was gone."""
+    the file the first had just started over the run the first had just rotated, and that run was gone.
+    A refused rename is said on stderr (once, see _client_diag_rotate_failed) and the row is appended anyway:
+    the bound has failed, and a file growing past the cap with nothing saying why is the silent kind of
+    failure (review, 2026-09-07). Only the absent-file case of the size check is quiet: a fresh state
+    directory has no file yet, and the append creates it."""
+    global _client_diag_rotate_failed
     with _client_diag_lock:
         try:
-            if fp.stat().st_size >= CLIENT_DIAG_MAX_BYTES:
+            size = fp.stat().st_size
+        except FileNotFoundError:
+            size = 0
+        if size >= CLIENT_DIAG_MAX_BYTES:
+            try:
                 os.replace(str(fp), str(fp) + ".1")
-        except OSError:
-            pass   # no file yet (fresh state) or a failed rename: the append below still goes to the current file
+            except OSError as e:
+                if not _client_diag_rotate_failed:
+                    _client_diag_rotate_failed = True
+                    print("[client-diag] could not rotate %s to %s.1 (%s): the file keeps growing past %d bytes"
+                          % (fp, fp, e, CLIENT_DIAG_MAX_BYTES), file=sys.stderr)
         with open(fp, "a", encoding="utf-8") as f:
             f.write(line)
 
@@ -3051,7 +3080,9 @@ def _followup_body(iid, title, text, injected=False, auto=False, stalled=False, 
     sid = str(iid).rsplit(":", 1)[0]
     nodes = {}
     try:
-        nodes = jd.load_goals(sid).get("nodes", {})
+        store, fault = jd.load_goals_or_fault(sid)  # a faulting store files its row; the message still goes
+        if fault is None:                            # out in the single-line form (no goal-derived enumeration)
+            nodes = store.get("nodes", {})
     except Exception:
         pass
     title = (title or "").strip()
@@ -3550,19 +3581,298 @@ def _alive_sessions(now, tmux):
     return _sessions(now)
 
 
+class _StateUnreadable(Exception):
+    """A small JSON state file EXISTS but could not be read -- a transient EIO, an EACCES, torn bytes
+    that could not be moved aside -- as opposed to a missing file. Raised by _read_state_json so a
+    read-modify-write writer REFUSES the write rather than folding the fault to an empty store and
+    publishing that emptiness back over the user's real state under a success ack (one such fold
+    erased a whole tag set, every session flag, the saved lane order, or every bell override,
+    silently). Callers on the MUTATION path let it propagate to a loud refusal; DISPLAY readers
+    serve their last-known-good cache if they hold one, else the empty default, UNPROVED and
+    uncached, so no writer persists it.
+
+    A plain Exception, deliberately NOT an OSError: the WS receive loop re-raises
+    `(BrokenPipeError, ConnectionResetError, OSError)` as a genuine socket failure and tears the
+    connection down, while any other exception falls to its logging arm and the next message still
+    processes. Were this an OSError, one handler branch that forgot to catch it would drop the
+    dashboard's socket on a read fault; as an Exception the same escape costs one logged line.
+    `path` is the file, `fault` the errno-and-strerror text (never the per-second quarantine stamp,
+    never a second path), so the once-per-fault-text registries dedupe a disk that stays broken."""
+
+    def __init__(self, path, fault):
+        self.path = Path(path)
+        self.fault = str(fault)
+        super().__init__("%s could not be read (%s)" % (self.path.name, self.fault))
+
+
+class _StateUnwritable(Exception):
+    """A small JSON state file could not be WRITTEN -- ENOSPC, EROFS, EACCES out of the publish itself,
+    after the store read proved. The sibling of _StateUnreadable for the gesture's other step (the
+    maintainer's fold on PR #1019: a user gesture's WRITE step is a fault boundary too). Raised by
+    _write_state_json in place of the OSError, which the WS receive loop re-raised as a socket failure
+    and turned into a DROPPED client (`finally: client["alive"] = False`): the dashboard disconnected
+    without a word, and the HTTP routes answered a 500 traceback where their callers read only their
+    own ok:false shape. As a plain Exception the same escape costs one logged line, and the gesture
+    arms catch it beside _StateUnreadable and answer the socket. `path` and `fault` as its sibling's:
+    errno + strerror only, never the temp path (which carries a per-call sequence), so the per-path
+    fault registry dedupes a disk that stays full."""
+
+    def __init__(self, path, fault):
+        self.path = Path(path)
+        self.fault = str(fault)
+        super().__init__("%s could not be written (%s)" % (self.path.name, self.fault))
+
+
+def _errno_text(e):
+    """errno + strerror ONLY: str(e) names the path(s), and a quarantine destination carries a
+    per-second stamp, so a text built from it changed every second and every once-per-fault-text
+    dedupe fired once a second (the ledgers' lesson)."""
+    return ("[Errno %d] %s" % (e.errno, e.strerror)) if getattr(e, "errno", None) is not None else type(e).__name__
+
+
+_STATE_REPLACED = "replaced meanwhile; the new bytes get their own read"   # _state_quarantine's decline when the
+#                                        file is no longer the one whose bytes failed: the reader re-reads (bounded)
+
+
+def _state_quarantine(p, st, reason):
+    """Move an unparseable state file ASIDE (never delete it) so the evidence survives the fresh
+    start that follows: the sidecar keeps the original name plus `.corrupt-<utc stamp>` (a `-n`
+    suffix for a second in the same second) -- the shape the goal-store and ledger quarantines wear,
+    so one convention reads across all three. Only while the file is still the one whose bytes
+    failed (same inode, mtime and size as `st`, the stat taken before the read): an atomic publish
+    that landed before the re-check already replaced them, and the new file gets its own read
+    (_STATE_REPLACED: _read_state_json re-reads, bounded -- the maintainer's fold on PR #1019; the
+    window left is between the re-check and the os.replace). Returns None once the bytes are out of
+    the way (moved, or already gone: a sibling reader moved them), with one stderr line for the move;
+    else the reason they are NOT, for the caller's fault text."""
+    try:
+        cur = p.stat()
+        if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
+            return _STATE_REPLACED
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        aside, n = p.with_name("%s.corrupt-%s" % (p.name, stamp)), 0
+        while aside.exists():                            # a second corrupt file in the same second
+            n += 1
+            aside = p.with_name("%s.corrupt-%s-%d" % (p.name, stamp, n))
+        os.replace(p, aside)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        return "could not be moved aside: %s" % _errno_text(e)
+    sys.stderr.write("romp-kernel: %s could not be parsed (%s); moved aside to %s, the store reads as empty\n"
+                     % (p.name, reason, aside.name))
+    # The dashboard hears it too (review find, 2026-09-08): a quarantine resets the store to EMPTY, so
+    # every bell override, lane flag (postal isolation included) or saved lane order it held reads as
+    # a default from here on, and the stderr line alone left that looking like settings resetting
+    # themselves. One notice, under the bell's `refused` kind (a setting that did not hold, not a
+    # machine sync); no dedupe registry: the next read of this path is an ENOENT, so a corrupt file
+    # speaks exactly once. Guarded like _note_state_fault: a notice never turns a successful move
+    # into a raise.
+    try:
+        _sync_notice("%s could not be parsed and was moved aside to %s; the settings it held start over "
+                     "empty until you set them again" % (p.name, aside.name), ok=False, kind="refused")
+    except Exception:
+        pass
+    return None
+
+
+def _read_state_json(path, st=None, expect=None, _tries=3):
+    """The ONE strict reader for a small JSON state file (session-flags, session-order, notify-cards;
+    timeline-views follows in its own change). Distinguishes the outcomes the old `except Exception: {}` conflated:
+      - a MISSING file is legitimately empty            -> returns None (a fresh install has no files)
+      - an UNREADABLE existing file (EIO/EACCES/...)     -> raises _StateUnreadable (never reads empty)
+      - TORN or non-JSON bytes                           -> QUARANTINED aside (_state_quarantine: a move,
+        never a delete -- the evidence survives for forensics), then None, so the store starts empty
+        ONLY after the bad bytes are preserved; bytes that could not be moved aside raise
+        _StateUnreadable instead; a file a peer's atomic publish REPLACED between the stat and the
+        rename is left alone and read afresh here, bounded by `_tries` (the maintainer's fold on
+        PR #1019), so the caller gets what is there now -- only a file that keeps changing under
+        every read ends _StateUnreadable.
+      - valid JSON of the WRONG top-level type           -> quarantined the same way, when the caller
+        names the store's shape in `expect` (dict for the flags and bells, list for the order). Read
+        as empty instead, a list where a dict belongs was overwritten by the next writer, and a file
+        none of our writers produce is exactly the evidence worth keeping (review find, 2026-09-08).
+        None skips the check.
+    `st` is the stat the caller already took (the display readers key their cache on it); without
+    one the reader stats first, so the quarantine can tell the file it read from one published
+    since. Reads bytes (json.loads accepts them and auto-detects the encoding), so a non-UTF-8 torn
+    file lands in the quarantine arm rather than escaping as an uncaught UnicodeDecodeError. Never
+    caches: the caller stores only a value that came from a clean read."""
+    path = Path(path)
+    if st is None:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            raise _StateUnreadable(path, "stat failed: %s" % _errno_text(e))
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise _StateUnreadable(path, "read failed: %s" % _errno_text(e))
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as e:
+        why = _state_quarantine(path, st, "invalid JSON: %s" % e)
+        if why is None:
+            return None                              # the bytes are preserved; the store starts empty
+        if why == _STATE_REPLACED and _tries > 1:    # a peer published since our stat: read what is there now
+            return _read_state_json(path, None, expect=expect, _tries=_tries - 1)
+        raise _StateUnreadable(path, "invalid JSON; %s" % why)
+    if expect is not None and not isinstance(data, expect):
+        why = _state_quarantine(path, st, "wrong shape: %s where %s was expected"
+                                % (type(data).__name__, expect.__name__))
+        if why is None:
+            return None
+        if why == _STATE_REPLACED and _tries > 1:
+            return _read_state_json(path, None, expect=expect, _tries=_tries - 1)
+        raise _StateUnreadable(path, "wrong shape; %s" % why)
+    return data
+
+
+# Last-known-good session order (session-order.json has no mtime cache): served over a transient
+# fault instead of a fabricated [], and the order to render when the store cannot be re-read.
+_session_order_lkg = [None]
+
+# One VISIBLE error per fault EPISODE, per state file (never a raise into the push/build path -- one
+# unreadable state file must not abort the whole push and wedge the board). str(path) -> the fault
+# text last filed. The first time a given fault text is seen for a path, _note_state_fault files one
+# stderr line + one dashboard notice; a repeat of the SAME text files nothing; a clean read clears
+# the entry (the event, no timer) so a recovered-then-refaulted file speaks again.
+_state_fault_seen = {}
+# The WRITE faults' own table, same key (str(path)): a clean READ ends a read episode, not a write one --
+# the display readers clear _state_fault_seen on every clean read, and a gesture's refusal reads the store
+# to name the value it still paints, so a write fault filed there was cleared before the next click and
+# said again per click. Only a landed write (_write_state_json) clears an entry here.
+_state_write_fault_seen = {}
+
+
+def _note_state_fault(exc):
+    """A DISPLAY-time state read fault is loud ONCE per episode, not on every build: file one stderr
+    line + one dashboard sync-notice the first time this fault text is seen for this path, then stay
+    quiet until a clean read clears it. The value the reader returns is UNPROVED (last-known or the
+    empty default) and no writer will persist it -- the mutation path reads the proved snapshot,
+    which raises and refuses. Never raises itself. The sync-notice ring is the surface the views
+    store's stale-writer guard already uses; the row carries the bell's `refused` kind (review find,
+    2026-09-08: filed under the ring's default sync kind, a user who muted the machine-sync log muted
+    every disk-fault notice with it, and the chip named a sync that moved no commits). A WRITE fault (_StateUnwritable, from
+    _write_state_json) files once per episode too, keyed on the same path but in its own table
+    (_state_write_fault_seen): only a landed write ends a write episode, where a clean read ends a
+    read one."""
+    key = str(exc.path)
+    if isinstance(exc, _StateUnwritable):
+        table = _state_write_fault_seen
+        text = "%s — the change was not saved; changes to it are refused until the file can be written again" % exc
+    else:
+        table = _state_fault_seen
+        text = ("%s — showing the last-known value; changes to it are refused until the file can be "
+                "read again" % exc)
+    if table.get(key) == text:
+        return
+    table[key] = text
+    sys.stderr.write("romp-kernel: %s\n" % text)
+    try:
+        _sync_notice(text, ok=False, kind="refused")   # the shell bell / feed sync-notice row (resolved at call time)
+    except Exception:
+        pass
+
+
+def _clear_state_fault(path):
+    """A clean read of `path` ends its fault episode, so the next fault on it files a fresh notice."""
+    _state_fault_seen.pop(str(path), None)
+
+
+def _refuse_setting(client, exc, what, gesture, sid="", item_id="", flag="", value=None):
+    """A dashboard gesture (a lane/tab flag, a card bell, a drag, a view change) that this kernel
+    REFUSED because the store it edits could not be read -- or, since the maintainer's fold on PR
+    #1019, WRITTEN (_StateUnwritable: the publish itself failed): one stderr line, and the refusal answered
+    on the DELIVERING socket as a `settingRefused` frame -- the same targeted _reply idiom the
+    settingStale stand-down and the saveFile acks use, never a broadcast. The frame names the
+    `gesture` ("flag" / "bell" / "order"; "views" follows with its store, so a pane never infers it from which fields are
+    empty), the gesture's own address (sid / itemId / flag), and `value`: what the kernel's display
+    path still paints for that flag or bell -- the value the next push carries -- so the pane
+    repaints the refused toggle to it on THIS event rather than to a value it recorded at the click
+    (two clicks before the first refusal made such a record wrong until the next push). None for a
+    gesture with no single value (an order, a whole-blob view write). A `warn` frame did none of
+    this: only the chat page renders `warn`, so a refused bell on the feed page and a refused lane
+    flag on the timeline page stayed painted as if they had landed until a reload. A dead socket is
+    the client's problem: the refusal already stands."""
+    text = "couldn't save %s \u2014 %s; try again" % (what, exc)
+    sys.stderr.write("romp-kernel: %s\n" % text)
+    if not client or not callable(client.get("send")):
+        return
+    _reply(client, {"type": "settingRefused", "gesture": str(gesture), "sid": str(sid or ""),
+                    "itemId": str(item_id or ""), "flag": str(flag or ""),
+                    "value": value if isinstance(value, bool) else None, "text": text})
+
+
+def _painted_flag_value(sid, flag):
+    """What the DISPLAY path paints for one lane/tab flag right now -- the derivation build_timeline
+    and build_session use for the lane and the tab (the bell EFFECTIVE: override, else the master).
+    Rides a settingRefused frame as `value`, so the pane repaints a refused toggle to exactly what
+    the next push will show. Never raises: the display readers serve their last read (or the empty
+    default) over a fault."""
+    if flag == "notify":
+        return bool(_notify_session_effective(sid))
+    if flag == "postalServiceOff":
+        return bool(_session_flag(sid, "postalServiceOff") or _session_flag(sid, "postalOff"))
+    return bool(_session_flag(sid, flag))
+
+
 def _session_order():
     """The shared session order (SID list), persisted by a tab-drag (reorderTabs) or a lane-drag
     (writeOrder). Chat tabs AND timeline lanes both order by it, so dragging either reorders both
-    (parity with the old UI's session-order.json). [] when unset."""
+    (parity with the old UI's session-order.json). [] when unset. This is the DISPLAY read: a
+    transient fault serves the last-known-good order this kernel read or wrote, else the empty
+    default (a cold start with no known-good yet) -- UNPROVED either way, never latched as the new
+    known-good, and no writer persists it (the mutation path reads _session_order_proved, which
+    refuses); the fault is loud once per episode (a sync-notice), never a raise into the build path."""
+    p = jd.STATE / "session-order.json"
     try:
-        a = json.loads((jd.STATE / "session-order.json").read_text())
-        return [x for x in a if isinstance(x, str)] if isinstance(a, list) else []
-    except Exception:
-        return []
+        raw = _read_state_json(p, expect=list)
+    except _StateUnreadable as e:
+        # DISPLAY path: never raise into the push (one outer try would abort every client's build).
+        _note_state_fault(e)
+        return list(_session_order_lkg[0]) if _session_order_lkg[0] is not None else []
+    _clear_state_fault(p)
+    order = [x for x in raw if isinstance(x, str)] if isinstance(raw, list) else []
+    _session_order_lkg[0] = list(order)              # a COPY: callers reorder the list they get
+    return order
+
+
+def _session_order_proved():
+    """The MUTATION snapshot of the lane order: a read fault RAISES (_StateUnreadable) so a writer
+    refuses rather than persisting a fabricated [] over the user's saved order (the drag that would
+    reorder every tab/lane on a transient EIO, under no gesture). Only a missing (or
+    freshly-quarantined) file reads as empty; no last-known-good -- a writer acts on the real store
+    or not at all."""
+    raw = _read_state_json(jd.STATE / "session-order.json", expect=list)
+    return [x for x in raw if isinstance(x, str)] if isinstance(raw, list) else []
 
 
 _atomic_lock = threading.Lock()
 _atomic_seq = [0]
+
+
+def _write_state_json(path, text):
+    """The ONE write door for the small JSON state files (session-flags, session-order, notify-cards,
+    and the views store once its path folds in): _atomic_write, with the publish's OSError turned into
+    _StateUnwritable and the fault filed ONCE per episode on the path's registry (_note_state_fault, the
+    write faults' own table beside the read faults'); a landed write ends the episode. Left as an OSError, a publish that
+    failed under a WS gesture escaped the arm's `except _StateUnreadable` to the receive loop, which
+    re-raised it as a socket failure and dropped the client, and under an HTTP route reached do_POST's
+    catch-all as a 500 traceback (the maintainer's fold on PR #1019: the write step is a fault boundary
+    too). Defined here, beside _atomic_write, because _write_session_order below is its first caller."""
+    path = Path(path)
+    try:
+        _atomic_write(path, text)
+    except OSError as e:
+        exc = _StateUnwritable(path, "write failed: %s" % _errno_text(e))
+        _note_state_fault(exc)
+        raise exc from e
+    _state_write_fault_seen.pop(str(path), None)     # a landed write ends the write-fault episode
 
 
 def _atomic_write(path, text, mode=None):
@@ -3653,8 +3963,11 @@ def _write_session_order(order):
     if not isinstance(order, list):
         return
     new = [x for x in order if isinstance(x, str)]
+    # for the audit only: the DISPLAY read never raises (a fault serves the last-known order), so a
+    # fault here cannot block the write -- the caller already read the store PROVED to build `order`
     _order_audit("persist", _session_order(), new)   # every mutation of the authoritative order, with its stack
-    _atomic_write(jd.STATE / "session-order.json", json.dumps(new))
+    _write_state_json(jd.STATE / "session-order.json", json.dumps(new))   # a failed publish raises _StateUnwritable:
+    _session_order_lkg[0] = new                      # what we just published IS the new known-good; nothing latched otherwise
 
 
 def _gc_session_order(known):
@@ -3664,10 +3977,17 @@ def _gc_session_order(known):
     it so a closed / aged-out session falls out on its own). Everything still around keeps its EXACT slot —
     only truly-absent sids are removed, and since the discover window only slides FORWARD a pruned sid never
     flickers back to reclaim a slot. Writes only when something actually changed (no churn on the hot path)."""
-    order = _session_order()
+    try:
+        order = _session_order_proved()
+    except _StateUnreadable as e:
+        _note_state_fault(e)                         # loud once per episode, not per pass
+        return
     kept = [sid for sid in order if sid in known]
     if kept != order:
-        _write_session_order(kept)
+        try:
+            _write_session_order(kept)
+        except _StateUnwritable:
+            pass                                     # filed once per episode by the write door; the next pass retries
 
 
 def _merge_session_order(incoming):
@@ -3680,7 +4000,9 @@ def _merge_session_order(incoming):
     sid's slot, so those lanes jumped — a drag that auto-reordered untouched lanes.) Returns the merged full
     SID order (deduped, strings only)."""
     incoming = [x for x in incoming if isinstance(x, str)]
-    existing = _session_order()
+    existing = _session_order_proved()   # a read fault RAISES -> the drag is refused loudly by the caller,
+    #                                      never spliced into a fabricated [] and persisted (the WS branch
+    #                                      catches _StateUnreadable and warns; it does not overwrite the order)
     inset = set(incoming)
     queue = list(incoming)
     merged = []
@@ -3710,7 +4032,21 @@ def _ordered(sessions):
     sibling already in the order. A genuinely-new session still appends at the end. Keyed off the anchor the
     sessions carry (default: the sid itself), so session-order.json + the client stay fsid-based — no
     migration (the user 2026-06-24: keep ONE slot across /clear / revive)."""
-    order = _session_order()
+    try:
+        order = _session_order_proved()   # a PROVED read: a transient fault must not fold to [] and then
+        #                                   mark every session "new", persisting discovery order over the
+        #                                   user's saved order under no gesture (the state-readers audit).
+    except _StateUnreadable as e:
+        # render the last-known order (or plain input order if we never read one) and persist NOTHING
+        # this pass; the next clean read re-appends any true newcomers. Loud once per episode.
+        _note_state_fault(e)
+        lkg = _session_order_lkg[0] or []
+        idx0 = {sid: i for i, sid in enumerate(lkg)}
+        return sorted(sessions, key=lambda s: idx0.get(s["sid"], len(idx0)))
+    _session_order_lkg[0] = list(order)   # a COPY of the clean read: `order` is spliced below and only
+    #                                       _write_session_order latches the spliced list, AFTER it lands
+    #                                       (review find, 2026-09-08: latched by reference, a publish that
+    #                                       failed left an unpersisted order as the known-good)
     known = set(order)
     # Slot inheritance keys on the STABLE session NAME (customTitle), NOT the fsid or discover's anchor: a
     # /clear, relaunch, or revive mints a NEW transcript fsid for the SAME logical session, and it must
@@ -3736,7 +4072,11 @@ def _ordered(sessions):
             else:
                 order.append(sid)                        # a genuinely new session appends, then is frozen
                 name_at.append(a)
-        _write_session_order(order)
+        try:
+            _write_session_order(order)
+        except _StateUnwritable:
+            pass                                         # this build still sorts by the in-memory order; the publish
+            #                                              is filed once per episode and the next pass retries it
     idx = {sid: i for i, sid in enumerate(order)}
     return sorted(sessions, key=lambda s: idx.get(s["sid"], len(idx)))   # stable sort: ties keep input order
 
@@ -5438,21 +5778,39 @@ def _tag_new_session(sid, parent_sid="", tags=()):
 _flags_cache = {}   # str(path) -> ((mtime,size), dict)
 
 
+def _session_flags_proved():
+    """The MUTATION snapshot of the per-session flags: a read fault RAISES (_StateUnreadable) so
+    _set_session_flag / _set_notify_session refuse rather than writing a fabricated {} back over
+    every session's flags -- including the postalServiceOff isolation boundaries -- under a success
+    ack (the state-readers audit). Only a missing (or freshly-quarantined) file reads as empty."""
+    raw = _read_state_json(jd.STATE / "session-flags.json", expect=dict)
+    return raw if isinstance(raw, dict) else {}
+
+
 def _session_flags():
     p = jd.STATE / "session-flags.json"
+    hit = _flags_cache.get(str(p))
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)   # ns + size → no stale hit on rapid toggles
-    except OSError:
+    except FileNotFoundError:
+        _clear_state_fault(p)
         return {}
-    hit = _flags_cache.get(str(p))
+    except OSError as e:
+        # DISPLAY path: never raise into the push. The last cached value if there is one, else {} (a
+        # cold start) -- UNPROVED either way, not cached; one loud notice per episode. Writers refuse
+        # via _session_flags_proved.
+        _note_state_fault(_StateUnreadable(p, "stat failed: %s" % _errno_text(e)))
+        return hit[1] if hit is not None else {}
     if hit is not None and hit[0] == key:
+        _clear_state_fault(p)
         return hit[1]
     try:
-        d = json.loads(p.read_text())
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
+        raw = _read_state_json(p, st, expect=dict)
+    except _StateUnreadable as e:
+        _note_state_fault(e)
+        return hit[1] if hit is not None else {}
+    _clear_state_fault(p)
+    d = raw if isinstance(raw, dict) else {}
     _flags_cache[str(p)] = (key, d)
     return d
 
@@ -5472,7 +5830,8 @@ def _session_flag_raw(sid, flag):
 
 
 def _set_session_flag(sid, flag, value):
-    cur = dict(_session_flags())                     # copy: never mutate the cached dict in place
+    cur = dict(_session_flags_proved())              # PROVED: a read fault refuses (raises) rather than
+    #                                                  overwriting every session's flags with a fabricated {}
     f = dict(cur.get(sid)) if isinstance(cur.get(sid), dict) else {}
     if value:
         f[flag] = True
@@ -5482,7 +5841,7 @@ def _set_session_flag(sid, flag, value):
         cur[sid] = f
     else:
         cur.pop(sid, None)
-    _atomic_write(jd.STATE / "session-flags.json", json.dumps(cur, sort_keys=True))
+    _write_state_json(jd.STATE / "session-flags.json", json.dumps(cur, sort_keys=True))
     if flag == "hideFromFeed" and value:
         # Muting takes the session OUT of task tracking → VIEW-CLEAR its current goals: seal them exactly like
         # crossing each card off the feed (cleared.jsonl + the durable node flag), NOT delete — they stay on
@@ -5541,21 +5900,40 @@ _NOTIFY_RESERVED = frozenset((NOTIFY_ALL_KEY, NOTIFY_TURNS_KEY))
 _notify_cards_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 
 
+def _notify_cards_proved():
+    """The MUTATION snapshot of the notification subscriptions: a read fault RAISES
+    (_StateUnreadable) so the bell setters (_set_notify_all/_turns/_card) and _prune_notify_cards
+    refuse rather than writing a fabricated {} back over every per-card, session and master bell
+    override under a success ack (the state-readers audit). Only a missing (or freshly-quarantined)
+    file reads as empty."""
+    raw = _read_state_json(jd.STATE / "notify-cards.json", expect=dict)
+    return raw if isinstance(raw, dict) else {}
+
+
 def _notify_cards():
     p = jd.STATE / "notify-cards.json"
+    hit = _notify_cards_cache.get(str(p))
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)
-    except OSError:
+    except FileNotFoundError:
+        _clear_state_fault(p)
         return {}
-    hit = _notify_cards_cache.get(str(p))
+    except OSError as e:
+        # DISPLAY path: never raise into the push. The last cached value if there is one, else {} (a
+        # cold start) -- UNPROVED either way, not cached; one loud notice per episode. Writers refuse
+        # via _notify_cards_proved.
+        _note_state_fault(_StateUnreadable(p, "stat failed: %s" % _errno_text(e)))
+        return hit[1] if hit is not None else {}
     if hit is not None and hit[0] == key:
+        _clear_state_fault(p)
         return hit[1]
     try:
-        d = json.loads(p.read_text())
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
+        raw = _read_state_json(p, st, expect=dict)
+    except _StateUnreadable as e:
+        _note_state_fault(e)
+        return hit[1] if hit is not None else {}
+    _clear_state_fault(p)
+    d = raw if isinstance(raw, dict) else {}
     _notify_cards_cache[str(p)] = (key, d)
     return d
 
@@ -5566,12 +5944,12 @@ def _notify_all_on():
 
 
 def _set_notify_all(value):
-    cur = dict(_notify_cards())                      # copy: never mutate the cached dict in place
+    cur = dict(_notify_cards_proved())               # PROVED: a read fault refuses rather than erasing bells
     if value:
         cur[NOTIFY_ALL_KEY] = True
     else:
         cur.pop(NOTIFY_ALL_KEY, None)
-    _atomic_write(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
+    _write_state_json(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
 
 
 def _notify_turns_on():
@@ -5582,12 +5960,12 @@ def _notify_turns_on():
 
 
 def _set_notify_turns(value):
-    cur = dict(_notify_cards())                      # copy: never mutate the cached dict in place
+    cur = dict(_notify_cards_proved())               # PROVED: a read fault refuses rather than erasing bells
     if value:
         cur[NOTIFY_TURNS_KEY] = True
     else:
         cur.pop(NOTIFY_TURNS_KEY, None)
-    _atomic_write(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
+    _write_state_json(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
 
 
 def _notify_session_effective(sid):
@@ -5611,15 +5989,21 @@ def _set_notify_card(item_id, value, sid=""):
     matches what the card would inherit anyway (session override, else master), in which case the
     override is deleted: clicking a bell back to its default returns it to FOLLOWING the default,
     rather than pinning today's default against tomorrow's master flip."""
-    cur = dict(_notify_cards())                      # copy: never mutate the cached dict in place
-    default = _session_flag_raw(sid, "notify")
+    cur = dict(_notify_cards_proved())               # PROVED: a read fault refuses rather than erasing bells
+    # the default this click is judged against comes from the OTHER store, and it must be PROVED too:
+    # read through the display reader, a fault on session-flags.json folded the session's bell to
+    # "unset" and the click was judged against the master instead -- a mute that matched the
+    # fabricated default was DELETED under the success path (the user's override, erased). A fault
+    # there refuses this write exactly like a fault on the bells file.
+    f = _session_flags_proved().get(sid)
+    default = None if not isinstance(f, dict) or f.get("notify") is None else bool(f.get("notify"))
     if default is None:
         default = bool(cur.get(NOTIFY_ALL_KEY))
     if bool(value) == default:
         cur.pop(item_id, None)
     else:
         cur[item_id] = bool(value)
-    _atomic_write(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
+    _write_state_json(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
 
 
 def _set_notify_session(sid, value):
@@ -5627,9 +6011,14 @@ def _set_notify_session(sid, value):
     discipline as _set_notify_card, against the master. Not _set_session_flag: that setter's
     pop-on-false is right for the on/off view flags, but here False is a real value (muted while
     the master is on)."""
-    cur = dict(_session_flags())                     # copy: never mutate the cached dict in place
+    cur = dict(_session_flags_proved())              # PROVED: a read fault refuses rather than erasing flags
     f = dict(cur.get(sid)) if isinstance(cur.get(sid), dict) else {}
-    if bool(value) == _notify_all_on():
+    # the master this click is judged against lives in the OTHER store and must be PROVED too: read
+    # through the display reader, a fault on notify-cards.json folded it to off, so a click matching
+    # that fabricated master popped the session's stored override -- a mute erased under the success
+    # path. A fault there refuses this write exactly like a fault on the flags file.
+    master = bool(_notify_cards_proved().get(NOTIFY_ALL_KEY))
+    if bool(value) == master:
         f.pop("notify", None)
     else:
         f["notify"] = bool(value)
@@ -5637,7 +6026,7 @@ def _set_notify_session(sid, value):
         cur[sid] = f
     else:
         cur.pop(sid, None)
-    _atomic_write(jd.STATE / "session-flags.json", json.dumps(cur, sort_keys=True))
+    _write_state_json(jd.STATE / "session-flags.json", json.dumps(cur, sort_keys=True))
 
 
 def _prune_notify_cards(live_ids):
@@ -5645,11 +6034,19 @@ def _prune_notify_cards(live_ids):
     Called from the feed-diff detector, so the write happens only on the event of a card leaving.
     The reserved keys (the master, the turn-finished switch) are not cards and never prune; values
     are kept as stored (False = a mute)."""
-    cur = _notify_cards()
+    try:
+        cur = _notify_cards_proved()   # PROVED: a fault must not prune against a fabricated {} and then
+        #                                write the truncation over the user's real bell overrides
+    except _StateUnreadable as e:
+        _note_state_fault(e)                         # loud once per episode, not per pass
+        return
     gone = [i for i in cur if i not in live_ids and i not in _NOTIFY_RESERVED]
     if gone:
         kept = {i: cur[i] for i in cur if i in live_ids or i in _NOTIFY_RESERVED}
-        _atomic_write(jd.STATE / "notify-cards.json", json.dumps(kept, sort_keys=True))
+        try:
+            _write_state_json(jd.STATE / "notify-cards.json", json.dumps(kept, sort_keys=True))
+        except _StateUnwritable:
+            pass                                     # filed once per episode by the write door; the next leaving card retries
 
 
 # ── user todos (plans/user-todos.md; docs/adr/0001 — the authority tier) ─────────────────────────
@@ -8052,17 +8449,46 @@ def _dismiss_update(ident):
         sys.stderr.write("update-dismiss: store write failed\n")
 
 
+def _sha8(s):
+    """The eight-character spelling of a sha for STATE and DISPLAY — the drift slots (_MAIN_DRIFT), the
+    in-place latch, the banner — with any '-dirty' suffix stripped; '' stays ''. Never use it to
+    COMPARE two shas (that is _sha_same): it only clamps downward, and a sha that came out SHORTER
+    than eight would still disagree with its own eight-character spelling."""
+    return (_sha_base(s) or "")[:8]
+
+
+def _sha_same(a, b):
+    """Whether two drift-verdict inputs name the SAME commit: '-dirty' stripped, then the shorter is a
+    prefix of the longer — _shas_agree's rule (the p2p path's) with a floor: the shorter must be at
+    least seven characters, git's own minimum for an auto abbreviation; below that, exact equality
+    (nothing git prints is that short, and a stray fragment must not agree with everything). The
+    verdict's three readers shorten INDEPENDENTLY — `rev-parse --short` for the running build floors
+    at seven on a small object store (a `--depth 1` clone) and widens past eight on a large one, and
+    carries '-dirty' on an uncommitted tree; `--short=8` for the checkout and the ls-remote slice for
+    origin sit at eight — so compared as strings, a checkout at the very commit the kernel runs read
+    as permanent drift: a 'ready on disk' banner that never cleared in ask mode, and in auto mode an
+    unwarranted full restart (every in-flight turn cut) once per cool-down, forever."""
+    a, b = _sha_base(a) or "", _sha_base(b) or ""
+    if not a or not b:
+        return False
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return long_.startswith(short) if len(short) >= 7 else a == b
+
+
 def _main_drift_verdict(origin, checkout, running):
     """(kind, target) — the pure decision. kind: "pull" (origin ahead of the checkout: fetch + advance
     + restart), "restart" (the checkout is ahead of the running kernel: restart alone), or "" (in sync
     or unknowable). A sha that could not be read ('' anywhere) is unknown → no verdict: guessing would
-    invent a notice. Comparison is by INEQUALITY, not ancestry — the checkout only ever moves by
-    fast-forwarding to origin/main here, so a differing sha IS new information, and a wrongly-diverged
-    checkout surfaces in the pull step's own fast-forward refusal rather than being guessed at."""
-    if origin and checkout and origin != checkout:
-        return ("pull", origin)
-    if checkout and running and checkout != running:
-        return ("restart", checkout)
+    invent a notice. Comparison is by prefix AGREEMENT (_sha_same: dirty-stripped, width-tolerant),
+    not ancestry — the checkout only ever moves by fast-forwarding to origin/main here, so a differing
+    commit IS new information, and a wrongly-diverged checkout is refused by the pull step's own
+    fast-forward check (_run_main_update) rather than being guessed at. The target is the eight-
+    character spelling (_sha8): the slots, the latch and the banner all carry that one form."""
+    origin, checkout, running = _sha_base(origin) or "", _sha_base(checkout) or "", _sha_base(running) or ""
+    if origin and checkout and not _sha_same(origin, checkout):
+        return ("pull", _sha8(origin))
+    if checkout and running and not _sha_same(checkout, running):
+        return ("restart", _sha8(checkout))
     return ("", "")
 
 
@@ -8477,7 +8903,7 @@ def _main_drift_check():
         # for the rest of the window, and a pull must not wait on a park that already delivered
         # (review find). When a stand-down ends without that landing — the row expired, the park
         # died with its manager — say so once and let the converge proceed on its own terms.
-        if running != checkout and _parked_quiet_deploy(checkout):
+        if not _sha_same(running, checkout) and _parked_quiet_deploy(checkout):
             if _QUIET_PARKED_LOGGED[0] != checkout:
                 _QUIET_PARKED_LOGGED[0] = checkout
                 sys.stderr.write("romp-kernel: converge: %s already parked as a quiet deploy — leaving it "
@@ -8493,7 +8919,7 @@ def _main_drift_check():
             _MAIN_DRIFT[slot] = ""
             return
         _LAST_AUTO_CONVERGE[0] = time.time()
-        _run_main_update(kind)
+        _run_main_update(kind, target=target)
     else:
         if target in _dismissed_updates():
             return                    # Not-now'd THIS sha, durably — a NEW sha offers again
@@ -8511,36 +8937,74 @@ def _main_drift_check():
 _PORT_FROM_ENV = object()
 
 
-def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
+def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV, target=""):
     """Converge on newest main: advance the checkout (fast-forward only; a DIRTY shared tree refuses
     LOUDLY — peer sessions' uncommitted work is never discarded) and bounce every kernel through the
     manager. `kind` "restart" skips the pull (the checkout is already ahead). The bounce is IMMEDIATE
     for every caller (T160, the user 2026-08-28: deploys cut in-flight turns now; the parked quiet
     window cost minutes per push and boot reconcile resumes cut turns either way) — pass
     immediate=False to ride the manager's quiet-window gate explicitly.
-    `manager_port` is the value the /update handler resolved before its ack (see _PORT_FROM_ENV)."""
+    `manager_port` is the value the /update handler resolved before its ack (see _PORT_FROM_ENV).
+    `target` is the commit the verdict ADVERTISED (the notice's sha, or the one auto mode acted on):
+    the pull moves the checkout onto exactly that commit, never onto the remote's ref — a ref can
+    move (or, after a failed fetch, sit stale) between the verdict and the move, and a ref checkout
+    is not a fast-forward operation, so it landed on a rewound or diverged main without a word.
+    Every step reads its own exit code: a failing `git status` is UNKNOWN, never clean (a tree that
+    cannot be read is not a tree that may be moved), and a failed fetch aborts instead of checking
+    out whatever the stale local ref points at. Every refusal is said on the sync surface
+    (_sync_notice, ok=False — the row every updater failure already lands on) and re-arms the notice."""
     if kind == "pull":
+        remote = _release_remote()
+        target = _sha8(target)
+
+        def refuse(why, r=None):
+            # the OUTCOME first: the row is capped downstream (300 chars on the wire, 240 in the
+            # badge), so git's own words come LAST and trimmed, never pushing "left alone" off the end
+            if r is not None:
+                said = (r.stderr or r.stdout or "").strip()[-120:]
+                why += (" (git: %s)" % said) if said else (" (git exited %d)" % r.returncode)
+            _sync_notice("main moved at %s, but %s." % (remote, why), ok=False)
+            _MAIN_DRIFT[0] = ""                   # every refusal re-arms: the notice re-fires once cured
         try:
-            dirty = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
-                                   capture_output=True, text=True, timeout=10).stdout.strip()
-            remote = _release_remote()
-            if dirty:
-                _sync_notice("main moved at %s, but the romp checkout has uncommitted work, so it "
-                             "was left alone. Commit or stash it, then Update again." % remote, ok=False)
-                _MAIN_DRIFT[0] = ""                   # let the notice re-fire once the tree is clean
+            if not target:
+                refuse("the checkout was left alone: no commit was named for the move. Update again "
+                       "once the next check has read main")
                 return
-            subprocess.run(["git", "fetch", remote, "main"], cwd=str(ROOT),
-                           capture_output=True, text=True, timeout=60)
-            r = subprocess.run(["git", "checkout", "--detach", "%s/main" % remote], cwd=str(ROOT),
+            st = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
+                                capture_output=True, text=True, timeout=10)
+            if st.returncode != 0:
+                refuse("the checkout was left alone: its state could not be read, so it was not "
+                       "assumed clean", st)
+                return
+            if st.stdout.strip():
+                refuse("the romp checkout has uncommitted work, so it was left alone. Commit or "
+                       "stash it, then Update again")
+                return
+            f = subprocess.run(["git", "fetch", remote, "main"], cwd=str(ROOT),
+                               capture_output=True, text=True, timeout=60)
+            if f.returncode != 0:
+                refuse("the checkout was left alone: the fetch failed", f)
+                return
+            anc = subprocess.run(["git", "merge-base", "--is-ancestor", "HEAD", target], cwd=str(ROOT),
+                                 capture_output=True, text=True, timeout=10)
+            if anc.returncode == 1:
+                # a real non-ancestor: the histories diverged — never merged on the user's behalf
+                refuse("the checkout was left alone: %s is not a fast-forward of it — the histories "
+                       "diverged, which is yours to move by hand" % target)
+                return
+            if anc.returncode != 0:
+                # git could not even name it (128): the fetch did not bring the advertised commit
+                # (main was rewound), or the short prefix is ambiguous — the next check re-reads main
+                refuse("the checkout was left alone: the fetch did not bring %s, so it could not be "
+                       "verified; the next check re-reads main" % target, anc)
+                return
+            r = subprocess.run(["git", "checkout", "--detach", target], cwd=str(ROOT),
                                capture_output=True, text=True, timeout=30)
             if r.returncode != 0:
-                _sync_notice("main moved at %s, but advancing the checkout failed: %s"
-                             % (remote, (r.stderr or r.stdout or "").strip()[-200:]), ok=False)
-                _MAIN_DRIFT[0] = ""
+                refuse("the checkout did not advance onto %s" % target, r)
                 return
         except Exception as e:
-            _sync_notice("main moved at %s, but the pull step failed: %s" % (_release_remote(), e), ok=False)
-            _MAIN_DRIFT[0] = ""
+            refuse("the pull step failed: %s" % e)
             return
     if kind == "pull":
         pulled = _checkout_sha()   # ONE read: verdict input and converge target must be the same
@@ -8562,15 +9026,20 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
     if manager_port is _PORT_FROM_ENV:
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
-        import urllib.request
         # the reason joins the dying kernel's restart-cuts.jsonl row to WHO restarted it (see
         # _recent_restart_reason) — the auto converge used to leave the row anonymous
         _audit_restart_request("main-converge", tag=kind, when=("now" if immediate else "quiet"),
                                sha=_checkout_sha())      # what a quiet row deploys (T240d: _parked_quiet_deploy)
-        req = urllib.request.Request("http://127.0.0.1:%d/restart-all%s"
-                                     % (int(manager_port or 7432),
-                                        "" if immediate else "?when=quiet"), method="POST")
-        urllib.request.urlopen(req, timeout=5).read()
+        # http.client, the way _restart_this_kernel dials: urllib's default opener honours
+        # HTTP_PROXY / http_proxy, so under a proxy environment this loopback POST went to the
+        # proxy and the code on disk never restarted — reported only as "restart request failed"
+        c = http.client.HTTPConnection("127.0.0.1", int(manager_port or 7432), timeout=5)
+        c.request("POST", "/restart-all%s" % ("" if immediate else "?when=quiet"))
+        resp = c.getresponse()
+        resp.read()
+        c.close()
+        if resp.status >= 400:
+            raise RuntimeError("the manager answered HTTP %d" % resp.status)
     except Exception as e:
         _sync_notice("romp is updated on disk but the restart request failed (%s) — "
                      "restart it yourself: romp refresh" % e, ok=False)
@@ -9359,7 +9828,9 @@ def _record_interrupt_block(sid, ev):
     fold would bury the row anyway. The tick retries every push, so a refused APPEND would grow the
     diary at push cadence; refusing without one keeps it clean until newer evidence (the next settled
     turn) makes the block land."""
-    store = jd.load_goals(sid)
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return None                                  # its row is filed; no block is recorded on a store we cannot read
     gid = _interrupt_focus_top(store)
     if not gid:
         return None
@@ -9400,11 +9871,18 @@ def _lift_interrupt_block(sid, gid, ev):
     read as "evidence newer than the last turn romp saw end", so _nudge_fire_list held the nudge under
     a why the stall surface screens), until a peer's message opened a fresh turn whose verdict finally
     outranked it. Floored at the block's own stamp so the lift can never sort BEFORE what it lifts —
-    the same guard rollup_status's moot-unblock uses."""
-    store = jd.load_goals(sid)
+    the same guard rollup_status's moot-unblock uses.
+
+    Returns True when the marker is SPENT (the block lifted, or there was nothing of ours left to lift)
+    and False when the store could not be read: the tick keeps the intrBlocked marker on False so the
+    lift is retried next tick, instead of erasing it and leaving romp's own block on the card with no
+    tick ever looking again."""
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return False                                 # its row is filed; the caller keeps the marker → retried next tick
     nd = store.get("nodes", {}).get(gid)
     if nd is None:
-        return
+        return True
     log = nd.get("log") or []
     lastblk = next((e.get("src") for e in reversed(log) if e.get("kind") == "block"), None)
     if lastblk == "interrupt" and nd.get("blocked"):
@@ -9414,6 +9892,7 @@ def _lift_interrupt_block(sid, gid, ev):
         jd.rollup_status(store, False)
         jd.save_goals(sid, store)
         _mark_views_dirty()
+    return True
 
 
 def _intr_blocked(sid=None):
@@ -9441,13 +9920,17 @@ def _intr_block_stands(sid, gid):
     compaction archives it — and a tick that trusts the bare marker skips the re-block forever while
     the session's live focus goal sits in Working wearing only the 'interrupted' badge, auto-nudge
     suppressed: invisible-blocked (the user 2026-08-08, whose stopped session's marker pointed at a
-    goal since ruled done, cleared, and archived)."""
+    goal since ruled done, cleared, and archived). An UNREADABLE store is not evidence the block fell:
+    it reads as standing, so the marker is KEPT (its row is filed) exactly as the lift keeps it — a
+    second stop during a persisting fault used to read "no longer stands", pop the marker, fail to
+    re-block through the same fault, and leave romp's own block on the card with nothing to lift it
+    once the file read again."""
     if not gid:
         return False
-    try:
-        nd = jd.load_goals(sid).get("nodes", {}).get(gid)
-    except Exception:
-        return False
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return True
+    nd = store.get("nodes", {}).get(gid)
     return bool(nd and nd.get("blocked"))
 
 
@@ -9517,8 +10000,9 @@ def _interrupt_block_tick(now, tmux):
             if ib:
                 # the re-engagement IS the newest turn's trigger — the same stamp the judges will put on
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
-                _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
-                _set_intr_blocked(sid, None)
+                if _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0):
+                    _set_intr_blocked(sid, None)         # spent; on a store fault the marker stays, so
+                #                                          the next tick retries the lift
     _alive_sids = {s["sid"] for s in alive}
     _intr_marks_forget(_alive_sids)                     # a sid that left the alive set releases its memo entries
     _states_overlay_forget(_alive_sids)                 # and its states-overlay fold entry (perf round 4, item C3)
@@ -10442,12 +10926,19 @@ def _lift_spent_awaiting(now, tmux):
             #                                           so the next cycle retries instead of skipping
             # PHASE 1, the probe: the shared read-only view. A FrozenStore is the cache's answer; anything
             # else is load_goals' own store handed through (no file, an unreadable journal, the cache off).
-            store = jd.load_goals_shared(sid)
+            # A read FAULT (the file exists and did not read) comes back as (None, fault) through the
+            # boundary, its row filed once per episode: forget the gate so the next cycle retries this
+            # session, and go on to the others.
+            store, fault = jd.load_goals_shared_or_fault(sid)
+            if fault is not None:
+                _lift_seen.pop(sid, None)
+                continue
             if isinstance(store, jd.FrozenStore):
                 _lift_gate_stats["shared"] += 1
             stamped, rolled = _lift_candidates(store)
-            # a read that FELL BACK (`_unread`) answered an empty store that is not the files' content:
-            # forget the fingerprint so the next cycle retries instead of caching the error as a skip
+            # the store read but its override JOURNAL did not (_replay_overrides' `_unread` mark): a ruling
+            # on that store is not a ruling on the files (a stamp the journal restored is missing from it), so
+            # forget the fingerprint and let the next cycle retry instead of caching the answer as a skip
             if store.get("_unread"):
                 _lift_seen.pop(sid, None)
             if not (stamped or rolled):
@@ -10455,8 +10946,12 @@ def _lift_spent_awaiting(now, tmux):
             if not _lift_decisions(sid, s, store, now, tmux):
                 continue                              # nothing due: the common stamped case, no writer load
             # PHASE 2, the write: a fresh private copy, decided on again, and only its own decisions filed.
+            # The same boundary: a fault between the probe and this load forgets the gate and retries.
             _lift_gate_stats["writer"] += 1
-            wstore = jd.load_goals(sid)
+            wstore, wfault = jd.load_goals_or_fault(sid)
+            if wfault is not None:
+                _lift_seen.pop(sid, None)
+                continue
             wnodes = wstore.get("nodes") or {}
             changed = False
             for nid, top, drop_rec in _lift_decisions(sid, s, wstore, now, tmux):
@@ -11794,7 +12289,9 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
     # deliberately NOT the arm: a romp-injected turn can never become the arm, so a verdict about one is
     # newer than the arm FOREVER (see _nudge_fire_list's deadlock note).
     seen = next((tn for tn in reversed(turns) if tn.get("ended")), None)
-    store = jd.load_goals(sid)
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return None                                  # its row is filed; nothing fires or stamps on a store we cannot read
     # Don't nudge until the CLOSER has classified this turn AT ITS CURRENT SIZE (session-level gate). A turn
     # that ENDS by asking you a question is "working" only in the window before the closer marks its goal
     # blocked; nudging there is pointless (it's waiting on YOU) and churns. _closer_settled mirrors the
@@ -19978,11 +20475,16 @@ _SYNC_SEQ = 0
 SYNC_RING = 40
 
 
-def _sync_notice(text, ok=True):
+def _sync_notice(text, ok=True, kind="sync"):
+    """One row on the ring the shell's bell mirrors. `kind` is the bell kind the row is filed under:
+    "sync" (the default, the ring's original tenant: a machine sync) or "refused" (a state file that
+    could not be read or written, or was moved aside), so a mute on one never hides the other (review
+    find, 2026-09-08). The shell allowlists the value; anything it does not know reads as sync."""
     global _SYNC_SEQ
     with _SYNC_LOCK:
         _SYNC_SEQ += 1
-        _SYNC_NOTICES.append({"seq": _SYNC_SEQ, "t": time.time(), "text": str(text), "ok": bool(ok)})
+        _SYNC_NOTICES.append({"seq": _SYNC_SEQ, "t": time.time(), "text": str(text), "ok": bool(ok),
+                              "kind": str(kind or "sync")})
         del _SYNC_NOTICES[:-SYNC_RING]
 
 
@@ -19997,7 +20499,7 @@ def _sync_notice_rows(limit=20, cap=300):
     with _SYNC_LOCK:
         rows = list(_SYNC_NOTICES[-limit:])
     return [{"sig": "sync|%d|%d" % (int(_STARTED), r["seq"]), "t": float(r["t"]),
-             "text": r["text"][:cap], "ok": bool(r["ok"])} for r in rows]
+             "text": r["text"][:cap], "ok": bool(r["ok"]), "kind": str(r.get("kind") or "sync")} for r in rows]
 
 
 # A notice built to this length reaches the user whole: the dashboard's bell shows a sync notice cut
@@ -20427,6 +20929,10 @@ def _pull_remote(host):
                             capture_output=True, text=True, timeout=10)
     except Exception as e:
         return False, str(e)[:200]
+    if st.returncode != 0:
+        # a tree whose state cannot be read is UNKNOWN, never clean: the fast-forward rewrites it
+        return False, "reading this machine's tree state failed (%s) — nothing pulled" % (
+            (st.stderr or st.stdout or "").strip()[:160] or "git status exited %d" % st.returncode)
     if (st.stdout or "").strip():
         return False, "this machine's tree has uncommitted changes — commit or stash them first (won't clobber)"
     rdir, rhead, _rdirty, derr = _discover_remote_clone(host)   # a DIRTY remote is fine: we take its COMMITS
@@ -26219,7 +26725,9 @@ def _feed_goals_view(sid):
       so equal objects mean equal bytes, and a publish, a journal append or an archive move yields a new
       object. Anything else the loader answers (the cache switched off after a write attempt, no store
       file, an unreadable journal, an archive that moved under the fill) is a private object per call
-      with no identity guarantee: the key is a sentinel.
+      with no identity guarantee: the key is a sentinel. A read that FAULTS (the file exists and did not
+      read) answers (None, sentinel) through jd.load_goals_shared_or_fault, its row filed once per
+      episode; build_feed renders that session without goal-derived content.
     - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it.
       Every user gesture recorded since the snapshot is replayed onto a FRESH private copy (one per
       moved mark, never in place on an earlier copy), and that copy is the key once the replay
@@ -26264,7 +26772,11 @@ def _feed_goals_view(sid):
             return _apply_rewind_hold(sid, store), key   # a pending rewind's cards are hidden NOW (latched
             #                                              at the gesture; archive lands at the branch-take)
         _goals_memo_stats["live"] += 1
-    store = jd.load_goals_shared(sid)                    # no pass in flight → the shared read-only view, outside the lock
+    store, fault = jd.load_goals_shared_or_fault(sid)   # no pass in flight → the shared read-only view, outside the lock
+    if fault is not None:
+        return None, object()                            # the read FAULTED (the pre-pass snapshot skips such a file
+    #                                                      too): the row is filed once per episode, and build_feed
+    #                                                      renders this one session without goal-derived content
     key = store if (isinstance(store, jd.FrozenStore) and not hold) else object()
     return _apply_rewind_hold(sid, store), key
 
@@ -29692,9 +30204,10 @@ def _atom_user_texts(a):
     the nudge body. _atom_user_text space-JOINS the blocks, so the echo's exact text was never a member of
     the transcript set and the landing check ("et in tx_user_texts") could not fire. The echo then never
     retired: it rode the bottom of the thread forever, still wearing its original SEND time, so a nudge
-    sent at 16:43 appeared BELOW a 17:00 answer (the user 2026-07-22). The FIFO floor can't save it either
-    — that was deliberately narrowed to PATH-BEARING echoes (2026-07-20) so a genuinely dropped send stays
-    visible. Per-block EXACT match, never a substring test: a bundled block is the very string that was
+    sent at 16:43 appeared BELOW a 17:00 answer (the user 2026-07-22). No floor can save it either —
+    sdk_backend.prune_live floors no echo (2026-09-06; before that the floor was narrowed to path-bearing
+    echoes, 2026-07-20), so a genuinely dropped send stays visible. Per-block EXACT match, never a
+    substring test: a bundled block is the very string that was
     echoed, so this retires the delivered nudge without ever guessing about containment."""
     if a.get("type") != "user":
         return ()
@@ -29762,7 +30275,7 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
     whitespace stripped), and the echo stores the send's text verbatim, so a raw comparison never matched a
     trailing-newline send (`romp send` passes its argument verbatim): the delivered echo stayed, hidden by
     the display dedup, and the settle then marked it `dropped` once a later human turn landed — a "never
-    delivered" bubble for a message the transcript holds (2026-09-06 review, round 4)."""
+    delivered" bubble for a message the transcript holds (2026-09-06)."""
     def _landed(a):
         et = sb.echo_text_key(a.get("_echo_text"))
         return a.get("uuid") in tx_uuids or (et and et in tx_texts)
@@ -30351,7 +30864,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     events, by_tool = [], {}                  # by_tool: tool_use_id → its tool event (fill output later)
     uuid2seg, seg_anchors = {}, {}            # atom uuid → seg id; seg id → (promptId, workId) for the dot/bar split
     seg_trig, seg_work = {}, {}               # goal-node DEEP-LINK anchors: prompt = the segment's trigger
-    _bs_store = jd.load_goals_shared(sid)     # seam-aware seg ids (mirror the judge's split); read-only
+    _bs_store, _bs_fault = jd.load_goals_shared_or_fault(sid)   # seam-aware seg ids (mirror the judge's split):
+    #                                                             the shared read-only view; a FAULT (row filed) →
+    #                                                             None → seams off, the tab still builds
     #                                          (the per-turn seg loop runs below, after the fold decision)
     last_t = None
     last_model = ""                           # the model on the most recent assistant message (system-card meta)
@@ -30722,6 +31237,19 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                                 ev["absorbed"] = True
                                 if a.get("landedT"):
                                     ev["landedAt"] = int(a["landedT"])
+                            # Several back-to-back sends the CLI took together land as ONE user record
+                            # with a text block each — the shape _atom_user_texts prunes the kernel's
+                            # echoes against. The chat's own pending bubbles end on an EXACT text match
+                            # with a landed event, and `md` is the blocks joined, which matches none of
+                            # them: without the blocks none of those bubbles ever ended (2026-09-07
+                            # review). Shipped only when there are two or more, each under the one text
+                            # key; the client counts one copy per matching block. (Not `texts`: the
+                            # queued event uses that name for another shape.)
+                            btexts = [sb.echo_text_key(b.get("text")) for b in blocks
+                                      if isinstance(b, dict) and b.get("type") == "text"]
+                            btexts = [t for t in btexts if t]
+                            if len(btexts) >= 2:
+                                ev["blocks"] = btexts
                             sp = _space_paths(prompt, sid, a.get("uuid"))
                             if sp:
                                 ev["spacePaths"] = sp   # backticked filenames WITH spaces, filesystem-verified → whole-span links
@@ -31263,7 +31791,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # LEAF: its descendants are hidden even if open. Skip cleared nodes. `current` marks the focus node
     # being worked on (the graph's lastNode) so render can point a line at it; done nodes carry their
     # time for a recency-coloured "(Xm ago)" on the right.
-    gstore = _apply_rewind_hold(sid, jd.load_goals_shared(sid))   # a pending rewind's cards hide on EVERY
+    gstore, gfault = jd.load_goals_shared_or_fault(sid)   # the shared read-only view; a FAULT (row filed) →
+    if gfault is None:                                    # None: this tab's ledger tree renders EMPTY instead
+        gstore = _apply_rewind_hold(sid, gstore)          # of every tab's build failing. A pending rewind's cards hide on EVERY
     #                                            surface — this ledger tree (and the tab-hover
     #                                            recents derived from it) used to keep showing the
     #                                            doomed asks for the whole armed window while the
@@ -31290,8 +31820,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         _chat_memo_bump(_ledger_memo_stats, "bypass_live")
     elif _rewind_hold_get(sid):
         _chat_memo_bump(_ledger_memo_stats, "bypass_hold")
-    elif not gstore.get("nodes"):
-        _chat_memo_bump(_ledger_memo_stats, "bypass_empty")
+    elif gstore is None or not gstore.get("nodes"):
+        _chat_memo_bump(_ledger_memo_stats, "bypass_empty")   # a faulted store too: no nodes, an empty walk
     else:
         _lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))
         _lent = _ledger_memo.get(sid)
@@ -31301,12 +31831,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         _chat_memo_bump(_ledger_memo_stats, "hit")
         tree, _live_roots = _lhit[3], _lhit[4]       # the memo's own lists: the ledger slices them, nothing writes a row
     else:
-        gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
+        gnodes = gstore.get("nodes", {}) if gstore is not None else {}
+        gstatus = gstore.get("status", {}) if gstore is not None else {}
+        gcleared = _cleared_ids()
         gkids = {}
         for _gid, _gn in gnodes.items():
             gkids.setdefault(_gn.get("parentId"), []).append(_gid)
         g_agent_open = _agent_open_set(gnodes, gkids)   # authoritative-open subtree → never 'done' (mirrors build_feed / the judge)
-        focus = gstore.get("lastNode")
+        focus = gstore.get("lastNode") if gstore is not None else None
         tree = []
 
         def _cleared(cid):
@@ -31800,10 +32332,14 @@ def _mark_nodes_cleared(item_ids, value, src="user", why=None):
     # a full jd.discover() filesystem enumeration — INSIDE the loop, so a Clear-all → Undo-clear across N
     # sessions did N back-to-back discoveries, blocking the single-threaded kernel (the "really slow" undo).
     sess_paths = {s["sid"]: s["path"] for s in _sessions(now)}
+    skipped = {}                                       # sid -> fault text: sessions this gesture could NOT reach
     for sid, ids in by_sid.items():
-        store = jd.load_goals(sid)
-        nodes = store.get("nodes", {})
-        touched = False
+        store, fault = jd.load_goals_or_fault(sid)
+        if fault is not None:
+            skipped[sid] = str(fault)                  # its row is filed; the flag cannot be written on a store we
+            continue                                   # cannot read (the view-level clear still holds), the other
+        nodes = store.get("nodes", {})                 # sessions' clears proceed, and the CALLER answers the user
+        touched = False                                # (a WS gesture reports the refusal to its own socket)
         for iid in ids:
             nd = nodes.get(iid)
             if nd is not None and bool(nd.get("cleared")) != value:
@@ -31840,7 +32376,14 @@ def _mark_nodes_cleared(item_ids, value, src="user", why=None):
         except Exception:
             closed = False
         jd.rollup_status(store, closed)
-        jd.save_goals(sid, store)
+        fault = jd.save_goals_or_fault(sid, store)
+        if fault is not None:
+            skipped[sid] = str(fault)                  # the store read a moment ago and faults at its SAVE (the
+            continue                                   # save path's own strict reads, or the publish itself): the
+        #                                                flag did not land, and the caller answers the user exactly
+        #                                                as for a load fault. Left to raise, an OSError out of a WS
+        #                                                gesture reached the receive loop, which re-raises it and
+        #                                                DROPS the client (review find, 2026-09-08)
         if not value:
             # A restore is a USER GESTURE and must never wait out a judge pass (the same rule as a card
             # reply, the user 2026-07-21/23): punch it through the pre-pass snapshot and push now. The
@@ -31848,6 +32391,7 @@ def _mark_nodes_cleared(item_ids, value, src="user", why=None):
             _note_user_goal_write(sid)
     if not value:
         _mark_views_dirty()
+    return skipped
 
 
 # ── /clear is an episode boundary, not a deletion (the user 2026-07-26) ──────────────────────────
@@ -31939,8 +32483,9 @@ def _episode_boundary_check(sid, path, now):
 
 
 def _clear_ask(item_id):
-    """Clear one feed card (inbox-zero) — a batch of one (see _clear_all)."""
-    _clear_all([item_id])
+    """Clear one feed card (inbox-zero) — a batch of one (see _clear_all). Returns _clear_all's
+    {sid: fault} so the WS op answers the socket when the card's session could not be read."""
+    return _clear_all([item_id])
 
 
 def _subtree_item_ids(iid):
@@ -32004,6 +32549,46 @@ def _delegation_linked_ids(item_ids):
     return out
 
 
+def _gesture_store_refusal(client, gesture, skipped):
+    """A user gesture (a clear, a sub-goal drop, an undo) that a session's UNREADABLE goal store made us
+    skip must say so on the socket that made it (the standing rule: a refusal of a user gesture reaches
+    the user). The feed's `err` dialog is the existing "that action did not land" surface, bell included;
+    one per session skipped, naming the session and the fault, and saying exactly what did and did not
+    happen, never a promise. Three accounts, because three different things happened: a whole-card clear
+    (askClear, Clear-all) DID hide the card(s) — cleared.jsonl hides top cards on its own — but the
+    durable flag was not written; a sub-goal drop (the modal's Drop, sub-task-only) changed NOTHING,
+    since a sub row renders from the node flag alone, the very write the fault refused, so the user is
+    told to try again (a retry appends a fresh row and sets the flag); an undo restored nothing and the
+    next Undo retries it (_undo_clear keeps those ids the newest batch). `text` carries the whole
+    account; there is no `copy` key, which by contract is the USER'S undelivered text (the feed renders
+    it as a "Copy my text" button and folds it into the bell entry). The skip itself is already a
+    judge-errors row: `store-unreadable` when the load faulted (jd.load_goals_or_fault), `store-unwritable`
+    when the store read and its publish then faulted (jd.save_goals_or_fault: the save path's strict reads,
+    or the write itself), so the prose says "read or write" and lets the fault text name which; this is
+    the user's copy (the save shape added on a review find, 2026-09-08: left to raise, it dropped the
+    dashboard's socket without a word)."""
+    for sid, fault in (skipped or {}).items():
+        who = _name_of(sid) or sid[:8]
+        if gesture == "undo":
+            title = "That undo did not land for %s" % who
+            text = ("Its cards were not restored: romp could not read or write that session's goals file (%s). "
+                    "They are still held for you; press Undo again once it can. The other sessions "
+                    "were not affected." % fault)
+        elif gesture == "drop":
+            title = "That sub-goal was not cleared for %s" % who
+            text = ("romp could not read or write that session's goals file (%s), so nothing changed there and "
+                    "the row is as it was. Try it again once it can." % fault)
+        else:                                          # "clear": one card, or every card of one session
+            title = "That clear did not fully land for %s" % who
+            text = ("What you cleared there is off the board, but the clear was not written into that "
+                    "session's goals file, which romp could not read or write (%s); nothing else changed there, "
+                    "and the other sessions were not affected." % fault)
+        try:
+            client["send"](json.dumps({"type": "err", "sid": sid, "title": title, "text": text}))
+        except Exception:
+            sys.stderr.write("gesture refusal (%s %s): %s\n" % (gesture, sid[:8], traceback.format_exc()))
+
+
 def _clear_all(item_ids):
     """Clear every given card in ONE batch (shared float timestamp = the batch key) so a single
     UndoClear restores the whole batch. Append-only + single-writer (the kernel) → crash-safe; an
@@ -32012,7 +32597,7 @@ def _clear_all(item_ids):
     sides at once and one UndoClear restores it on both (the user 2026-06-23)."""
     item_ids = [i for i in item_ids if i]
     if not item_ids:
-        return
+        return {}
     seen = set(item_ids)
     item_ids = item_ids + [i for i in _delegation_linked_ids(item_ids) if i not in seen]   # + the delegation's peer copy
     p = jd.STATE / "cleared.jsonl"
@@ -32021,12 +32606,13 @@ def _clear_all(item_ids):
     with p.open("a") as f:
         for iid in item_ids:
             f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
-    _mark_nodes_cleared(item_ids, True)               # durable node flag → no grouper re-wrap, no column bounce
+    skipped = _mark_nodes_cleared(item_ids, True)     # durable node flag → no grouper re-wrap, no column bounce
     # CLEAR IS SILENT (the user 2026-08-23, reversing the 2026-07-24 wrap-up): the session hears
     # NOTHING. The wrap's response turn routinely re-minted the very card the user had just cleared —
     # a discard that answered back — so the gesture now only discards; if anything real remains, the
     # user asks a follow-up or tells the session themselves. The judge keeps recognizing HISTORICAL
     # wrap markers in old transcripts; no new ones are ever sent.
+    return skipped                                    # {sid: fault} for sessions whose store could not be read
 
 
 # (_clear_wrap_targets / _clear_wrap_body / _clear_wrap_notify lived here 2026-07-24..2026-08-23:
@@ -32039,32 +32625,41 @@ def _clear_all(item_ids):
 def _undo_clear():
     """Restore the most-recent clear BATCH — every id cleared at the latest timestamp. So one
     UndoClear undoes a Clear-all as a unit, and a single-card clear restores just that card.
-
-    Order (2026-09-07): the archive restore FIRST, the cleared.jsonl undo rows only after it returned. The rows
-    came first, so a restore that could not land (the live goals file did not read or parse, and save_goals
-    refuses to publish the fallback) consumed the batch and left the nodes in the archive behind an orphan
-    restore row: a second click found nothing to undo, and load_goals' replay defers to an archive that still
-    holds the node, so the card was gone for good from the UI (the fallback-refusal review, both lenses). Before
-    any side effect every restored sid's store and archive are read; a store that loaded as a fallback or an
-    archive that did not read stands the whole gesture down with UnreadStoreError (nothing written, the batch
-    still undoable), which the WebSocket handler reports to the pane."""
+    A session whose goals file cannot be read is left OWED, never consumed: its ids are journaled as
+    undone only if the archive restore reached its store, and any id journaled whose flag step then
+    could not run is re-journaled as cleared, so in every fault shape those ids stay the newest batch
+    and the user's next Undo retries exactly them. Journaling every id first consumed the batch on a
+    fault (the ids read as undone, the nodes stayed in the archive, and no later Undo could reach
+    them); journaling last is not an option either, since the reopen verdict's gate needs the undo
+    row on disk before the flag step runs (its comment says why). Returns {sid: fault} for the
+    sessions skipped."""
     cur = _cleared_ids()
     if not cur:
-        return
+        return {}
     newest = max(cur.values())
     restored = [i for i, ct in cur.items() if ct == newest]
-    for sid in sorted({iid.rsplit(":", 1)[0] for iid in restored}):
-        if jd._fallback_store(jd.load_goals(sid)):
-            raise jd.UnreadStoreError("the goal store for %s cannot be read right now (goals/%s.json); nothing was "
-                                      "undone. Try again once it reads." % (_name_of(sid) or sid[:8], sid))
-        if jd.load_goal_archive(sid).get("_unread"):
-            raise jd.UnreadStoreError("the cleared-card archive for %s cannot be read right now (goals-archive/%s.json); "
-                                      "nothing was undone. Try again once it reads." % (_name_of(sid) or sid[:8], sid))
-    _restore_goal_archive(restored)                   # pull the restored tops back OUT of the archive FIRST (a raise
-    with (jd.STATE / "cleared.jsonl").open("a") as f:  # here leaves the batch undoable), then consume the batch,
+    skipped = dict(_restore_goal_archive(restored))   # pull the restored tops back OUT of the archive FIRST,
+    restored = [i for i in restored if i.rsplit(":", 1)[0] not in skipped]   # (a session it could not read
+    with (jd.STATE / "cleared.jsonl").open("a") as f:   # keeps its clear rows: still the newest batch)
         for iid in restored:
             f.write(json.dumps({"id": iid, "t": time.time(), "op": "undo"}) + "\n")
-    _mark_nodes_cleared(restored, False)              # then un-set the durable flag on the nodes the restore put back
+    late = _mark_nodes_cleared(restored, False)       # so this finds the nodes → un-set the durable flag → real status
+    if late:
+        # The store read fine (or held nothing archived) a moment ago and faults NOW, after the undo row
+        # landed (at the flag step's read, or at its publish): the node is restored flag-cleared, which
+        # build_feed hides exactly like the clear did, and the modal has no op that could reach it (resolve
+        # and clear only). Re-journal the clear for those ids so the batch stays owed: the very next Undo
+        # restores them once the file reads again. ONE stamp for the whole re-journal, as _clear_all takes
+        # one before its loop: a batch IS its exact timestamp (_cleared_ids keys on equality), so a stamp
+        # per row split a two-card batch into two one-card batches and each further Undo brought back one
+        # card, against the promise that the next Undo restores exactly them (review find, 2026-09-08).
+        t = time.time()
+        with (jd.STATE / "cleared.jsonl").open("a") as f:
+            for iid in restored:
+                if iid.rsplit(":", 1)[0] in late:
+                    f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
+        skipped.update(late)
+    return skipped                                    # {sid: fault} for sessions whose store could not be read
 
 
 # ── goal-store compaction: archive dismissed (cleared) cards out of the live tree ──────────────────────────
@@ -32085,7 +32680,9 @@ def _compact_goal_store(fsid):
     Returns the count of nodes moved. Whole-subtree only (a cleared top rolls cleared/done DOWN its tree, so the
     subtree is terminal) and roots only (parentId is null), so an active card never loses children."""
     cleared = _cleared_ids()
-    store = jd.load_goals(fsid)
+    store, fault = jd.load_goals_or_fault(fsid)
+    if fault is not None:
+        return None                                    # its row is filed; nothing moves out of a store we cannot read
     nodes = store.get("nodes", {})
     if not nodes:
         return 0
@@ -32110,6 +32707,9 @@ def _compact_goal_store(fsid):
         return 0
     with jd._GOAL_ARCH_LOCK:                            # the archive is a blind RMW — see the lock's note
         arch = jd.load_goal_archive(fsid)
+        if arch.get("_unread"):
+            return None                                # the archive exists and did not read (its mark): nothing moves
+            #                                            into an archive we cannot read; not marked seen, retried next sweep
         a_nodes = arch.setdefault("nodes", {})
         a_status = arch.setdefault("status", {})
         for nid in move:
@@ -32147,11 +32747,10 @@ def _compact_goal_stores():
             continue
         if _compact_seen.get(fsid) == mt:
             continue                                   # unchanged → nothing new to archive
-        try:
-            moved += _compact_goal_store(fsid)
-        except jd.UnreadStoreError:
-            continue                                   # the archive did not read: save_goal_archive refused (its row
-            #                                            says so) before the live store was touched; retried next sweep
+        n = _compact_goal_store(fsid)
+        if n is None:
+            continue                                   # unreadable this sweep: NOT recorded as seen (its mtime did
+        moved += n                                     # not move), so the next sweep retries it
         try:                                           # record OUR write's mtime so we don't re-sweep it next pass
             _compact_seen[fsid] = os.path.getmtime(jd.GOALDIR / (fsid + ".json"))
         except OSError:
@@ -32166,11 +32765,13 @@ def _restore_goal_archive(item_ids):
     by_sid = {}
     for iid in item_ids:
         by_sid.setdefault(iid.rsplit(":", 1)[0], []).append(iid)
+    skipped = {}                                       # sid -> fault text: sessions the restore could NOT reach
     for sid, ids in by_sid.items():
         with jd._GOAL_ARCH_LOCK:                       # the archive is a blind RMW — see the lock's note
             arch = jd.load_goal_archive(sid)
-            if arch.get("_unread"):
-                raise jd.UnreadStoreError("goals-archive/%s.json exists and did not read: nothing restored" % sid)
+            if arch.get("_unread"):                    # the archive exists and did not read (load_goal_archive's mark):
+                skipped[sid] = "goals-archive/%s.json exists and did not read: nothing restored" % sid
+                continue                               # nothing restored FROM an archive we cannot read; the batch stays owed
             a_nodes = arch.get("nodes", {})
             if not a_nodes:
                 continue
@@ -32189,11 +32790,18 @@ def _restore_goal_archive(item_ids):
                             stack.extend(a_children.get(x, []))
             if not move:
                 continue
-            store = jd.load_goals(sid)
-            if jd._fallback_store(store):
-                # BEFORE the journal row below: a restore that cannot land (save_goals refuses to publish the
-                # fallback) must leave no row, or the replay would carry a restore the archive still holds
-                raise jd.UnreadStoreError("goals/%s.json exists and did not read: nothing restored" % sid)
+            store, fault = jd.load_goals_or_fault(sid)
+            if fault is not None:
+                skipped[sid] = str(fault)              # its row is filed; the archive keeps these nodes (nothing is
+                continue                               # restored INTO a store we cannot read), the other sessions'
+            #                                            restores proceed, and the caller answers the user
+            if store.get("_unread"):
+                # the store read but its override JOURNAL did not (_replay_overrides' mark): a restore published over
+                # it would land under a replay missing the user's rows, and save_goals refuses such a store. Skip it
+                # the same way, BEFORE the journal row below, so nothing is written and the batch stays owed
+                skipped[sid] = ("goals/%s.json read without its override journal (overrides/%s.jsonl): nothing "
+                                "restored" % (sid, sid))
+                continue
             nodes = store.setdefault("nodes", {})
             status = store.setdefault("status", {})
             # Journal the payload FIRST (the user 2026-07-10): once the archive save below lands, these nodes
@@ -32223,9 +32831,16 @@ def _restore_goal_archive(item_ids):
                     store.setdefault("rewindRestored", {})[nid] = max(rt, int(sv))
             # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
             # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
-            jd.save_goals(sid, store)
+            fault = jd.save_goals_or_fault(sid, store)
+            if fault is not None:
+                skipped[sid] = str(fault)              # the publish did not land (a save-path read fault, or the
+                continue                               # write itself), so the archive is NOT saved: it keeps these
+            #                                            nodes for the next Undo, whose restore journal row replays
+            #                                            idempotently; the caller answers the user (review find,
+            #                                            2026-09-08: left to raise, this dropped the WS client)
             jd.save_goal_archive(sid, arch)
             _compact_seen.pop(sid, None)               # force a re-stat next sweep (we just changed the live file)
+    return skipped
 
 
 def _resolve_node(sid, node_id):
@@ -33292,6 +33907,14 @@ def build_feed(now, tmux=None):
         store, _skey = _feed_goals_view(fsid)    # pre-pass snapshot while a judge pass is mid-flight → the card's
                                                  # status never shows a half-applied intermediate (atomic visibility);
                                                  # _skey: the store's identity key for the per-session memo below
+        store_faulted = store is None            # this session's store could not be READ (EACCES, EIO, a directory
+        if store_faulted:                        # at the path): its row is filed (jd.load_goals_shared_or_fault) and THIS
+            store = {"nodes": {}, "status": {}}  # session renders with no goal-derived content — no cards (so no
+            #                                      floors and no swirl, which land only on cards) and nothing
+            #                                      inferred from the absence (the provisional card is gated on the
+            #                                      flag below). A render-only stand-in, never saved. Every other
+            #                                      session is untouched; before this, one such file aborted the
+            #                                      whole build.
         # ANALYZING (the user 2026-07-13; broadened 2026-08-12): the card must say when romp is working
         # on it. Two prongs, either lights the swirl:
         #   * the SETTLE GAP — the turn just settled but the closer hasn't delivered its verdict yet
@@ -33582,9 +34205,11 @@ def build_feed(now, tmux=None):
                 # offered Continue. Badges persist for the card's life, so one absorbed badge
                 # poisoned the session's whole card tail.
                 psid, gid = o["peer"], o.get("goalId")
-                sgoal = jd.load_goals_shared(psid).get("nodes", {}).get(gid) if gid else None   # read-only peer view
+                pstore, pfault = jd.load_goals_shared_or_fault(psid) if gid else (None, None)   # read-only peer view
+                sgoal = pstore.get("nodes", {}).get(gid) if pstore is not None else None
                 origin_live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
-                                   and gid not in cleared)
+                                   and gid not in cleared)   # a sender whose store faults reads absorbed (dimmed,
+                #                                              no affordance) rather than aborting the build
                 # Name resolution: the live names registry first (a local sender may have been
                 # renamed), then the courier's plant-time snapshot (the only source for a
                 # FEDERATED sender, whose sid this kernel can't resolve), then the sid stub.
@@ -34039,7 +34664,9 @@ def build_feed(now, tmux=None):
             # todo_top excluded for the same reason (review 2026-08-22): the todo-floored focus card reports
             # needs_input too, so during judge latency this chain painted a provisional Working "Analyzing:"
             # placeholder BESIDE it — the exact duplicate the perm guard prevents; mirror it.
-            pc = _provisional_card(s, name, color, fsid, live, now, store)
+            # store_faulted excluded: "the planner has not placed this yet" is an inference from placements we
+            # could not read, so a session whose store faulted gets no provisional card (its row says why).
+            pc = _provisional_card(s, name, color, fsid, live, now, store) if not store_faulted else None
             if pc:
                 asks.append(pc)
             elif perm_state in _NEEDS_INPUT_STATES:      # perm_top is None here (outer guard) → no goal to floor
@@ -37032,7 +37659,7 @@ def _lane_segments(sid, session, goals, caps, live, bft):
                     "romp": bool(author == "romp"),
                     "workUuid": work_uuid, "replyUuid": reply_uuid})
     try:
-        cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+        cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends) if goals is not None else ([], [])
         # The horizon comparisons run in _judging_assemble, per build, outside this lane's guard; the
         # one-pass form compared every time here and a malformed one (a string t on a captions row, a
         # non-numeric groupOp.t, ev_t, distilledMt, briefedMt or archive t) cost this lane its marks.
@@ -37060,8 +37687,8 @@ def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
     empty stand-in."""
     if isinstance(goals, jd.FrozenStore):
         gobj, gtag = goals, "shared"
-    elif not goals.get("seams") and not goals.get("nodes"):
-        gobj, gtag = None, "empty"
+    elif goals is None or (not goals.get("seams") and not goals.get("nodes")):
+        gobj, gtag = None, "empty"   # None: the store FAULTED (build_timeline complained); no seams, no marks
     else:
         gobj, gtag = None, None
     cobj, ctag = (caps, "obj") if caps else (None, "empty")
@@ -37279,8 +37906,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         # The SKELETON reads the goal store for a DEAD lane only (its blocked badge, in the dead branch
         # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
         # load — the largest per-lane cost of the skeleton build — was never read (2026-09-06).
-        goals = jd.load_goals_shared(sid) if with_bars else None   # read-only: seams + judging marks
-        parse_ok = True
+        goals, gfault = jd.load_goals_shared_or_fault(sid) if with_bars else (None, None)   # read-only view (seams +
+        if gfault is not None:                       # judging marks); a FAULT (row filed) → None: this lane renders
+            _bars_complain(sid, "goals", gfault)     # without goal-derived data (blocked state, seams, marks) and the
+        parse_ok = True                              # frame ships for every other lane
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
@@ -37347,9 +37976,12 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         else:                             # dead lane: NEVER "working" — a turn left open at death (e.g. a stalled API
                                           # turn that never returned a ResultMessage, then ended) must not read as
                                           # active (the user 2026-06-23); badgeFor dims a dead lane anyway.
-            if goals is None:
-                goals = jd.load_goals_shared(sid)           # the skeleton's one store read (shared view): a dead lane's badge
-            blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
+            if not with_bars:                           # the skeleton's one store read (shared view): a dead lane's badge
+                goals, gfault = jd.load_goals_shared_or_fault(sid)
+                if gfault is not None:
+                    _bars_complain(sid, "goals", gfault)
+            blocked = (goals is not None and "blocked" in goals.get("status", {}).values()
+                       and not _session_flag(sid, "hideFromFeed"))
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
         if not with_bars:
@@ -37991,7 +38623,10 @@ def _goal_segments(item_id):
     `id` IS the segment id, so `hit(segId)` lights both its dot and bar). item_id is the goal node id;
     its prefix (before ':gN') is the owning session's rompUuid. Empty list if unknown."""
     sid = item_id.rsplit(":", 1)[0]
-    nodes = jd.load_goals(sid).get("nodes", {})
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return []                                      # its row is filed; nothing lights for a store we cannot read
+    nodes = store.get("nodes", {})
     if item_id not in nodes:
         return []
     children = {}
@@ -38017,7 +38652,10 @@ def _cards_for_segments(sid, seg_ids):
     seg_set = set(seg_ids or [])
     if not seg_set:
         return []
-    nodes = jd.load_goals(sid).get("nodes", {})
+    store, fault = jd.load_goals_or_fault(sid)
+    if fault is not None:
+        return []                                      # its row is filed; nothing lights for a store we cannot read
+    nodes = store.get("nodes", {})
 
     def top(nid):
         while nodes.get(nid, {}).get("parentId") is not None:
@@ -43750,15 +44388,17 @@ _UNREADABLE_WARNED = set()      # sids whose goals-store read-failure episode ha
 
 
 def _unreadable_store_warns(now):
-    """Say, once per failure episode, that a listed session's goal store cannot be read. judge.load_goals answers
-    an empty fallback while a goals file exists and does not read or parse, so every reader (the feed, the
-    timeline, the judge tiers) shows the session with no cards and every writer stands down or is refused
-    (save_goals), and nothing on screen said why (the fallback-refusal review, 2026-09-07). The judge-errors row
-    carries no goal, so no card warn can hold it: this warn frame to the chat clients is the surface, and the
-    /perf goals gauge `unreadable_stores` (jd.goal_io_stats) counts the standing episodes for `romp perf`.
-    One frame per episode: jd.unreadable_store_sids lists the sids whose last read failed, _read_ok ends an
-    episode, and a sid the surfaces do not list waits (nothing shows it, so nothing needs explaining) until
-    it is listed."""
+    """Say, once per fault episode, that a listed session's goal store cannot be read. A goals file that exists
+    and does not read RAISES in judge.load_goals (upstream #1019, adopted 2026-09-08); the per-session boundary
+    (jd.load_goals_or_fault / load_goals_shared_or_fault / save_goals_or_fault) files one judge-errors row per
+    episode and answers None, so every reader (the feed, the timeline, the awaiting lift) shows the session
+    with no cards and a gesture that would write to it is refused on its socket (_gesture_store_refusal), and
+    nothing on screen said why (the fallback-refusal review, 2026-09-07). The judge-errors row carries no goal,
+    so no card warn can hold it: this warn frame to the chat clients is the surface, and the /perf goals gauge
+    `unreadable_stores` (jd.goal_io_stats) counts the standing episodes for `romp perf`. One frame per episode:
+    jd.unreadable_store_sids lists the sids in a standing episode, the next good read or publish through the
+    boundary ends it, and a sid the surfaces do not list waits (nothing shows it, so nothing needs explaining)
+    until it is listed."""
     cur = set(jd.unreadable_store_sids())
     _UNREADABLE_WARNED.intersection_update(cur)      # ended episodes leave; a recurrence warns again
     new = cur - _UNREADABLE_WARNED
@@ -43934,7 +44574,7 @@ def _shim(app, v=0, caps=""):
     # page and bundle from one dist, so it is the kernel's knowledge to assert; a page that passes nothing
     # gets the full frames it always did, from accept.
     return """
-(function(){var queue=[],ws=null,everConnected=false;
+(function(){/*shim-core*/var queue=[],ws=null,everConnected=false;
 var bundleReady=false,readyQueued=false;   // the BUNDLE's own {type:"ready"} has passed through send() on this page / is waiting in `queue` for an open — the reconnect re-send below keys on both
 var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
 var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the last open: reported as ONE wsconnfail row on the next open, never one wsclose per redial
@@ -43950,6 +44590,7 @@ try{if(!wid)wid=window.sessionStorage.getItem("romp:wid")||"";}catch(e){}
 // sessionStorage, and with it wid; it must not copy this).
 var IID="";try{IID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"";}catch(e){}if(!IID)IID=String(Math.random()).slice(2)+"-"+Date.now();
 var APP="%s";var LOADEDV=%d;var CAPS="%s";var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+var PROVISIONAL_MS=15000,resumeProvisional=0;   // a resumed keep is PROVISIONAL (review find, 2026-09-08): the `resume` stamp below re-bases the watchdog on a socket the browser still holds OPEN, but the far end can have died without a FIN reaching the browser, and only the kernel's next frame can tell. Until one lands the watchdog runs at 1.5 keepalive periods (KEEPALIVE_S is 10 s, so 15 s: one beat may be in flight, two missing is silence) instead of STALE_MS. resumeProvisional holds the stamp a kept socket rests on; 0 once a frame confirmed it (or the socket is a fresh one)
 // NO_STALE_CAP: this page has no live kernel-pushed view — its content is fetched on demand and its socket carries
 // keepalives and request/response replies only (the Files pane) — so the "what you see may be stale" prompt below
 // (armStale/clearStale) is never armed for it: the retire keys on a resync frame, and none is ever coming, so the
@@ -43983,7 +44624,8 @@ function selfStale(){selfBar("romp lost the live connection, so what you see may
 function clearStale(){stalePending="";   // armed but never shown → nothing to see
 if(NOSTALE)return;   // never armed here (NO_STALE_CAP): nothing to retire, and a peer pane's prompt is not this page's to retract
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsFresh"},"*");}catch(e){}}
-else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="conn")b.remove();}}
+else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="conn")b.remove();}
+try{window.dispatchEvent(new Event("romp:wsfresh"));}catch(e){}}   // the pane's own reconnecting cue (_pane_spin's corner badge) ends on FRESH DATA, not on the socket opening (the user 2026-09-07: over a slow link the resync ran for seconds with no cue, so the dashboard looked frozen)
 // A pane the user cannot SEE never interrupts them about ITS OWN staleness (the user 2026-08-15: the
 // phone shell shows one pane at a time via display:none, iOS throttles the hidden iframes' JS, and each
 // hidden pane's watchdog force-closed its own healthy socket and re-raised the banner every ~45s over a
@@ -43999,6 +44641,37 @@ function paneHidden(){try{if(typeof window.__rompPaneHidden==="function")return 
 // socket is down and delivers on reconnect, so the breadcrumb survives the very drop it describes.
 function staleDiag(what,why){try{send({type:"clientDiag",surface:"pane-shim",what:what,
 data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,hidden:paneHidden()}});}catch(e){}}
+// RETURN breadcrumbs (the user 2026-09-07, whose dashboard froze after its tab sat in the background): which
+// browser regime a return lands in — hidden-but-running, FROZEN (Page Lifecycle freeze/resume) or DISCARDED (a
+// cold reload; document.wasDiscarded) — decides what can help, and no emulation can tell them apart. So the
+// shim records, on the user's own machine: the page load (discarded? navigation type), every return (was a
+// resume seen; how long frozen/hidden/quiet; the socket state; what the fast-path below DECIDED), and how long
+// the first fresh frame then took (and whether a redial got in the way). Same clientDiag path as staleDiag:
+// send() queues while the socket is down, so a row survives the very redial it describes.
+var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
+function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
+var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
+// the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
+// cold load, no visibilitychange, so no `return` row) or a reload/back-forward arrival — a plain navigation says
+// nothing, so it files nothing (four rows per dashboard open would be noise, and they would eat the queued-breadcrumb
+// cap other rows share) (2026-09-07)
+if(document.wasDiscarded||(nav&&nav!=="navigate"))returnDiag("page-load",{wasDiscarded:!!document.wasDiscarded,nav:nav});
+document.addEventListener("freeze",function(){frozeAt=Date.now();});
+// `resume` (Chromium's thaw, dispatched before visibilitychange and before any task the freeze queued) is the
+// event that "lastRecv is stale" was approximating: lastRecv measures how long JS did not RUN, not how long
+// the socket was silent, so a thawed tab read its healthy OPEN socket as dead and redialed — a full resync per
+// pane on every return. Stamping here makes the clock honest; the foreground test and the watchdog tick the
+// freeze queued then KEEP the socket. No `resume` (Firefox, Safari, hidden-but-running, a genuinely silent
+// socket) reads stale exactly as before and redials at once. The pre-stamp gap is kept for the return row.
+// The stamp RE-BASES the watchdog, it does not disarm it (review find, 2026-09-08): an OPEN readyState says only
+// that the browser has seen no FIN, and a peer that died while the tab was frozen (a laptop sleep across a network
+// change, a tunnel whose local end stays open) leaves the socket looking exactly like a healthy one. So the stamp
+// is PROVISIONAL (resumeProvisional: the watchdog runs at PROVISIONAL_MS until a frame confirms it, and abandon()
+// re-files the held keep row onto the redial when none does), and a socket already overdue BEFORE the freeze is
+// not stamped at all: its silence began while JS was running, so that gap is real and the return redials it at
+// once, as it did before the stamp existed.
+document.addEventListener("resume",function(){resumedAt=Date.now();resumeQuiet=lastRecv?resumedAt-lastRecv:-1;
+if(ws&&ws.readyState===1&&!(frozeAt&&frozeAt-lastRecv>STALE_MS)){lastRecv=Date.now();resumeProvisional=lastRecv;}});   // only an OPEN socket that was in time at the freeze earns the stamp, and only provisionally
 function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}
 staleDiag("stale-raise",why);
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}catch(e){}}else{selfStale();}}
@@ -44035,6 +44708,7 @@ function raiseBuild(){if(buildRaised)return;buildRaised=true;
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale",build:1},"*");}catch(e){}}
 else selfBar("A newer romp build is available.","build");}
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
+if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
 ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):""));
@@ -44045,7 +44719,7 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];queuedDiag=0;var flushedReady=readyQueued;readyQueued=false;
+ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");resumeProvisional=0;var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];queuedDiag=0;var flushedReady=readyQueued;readyQueued=false;
 if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}   // the redials that never opened since the last open, as ONE row: how many, and how long ago the first failed
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
 if(!ann)armStale(pendingWhy||"reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; a restart that never comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as always
@@ -44061,10 +44735,10 @@ pendingWhy="";freshPending=true;
 // is the shim's, and must not count as the bundle's.
 if(bundleReady&&!flushedReady)ws.send(JSON.stringify({type:"ready"}));
 try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
-ws.onmessage=function(ev){lastRecv=Date.now();var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){lastRecv=Date.now();resumeProvisional=0;if(returnAt)returnBytes+=(ev.data&&ev.data.length)||0;var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();
 if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}   // the SECOND keepalive since the arm, no resync between: a full heartbeat period on THIS socket with the kernel alive, talking to it, and not resyncing it — the view IS stale. (One keepalive alone can be a beat queued at accept, ahead of the resync frame.)
-return;}   // keepalive: stamped lastRecv above; carries the build token (drift → reload banner); nothing for the bundle to render
+return;}   // keepalive: stamped lastRecv above and confirmed a resumed keep (resumeProvisional=0: any frame does); carries the build token (drift → reload banner); nothing for the bundle to render
 // T217: the kernel announces its own death (one final frame from the dying process). Latch it: the
 // imminent close is EXPECTED — onclose redials eagerly instead of on the blind cadence, and the
 // reconnect skips the stale-banner arm once (the resync is seconds away; a restart that never
@@ -44075,12 +44749,13 @@ if(msg&&msg.type==="restarting"){restartAnnounced=Date.now();staleDiag("restart-
 // the first REAL frame after a reconnect is the kernel's connect-time push — the resync itself, so the
 // "what you see may be stale" prompt is answered and retires (see clearStale). Keepalives return above.
 if(freshPending){freshPending=false;clearStale();}
+if(returnAt){returnDiag("return-fresh",{ms:Date.now()-returnAt,bytesSince:returnBytes,redialed:returnRedialed});returnAt=0;}   // the first real frame after a return: how long the user waited for current content
 // VIEW DELTAS (2026-09-03): the bars/feed slots arrive as {type:"delta"} frames carrying only the changed
 // entries; reassemble the full message from what this pane holds and hand the bundle exactly what it
 // used to receive. A delta whose base is not the revision held here cannot be applied → ask for a full.
 if(msg&&msg.type==="delta"){var full=applyDelta(msg);if(!full){send({type:"needSlot",slot:msg.slot});return;}msg=full;}
 else if(msg&&DELTA_KINDS[msg.type]){var keys=msg._keys;delete msg._keys;LAST[msg.type]=keys?{rev:0,msg:msg,maps:buildMaps(msg,keys)}:null;}
-if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
+enqueue(msg);};   // the handoff to the bundle is the ONE deferred step (see the FIFO below); everything above reacted to the wire, in wire order
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
 // Every close the BROWSER reports for a socket that OPENED leaves a breadcrumb with the CLOSE CODE and
@@ -44098,13 +44773,48 @@ if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclos
 else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
 if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}   // the reconnected socket died before its resync: nothing is coming on it, and the view IS stale
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
-setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
+// a close landing inside the return window: the socket the keep-decision row (and maybe its return-fresh) was written
+// into was already dead when the tab thawed — re-file the row marked resent and re-open the return-fresh window, so
+// both ride the redial (review find 2026-09-07: the frozen-then-dropped regime otherwise left no trace)
+if(returnRow&&Date.now()-foregroundedAt<STALE_MS){var rr=returnRow;returnRow=null;rr.resent=true;returnDiag("return",rr);returnAt=returnAt||foregroundedAt;returnBytes=0;}
+var inWin=Date.now()-foregroundedAt<STALE_MS,d=1500;   // a close landing within STALE_MS of a foreground (the FIN a frozen tab thawed into; an iOS return): the close IS the event
+if(inWin){d=eagerDial?0:250;eagerDial=false;}   // …so the FIRST such close redials NOW; every further close in the same window waits 250 ms (a kernel that is down must not be hammered) (2026-09-07)
+if(restartAnnounced&&Date.now()-restartAnnounced<30000)d=Math.min(d,250);   // an announced death keeps its tight redial
+setTimeout(connect,d);};   // the blind 1.5 s stays for unannounced drops outside any return window
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready")bundleReady=true;   // the bundle's listener is installed: from here a reconnect may re-send its handshake (onopen)
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // …and this one waits for the open, so that open must not add a second
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
 queue.push(s);}
+// ONE ordered dispatch FIFO per socket (the user 2026-09-07, whose dashboard froze on return to its tab): a tab
+// that sat hidden or frozen thaws into EVERY frame the browser queued for it, and each used to be parsed AND
+// fully rendered in its own task — eight feed renders and sixteen timeline draws for a board that only needs
+// its newest state. Frames are still parsed, delta-applied and LAST-stamped synchronously in wire order above
+// (reactions to the wire, like ka/restarting/needSlot/clearStale); only the HANDOFF to the bundle rides this
+// queue, flushed in one MessageChannel task — never rAF (held while hidden and in a display:none frame, and
+// state must still land) and never a timer (throttled in the background). A newer WHOLE-STATE frame (a full
+// feed/bars/skeleton/tabOrder/working/globalRetryPaused) replaces the older entry of its type and takes the
+// END position, so it never overtakes a frame that arrived between them (a `closed` between two tabOrders must
+// still land before the second, or the closed tab ghosts back). Chained kinds (session, chatTail, closed,
+// focus, status, …) are never removed. abandon()/onclose leave the queue alone: its frames are the newest
+// state the pane should hold; the next socket's frames enter behind them. Steady state: one sub-ms task hop.
+var FIFO=[],flushArmed=false,WHOLE={feed:1,bars:1,data:1,tabOrder:1,working:1,globalRetryPaused:1};
+var ch=new MessageChannel();ch.port1.onmessage=flush;
+function enqueue(m){if(m&&WHOLE[m.type]){for(var i=0;i<FIFO.length;i++){if(FIFO[i]&&FIFO[i].type===m.type){FIFO.splice(i,1);break;}}}
+FIFO.push(m);if(!flushArmed){flushArmed=true;ch.port2.postMessage(0);}}
+// The flush is TIME-SLICED (2026-09-07, measured on the thaw of a 45 s freeze: one task delivering 25 chat tails
+// ran 796 ms — every tail an incremental repaint with a forced layout). Frames are delivered in wire order until
+// the slice budget is spent, then the port is re-armed and the rest follows in the next task, so a click or a
+// keystroke can land between slices and a frame can paint. Nothing is lost or reordered: the queue is drained
+// from its head, and a newer whole-state frame arriving mid-burst still replaces its older still-queued twin.
+var FLUSH_MS=8;
+function flush(){flushArmed=false;var t0=Date.now(),err=null;
+if(returnRow&&!returnAt)returnRow=null;   // the held keep row is spent once its return-fresh has filed AND the burst that carried the frame has drained: this hop runs after every task the thaw queued, a same-burst FIN included, so that FIN still finds the row (onclose re-files it) and an ordinary close later does not (review find, 2026-09-08: a kernel restart 5 s after a healthy return re-filed the row `resent` and a second return-fresh followed)
+while(FIFO.length){var m=FIFO.shift();try{deliver(m);}catch(e){if(!err)err=e;}   // one bad frame never eats the rest of the burst; its error still surfaces
+if(FIFO.length&&Date.now()-t0>=FLUSH_MS){flushArmed=true;ch.port2.postMessage(0);break;}}   // budget spent → the rest rides the next task
+if(err)throw err;}
+function deliver(m){if(window.__rompFed){window.__rompFed.inbound("",m);}else{window.dispatchEvent(new MessageEvent("message",{data:m}));}}
 // The delta reassembler. DELTA_KINDS mirrors the kernel's _DELTA_SLOTS: which top-level collections of each
 // slot are keyed, and how — "dict" (an object keyed by its own keys), "byid" (a list keyed by item id),
 // "bykeys:a,b" (a list keyed by a composite of item fields), "dictlist:id" (an object of lists, each item keyed by its
@@ -44159,6 +44869,7 @@ setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}
 // socket still carries writes; the raise's row does not depend on that.)
 function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;
 if(stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}   // the reconnected socket armed and then said nothing before its resync: nothing is coming on it, and the view IS stale — the disowned onclose cannot rule on it, and the redial's open would otherwise re-arm from zero
+if(returnRow&&returnAt){var rr=returnRow;returnRow=null;rr.resent=true;returnDiag("return",rr);returnBytes=0;}   // a KEPT socket put down before any fresh frame reached this return (the watchdog at the provisional bound): the keep row went into a socket that proved dead, so re-file it onto the redial as onclose does for a same-burst FIN, keyed on the return still being open, never on the clock (review find, 2026-09-08)
 netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 // progress watchdog (state-keyed, one per socket state): OPEN but silent past STALE_MS = half-open, no
 // onclose will ever fire — force-close (the user 2026-06-29). CONNECTING past its deadline = the browser is
@@ -44167,19 +44878,42 @@ netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 // "Disconnected — reconnecting…" banner sat until a manual refresh). CLOSED with no fresh attempt = the 1.5s
 // retry timer was lost (throttled/killed) — re-dial directly; connect()'s own guard makes this idempotent.
 setInterval(function(){if(!ws)return;
-if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");abandon();connect();}return;}
+if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;if(everConnected&&Date.now()-lastRecv>bound){staleDiag("watchdog-close","quiet");abandon();connect();}return;}   // a resumed keep no frame has confirmed runs at the shorter bound (PROVISIONAL_MS, above)
 if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
-// force a reconnect (which resyncs live) and hand the reconnect its reason, so ITS arm reads "foreground" —
-// the prompt then follows the same two events as any reconnect, rather than leaving the user on a frozen frame.
-document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="visible"||!everConnected)return;
-if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;
+// force a reconnect (which resyncs live) and hand the reconnect its reason, so ITS arm reads "foreground".
+// 2026-09-07: it latches hiddenAt/foregroundedAt first (onclose's eager redial and the return rows key on them),
+// names its DECISION, files the `return` row, and only then acts — the test itself is unchanged.
+document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="visible"){hiddenAt=Date.now();return;}
+foregroundedAt=Date.now();eagerDial=true;if(!everConnected)return;
+var stale=!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS;var res=resumedAt>hiddenAt;
+var row={decision:stale?((!ws||ws.readyState!==1)?"redial-closed":"redial-stale"):"keep",resumed:res,hiddenMs:hiddenAt?Date.now()-hiddenAt:-1,
+frozenMs:(res&&frozeAt>=hiddenAt&&resumedAt>frozeAt)?resumedAt-frozeAt:0,quietMs:lastRecv?Date.now()-lastRecv:-1,quietAtResumeMs:res?resumeQuiet:-1,ready:ws?ws.readyState:-1};
+returnAt=Date.now();returnBytes=0;returnRedialed=false;returnRow=null;   // every return starts with no held row (review find, 2026-09-08): a keep row left over from an earlier return must not ride this one's close or abandon
+if(!stale){returnRow=row;returnDiag("return",row);return;}   // the socket stands: the row rides it now — and is HELD, because a FIN queued in the same thaw burst would swallow it (review find 2026-09-07; onclose re-files)
+pendingWhy="foreground";freshPending=true;   // the reconnect's arm reads "foreground" (upstream's two-event prompt)
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
-if(!ws||ws.readyState===3)connect();}});})();
+if(!ws||ws.readyState===3)connect();
+returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial so it queues for the new socket instead of vanishing into the dead one
 """ % (app, int(v), caps, NO_STALE_CAP, app, app)
+
+
+def _shim_core_js(app="test", v=0):
+    """The shim's decision code alone — the IIFE body between its /*shim-core*/ anchors, formatted for `app` —
+    so a node test can run the REAL code (connect/onmessage/onclose, the watchdog, the visibility fast-path,
+    the resume stamp, the dispatch FIFO, the return breadcrumbs) at module scope with fakes for Date.now,
+    document, WebSocket, MessageChannel and the timers, and read its state back by name. A helper rather than
+    a regex in the tests (2026-09-07): test_view_deltas' regex lift of the delta functions is one reflow of its
+    anchor line away from silently matching nothing. Fails loudly if the anchors ever go missing."""
+    js = _shim(app, v)
+    a, b = "/*shim-core*/", "/*end-shim-core*/"
+    i, j = js.find(a), js.find(b)
+    if i < 0 or j < i:
+        raise RuntimeError("the shim-core anchors are missing from _shim")
+    return js[i + len(a):j]
 
 
 # On a narrow / touch viewport the chat's session tabs wrap into several rows and eat vertical space.
@@ -44477,13 +45211,21 @@ def _pane_spin(cid, ignore_id=""):
             "arm();"
             "if(c){try{new MutationObserver(function(){if(ready())hide();}).observe(c,{childList:true});}catch(e){}"
             "if(ready())hide();}"
-            "var rb=document.getElementById('pane-reconn');"
-            "function badge(on){if(rb)rb.classList.toggle('on',!!on);}"
+            "var rb=document.getElementById('pane-reconn'),bfail=0;"
+            # the badge's own failsafe, armed per SHOW like the sheet's (2026-09-07): it now waits for
+            # fresh DATA (below), which over a dead tunnel may never come — 30s only ever fires then.
+            "function badge(on){if(rb)rb.classList.toggle('on',!!on);clearTimeout(bfail);if(on)bfail=setTimeout(function(){badge(false);},30000);}"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
-            # painted), per the loading-states rule. wsup ends both, exactly as before.
+            # painted), per the loading-states rule.
             "window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});"
-            "window.addEventListener('romp:wsup',function(){badge(false);hide();});})();</script>")
+            # wsup still ends the empty-pane sheet (content arrival hides it too, via the observer). The
+            # BADGE no longer comes down on wsup (2026-09-07, the user, whose dashboard looked frozen while
+            # a slow resync ran with no cue): the socket OPENING is not the end of "reconnecting" for a
+            # pane that has content — the kernel's connect-time push landing is. So it waits for
+            # romp:wsfresh, the shim's first real frame after the reconnect.
+            "window.addEventListener('romp:wsup',function(){hide();});"
+            "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
 def _chat_page():
@@ -44665,6 +45407,7 @@ else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
 else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
 else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
+else if(m.type==="settingRefused"&&panel.settingRefused)panel.settingRefused(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
 var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;
@@ -44960,10 +45703,10 @@ el.classList.toggle('has',n>0||(kindOn('conn')&&liveDown()));
 var t=el.querySelector('.rerr-n');if(t)t.textContent=n<=0?'!':(n>9?'+':String(n));});
 if(!back.hidden)renderList();}
 // each entry leads with the chip its card wears in the feed, so the vocabulary matches across surfaces
-var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','undelivered'];
+var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','refused','undelivered'];
 var KINDLBL={conn:'offline',limit:'limit',judge:'judge',warn:'warning',stalled:'stalled',
 nudge:'follow-up failed',retry:'retrying',apierror:'api error',sdk:'sdk',sync:'fleet sync',
-locate:'jump failed',cleared:'cleared',undelivered:'not sent'};
+locate:'jump failed',cleared:'cleared',refused:'not saved',undelivered:'not sent'};
 // what each kind MEANS (the user 2026-07-28: the tooltip should explain the badge, not just say
 // show/hide) — worn by the filter toggles AND every entry's chip
 var DESC={conn:"the dashboard lost its live connection to the kernel for a visible pane; it reconnects on its own",
@@ -44978,6 +45721,7 @@ sdk:"romp's SDK backend, the machinery that actually runs your sessions, hit an 
 sync:"romp moved commits between your machines by itself \u2014 a push to a remote, a pull from one, or an ask that a peer fast-forward itself. Successes are logged as well as failures, so this is the record of what romp did to your machines; the network panel shows a sync while it is still running",
 locate:"a click that should have jumped to a message in the chat couldn't find it. Usually the chat is missing part of its history; reload the pane if it keeps happening",
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
+refused:"a setting that could not be saved, or a state file that could not be read. A change you made \u2014 a lane or tab setting, a card bell, a lane order \u2014 was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults",
 undelivered:"something you sent never reached a session — the kernel it was addressed to has no session by that id, which on a board showing more than one machine means the pane addressed the wrong one. Nothing was delivered. Your text is kept verbatim in undelivered.jsonl under ~/.local/state/romp"};
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
@@ -46673,7 +47417,9 @@ sub().then(function(s){devOn=!!s;paint();});
 function fail(e){try{window.__rompNotify&&window.__rompNotify('error','Notifications: '+((e&&e.message)||e));}catch(err){}}
 function post(path,obj){return fetch(path,{method:'POST',body:JSON.stringify(obj)}).then(function(r){
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});
-return r.json().catch(function(){return {};});});}
+return r.json().catch(function(){return {};});}).then(function(d){
+if(d&&d.ok===false&&d.error)throw new Error(d.error);   // a refusal in the route's own shape ({ok:false, error}): the switch stays put and the reason toasts. Only bodies carrying `error`: /push/test answers 200 {ok:false, status, detail} for a refused or unsubscribed test push, and its caller reads those itself (review find, 2026-09-08)
+return d;});}
 function b64u(s){var raw=atob((s+'==='.slice((s.length+3)%4)).replace(/-/g,'+').replace(/_/g,'/'));
 var a=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i);return a;}
 function devSubscribe(permP){return permP.then(function(p){
@@ -47848,6 +48594,7 @@ def _landing():
             ".rerr-chip{flex:0 0 auto;font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 6px;"
             "border-radius:999px;line-height:1.4;white-space:nowrap;border:1px solid transparent}"
             ".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166;border-color:rgba(255,209,102,0.6)}"
+            ".rerr-chip.k-refused{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # a change that did not land: the warning yellow, its own kind
             # "not sent" rides with the follow-up-failed red: both mean a message of yours didn't land, and
             # this one is the harder loss of the two — nothing was delivered at all (the user 2026-07-29)
             ".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a;border-color:rgba(255,106,106,0.6)}"
@@ -49238,14 +49985,19 @@ class Handler(BaseHTTPRequestHandler):
                         _run_update(tag)
                         _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": _UPDATE_STATE[0]}), "application/json")
-                kind = "pull" if _MAIN_DRIFT[0] else ("restart" if _MAIN_DRIFT[1] else "")
+                # ONE snapshot of what the kernel found: the kind and the commit it advertised come
+                # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
+                # landing) can never pair a "pull" with an empty target — an unbound move
+                d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
+                kind = "pull" if d0 else ("restart" if d1 else "")
                 if kind:
-                    _audit_restart_request("main-converge", tag=_MAIN_DRIFT[0] or _MAIN_DRIFT[1],
+                    _audit_restart_request("main-converge", tag=d0 or d1,
                                            addr=str(self.client_address[0]))
                     # same ack-time port resolution as /restart: the daemon thread's env read could
                     # otherwise land after this response, on a value the caller has already restored
                     threading.Thread(target=_run_main_update, args=(kind, True),
-                                     kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT")},
+                                     kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT"),
+                                             "target": d0 or d1},
                                      daemon=True).start()
                     _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
@@ -49259,7 +50011,18 @@ class Handler(BaseHTTPRequestHandler):
                     _on = bool(json.loads(raw_body or b"{}").get("on"))
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
-                _set_notify_all(_on)
+                try:
+                    _set_notify_all(_on)
+                except (_StateUnreadable, _StateUnwritable) as e:
+                    # the bells store could not be read, or its publish failed: refuse in the shape every
+                    # kernel refusal wears -- 200 with {ok:false, error}, as /send and /new answer theirs --
+                    # never a 5xx (a failed publish used to reach do_POST's catch-all as a 500 traceback).
+                    # The shell's post() consumes that shape; a non-2xx would reach it as raw JSON inside
+                    # an HTTP error, the toast showing a body instead of the reason. (An earlier comment
+                    # here credited `romp tag`'s curl -sf and the federation forward; neither calls this
+                    # route -- review find, 2026-09-08. No `retryable` key: nothing reads one.)
+                    return self._send(200, json.dumps({"ok": False,
+                        "error": "%s \u2014 the change did not land; try again" % e}), "application/json")
                 _mark_views_dirty()
                 _send_to_app("shell", {"type": "notifyAll", "on": _on})
                 return self._send(200, json.dumps({"ok": True, "on": _on}), "application/json")
@@ -49271,7 +50034,18 @@ class Handler(BaseHTTPRequestHandler):
                     _on = bool(json.loads(raw_body or b"{}").get("on"))
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
-                _set_notify_turns(_on)
+                try:
+                    _set_notify_turns(_on)
+                except (_StateUnreadable, _StateUnwritable) as e:
+                    # the bells store could not be read, or its publish failed: refuse in the shape every
+                    # kernel refusal wears -- 200 with {ok:false, error}, as /send and /new answer theirs --
+                    # never a 5xx (a failed publish used to reach do_POST's catch-all as a 500 traceback).
+                    # The shell's post() consumes that shape; a non-2xx would reach it as raw JSON inside
+                    # an HTTP error, the toast showing a body instead of the reason. (An earlier comment
+                    # here credited `romp tag`'s curl -sf and the federation forward; neither calls this
+                    # route -- review find, 2026-09-08. No `retryable` key: nothing reads one.)
+                    return self._send(200, json.dumps({"ok": False,
+                        "error": "%s \u2014 the change did not land; try again" % e}), "application/json")
                 _send_to_app("shell", {"type": "notifyTurns", "on": _on})
                 return self._send(200, json.dumps({"ok": True, "on": _on}), "application/json")
             if u.path == "/push/test":
@@ -51062,11 +51836,20 @@ class Handler(BaseHTTPRequestHandler):
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
-            if str(msg["flag"]) == "notify":
-                _set_notify_session(str(msg["id"]), bool(msg.get("value")))
+            try:
+                if str(msg["flag"]) == "notify":
+                    _set_notify_session(str(msg["id"]), bool(msg.get("value")))
+                else:
+                    _set_session_flag(str(msg["id"]), str(msg["flag"]), bool(msg.get("value")))
+            except (_StateUnreadable, _StateUnwritable) as e:
+                # the flags store could not be read, or its publish failed: refuse on the DELIVERING socket,
+                # addressed to the toggle (sid + flag) so the lane gear / tab menu ends its optimistic state
+                # and says why. Left as an OSError, the failed publish reached the receive loop and DROPPED
+                # this client (the maintainer's fold on PR #1019)
+                _refuse_setting(client, e, "that setting", "flag", sid=msg["id"], flag=msg["flag"],
+                                value=_painted_flag_value(str(msg["id"]), str(msg["flag"])))
             else:
-                _set_session_flag(str(msg["id"]), str(msg["flag"]), bool(msg.get("value")))
-            _mark_views_dirty()
+                _mark_views_dirty()
         elif msg and msg.get("type") == "setTimelineViews" and isinstance(msg.get("views"), dict):
             # timeline corner panel → replace the whole views blob (tiny; last-write-wins across
             # dashboards, like colormap). Validation/normalization happens in the setter. Under
@@ -51168,8 +51951,15 @@ class Handler(BaseHTTPRequestHandler):
             # completes). Persisted to notify-cards.json; build_feed echoes it back as ask.notify.
             # sid rides so the override can be resolved against the card's own default (session, else
             # the master) and deleted when it merely restates it.
-            _set_notify_card(str(msg["itemId"]), bool(msg.get("value")), str(msg.get("sid") or ""))
-            _mark_views_dirty()
+            try:
+                _set_notify_card(str(msg["itemId"]), bool(msg.get("value")), str(msg.get("sid") or ""))
+            except (_StateUnreadable, _StateUnwritable) as e:
+                # the bells store could not be read, or its publish failed: refuse on the DELIVERING socket,
+                # addressed to the card (itemId) so the feed drops that bell's optimistic latch and says why
+                _refuse_setting(client, e, "that bell", "bell", sid=msg.get("sid") or "", item_id=msg["itemId"],
+                                value=bool(_notify_card_effective(_notify_cards(), str(msg["itemId"]), str(msg.get("sid") or ""))))
+            else:
+                _mark_views_dirty()
         elif msg and msg.get("type") == "setSessionColor" and msg.get("id") and msg.get("bg"):
             # tab right-click color picker → override the session's identity color (persisted to the names
             # registry); re-broadcast so every tab/lane/card repaints in the new color at once.
@@ -51262,7 +52052,7 @@ class Handler(BaseHTTPRequestHandler):
             # (wireNodeZones sends the clicked node's own id), so collect the card's whole subtree BEFORE
             # the clear archives it out of the live store, and drop a chip citing ANY of those nodes.
             _gone = _subtree_item_ids(str(msg["itemId"]))
-            _clear_ask(msg["itemId"])
+            _gesture_store_refusal(client, "clear", _clear_ask(msg["itemId"]))
             _send_to_app("chat", {"type": "dropCitation", "itemId": str(msg["itemId"]), "itemIds": _gone})
             _mark_views_dirty()                # cleared.jsonl is invisible to the fleet sig → dirty-rebuild now
         elif msg and msg.get("type") == "quarantineDecision" and msg.get("mid"):
@@ -51310,7 +52100,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "op": "resolve", "ok": _rok, "error": _rerr})
             elif msg.get("op") == "clear":
                 _gone = _subtree_item_ids(str(msg["nodeId"]))
-                _clear_all([str(msg["nodeId"])])
+                _gesture_store_refusal(client, "drop", _clear_all([str(msg["nodeId"])]))   # a SUB-goal: its own account
                 _send_to_app("chat", {"type": "dropCitation", "itemId": str(msg["nodeId"]), "itemIds": _gone})
                 _mark_views_dirty()
         elif msg and msg.get("type") == "redistill" and msg.get("sid") and msg.get("itemId"):
@@ -51348,20 +52138,31 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         elif msg and msg.get("type") == "clearAll":
             d = build_feed(int(time.time()))
-            _clear_all([a["itemId"] for a in d["asks"]] + [c["itemId"] for c in d["items"]])
+            # `items` (the old stream deliverables) is no longer a payload key; indexing it raised before
+            # _clear_all ever ran, so Clear-all cleared nothing and only the receive loop's stderr line knew
+            _gesture_store_refusal(client, "clear",
+                                   _clear_all([a["itemId"] for a in d["asks"]]
+                                              + [c["itemId"] for c in (d.get("items") or [])]))
             _send_to_app("chat", {"type": "dropCitationsAll"})   # every card cleared → drop every composer chip
             _mark_views_dirty()
         elif msg and msg.get("type") == "undoClear":
-            # the Undo click's failure path speaks (2026-09-07): _undo_clear stands down, with nothing written,
-            # when a restored session's goal store or archive cannot be read; the pane ends its working cue,
-            # reverts its optimistic restore, toasts the reason and keeps the batch undoable (undoClearResult).
-            # Success stays silent: the next feed payload carries the restored cards
+            # the Undo click's failure path speaks (2026-09-07): a session whose goal store or archive could not
+            # be read is left OWED by _undo_clear (its ids stay the newest batch, nothing written for it) and
+            # named on THIS socket by _gesture_store_refusal; the feed pane also ends its working cue, reverts
+            # its optimistic restore and toasts the reason (undoClearResult, sent only on a refusal or a raise:
+            # success stays silent, the next feed payload carries the restored cards)
             try:
-                _undo_clear()
+                _skipped = _undo_clear()
             except Exception as _e:
                 sys.stderr.write("undoClear: %s\n" % traceback.format_exc())
                 _send_to_app("feed", {"type": "undoClearResult", "ok": False,
                                       "error": (str(_e) or _e.__class__.__name__)})
+            else:
+                _gesture_store_refusal(client, "undo", _skipped)
+                if _skipped:
+                    _send_to_app("feed", {"type": "undoClearResult", "ok": False,
+                                          "error": "; ".join("%s: %s" % (_name_of(k) or k[:8], f)
+                                                             for k, f in sorted(_skipped.items()))})
             _mark_views_dirty()
         elif msg and msg.get("type") == "dismissLane" and msg.get("id"):
             # timeline: clear a DEAD lane's leftover row (the user 2026-07-02). DURABLE since 2026-08-14
@@ -51414,12 +52215,22 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") in ("reorderTabs", "writeOrder") and isinstance(msg.get("order"), list):
             # tab-drag or lane-drag → reorder BOTH surfaces. MERGE the dragged surface's order into the
             # persisted one (don't overwrite): a chat-tab drag must not drop/reshuffle timeline-only lanes.
-            _write_session_order(_merge_session_order(msg["order"]))
-            # _mark_views_dirty, NOT _push_all: the feed/timeline order the grouped cards CLIENT-side by this
-            # list, but a plain push serves the CACHED feed — reused for REBUILD_MIN_S (2s) even though the sig
-            # changed — so the reordered cards lagged up to ~2s (the user 2026-07-15). The dirty mark bypasses
-            # the throttle AND wakes the pusher, so the rebuilt payload (fresh order) ships right away.
-            _mark_views_dirty()
+            try:
+                _merged = _merge_session_order(msg["order"])
+                _write_session_order(_merged)            # the publish too: a failed one is refused, never a
+            except (_StateUnreadable, _StateUnwritable) as e:   # dropped socket (the fold on PR #1019)
+                # the order file could not be read, or its publish failed; the drag must not splice against
+                # a fabricated [] and persist discovery order over the user's saved order. Refused on the
+                # delivering socket. (No shipped pane posts this op today -- the strip and the lanes write
+                # the viewer's own arrangement -- so the frame has no latch to release; the contract holds
+                # for the op all the same.)
+                _refuse_setting(client, e, "the new order", "order")
+            else:
+                # _mark_views_dirty, NOT _push_all: the feed/timeline order the grouped cards CLIENT-side by this
+                # list, but a plain push serves the CACHED feed — reused for REBUILD_MIN_S (2s) even though the sig
+                # changed — so the reordered cards lagged up to ~2s before the dirty mark. The dirty mark bypasses
+                # the throttle AND wakes the pusher, so the rebuilt payload (fresh order) ships right away.
+                _mark_views_dirty()
         elif msg and msg.get("type") == "createSession" and msg.get("name"):
             nm = str(msg["name"]).strip()
             if not NAME_RE.match(nm):

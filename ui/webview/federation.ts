@@ -28,8 +28,6 @@ export function perfCollectorFor(app: string): RompPerf | null {
 
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
-/** The merged emits a hidden pane can owe: the feed frame; the timeline's lanes skeleton and its bars. */
-export type HoldSlot = "feed" | "data" | "bars";
 
 /** `host:id` for a remote host; the bare id unchanged for the local host. */
 export function prefixId(host: string, id: string): string {
@@ -638,14 +636,22 @@ export function mergeHostBars(perHost: Record<string, any>, hostSeq: readonly st
 export const REMOTE_STALE_MS = 30000;
 export const REMOTE_CONNECT_MS = 15000;
 export const REMOTE_REDIAL_MS = 8000;
+// A resumed keep is PROVISIONAL (review find, 2026-09-08), the pane shim's PROVISIONAL_MS byte for byte: 1.5
+// kernel keepalive periods (KEEPALIVE_S is 10 s, so 15 s: one beat may be in flight, two missing is silence).
+// The `resume` stamp (resumed() below) re-bases a socket the browser still holds OPEN, but the far end can
+// have died without a FIN reaching the browser (a laptop sleep across a network change, a tunnel whose local
+// end stays open), and only the kernel's next frame can tell; until one lands the watchdog runs at this bound
+// instead of REMOTE_STALE_MS.
+export const REMOTE_PROVISIONAL_MS = 15000;
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
  *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
  *  or a hung handshake); "redial" — CLOSED with no fresh attempt: dial directly; "" — leave it be.
  *  `lastRecv` is stamped at open and on every frame, so an open socket's silence is measured from
- *  its own open, never from an earlier socket's traffic. */
-export function socketVerdict(readyState: number, lastRecv: number, connT: number, now: number): "close" | "redial" | "" {
-  if (readyState === 1) return now - (lastRecv || connT) > REMOTE_STALE_MS ? "close" : "";
+ *  its own open, never from an earlier socket's traffic. `staleMs` is the silence bound for an OPEN
+ *  socket: REMOTE_STALE_MS, or REMOTE_PROVISIONAL_MS while a resumed keep awaits its confirming frame. */
+export function socketVerdict(readyState: number, lastRecv: number, connT: number, now: number, staleMs = REMOTE_STALE_MS): "close" | "redial" | "" {
+  if (readyState === 1) return now - (lastRecv || connT) > staleMs ? "close" : "";
   if (readyState === 0) return now - connT > REMOTE_CONNECT_MS ? "close" : "";
   if (readyState === 3) return now - connT > REMOTE_REDIAL_MS ? "redial" : "";
   return "";
@@ -678,6 +684,7 @@ interface Conn {
   closed: boolean;
   live: boolean; // kernel reports this tunnel "up" — the only state in which its port is dialed
   lastRecv: number; // epoch ms of the last frame on the CURRENT socket (keepalives count); 0 = none yet
+  resumeProvisional: number; // the `resume` stamp lastRecv rests on until a frame confirms it (the watchdog runs at REMOTE_PROVISIONAL_MS meanwhile); 0 = confirmed, or no stamp
   connT: number;    // when the current socket's connect() attempt started — the watchdog's reference point
   // KERNEL_SETTING messages that arrived while this host's socket was down, newest per type only —
   // flushed on the socket's open event (sendRemote/flushPending). Bounded by construction: at most
@@ -689,6 +696,7 @@ interface Conn {
 export class FederationManager {
   app = "chat";
   private conns = new Map<string, Conn>();
+  private frozeAt = 0;   // the Page Lifecycle `freeze` before the current thaw: a socket already overdue at that moment is not stamped by resumed()
   private perHostOrder: Record<string, string[]> = {};
   private perHostTabs: Record<string, any[]> = {};
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
@@ -777,7 +785,6 @@ export class FederationManager {
       pending: () => this.pendingFor(),
       lastSeen: (h: string) => this.lastSeen[h] || 0,
     };
-    this.installPaneHold(w);   // the shell's on-screen word + the first-show resize (the hidden-pane hold below)
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
     // and re-emitting all three merged payloads is what moves the tabs, lanes and feed groups together.
@@ -806,8 +813,46 @@ export class FederationManager {
     // remote socket that is not open, or has gone quiet past the bound, is closed and redialed now
     // rather than waited out — the phone's re-foreground is exactly the audited case.
     try {
-      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") this.watchdog(Date.now(), true); });
+      this.watchLifecycle(document);
     } catch (e) { /* no document — the node tests construct the manager bare */ }
+  }
+
+  /** The Page Lifecycle listeners on the document (public and parameterised so the tests install them
+   *  on a fake and fire the events in the browser's order). `freeze` → frozeAt; `resume` → resumed(); `visibilitychange`
+   *  to visible → the foreground watchdog pass, exactly as before. */
+  watchLifecycle(doc: { addEventListener(type: string, listener: () => void): void; readonly visibilityState: string }): void {
+    doc.addEventListener("freeze", () => { this.frozeAt = Date.now(); });
+    doc.addEventListener("resume", () => this.resumed(Date.now()));
+    doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "visible") this.watchdog(Date.now(), true); });
+  }
+
+  /** The Page Lifecycle `resume` event (the user 2026-09-07, whose dashboard froze every time they came
+   *  back to its tab): stamp every OPEN relay socket's lastRecv to now. A Chromium tab left in the
+   *  background is FROZEN — no JS runs at all — so no frame could stamp lastRecv even though the socket
+   *  stayed open and the kernel kept heartbeating. lastRecv therefore measured "JS did not run", not
+   *  "the socket went silent", and the foreground pass (watchdog(now, true), fired by visibilitychange
+   *  right after the thaw) read the frozen stretch as 30s+ of silence and abandoned+redialed EVERY
+   *  attached host on EVERY return — each redial a full resend from that kernel. Chromium fires
+   *  `resume` before `visibilitychange`, so the stamp lands first and socketVerdict (unchanged) sees a
+   *  fresh socket and keeps it; the frames queued during the freeze then dispatch on the same socket.
+   *  This re-BASES the measurement, it does not disarm it: a socket that stays silent after the thaw is
+   *  still put down by the regular tick, and sooner than REMOTE_STALE_MS (review find, 2026-09-08): an
+   *  OPEN readyState says only that the browser has seen no FIN, and a peer that died while the tab was
+   *  frozen leaves the socket looking exactly like a healthy one, so the stamp is PROVISIONAL
+   *  (resumeProvisional: the watchdog runs at REMOTE_PROVISIONAL_MS until a frame confirms it), and a
+   *  socket already overdue BEFORE the freeze is not stamped at all: its silence began while JS was
+   *  running, so that gap is real and the foreground pass redials it as it did before the stamp
+   *  existed. Only readyState 1 is stamped — a socket
+   *  still CONNECTING is a handshake the frozen tab never finished, and the foreground pass still kills
+   *  it. Where no `resume` fires (Firefox, Safari, a hidden-but-running tab) stale lastRecv IS real
+   *  silence, and today's instant abandon on foreground is unchanged. */
+  resumed(now: number): void {
+    for (const c of this.conns.values()) {
+      if (!c.ws || c.ws.readyState !== 1) continue;
+      if (this.frozeAt && this.frozeAt - (c.lastRecv || c.connT) > REMOTE_STALE_MS) continue;   // overdue before the freeze: real silence, no stamp
+      c.lastRecv = now;
+      c.resumeProvisional = now;
+    }
   }
 
   /** One pass of the remote-socket watchdog (public so the tests can tick it with their own clock):
@@ -817,7 +862,7 @@ export class FederationManager {
     for (const c of this.conns.values()) {
       if (c.closed || !c.ws) continue;
       const rs = c.ws.readyState;
-      let v = socketVerdict(rs, c.lastRecv, c.connT, now);
+      let v = socketVerdict(rs, c.lastRecv, c.connT, now, c.resumeProvisional ? REMOTE_PROVISIONAL_MS : REMOTE_STALE_MS);
       if (foreground && rs === 0) v = "close";
       if (v === "close") {
         // the same breadcrumb family as open/close/detach, so a "cards came back late" report reads
@@ -998,72 +1043,6 @@ export class FederationManager {
 
   private lastFeedCounts = "";   // last per-host ask-count signature — breadcrumb only on change
 
-  // ── the hidden-pane hold (2026-09-06) ──────────────────────────────────────────────────────────
-  // The shell hides a pane with display:none on its iframe — the Outline and Waiting panes by default, the
-  // timeline band when toggled off, every pane but the current tab on the phone — and this layer went on
-  // merging and dispatching every frame to it, so the pane rendered a board nobody could see. In the live
-  // minute rows about 58% of all recorded handler time was spent this way (the dispatch and the pane's own
-  // handler together). The hold lives HERE, above the panes: the per-host state this class keeps
-  // (perHostFeed, perHostTl, perHostTlBars) must keep updating while hidden — a delta applies onto it and
-  // nothing ever has to ask for a full frame — and one emit on show hands the pane the newest merge, the
-  // very frame it would have built last. Only the newest matters: the intermediate states were never on
-  // screen (the feed pane's hover-freeze queue is the precedent).
-  //   HIDDEN is the shell's word, not a viewport probe. The shell posts {romp:'panes', on:{key:bool}} to every
-  // pane iframe on each toggle, on the iframe's load and on a mobile tab switch (kernel.py
-  // _LANDING_COLLAPSE_JS), and on[app] is the same state that drives display:none. The zero-viewport probe
-  // (innerWidth 0) is right only for a pane hidden since load: once shown and hidden again the iframe KEEPS
-  // its last size, and a same-size re-show fires no resize (Chromium 151, measured 2026-09-06) — so the
-  // probe is the boot-time default, until the shell's first word arrives. The show event is the panes
-  // message turning on[app] true, plus the resize a first show fires (0 → size) under a shell that never
-  // posts the message.
-  //   Not held: the chat (its frames do not pass through these emits) and the feed pane — never hidden in
-  // the recorded minutes, and its message handlers read the board's DOM (a bell jump reveals the pane and
-  // posts revealCard in one gesture) while its render animates column moves, which a catch-up render after
-  // an hour hidden would replay as flights. The FIRST frame of each slot always goes through while hidden:
-  // the timeline posts {romp:'ready'} from its first lanes, and the panes' loaders resolve on it.
-  private paneOn: boolean | null = null;   // on[app] from the shell's last panes message; null until one arrives
-  private slotEmitted: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
-  private slotOwed: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
-
-  /** Is this pane off screen right now? The shell's word once it has spoken; the zero-viewport probe before. */
-  paneHidden(): boolean {
-    if (this.paneOn !== null) return !this.paneOn;
-    try { const w = window as any; return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch (e) { return false; }
-  }
-  /** Which panes the hold applies to (see the block comment: not the chat, not the feed). */
-  private holdEligible(): boolean { return this.app !== "chat" && this.app !== "feed"; }
-  /** Hold this slot's emit while the pane is hidden (after its first frame): records the debt and says so. */
-  private holdWhileHidden(slot: HoldSlot): boolean {
-    if (this.slotEmitted[slot] && this.holdEligible() && this.paneHidden()) { this.slotOwed[slot] = true; return true; }
-    this.slotEmitted[slot] = true;
-    return false;
-  }
-  /** The show event: emit each owed slot once — the feed; the lanes, then the bars. Nothing owed → nothing. */
-  private flushOwed(): void {
-    if (this.paneHidden()) return;
-    if (this.slotOwed.feed) { this.slotOwed.feed = false; this.emitMergedFeed(); }
-    if (this.slotOwed.data) { this.slotOwed.data = false; this.emitMergedTimeline(false); }
-    if (this.slotOwed.bars) { this.slotOwed.bars = false; this.emitMergedTimeline(true); }
-  }
-  /** The shell's word for this pane, on[app] of its panes message (a test drives this directly). */
-  setPaneOn(on: boolean): void {
-    const was = this.paneHidden();
-    this.paneOn = on;
-    if (was && !this.paneHidden()) this.flushOwed();
-  }
-  /** Wire the hold's inputs on a window: the shell's panes message and the resize a first show fires.
-   *  Publishes the answer as window.__rompPaneHidden, which perf-telemetry's hidden_pane row and the
-   *  shim's paneHidden read, so the telemetry stops under-reporting a pane hidden after its first show. */
-  installPaneHold(w: any): void {
-    if (!w || typeof w.addEventListener !== "function") return;
-    w.addEventListener("message", (e: any) => {
-      const m = e && e.data;
-      if (m && m.romp === "panes" && m.on && typeof m.on === "object") this.setPaneOn(m.on[this.app] === true);
-    });
-    w.addEventListener("resize", () => this.flushOwed());
-    w.__rompPaneHidden = () => this.paneHidden();
-  }
-
   private emitMergedFeed(): void {
     // MERGE-INPUT TRIPWIRE (the user 2026-07-31): one breadcrumb whenever any host's contribution to
     // the merged feed CHANGES SIZE — so a card blinking out is attributable to the host snapshot that
@@ -1079,7 +1058,6 @@ export class FederationManager {
       this.diag("feedmerge", { counts });
     }
     this.publishPending();
-    if (this.holdWhileHidden("feed")) return;   // a hidden pane owes one emit on show (the hold above)
     const dead = this.deadHosts();
     this.emit(mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt));
   }
@@ -1132,7 +1110,6 @@ export class FederationManager {
     // discipline as the lanes hold above: the local kernel pushes bars on connect, so the hold is
     // momentary, and the local arrival itself emits.
     if (bars && !(LOCAL in this.perHostTlBars)) return;
-    if (this.holdWhileHidden(bars ? "bars" : "data")) return;   // a hidden pane owes one emit on show (the hold above)
     const data = bars
       // the bars message carries no lanes — hand the merged lane list in for the connector stitch
       ? mergeHostBars(this.perHostTlBars, this.hostSeq, mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()).sessions)
@@ -1364,7 +1341,7 @@ export class FederationManager {
     const w = dashboardWid();
     const url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}&token=${encodeURIComponent(token)}`
       + (w ? `&wid=${encodeURIComponent(w)}` : "");
-    const conn: Conn = { host, ws: null, url, closed: false, live, lastRecv: 0, connT: 0, pending: new Map() };
+    const conn: Conn = { host, ws: null, url, closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() };
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
@@ -1385,6 +1362,7 @@ export class FederationManager {
     let ws: WebSocket;
     conn.connT = Date.now();
     conn.lastRecv = 0;
+    conn.resumeProvisional = 0;   // a fresh socket starts unmarked: the provisional rule was the resumed socket's
     try {
       ws = new WebSocket(conn.url);
     } catch (e) {
@@ -1412,6 +1390,7 @@ export class FederationManager {
     };
     ws.onmessage = (ev: MessageEvent) => {
       conn.lastRecv = Date.now();   // every frame counts, the keepalive included — that is the heartbeat
+      conn.resumeProvisional = 0;   // and any frame, the keepalive included, confirms a resumed keep
       let msg: any;
       try {
         msg = JSON.parse(ev.data);

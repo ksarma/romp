@@ -1050,7 +1050,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; ro?: ResizeObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -2541,10 +2541,29 @@ function contentOffsetFrame(content: HTMLElement, v: View, s: Session):
   // remember every rendered unit's measured height — the virtual frame feeds on them
   let uh = unitHeights.get(activeId!);
   if (!uh) { uh = new Map(); unitHeights.set(activeId!, uh); }
-  for (const node of Array.from(v.el.querySelectorAll<HTMLElement>(".turn[data-unit]"))) {
+  const nodes = Array.from(v.el.querySelectorAll<HTMLElement>(".turn[data-unit]"));
+  const exact = new Map<number, number>();               // unit → its real middle in scroll space (fully rendered only)
+  for (const node of nodes) {
     const u = Number(node.dataset.unit);
     const h = node.offsetHeight;
     if (Number.isFinite(u) && h > 0) uh.set(u, h);
+    if (Number.isFinite(u) && !exact.has(u)) {   // a unit's FIRST .turn node is its root (see the gate below)
+      const r = node.getBoundingClientRect();
+      exact.set(u, content.scrollTop + (r.top - cRect.top) + r.height / 2);
+    }
+  }
+  // EXACT when every unit is rendered (no spacer): the scrollbar the user reads the notches against spans
+  // content.scrollHeight, and each unit's real middle in scroll space is known — the unit-height sum below
+  // omits the gaps between turns and everything that is not a unit, so it sat a few dozen pixels off even
+  // on a fully rendered conversation (T245). scrollTop + client-rect top is the position IN THE SCROLL
+  // CONTENT, invariant under scrolling: pure scrolling still moves nothing. The gate counts UNITS, never
+  // nodes: one unit may own several .turn nodes — appendItem tags an expanded tool/retry group's child
+  // turns and every absorbed cue with their unit — so a node-count gate silently dropped the frame back
+  // to the sum whenever a group stood open (review of the first cut, 2026-09-08: 14px off, and the notch
+  // changed basis on every expand and collapse).
+  if (exact.size > 0 && exact.size === unitTotal && !v.el.querySelector(".tx-spacer") && content.scrollHeight > 0) {
+    const shx = content.scrollHeight;
+    return { sh: shx, offsetOf: (i: number): number | null => exact.get(i) ?? null };
   }
   const avg = v.avgTurnH ?? 60;
   // one prefix-sum pass per paint (O(n)), then O(1) per mark
@@ -5584,6 +5603,19 @@ let tabsRaf: number | null = null;
 function scheduleRenderTabs(): void {
   if (tabsRaf != null) return;
   tabsRaf = requestAnimationFrame(() => { tabsRaf = null; renderTabs(); });
+}
+
+// The same coalescing for the ACTIVE tab's incremental repaint (2026-09-07, measured on the thaw of a 45 s
+// freeze: the queued tails for the watched session replayed as one task of 796 ms — each tail an appendActive
+// with a forced layout, repainting the same suffix again and again). Tails still APPLY at once (events pushed,
+// `rendered` lowered to the earliest changed point, the ledger stored); the paint runs once per animation
+// frame from that lowest point, and carries the ledger with it. A frame is also the right clock for a hidden
+// tab: the browser holds it, so a background tab applies state and paints once on return. The full-session
+// paths (upsert, chatHead, the rewind overlay) keep their synchronous appendActive — they are one frame each.
+let appendRaf: number | null = null;
+function scheduleAppendActive(): void {
+  if (appendRaf != null) return;
+  appendRaf = requestAnimationFrame(() => { appendRaf = null; appendActive(); renderLedger(); });
 }
 
 function renderTabs() {
@@ -10305,6 +10337,17 @@ function ensureView(id: string): View {
     // with a null/absent ref node just appends, so this is safe whether or not the picker node exists yet.
     content?.insertBefore(elv, document.getElementById("live-ask"));
     v = { el: elv, rendered: 0, scrollTop: 0, stick: true, shown: false, stale: false, winStart: 0, winEnd: 0 };
+    // THE event the scrollbar overlays were missing (T245, the user 2026-09-07): a rendered unit CHANGED
+    // HEIGHT after the paint — a lazy figure sizing in, a fold toggling. The notch/rail frame feeds on the
+    // rendered units' measured heights, but it was refreshed only inside a paint, and the paint ran only
+    // on scroll, resize and a few render-side callers — so 54 figures loading after the paint grew the
+    // turn and the native thumb moved to the new truth while the notches kept the stale frame, and a notch
+    // for a message on screen read as "below". The view element's box grows with any child, so one observer
+    // per view re-runs the shared rAF paint exactly when the geometry changes. No timer, no per-image hook.
+    if (typeof ResizeObserver === "function") {
+      v.ro = new ResizeObserver(() => scheduleRailSticky());
+      v.ro.observe(elv);
+    }
     views.set(id, v);
   }
   return v;
@@ -13708,15 +13751,16 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
   const quoteCites = cites ? cites.filter((c) => c.quote) : [];
   // EVERY branch echoes optimistically (the user 2026-08-23: quoted and follow-up sends showed
   // nothing until the kernel round-tripped, while plain sends painted instantly — the exact
-  // inconsistency reported). The quote branch echoes the COMPOSED body, which is byte-identical to
-  // what lands (quoteReplyBody IS the send path), so the reconcile's includes() match is exact; the
-  // follow-up echoes the typed words, a substring of the goal-wrapped landing.
+  // inconsistency reported). The reconcile ends a bubble on an EXACT text match with the landed event's
+  // md (send-pending.ts): the quote branch echoes the COMPOSED body, which is byte-identical to what
+  // lands (quoteReplyBody IS the send path); the follow-up echoes the typed words, which is what the
+  // kernel ships as the landed event's md once it strips the goal wrapper (_split_followup).
   if (goalCite?.itemId) { vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid }); registerOptimistic(sid, text, imgPaths); }
   else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body }); registerOptimistic(sid, body, imgPaths); }
   else { vscodeApi.postMessage({ type: "sendMessage", id: sid, text }); registerOptimistic(sid, text, imgPaths); }
   // One breadcrumb per composer send (client-diag.jsonl): sid, when, how long, which route — never the
   // text. A send that "vanished" can then be traced from the press through the kernel's own logs
-  // instead of reconstructed from memory (the 2026-09-05/06 audits had to).
+  // instead of reconstructed from memory.
   vscodeApi.postMessage({ type: "clientDiag", surface: "chat", what: "send",
     data: { sid, ts: Date.now(), len: text.length, route: goalCite?.itemId ? "followup" : quoteCites.length ? "quote" : "plain" } });
 }
@@ -14508,7 +14552,7 @@ function upsert(msg: any) {
   }
   if (forked) {
     const v = views.get(msg.id);
-    if (v) { v.el.remove(); views.delete(msg.id); }
+    if (v) { v.ro?.disconnect(); v.el.remove(); views.delete(msg.id); }
   } else if (existed) {
     // A full frame replaces every event object and can differ from what this view rendered ANYWHERE (it is
     // what the kernel sends a client it believes is behind): the tail path trusts v.rendered as the exact
@@ -14630,7 +14674,7 @@ function requestFullSession(id: string): void {
 // nothing, its reconnect is a brand-new client whose connect push heals by itself.)
 window.addEventListener("romp:wsdown", () => awaitingFull.clear());
 window.addEventListener("romp:wsup", () => awaitingFull.clear());
-// …and a send still unconfirmed at the down edge may never have reached the kernel: say so on its bubble
+// A send still unconfirmed at the socket's down edge may never have reached the kernel: say so on its bubble
 window.addEventListener("romp:wsdown", () => markPendingLost("connection"));
 
 function chatTail(msg: any) {
@@ -14699,8 +14743,7 @@ function chatTail(msg: any) {
       v.rendered = Math.min(v.rendered, from);        // repaint from the exact changed point (catches a tool fill)
       if (shrank) v.stale = true;                     // …but a pure truncation needs the window rebuilt, see above
     }
-    appendActive();
-    renderLedger();
+    scheduleAppendActive();   // one paint per animation frame however many tails land (2026-09-07); the ledger rides it
     renderPinnedNotes();   // the strip rides the same frame as the field (a pin lands with no event change)
     // THIS is the frame that flips the chip (T225): a status-only change reaches a caught-up client as a
     // chatTail with an empty suffix and the full status — awaitingWhy/Kind/Count/Tasks included. The box
@@ -14992,7 +15035,7 @@ function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string
     persistDrafts();   // a host drop / omission KEEPS it all (see DismissWhy) — the stash above may have updated the copy
   }
   const v = views.get(id);
-  if (v) { v.el.remove(); views.delete(id); }
+  if (v) { v.ro?.disconnect(); v.el.remove(); views.delete(id); }
   const oi = order.indexOf(id); if (oi >= 0) order.splice(oi, 1);
   const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);   // before the fallback read below — never the dead id
   renderTabs();                          // tab removed from `order` above → repaint without it
@@ -15064,8 +15107,9 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     }
     return;
   }
-  // the pipe's down edge also clears awaitingFull (the VS Code twin of the shim's romp:wsdown — an ask
-  // lost with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession)
+  // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: it clears awaitingFull (an ask lost
+  // with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession) and
+  // unconfirmed sends say so (markPendingLost)
   if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); if (!m.up) markPendingLost("connection"); pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   // any kernel message proves the kernel is reachable again — heal previews whose fetch died in a
   // restart window (preview.ts retryFailedPreviews; a no-op when nothing failed). federation's
@@ -15151,6 +15195,19 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   }
   else if (m.type === "nextTab") cycleTab(1);
   else if (m.type === "prevTab") cycleTab(-1);
+  else if (m.type === "settingRefused" && typeof m.text === "string" && m.text) {
+    // the kernel refused a gesture this page posted (its store could not be read): the optimistic state ends
+    // on THIS event, not on the next push, and the reason toasts (the warn toast is this pane's soft-refusal
+    // surface; nothing typed was lost) and is filed in the shell's bell under its own `refused` kind
+    if (m.gesture === "flag" && typeof m.sid === "string" && typeof m.flag === "string" && m.sid && m.flag) {
+      // a tab-menu flag: repaint the local copy to the value the kernel still paints (the frame carries it —
+      // what the next push shows), not to a value recorded at the click, which a second click made wrong
+      const s = sessions.get(m.sid);
+      if (s && typeof m.value === "boolean") (s as any)[m.flag] = m.value;
+    }
+    notifyShell("refused", m.text, typeof m.sid === "string" ? m.sid : "");
+    warnToast(m.text);
+  }
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
     // A warn while the emoji dialog awaits its answer is the kernel refusing THAT value (the setSessionEmoji
     // op answers with emojiSet or a bare warn, nothing else), so it goes under the dialog's input — checked
