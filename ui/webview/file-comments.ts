@@ -3009,7 +3009,14 @@ class Panel {
       const i = btn("Show changes inline", "fcinline", "fileview-btn fc-toggle");
       i.dataset.on = this.inline ? "1" : "0";
       i.setAttribute("aria-pressed", this.inline ? "true" : "false");
-      i.title = this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
+      // under Comments the read view paints no change mark whatever the setting (paintChanges), so the title says the filter
+      // hides them and that the setting governs All and Changes — an ON toggle over a body with no marks must not claim marks
+      // in the text (the review, 2026-09-07). The button stays: its setting is shared with the other views and other panels
+      const withheld = this.activeFilter() === "comments";
+      i.title = withheld
+        ? (this.inline ? "Comments above hides the change marks with the change cards; under All or Changes the session's changes are marked in the text. Click to read the file without the marks there too"
+          : "The marks are off, and Comments above hides them with the change cards; click to mark the session's changes in the text under All or Changes")
+        : this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
         : "The marks are off and the file reads as it is; click to mark the session's changes in the text";
       row.appendChild(i);
     }
@@ -3019,7 +3026,7 @@ class Panel {
     // row under them, the chosen one filled — offered once the file has a card to filter (filterOffered), and never before:
     // a control over an empty list is noise. Its counts are the action-row label's (cardCounts), so the glance and the
     // control agree. The buttons take the arrow keys as one group (the constructor's keydown).
-    let filterRow: HTMLElement | null = null;          // the filter's row, when offered: the toggles' confirm rows go above it (underToggles)
+    let filterRow: HTMLElement | null = null;          // the row the toggles' answers stand above (underToggles): the filter's, when offered; else the first of the head's other rows, set below
     if (filterOffered(s)) {
       const seg = el("div", "fc-row fc-filter");
       seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Show");
@@ -3083,7 +3090,11 @@ class Panel {
     }
     for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
     // the track slot's loader and refusal, built with the head's rows above: moved under the toggle that asked, like its confirms
-    // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row)
+    // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row). With no filter row
+    // (a file with nothing to filter, or no status) the move's anchor is the first of the head's other rows instead: an
+    // insertBefore with no anchor appends, and appended after the status refusal's row the answer to the Track click stood
+    // below a row about the file (the review, 2026-09-07)
+    if (!filterRow) filterRow = (Array.from(head.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && ["head", "poll", "edit"].includes(n.dataset.slot || "")) || null;
     for (const n of Array.from(head.childNodes)) if (n.nodeType === 1 && (n as HTMLElement).dataset.slot === "track") underToggles(n as HTMLElement);
     const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)

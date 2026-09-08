@@ -1676,11 +1676,11 @@ a.fileview-gh-note { border-style: dashed; }
   display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
 .fc-card:hover { border-color: var(--accent); }
 .fc-card.open { cursor: default; }
-/* the kind cue (the filter follow-on, 2026-09-07): a card's head names its kind in a word before the author's chip, in the
-   note's dress, and the card's left edge says it in colour — the accent for a comment (a region is one), the muted tone for
-   a change (renderCard / renderChangeCard set data-cue) — so the two read apart at a glance in a long list. A detached
-   card keeps its dashed edge (below): the :not() leaves that rule the edge. The change edge holds under the hover rule
-   above, which paints every side the accent. */
+/* the kind cue (the filter follow-on, 2026-09-07): a card's head names its kind in a word before the author's chip, styled
+   like .fc-note (--dim, 0.86em), and the card's left edge is coloured by kind, a 3px border in the accent for a comment (a
+   region is one) and in --text-muted for a change (renderCard / renderChangeCard set data-cue) — so the two read apart at a
+   glance in a long list. A detached card keeps its dashed edge (below): the :not() leaves that rule the edge. The change
+   edge holds under the hover rule above, which paints every side the accent. */
 .fc-kind { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
 .fc-card[data-cue="comment"]:not(.fc-card-detached) { border-left: 3px solid var(--accent); }
 .fc-card[data-cue="change"]:not(.fc-card-detached) { border-left: 3px solid var(--text-muted); }
