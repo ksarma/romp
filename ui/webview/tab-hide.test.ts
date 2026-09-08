@@ -353,13 +353,13 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
   assert.match(flat, /the group's header keeps the dot and the ⚑ flag for its hidden sessions/);
-  assert.match(flat, /the dot red when one of them needs you \(by the feed's rule or its own\), and the header's count says how many are hidden;/, "the count says it (headWords), and the dot reads the feed too (standInPip)");
+  assert.match(flat, /\(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
-  assert.match(flat, /While the group is open, that count, the dot and the flag open this view without folding the group, so a hidden session is one click from the strip; on a folded header the flag opens the group, as before\./, "the non-folding door");
-  assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden and its group folded or open as it was\./);
+  assert.match(flat, /While the group is open, the count, the dot and the flag each open this view without folding the group, so a hidden session is one click away from the strip; on a folded header the flag opens the group, as before\./, "the non-folding door");
+  assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
-  assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section when the section is folded \(a hidden session's does not; see below\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1)");
+  assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section if the section is folded \(a hidden session's section stays as it was; see the next paragraph\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1)");
   assert.ok(!para.includes("—"), "no em dash in the new guide text");
   assert.ok(!/fleet/i.test(para));
   const ref = REF.slice(REF.indexOf("### The tab strip's per-browser choices"), REF.indexOf("### Model and effort, from the statusline or a typed command")).replace(/\s+/g, " ");

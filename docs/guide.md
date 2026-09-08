@@ -141,8 +141,8 @@ went quiet shows the word with no dot: the dot follows the session's own state, 
 the feed. What it is doing now comes from its current task, else from the headline of
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
-its formatting; click one to open that session, which also opens its section when the section is
-folded (a hidden session's does not; see below). The rows update as
+its formatting; click one to open that session, which also opens its section if the section is
+folded (a hidden session's section stays as it was; see the next paragraph). The rows update as
 the sessions work and change only when something about a session changes; the **needs you** word
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
@@ -155,17 +155,17 @@ once the session is hidden. Hiding a session takes its tab off the strip while i
 and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
 **Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
 open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
-hiding: the group's header keeps the dot and the ⚑ flag for its hidden sessions, the dot red when
-one of them needs you (by the feed's rule or its own), and the header's count says how many are
-hidden; when a hidden session needs you the fold's head says so in red before you open it, and
-its row says **needs you**. While the group is open, that count, the dot and the flag open this
-view without folding the group, so a hidden session is one click from the strip; on a folded
-header the flag opens the group, as before. Clicking a hidden session's row shows its transcript,
-with the header standing in for the tab, and leaves it hidden and its group folded or open as it
-was. A session set to **Show when folded** stays hidden while it is hidden: the hide wins, and the
-setting resumes when you show it again. A hidden session keeps the setting when its group is
-renamed, and shows again wherever it lands when it leaves the group. Like the sections, hiding is
-per browser and for the desktop layout.
+hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
+when one of them needs you), and its count says how many are hidden. When a hidden session needs
+you, the fold's head says so in red before you open it, and its row says **needs you**. While the
+group is open, the count, the dot and the flag each open this view without folding the group, so a
+hidden session is one click away from the strip; on a folded header the flag opens the group, as
+before. Clicking a hidden session's row shows its transcript, with the header standing in for the
+tab, and leaves it hidden, its group folded or open as it was. A session set to **Show when
+folded** stays hidden while it is hidden: the hide wins, and the setting resumes when you show it
+again. A hidden session keeps the setting when its group is renamed, and shows again wherever it
+lands when it leaves the group. Like the sections, hiding is per browser and for the desktop
+layout.
 
 ### The feed
 
