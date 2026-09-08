@@ -35,3 +35,6 @@ must live in the second file.
   lives in a browser.
 - A later change to the storage format is a change to files sitting in users' projects, and to
   three editors at once; it should come with a version bump under the format's own gating rule.
+- Under that rule the sidecar now carries two additive fields, `target` (a region) and `anchorAt`
+  (the offset at which a passage comment's anchor was located; the anchors follow-on, 2026-09-07);
+  both are romp-only, ignored by older readers, and written back whole by the other editors.

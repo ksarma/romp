@@ -4122,7 +4122,9 @@ body.filebrowse-open { overflow: hidden; }
   border-left: 1px dashed var(--text-faint); }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
-   wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet
+   wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts
+   copyUnsure: the passage recurs and the stored position names none of the copies); the composer's pending target
+   wears the accent. Adapted from the Obsidian host's stylesheet
    with romp's tokens in place of its palette. Each highlight is a <mark>, and the UA sheet gives a mark its own ink
    (`mark { color: MarkText }`, black in every engine) — a declaration on the element, so it beats whatever the
    passage inherits; without `color: inherit` the passage's glyphs went black over the wash, and a code token or a
