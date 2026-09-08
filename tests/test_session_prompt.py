@@ -61,7 +61,7 @@ class SessionPrompt(unittest.TestCase):
     def test_a_look_at_a_file_goes_through_the_tools_file_argument(self):
         # The todo-file follow-on (2026-09-07): a session that wants the user to look at a file
         # passes the file's absolute path as add_user_todo's `file` argument — the structured
-        # field the request shows and the user's comments on that file answer — rather than only
+        # field the todo shows and the user's comments on that file answer — rather than only
         # naming the path in the detail (the detail may still describe it). The sentence stays in
         # Working style, conditional on the tool (the User todos switch gates it), and speaks as
         # the person: no romp nouns, nothing the agent cannot see.
