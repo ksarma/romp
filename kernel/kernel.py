@@ -45521,9 +45521,14 @@ window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='usage
 
 # The bottom bar's API health cell (the user 2026-09-07): one dot and one word beside the spend cell,
 # painted from the kernel's apiHealth shell push (_api_health_frame), the reading on hover, the detail
-# with its actions pinned on click (or Enter / Space: the cell is a keyboard button). It renders ONLY from
-# the last pushed frame, no fetch, no timer: the frame moves on events, and the cell repaints only when its
-# state or text changed, so the ready re-send of an identical frame cannot pulse it. The detail card is
+# with its actions pinned on click (or Enter / Space: the cell is a keyboard button). The cell and the
+# frame's reading render ONLY from the last pushed frame, no fetch, no timer: the frame moves on events, and
+# the cell repaints only when its state or text changed, so the ready re-send of an identical frame cannot
+# pulse it. The hover's History section (the user 2026-09-08, who wanted the cell's hover to carry some
+# history the way the spend hover does) is the ONE read: GET /api-health, the designed signal
+# (docs/reference.md "The API-health signal"), fetched when the hover or the detail opens and again when a
+# frame lands on an open one. The signal derives its state at read time by design, so the read is the
+# observation; the frame stays byte-identical and its dedupe untouched. The detail card is
 # built in the usage tip's grammar and shares its skin (#ah-tip sits beside #ru-tip in every selector) and
 # its backdrop (#ru-back, one modal at a time). Web rail only in v1; the VS Code strip twin (strip.ts
 # apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section (no rail on the
@@ -45542,8 +45547,22 @@ if(!back){back=document.createElement('div');back.id='ru-back';document.body.app
 // button. lastX: where the hover anchored, so a re-anchor keeps its place. focusBack: where focus returns when the
 // detail closes.
 var LAST=null,pinned=false,held=false,dirty=false,pending=null,pendSeq=null,hint='',lastX=null,focusBack=null;
+// HIST: the last /api-health answer, {error} for a failed read, null before the first; histSeq keys the paint to the
+// newest read so an older answer landing last is dropped. skipFocus: the dialog's close refocuses the cell, and that
+// focus event must not pop the hover. No timer anywhere: the show is the event.
+var HIST=null,histSeq=0,skipFocus=false;
+var RESTART_WHY='kernel restarted: the event ring is empty';   // sdk_backend.API_HEALTH_RESTART_WHY: the row the boot files
+var HIST_ROWS=6;
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function hm(ep){return new Date(ep*1000).toTimeString().slice(0,5);}
+function hms(ep){return new Date(ep*1000).toTimeString().slice(0,8);}
+// a stamp from another day carries its date (a quiet tail can span days): '09-07 14:02'
+function hmd(ep){var d=new Date(ep*1000),n=new Date();if(d.toDateString()===n.toDateString())return hm(ep);
+return ('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+hm(ep);}
+function dur(s){s=Math.max(0,Math.round(s));if(s<60)return s+' s';var m=Math.round(s/60);if(m<60)return m+' min';
+var h=Math.floor(m/60);m-=h*60;if(h<24)return h+' h'+(m?' '+m+' min':'');var d=Math.floor(h/24);h-=d*24;return d+' d'+(h?' '+h+' h':'');}
+function pct(r){return (r==null?0:Math.round(r*100))+'%';}
+function pl(n,w){n=n||0;return n+' '+w+(n===1?'':'s');}
 // The plain-words pause reasons and the ok line: the kernel's `text` is the headline, these say what it means.
 var PAUSE={limit:'Auto-retry and the judges are paused until your usage limit resets.',
 spend:'Auto-retry and the judges are paused: you have reached the monthly spend limit. Raise it at claude.ai/settings/usage.',
@@ -45565,6 +45584,53 @@ return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=butto
 +(bg?'<i class=ah-sw style="background:'+bg+'"></i><span class=ah-nm style="color:'+bg+'">':'<i class=ah-sw></i><span class=ah-nm>')+esc(r.name)+'</span>'
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
+// ── History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
+// cookie; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
+// place of the rows: never stale numbers, never silence. Painted through the same held / dirty gate as a frame.
+// fresh=true (a show) drops the last answer first, so a hover never paints an earlier hover's numbers while its
+// own read is in flight; the open and a frame on an open card re-read behind the stamped answer they already show.
+function load(fresh){var n=++histSeq;if(fresh)HIST=null;
+fetch('/api-health',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+.then(function(d){if(n!==histSeq)return;HIST=(d&&d.buckets)?d:{error:'malformed answer'};
+if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();},
+function(e){if(n!==histSeq)return;HIST={error:String((e&&e.message)||e)};
+if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();});}
+// a bucket's name for the card: its model family, plus its auth label when another bucket shares the family
+function bname(d,key){var b=(d.buckets||{})[key]||{},fam=b.family||key.split('|')[1]||key,dup=false;
+Object.keys(d.buckets||{}).forEach(function(k){if(k!==key&&((d.buckets[k]||{}).family||'')===fam)dup=true;});
+return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}
+// one window row in the spend hover's grammar: the label (with its caveat when the window outreaches the kernel's
+// uptime, the way the rolling month says 'complete since'), then the figures
+function winRow(w,c,up){var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);
+var v=(!c||!c.requests)?'no attempts':(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retrying');
+return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>';}
+// the newest HIST_ROWS transitions, newest first: the time, the state entered (with its bucket when there are
+// several), and how long it held (until the same bucket's next transition; 'so far' for the current one). A row the
+// boot filed says so; where the tail crosses this kernel's bootAt and the newer row is not such a row (the bucket
+// was already unknown at shutdown, so the boot filed nothing), a divider names the restart. Never hidden.
+function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
+var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,out='',crossed=false,prevRestart=false,shown=0;
+for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY;
+if(!crossed&&typeof boot==='number'&&r.t<boot){crossed=true;
+if(!prevRestart){out+='<div class="ru-tip-row ah-hrow ah-boot"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';shown++;if(shown>=HIST_ROWS)break;}}
+var end=now;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;break;}
+var word=(multi?bname(d,r.bucket)+' ':'')+r.to+(restart?' · kernel restarted':'');
+out+='<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+hmd(r.t)+'</span><span class=ah-hword>'+esc(word)+'</span><span class=ru-tip-v>'+dur(end-r.t)+(end===now?' so far':'')+'</span></div>';
+prevRestart=restart;shown++;}
+return out;}
+function histHTML(){var h='<div class="ru-tip-win ah-hist"><div class=ru-tip-name><span>History</span>'
++((HIST&&!HIST.error&&typeof HIST.asOf==='number')?'<span class=ru-tip-reset>as of '+hms(HIST.asOf)+'</span>':'')+'</div>';
+if(!HIST)return h+'<div class="rl-dots ah-wait"><i></i><i></i><i></i></div></div>';
+if(HIST.error)return h+'<div class="ah-line ah-err">Could not read the API history: '+esc(HIST.error)+'</div></div>';
+var d=HIST,ov=d.overall||{},key=ov.worstBucket,b=key?(d.buckets||{})[key]:null,nb=Object.keys(d.buckets||{}).length,st=ov.state||'unknown';
+h+='<div class="ru-tip-row ah-head"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'
++((nb>1&&b)?'<span class=ah-hsub>'+esc(bname(d,key))+' · worst of '+nb+' buckets</span>':'')
++((b&&b.stateSince)?'<span class=ah-since>since '+hmd(b.stateSince)+'</span>':'')+'</div>';
+if(b&&b.why)h+='<div class="ah-line ru-tip-reset">'+esc(b.why)+'</div>';
+if(!b)h+='<div class=ah-line>No API traffic seen'+(typeof d.bootAt==='number'?' since the kernel started at '+hmd(d.bootAt):' yet')+'.</div>';
+else ((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});
+var tr=transRows(d);if(tr)h+='<div class="ru-tip-name ah-hname"><span>State changes</span></div>'+tr;
+return h+'</div>';}
 // full=false is the HOVER: the same reading with no controls. The hover sits under pointer-events:none and hides
 // on mouseleave, so a button there could not be honored; the click is where the actions live.
 function html(m,full){var h='<div class=ru-tip-win><div class=ru-tip-name><span>API · this machine</span></div>'
@@ -45577,6 +45643,7 @@ h+='</div>';
 var rows=m.sessions||[];
 if(rows.length){h+='<div class=ru-tip-win><div class=ru-tip-name><span>Sessions waiting</span></div>';
 rows.forEach(function(r){h+=rowHTML(r,full);});h+='</div>';}
+h+=histHTML();
 if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 tmux session is seen through its transcript only':m.tmux+' tmux sessions are seen through their transcripts only')
 +', so a retry in progress there shows only when it fails or recovers.</div>';
 if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span><span class=ah-link role=button tabindex=0 data-act=log>Log</span></div>';
@@ -45594,10 +45661,13 @@ tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();
 if(key!==null){var n=null,all=tip.querySelectorAll('[data-act]');for(var i=0;i<all.length;i++)if(focusKey(all[i])===key){n=all[i];break;}
 try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}}}
 function show(ev){if(!LAST)return;lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;
-tip.classList.remove('ru-modal');tip.style.display='block';render();}
-function close(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
+tip.classList.remove('ru-modal');tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}
+function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}
+function close(){hide();tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
 window.__rompApiClose=null;if(back.onclick===close)back.onclick=null;
-var fb=focusBack;focusBack=null;try{(fb&&fb.focus?fb:el).focus();}catch(e){}}
+// the refocus fires the cell's focus event, which would pop the hover right after Escape: skipFocus covers that one
+// call (the handler runs synchronously inside .focus(), so the flag is reset as soon as the call returns)
+var fb=focusBack;focusBack=null;skipFocus=true;try{(fb&&fb.focus?fb:el).focus();}catch(e){}skipFocus=false;}
 // A click PINS the detail as a centered modal over the dimmed dashboard (the usage modal's own backdrop and
 // pattern); Escape lands via _LANDING_ESC_JS (shell AND pane documents), the backdrop tap closes too. An open
 // usage modal is closed FIRST, explicitly: the two share #ru-back, and its one handler must belong to one modal.
@@ -45605,10 +45675,14 @@ var fb=focusBack;focusBack=null;try{(fb&&fb.focus?fb:el).focus();}catch(e){}}
 function open(){if(!LAST)return;try{window.__rompUsageClose&&window.__rompUsageClose();}catch(e){}
 focusBack=document.activeElement;pinned=true;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';
 tip.style.display='block';render();back.classList.add('on');
-window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}}
+window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}load();}
 // The listeners sit on the STABLE #rail-api cell; __rompApiHealth writes its children, never the cell.
 el.addEventListener('mouseenter',function(ev){if(!pinned)show(ev);});
-el.addEventListener('mouseleave',function(){if(!pinned)tip.style.display='none';});
+el.addEventListener('mouseleave',function(){if(!pinned)hide();});
+// keyboard focus shows the hover as the pointer does (the tooltip pattern) and blur hides it; a pinned detail is
+// unmoved, and a hover the pointer already opened is left where it anchored
+el.addEventListener('focus',function(){if(skipFocus||pinned||tip.style.display==='block')return;show(null);});
+el.addEventListener('blur',function(){if(!pinned)hide();});
 el.addEventListener('click',function(){if(pinned)close();else open();});
 el.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else open();}});
 // Click-safe across a frame (ui/CLAUDE.md): a frame that lands while a pointer is DOWN over the detail is painted
@@ -45676,6 +45750,7 @@ if(pending!==null&&(m.seq==null||m.seq!==pendSeq))pending=null;
 if(el.hidden)el.hidden=false;   // the first frame reveals the cell (an older kernel never sends one: nothing shows)
 if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);txt.textContent=m.text;el.setAttribute('aria-label','API '+m.text);}
 if(tip.style.display!=='block')return;   // an open detail re-renders from the new frame, nothing else does
+load();   // and re-reads the history: the world changed
 if(held){dirty=true;return;}render();};
 })();
 """
@@ -47611,6 +47686,12 @@ def _landing():
             # a failed send's reason, under the button it restored; the hover's rows carry no action (.ah-ro),
             # so no pointer and no hover wash; the pinned detail takes focus as a dialog without a ring on the card
             ".ah-hint{margin-top:4px;opacity:.75;max-width:340px}"
+            # the History section (the user 2026-09-08): the signal's state dot in status hexes (never the accent),
+            # the transition rows' state word, the restart divider in italics, a failed read in the API-error red,
+            # and the loader's dots (.rl-dots, _LOADER_CSS) while the first answer is in flight
+            ".ah-dot[data-state=thrashing]{background:#e5484d;opacity:1}.ah-dot[data-state=recovering]{background:#e67e22;opacity:.7}"
+            ".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}"
+            ".ah-hname{margin-top:6px}.ah-err{color:#e5484d}.ah-wait{margin:5px 0 2px}"
             ".ah-row.ah-ro{cursor:default}.ah-row.ah-ro:hover{background:transparent}"
             "#ah-tip:focus{outline:none}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/

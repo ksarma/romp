@@ -453,8 +453,12 @@ class Detail(unittest.TestCase):
         self.assertIn("seen through their transcripts only", self.JS)
         self.assertIn(", so a retry in progress there shows only when it fails or recovers.", self.JS)
 
-    def test_the_detail_renders_from_the_last_frame_only(self):
-        self.assertNotIn("fetch(", self.JS)
+    def test_the_detail_renders_from_the_last_frame_and_the_history_is_the_one_read(self):
+        # the cell and the frame's reading render from the last frame only; the History section (2026-09-08) is the
+        # one fetch, GET /api-health at show time, and there is still no timer anywhere (test_api_health_hover.py
+        # holds the section's own pins)
+        self.assertEqual(self.JS.count("fetch("), 1, "one read: the history's")
+        self.assertIn("fetch('/api-health',{cache:'no-store'})", self.JS)
         self.assertNotIn("setInterval", self.JS)
         self.assertNotIn("setTimeout", self.JS)
         self.assertIn("window.__rompApiHealth=function(m){", self.JS)

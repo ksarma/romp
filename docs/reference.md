@@ -1942,6 +1942,25 @@ unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
 and engages the `spend` pause in the same cycle.
 
+The cell's hover and its click detail carry a **History** section read from
+this signal: the shell fetches `GET /api-health` when the hover or the detail
+opens, and again when a frame lands on an open one, authenticating with the
+dashboard's own cookie the way its other reads do. Nothing polls; the frame
+carries no history and is unchanged. The section shows `overall.state` with
+the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
+count when there is more than one), one row per window from `config.windows`
+(`requests`, `rate429` and `rate5xx` as percentages, `gaveUp`,
+`sessionsRetrying`; a window whose `complete` is false says how long the
+kernel has been up), the newest six rows of `transitions` newest first with
+the state entered and how long it held (until the same bucket's next
+transition, `so far` for the current one), and the payload's `asOf`. A row
+the boot filed (`<state> -> unknown`, its `why` the restart reason) reads
+`kernel restarted`; where the tail crosses `bootAt` without such a row (the
+bucket was already `unknown` when the previous kernel stopped, so the boot
+filed nothing), a `kernel restarted` divider is inserted. A read that fails
+(a non-2xx, or no answer) shows one line saying so in place of the rows,
+never the previous numbers.
+
 ## Kernel performance counters
 
 `GET /perf` returns one JSON document of counters the kernel keeps at all
