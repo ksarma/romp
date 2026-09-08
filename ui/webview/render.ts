@@ -1330,8 +1330,18 @@ document.addEventListener("click", (e) => {
   // is right: a press on SVG text selects it.
   if (!(a as HTMLElement).draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
   let href = linkHref(a);                          // as written; a scheme-less one is replaced below by the address the browser would follow
-  // The rendered body the anchor sits in (`.md`: every markdown body the chat renders, a reply, a user bubble, a notice, a
-  // report), or null for an anchor the page built itself. The two branches below read a MESSAGE's link the way its author's
+  // The rendered body the anchor sits in, or null for an anchor the page built itself. The bodies: `.md`, which every body
+  // md() and userMd() fill wears (a reply, a user bubble, a notice, a report), and the one body md() fills that does not, a
+  // comment thread's agent reply in the popover's msgs projection (commentMsgEl: `div.cmt-msg.agent`, the render a thread
+  // shows until its events arrive, and the whole render under a kernel that sends none; the popover stands on document.body,
+  // so no `.md` is above it either). Read as `.md` alone, a reply's own `#` link there did nothing (the prefixed id, the
+  // browser's bare lookup; the `#` branch below) and a scheme-less link there navigated the chat document in the same frame,
+  // the two defects the branches close (the 2026-09-08 review of plans/markdown-viewer.md Slice 1, round 4). The class is
+  // named here rather than `.md` added to the reply: `.md` is also the chat's typography and the comment highlight's host
+  // rule, and the popover's reply has its own dress. Spelled inline, not as a constant: file-view-links-browser.test.ts
+  // lifts this handler's source into another page and defines every free name it uses; a string is none.
+  // md-sanitize-chat-links-browser.test.ts clicks both links in the popover; chat-link-open.test.ts pins the class against
+  // commentMsgEl. The two branches below read a MESSAGE's link the way its author's
   // HTML has to be read; an anchor the page built asks for the browser's default action and gets it: the lightbox's download
   // control (preview.ts), the transient `<a download>` the viewer's and the file browser's Download controls click
   // (file-view.ts, file-browse.ts startDownload), each a scheme-less `/file?...` the browser's own download UI answers. The
@@ -1341,7 +1351,7 @@ document.addEventListener("click", (e) => {
   // carries the page's data-act (the sanitizer keeps no data-* attribute), so the body test tells them apart, and an anchor
   // that does carry a data-act is the page's whatever body it stands in (its action is the body delegate's, actions.ts).
   // md-sanitize-chat-schemeless-browser.test.ts presses each control over the real bundle; chat-link-open.test.ts pins the test.
-  const msg = a.hasAttribute("data-act") ? null : a.closest(".md");
+  const msg = a.hasAttribute("data-act") ? null : a.closest(".md, .cmt-msg.agent");
   if (href.startsWith("#")) {
     // An in-page anchor in a message (a footnote's back link, `[section](#install)` over the reply's own `<a name>`): the
     // sanitizer prefixes every author id and name user-content- (md-sanitize.ts, GitHub's rule) and leaves the href as

@@ -97,10 +97,22 @@ test("a `#` href in a message is resolved under the user-content- prefix, in the
   assert.match(branch, /if \(browserTabClick\(e, IS_MAC\)\) return;/, "a click the browser answers with a tab or window keeps the browser's; Super-click on Linux and Windows is a plain click to the browser and is resolved (the round-2 review; md-sanitize-chat-modified-click-browser.test.ts clicks each key)");
   assert.doesNotMatch(branch, /e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey/, "no any-modifier read in the fragment branch: Meta off macOS is not a tab gesture");
   // the message-body scope is read ONCE, ahead of both branches (the `#` resolver and the scheme-less arm below share it): the
-  // `.md` body the anchor stands in, or null for an anchor the page built or one carrying the page's data-act (the body
-  // delegate's, actions.ts; the sanitizer keeps no data-* attribute, so no author anchor has one)
-  assert.match(HANDLER, /let href = linkHref\(a\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const msg = a\.hasAttribute\("data-act"\) \? null : a\.closest\("\.md"\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(href\.startsWith\("#"\)\) \{/,
+  // message body the anchor stands in (`.md`, or the popover's `.cmt-msg.agent`), or null for an anchor the page built or one
+  // carrying the page's data-act (the body delegate's, actions.ts; the sanitizer keeps no data-* attribute, so no author anchor
+  // has one)
+  assert.match(HANDLER, /let href = linkHref\(a\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const msg = a\.hasAttribute\("data-act"\) \? null : a\.closest\("\.md, \.cmt-msg\.agent"\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(href\.startsWith\("#"\)\) \{/,
     "the body scope is read right after the href and before the fragment branch, and a data-act anchor is never a message's");
+  // The scope names every body md() fills: `.md`, which every other consumer wears, and the popover's `.cmt-msg.agent`, a comment
+  // thread's agent reply in the msgs projection (commentMsgEl), which wears no `.md`. Read as `.md` alone, the delegate left a
+  // reply's own `#` link there to the browser's bare lookup (nothing, since the id is prefixed) and a scheme-less link there to
+  // the default action (the chat document navigated in the same frame): the round-4 review of Slice 1.
+  // md-sanitize-chat-links-browser.test.ts clicks both in the popover over the real bundle.
+  // Spelled inline in the handler, not as a constant: file-view-links-browser.test.ts lifts the handler's source into another
+  // page and defines every free name it uses, and a string is none.
+  assert.doesNotMatch(HANDLER, /closest\("\.md"\)/, "the handler reads both bodies, never .md alone");
+  assert.doesNotMatch(RENDER, /MSG_BODY_SEL/, "no constant for the lifted handler to miss");
+  assert.match(RENDER, /function commentMsgEl\(who: "you" \| "agent", text: string\): HTMLElement \{\n\s*const n = el\("div", "cmt-msg " \+ who\);\n\s*if \(who === "agent"\) n\.innerHTML = md\(text\);/,
+    "the scope's second class is the one md() body that wears no .md: commentMsgEl's agent reply, `cmt-msg agent`");
   assert.match(branch, /if \(browserTabClick\(e, IS_MAC\)\) return;\n\s*if \(!msg\) return;/, "a link outside a message body (the file viewer's own section links) is not this handler's");
   assert.doesNotMatch(branch, /closest\(/, "the fragment branch reads the scope computed above, not one of its own");
   assert.match(branch, /let frag = href\.slice\(1\);\n\s*try \{ frag = decodeURIComponent\(frag\); \} catch \{[^}]*\}/, "the fragment is decoded, a malformed escape kept as written (the viewer's scrollToFragment rule)");

@@ -135,11 +135,13 @@ built departs from the text above, and why:
    fetch the URL the moment the note renders, with no click and no gate, and decision 8's `img[src]` gate would
    never see it; DOMPurify's html list keeps the attribute, GitHub's allowlist does not. `bgcolor` fetches nothing
    and stays. `usemap`, with the `map` and `area` tags (added between review rounds 1 and 2): an image map is
-   dropped whole, as GitHub drops it. The prefix rule renames `<map name="nav">` to `user-content-nav` and leaves
-   `usemap="#nav"` as written, so no map an author writes could bind to its picture (the round-1 fixtures had
-   spelled the prefix by hand, which is how the promise survived a review); and once #347 was folded, the file
-   kind's links were dressed by `linkMarkdownAnchors`, a walk over `a`, so a surviving `<area href>` in a file
-   document navigated the pane again (the fold's own browser leg caught it). `LINK_SEL` (item 8) keeps naming
+   dropped whole, as GitHub drops it. Review round 1 had kept `map` and `area` on the promise that every link
+   element the profile admits was stamped or delegated (item 8), but the prefix rule renames `<map name="nav">` to
+   `user-content-nav` and leaves `usemap="#nav"` as written, so no map an author writes could bind to its picture
+   (round 1's fixtures had spelled the prefix by hand, which is how the promise survived that review); and once #347
+   was folded, the file kind's links were dressed by `linkMarkdownAnchors`, a walk over `a`, so a surviving
+   `<area href>` in a file document navigated the pane again (the fold's own browser leg caught it). `LINK_SEL`
+   (item 8) keeps naming
    `area[href]` as a second guard. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video poster>`,
    `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a
@@ -177,15 +179,20 @@ built departs from the text above, and why:
    not ending in `%`) takes `height: auto` so it keeps its ratio as the cap shrinks it; a percentage-width element
    the cap never shrinks keeps the author's explicit height (round 1's unconditional `height: auto` grew a
    full-width `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to
-   Chromium's default 150, the review's recheck). A video's ratio is not its attributes' by construction, as an
+   Chromium's default 150, measured in the review of round 1's fixes). A video's ratio is not its attributes' by
+   construction, as an
    svg's and a canvas's are: the browser maps `width="640" height="360"` to `aspect-ratio: auto 640 / 360`, and
    `auto` defers to the media's natural ratio once a poster or the frames are there, so `height: auto` alone laid a
    640 by 360 clip with a square poster out 640 by 640 in a pane that shrank nothing, and the box jumped to the
    frames' shape at play (review round 2). `mdBlock` now writes the attributes' ratio as a pixel-sized video's inline
    `aspect-ratio` (`keepVideoShape`, file-view.ts; a percentage in either attribute is left alone, as the sheet's rule
    leaves a percentage width), so the box is the author's shape capped or not, and the sheet's rule stays the one that
-   lets it shrink; md-sanitize-wide-media-browser.test.ts holds it with a square-poster fixture at 640x360 and the same
-   poster on the capped 1500x40 video. Both rules are written inside `:where()` at zero class
+   lets it shrink; md-sanitize-wide-media-browser.test.ts holds it with a square-poster fixture at 640x360, the same
+   clip spelled `640.5` and `640px` (the other spellings HTML's dimension rules and the browser's own mapping read as a
+   length; review round 4), the same poster on the capped 1500x40 video, and a percentage-width clip that gets no
+   ratio written; a padded length and a padded percentage pin that the sanitizer trims every attribute value (DOMPurify,
+   all but `value`), so neither the sheet's `[width$="%"]` test nor `mdBlock`'s parse ever meets whitespace. Both
+   rules are written inside `:where()` at zero class
    specificity, so KaTeX's own `.katex svg` rule wins once math renders in a note (its stretchy glyphs carry
    `width="400em"`, pixel-like to the attribute test), and the direct-child measure rule covers them too. A
    no-viewBox svg wider than the column is cropped rather than scrolled to, the one case where the base's sideways
@@ -221,11 +228,23 @@ built departs from the text above, and why:
    fixed value closes it: the default 1,000 allows 1,000 uses of a body under the cap, and a value low enough to matter
    breaks ordinary formulas, whose `\,`, `\dots` and `\boxed` are macros that count (100 `\boxed` fail at 50). math.ts
    computes it per formula (`maxExpandFor`: `MATH_EXPANSION_BUDGET_CHARS`, the cap's 20,000, divided by the longest
-   macro body the formula defines, KaTeX's default when it defines none), since each expansion pushes at most that
-   body, so the expanded formula is at most two caps' worth (0.9 s for 40,000 flat characters in node); a body that
-   uses one of its parameters more than once (`\def\a#1{#1#1}`, 512 copies of the argument nine levels deep) is the
-   one amplification no count bounds and is shown as source before KaTeX sees it (`macroBounds`, which reads the
-   group after a defining command wherever it starts, so `\csname` is no way round it). The cap was per formula, and a
+   macro body the formula defines, never above KaTeX's default of 1,000, which a body of 20 characters or fewer
+   leaves in place and a formula that defines no macro keeps), since each expansion pushes at most that body, so the
+   expanded formula is at most two caps' worth (0.9 s for 40,000 flat characters in node); a body that
+   uses one of its parameters more than once (`\def\a#1{#1#1}`, 512 copies of the argument nine levels deep) is one
+   amplification no count bounds and is shown as source before KaTeX sees it (`macroBounds`, which reads the
+   group after a defining command wherever it starts, so `\csname` is no way round it). The other is a body defined
+   with `\edef` or `\xdef` (review round 4): KaTeX stores those EXPANDED, charging the stored body's length once at
+   the definition and one expansion per later use whatever that length, so the count over the bodies as written
+   bounds nothing (`\def\a{<20 characters>}\edef\b{<10 uses of \a>}` and 788 uses of `\b`, 1,635 characters of TeX
+   under every bound here, was 998 expansions, 157,600 characters of formula and 31 s of freeze over the real
+   pipeline); a formula that defines a macro with either is shown as source before KaTeX sees it (`macroBounds`'s
+   `expandedBody`), as the argument repeat is, since no ordinary notation needs an expanded-at-definition macro. The
+   count is an over-approximation in one direction, recorded and left as is: once a formula defines a body longer than
+   20 characters every expansion is priced at that body, the built-in macros' included (`\,` costs 3, `\dots` 2,
+   `\boxed` 1), so a 200-character body used once beside 34 `\,` is refused with KaTeX's own error where plain KaTeX
+   renders it (review round 4, measured); no exact price exists, since KaTeX counts built-ins and defined macros
+   alike. The cap was per formula, and a
    message of twenty formulas just under it handed KaTeX 400,000 characters and blocked the page for 8 to 15 s (the
    render, then the layout of 1,200,000 elements): `MATH_TEX_BUDGET_CHARS` (100,000, five caps, several hundred
    ordinary display equations, more than a long paper's mathematics) is a running total per `renderMathPlaceholders`
@@ -233,14 +252,26 @@ built departs from the text above, and why:
    one that still fits renders. `maxSize` (`MATH_MAX_SIZE_EM`, 50, about the chat column) caps the sizes a formula asks
    for: KaTeX's default is Infinity, and `\rule{5000em}{5000em}` laid a 78,650 px square in the transcript, `a\kern{50000em}b`
    a line 786,520 px wide beyond the page's `overflow-x: hidden`; ordinary layout never nears it and renders byte for
-   byte as before (md-sanitize-katex-browser.test.ts holds the identity with the option in place). The source fallback
+   byte as before (md-sanitize-katex-browser.test.ts holds the identity with the option in place). The cap is on each
+   size a formula asks for, not on their sum (review round 4, measured): a row of a thousand capped rules is clipped by
+   the column as any long inline formula is and the transcript keeps its shape, while a column of a thousand
+   `\rule{1px}{49em}` rows in a display array (18,051 characters, under the length cap) is some 776,000 px tall where a
+   thousand plain rows are 19,000 px, identical on main; the two length caps bound it, and a bound on the rendered
+   box's height would be a new mechanism, left for the coordinator. The source fallback
    was indistinguishable from a code span the author wrote (every computed property equal; the title is the one
    marker, and a phone has no hover): its code element now wears `md-math-src` (`MATH_SOURCE_CLASS`) and one rule,
    byte-equal in styles.css and feed.css and pinned by fileview-parity.test.ts, dresses it in the dim tier with a
    dotted underline, tokens only; render.ts's highlighter leaves the element alone (auto-detection over 20,000
-   characters of TeX cost 250 ms and coloured it as a guessed grammar). The registry's loop stays as it was, with no
-   per-pass isolation: both refuters of that finding showed a per-pass try/catch fails OPEN for the kind of pass a later
-   slice may add (a gate that rewrites off-host figure sources and throws midway would hand back a half-rewritten body
+   characters of TeX cost 250 ms and coloured it as a guessed grammar). In the user's own bubble that rule lost to
+   the bubble's code rule (`.user-bubble :not(pre) > code`, which outranks it), so a formula the user typed came back
+   white, as a code span they wrote, under a `var(--dim)` underline near 1.7:1 on the fill (review round 4); a second
+   rule in styles.css alone (the bubble's rules live in no other sheet) gives the code SPAN the bubble's dim tier, the
+   blockquote's white tint, for its text and its underline, and leaves the block shape to the page-coloured well, where
+   `var(--dim)` reads as it does in `.md` (md-sanitize-katex-browser.test.ts lays both shapes out under the whole sheet
+   in both themes). The registry's loop stays as it was, with no
+   per-pass isolation: review round 3 asked for a try/catch around each pass, and both reviewers who checked that
+   finding showed it fails OPEN for the kind of pass a later slice may add (a gate that rewrites off-host figure
+   sources and throws midway would hand back a half-rewritten body
    that looks fine while the rest fetches), where today a throw falls to the whole-message source view, visible and
    closed; per-element resilience is each pass's own contract, as the math fill's per-formula belt is. The fill is a
    POST-PASS `sanitizeMd` itself runs: md-sanitize.ts keeps a small registry
@@ -248,8 +279,9 @@ built departs from the text above, and why:
    registers `renderMathPlaceholders` at load, so every `sanitizeMd` call in a bundle that carries the grammar
    renders math and a bundle without it (files.js, feed.js) has neither the grammar nor the fill nor KaTeX. Round
    1's first cut had `md()` and `userMd()` call the fill by hand, and the viewer's `mdBlock`, which parses with the
-   same marked singleton inside the chat page, showed a note's formulas as bare TeX where main rendered KaTeX (the
-   recheck's probe; md-sanitize-viewer-math-browser.test.ts opens such a note in both bundles). An author who
+   same marked singleton inside the chat page, showed a note's formulas as bare TeX where main rendered KaTeX (caught
+   by the review of round 1's fixes; md-sanitize-viewer-math-browser.test.ts opens such a note in both bundles). An
+   author who
    hand-writes the placeholder gets only what KaTeX renders from TeX under `trust: false` (no \href, \htmlStyle,
    \includegraphics, \htmlClass). The colour-only rule is unchanged and no class name is special-cased; the svg
    profile now serves a note's own inline SVG, not KaTeX. Slice 4 imports the grammar module into the files and
@@ -294,11 +326,19 @@ built departs from the text above, and why:
    an href the way the default action would, `new URL(href, document.baseURI)` (the browser's own parser drops the
    control and the whitespace and gives `//host` the page's scheme), and opens the RESOLVED address as it opens an
    absolute one: a tab, or the viewer for a same-origin `.md`; an empty href (`[x]()`, which the default action would
-   reload the page for) is inert; a non-web result (VS Code's webview scheme, where every relative href resolves) or a
+   reload the page for) is inert on any click, a Ctrl- or Shift-click included, since the arm owns the click whatever
+   the modifier and the base's tab was a second copy of the dashboard, not a destination the author named; a non-web
+   result (VS Code's webview scheme, where every relative href resolves) or a
    parse failure stays the browser's, as before. md-sanitize-chat-schemeless-browser.test.ts clicks each shape over
    the real bundle. Both branches read a MESSAGE's link only (review round 3): the body scope (`.md`, or null for an
    anchor carrying the page's `data-act`, the body delegate's) is read once ahead of them, and an anchor outside a
-   message body is the browser's. The delegate is document-wide, and the page itself builds scheme-less anchors,
+   message body is the browser's. The scope names one body more than `.md` (review round 4): a comment thread's agent
+   reply in the popover's msgs projection (`div.cmt-msg.agent`, `commentMsgEl`), the one body `md()` fills that wears
+   no `.md` and stands on `document.body` with none above it, where a reply's own `#` link did nothing and a
+   scheme-less link navigated the chat document in the same frame; the class is read there rather than `.md` added to
+   the reply, since `.md` is also the chat's typography and the comment highlight's host rule
+   (md-sanitize-chat-links-browser.test.ts clicks both links in a mounted popover). The delegate is document-wide, and
+   the page itself builds scheme-less anchors,
    `<a href="/file?..." download>`, for its three download controls (the lightbox's control, preview.ts; the viewer's
    Download button and the file browser's download row, a transient anchor each button clicks): the arm as first
    written resolved those too and handed them to `window.open`, a popup where the download was, nothing at all under
@@ -370,6 +410,21 @@ built departs from the text above, and why:
    render.ts), a guard lists any name the lifted opener uses that the prelude lacks, and the chat-host test clicks a
    section link plain and Ctrl-clicked and a query-only link; `md-sanitize-guide.test.ts` pins the guide's link
    clause (the target decides, not the element); `render.ts`'s nav-chord handler reads `IS_MAC` (one platform test).
+   Review round 4: `render-math.test.ts` executes `macroBounds`'s `expandedBody` over every definer (true for `\edef`
+   and `\xdef` alone, `\global\edef` included, `\edefx` not) and KaTeX's cost model behind it (fifty uses of an
+   `\edef` body render 10,000 characters of formula under a count the same shape spelled with `\def` stops at), and
+   pins the expanded-body rule's place among the fill's bounds; `md-sanitize-postpass-browser.test.ts` runs the 788-use
+   `\edef` bomb over the pipeline (source in milliseconds where it froze 31 s) and its budget leg's time bound is a
+   ceiling with the counts as the check; `md-sanitize-katex-browser.test.ts` lays the source fallback out under the
+   whole of styles.css in the user's bubble and the assistant's `.md`, both shapes, both themes;
+   `md-sanitize-chat-links-browser.test.ts` mounts a comment popover's agent reply and clicks its `#` link (the list
+   scrolls, the hash stays) and its root-relative link (opened, the document kept), with `chat-link-open.test.ts`
+   pinning the scope against `commentMsgEl`; `md-sanitize-viewer-links-browser.test.ts` reads what a click did from
+   the Navigation API's `navigate` record and CDP's `Target.targetCreated` instead of nineteen 500 ms sleeps (11.7 s to
+   about 2.3 s); `md-sanitize-wide-media-browser.test.ts` lays the poster clip out in every spelling of a length and
+   pins the sanitizer's trim, with `keepVideoShape` and `pxDimension` module-private (no importer);
+   `file-view-links-browser.test.ts`'s guard reads every import form and every top-level declaration of render.ts (a
+   `let`, a function, a default or package import passed it in silence before).
 
 ### Slice 2: layout follows the pane, reader keeps their place
 

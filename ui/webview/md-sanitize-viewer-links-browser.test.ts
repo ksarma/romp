@@ -26,9 +26,16 @@
 //     production) where the HTML one opened the sibling file, and the dead one opened a tab there and navigated the Files
 //     document in the same frame. mdBlock removes the XLink spelling after the copy now, so a link is read one way by the
 //     browser too; every leg here reads no xlink:href on any anchor, and the two SVG shapes are clicked in both pages.
-// What a click does is awaited as an EVENT, never a sleep: the new tab on the context's `page` event, the defect on the
-// main frame's navigation (the idiom of file-view-links-browser.test.ts); a bounded wait serves only the checks that
-// nothing happened. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// What a click does is read from EVENTS, never a sleep. Every synchronous consequence of a click has happened when
+// page.mouse.click resolves (Chromium answers the input once the renderer has dispatched the click and run the anchor's
+// activation), and both things a link click can start are on record by then: a navigation of this document fires the
+// Navigation API's `navigate` event as the browser starts it (a recorder in both pages keeps the destination), and a new
+// tab, opened by a followed link or by a script, is a target the browser reports (CDP Target.targetCreated) during the
+// window creation the renderer waits on, so the report precedes the click's answer on the same connection (30 of 30 in a
+// probe; playwright's own `page` event fires only once the tab is set up, after the answer in 30 of 30). The checks that
+// nothing happened read those records (clickForNothing), and a tab that must open is awaited on the context's `page` event
+// once its target is on record (clickForTab); an earlier draft slept 500 ms after each of 19 clicks, 9.5 s of an 11.7 s
+// leg. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
 // Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, example.invalid URLs.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -118,10 +125,12 @@ function bundle(): string {
   return text;
 }
 // the Files page as the kernel serves it (_files_page): the chat's styles.css for the viewer's dress, files-pane.css
-// after it for the pane layout, a fake acquireVsCodeApi (the shim's role), then the files bundle
+// after it for the pane layout, a fake acquireVsCodeApi (the shim's role), the navigation recorder (the header above),
+// then the files bundle
 const FILES_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}\n${PANE}</style></head><body class=fileview-pane>
 <div id=files-empty></div>
-<script>window.__posts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};</script>
+<script>window.__posts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};
+window.__navStarts=[];navigation.addEventListener("navigate",function(e){window.__navStarts.push(e.destination.url);});</script>
 <script src=/dist/files.js></script></body></html>`;
 
 /** The chat page's bundle (render.ts hosts the same viewer, for the todo card's path links and a same-origin .md), plus
@@ -140,17 +149,18 @@ function chatBundle(): string {
   return renderJs;
 }
 // the chat page as the web dashboard serves it: the shared skeleton, the chat's sheet, a fake acquireVsCodeApi, window.open
-// recorded instead of opened (what the chat's delegate hands it is the evidence), then the chat bundle
+// recorded instead of opened (what the chat's delegate hands it is the evidence), the navigation recorder, then the chat bundle
 const CHAT_HTML = `<!DOCTYPE html><html lang=en><head><meta charset=utf-8><style>${STYLES}</style></head><body>
 ${chatBody(ATTACH_TITLE_WEB)}
 <script>window.__opens=[];window.open=function(u,t,f){window.__opens.push([u,t,f]);return null;};
-window.acquireVsCodeApi=function(){return{postMessage:function(){}}};</script>
+window.acquireVsCodeApi=function(){return{postMessage:function(){}}};
+window.__navStarts=[];navigation.addEventListener("navigate",function(e){window.__navStarts.push(e.destination.url);});</script>
 <script src=/dist/render.js></script></body></html>`;
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-type Watch = { errors: string[]; navs: string[]; popups: string[]; fileRequests: string[]; docRequests: string[] };
+type Watch = { errors: string[]; navs: string[]; popups: string[]; tabs: string[]; fileRequests: string[]; docRequests: string[] };
 
 /** The note open in the viewer: in the Files page as a FILE document (viewFile, the pane's own route) or as a URL document
  *  (openUrlView), or in the CHAT page as a file document (openFileView, the render bundle). */
@@ -159,8 +169,13 @@ async function inBrowser(t: any, kind: "file" | "url" | "chat", body: (page: any
   let browser: any;
   try { browser = await pw.chromium.launch(); }
   catch (e) { t.skip("no playwright browser on this box: the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
-  const w: Watch = { errors: [], navs: [], popups: [], fileRequests: [], docRequests: [] };
+  const w: Watch = { errors: [], navs: [], popups: [], tabs: [], fileRequests: [], docRequests: [] };
   try {
+    // every page target the browser creates, on record before the click that created it is answered (the header above);
+    // cleared once the note is shown, so it holds the tabs the clicks open
+    const cdp = await browser.newBrowserCDPSession();
+    cdp.on("Target.targetCreated", (e: any) => { if (e.targetInfo.type === "page") w.tabs.push(e.targetInfo.url); });
+    await cdp.send("Target.setDiscoverTargets", { discover: true });
     const onChat = kind === "chat";
     // the page and its bundle, by pathname
     const pages: Record<string, { type: string; body: string }> = onChat
@@ -195,6 +210,7 @@ async function inBrowser(t: any, kind: "file" | "url" | "chat", body: (page: any
     else if (kind === "url") await page.evaluate((u: string) => { (window as any).__rompProbe.openUrlView(u); }, URL_PATH);
     else await page.evaluate(([p, sid]: [string, string]) => { (window as any).__rompProbe.openFileView(p, sid); }, [PATH, SID] as [string, string]);
     await page.waitForSelector("#romp-fileview .fileview-body .fileview-md", { timeout: 10000 });
+    w.tabs.length = 0;
     await body(page, w);
   } finally {
     await browser.close();
@@ -214,31 +230,59 @@ async function centreOf(page: any, sel: string): Promise<{ x: number; y: number 
   return box;
 }
 
-/** Click `sel` with the mouse and wait for what the click DOES, by event: the new tab it opens (the context's `page` event)
- *  or a main-frame navigation of this page (the defect), whichever comes first; neither within 10 s is an inert link.
- *  Returns the tab's URL once it has loaded and closes the tab; the short settle after it is for the checks that follow
- *  (no second tab, no navigation), which can only be bounded. */
-async function clickForTab(page: any, sel: string, name: string): Promise<string> {
+/** The main frame's next navigation, armed before a click: its URL, or null after 10 s (a waiter that loses resolves null
+ *  instead of rejecting unheard). Awaited only when a navigation IS under way (navStarted found the document gone). */
+function armNav(page: any): Promise<string | null> {
+  return page.waitForEvent("framenavigated", { predicate: (f: any) => f === page.mainFrame(), timeout: 10000 }).then((f: any) => f.url() as string, () => null);
+}
+
+/** Where the answered click sent this document, from the page's own record (the `navigate` recorder in both pages; each
+ *  read clears it, so a click reads only its own), or, when the document is already gone before the record can be read,
+ *  from the navigation that replaced it (`navP`). With every route answered from memory a cross-document navigation
+ *  commits before the read reaches the page (8 of 8 in a probe), so that is the usual path for the defect this leg guards
+ *  against, and the record is the path for a same-document one (a hash change). Empty when the click stayed. */
+async function navStarted(page: any, navP: Promise<string | null>): Promise<string[]> {
+  try { return await page.evaluate(() => (window as any).__navStarts.splice(0) as string[]); }
+  catch (e) {
+    const nav = await navP;
+    return [nav ? nav + " (committed before the record could be read)" : "an unknown destination (" + String((e as Error).message).split("\n")[0] + ")"];
+  }
+}
+
+/** Click `sel` with the mouse and wait for the new tab it must open: its target is on record when the click is answered
+ *  (w.tabs), the tab itself arrives on the context's `page` event; a click that started a navigation of this document
+ *  instead (the defect), opened two tabs, or opened nothing fails by name. Returns the tab's URL once it has loaded and
+ *  closes the tab. */
+async function clickForTab(page: any, w: Watch, sel: string, name: string): Promise<string> {
   const at = await centreOf(page, sel);
-  // both waiters armed before the click; the one that loses resolves null at its own timeout instead of rejecting unheard
-  const tabP = page.context().waitForEvent("page", { timeout: 10000 }).then((p: any) => ({ tab: p }), () => null);
-  const navP = page.waitForEvent("framenavigated", { predicate: (f: any) => f === page.mainFrame(), timeout: 10000 }).then((f: any) => ({ nav: f.url() as string }), () => null);
+  const tabs0 = w.tabs.length;
+  // armed before the click; the tab's `page` event comes after the click is answered (playwright sets the tab up first)
+  const tabP = page.context().waitForEvent("page", { timeout: 10000 }).then((p: any) => p, () => null);
+  const navP = armNav(page);
   await page.mouse.click(at.x, at.y);
-  const got: { tab?: any; nav?: string } | null = await Promise.race([tabP, navP]);
-  if (!got) assert.fail(name + ": neither a new tab nor a navigation within 10 s of the click: the link is inert");
-  if (got.nav !== undefined) assert.fail(name + ": the click navigated the Files document in the same frame, to " + got.nav + ", instead of opening a new tab");
-  await got.tab.waitForLoadState();
-  const url: string = got.tab.url();
-  await got.tab.close();
-  await page.waitForTimeout(500);
+  const started = await navStarted(page, navP);
+  assert.deepEqual(started, [], name + ": the click navigated this document in the same frame instead of opening a new tab");
+  const opened = w.tabs.slice(tabs0);
+  if (opened.length === 0) assert.fail(name + ": no new tab and no navigation when the click was answered: the link is inert");
+  assert.equal(opened.length, 1, name + ": one new tab, not " + opened.length + ": " + JSON.stringify(opened));
+  const tab = await tabP;
+  if (!tab) assert.fail(name + ": the tab's target is on record, but no page arrived within 10 s");
+  await tab.waitForLoadState();
+  const url: string = tab.url();
+  await tab.close();
   return url;
 }
 
-/** Click `sel` with the mouse when the click must open nothing and go nowhere: a bounded wait is the only shape that check can take. */
-async function clickForNothing(page: any, sel: string): Promise<void> {
+/** Click `sel` with the mouse when the click must open nothing and go nowhere, and read that from the click's own record
+ *  once it is answered: no navigation of this document started (navStarted), no tab's target was created (w.tabs). */
+async function clickForNothing(page: any, w: Watch, sel: string): Promise<void> {
   const at = await centreOf(page, sel);
+  const tabs0 = w.tabs.length;
+  const navP = armNav(page);
   await page.mouse.click(at.x, at.y);
-  await page.waitForTimeout(500);
+  const started = await navStarted(page, navP);
+  assert.deepEqual(started, [], sel + ": the click started a navigation of this document");
+  assert.deepEqual(w.tabs.slice(tabs0), [], sel + ": the click opened a tab");
 }
 
 type LinkFacts = { tag: string; ns: string | null; href: string | null; xlink: string | null; target: string | null; rel: string | null; act: string | null; path: string | null; frag: string | null; cls: string; title: string | null };
@@ -272,7 +316,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
     // 1. an absolute href of every surviving shape: a click opens a new tab at the link's URL and the Files document stays where it was
     for (const c of ABSOLUTE) {
       const popups0 = w.popups.length, navs0 = w.navs.length;
-      const tabUrl = await clickForTab(page, c.sel, c.name);
+      const tabUrl = await clickForTab(page, w, c.sel, c.name);
       assert.equal(tabUrl, c.href, c.name + ": the new tab is at the link's URL");
       assert.equal(page.url(), START, c.name + ": location.href is unchanged after the click");
       assert.deepEqual(w.navs.slice(navs0), [], c.name + ": no main-frame navigation");
@@ -282,7 +326,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
     // ...and the picture whose image map the sanitizer dropped: a click on it opens nothing and moves nothing
     {
       const popups0 = w.popups.length, navs0 = w.navs.length;
-      await clickForNothing(page, ".fx-img");
+      await clickForNothing(page, w, ".fx-img");
       assert.equal(page.url(), START, "the mapped picture: location.href is unchanged after the click");
       assert.deepEqual(w.navs.slice(navs0), [], "the mapped picture: no main-frame navigation");
       assert.equal(w.popups.length, popups0, "the mapped picture: no new tab, the map is gone");
@@ -291,7 +335,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
     // 2. the SVG anchor's #fragment lands on its heading in this body: no tab, no navigation, a scroll
     const popups1 = w.popups.length, navs1 = w.navs.length;
     await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-body") as HTMLElement).scrollTop = 0; });
-    await clickForNothing(page, ".fx-svg-frag text");
+    await clickForNothing(page, w, ".fx-svg-frag text");
     const landed = await page.evaluate(readLanding);
     assert.equal(page.url(), START, "fragment: location.href is unchanged");
     assert.deepEqual(w.navs.slice(navs1), [], "fragment: no main-frame navigation");
@@ -329,7 +373,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
     //     document in the same frame to http://<host>/127.0.0.1:3000 (round 3 of the review); the HTML one was inert all along
     for (const [sel, name] of [[".fx-svg-xlink-dead text", "the dead SVG xlink anchor"], [".fx-a-dead", "the dead HTML anchor (control)"]] as const) {
       const popups0 = w.popups.length, navs0 = w.navs.length;
-      await clickForNothing(page, sel);
+      await clickForNothing(page, w, sel);
       assert.deepEqual(w.navs.slice(navs0), [], name + ": no main-frame navigation (the browser had no xlink:href left to follow)");
       assert.equal(page.url(), START, name + ": location.href is unchanged");
       assert.equal(w.popups.length, popups0, name + ": no new tab");
@@ -338,7 +382,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
 
     // 4. the SVG anchor's relative `sibling.md` opens the sibling in THIS viewer, through the body's one click listener
     const popups2 = w.popups.length, navs2 = w.navs.length;
-    await clickForNothing(page, ".fx-svg-rel text");
+    await clickForNothing(page, w, ".fx-svg-rel text");
     await page.waitForSelector("#romp-fileview .fileview-md h1#md-sibling", { timeout: 10000 });
     assert.ok(w.fileRequests.includes(SIBLING), "the viewer fetched the sibling over /file: " + JSON.stringify(w.fileRequests));
     assert.equal(page.url(), START, "sibling: location.href is unchanged");
@@ -350,7 +394,7 @@ test("a FILE document: every link shape keeps the Files document: a new tab for 
     await page.evaluate(([p, sid]: [string, string]) => { window.postMessage({ romp: "viewFile", path: p, sid }, "*"); }, [PATH, SID] as [string, string]);
     await page.waitForSelector("#romp-fileview .fileview-md h1#md-figure", { timeout: 10000 });
     const popups3 = w.popups.length, navs3 = w.navs.length, files3 = w.fileRequests.length;
-    await clickForNothing(page, ".fx-svg-xlink-rel text");
+    await clickForNothing(page, w, ".fx-svg-xlink-rel text");
     await page.waitForSelector("#romp-fileview .fileview-md h1#md-sibling", { timeout: 10000 });
     assert.ok(w.fileRequests.slice(files3).includes(SIBLING), "xlink sibling: the viewer fetched the sibling over /file: " + JSON.stringify(w.fileRequests.slice(files3)));
     assert.equal(page.url(), START, "xlink sibling: location.href is unchanged");
@@ -371,7 +415,7 @@ test("a URL document, with nothing in front of mdBlock's own stamps: an absolute
     //    the browser to follow the anchor in this frame, and clickForTab names that navigation
     for (const c of ABSOLUTE) {
       const popups0 = w.popups.length, navs0 = w.navs.length;
-      const tabUrl = await clickForTab(page, c.sel, c.name);
+      const tabUrl = await clickForTab(page, w, c.sel, c.name);
       assert.equal(tabUrl, c.href, c.name + ": the new tab is at the link's URL");
       assert.equal(page.url(), START, c.name + ": location.href is unchanged after the click");
       assert.deepEqual(w.navs.slice(navs0), [], c.name + ": no main-frame navigation");
@@ -384,7 +428,7 @@ test("a URL document, with nothing in front of mdBlock's own stamps: an absolute
     //    same-origin .md back into the viewer; there is no delegate here, and the tab is the stamps' own outcome)
     for (const [sel, name] of [[".fx-svg-rel text", "the SVG anchor's relative href"], [".fx-svg-xlink-rel text", "the SVG anchor's relative xlink:href"]] as const) {
       const popups0 = w.popups.length, navs0 = w.navs.length;
-      const tabUrl = await clickForTab(page, sel, name);
+      const tabUrl = await clickForTab(page, w, sel, name);
       assert.equal(tabUrl, URL_SIBLING, name + ": resolved against the document's URL, not the page's");
       assert.equal(page.url(), START, name + ": location.href is unchanged");
       assert.deepEqual(w.navs.slice(navs0), [], name + ": no main-frame navigation");
@@ -394,7 +438,7 @@ test("a URL document, with nothing in front of mdBlock's own stamps: an absolute
     // 3. the SVG anchor's #fragment: stamped fv-anchor, so the body's delegate lands it on its heading; no tab, no navigation
     const popups1 = w.popups.length, navs1 = w.navs.length;
     await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-body") as HTMLElement).scrollTop = 0; });
-    await clickForNothing(page, ".fx-svg-frag text");
+    await clickForNothing(page, w, ".fx-svg-frag text");
     const landed = await page.evaluate(readLanding);
     assert.equal(page.url(), START, "fragment: location.href is unchanged");
     assert.deepEqual(w.navs.slice(navs1), [], "fragment: no main-frame navigation");
@@ -449,7 +493,7 @@ test("the chat page's viewer (the render bundle): a file document's SVG anchors 
     //    http://<host>/sibling.md as a URL document (a 404 in production), and its stopPropagation kept the click from the viewer
     {
       const popups0 = w.popups.length, navs0 = w.navs.length, files0 = w.fileRequests.length, docs0 = w.docRequests.length;
-      await clickForNothing(page, ".fx-svg-xlink-rel text");
+      await clickForNothing(page, w, ".fx-svg-xlink-rel text");
       await page.waitForSelector("#romp-fileview .fileview-md h1#md-sibling, #romp-fileview .fileview-md h1#md-url-sibling", { timeout: 10000 });
       const h1 = await page.evaluate(() => (document.querySelector("#romp-fileview .fileview-md h1") as HTMLElement).id);
       assert.equal(h1, "md-sibling", "the sibling FILE is shown, not the document at the page-relative URL: h1#" + h1);
@@ -469,7 +513,7 @@ test("the chat page's viewer (the render bundle): a file document's SVG anchors 
     for (const [sel, name] of [[".fx-svg-xlink-dead text", "the dead SVG xlink anchor"], [".fx-a-dead", "the dead HTML anchor (control)"]] as const) {
       const popups0 = w.popups.length, navs0 = w.navs.length;
       await page.evaluate(() => { (window as any).__opens.length = 0; });
-      await clickForNothing(page, sel);
+      await clickForNothing(page, w, sel);
       assert.deepEqual(w.navs.slice(navs0), [], name + ": no main-frame navigation");
       assert.equal(page.url(), START, name + ": location.href is unchanged");
       assert.deepEqual(await opens(), [], name + ": the chat's delegate opened nothing (window.open)");
@@ -480,7 +524,7 @@ test("the chat page's viewer (the render bundle): a file document's SVG anchors 
     // 4. the control the other way round: the ABSOLUTE xlink anchor still opens, through the chat's delegate, from its plain href
     {
       await page.evaluate(() => { (window as any).__opens.length = 0; });
-      await clickForNothing(page, ".fx-svg-xlink text");
+      await clickForNothing(page, w, ".fx-svg-xlink text");
       assert.deepEqual(await opens(), [["https://example.invalid/xlink", "_blank", "noopener,noreferrer"]], "the absolute xlink anchor opens in the user's browser through the chat's delegate");
       assert.equal(page.url(), START, "absolute xlink: location.href is unchanged");
     }

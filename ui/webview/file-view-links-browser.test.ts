@@ -128,17 +128,22 @@ function hostScript(kind: "chat" | "feed"): string {
       + "const isMarkdownUrl = (window as any).__rompProbe.isMarkdownUrl as (href: string, origin: string) => boolean;\nconst openUrlView = (window as any).__rompProbe.openUrlView as (href: string) => void;\n"
       + "const LINK_SEL = (window as any).__rompProbe.LINK_SEL as string;\nconst linkHref = (window as any).__rompProbe.linkHref as (a: Element) => string;\nconst userContentTarget = (window as any).__rompProbe.userContentTarget as (root: ParentNode, id: string) => Element | undefined;\n"
       + "const browserTabClick = (window as any).__rompProbe.browserTabClick as (e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean) => boolean;\n" + isMac![0] + "\n";
-    // Every name the lifted opener uses that render.ts imports from a sibling module or declares at its top level must be one
-    // of the consts above: a missing one throws a ReferenceError at the first click that reaches its branch, and the leg then
-    // reads a page error where the viewer did nothing wrong (round 2 added browserTabClick and IS_MAC to the `#` branch and
-    // the prelude defined neither, so the chat-host test could click no section link; the round-3 review). Read over the lift
-    // with its comments and string literals removed, the lift's own locals set aside, and a property read (`.name`) not counted.
+    // Every name the lifted opener uses that render.ts imports (a default, a namespace or a named import, from a sibling module
+    // or a package) or declares at its top level (a const, let, var, function or class) must be one of the consts above: a
+    // missing one throws a ReferenceError at the first click that reaches its branch, and the leg then reads a page error, or
+    // a tab that never opens, where the viewer did nothing wrong (round 2 added browserTabClick and IS_MAC to the `#` branch
+    // and the prelude defined neither, so the chat-host test could click no section link; the round-3 review). Read over the
+    // lift with its comments and string literals removed, the lift's own locals set aside, and a property read (`.name`) not
+    // counted. As first written the read took sibling named imports and consts only, so an opener reading a top-level `let`, a
+    // function, hljs or marked passed it in silence and failed at the click (the round-4 review); a type-only import is
+    // skipped, since it names nothing at run time.
     const lifted = RENDER.slice(start, end);
     const code = lifted.replace(/\/\*[\s\S]*?\*\/|\/\/.*$|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gm, (m) => (m[0] === "/" ? "" : '""'));
     const locals = new Set(Array.from(code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g), (m) => m[1]));
     const named = new Set<string>();
-    for (const m of RENDER.matchAll(/^import \{([^}]*)\} from "\.\/[^"]+";/gm)) for (const part of m[1].split(",")) { const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim(); if (name) named.add(name); }
-    for (const m of RENDER.matchAll(/^const ([A-Za-z_$][\w$]*)/gm)) named.add(m[1]);
+    const addNamed = (list: string) => { for (const part of list.split(",")) { const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim(); if (name) named.add(name); } };
+    for (const m of RENDER.matchAll(/^import (?!type\b)(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\* as ([A-Za-z_$][\w$]*)|\{([^}]*)\})?\s*from "[^"]+";/gm)) { if (m[1]) named.add(m[1]); if (m[2]) named.add(m[2]); if (m[3]) addNamed(m[3]); }
+    for (const m of RENDER.matchAll(/^(?:export )?(?:const|let|var|(?:async )?function\*?|class) ([A-Za-z_$][\w$]*)/gm)) named.add(m[1]);
     const declared = new Set(Array.from(ts.matchAll(/^const ([A-Za-z_$][\w$]*)/gm), (m) => m[1]));
     const free = Array.from(named).filter((n) => !locals.has(n) && !declared.has(n) && new RegExp("(?<![.\\w$])" + n.replace(/\$/g, "\\$") + "\\b").test(code));
     assert.deepEqual(free, [], "render.ts's opener names these and the prelude defines none of them: export each from the bundle's __rompProbe (bundle() above) and define it here, or the lifted handler throws where a click reaches it");
