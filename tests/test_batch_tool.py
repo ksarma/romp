@@ -300,8 +300,8 @@ class Plan(_Base):
         self.assertEqual(st["base"], fx.bare_rev("main"))
 
     def test_docs_and_tests_only_are_tiers_a_member_can_carry(self):
-        """`docs` is upstream's coming rename of tests-only; the fork accepts both ahead of the rename
-        (its own PRs keep tests-only), so a member labeled either way is planned with that tier and
+        """`docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; the old spelling
+        stays accepted as an alias), so a member labeled either way is planned with that tier and
         never listed as unlabeled (2026-09-07 sync; the fork's pr-tier.yml counts the same labels)."""
         fx = self.fx
         fx.branch("a", {"docs/a.md": "a\n"})
@@ -2001,8 +2001,9 @@ class PrTierWorkflow(unittest.TestCase):
     """The fork's copy of .github/workflows/pr-tier.yml, upstream's check that every PR carries exactly
     one tier label, also counts `batch` and `docs` (2026-09-07 sync). A batch PR carries `batch` and no
     tier, and ci_of folds a red check into "ci: failure", so upstream's list would hold every batch PR
-    red; `docs` is upstream's coming rename of tests-only. The workflow's jq filter is run here as the
-    workflow runs it, so the labels it counts and the labels batch.py knows stay in step."""
+    red; `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08, the old spelling
+    still accepted). The workflow's jq filter is run here as the workflow runs it, so the labels it
+    counts and the labels batch.py knows stay in step."""
 
     WORKFLOW = ROOT / ".github" / "workflows" / "pr-tier.yml"
 

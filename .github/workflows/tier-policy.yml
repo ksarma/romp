@@ -34,6 +34,14 @@ name: Tier policy
 #   cannot tell them apart. The policy requires an approval for ANY PR touching .github/ or
 #   scripts/ci/ (a human looks), but that rule rides the check the forged run competes with; what
 #   closes it is a CODEOWNERS entry for those paths with code-owner review required in the ruleset.
+#
+# Fork divergence (2026-09-08): the job runs only on the upstream repository (the `if:` below).
+# This clone is a fork whose PRs land through batches (scripts/batch.py, docs/batching.md): a batch
+# PR carries `batch` and no tier, and a fix or feature PR has no second maintainer to approve it, so
+# on the fork this workflow (pull_request_target fires on every PR, the schedule hourly) would post a
+# failing "Tier policy" verdict on nearly every PR, and batch.py's ci_of folds any red check into
+# "ci: failure". The fork's label check is .github/workflows/pr-tier.yml. The `if:` is the only
+# change; the rest of the file is upstream's byte for byte, so the next sync merges cleanly.
 
 on:
   pull_request_target:
@@ -56,6 +64,7 @@ permissions:
 jobs:
   policy:
     name: Tier policy evaluation
+    if: github.repository == 'romp-on/romp'    # the fork divergence in the header
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

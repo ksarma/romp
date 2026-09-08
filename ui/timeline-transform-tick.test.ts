@@ -8,6 +8,7 @@
 // so a rebuild is observable. (ui/timeline-live-tick.test.ts pins the loop's pacing; this file pins the look.)
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 
@@ -52,6 +53,7 @@ g.innerWidth = 1400; g.innerHeight = 800;
 
 const viewPath = path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js");
 const { TimelinePanel } = createRequire(__filename)(viewPath);
+const SRC = fs.readFileSync(viewPath, "utf8");
 
 const NOW = 1_781_000_000;
 const SID1 = "11111111-2222-3333-4444-aaaaaaaaaaa1", SID2 = "11111111-2222-3333-4444-aaaaaaaaaaa2";
@@ -344,15 +346,23 @@ test("a gridline entering the window gets its full draw: the tick translates unt
 });
 
 test("sub-pixel looks add up: the drift is measured from the build, not the last look, so the edge advances once they reach a pixel", () => {
-  // a 12 h window: a 5 s look is a fraction of a pixel, under LIVE_MIN_PX every time. Re-basing the drift on each
-  // look would leave the edge stuck at any zoom where one look is under a pixel; measured from the build, the
-  // looks accumulate and the first whose drift reaches a pixel writes it.
+  // a 12 h window: a 5 s look is a fraction of a pixel, under the translate's guard every time. Re-basing the drift
+  // on each look would leave the edge stuck at any zoom where one look is under the guard; measured from the build,
+  // the looks accumulate and the first whose drift since the last write reaches the guard writes it. The guard is
+  // read from the source: on this fork a translate runs on animation frames under TICK_MIN_PX (the per-frame glide
+  // kept in the 2026-09-08 fold; upstream paces the translate at LIVE_MIN_PX, a whole pixel), and the claim here is
+  // the accumulation, not the guard's value.
+  const guardM = /^const TICK_MIN_PX = ([0-9.]+);/m.exec(SRC);
+  assert.ok(guardM, "the translate's sub-pixel guard is a named constant");
+  const GUARD = Number(guardM![1]);
+  assert.ok(GUARD > 0 && GUARD <= 1, "the guard is a fraction of a pixel or one pixel: " + GUARD);
+  assert.match(SRC, /if \(Math\.abs\(px - tp\.applied\) < TICK_MIN_PX\) return true;/, "the translate's guard compares the drift since the build with the last write");
   const panel = livePanel(liveData(), 43200);
   const tp = panel._tickPlot, step = 5 * panel._geom.plotW / panel._geom.winSec;   // px per 5 s look
-  assert.ok(step < 0.2, "one look is well under a pixel: " + step);
-  const expected: number[] = [];   // the writes a drift measured from the build makes: each the first look a pixel past the last write
-  for (let i = 1, last = 0; i <= 20; i++) { const d = i * step; if (d - last >= 1 - 1e-9) { expected.push(d); last = d; } }
-  assert.ok(expected.length >= 1, "20 looks reach a pixel at this zoom");
+  assert.ok(step < GUARD, "one look is under the guard, so no single look writes: " + step + " vs " + GUARD);
+  const expected: number[] = [];   // the writes a drift measured from the build makes: each the first look a guard's worth past the last write
+  for (let i = 1, last = 0; i <= 20; i++) { const d = i * step; if (d - last >= GUARD - 1e-9) { expected.push(d); last = d; } }
+  assert.ok(expected.length >= 1, "20 looks reach the guard at this zoom");
   const before = created, writes: number[] = [];
   for (let i = 1; i <= 20; i++) {
     advance(panel, 5 * i);

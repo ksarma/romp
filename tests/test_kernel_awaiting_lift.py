@@ -748,7 +748,7 @@ class LiftHorizonJournaled(_HorizonBase):
         self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the respawn is the ending it cites")
         # the task/job shape (2026-09-05): every launch placed on a sibling top, the world emptied
         # after the stamp — the horizon is the newest terminal record
-        km._bg_placed_tops = lambda sid, path, tids: {t: self.other for t in tids}
+        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}   # the lift hands its store
         self.spawn = STAMP - 50
         self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])
         self._seed("job")

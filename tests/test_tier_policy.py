@@ -530,6 +530,11 @@ class WorkflowPins(unittest.TestCase):
         tmpl = open(os.path.join(os.path.dirname(HERE), ".github", "PULL_REQUEST_TEMPLATE.md")).read()
         import re
         in_jq = set(re.findall(r'\. == "([a-z-]+)"', wf))
+        # the fork's pr-tier.yml also counts `batch`, its label for a batch PR (scripts/batch.py,
+        # docs/batching.md): a batch merges already-tiered member PRs and carries `batch` alone, no
+        # tier, so the policy never names it (CLAUDE.md, the tier-label bullet). The workflow keeps
+        # the label and this pin subtracts it (upmerge4 fold, R5).
+        in_jq -= {"batch"}
         expected = set(tp.TIERS) | set(tp.TIER_ALIASES)
         self.assertEqual(in_jq, expected, "the label check and the policy name the same tiers")
         for t in tp.TIERS:

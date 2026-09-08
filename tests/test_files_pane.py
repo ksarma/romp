@@ -46,8 +46,13 @@ class Plumbing(unittest.TestCase):
 
     def test_files_is_not_in_the_feed_send_set_loop_or_ready_serve(self):
         # the feed-consumer tuples are verbatim from before the pane: adding "files" to any of them would
-        # build and ship a feed frame nobody reads
-        self.assertIn('want_feed = any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in targets)', SRC)
+        # build and ship a feed frame nobody reads. The send set is ONE question, _feed_audience
+        # (upstream's helper; upmerge4 fold, kernel-code H51), so its tuple is checked where it lives
+        self.assertIn('want_feed = _feed_audience(targets)', SRC)
+        aud = SRC[SRC.index("def _feed_audience("):]
+        aud = aud[:aud.index("\ndef ")]
+        self.assertIn('return any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in clients)', aud)
+        self.assertNotIn('"files"', aud, "_feed_audience names every app that rides the feed; the Files pane is not one")
         self.assertIn('if c["app"] in ("feed", "fleet", "waiting"):', SRC)
         self.assertIn('served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)', SRC)
         self.assertIn('if not (served and client.get("app") in ("feed", "waiting")):', SRC)
