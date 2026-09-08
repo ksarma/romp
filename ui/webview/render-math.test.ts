@@ -162,8 +162,14 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
-  assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor\(tex\) \}\);\n\s*el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/,
-    "the one katex call, html-only and untrusted, under KaTeX's two bounds (a size cap, a per-formula expansion count), and the placeholder unwrapped right after it: the .katex root stands where marked's output used to");
+  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM \} as const;/, "every call is html-only and untrusted, under KaTeX's size cap");
+  assert.match(math, /katex\.render\(tex, el, \{ \.\.\.KATEX_OPTIONS, displayMode: display, throwOnError: true, maxExpand \}\);/,
+    "the one katex call on the happy path, under the per-formula expansion count, and thrown at, so the catch can tell KaTeX's expansion stop from a syntax error (review round 5)");
+  assert.match(math, /if \(!\(e instanceof katex\.ParseError\)\) throw e;\n\s*if \(\/Too many expansions\/\.test\(e\.message\)\) \{\n\s*showSource\(el, tex, "Not rendered: too many macro expansions; the limit for this formula is " \+ maxExpand \+ ", set by the longest macro body it defines\."\);/,
+    "the expansion stop wears the slice's fallback, the source with the reason and the count, where KaTeX's red text stood before");
+  assert.match(math, /katex\.render\(tex, el, \{ \.\.\.KATEX_OPTIONS, displayMode: display, throwOnError: false, maxExpand \}\);\n\s*\}\n\s*el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/,
+    "any other syntax error is rendered again with throwOnError: false, KaTeX's own red text as on main, and the placeholder is unwrapped right after either call: the .katex root stands where marked's output used to");
+  assert.equal((math.match(/katex\.render\(/g) || []).length, 2, "two katex.render calls in the file: the happy path and the syntax-error rendering, no third");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
   const grammar = UI("chat-md.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
@@ -212,7 +218,7 @@ test("a formula longer than MATH_TEX_MAX_CHARS is shown as source before katex.r
     "the residual-throw belt is the same helper, and says so on the console once per call (the fail-loudly rule: a swallowed throw hides the breakage)");
 });
 
-test("the fill's bounds stand ahead of the one katex.render call, in order: the formula's length, the call's total, a macro that repeats an argument, a macro defined with \\edef or \\xdef; then KaTeX's own two", () => {
+test("the fill's bounds stand ahead of the one katex.render call, in order: the formula's length, the call's total, a macro that repeats an argument, a macro defined with \\edef or \\xdef; then KaTeX's own two, its expansion stop shown as source too", () => {
   // Review round 3. The length cap bounds one formula; a message of twenty formulas just under it blocked the page for
   // 8 to 15 s, so the call keeps a running total of the TeX it has rendered (its own local: one sanitizeMd call, so one
   // message or one note) and shows a formula that would pass MATH_TEX_BUDGET_CHARS as source, a shorter one still
@@ -234,8 +240,10 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
   const repeat = fill.indexOf("if (macroBounds(tex).argRepeat) {");
   const expanded = fill.indexOf("if (macroBounds(tex).expandedBody) {");
   const spend = fill.indexOf("rendered += tex.length;");
+  const count = fill.indexOf("const maxExpand = maxExpandFor(tex);");
   const render = fill.indexOf("katex.render(");
-  assert.ok(cap > 0 && cap < budget && budget < repeat && repeat < expanded && expanded < spend && spend < render, "length cap, then the running total, then the argument-repeat rule, then the expanded-body rule, then the total is charged, then the one katex.render call: " + JSON.stringify({ cap, budget, repeat, expanded, spend, render }));
+  const stop = fill.indexOf("if (/Too many expansions/.test(e.message)) {");
+  assert.ok(cap > 0 && cap < budget && budget < repeat && repeat < expanded && expanded < spend && spend < count && count < render && render < stop, "length cap, then the running total, then the argument-repeat rule, then the expanded-body rule, then the total is charged, then the count is computed, then the one katex.render call, whose catch reads the expansion stop: " + JSON.stringify({ cap, budget, repeat, expanded, spend, count, render, stop }));
   assert.match(fill, /let rendered = 0;/, "the meter is the call's own local: one sanitizeMd call, one message or note");
   assert.match(fill.slice(budget, repeat), /showSource\(el, tex, "Not rendered: the formulas above already total " \+ rendered \+ " characters of TeX; the limit for one message or note is " \+ MATH_TEX_BUDGET_CHARS \+ "\."\);/, "over the total: the source, the title saying what was rendered and the limit");
   assert.match(fill.slice(repeat, expanded), /showSource\(el, tex, "Not rendered: a macro in this formula repeats one of its arguments/, "an argument repeated: the source, the title saying why");
@@ -263,17 +271,18 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
 
 test("executed: macroBounds reads a formula's macro bodies the way KaTeX will expand them, and maxExpandFor bounds the expansion by the longest", () => {
   const long = "x+".repeat(500);                                  // a 1,000-character body
-  assert.deepEqual(macroBounds("\\frac{a}{b} + \\sqrt{x}"), { maxBody: 0, argRepeat: false, expandedBody: false }, "no macro defined: nothing to bound");
+  const none = { maxBody: 0, argRepeat: false, expandedBody: false, unplacedBody: false };
+  assert.deepEqual(macroBounds("\\frac{a}{b} + \\sqrt{x}"), none, "no macro defined: nothing to bound");
   assert.equal(maxExpandFor("\\frac{a}{b}"), 1000, "KaTeX's default when no macro is defined (its built-ins have bodies of a few tokens)");
-  assert.deepEqual(macroBounds("\\def\\a{" + long + "}" + "\\a".repeat(200)), { maxBody: 1000, argRepeat: false, expandedBody: false }, "\\def: the body's length, stored as written");
+  assert.deepEqual(macroBounds("\\def\\a{" + long + "}" + "\\a".repeat(200)), { ...none, maxBody: 1000 }, "\\def: the body's length, stored as written");
   assert.equal(maxExpandFor("\\def\\a{" + long + "}" + "\\a".repeat(200)), 20, "20,000 / 1,000: twenty expansions of that body at most");
-  assert.deepEqual(macroBounds("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), { maxBody: 11, argRepeat: false, expandedBody: false }, "\\newcommand: the first group is the name, the second (after [n]) the body; one use of #1 is no repeat");
+  assert.deepEqual(macroBounds("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), { ...none, maxBody: 11 }, "\\newcommand: the first group is the name, the second (after [n]) the body; one use of #1 is no repeat");
   assert.equal(maxExpandFor("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), 1000, "a short body leaves KaTeX's default in place");
-  assert.deepEqual(macroBounds("\\newcommand\\R{\\mathbb{R}}"), { maxBody: 10, argRepeat: false, expandedBody: false }, "\\newcommand with an unbraced name");
-  assert.deepEqual(macroBounds("\\def\\a#1{#1#1}\\a{\\a{\\a{x}}}"), { maxBody: 4, argRepeat: true, expandedBody: false }, "#1 twice in a body: the argument is copied at each use");
-  assert.deepEqual(macroBounds("\\newcommand{\\pair}[2]{(#1, #2, #1)}"), { maxBody: 12, argRepeat: true, expandedBody: false }, "a repeat of any one parameter counts");
-  assert.deepEqual(macroBounds("\\newcommand{\\f}[2]{#1 + #2}"), { maxBody: 7, argRepeat: false, expandedBody: false }, "two different parameters once each: no repeat");
-  assert.equal(macroBounds("\\expandafter\\def\\csname a\\endcsname{" + long + "}").maxBody, 1000, "a name KaTeX builds: the group after the command is read wherever it starts");
+  assert.deepEqual(macroBounds("\\newcommand\\R{\\mathbb{R}}"), { ...none, maxBody: 10 }, "\\newcommand with an unbraced name");
+  assert.deepEqual(macroBounds("\\def\\a#1{#1#1}\\a{\\a{\\a{x}}}"), { ...none, maxBody: 4, argRepeat: true }, "#1 twice in a body: the argument is copied at each use");
+  assert.deepEqual(macroBounds("\\newcommand{\\pair}[2]{(#1, #2, #1)}"), { ...none, maxBody: 12, argRepeat: true }, "a repeat of any one parameter counts");
+  assert.deepEqual(macroBounds("\\newcommand{\\f}[2]{#1 + #2}"), { ...none, maxBody: 7 }, "two different parameters once each: no repeat");
+  assert.equal(macroBounds("\\expandafter\\def\\csname a\\endcsname{" + long + "}").maxBody, 1000, "whatever stands between the definer and the brace: the group after the command is read wherever it starts");
   assert.equal(macroBounds("\\def\\a{" + long + "}\\def\\b{\\a\\a\\a}\\b\\b").maxBody, 1000, "a chain: the longest body counts, every use of \\b costs \\a's expansions too");
   assert.equal(macroBounds("\\global\\def\\a{xy}\\long\\def\\b{xyz}").maxBody, 3, "\\global and \\long in front: the \\def still reads");
   for (const cmd of ["gdef", "edef", "xdef", "renewcommand", "providecommand", "DeclareMathOperator"]) {
@@ -282,20 +291,62 @@ test("executed: macroBounds reads a formula's macro bodies the way KaTeX will ex
   }
   assert.equal(macroBounds("\\global\\edef\\a{xyz}").expandedBody, true, "\\global in front: the \\edef still reads");
   assert.equal(macroBounds("\\def\\a{xyz}\\edefx").expandedBody, false, "\\edefx is a different command");
-  assert.deepEqual(macroBounds("\\deficit{xyz} \\let\\b\\a"), { maxBody: 0, argRepeat: false, expandedBody: false }, "a word that starts with def is not \\def; \\let adds no body (the one it aliases is counted where it is defined)");
+  assert.deepEqual(macroBounds("\\deficit{xyz} \\let\\b\\a"), none, "a word that starts with def is not \\def; \\let aliases a command and adds no body (the one it aliases is counted where it is defined)");
   assert.equal(macroBounds("\\def\\a{\\{x\\}}").maxBody, 5, "escaped braces are not braces: the body is the five characters between the real ones");
   assert.equal(macroBounds("\\def\\a{" + long).maxBody, 1000, "an unclosed body (KaTeX rejects the formula) counts to the end of the text");
-  // executed against KaTeX itself: the 200-use bomb stops at once with KaTeX's own visible error under the computed maxExpand,
-  // where the default let it run for 20 s; an ordinary formula with a short macro and a hundred built-in macros still renders
+  // review round 5: a definer is its TOKEN, whatever follows it. KaTeX's `\def` takes as the name the next token but
+  // `\ { } $ & # ^ _`, so a digit, a control symbol and a control word all name a macro, and the scan once required a word
+  // boundary after the definer, which `\def1` has not: the round-3 and round-4 bombs returned under a digit name
+  assert.deepEqual(macroBounds("\\def1{" + long + "}" + "1".repeat(200)), { ...none, maxBody: 1000 }, "\\def1: a digit names the macro; the body reads as \\def\\a's does");
+  assert.equal(maxExpandFor("\\def1{" + long + "}" + "1".repeat(200)), 20, "and bounds it the same");
+  assert.deepEqual(macroBounds("\\def\\a{xy}\\edef1{\\a\\a}"), { ...none, maxBody: 4, expandedBody: true }, "\\edef1: flagged as \\edef\\b is");
+  assert.equal(macroBounds("\\def\\!{" + long + "}").maxBody, 1000, "a control symbol names the macro");
+  assert.equal(macroBounds("\\renewcommand1{xyz}").maxBody, 3, "\\renewcommand with a digit name (KaTeX refuses \\newcommand1: 1 is defined already)");
+  assert.deepEqual(macroBounds("\\def@\\a{xyz}"), none, "\\def@ is another control word (KaTeX's lexer takes @ as a letter): the formula defines nothing and @ never expands");
+  // a body the scan cannot place takes the strict bound (unplacedBody: maxExpandFor prices every expansion at the formula's
+  // own length, the most any body written in it can be): a definer with no brace group after it; a `\let` or `\futurelet`
+  // that aliases a definer, whose later uses put their bodies wherever they like (read as the group after `\def`, `{a}`
+  // stood in for the body of `\let\d\def \frac{a}{b} \d\b{<1,000>}` and 200 uses passed at KaTeX's default count); a
+  // definer inside a brace group, stored in a body and run at each use, where a body assembled from the arguments is up to
+  // nine groups long (`\def\d#1...#9{\def\b{#1...#9}}` over nine 2,000-character groups, 18,154 characters of TeX under
+  // every bound, had not finished after two minutes)
+  const decoy = "\\let\\d\\def \\frac{a}{b} \\d\\b{" + long + "}" + "\\b".repeat(200);
+  assert.deepEqual(macroBounds(decoy), { ...none, maxBody: 1, unplacedBody: true }, "\\let aliasing \\def: the scan reads the decoy group (1 character), and unplacedBody says the body is wherever a use of the alias puts it");
+  assert.equal(maxExpandFor(decoy), Math.floor(20000 / decoy.length), "so the count is the budget over the whole formula");
+  assert.equal(macroBounds("\\let\\d=\\gdef").unplacedBody, true, "the optional = before the aliased command");
+  assert.equal(macroBounds("\\futurelet\\d\\relax\\newcommand").unplacedBody, true, "\\futurelet aliases the second token after the name");
+  assert.equal(macroBounds("\\let\\e\\let \\e\\d\\def").unplacedBody, true, "an alias of \\let is caught at the first \\let");
+  assert.deepEqual(macroBounds("\\def\\a{xyz}\\let1=\\a 111"), { ...none, maxBody: 3 }, "\\let1=\\a aliases a macro defined here: its body is counted where it is defined, nothing is unplaced");
+  assert.equal(macroBounds("\\def\\d#1#2{\\def\\b{#1#2}}").unplacedBody, true, "a definer inside a body");
+  assert.equal(macroBounds("\\@firstoftwo{\\def\\b}{} x{" + long + "}").unplacedBody, true, "a definer inside any brace group (pushed back and run later)");
+  assert.equal(macroBounds("\\def\\d{\\let}").unplacedBody, true, "an aliaser inside a body");
+  assert.equal(macroBounds("\\newcommand\\b\\a").unplacedBody, true, "no brace group after the definer: the body is one token, or the formula is an error; priced as unknown either way");
+  assert.equal(maxExpandFor("\\newcommand\\b\\a"), 1000, "and a short formula still keeps the default: 20,000 over 16 characters clamps to it");
+  // the argument-repeat rule reads every brace group, not only the group after a definer, so a hidden body cannot escape it
+  assert.equal(macroBounds("\\let\\d\\def \\d\\b#1{#1#1}").argRepeat, true, "#1 twice in a body the alias defines");
+  assert.equal(macroBounds("\\def\\a#1{\\frac{#1}{#1}}").argRepeat, true, "a repeat across the nested groups of one body");
+  assert.equal(macroBounds("\\newcommand{\\f}[1]{#1} \\newcommand{\\g}[1]{#1}").argRepeat, false, "two bodies using #1 once each: no repeat");
+  // executed against KaTeX itself: the 200-use bomb stops at once under the computed maxExpand, where the default let it run
+  // for 20 s (KaTeX's own error through the string renderer here; the fill shows the source instead, and the postpass browser
+  // leg runs that); the digit-named bomb and the alias decoy stop the same way; an ordinary formula with a short macro and a
+  // hundred built-in macros, and one whose short macro is used a hundred times, render under the default count
   const bomb = "\\def\\a{" + long + "}" + "\\a".repeat(200) + "x";
   const t0 = performance.now();
   const stopped = katex.renderToString(bomb, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(bomb) });
   const ms = performance.now() - t0;
-  assert.ok(stopped.includes("katex-error") && stopped.includes("Too many expansions"), "the bomb is KaTeX's own error, the source shown in place: " + stopped.slice(0, 200));
+  assert.ok(stopped.includes("katex-error") && stopped.includes("Too many expansions"), "the bomb is stopped by KaTeX's count: " + stopped.slice(0, 200));
   assert.ok(ms < 1000, "and it stops well under a second: " + Math.round(ms) + " ms");
+  const digit = "\\def1{" + long + "}" + "1".repeat(200) + "x";
+  const digitOut = katex.renderToString(digit, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(digit) });
+  assert.ok(digitOut.includes("Too many expansions"), "the bomb under a digit name stops under the same count (4,470,000 bytes of HTML from 30 uses at the default): " + digitOut.slice(0, 200));
+  const decoyOut = katex.renderToString(decoy + "x", { ...KATEX, displayMode: true, maxExpand: maxExpandFor(decoy + "x") });
+  assert.ok(decoyOut.includes("Too many expansions"), "the alias decoy stops under the strict count: " + decoyOut.slice(0, 200));
   const ordinary = "\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x} + " + "\\boxed{y}\\,".repeat(100);
   const fine = katex.renderToString(ordinary, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(ordinary) });
   assert.ok(!fine.includes("katex-error"), "a short macro and a hundred built-in macros render under the default count: " + fine.slice(0, 200));
+  const reals = "\\newcommand{\\RR}{\\mathbb{R}} " + "\\RR\\times".repeat(99) + "\\RR";
+  const realsOut = katex.renderToString(reals, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(reals) });
+  assert.ok(!realsOut.includes("katex-error"), "a short macro used a hundred times renders under the default count: " + realsOut.slice(0, 200));
   // executed against KaTeX itself, the cost model behind the expanded-body rule (review round 4): `\edef\b{<10 uses of a
   // 20-character \a>}` stores a 200-character body and charges 210 expansions once (10 uses of \a, then the 200 tokens
   // stored); each use of \b is ONE expansion pushing all 200, so under the count maxExpandFor computes from the bodies as
@@ -306,7 +357,7 @@ test("executed: macroBounds reads a formula's macro bodies the way KaTeX will ex
   const twenty = "a".repeat(20);
   const edef = "\\def\\a{" + twenty + "}\\edef\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(50) + " x";     // the space: `\bx` would be one command
   const asDef = "\\def\\a{" + twenty + "}\\def\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(50) + " x";
-  assert.deepEqual(macroBounds(edef), { maxBody: 20, argRepeat: false, expandedBody: true }, "the bodies as written are 20 characters; the \\edef is flagged");
+  assert.deepEqual(macroBounds(edef), { ...none, maxBody: 20, expandedBody: true }, "the bodies as written are 20 characters; the \\edef is flagged");
   assert.equal(maxExpandFor(edef), 1000, "so the count over them would be KaTeX's default, which the 788-use form passes");
   const edefOut = katex.renderToString(edef, { ...KATEX, displayMode: true, maxExpand: 260 });
   assert.ok(!edefOut.includes("katex-error"), "the \\edef shape renders 50 uses under 260 expansions (210 at the definition, one per use)");

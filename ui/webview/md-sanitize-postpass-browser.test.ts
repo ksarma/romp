@@ -296,8 +296,9 @@ test("a formula longer than MATH_TEX_MAX_CHARS is shown as its TeX source, so on
 // `\rule{5000em}{5000em}` laid a 78,650 px square in the transcript. math.ts now hands katex.render a maxSize and a
 // maxExpand computed from the formula's macro bodies, keeps a per-call total of the TeX it renders, and shows a formula
 // whose macro repeats an argument as source before KaTeX sees it; the source fallback wears MATH_SOURCE_CLASS and the
-// sheets dress it as unrendered source. Each is measured here over the real pipeline, with the bounds that matter to a
-// reader (time, pixels, what rendered) and a generous margin for a loaded box.
+// sheets dress it as unrendered source. Since review round 5 a macro definer is read by its token alone, whatever names the
+// macro, and KaTeX's own expansion stop wears the same fallback. Each is measured here over the real pipeline, with the
+// bounds that matter to a reader (time, pixels, what rendered) and a generous margin for a loaded box.
 
 /** The rules that dress the fallback and the code spans around it, lifted from styles.css by head (fileview-parity.test.ts
  *  holds feed.css byte-equal), plus the tokens they read, so the page computes what the chat page computes. */
@@ -309,48 +310,86 @@ function fallbackCss(): string {
     + [".md :not(pre) > code {", ".md pre {", ".md pre code {", ".md code.md-math-src, .fileview-md code.md-math-src {"].map(rule).join("\n");
 }
 
-test("a macro bomb stops at once with KaTeX's own error, a macro that repeats an argument or is defined with \\edef is shown as source, and a rule or a kern is capped at the column", { timeout: 120000 }, async (t) => {
+type MacroCase = { name: string; src: string; expect: "stop" | "repeat" | "expanded" | "renders" | "error" };
+
+test("every macro bound wears the source fallback (a bomb under any name, an argument repeated, an \\edef body, KaTeX's expansion stop), ordinary macro use and a syntax error render as on main, and a rule or a kern is capped at the column", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (page, errors) => {
     const long = "x+".repeat(500);                                                          // a 1,000-character body
-    const bomb = "$$\\def\\a{" + long + "}" + "\\a".repeat(200) + "x$$";                    // 1,409 characters; 200,000 expanded; 20 s before
-    const chain = "$$\\def\\a{" + long + "}\\def\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(20) + "x$$";   // 220 expansions; 22 s before
-    const dup = "$\\def\\a#1{#1#1}\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{" + "x+".repeat(2500) + "}}}}}}}}}$";   // 512 copies of 5,000 characters before
-    // \edef stores its body EXPANDED (review round 4): ten uses of a 20-character \a is a 200-character \b, charged once at the
-    // definition and one expansion per use whatever its length, so 788 uses passed the count computed from the bodies as
-    // written (20 characters: KaTeX's default) and laid 157,600 characters of formula, 31 s of freeze over this pipeline
-    const edef = "$$\\def\\a{" + "a".repeat(20) + "}\\edef\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(788) + " x$$";   // 1,639 characters as written; the space keeps `\bx` from reading as one command
-    const facts = await page.evaluate(([bomb, chain, dup, edef, srcClass]: [string, string, string, string, string]) => {
+    const body20 = "a".repeat(20);
+    // each case: the message, and what the fill must make of it. `stop` is KaTeX's expansion stop under the computed count,
+    // shown as source with the reason (review round 5; KaTeX's red text stood there before); `repeat` and `expanded` are the
+    // two rules a formula meets before KaTeX; `renders` is one .katex root and nothing else; `error` is KaTeX's own red span
+    // for a syntax error, as on main. Every case is handled in well under the seconds the bombs took, on a loaded box too.
+    const cases: MacroCase[] = [
+      { name: "the 200-use bomb", src: "$$\\def\\a{" + long + "}" + "\\a".repeat(200) + "x$$", expect: "stop" },        // 1,409 characters; 200,000 expanded; 20 s before round 3
+      { name: "the nested chain", src: "$$\\def\\a{" + long + "}\\def\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(20) + "x$$", expect: "stop" },   // 220 expansions; 22 s before
+      { name: "an argument repeated", src: "$\\def\\a#1{#1#1}\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{" + "x+".repeat(2500) + "}}}}}}}}}$", expect: "repeat" },   // 512 copies of 5,000 characters before
+      // \edef stores its body EXPANDED (review round 4): ten uses of a 20-character \a is a 200-character \b, charged once at the
+      // definition and one expansion per use whatever its length, so 788 uses passed the count computed from the bodies as
+      // written (20 characters: KaTeX's default) and laid 157,600 characters of formula, 31 s of freeze over this pipeline
+      { name: "the \\edef bomb", src: "$$\\def\\a{" + body20 + "}\\edef\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(788) + " x$$", expect: "expanded" },   // the space keeps `\bx` from reading as one command
+      // review round 5: a definer is read by its token alone, whatever names the macro (KaTeX's \def takes any next token but
+      // `\ { } $ & # ^ _` as the name); the scan once required a word boundary after the definer, which `\def1` has not, and
+      // both bombs above returned under a digit name at KaTeX's default count
+      { name: "the bomb under a digit name", src: "$$\\def1{" + long + "}" + "1".repeat(200) + "x$$", expect: "stop" },
+      { name: "the \\edef bomb under a digit name", src: "$$\\def\\a{" + body20 + "}\\edef1{" + "\\a".repeat(10) + "}" + "1".repeat(788) + " x$$", expect: "expanded" },
+      { name: "a digit aliased to the bomb's macro", src: "$$\\def\\a{" + long + "}\\let1=\\a " + "1".repeat(200) + "x$$", expect: "stop" },
+      { name: "\\global in front", src: "$$\\global\\def\\a{" + long + "}" + "\\a".repeat(200) + "x$$", expect: "stop" },
+      { name: "a control symbol as the name", src: "$$\\def\\!{" + long + "}" + "\\!".repeat(200) + "x$$", expect: "stop" },
+      // \let aliasing \def puts the body wherever a use of the alias is: read as the group after \def, `{a}` stood in for it
+      { name: "\\def aliased behind a decoy group", src: "$$\\let\\d\\def \\frac{a}{b} \\d\\b{" + long + "}" + "\\b".repeat(200) + "x$$", expect: "stop" },
+      // the count over-approximates a long linear body used many times (review round 4): plain KaTeX renders this one, and
+      // the fill shows it as source with the reason, where it left KaTeX's red text before (review round 5)
+      { name: "a 200-character body used 150 times", src: "$$\\def\\Q{" + "a+b+".repeat(50) + "}" + "\\Q".repeat(150) + "x$$", expect: "stop" },
+      { name: "ordinary macro use", src: "$$\\newcommand{\\RR}{\\mathbb{R}} " + "\\RR\\times".repeat(99) + "\\RR$$", expect: "renders" },
+      { name: "a plain syntax error", src: "$\\frac{a}{$", expect: "error" },
+    ];
+    const facts = await page.evaluate(([cases, srcClass]: [{ name: string; src: string }[], string]) => {
       const w = window as any;
       const out = document.getElementById("out") as HTMLElement;
       const run = (src: string): number => { const t0 = performance.now(); out.innerHTML = w.__mdPipe(src); return Math.round(performance.now() - t0); };
-      const err = () => { const e = out.querySelector(".katex-error"); return e ? (e.getAttribute("title") || "") : null; };
-      const bombMs = run(bomb), bombErr = err(), bombKatex = out.querySelectorAll(".katex").length;
-      const chainMs = run(chain), chainErr = err();
-      const dupMs = run(dup);
-      const dupCode = out.querySelector("p > code." + srcClass);
-      const dupFacts = { code: !!dupCode, title: dupCode?.getAttribute("title") ?? null, katex: out.querySelectorAll(".katex").length, textLen: dupCode?.textContent?.length ?? 0 };
-      const edefMs = run(edef);
-      const edefPre = out.querySelector("pre"), edefCode = out.querySelector("pre > code." + srcClass);   // a display paragraph of its own: the title sits on the pre
-      const edefFacts = { code: !!edefCode, title: edefPre?.getAttribute("title") ?? null, katex: out.querySelectorAll(".katex").length, textLen: edefCode?.textContent?.length ?? 0 };
+      const perCase = cases.map(({ name, src }) => {
+        const ms = run(src);
+        const code = out.querySelector("code." + srcClass);
+        // the title sits on the pre for a display paragraph of its own (a code block), on the code span in a paragraph
+        const shown = code ? (code.parentElement && code.parentElement.tagName === "PRE" ? code.parentElement : code) : null;
+        const err = out.querySelector(".katex-error");
+        return { name, ms, katex: out.querySelectorAll(".katex").length, error: err ? (err.getAttribute("title") || "") : null,
+          source: code && shown ? { text: code.textContent || "", title: shown.getAttribute("title"), shape: shown.tagName } : null };
+      });
       // sizes: an inline rule and an inline kern, measured; the em is KaTeX's (its root is 1.21em of the 16px body here)
       run("before $\\rule{5000em}{5000em}$ after");
       const rule = (out.querySelector(".katex-rule") as HTMLElement | null)?.getBoundingClientRect();
       const em = parseFloat(getComputedStyle(out.querySelector(".katex") as HTMLElement).fontSize);
       run("$a\\kern{50000em}b$");
       const kern = (out.querySelector(".katex") as HTMLElement | null)?.getBoundingClientRect();
-      return { bombMs, bombErr, bombKatex, chainMs, chainErr, dupMs, dupFacts, edefMs, edefFacts, rule: rule ? { w: rule.width, h: rule.height } : null, em, kernW: kern ? kern.width : null };
-    }, [bomb, chain, dup, edef, MATH_SOURCE_CLASS]);
-    assert.ok(facts.bombMs < 2000, "the 200-use bomb is stopped in well under the 20 s it took, on a loaded box too: " + facts.bombMs + " ms");
-    assert.match(facts.bombErr || "", /Too many expansions/, "KaTeX's own visible error, the source shown in place: " + facts.bombErr);
-    assert.equal(facts.bombKatex, 0, "nothing of the bomb rendered");
-    assert.ok(facts.chainMs < 2000, "the nested chain is stopped the same way: " + facts.chainMs + " ms");
-    assert.match(facts.chainErr || "", /Too many expansions/, "the chain: KaTeX's error too: " + facts.chainErr);
-    assert.ok(facts.dupMs < 2000, "the argument-repeating macro never reaches KaTeX: " + facts.dupMs + " ms");
-    assert.deepEqual({ ...facts.dupFacts, title: null }, { code: true, title: null, katex: 0, textLen: dup.length - 2 }, "a code span in the paragraph, the TeX intact: " + JSON.stringify(facts.dupFacts));
-    assert.match(facts.dupFacts.title || "", /^Not rendered: a macro in this formula repeats one of its arguments/, "its title says why");
-    assert.ok(facts.edefMs < 2000, "the \\edef bomb never reaches KaTeX (31 s of freeze before, under a count the bodies as written could not bound): " + facts.edefMs + " ms");
-    assert.deepEqual({ ...facts.edefFacts, title: null }, { code: true, title: null, katex: 0, textLen: edef.length - 4 }, "a code block where the display paragraph stood, the TeX intact: " + JSON.stringify(facts.edefFacts));
-    assert.match(facts.edefFacts.title || "", /^Not rendered: a macro in this formula is defined with \\edef or \\xdef, whose stored body is its expansion/, "its title says why");
+      return { perCase, rule: rule ? { w: rule.width, h: rule.height } : null, em, kernW: kern ? kern.width : null };
+    }, [cases.map(({ name, src }) => ({ name, src })), MATH_SOURCE_CLASS]);
+    const titles = {
+      stop: /^Not rendered: too many macro expansions; the limit for this formula is \d+, set by the longest macro body it defines\.$/,
+      repeat: /^Not rendered: a macro in this formula repeats one of its arguments/,
+      expanded: /^Not rendered: a macro in this formula is defined with \\edef or \\xdef, whose stored body is its expansion/,
+    };
+    for (const c of cases) {
+      const f = facts.perCase.find((x: { name: string }) => x.name === c.name)!;
+      const tag = c.name + " (" + f.ms + " ms): ";
+      assert.ok(f.ms < 2000, tag + "handled in well under the seconds the bombs took, on a loaded box too");
+      if (c.expect === "renders") {
+        assert.deepEqual({ katex: f.katex, error: f.error, source: f.source }, { katex: 1, error: null, source: null }, tag + "one .katex root, no error, no fallback");
+        continue;
+      }
+      if (c.expect === "error") {
+        assert.match(f.error || "", /^ParseError: KaTeX parse error: /, tag + "KaTeX's own red span, as on main (a syntax error is not a bound)");
+        assert.deepEqual({ katex: f.katex, source: f.source }, { katex: 0, source: null }, tag + "and nothing else");
+        continue;
+      }
+      assert.equal(f.katex, 0, tag + "nothing rendered");
+      assert.equal(f.error, null, tag + "no KaTeX error text: the bound wears the fallback");
+      assert.ok(f.source, tag + "the source is shown");
+      assert.equal(f.source!.text, c.src.replace(/^\$+|\$+$/g, ""), tag + "the TeX intact");
+      assert.equal(f.source!.shape, c.src.startsWith("$$") ? "PRE" : "CODE", tag + "a code block where a display paragraph stood, a code span in a paragraph, the title on it");
+      assert.match(f.source!.title || "", titles[c.expect], tag + "its title says why: " + f.source!.title);
+    }
     assert.ok(facts.rule && facts.rule.w > 100 && facts.rule.w <= MATH_MAX_SIZE_EM * facts.em + 1 && facts.rule.h <= MATH_MAX_SIZE_EM * facts.em + 1,
       "the rule renders, capped at MATH_MAX_SIZE_EM ems each way (78,650 px before): " + JSON.stringify(facts.rule) + " at " + facts.em + " px/em");
     assert.ok(facts.kernW !== null && facts.kernW < MATH_MAX_SIZE_EM * facts.em + 3 * facts.em, "the kern is capped at the column (786,520 px before): " + facts.kernW + " px");

@@ -60,10 +60,10 @@ function registry(): { runs: number; other: number; sawKatex: boolean } {
 }
 // KaTeX's own output for the same TeX, by the same DOM path (katex.render into a fresh element, the browser serializing):
 // renderToString differs in serialization only (no space after a colon, no empty class attribute), so it is not the reference.
-// The options are the fill's (render-math.test.ts pins math.ts to them): KaTeX's two bounds included, since a size cap
-// changes what a \\rule renders to; uncapped is the same call under KaTeX's defaults, the control that shows the bounds reach the call
+// The options are the fill's happy-path call's (render-math.test.ts pins math.ts to them): KaTeX's two bounds included, since a
+// size cap changes what a \\rule renders to; uncapped is the same call under KaTeX's defaults, the control that shows the bounds reach the call
 function direct(tex: string, display: boolean): string {
-  const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor(tex) }); return el.innerHTML;
+  const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: true, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor(tex) }); return el.innerHTML;
 }
 function uncapped(tex: string, display: boolean): string {
   const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false }); return el.innerHTML;

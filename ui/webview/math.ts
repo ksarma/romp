@@ -99,8 +99,9 @@ export const MATH_MAX_SIZE_EM = 50;
  *  body, the built-in macros' included (`\,` costs 3, `\dots` 2, `\boxed` 1), so a formula that defines a 200-character
  *  body has 100 expansions for everything, and one that spends them on thin spaces is refused although its real
  *  expansion is small (review round 4, measured: a 200-character body used once beside 34 `\,` is refused). Over the
- *  bound KaTeX stops with its own visible error ("Too many expansions"), the source shown in place: the 200-use bomb
- *  and the chain both stop in about 10 ms. The value is the single-formula cap, so the most one formula lays out is
+ *  bound KaTeX throws, and the fill shows the formula as source with the reason and the count in its title, as it does
+ *  over its own bounds (review round 5: KaTeX's red error text stood there before, and this is the one bound an ordinary
+ *  formula can meet); the 200-use bomb and the chain both stop in about 10 ms. The value is the single-formula cap, so the most one formula lays out is
  *  two caps' worth, measured at 0.9 s for 40,000 flat characters here (node, KaTeX 0.18.1). The premise, that an
  *  expansion pushes a body as WRITTEN, holds for `\def` and `\newcommand`, whose bodies KaTeX stores unexpanded, and
  *  fails for `\edef` and `\xdef`, which store the EXPANDED body (review round 4): KaTeX charges that body's length
@@ -121,13 +122,40 @@ export const MATH_SOURCE_CLASS = "md-math-src";
 /** KaTeX's default for maxExpand (katex.mjs Settings), the value a formula that defines no macro renders under. */
 const KATEX_DEFAULT_MAX_EXPAND = 1000;
 
-// The commands that give a macro a body KaTeX expands: TeX's `\def` family (with `\global` or `\long` in front, the
-// `\def` still matches) and LaTeX's `\newcommand` family. `\let` and `\futurelet` alias an existing command and add no
-// body of their own, so the body they alias is counted where it is defined. `\edef` and `\xdef` are the two whose body
-// KaTeX stores EXPANDED (katex.mjs, the def handler: expandTokens before macros.set), so the group as written is no
-// measure of what a use pushes; macroBounds flags them and the fill shows the formula as source.
-const MACRO_DEFINER = /\\(?:g?def|[ex]def|newcommand|renewcommand|providecommand|DeclareMathOperator)\b/g;
-const EXPANDED_AT_DEFINITION = /^\\[ex]def$/;
+// The commands that define a macro in KaTeX 0.18.1 (katex.mjs: the `\def` handler, the `\newcommand` macros, and `\let`
+// and `\futurelet`, which alias a command; `\global` and `\long` in front change nothing the scan needs, since the
+// defining token still appears). Each is recognised by its TOKEN alone, whatever follows it: KaTeX's `\def` takes as the
+// name the next token but `\ { } $ & # ^ _`, so a control word (`\a`), a control symbol (`\!`) and a single character
+// (`1`) all name a macro, and a scan that required a word boundary after the definer, as JS's `\b` does, never saw
+// `\def1{...}` (review round 5: the round-3 and round-4 bombs returned under a digit name). A control word ends where
+// KaTeX's lexer ends it, at the first character outside [a-zA-Z@], so `\deficit` and `\def@` are other commands. `\edef`
+// and `\xdef` are the two whose body KaTeX stores EXPANDED (the def handler: expandTokens before macros.set), so the
+// group as written is no measure of what a use pushes; macroBounds flags them and the fill shows the formula as source.
+// `\DeclareMathOperator` is not in KaTeX 0.18.1 (the formula fails as an undefined control sequence) and is listed for a
+// KaTeX that adds it; `\newenvironment` is not in KaTeX either and defines no macro there.
+const BODY_DEFINERS = new Set(["\\def", "\\gdef", "\\edef", "\\xdef", "\\newcommand", "\\renewcommand", "\\providecommand", "\\DeclareMathOperator"]);
+const ALIASERS = new Set(["\\let", "\\futurelet"]);
+const EXPANDED_AT_DEFINITION = new Set(["\\edef", "\\xdef"]);
+/** A control sequence at a backslash, as KaTeX's lexer reads it: a control word of letters and `@`, else the backslash
+ *  and the one character after it (a control symbol: `\!`, `\{`, `\\`), else the bare backslash ending the text. */
+const CONTROL_SEQ = /\\(?:[a-zA-Z@]+|[^])?/y;
+/** A `\newcommand` body after its name group: across whitespace and an optional `[n]` parameter count only, so a group
+ *  further on in the formula is not read as a body. */
+const SECOND_GROUP = /\s*(?:\[[^\]]*\]\s*)?\{/y;
+
+function controlSeqAt(tex: string, at: number): string {
+  CONTROL_SEQ.lastIndex = at;
+  return CONTROL_SEQ.exec(tex)![0];
+}
+
+/** The next token from `at`, whitespace skipped: a control sequence, else one character; "" at the end of the text. */
+function tokenAt(tex: string, at: number): { text: string; end: number } {
+  let i = at;
+  while (i < tex.length && /\s/.test(tex[i])) i++;
+  if (i >= tex.length) return { text: "", end: i };
+  const text = tex[i] === "\\" ? controlSeqAt(tex, i) : tex[i];
+  return { text, end: i + text.length };
+}
 
 /** The brace group starting at `open` (the index of a `{`): the index one past its matching `}`, or the text's length
  *  when the group never closes (KaTeX would reject the formula; the rest of the text is counted as the body, which can
@@ -143,51 +171,107 @@ function braceGroupEnd(tex: string, open: number): number {
   return tex.length;
 }
 
-/** What a formula's macro definitions let it expand to. `maxBody` is the longest brace group that follows a defining
- *  command, in characters (0 when the formula defines no macro): the body of a `\def\a{...}`; of a
- *  `\newcommand{\a}[1]{...}`, whose first group is the name, so the two groups after a command are both read and the
- *  longer counts; of a `\def\csname a\endcsname{...}`, since the group is read wherever it starts and a name KaTeX
- *  builds is no way round the count. `argRepeat` is true when a body uses one of its parameters more than once (`#1`
- *  twice): each use copies the argument, so `\def\a#1{#1#1}` nested nine deep over 5,000 characters is 512 copies of
- *  them, an amplification no expansion count bounds when the body is four characters long, and one no ordinary
- *  notation needs (`\newcommand{\abs}[1]{\left|#1\right|}` uses its argument once). `expandedBody` is true when a
- *  definer is `\edef` or `\xdef`: KaTeX stores their body expanded, charging its length once at the definition and one
- *  expansion per use however long it is, so `maxBody`, read as written, undercounts what a use pushes by the factor the
- *  body's own macros expand it (a 20-character `\a` ten times over is a 200-character body: 788 uses of it under the
- *  default count were 157,600 characters of formula). Exported for render-math.test.ts. */
-export function macroBounds(tex: string): { maxBody: number; argRepeat: boolean; expandedBody: boolean } {
-  let maxBody = 0, argRepeat = false, expandedBody = false;
-  MACRO_DEFINER.lastIndex = 0;
-  for (let m = MACRO_DEFINER.exec(tex); m; m = MACRO_DEFINER.exec(tex)) {
-    if (EXPANDED_AT_DEFINITION.test(m[0])) expandedBody = true;
-    let at = m.index + m[0].length;
-    for (let group = 0; group < 2; group++) {
-      // the first group: the next brace wherever it is, whatever spells the name before it; the second: only across
-      // whitespace and an optional `[n]` parameter count, so a group further on in the formula is not read as a body
-      let open = -1;
-      if (group === 0) open = tex.indexOf("{", at);
-      else { const next = /^\s*(?:\[[^\]]*\]\s*)?\{/.exec(tex.slice(at)); if (next) open = at + next[0].length - 1; }
-      if (open < 0) break;
-      const end = braceGroupEnd(tex, open);
-      const body = tex.slice(open + 1, tex[end - 1] === "}" ? end - 1 : end);
-      if (body.length > maxBody) maxBody = body.length;
-      const seen = new Set<string>();
-      for (const p of body.matchAll(/#([1-9])/g)) { if (seen.has(p[1])) argRepeat = true; seen.add(p[1]); }
-      at = end;
+/** The index of the first `{` at or after `at` that opens a group (a control symbol's `\{` is not one), or -1. */
+function nextGroupOpen(tex: string, at: number): number {
+  for (let i = at; i < tex.length; i++) {
+    if (tex[i] === "\\") { i++; continue; }
+    if (tex[i] === "{") return i;
+  }
+  return -1;
+}
+
+export type MacroBounds = { maxBody: number; argRepeat: boolean; expandedBody: boolean; unplacedBody: boolean };
+
+/** What a formula's macro definitions let it expand to, read from the TeX as text. `maxBody` is the longest brace group
+ *  that follows a defining command, in characters (0 when the formula defines no macro): the body of a `\def\a{...}`; of
+ *  a `\newcommand{\a}[1]{...}`, whose first group is the name, so the two groups after a command are both read and the
+ *  longer counts; the group is read wherever it starts, so nothing between the definer and the brace (a name, parameters,
+ *  a delimiter) matters. `argRepeat` is true when any brace group uses one parameter more than once (`#1` twice): each
+ *  use copies the argument, so `\def\a#1{#1#1}` nested nine deep over 5,000 characters is 512 copies of them, an
+ *  amplification no expansion count bounds when the body is four characters long, and one no ordinary notation needs
+ *  (`\newcommand{\abs}[1]{\left|#1\right|}` uses its argument once); every group is read, not only a definer's, so a
+ *  body the scan cannot place (below) is still caught. `expandedBody` is true when a definer is `\edef` or `\xdef`:
+ *  KaTeX stores their body expanded, charging its length once at the definition and one expansion per use however long
+ *  it is, so `maxBody`, read as written, undercounts what a use pushes by the factor the body's own macros expand it (a
+ *  20-character `\a` ten times over is a 200-character body: 788 uses of it under the default count were 157,600
+ *  characters of formula). `unplacedBody` is true when a body is not where the scan reads it (review round 5), so
+ *  `maxBody` bounds nothing and maxExpandFor prices every expansion at the formula's own length instead, which no body
+ *  written in it exceeds: a definer with no brace group after it (the body is one token, or the formula is an error); a
+ *  `\let` or `\futurelet` that aliases a definer, whose later uses put their bodies wherever they like
+ *  (`\let\d\def \frac{a}{b} \d\b{<1,000>}` read `{a}` as the body, and 200 uses passed at KaTeX's default count); a
+ *  definer or an aliaser inside a brace group, stored in a body and run at each use, where a body assembled from the
+ *  arguments is up to nine groups long (`\def\d#1...#9{\def\b{#1...#9}}` over nine 2,000-character groups, 18,154
+ *  characters of TeX under every bound, had not finished after two minutes). Exported for render-math.test.ts. */
+export function macroBounds(tex: string): MacroBounds {
+  let maxBody = 0, argRepeat = false, expandedBody = false, unplacedBody = false;
+  let depth = 0;
+  const params: Set<string>[] = [];          // per open brace group, the parameters seen inside it so far
+  // the group after a definer, found and measured once however many definers stand before it
+  let nextFrom = -1, nextOpen = -1, endOf = -1, endAt = -1;
+  const groupAfter = (at: number): number => {
+    if (nextFrom < 0 || nextFrom > at || (nextOpen >= 0 && nextOpen < at)) { nextFrom = at; nextOpen = nextGroupOpen(tex, at); }
+    return nextOpen;
+  };
+  const groupEnd = (open: number): number => { if (open !== endOf) { endOf = open; endAt = braceGroupEnd(tex, open); } return endAt; };
+  for (let i = 0; i < tex.length; i++) {
+    const ch = tex[i];
+    if (ch === "{") { depth++; params.push(new Set()); continue; }
+    if (ch === "}") { if (depth > 0) { depth--; params.pop(); } continue; }
+    if (ch === "#") {
+      const d = tex[i + 1];
+      if (d >= "1" && d <= "9") { for (const seen of params) { if (seen.has(d)) argRepeat = true; seen.add(d); } i++; }
+      continue;
+    }
+    if (ch !== "\\") continue;
+    const cs = controlSeqAt(tex, i);
+    const after = i + cs.length;
+    i = after - 1;
+    if (BODY_DEFINERS.has(cs)) {
+      if (EXPANDED_AT_DEFINITION.has(cs)) expandedBody = true;
+      if (depth > 0) { unplacedBody = true; continue; }
+      let at = after, read = 0;
+      for (let group = 0; group < 2; group++) {
+        let open = -1;
+        if (group === 0) open = groupAfter(at);
+        else { SECOND_GROUP.lastIndex = at; const next = SECOND_GROUP.exec(tex); if (next) open = next.index + next[0].length - 1; }
+        if (open < 0) break;
+        const end = groupEnd(open);
+        const body = end - open - (tex[end - 1] === "}" ? 2 : 1);
+        if (body > maxBody) maxBody = body;
+        read++;
+        at = end;
+      }
+      if (read === 0) unplacedBody = true;
+    } else if (ALIASERS.has(cs)) {
+      if (depth > 0) { unplacedBody = true; continue; }
+      let t = tokenAt(tex, after);                                  // the name
+      // \let: an optional `=`, then the token aliased; \futurelet: two tokens, the second of them aliased
+      for (let n = cs === "\\let" ? 1 : 2; n > 0; n--) {
+        t = tokenAt(tex, t.end);
+        if (t.text === "=") t = tokenAt(tex, t.end);
+        if (BODY_DEFINERS.has(t.text) || ALIASERS.has(t.text)) unplacedBody = true;
+      }
     }
   }
-  return { maxBody, argRepeat, expandedBody };
+  return { maxBody, argRepeat, expandedBody, unplacedBody };
 }
 
 /** The maxExpand for a formula: KaTeX's default when it defines no macro, else the expansion budget divided by its
  *  longest body, clamped to at least 1 and at most KaTeX's default (a body under 20 characters leaves the default in
  *  place rather than loosening it), so whatever the count of uses, the bodies it expands stay within the budget. The
  *  bodies are read as written, which is what KaTeX stores for `\def` and `\newcommand`; a formula with an `\edef` or
- *  `\xdef` body never reaches KaTeX (renderMathPlaceholders shows it as source), so the count is not asked to bound it. */
+ *  `\xdef` body never reaches KaTeX (renderMathPlaceholders shows it as source), so the count is not asked to bound it;
+ *  a formula with a body the scan cannot place (macroBounds's unplacedBody) is priced at its own length, which no body
+ *  written in it exceeds, so it has the budget over its length in expansions and pushes at most the budget's worth. */
 export function maxExpandFor(tex: string): number {
-  const { maxBody } = macroBounds(tex);
-  return maxBody > 0 ? Math.max(1, Math.min(KATEX_DEFAULT_MAX_EXPAND, Math.floor(MATH_EXPANSION_BUDGET_CHARS / maxBody))) : KATEX_DEFAULT_MAX_EXPAND;
+  const { maxBody, unplacedBody } = macroBounds(tex);
+  const body = unplacedBody ? tex.length : maxBody;
+  return body > 0 ? Math.max(1, Math.min(KATEX_DEFAULT_MAX_EXPAND, Math.floor(MATH_EXPANSION_BUDGET_CHARS / body))) : KATEX_DEFAULT_MAX_EXPAND;
 }
+
+/** What every katex.render call here passes: KaTeX's html output only (no MathML twin), no trusted command (KaTeX's own
+ *  safety model), and the size cap; the mode, the per-formula expansion count and whether to throw are the call's. */
+const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM } as const;
 
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
@@ -292,12 +376,15 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  fits); a formula whose macro definitions repeat an argument; a formula that defines a body with `\edef`
  *  or `\xdef`, which KaTeX stores expanded (macroBounds; the two cases no expansion count over the bodies
  *  as written can bound). The call itself runs under maxSize and a maxExpand computed from the formula's
- *  macro bodies (maxExpandFor), so KaTeX's own bounds hold too. throwOnError: false renders bad TeX as
- *  visibly-flagged source instead of throwing; the catch
- *  is a belt for the residual throws (an internal error), showing the source the same way and saying so
- *  on the console once per call, so a formula can never blank a message. A second run over the same
- *  root is a no-op: no placeholder survives the first. Plain and exported: chat-md.ts registers it as
- *  sanitizeMd's post-pass, and the tests call it directly. */
+ *  macro bodies (maxExpandFor), so KaTeX's own bounds hold too, and it runs with throwOnError: true so the
+ *  catch can read what stopped it: KaTeX's expansion stop (a ParseError saying "Too many expansions") is
+ *  the fifth bound and wears the same fallback, the source with the reason and the count in its title
+ *  (review round 5: KaTeX's red error text stood there before, and this is the one bound an ordinary
+ *  formula can meet, since the count over-approximates); any other ParseError, a syntax error, is rendered
+ *  again with throwOnError: false, KaTeX's own red text as on main; a residual throw (an internal error)
+ *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
+ *  blank a message. A second run over the same root is a no-op: no placeholder survives the first. Plain
+ *  and exported: chat-md.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
   let rendered = 0;          // characters of TeX handed to KaTeX so far in this call: the budget's meter
   let reported = false;      // the belt's console report, once per call
@@ -323,8 +410,18 @@ export function renderMathPlaceholders(root: ParentNode): void {
       return;
     }
     rendered += tex.length;
+    const maxExpand = maxExpandFor(tex);
     try {
-      katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor(tex) });
+      try {
+        katex.render(tex, el, { ...KATEX_OPTIONS, displayMode: display, throwOnError: true, maxExpand });
+      } catch (e) {
+        if (!(e instanceof katex.ParseError)) throw e;
+        if (/Too many expansions/.test(e.message)) {
+          showSource(el, tex, "Not rendered: too many macro expansions; the limit for this formula is " + maxExpand + ", set by the longest macro body it defines.");
+          return;
+        }
+        katex.render(tex, el, { ...KATEX_OPTIONS, displayMode: display, throwOnError: false, maxExpand });
+      }
       el.replaceWith(...Array.from(el.childNodes));
     } catch (e) {
       if (!reported) { reported = true; console.error("math: KaTeX could not lay out a formula; its source is shown instead", e); }
