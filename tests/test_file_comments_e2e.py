@@ -454,13 +454,16 @@ def test_the_repeat_fixture_puts_the_marker_more_than_the_cap_from_both_ends_of_
     assert PARA.count(MARKER) == 1 and REPEAT.count(MARKER) == 3
 
 
-def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_position_which_a_later_write_keeps(world):
+def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_position_which_follows_recorded_changes_only(world):
     """The anchors follow-on (2026-09-07), over the kernel wire on a tie the widening cannot break: with no
     position the request is refused `anchor-ambiguous`; with the selection's offset the comment is saved with
-    its anchor at the cap and `anchorAt` beside it, the one thing that tells the copies apart. After an edit
-    above, a host write leaves that position as it is (nothing in the text says which copy moved where), and
-    the webview, painting with it as the engine's tie-break, still lands on the chosen copy because the
-    engine picks the nearest tied hit."""
+    its anchor at the cap and `anchorAt` beside it, the one thing that tells the copies apart. After an
+    insertion above that the vendored CLI recorded as a pending change, the next host write moves each
+    position to the one copy the record can have carried it to (the review's round 1, 2026-09-07: the anchor
+    alone cannot tell the copies apart, the recorded change can). After an edit nobody recorded (a direct write
+    to the file, which the sidecar's fingerprint no longer matches) the positions stand, on that write and on
+    the ones after it, and the webview, painting with one as the engine's tie-break, still lands on the chosen
+    copy because the engine picks the nearest tied hit."""
     fp = world.root / "docs" / "repeat.md"
     fp.write_text(REPEAT)
     m = nth(REPEAT, MARKER, 1)
@@ -483,22 +486,52 @@ def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_p
     third = nth(REPEAT, MARKER, 2)
     r2 = world.comment(fp, "And here.", fence=world.fence_of(r), anchor=make_anchor(REPEAT, third, third + len(MARKER)), hint=third)
     assert [x["anchorAt"] for x in r2["store"]["comments"]] == [m, third]
-    # a line lands above through the vendored CLI; the next host write keeps both positions
+    anchors = [x["anchor"] for x in r2["store"]["comments"]]
+    # a line lands above through the vendored CLI, a recorded change: the CLI writes the sidecar back with the
+    # positions as they were, a read never rewrites it, and the next host write moves both positions through
+    # the record (every copy moved by the insertion, and no copy but the chosen one lies within its length)
     inserted = "Added.\n"
     world.track_edit("# Repeats\n", "# Repeats\n" + inserted, path=fp)
     moved = fp.read_text()
     assert nth(moved, MARKER, 1) == m + len(inserted)
     s = world.ok("status", fp)
     assert [x["anchorAt"] for x in s["store"]["comments"]] == [m, third], "a read never rewrites the sidecar"
+    assert len(s["hunks"]) == 1, "the insertion is a pending change"
     r3 = world.ok("reply", fp, {"commentId": c["id"], "note": "Still once."}, world.fence_of(s))
     after = r3["store"]["comments"]
-    assert [x["anchorAt"] for x in after] == [m, third], "not refreshed: neither anchor locates uniquely"
-    assert after[0]["anchor"] == c["anchor"] and len(after[0]["replies"]) == 1
-    assert json.loads(Path(r3["storePath"]).read_text())["comments"][0]["anchorAt"] == m
+    followed = [m + len(inserted), third + len(inserted)]
+    assert [x["anchorAt"] for x in after] == followed, "each position moved to the one copy the recorded insertion can have carried it to"
+    assert [x["anchor"] for x in after] == anchors, "the anchors' own fields are untouched"
+    assert len(after[0]["replies"]) == 1
+    assert [x["anchorAt"] for x in json.loads(Path(r3["storePath"]).read_text())["comments"]] == followed
+    # what the webview paints: the refreshed position names the chosen copy exactly
+    assert locate_anchor(moved, after[0]["anchor"], after[0]["anchorAt"]) == {"from": followed[0], "to": followed[0] + len(MARKER)}
+    assert locate_anchor(moved, after[1]["anchor"], after[1]["anchorAt"])["from"] == followed[1]
+    # a line lands between the first copy and the chosen one by a write nobody recorded (away from the pending
+    # insertion: an unrecorded edit beside a record is folded into it when the sidecar loads, and the record
+    # then vouches for it): the file no longer matches the sidecar's fingerprint, so no record vouches for
+    # where the copies went, and the next host write leaves both positions as they are
+    raw = "Nobody recorded this line.\n"
+    fp.write_text(moved.replace(PARA + "\n\n", PARA + "\n\n" + raw, 1))
+    raw_moved = fp.read_text()
+    assert nth(raw_moved, MARKER, 0) == nth(moved, MARKER, 0), "the first copy did not move"
+    assert nth(raw_moved, MARKER, 1) == followed[0] + len(raw)
+    s2 = world.ok("status", fp)
+    assert len(s2["hunks"]) == 1, "the recorded insertion is still the one pending change"
+    r4 = world.ok("resolve", fp, {"commentId": c["id"], "on": True}, world.fence_of(s2))
+    assert [x["anchorAt"] for x in r4["store"]["comments"]] == followed, "kept: nothing recorded the shift"
+    assert r4["store"]["comments"][0]["resolved"] is True
+    # that write stamped the sidecar's fingerprint for the text as it is now, and the next one still finds no
+    # record that carries a position past the pending insertion's few characters: the unrecorded shift is
+    # never recovered by a later write; only the painter's nearest-wins covers it
+    r5 = world.ok("resolve", fp, {"commentId": c["id"], "on": False}, world.fence_of(r4))
+    assert [x["anchorAt"] for x in r5["store"]["comments"]] == followed, "kept again"
+    assert [x["anchor"] for x in r5["store"]["comments"]] == anchors
+    assert [x["anchorAt"] for x in json.loads(Path(r5["storePath"]).read_text())["comments"]] == followed
     # what the webview paints: the stale position is nearest the chosen copy, a paragraph from the others
-    loc = locate_anchor(moved, after[0]["anchor"], after[0]["anchorAt"])
-    assert loc == {"from": m + len(inserted), "to": m + len(inserted) + len(MARKER)}
-    assert locate_anchor(moved, after[1]["anchor"], after[1]["anchorAt"])["from"] == third + len(inserted)
+    loc = locate_anchor(raw_moved, anchors[0], followed[0])
+    assert loc == {"from": followed[0] + len(raw), "to": followed[0] + len(raw) + len(MARKER)}
+    assert locate_anchor(raw_moved, anchors[1], followed[1])["from"] == followed[1] + len(raw)
 
 
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):

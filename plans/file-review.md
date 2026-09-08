@@ -237,8 +237,13 @@ Four properties of the contract shape the design:
   comment and holds the offset the anchor located at (the anchors follow-on, 2026-09-07). It is
   romp-only and additive under the same version rule: older readers ignore it, the other hosts and
   the CLIs write the whole object back so it survives them, and the host script refreshes it on
-  every sidecar write it makes, for each comment whose anchor still locates uniquely in the file's
-  text at the time of the write. A comment without an anchor never carries it. The panel passes it to the
+  every sidecar write it makes, against the text the sidecar is saved for, by where the whole
+  anchor sits in that text: at one place, the position becomes that place; at several (the copies
+  tie), the position stands where it still names a copy and otherwise moves only to the one copy
+  the sidecar's recorded changes can have carried it to, never to the nearest, and only while the
+  file is as the sidecar's last writer left it; nowhere, the engine's scoring places it, under a
+  scan budget per write past which the remaining such comments keep the position they have (the
+  anchors follow-on review, 2026-09-07). A comment without an anchor never carries it. The panel passes it to the
   engine as the tie-break when it paints, so a passage that recurs with identical surroundings
   wider than the anchor's context stays on the copy that was chosen.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
@@ -406,10 +411,21 @@ rebuilding the anchor at the located position with the smallest context, from 24
 steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the
 whole text (past the cap it is saved at the cap), storing the located offset beside it as
 `anchorAt`, and refuses `anchor-not-found` when the passage is gone and `anchor-ambiguous` when
-two candidates tie and the request carries no offset to settle it (the anchors follow-on,
-2026-09-07; before it every tie was refused). Every sidecar write the host makes refreshes
-`anchorAt` for each comment whose anchor locates uniquely in the file's text at the time of the
-write, and a stored comment's anchor is located with its `anchorAt` as the hint. Reject writes the sidecar first, then the
+two candidates tie and the request's offset cannot settle it: no offset was sent, or the offset
+sent sits on none of the tied copies in the text the host read, because the text moved after the
+selection; that offset is refused, with a message that says the text moved, rather than placed on
+the nearest copy (the anchors follow-on, 2026-09-07, and its review; before the follow-on every
+tie was refused). Every sidecar write the host makes refreshes `anchorAt`, in `stageSidecar`, the
+one function every sidecar write goes through, and once more before the reply is measured, so the
+bytes the refresh adds count against `too-large`; the refresh reads where each comment's whole
+anchor sits in the text the sidecar is saved for: at one place, the position becomes that place;
+at several, the position stands where it still names a copy and otherwise moves only to the one
+copy the recorded changes (the pending ops, the ops the write settles, the edits the write
+applies) can have carried it to, and only while the sidecar's fingerprint matches the file, since
+after an unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it, under a budget
+on the engine's whole-text scans per write (`REFRESH_SCAN_BUDGET`), past which the remaining such
+comments keep their position and stderr says how many; and a stored comment's anchor is located
+with its `anchorAt` as the hint. Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
@@ -433,7 +449,15 @@ refusal  {type:"fileCommentsSendFailed", reqId, error}
 ```
 
 `tracked` is the client's post-toggle `status` verdict and picks the second bullet of the message.
-`desc` is the first 40 characters of the passage for an anchored comment, the change's old and
+`desc` is the first 40 characters of the passage for an anchored comment, and when the host
+widened the anchor's context past 24 characters because the passage recurs, also the copy by its
+whole surroundings (`, the one after "…" and before "…"`: the stored prefix and suffix,
+JSON-quoted so the message's `Comment <id> (…):` line stays one line; a side the file's bound left
+empty is not named), the text a session can pass to `track-edit --old`, which refuses text that
+is not unique, to reach that copy; a side wider than 120 characters (five widening steps) is not
+printed, and the desc says instead that the passage appears more than once with the same text
+around each copy, since at the host's cap the anchor may still tie, so the sides would name every
+copy, and would run to a kilobyte of escaped text (the anchors follow-on review, 2026-09-07); the change's old and
 new text for a comment bound by `suggestionId`, "this file" for a whole-file comment, and "the
 region at x, y, w, h" (with the page for a PDF) for a region comment. `body` is the comment's
 unsent `you` turns joined with a blank line, oldest first; a comment whose opening was already
@@ -716,7 +740,9 @@ quote plus 24 characters of prefix and suffix) and sends it with the note and th
 the host script re-reads the file and locates the anchor with the engine's `locateAnchor`, hinted
 by that offset, widens the stored anchor's context until it is unique in the file, stores the
 offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when
-two candidates tie and no offset was sent. The typed note is never discarded by a refusal.
+two candidates tie and the offset cannot settle it: none was sent, or the one sent sits on no tied
+copy because the text moved after the selection, and the note is then refused rather than placed
+on the nearest copy. The typed note is never discarded by a refusal.
 
 In Raw view the mapping is exact. Each logical line is one row whose text equals the source line
 (the viewer always soft-wraps, and the row number is CSS content that never enters a selection),
@@ -1014,13 +1040,31 @@ three anchor fields to be placed by. Two changes, both in the host and both romp
 anchor's context widens until it is unique (`uniqueAnchor`: 24 characters, then 24 more at a time, to
 a cap of 480 or the file's bounds; a passage unique at 24 keeps the anchor `track-comment` writes, and
 one still tied at the cap is saved at the cap), and the comment gains `anchorAt`, the located offset,
-refreshed on every sidecar write the host makes for each comment whose anchor locates uniquely
-(`refreshAnchorAts`, in the one sidecar-writing function). The panel passes a card's `anchorAt` to the
-engine as the tie-break when it paints (the model carries the field; the composer path is unchanged),
-so the highlight stays on the copy that was chosen even where the anchor alone cannot tell. The
-refusal remains for a tie the request cannot settle: no offset sent. Tests: the host module
-`tools/file-comments-host-anchors.test.mjs`, one e2e case, `ui/webview/file-comments-anchors.test.ts`,
-and this plan's pins in `tools/file-review-plan.test.mjs`.
+refreshed on every sidecar write the host makes (`refreshAnchorAts`, first thing in `stageSidecar`, the
+one function every sidecar write goes through, and again in `checkReplyFits` before the reply is
+measured, so the bytes it adds are counted). The refresh is exact and bounded (the review, 2026-09-07):
+an anchor that sits in whole at one place takes that place; one that sits at several keeps its position
+where it still names a copy and otherwise moves only to the one copy the recorded changes (the pending
+ops, the ops the write settles, the edits the write applies, summed as bounds on the shift) can have
+carried it to (`movedCopy`), never to the nearest copy, and only while the sidecar's fingerprint says no
+unrecorded edit touched the file; one that sits nowhere in whole is placed by the engine's scoring under
+`REFRESH_SCAN_BUDGET`, past which the rest keep their position and stderr says how many, so no count of
+comments holds a write past the kernel's deadline. The panel passes a card's `anchorAt` to the
+engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
+copy that was chosen even where the anchor alone cannot tell; a pending composer's passage moves
+exactly through an edit that does not reach it, and one the edit reaches is re-found through its
+anchor, with no offset sent when the copies now tie, so the host refuses instead of guessing
+(`followPassage`). The refusal remains for a tie the request cannot settle: no offset sent, or an
+offset that sits on none of the tied copies in the text the host read because the text moved after
+the selection (`locateExact` with `exact`, refused `anchor-ambiguous` with a message that says so,
+never placed on the nearest copy). The sent message names a recurring passage by its widened
+surroundings (`passageDesc`, up to 120 characters a side; past that it says only that the passage
+recurs with the same text around each copy), so the session reading it can reach the chosen copy,
+or learns that `--old` with the nearby text will be refused. Tests: the host
+modules `tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`, two e2e cases (a 24-character
+tie told apart at 48, and a tie past the cap whose positions follow a tracked insertion above),
+`ui/webview/file-comments-anchors.test.ts`, `-follow` and `-model-recurring`, and this plan's pins in
+`tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`.
 
 ### Slice 3: region comments on images
 
@@ -1407,17 +1451,29 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
   Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
   read, `too-large` before `figure-changed`. The anchors follow-on
-  (`tools/file-comments-host-anchors.test.mjs`): the anchor's context widens only as far as
-  uniqueness needs and stops at the cap; a tie settled by the hint is placed and one without a hint
-  refuses; `anchorAt` is set at creation, kept by `track-reply` and `track-edit`, refreshed by the
+  (`tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`): the anchor's context widens only as far as
+  uniqueness needs and stops at the cap; a tie settled by the hint is placed, one without a hint
+  refuses, and one whose hint sits on no tied copy (the text moved) refuses too, on a plain and on
+  a tracked file; `anchorAt` is set at creation, kept by `track-reply` and `track-edit`, refreshed by the
   next host write after an edit above, never added to a comment without an anchor, and round-trips
-  through `store-io`. `tools/file-review-plan.test.mjs` pins what this plan
+  through `store-io`; a tied position follows its copy through a tracked insertion above, its
+  reject, an accept and the person's own save, and keeps its position after an edit nobody recorded, after
+  changes above that span a copy, and when the comment has no position; the refresh scans only for
+  anchors that sit in whole nowhere, under the budget, past which the rest keep their position and
+  stderr says so, and 300 cap-width tied comments on a near-cap file complete inside the kernel's
+  deadline; the reply is measured with the refreshed positions, so a store within the slack of the
+  cap refuses `too-large` instead of landing a reply the kernel discards. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the anchor rule, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
   fails a test. `tools/file-review-plan-acceptance.test.mjs` pins the Both acceptance criterion
   on the comment `addComment` writes: its wording, the host test whose title makes the same
   `anchorAt` exception, and on the fixture the anchor kept at 24 characters for a unique passage
-  and widened for a tied one.
+  and widened for a tied one. `tools/file-review-plan-anchors.test.mjs` pins what the contract,
+  the host paragraph, the commenting section and the follow-on note state after the follow-on's
+  review: the refresh by where the whole anchor sits, its two sites and its budget, the refusal of
+  an offset that sits on no tied copy once the text moved, and the `desc` sentence's widened form and
+  its 120-character bound, against the host and model sources, the fixture, and the test modules and
+  e2e cases the note names.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).

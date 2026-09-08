@@ -106,8 +106,9 @@
 //     offset (the anchors follow-on, 2026-09-07, and its review). The refresh is exact and bounded: a
 //     stored position moves only to the one copy the recorded changes (the pending ops, the ops this
 //     write settles, the edits this write applies) can have carried it to, never to the nearest one,
-//     and the engine's whole-text scans are budgeted per write (REFRESH_SCAN_BUDGET), so no count of
-//     comments can hold a write past the kernel's deadline;
+//     and the refresh's whole-text scans — both the classification scan every anchored comment costs
+//     and the engine's scoring a nowhere anchor costs — are budgeted per write (REFRESH_SCAN_BUDGET),
+//     so no count of comments can hold a write past the kernel's deadline;
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -247,14 +248,16 @@ export const LOG_SUFFIX = '.comments-log.jsonl';
 export const ANCHOR_CTX = 24;
 export const ANCHOR_CTX_STEP = 24;
 export const ANCHOR_CTX_CAP = 480;
-// The refresh's bound on the engine's whole-text scans in one write, in characters of context compared:
-// every occurrence of a quote, times the anchor's prefix and suffix, which is what locateAnchor's cost
-// is made of. Only a comment whose whole anchor sits nowhere in the text (its context edited) needs
-// the engine's scoring (refreshAnchorAts), and one such scan on a near-cap file of repeated text with a
-// cap-width anchor compares tens of millions of characters; a loop over every comment with no bound held
-// a reply past the kernel's 10 s deadline, after which no verb could write the file's comments (the
-// review, 2026-09-07). Past the budget the remaining such comments keep the position they have, and
-// stderr says how many. About half a second of scanning on the machine the figure was taken on.
+// The refresh's bound on its whole-text scans in one write, in characters compared. Two scans a comment
+// can cost are charged to it: the classification scan (fullMatches, one indexOf over the whole text per
+// distinct anchor, affordableScan), and — only for a comment whose whole anchor sits nowhere in the text
+// (its context edited) — the engine's scoring (locateExact, every occurrence of the quote times the
+// anchor's prefix and suffix, affordable). Either, unbounded and once per comment, held a write past the
+// kernel's 10 s deadline: a near-cap file of repeated text with cap-width anchors for the engine scan,
+// and thousands of CLI-written passage comments with distinct anchors for the classification scan, after
+// which no verb could write the file's comments (the review, 2026-09-07 and 2026-09-08). Past the budget
+// a comment keeps the position it has, and stderr says how many and why. About half a second of scanning
+// on the machine the figure was taken on.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
 // The most copies of a whole anchor the refresh enumerates for one comment; past it the tie is left as
 // it is (a one-character quote with no context can sit at every other offset of a large file).
@@ -1501,6 +1504,20 @@ function requireCommentId(args) {
   return id;
 }
 
+// The comment verb's hintOffset in this text's coordinates. The browser measures the offset against
+// the text the fetch handed the viewer, which strips a leading UTF-8 BOM (the fetch spec's decode);
+// this script reads the file through decodeTextOrNull (TextDecoder ignoreBOM: true), which KEEPS the
+// one U+FEFF at offset 0, so on a BOM-prefixed file every browser offset is this text's minus one.
+// Mapping it back (add the BOM) is what lets locateExact's `exact` check see the browser's offset land
+// on the tied copy it named; without it, on a BOM file a tie was refused `anchor-moved` for the correct
+// selection, and reloading never cleared it, since the browser's offset was always one short (the review,
+// 2026-09-08). A non-numeric hint (a tie with no offset) passes through untouched, and a non-BOM file is
+// unchanged; the stored `anchorAt` is already in this text's coordinates and never goes through here.
+function browserHint(text, hintOffset) {
+  if (typeof hintOffset !== 'number' || !Number.isFinite(hintOffset)) return hintOffset;
+  return text.charCodeAt(0) === 0xFEFF ? hintOffset + 1 : hintOffset;
+}
+
 // Locate an anchor in the file as it is now. The engine picks the best-scoring hit and breaks
 // ties by the hint, nearest wins. Locating with the hint pinned to the start and to the end of the
 // text asks the engine for the earliest and the latest tied hit; when they agree the anchor has one
@@ -1550,26 +1567,27 @@ function boundaryHits(text, anchor) {
   return out;
 }
 
-// Whether `anchor` has exactly one best-scoring hit in `text`, at `at`: the engine's earliest and
-// latest tied hits (hint 0 and hint text.length) are the same position, and it is `at`. The engine's
-// own scoring, asked twice, never a second scorer.
-function locatesUniquelyAt(text, anchor, at) {
-  const { first, last } = boundaryHits(text, anchor);
-  if (!first || first.from !== at || text.slice(first.from, first.to) !== anchor.quote) return false;
-  return !!last && last.from === at;
-}
-
 // The anchor stored for the passage at from..to: makeAnchor at that position with the smallest
-// context, from ANCHOR_CTX in steps of ANCHOR_CTX_STEP, at which it locates uniquely (locatesUniquelyAt);
-// a passage unique at 24 keeps the 24 characters track-comment would write. The widening stops at
-// ANCHOR_CTX_CAP, or sooner when both sides already reach the file's bounds (wider is the same anchor);
-// an anchor still tied there is returned at the cap with `unique: false`, for the caller to keep with
-// its stored position.
+// context, from ANCHOR_CTX in steps of ANCHOR_CTX_STEP, at which it locates uniquely; a passage unique
+// at 24 keeps the 24 characters track-comment would write. The widening stops at ANCHOR_CTX_CAP, or
+// sooner when both sides already reach the file's bounds (wider is the same anchor); an anchor still
+// tied there is returned at the cap with `unique: false`, for the caller to keep with its stored
+// position.
+//
+// Uniqueness is tested with fullMatches, not the engine: makeAnchor's own prefix and suffix sit whole
+// around the passage at `from`, so the whole anchor always matches there, and where the whole anchor
+// matches the engine's best-scoring hits ARE its whole matches (fullMatches' own note), so one whole
+// match is the one best hit and two or more are the tie. fullMatches is one native indexOf for the
+// concatenated prefix+quote+suffix (asked for at most two hits), where locatesUniquelyAt ran two whole
+// engine scans per step, each slicing the anchor's context at EVERY occurrence of the quote. On a file
+// where a short quote recurs 10^5+ times (a 2 MB log of identical lines) that unbounded widening ran
+// tens of seconds and the kernel killed the host past its 10 s deadline, saving nothing (the review,
+// 2026-09-08); the whole-anchor test is a single linear scan that stops at the second hit.
 export function uniqueAnchor(text, from, to) {
   let anchor = null;
   for (let ctx = ANCHOR_CTX; ctx <= ANCHOR_CTX_CAP; ctx += ANCHOR_CTX_STEP) {
     anchor = engine.makeAnchor(text, from, to, ctx);
-    if (locatesUniquelyAt(text, anchor, from)) return { anchor, unique: true };
+    if (fullMatches(text, anchor, 2).hits.length === 1) return { anchor, unique: true };
     if (from - ctx <= 0 && to + ctx >= text.length) break;
   }
   return { anchor, unique: false };
@@ -1655,15 +1673,44 @@ function movedCopy(hits, at, bounds) {
   return found;
 }
 
+// Occurrences of `needle` in `text`, memoized per needle and text for this process: comments on the
+// copies of one repeated passage share a quote, so one count serves them all, and a sidecar of
+// thousands of such comments does not re-scan the whole file once per comment (the review, 2026-09-08).
+const countMemo = new Map();
+function quoteCount(text, needle) {
+  const m = countMemo.get(needle);
+  if (m && m.text === text) return m.count;
+  let count = 0;
+  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) count++;
+  countMemo.set(needle, { text, count });
+  return count;
+}
+
+// Whether one classification scan (fullMatches, a single indexOf pass over the whole text) fits what
+// is left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
+// anchor pays once); otherwise it costs a pass. This bounds the number of DISTINCT anchors the refresh
+// scans in one write: for every anchored comment refreshAnchorAts asked fullMatches over the whole
+// text, so a sidecar of thousands of passage comments with distinct anchors held the write past the
+// kernel's 10 s deadline, after which no verb could write the file's comments (the review, 2026-09-08).
+function affordableScan(budget, text, anchor) {
+  const key = `${REFRESH_COPIES_MAX} ${anchorKey(anchor)}`;
+  const m = matchMemo.get(key);
+  if (m && m.text === text) return true;
+  if (budget.left <= 0) return false;
+  budget.left -= text.length;
+  return true;
+}
+
 // Whether the engine's scan for `anchor` fits what is left of the refresh's budget: the two whole-text
 // locates locateExact makes, each comparing the anchor's context at every occurrence of the quote. A
-// scan already memoized for this text (boundaryHits) is free. Past the budget the comment is counted
+// scan already memoized for this text (boundaryHits) is free, and the occurrence count is memoized per
+// quote (quoteCount). Once the budget is spent nothing more is counted; past it the comment is counted
 // and skipped.
 function affordable(budget, text, anchor) {
   const m = boundaryMemo.get(anchorKey(anchor));
   if (m && m.text === text) return true;
-  let n = 0;
-  for (let i = text.indexOf(anchor.quote); i !== -1; i = text.indexOf(anchor.quote, i + 1)) n++;
+  if (budget.left <= 0) { budget.skipped++; return false; }
+  const n = quoteCount(text, anchor.quote);
   const prefix = typeof anchor.prefix === 'string' ? anchor.prefix.length : 0;
   const suffix = typeof anchor.suffix === 'string' ? anchor.suffix.length : 0;
   const cost = 2 * n * (prefix + suffix + 1);
@@ -1692,9 +1739,12 @@ function affordable(budget, text, anchor) {
 function refreshAnchorAts(store, text) {
   if (typeof text !== 'string') return;
   let bounds = null;
-  const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0 };
+  const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };
   for (const c of (store && store.comments) || []) {
     if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
+    // The classification scan itself is budgeted: without it, N distinct anchors were N whole-text
+    // passes, and thousands of CLI-written passage comments held the write past the kernel's deadline.
+    if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }
     const { hits, more } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX);
     if (hits.length === 1) { c.anchorAt = hits[0]; continue; }
     if (hits.length > 1) {
@@ -1711,6 +1761,9 @@ function refreshAnchorAts(store, text) {
   }
   if (budget.skipped) {
     process.stderr.write(`file-comments-host: ${budget.skipped} comment(s) whose anchor sits in whole nowhere in the text kept their stored position: placing them would scan past the refresh's budget for one write\n`);
+  }
+  if (budget.unscanned) {
+    process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
   }
 }
 
@@ -1782,7 +1835,7 @@ export function buildComment(text, args, now, suggestions) {
     c = { id: `${now}-0`, author: AUTHOR, ts: now, body: note, replies: [], resolved: false };
   } else {
     const anchor = validateAnchor(args.anchor);
-    const loc = locateExact(text, anchor, args.hintOffset, { exact: true });
+    const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });
     if (loc.error) return { error: loc.error };
     c = {
       id: `${now}-${loc.from}`,

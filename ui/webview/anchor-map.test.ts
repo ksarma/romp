@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import hljs from "highlight.js/lib/core";
 import python from "highlight.js/lib/languages/python";
 import xml from "highlight.js/lib/languages/xml";
@@ -24,6 +25,12 @@ import engine from "../../vendor/track-changents/engine.js";
 const FIX = (f: string) => path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", f);
 const fixture = (f: string) => fs.readFileSync(FIX(f), "utf8");
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
+// The host script that places every passage comment (tools/file-comments-host.mjs), loaded as the real ESM module at
+// run time for the tie tests below — bundling it would copy its vendored engine; its main runs only when invoked directly.
+const HOST = path.resolve(process.cwd(), "..", "tools", "file-comments-host.mjs");
+type HostModule = {
+  locateExact(text: string, anchor: { quote: string; prefix: string; suffix: string }, hint: number | undefined, opts?: { exact?: boolean }): { from: number; to: number } | { error: string };
+};
 
 // ── the viewer's marked configuration (file-view.ts) ──────────────────────────────────────────────
 marked.setOptions({ gfm: true, breaks: false });
@@ -459,7 +466,12 @@ test("makeAnchor equals the engine's own anchor; locateComment reports located /
   assert.deepEqual(locateComment(removed, a, start), { state: "detached" });
 });
 
-test("Raw: a quote that occurs twice anchors to the selected occurrence, also after two lines are inserted above", () => {
+test("Raw: a quote that occurs twice anchors to the selected occurrence, also after two lines are inserted above — the panel's follow moves the pair with its copy and the host places it there; a stale offset is refused, never guessed", async () => {
+  // The acceptance criterion (plans/file-review.md, Commenting from either view) as the system meets it: the HOST
+  // places every passage comment (the host paragraph), so the criterion is pinned against the real host module's
+  // locateExact, driven the way the comment verb drives it (`exact`), and against the panel's followPassage, the
+  // one thing that moves the composer's offset; the engine's own nearest-wins from the pre-edit offset is
+  // production's path nowhere, and the pin until 2026-09-07 asserted only that.
   const source = fs.readFileSync(FIX("handlers-crlf.py"), "utf8");
   const needle = 'return respond(404, "missing")';
   const first = source.indexOf(needle), second = source.indexOf(needle, first + 1);
@@ -474,13 +486,55 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   const anchor = makeAnchor(source, r.range);
   assert.deepEqual(locateComment(source, anchor, r.range.start), { state: "located", range: r.range });
   assert.deepEqual(locateComment(source, anchor), { state: "located", range: { start: first, end: first + needle.length } }, "without the hint the engine takes the earliest tie");
-  // the session inserted two lines above the passage between the selection and Enter
+  // Enter with no edit in between: Save sends the anchor and the pair's start (saveComposer), and the host settles the
+  // tie by that hint because it sits on a tied copy in the text the host read — the selected one. No offset: refused.
+  const host = (await import(pathToFileURL(HOST).href)) as HostModule;
+  const span = (at: number) => ({ from: at, to: at + needle.length });
+  assert.deepEqual(host.locateExact(source, anchor, r.range.start, { exact: true }), span(second));
+  assert.deepEqual(host.locateExact(source, anchor, undefined, { exact: true }), { error: "anchor-ambiguous" }, "a tie the request cannot settle");
+  // The session inserts two lines above the passage between the selection and Enter. The pair the composer holds
+  // indexes the text the selection was made over; two paths reach the host from here.
+  const at = source.indexOf("def put_note");
+  assert.ok(first < at && at < second, "the insertion lands between the copies");
   const inserted = "# reviewed\r\n# twice\r\n";
-  const edited = source.slice(0, source.indexOf("def put_note")) + inserted + source.slice(source.indexOf("def put_note"));
-  const loc = locateComment(edited, anchor, r.range.start);
-  assert.equal(loc.state, "located");
-  assert.equal(loc.range!.start, second + inserted.length);
-  assert.equal(edited.slice(loc.range!.start, loc.range!.end), needle);
+  const edited = source.slice(0, at) + inserted + source.slice(at);
+  const moved = second + inserted.length;
+  // (a) The panel saw the edit before Enter — the poll or Reload repainted over the new text: retargetComposer follows
+  // the pair with its copy, exactly, by the edit's common prefix and suffix rather than by the anchor, and Save builds
+  // the anchor over the edited text at the followed range and sends its start. The host places it on the selected copy,
+  // and the panel paints the saved comment there with its stored anchorAt as the hint.
+  const { followPassage } = await import("./file-comments");
+  const f = followPassage(source, r.range, edited);
+  if (f.state !== "moved") assert.fail("the passage sits after the edit's span: followed exactly");
+  assert.deepEqual(f.range, { start: moved, end: moved + needle.length });
+  const followed = makeAnchor(edited, f.range);
+  assert.deepEqual(host.locateExact(edited, followed, f.range.start, { exact: true }), span(moved));
+  assert.equal(edited.slice(moved, moved + needle.length), needle);
+  assert.deepEqual(locateComment(edited, followed, moved), { state: "located", range: f.range });
+  // (b) Enter fired before the panel saw the edit: the hint is the pre-edit offset, which sits on no copy now. The
+  // engine's nearest-wins from it happens to pick the selected copy here (the insertion is shorter than the gap between
+  // the copies), a coincidence the host does not take: the request refuses (`anchor-moved`, surfaced by the comment
+  // verb as `anchor-ambiguous` naming the moved text), nothing is written, and the note stays in the composer to be
+  // placed by a reselect. A stored position keeps nearest-wins: it indexes this very text.
+  assert.deepEqual(locateComment(edited, anchor, r.range.start), { state: "located", range: f.range }, "the engine's guess, right by luck");
+  assert.deepEqual(host.locateExact(edited, anchor, r.range.start, { exact: true }), { error: "anchor-moved" });
+  assert.deepEqual(host.locateExact(edited, anchor, r.range.start), span(moved), "the same offset as a stored anchorAt: nearest wins");
+  // the same stale request when the insertion sits above BOTH copies and is longer than half the gap between them: the
+  // guess is the copy that was not selected, and the refusal is the same — the reason the host refuses rather than guesses
+  const above = "# " + "reviewed ".repeat(9) + "\r\n";
+  assert.ok(above.length > (second - first) / 2 && above.length < second - first);
+  const shifted = above + source;
+  assert.deepEqual(locateComment(shifted, anchor, r.range.start), { state: "located", range: { start: first + above.length, end: first + above.length + needle.length } }, "nearest-wins picks the other copy");
+  assert.deepEqual(host.locateExact(shifted, anchor, r.range.start, { exact: true }), { error: "anchor-moved" });
+  assert.deepEqual(followPassage(source, r.range, shifted), { state: "moved", range: { start: second + above.length, end: second + above.length + needle.length } }, "the panel's follow is exact whatever the length");
+  // the verb and the panel, pinned to their sources: the comment verb is the exact caller and its anchor-moved is the
+  // anchor-ambiguous refusal that names the moved text; Save's hint is the pair's start, which retargetComposer alone moves
+  const hostSrc = fs.readFileSync(HOST, "utf8");
+  assert.ok(hostSrc.includes("const loc = locateExact(text, anchor, args.hintOffset, { exact: true });"), "buildComment places with exact");
+  assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `[^`]*the text moved after it was selected[^`]*reload and select it again`\);/.test(hostSrc), "the refusal names the moved text");
+  const panel = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
+  assert.ok(panel.includes("if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }"), "saveComposer sends the pair's start");
+  assert.ok(/const f = followPassage\(c\.text, c\.range, src\);\s*\n\s*if \(f\.state === "moved"\) \{ c\.range = f\.range; c\.text = src; c\.tied = false; \}/.test(panel), "retargetComposer moves the pair with its copy");
 });
 
 test("rawOffsetToLine counts the Raw view's rows", () => {

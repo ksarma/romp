@@ -226,7 +226,7 @@ test('the contract names anchorAt as the second optional field with its rule, an
   // the host: set at creation after the widened anchor; refreshed first thing in the one function every sidecar
   // write goes through; skipped for a comment with no usable anchor
   assert.ok(/anchor: uniqueAnchor\(text, loc\.from, loc\.to\)\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host), 'set at creation, after the anchor');
-  assert.ok(/function stageSidecar\(root, storePath, store, text\) \{\s*\n\s*refreshAnchorAts\(store, text\);/.test(host), 'refreshed at the one door');
+  assert.ok(/function stageSidecar\(root, storePath, store, text\) \{\s*\n\s*refreshAnchorAts\(store, text\);/.test(host), 'stageSidecar, the one function every sidecar write goes through, calls refreshAnchorAts first');
   assert.ok(/if \(!c \|\| !c\.anchor \|\| typeof c\.anchor !== 'object' \|\| typeof c\.anchor\.quote !== 'string' \|\| !c\.anchor\.quote\) continue;/.test(host), 'never on a comment without an anchor');
   assert.ok(/const loc = locateExact\(text, c\.anchor, undefined\);\s*\n\s*if \(!loc\.error\) c\.anchorAt = loc\.from;/.test(host), 'only when the anchor locates uniquely (a hintless locateExact is unique or an error)');
   // the model and the panel: the field rides on the store comment and the card beside an anchor, and is the painter's hint

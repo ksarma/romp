@@ -202,6 +202,19 @@ export function anchorWidened(a: Anchor): boolean {
     || (typeof a.suffix === "string" && a.suffix.length > ANCHOR_CTX);
 }
 
+/** The widest context passageDesc prints whole, per side: five of the host's 24-character widening steps (120
+ *  characters, a sentence or two — about what a person quotes to say which copy they mean). A side wider than this
+ *  is not printed: the message's `Comment <id> (…):` line is one line the session reads before the body, and at the
+ *  host's cap (ANCHOR_CTX_CAP, 480 a side) the two sides ran to a kilobyte of escaped text on it (the anchors
+ *  follow-on review, round 2, 2026-09-07). A multiple of the host's step, so no stored width falls between. */
+export const DESC_CTX_MAX = ANCHOR_CTX * 5;
+
+/** What the desc says of a recurring passage whose copies the message cannot tell apart within DESC_CTX_MAX: the
+ *  fact a person would state instead of quoting a page — the text recurs, and what surrounds each copy is the same.
+ *  It tells the session that an --old with the nearby text will be refused as not unique, so it can ask, or revise
+ *  every copy, rather than try. Names no position: `anchorAt` is an offset the session has no tool for. */
+export const RECURS_CLAUSE = ", which appears more than once with the same text around each copy";
+
 /** The parenthetical for a passage comment. The plan's form is `on "<the first 40 characters of the quote>"`, and for
  *  a passage unique at the engine's default context that is all of it. When the host widened the anchor
  *  (anchorWidened) the passage recurs, and the quote alone does not say which copy the person meant: the session
@@ -211,16 +224,21 @@ export function anchorWidened(a: Anchor): boolean {
  *  host verified unique around this copy and so an --old the session can build: `on "Ship it.", the one after "…"
  *  and before "…"`. Both are JSON-quoted, since a context can hold line breaks and quotation marks and the message's
  *  `Comment <id> (…):` line must stay one line; the quote keeps its plain form. A side the file's bound left empty is
- *  not named. An anchor still tied at the host's cap prints the cap's worth, the most the message can say; the
- *  painter's tie-break, `anchorAt`, is an offset the session has no tool for and one that moves with the text. A
- *  24-character anchor on text that came to recur AFTER the comment was made is not widened (the host never rewrites
- *  an anchor's fields) and keeps the plan's form: this module has no text to tell. */
+ *  not named. The sides are printed whole or not at all: a span cut short is not the unique text the clause promises.
+ *  Past DESC_CTX_MAX on either side the desc says RECURS_CLAUSE instead — at the host's cap the anchor may still tie
+ *  (the host stores no `unique` flag, and a 480-character side is the cap whether it settled there or not), so the
+ *  "the one after … and before …" form would name a span that sits on every copy, and a kilobyte of it. A
+ *  24-character anchor on text that came to recur AFTER the comment was made is not widened (the host never
+ *  rewrites an anchor's fields) and keeps the plan's form: this module has no text to tell. */
 export function passageDesc(a: Anchor): string {
   const head = 'on "' + a.quote.slice(0, 40) + '"';
   if (!anchorWidened(a)) return head;
+  const prefix = typeof a.prefix === "string" ? a.prefix : "";
+  const suffix = typeof a.suffix === "string" ? a.suffix : "";
+  if (prefix.length > DESC_CTX_MAX || suffix.length > DESC_CTX_MAX) return head + RECURS_CLAUSE;
   const sides: string[] = [];
-  if (typeof a.prefix === "string" && a.prefix) sides.push("after " + JSON.stringify(a.prefix));
-  if (typeof a.suffix === "string" && a.suffix) sides.push("before " + JSON.stringify(a.suffix));
+  if (prefix) sides.push("after " + JSON.stringify(prefix));
+  if (suffix) sides.push("before " + JSON.stringify(suffix));
   return head + ", the one " + sides.join(" and ");
 }
 
@@ -240,7 +258,8 @@ export function passageDesc(a: Anchor): string {
  *  name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that does not exist, and a
  *  session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the review of 2026-09-06).
  *  The standalone forms are the plan's own; the figure's name is this module's addition to them, and so is the
- *  surroundings clause a passage comment gains when its anchor was widened for text that recurs (passageDesc). */
+ *  surroundings clause a passage comment gains when its anchor was widened for text that recurs — the sides whole
+ *  up to DESC_CTX_MAX, else the short RECURS_CLAUSE (passageDesc). */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
   if (c.suggestionId) {
     const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
