@@ -45,11 +45,12 @@ MESSAGES_LOG = STATE / "timeline" / "messages.jsonl"
 # Mid-turn the model stops with `tool_use` (a tool cycle) — that does NOT end the turn.
 END_STOPS = ("end_turn", "stop_sequence")
 # The toolUseResult keys a consumer actually reads (Edit's structuredPatch → diffRows,
-# AskUserQuestion's answers map → the answered box). The atom carry is GATED on one of these
-# being present: an unconditional dict carry held every Read result's full file bytes in the
-# parse cache by reference — ~a fifth of transcript bytes on read-heavy sessions — for shapes
-# nothing reads. Widen this set when a new consumer appears; never revert to carry-all.
-TUR_CONSUMED_KEYS = frozenset(("answers", "structuredPatch"))
+# AskUserQuestion's answers map → the answered box, the Agent tool's agentId / isAsync → the
+# subagent join + the background-launch flag, plans/subagent-transcripts.md). The atom carry is
+# GATED on one of these being present: an unconditional dict carry held every Read result's full
+# file bytes in the parse cache by reference — ~a fifth of transcript bytes on read-heavy sessions —
+# for shapes nothing reads. Widen this set when a new consumer appears; never revert to carry-all.
+TUR_CONSUMED_KEYS = frozenset(("answers", "structuredPatch", "agentId", "isAsync"))
 # romp's own postal marker, injected into a delivered message body. It is the ONLY
 # postal signal — never the generic "Stop hook feedback:" prefix (any blocking Stop
 # hook produces that). The sender rompUuid is resolved from timeline/messages.jsonl
@@ -213,8 +214,17 @@ def _parse_task_notification(txt):
     # has_status: whether <status> was PRESENT, distinct from the "completed" default. A Monitor's
     # per-EVENT notification carries no status tag (only its terminal one does) — without this bit the
     # default would let a wrapped event read as "completed" and end a watch that is still live.
+    # result: an AGENT's closing message (the <result> body) — the report the parent's Agent tool head
+    # shows once a background agent has come to rest (plans/subagent-transcripts.md); a command's
+    # notification carries none. Capped like the chat's own tool output.
     return {"status": (st or "completed").lower(), "has_status": bool(st), "summary": fld("summary"),
-            "output_file": fld("output-file"), "tool_use_id": fld("tool-use-id")}
+            "output_file": fld("output-file"), "tool_use_id": fld("tool-use-id"),
+            "result": fld("result")[:_RESULT_CAP]}
+
+
+# A background agent's <result> text kept on its scan row (the want_all view) — the same 16000-char cap
+# build_session puts on every tool's output, so the report fold and the scan row can never disagree.
+_RESULT_CAP = 16000
 
 
 # A non-persistent Monitor records its own lifetime ceiling at launch (timeout_ms — the harness kills
@@ -319,6 +329,8 @@ def _bg_step(state, o):
                 return                     # a monitor EVENT (no <status> tag) — the watch is still live
             tasks[tid].update(status=note["status"], outputFile=note["output_file"],
                               summary=note["summary"] or tasks[tid]["summary"])
+            if note.get("result"):         # an agent's closing message → the Agent head's report fold
+                tasks[tid]["result"] = note["result"]
             if end_t:                      # WHEN the result landed — the awaiting-stamp lift keys the
                 tasks[tid]["endT"] = end_t  # "returned after the stamp was written" test on it (2026-08-16)
             _bg_forget_terminal(state, tid)
@@ -404,6 +416,8 @@ def _bg_step(state, o):
                                   "outputFile": tur.get("outputFile") or ""}
                     if tur.get("taskType") or d.get("type"):
                         tasks[tid]["type"] = tur.get("taskType") or d["type"]
+                    if tur.get("agentId"):   # the ack names the agent whose own transcript this launch writes
+                        tasks[tid]["agentId"] = str(tur["agentId"])   # (plans/subagent-transcripts.md)
                     order.append(tid)
                     continue
                 if async_launch and tid in tasks and not b.get("is_error") \
@@ -415,6 +429,8 @@ def _bg_step(state, o):
                     tk["outputFile"] = tk["outputFile"] or tur.get("outputFile") or ""
                     if tur.get("taskType"):
                         tk["type"] = tur["taskType"]
+                    if tur.get("agentId") and not tk.get("agentId"):
+                        tk["agentId"] = str(tur["agentId"])
                     if not tk["command"]:
                         tk["command"] = _clip_detail(tur.get("prompt") or "")
                     continue
@@ -424,6 +440,8 @@ def _bg_step(state, o):
                         continue               # a wrapped monitor EVENT — not a terminal (see _mark)
                     tasks[tid].update(status=note["status"], outputFile=note["output_file"],
                                       summary=note["summary"] or tasks[tid]["summary"])
+                    if note.get("result"):
+                        tasks[tid]["result"] = note["result"]
                     et = parse_z(o.get("timestamp"))
                     if et:                     # the return's moment (see _mark)
                         tasks[tid]["endT"] = et
@@ -507,7 +525,9 @@ def _read_jsonl(path):
 # whole-parse cache contract. The cached list itself is never extended in place — a grown file stores a
 # NEW list — so a concurrent reader holding the old list is never surprised mid-iteration.
 _JSONL_CACHE = {}                 # path -> (mtime, size, offset, tail_bytes, records); dict order = LRU, hits reinsert
-_JSONL_CACHE_MAX = 384            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
+_JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-03: the per-session states,
+                                  # captions and the postal/nudge logs became tenants — a few KB each — and
+                                  # must never evict a live transcript's slot) — past the cap, evict the least-recently-USED entry, one per
                                   # insert, never clear(). The old clear-at-cap was sized to the session count, but
                                   # the working set is FILES, not sessions (every subagent writes its own transcript):
                                   # once more distinct files than slots passed through one push cycle, the clear
@@ -544,15 +564,20 @@ def _scan_jsonl_bytes(data, base_offset):
     return records, base_offset + end + 1
 
 
-def _read_jsonl_incremental(path):
+def _read_jsonl_incremental(path, on_fail=None):
     """The parsed records of `path` (a list, NOT a generator), served append-incrementally per the cache
-    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl."""
+    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl. `on_fail`,
+    when given, is called with the exception for a stat, open or read that failed on a file that EXISTS (any
+    OSError but FileNotFoundError): an absent file is a state and answers [] quietly, an unreadable one is a
+    failure the caller may count and log (fold_records passes it through as on("fail"), 2026-09-07)."""
     path = str(path)
     try:
         st = os.stat(path)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         hit = _JSONL_CACHE.get(path)
@@ -576,9 +601,11 @@ def _read_jsonl_incremental(path):
             tail_from = max(0, offset - _JSONL_TAIL_GUARD)
             fh.seek(tail_from)
             tail = fh.read(offset - tail_from)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         _JSONL_CACHE.pop(path, None)
@@ -588,7 +615,7 @@ def _read_jsonl_incremental(path):
     return records
 
 
-def fold_records(cache, path, init, step):
+def fold_records(cache, path, init, step, on=None):
     """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
     the states/transcript readers re-read their whole file behind an (mtime,size) key that every append
     invalidates — O(file) per push for every working session. _read_jsonl_incremental already serves the
@@ -600,10 +627,25 @@ def fold_records(cache, path, init, step):
     cached state is deep-copied before folding onto it, so a state a caller was handed never changes
     under it). Returns the state; [] records (a missing or unreadable file) fold to init().
 
+    `on`, when given, is called once per call with which path the fold took: "hit" (the records are the
+    cached ones; nothing stepped), "append" (only the records past the cached prefix stepped), "refold"
+    (every record stepped: a rewrite, a shrink, or the first fold of this file) or "fail" (the file exists
+    and its stat, open or read raised: the answer is init(), the cache entry for the path is dropped and
+    nothing is memoized, so the next call reads again; an ABSENT file is not a failure and folds to init()
+    through the normal path). A caller's /perf counters ride it (kernel `_states_awaiting_overlay`,
+    2026-09-07); the fold itself keeps no counters, since one cache dict serves many readers and the
+    kernel's counters are locked per reader.
+
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
     key = str(path)
-    recs = _read_jsonl_incremental(path)
+    failed = []
+    recs = _read_jsonl_incremental(path, on_fail=failed.append)
+    if failed:
+        cache.pop(key, None)                              # a failed read is never memoized: the next call reads again
+        if on is not None:
+            on("fail")
+        return init()
     ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
     if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
         recs = _read_jsonl_incremental(path)              # past our records before we look at its tail, and a newer tail
@@ -614,19 +656,23 @@ def fold_records(cache, path, init, step):
     if hit is not None:
         n0, last0, state0 = hit
         if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            if on is not None:
+                on("hit")
             return _fold_eof_fragment(key, ent, state0, step)   # unchanged records; a newline-less tail may still sit past them
         if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
-            state, start = copy.deepcopy(state0), n0
+            state, start, kind = copy.deepcopy(state0), n0, "append"
         else:
-            state, start = init(), 0
+            state, start, kind = init(), 0, "refold"
     else:
-        state, start = init(), 0
+        state, start, kind = init(), 0, "refold"
     for r in recs[start:]:
         if isinstance(r, dict):
             state = step(state, r)
     if len(cache) > 256:                                  # bounded by the session count; never unbounded
         cache.clear()
     cache[key] = (len(recs), recs[-1] if recs else None, state)
+    if on is not None:
+        on(kind)
     return _fold_eof_fragment(key, ent, state, step)
 
 
@@ -654,6 +700,23 @@ _TRAILING_CACHE_MAX = 256
 _TRAILING_LOCK = threading.Lock()   # the memo is shared by the pusher, the handler threads and the judge pools: the
 #                                     LRU pop/reinsert/evict are several dict ops, not one (an unlocked evict raised
 #                                     KeyError under two inserters at the cap, reproduced 2026-09-04)
+
+
+def cache_gauges():
+    """Exact occupancy of the parse-layer caches for the kernel's /perf `caches` block (perf round 4,
+    M1-lite, 2026-09-07): jsonl {entries, file_bytes (the cached files' sizes, summed), records (the parsed
+    records held, summed)}, asm {entries}, asm_keylocks {entries} (never pruned, so this is the number of
+    distinct assembly keys ever seen), trailing {entries}. Every figure is a len() or a sum of len()s under
+    the cache's own lock; nothing is estimated."""
+    with _JSONL_CACHE_LOCK:
+        ents = list(_JSONL_CACHE.values())
+    jsonl = {"entries": len(ents), "file_bytes": sum(int(e[1]) for e in ents), "records": sum(len(e[4]) for e in ents)}
+    with _ASM_LOCK:
+        asm = {"entries": len(_ASM_CACHE)}
+        keylocks = {"entries": len(_ASM_KEYLOCKS)}
+    with _TRAILING_LOCK:
+        trailing = {"entries": len(_TRAILING_CACHE)}
+    return {"jsonl": jsonl, "asm": asm, "asm_keylocks": keylocks, "trailing": trailing}
 
 
 def _trailing_record(path, ent):
@@ -2879,12 +2942,15 @@ def declared_plan(session):
     [{key, text, activeForm, status}] — the FALLBACK behind task_store_plan for a session with no
     live task store, so downstream (the judge's plan-sync) sees a generic 'declared plan' shape
     instead of raw tool calls. Mirrors the kernel's _fold_tasks, with the same blind spots: only the
-    MAIN agent's TaskCreate/TaskUpdate calls, and only those on the transcript's live chain.
+    MAIN agent's TaskCreate/TaskUpdate calls, and only those on the transcript's live chain — and the
+    same skips: a TaskCreate the CLI rejected (its paired tool_result carries is_error) is not a step,
+    and a rejected TaskUpdate moves none.
     `key` is the stable `Task #N` id lifted from TaskCreate's
     result text (a creation-order `cN` fallback if the result is unreadable); `status` rides each
     TaskUpdate. Only TaskCreate/TaskUpdate are folded — plain TodoWrite (no durable ids) is not
     used by romp. Empty list if the session declared no plan."""
     results = {}                                           # tool_use_id → result text (carries 'Task #N')
+    rejected = set()                                       # tool_use_ids whose result came back is_error
     for turn in session["turns"]:
         for a in turn["atoms"]:
             if a.get("type") != "user":
@@ -2893,6 +2959,8 @@ def declared_plan(session):
                 if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
                     c = b.get("content")
                     results[b["tool_use_id"]] = c if isinstance(c, str) else json.dumps(c)
+                    if b.get("is_error"):
+                        rejected.add(b["tool_use_id"])
     tasks, order = {}, 0
     for turn in session["turns"]:
         for a in turn["atoms"]:
@@ -2903,6 +2971,13 @@ def declared_plan(session):
                     continue
                 inp = b.get("input") or {}
                 if b.get("name") == "TaskCreate":
+                    # A TaskCreate the CLI rejected (a malformed call — no `subject`, or a {tasks: [...]}
+                    # batch — answered by an is_error tool_result naming the missing field) created no task,
+                    # so it is not a declared step. Folded, it became a keyless item with empty text that
+                    # _sync_declared_plan minted as a standalone open "(declared step)" card no TaskUpdate
+                    # could ever close. Keyed on the result's is_error, as the kernel's fold is.
+                    if b.get("id") in rejected:
+                        continue
                     m = re.search(r"Task #(\d+)", results.get(b.get("id"), "") or "")
                     key = m.group(1) if m else "c%d" % order
                     af = inp.get("activeForm")
@@ -2910,6 +2985,8 @@ def declared_plan(session):
                                   "activeForm": str(af) if af else None, "status": "pending"}
                     order += 1
                 elif b.get("name") == "TaskUpdate":
+                    if b.get("id") in rejected:            # the same rejection-keyed skip as the kernel's
+                        continue                           # _fold_tasks: a refused update moved nothing
                     t = tasks.get(str(inp.get("taskId", "")))
                     if t:
                         t["status"] = str(inp.get("status") or t["status"])

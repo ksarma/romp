@@ -938,12 +938,14 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 #bg-tasks { flex: 0 0 auto; min-height: 0; max-height: min(50vh, 340px); overflow: hidden;
   box-sizing: border-box; margin: 8px 10px 6px; border: 1px solid var(--box-border); border-radius: 8px;
   background: var(--box-bg); display: flex; flex-direction: column; }
-/* level 1: the header BAR at the top of the box ("N background tasks" / "Background task · name"). No own
-   border/radius — the box provides them; a bottom border appears when expanded, separating it from the list below. */
+/* level 1: the header BAR at the top of the box ("Awaiting 3 · 2 agents · 1 command" idle, "In the background ·
+   2 agents · 1 command" working — 2026-09-06). No own border/radius — the box provides them; a bottom border
+   appears when expanded, separating it from the list below. */
 .bg-fold-head { --bgt: var(--st-working-bg); flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
   padding: 7px 11px; cursor: pointer; user-select: none; font-size: 12px; }
 .bg-fold-head.open { border-bottom: 1px solid var(--box-border); }
 .bg-fold-head:hover { background: rgba(255, 255, 255, 0.04); }
+/* Stop (a live task) and Cancel (an armed watch — slice 2, 2026-09-05) wear ONE button treatment */
 .bg-stop { flex: 0 0 auto; font-size: var(--btn-fs-sm); padding: var(--btn-pad-sm); border-radius: 9px; cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg);
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
@@ -960,6 +962,18 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .bg-task { --bgt: var(--st-working-bg); }
 .bg-task.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-task.bg-completed { --bgt: var(--st-ready-bg); }
+/* an armed watch / a peer or timer wait: nothing is computing HERE — the dot wears the await-green (slice 2) */
+.bg-task.bg-armed, .bg-task.bg-waiting { --bgt: var(--st-awaitbg-bg); }
+/* the rows grouped by KIND (slice 2, 2026-09-05): a small dim header per group, in the .bg-status
+   vocabulary (10px uppercase), shown only when more than one group is on screen */
+.bg-group-head { flex: 0 0 auto; padding: 6px 9px 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; color: var(--dim); }
+.bg-group-head + .bg-group-head { padding-top: 2px; }
+/* a row with nothing to unfold (a hook-only agent, a PR watch, a peer) is not a toggle: no hand, no hover wash */
+.bg-head.bg-flat { cursor: default; }
+.bg-head.bg-flat:hover { background: none; }
+/* how long a row has been waited on (its own event time; the statusline tick keeps it live) */
+.bg-since { flex: 0 0 auto; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bg-list > .bg-await-note { padding: 2px 9px 4px; }
 /* AWAITED (the user 2026-08-19): the session's await-green chip is waiting on THIS task — the box
    border + the row's thin outline take the chip's green; the dot keeps meaning the task's own status */
 #bg-tasks.bg-awaited { border-color: var(--st-awaitbg-bg); }
@@ -969,7 +983,12 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* SOLID status dot — no pulse (the user 2026-07-07: the pulsating yellow was distracting; a running dot is
    just solid working-yellow, like the rest of the dashboard's status dots). */
 .bg-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--bgt); }
-.bg-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg); }
+/* the row reads LEFT TO RIGHT as one line — label, then its cluster (arrow · elapsed · STATUS · Stop · caret)
+   INLINE right after it (the user 2026-09-05: with the label growing to fill, the cluster sat at the far
+   right edge and a wide desktop pane lost it entirely). The label takes only its own width and shrinks with
+   an ellipsis when too long (flex 0 1 auto, min-width 0); every cluster item is 0 0 auto, so the label can
+   never push them off-screen; no spacer, no margin-left:auto, no space-between. */
+.bg-sum { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg); }
 .bg-status { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; color: var(--bgt); }
 .bg-caret { flex: 0 0 auto; color: var(--dim); font-size: 10px; width: 10px; }
 /* level 3: a task's command + output, each its own scrollable block, indented under the line (overscroll-
@@ -1321,6 +1340,13 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    #fff default = the no-identity (cross-host) name stays legible on the dark backing. */
 .chip-peer-name { background: rgba(0, 0, 0, 0.85); color: #fff; border-radius: 7px; padding: 0 5px; margin-left: 1px; }
 .chip-awaitingBg { background: var(--st-awaitbg-bg); color: var(--st-awaitbg-fg); }
+/* the Awaiting chip is a BUTTON (slice 2, 2026-09-05): click opens the awaiting box below. The UA
+   button chrome is reset so it wears the chip exactly (.chip supplies size, weight, padding, radius);
+   hover lifts it a touch, :active presses, and the delegate's .romp-acted pulse acknowledges the click. */
+button.chip { font-family: inherit; line-height: normal; border: 0; cursor: pointer; transition: filter 0.12s ease, transform 0.08s ease; }
+button.chip:hover { filter: brightness(1.08); }
+button.chip:active { transform: scale(0.96); }
+button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* retrying = a SOFT 'blocked on the API' (rate-limit / overload auto-retry) — not a hang, not working. Amber/
    orange, deliberately distinct from working-yellow and blocked-red (the user via api 2026-06-23). */
 .chip-retrying { background: #e67e22; color: #2a1500; }
@@ -1867,7 +1893,15 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    as the links above: `.md blockquote` ties it later in the sheet and was silently winning. */
 .user-bubble blockquote, .user-bubble.md blockquote { color: rgba(255, 255, 255, 0.88); border-left-color: rgba(255, 255, 255, 0.40);
   font-family: var(--font-prose); }
-.user-bubble :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.user-bubble :not(pre) > code, .user-bubble.md :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+/* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
+   ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
+   whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
+   are unreadable on the fill. All doubled: the bubble element wears .md, which ties bare selectors. */
+.user-bubble pre, .user-bubble.md pre { background: var(--bg); }
+.user-bubble strong, .user-bubble.md strong { color: #fff; }
+.user-bubble h1, .user-bubble h2, .user-bubble h3, .user-bubble h4,
+.user-bubble.md h1, .user-bubble.md h2, .user-bubble.md h3, .user-bubble.md h4 { color: #fff; }
 /* a slash COMMAND you sent (the user 2026-06-29): the "/cmd" token renders as a monospace KEYWORD chip inside
    the blue bubble — a darkened, outlined pill so it reads as a command, not prose. Args sit after it as text. */
 .slash-cmd-chip {
@@ -1969,6 +2003,21 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   color: var(--dim); background: transparent; border: 0; border-radius: 6px; padding: 0;
 }
 .queued-x:hover { color: var(--vscode-errorForeground, #f48771); background: rgba(255, 255, 255, 0.08); }
+/* A notice romp itself queued (T243) wears the LANDED romp notice card nested inside the queued bubble: the
+   dashed "you" dress comes off the wrapper (the card brings its own gray tone), and the ✕ moves inside the
+   card's corner so it reads as the card's control. */
+.queued-bubble.queued-romp { background: transparent; border: 0; padding: 0; opacity: 1; }
+.queued-bubble.queued-romp.cancelable { padding-right: 0; }
+.queued-bubble.queued-romp.cancelable:hover { border-color: transparent; }
+.queued-bubble.queued-romp > .notice-card { margin-top: 0; }
+/* The queued NUDGE nests the landed .romp-tag + .romp-bubble: the wrapper is the landed romp turn's own
+   right-aligned column (tag above, bubble flush right), the nested bubble sheds its own 72% cap (the
+   wrapper already carries it — nested, it shrank to 72% of 72% and wrapped one-line gists) and anchors the
+   ✕ in ITS corner, not the wrapper's (T243 follow-up, measured in queued-romp-layout.test.ts). */
+.queued-bubble.queued-romp:not(.queued-sys) { display: flex; flex-direction: column; align-items: flex-end; }
+.queued-bubble.queued-romp > .romp-bubble { max-width: none; position: relative; }
+.queued-bubble.queued-romp.cancelable > .notice-card,
+.queued-bubble.queued-romp.cancelable > .romp-bubble { padding-right: 30px; }   /* room for the ✕ only when there is one */
 /* NEVER-DELIVERED send (ev.undelivered): a message whose CLI died holding it — kept, because the bubble
    is the only surviving copy of the text, but marked as a LOSS instead of posing as delivered history
    (the user 2026-07-29). Dashed like the queued family (a send that never became a turn), red-edged like
@@ -2475,6 +2524,37 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .notice-dot-clear { border-color: var(--dim); }
 .clear-loading { display: inline-flex; align-items: center; gap: 8px; }
 .clear-truncated { color: var(--dim); padding: 4px 0 6px; }
+
+/* ── SUBAGENT TRANSCRIPTS (plans/subagent-transcripts.md, 2026-09-05) ──────────────────────────────
+   The open-transcript arrow on an Agent head / agent bg row and the viewer header's pin share ONE
+   button dress (dim line icon, accent on hover — the house icon-button treatment); the running
+   preview under the head wears the tool-fold-toggle's 0.86em (no new size on the tool head); the
+   viewer header is a sticky dim line above the transcript, tokens only so both themes read. */
+.tool-open-agent, .sub-head-pin { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; color: var(--dim); cursor: pointer; flex: 0 0 auto; align-self: center; }
+.tool-open-agent:hover, .sub-head-pin:hover { color: var(--accent); background: var(--accent-wash); }
+.tool-open-agent svg, .sub-head-pin svg { display: block; }
+.tool-open-agent.bg-open-agent { margin-left: 2px; }
+.sub-head-pin.pinned { color: var(--accent); }
+.agent-gist { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 3px; color: var(--dim); font-size: 0.86em; }
+.agent-gist-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.agent-gist-tool { flex: 0 0 auto; font-weight: 600; }
+.agent-gist-desc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-gist-meta { flex: 0 0 auto; white-space: nowrap; opacity: 0.8; }
+/* the head's fold lists EVERY call (same rows); the level-0 preview yields to it the instant the fold
+   opens — this rule covers the click, the render-time openFolds check covers every rebuild after */
+.turn-tool.fold-open > .agent-preview { display: none; }
+.agent-folds > .agent-steps { margin: 6px 0 6px 2px; }
+.agent-steps-note { opacity: 0.8; font-style: italic; margin-bottom: 2px; }
+#sub-head { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--box-border); color: var(--dim); font-size: 0.86em; }
+.sub-head-line { display: flex; align-items: center; gap: 6px; padding: 6px 12px; min-width: 0; }
+.sub-head-parent { color: var(--fg); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.sub-head-parent:hover { text-decoration: underline; }
+.sub-head-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sub-head-state.running { color: var(--st-working-bg); }
+.sub-head-state.finished { color: var(--st-ready-bg); }
+.sub-head-pin { margin-left: auto; }
+.sub-head-note { padding: 0 12px 6px; }
+.sub-status-line { color: var(--dim); }
 /* the nested pre-clear transcript: same renderers as the live chat, scoped so its rail hugs the card */
 .clear-episode { border-top: 1px solid var(--box-border); margin-top: 4px; padding-top: 4px; }
 
@@ -2929,11 +3009,11 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    it; render.ts measures its bottom against #content's edge (the composer growing moves it). Below
    toasts/seek (60), above the transcript. */
 #jump-bottom {
-  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  position: fixed; left: 14px; z-index: 40;   /* bottom-LEFT (the user 2026-09-03; it sat centered and went unnoticed — they were still clicking in + End) */
   width: 40px; height: 22px; border-radius: var(--radius-pill); cursor: pointer; padding: 0;   /* a short PILL, wider than tall, hugging the bottom (the user 2026-08-31, revising the circle) */
   display: flex; align-items: center; justify-content: center;
   background: var(--vscode-menu-background, var(--surface-raised)); color: var(--dim);
-  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: var(--shadow-toast);
+  border: 1px solid var(--menu-border); box-shadow: var(--shadow-toast);   /* the raw white-alpha border vanished on the light page — cream on cream */
 }
 #jump-bottom:hover { border-color: var(--accent); color: var(--accent); }
 #jump-bottom[hidden] { display: none; }   /* author display:flex defeats [hidden] — the login-modal lesson */
@@ -3528,25 +3608,47 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
    above it the stacking rule never applied, and a narrow column got the fold's aside rules alone (45% of the ROW, a top
    border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). */
 body.fileview-open { overflow: hidden; }
-.fileview-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
+.fileview-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
 /* Only the DIRECTORY may be truncated: the filename identifies the file, so it holds its width however
-   deep the path is, and the dimmed directory in front of it gives up room first. */
+   deep the path is, and the dimmed directory in front of it gives up room first. The bar WRAPS: the path keeps
+   at least 12em and the action row drops to a second line, right-aligned, when the two do not fit side by side.
+   The pane variant wrapped first (files-pane.css, review 2026-09-07: the row of buttons squeezed the directory
+   link to 0px in a 480px pane); the modal kept one rigid line until the text-size control's three buttons pushed
+   Download, Copy path and the close button off the card below about 600px (.fileview is overflow: hidden, and a
+   phone has no Escape), so the wrap is the bar's own now, in both sheets (review 2026-09-07, round 1): the two
+   .fileview-bar rules after .fileview-acts below. */
 .fileview-name { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--fg);
   display: flex; align-items: baseline; white-space: nowrap; }
 .fileview-dir { flex: 0 1 auto; min-width: 0; color: var(--dim);
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
-/* the SESSION the file was opened from (the user 2026-09-03), in the waiting pane's chip idiom (.wt-sess): a
-   pill in the session's identity colour (inline, from the resolved row), a remote session's "host:" quiet
-   inside. Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
-   when the session has no colour (a stub for a sid the document cannot name); absent when there is no sid. */
-.fileview-sess { flex: 0 0 auto; display: inline-flex; align-items: center; max-width: 38%; padding: 1px 8px;
-  border-radius: var(--radius-pill, 999px); font-size: 11px; font-weight: 600; line-height: 1.5;
+/* the SESSION the file was opened from (the user 2026-09-03): a pill in the session's identity colour
+   (inline, from the resolved row — the colour its tab wears), a remote session's "host:" quiet inside.
+   Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
+   when the session has no colour (a stub for a sid the document cannot name); absent when there is no
+   sid. The host: token takes the pill's OWN foreground (color: inherit): the global .host-prefix rule's
+   var(--dim) would otherwise beat the inline colour and sit near-invisible on a saturated pill.
+   Sized at the bar's button size — 0.82em of --fs, not a px value — so the chip scales with its
+   neighbours. A BLOCK container, not inline-flex: text-overflow acts on block containers only — on a flex
+   container the text sits in an anonymous flex item the property cannot reach, and an over-long name
+   hard-clipped at max-width (the review of #970). The bar's align-items centres the pill; its one nowrap
+   line centres within it. */
+.fileview-sess { flex: 0 0 auto; display: block; max-width: 38%; padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px); font-size: 0.82em; font-weight: 600; line-height: 1.5;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); }
+  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); user-select: none; }
 .fileview-sess .host-prefix { color: inherit; opacity: 0.75; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+/* The wrap is the TITLE BAR's, not the classes' (review 2026-09-07, round 2). Two surfaces wear these classes
+   outside any bar: the Files pane's Recent rows (.fs-row, files.ts) wear .fileview-name, and the file browser's
+   action row (.fb-bar, file-browse.ts) wears .fileview-acts. Round 1 put the pane's wrap into the two base rules
+   and both surfaces changed shape: a 200px pane's Recent row overflowed under the name's 12em and pushed its
+   session chip past the row, and the browser's Hidden and close buttons stacked at 320-480px under a long crumb
+   trail (.fb-bar never wraps). Inside the bar the path keeps 12em and takes the rest of a wide bar, and the action
+   row shrinks and wraps to the right edge; elsewhere the plain flex above holds, as before the control. */
+.fileview-bar .fileview-name { flex: 1 1 0; min-width: 12em; }
+.fileview-bar .fileview-acts { flex: 0 1 auto; min-width: 0; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
   padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
   border: 1px solid var(--card-border);
@@ -3557,18 +3659,30 @@ body.fileview-open { overflow: hidden; }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* the GitHub action is one unit: the control and, when the kernel gave one, its reason as a caption
-   beside it — visible without hover (touch has none, and a disabled button takes no focus), truncated
-   with the full text in its tooltip; same size as the buttons it annotates. Hidden until the kernel
-   answers: an author `display` beats the UA's [hidden] rule, so the hide is spelled out. */
+   beside it — visible without hover (touch has none, and a disabled button takes no focus), and whole:
+   it wraps inside a bounded width rather than truncating, because nothing in the unit takes a tap,
+   click or focus that could finish a cut sentence; same size as the buttons it annotates, ragged edge
+   away from the control it precedes. */
 .fileview-gh { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.fileview-gh[hidden] { display: none; }
-.fileview-gh-why { font-size: 0.82em; color: var(--dim); max-width: 18em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-/* no link: a real disabled button, greyed, hover inert — never hidden (an absent button read as
-   "broken" when the file was simply not committed yet, 2026-09-05) */
-.fileview-gh .fileview-btn:disabled { opacity: 0.55; cursor: default; }
-.fileview-gh .fileview-btn:disabled:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
-.fileview-gh .fileview-btn:disabled:active { transform: none; }
+.fileview-gh-why { font-size: 0.82em; line-height: 1.25; color: var(--dim); max-width: 18em; text-align: right; }
+/* pending: the kernel's check is on its way (up to 3 s when it must ask origin), so the slot holds the
+   dimmed button and the loader's dots (.fileview-dot, the pane's own) where the caption will go — a slow
+   check must read as a wait, not as the old no-button state nor as a verdict (the loading-state rule) */
+.fileview-gh-dots { display: inline-flex; align-items: center; gap: 4px; }
+/* a disabled bar button, greyed, hover inert: the GitHub unit's no-link state (a real disabled button, never
+   hidden: an absent button read as "broken" when the file was simply not committed yet, 2026-09-05) and the
+   text-size control's end (A− at the smallest step, A+ at the largest; aria-disabled, so the button keeps the
+   keyboard focus it holds and the ring stays where the person left it). One treatment for every bar button
+   (review 2026-09-07: the end buttons kept the pointer cursor and the accent hover and read as live). */
+.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover { border-color: var(--card-border); color: var(--fg); background: transparent; }
+.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active { transform: none; }
+/* the text-size readout between A− and A+ (file-view.ts): a slot of ONE width whatever it says, and at the
+   default (nothing to reset, nothing to say) an empty slot rather than none, so A− never moves under the
+   pointer when the readout appears after the first press (review 2026-09-07: the second press landed on the
+   reset and undid the first). visibility, not display: the box stays, the button leaves the tab order. */
+.fileview-size-reset { min-width: 5.5em; box-sizing: border-box; text-align: center; font-variant-numeric: tabular-nums; }
+.fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -3594,14 +3708,20 @@ a.fileview-gh-note { border-style: dashed; }
 
 /* ── the file BROWSER (file-browse.ts) in the CHAT document ── the 642 move made the browser
    pane-local here, but its overlay dress lived only in feed.css, so it mounted as unstyled block
-   flow at the document bottom, below the composer (the user 2026-08-24, near-verbatim: "totally
-   messed up — showing at the bottom"). This block MIRRORS feed.css's (the .romp-acted precedent:
-   the two pages load different sheets, so shared overlays are declared in both — a test pins the
-   pair equal). The browser fills the pane (fixed inset-0), sits one z layer BENEATH the viewer
-   (890 < 1200) so a file opened from a listing overlays it, and body.filebrowse-open locks the
-   thread's scroll while open. */
-.filebrowse { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column;
-  background: var(--bg, #1e1e1e); }
+   flow at the document bottom, below the composer (the user 2026-08-24, who found it broken at
+   the page bottom). This block MIRRORS feed.css's (the .romp-acted precedent: the two pages load
+   different sheets, so shared overlays are declared in both — a test pins the pair equal). The
+   browser WORE the whole pane through 2026-09-04, when the user found the takeover odd once the
+   listing was capped — it presents like the file viewer now: a centered card over the dimmed
+   backdrop (the id rides the BACKDROP: every open/close check looks it up), one z layer BENEATH
+   the viewer (890 < 1200) so a file opened from a listing overlays it, and body.filebrowse-open
+   locks the thread's scroll while open. Height caps in px/%, never vh — in a pane iframe vh IS
+   the pane, so a vh cap would beat 95% on the short panes it exists to protect. */
+#romp-filebrowse { position: fixed; inset: 0; z-index: 890; background: var(--overlay-dim);
+  display: flex; align-items: center; justify-content: center; }
+.filebrowse { width: min(720px, 95%); height: min(760px, 95%); display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg, #1e1e1e); border: 1px solid var(--box-border);
+  border-radius: var(--radius-modal); box-shadow: var(--shadow-modal); }
 body.filebrowse-open { overflow: hidden; }
 .fb-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -3612,10 +3732,7 @@ body.filebrowse-open { overflow: hidden; }
 .fb-crumb:hover { color: var(--accent); text-decoration: underline; }
 .fb-crumb:last-child { color: var(--fg); }
 .fb-crumb-sep { margin: 0 3px; opacity: 0.6; }
-/* the overlay still takes the whole pane (the user 2026-08-24 ruling) — but the LISTING reads at a
-   centered 720px measure on a wide pane (the user 2026-09-02: full-width rows put a file's size
-   ~800px from its name); 100% wins on narrow panes/phones, pixel-identical to before */
-.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; width: min(720px, 100%); margin-inline: auto; }
+.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
 .fb-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 14px; cursor: pointer;
   font-size: 0.86em; }
 .fb-row:hover, .fb-row.active { background: var(--menu-hover); }
@@ -3633,11 +3750,11 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }
 .fileview-gutter { flex: 0 0 auto; position: sticky; left: 0; z-index: 1;
   padding: 10px 8px 10px 10px; text-align: right; user-select: none;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--dim); opacity: 0.55; background: var(--bg, #1e1e1e);
   border-right: 1px solid var(--box-border); white-space: pre; }
 .fileview-pre { flex: 1 1 auto; margin: 0; padding: 10px 12px;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   white-space: pre; tab-size: 4; }
 .fileview-pre code { background: none; padding: 0; font: inherit; }
 /* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
@@ -3687,19 +3804,64 @@ body.filebrowse-open { overflow: hidden; }
   color: var(--dim); opacity: 0.55; user-select: none;
 }
 .fileview-wrap .fv-ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Links inside a shown file (file-view-links.ts): a URL opens a new tab, a path opens in the viewer. Light by
+   design (the user 2026-09-07): the token keeps the colour the highlight gave it, under a faint dotted underline
+   that turns solid on hover; nothing else in the view changes. A Markdown link whose target is a file keeps the
+   link ink the other Markdown links wear. Neither is draggable (-webkit-user-drag: none, with draggable=false on the
+   anchor) and both are selectable (user-select: text; Chromium starts no selection inside a link without it), so a
+   press-drag that starts on a link selects the text under it, as on plain text, instead of starting the browser's link
+   drag; the click that ends such a drag finds the selection open, and the viewer's delegate and the chat's opener both
+   yield to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
+.fileview-body .file-uri-link, .fileview-body .fv-url { color: inherit; cursor: pointer; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; -webkit-user-drag: none; user-select: text; }
+.fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover { text-decoration: underline; text-decoration-color: currentColor; }
+.fileview-md a.file-uri-link { color: var(--link); text-decoration: none; }
+.fileview-md a.file-uri-link:hover { text-decoration: underline; }
+/* A Markdown link with no target the viewer can follow (the sanitizer removed it; a section this document does not
+   have): dead, and it says so, since the title holds the reason (file-view-links.ts DEAD_LINK_CLASS). */
+.fileview-md a.fv-dead { color: inherit; opacity: 0.7; text-decoration: underline dotted; cursor: help; }
 
+/* ── text size and measure (the user 2026-09-07: the rendered markdown had to be zoomable, and a table did not
+   follow the Files pane's width) ── The A− / A+ buttons and Ctrl/Cmd + wheel over the body (file-view.ts) set
+   `data-fv-text` on the viewer root to one of TEXT_SIZES; this table turns the step into the ONE property the
+   text views read, --fv-scale. Every text size below is a multiple of it, so the prose, its headings (em of the
+   prose), inline and fenced code, and the Raw view's rows and gutter scale together, and the prose measure with
+   them (the same characters per line at every size). Nothing else reads it: the title bar, the aside, a figure's
+   region chip (--fs) and the editor keep the page's size. Absent (an older bundle) every fallback reads as 1:
+   today's sizes byte for byte. file-view-text-size.test.ts pins the table against TEXT_SIZES in both sheets.
+   The measure sits on the prose blocks, not the root: a table takes the pane's width when it needs it (the
+   root is fluid to the pane), and a table wider than that scrolls in its own box, whole words kept
+   (`overflow-wrap: normal` against the root's `anywhere`, which crushed every column to fit), so the page never
+   widens. Code blocks keep the measure and wrap their long lines (the user 2026-08-24: long lines always
+   soft-wrap): a short snippet has no use for a 1400px box beside 860px prose. The measure rule is written at
+   ZERO specificity (:where) so a picture's own cap below always beats it: a bare <img> line in a README is a
+   direct child of the root, and a plain :not() chain outranked `.fileview-md img`, laid the picture out at the
+   measure and scrolled a 380px pane sideways (review 2026-09-07). A picture that is itself a block of the page,
+   or the figure layer's wrapper around one, takes the measure AND the column, like an image paragraph. */
+.fileview[data-fv-text="70"] { --fv-scale: 0.7; }
+.fileview[data-fv-text="80"] { --fv-scale: 0.8; }
+.fileview[data-fv-text="90"] { --fv-scale: 0.9; }
+.fileview[data-fv-text="100"] { --fv-scale: 1; }
+.fileview[data-fv-text="115"] { --fv-scale: 1.15; }
+.fileview[data-fv-text="130"] { --fv-scale: 1.3; }
+.fileview[data-fv-text="150"] { --fv-scale: 1.5; }
+.fileview[data-fv-text="175"] { --fv-scale: 1.75; }
+.fileview[data-fv-text="200"] { --fv-scale: 2; }
 /* Rendered markdown (the Raw ⇄ Rendered toggle; Rendered is the default — the user 2026-08-09).
    Typography mirrors the chat's .md block in styles.css, the reference aesthetic (one treatment, two
    sheets — the .romp-acted precedent); font sizes reuse what this surface already wears (the page base,
    12px mono, the err-hint's 0.92em). Vars the feed sheet does not define carry the chat's literals as
    fallbacks (feed-css-vars.test.ts holds that line). */
-.fileview-md { padding: 14px 18px; max-width: 860px; overflow-wrap: anywhere; font-family: var(--font-prose); }
+.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); }
+.fileview-md > :where(:not(table)) { max-width: calc(860px * var(--fv-scale, 1)); }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }
 .fileview-md p { margin: 0.5em 0; }
 .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4 {
   font-weight: 600; color: var(--fg); margin: 1em 0 0.4em; line-height: 1.3; }
 .fileview-md h1 { font-size: 1.3em; } .fileview-md h2 { font-size: 1.15em; } .fileview-md h3 { font-size: 1.05em; }
+/* a heading an in-document link lands on (scrollIntoView) sits a breath below the title bar's hairline
+   rather than flush against it — the bar's own 10px spacing */
+.fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6 { scroll-margin-top: 10px; }
 .fileview-md ul, .fileview-md ol { margin: 0.4em 0; padding-left: 1.4em; }
 .fileview-md li { margin: 0.2em 0; }
 .fileview-md strong { color: var(--fg); font-weight: 600; }
@@ -3720,13 +3882,14 @@ body.filebrowse-open { overflow: hidden; }
 }
 .fileview-md pre code {
   background: none; padding: 0; display: block;
-  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--code-fg, #e1c08d); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.fileview-md table { border-collapse: collapse; margin: 0.6em 0; }
+.fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
+.fileview-md > img, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
 /* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
    heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
    0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
@@ -3763,12 +3926,21 @@ body.filebrowse-open { overflow: hidden; }
 .fc-composer { display: flex; flex-direction: column; gap: 6px; }
 .fc-composer[hidden] { display: none; }
 .fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.fc-composer-ref[hidden] { display: none; }   /* hidden inside a card, where the comment itself is the reference (placeComposer) */
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
-.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; padding: 5px 8px; border-radius: 6px;
-  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg); }
+/* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
+   (autosizeComposer), which caps it at twelve rows — COMPOSER_MAX_ROWS of the box's computed line-height plus its
+   padding (file-comments.ts) — after which it scrolls; the person may drag it taller or shorter (resize: vertical),
+   past the cap too. The sheet declares only the floor and the row height: a max-height here clamped the drag along
+   with the autosize, since both write the same inline height (the 2026-09-07 review). One row is 1.4em of the box's
+   own size; the 12px are its padding and border (box-sizing: border-box), so the floor is exactly COMPOSER_ROWS rows. */
+.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; line-height: 1.4; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg);
+  resize: vertical; overflow-y: auto; min-height: calc(3 * 1.4em + 12px); }
 .fc-input:focus { outline: none; border-color: var(--accent); }
 .fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.fc-hint { margin-right: auto; }   /* the chord hint at the composer row's left; Save and Cancel keep the right */
 .fc-cards { display: flex; flex-direction: column; gap: 8px; }
 .fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
 .fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);
@@ -3791,6 +3963,14 @@ body.filebrowse-open { overflow: hidden; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
+   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
+   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
+.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
+/* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
+   turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
+   reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
+.fc-composer-in { border-radius: 6px; padding: 5px 8px; background: var(--accent-wash); border-left: 3px solid var(--accent); }
 .fc-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .fc-sec { background: none; border: 0; padding: 2px 0; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer; text-align: left; }
 .fc-sec:hover { color: var(--accent); }
@@ -3841,6 +4021,11 @@ body.filebrowse-open { overflow: hidden; }
 .fc-margin > .fc-sec-head, .fc-margin > .fc-composer { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 10px 12px 0; }
 .fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 12px; }
 .fc-margin > .fc-sec-log { padding-bottom: 10px; }
+/* The composer section scrolls inside itself when it shrinks; its children keep their height. The box is the height the
+   autosize or the person's drag gave it (file-comments.ts autosizeComposer): as flex items of the section they shrank
+   with it, down to the sheet's three-row floor, so a twelve-row box rendered short of its own inline height and a drag
+   was overridden by the layout (found when the composer follow-on met the margin layout, 2026-09-08). */
+.fc-margin > .fc-composer > * { flex-shrink: 0; }
 .fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2)),
 .fc-margin > .fc-sec-send:has(> :not(.fc-foot, .fc-send), .fc-foot > :nth-child(n+2), .fc-send > :nth-child(n+2):not(.fc-note)),
 .fc-margin > .fc-sec-log:has(.fc-log > :nth-child(n+2)) { flex-shrink: 1000000; min-height: min(15%, 2.4em); }
@@ -3878,7 +4063,11 @@ body.filebrowse-open { overflow: hidden; }
    node enters a row, so the Raw walks' row verification, the selection mapping and unpaint are untouched, and, like the
    row number, the label never enters a selection; a substitution is the point followed by the tint. Both wear the
    author's session colour as a 2px underline (--fc-author, set inline per mark; the accent when no session matches).
-   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). */
+   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). The Rendered view places the
+   same point in the prose (the inline-display follow-on, 2026-09-07): an inline span, so the label wraps with the words
+   around it and wears the block's own face (a heading's size in a heading); the block's normal white-space folds a
+   multi-line label onto its line, where the Raw rows show its line endings. Show changes inline, in the panel's head,
+   leaves every mark off in both views. */
 .fc-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
   color: inherit; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }

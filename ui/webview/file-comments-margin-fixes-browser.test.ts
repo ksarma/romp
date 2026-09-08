@@ -112,7 +112,7 @@ function mount(page: any, status: Record<string, unknown> = STATUS): Promise<voi
       body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null,
       renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
       onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: () => { /* inert */ }, onClose: () => { /* inert */ },
-      post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+      post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
       aside: (node: HTMLElement | null) => { const main = document.getElementById("main")!; main.querySelector(".fileview-aside")?.remove(); if (node) { node.classList.add("fileview-aside"); main.appendChild(node); } },
       setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ }, reload: () => { /* inert */ },
     };
@@ -256,7 +256,7 @@ for (const name of ["chromium", "firefox"]) {
       await click(page, '.fileview-aside [data-act="fcfile"]');
       await page.focus(".fileview-aside .fc-composer .fc-input");
       await page.keyboard.type(FRESH.body);
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("Control+Enter");   // the save chord (the composer follow-on: Enter alone adds a line)
       await awaitVerb(page, "comment");
       const req = await page.evaluate(() => (window as any).__posted.slice(-1)[0]);
       assert.equal(req.args.anchor, undefined, "a whole-file comment: no anchor");
@@ -283,7 +283,7 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(s.composerHidden, false, "the composer is up for the reply");
       await page.focus(".fileview-aside .fc-composer .fc-input");
       await page.keyboard.type("Which cache do you mean?");
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("Control+Enter");   // the save chord
       await awaitVerb(page, "reply");
       assert.equal(await lastVerb(page), "reply");
       const c3r = { ...COMMENTS[1], replies: [{ author: "you", ts: T0 + 9000, body: "Which cache do you mean?" }] };
@@ -294,7 +294,13 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(s.cards.c3.height + 8 <= s.trackHeight, "the fixture: the card with its reply fits the track: " + s.cards.c3.height);
       assert.ok(s.marks.c3!.top >= s.bodyBox.top - 1 && s.marks.c3!.bottom <= s.bodyBox.bottom + 1, "the mark is in the body's box: " + JSON.stringify(s.marks.c3) + " in " + JSON.stringify(s.bodyBox));
       assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
-      near(s.cards.c3.top, s.marks.c3!.top, "and level with its mark");
+      // level with its mark — or, where the loose group above it (the whole-file cards, at the top of the track) reaches past
+      // the mark, pushed down to the group's end and wearing the leader (card-layout.ts). Paragraph 3's mark is one line under
+      // that reach: the head is a row taller since Show changes inline joined its button row (the file has a change, and three
+      // buttons wrap at 340px), so the track begins that much lower and the card's desired top falls inside the group
+      const floor = s.cards.fresh.bottom + 8;
+      near(s.cards.c3.top, Math.max(s.marks.c3!.top, floor), "and level with its mark, or pushed to the loose group's end");
+      if (floor > s.marks.c3!.top) { assert.equal(s.cards.c3.pushed, "1", "pushed by the loose group"); near(parseFloat(s.cards.c3.leader), floor - s.marks.c3!.top, "the leader spans the push", 1); }
       near(s.trackScroll, s.bodyScroll, "the track came along", 1);
     });
   });

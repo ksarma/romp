@@ -871,6 +871,28 @@ class LiveTail(unittest.TestCase):
         self.assertEqual(s.client.calls, 2, "the queued rerun fires after the live refresh lands")
         self.assertFalse(s._ctx_refresh_again, "the queue holds ONE rerun, not a storm")
 
+    def test_queued_refresh_survives_a_failed_attempt(self):
+        """PR #886 review: the early return on a failed/None payload sat BEFORE the rerun tail, so a
+        switch-time ask queued behind a refresh that then errored was dropped on the floor — the old
+        model's number stood until the next turn. The rerun fires however the attempt ended."""
+        import asyncio
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+        s = sb.SdkSession(be, {"sid": "11111111-2222-3333-4444-555555555555", "name": "n", "cwd": "/tmp"})
+
+        class _FailThenWork:
+            def __init__(self): self.calls = 0
+            async def get_context_usage(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("control channel hiccup")
+                return {"percentage": 40}
+        s.client = _FailThenWork()
+        s._ctx_refresh_again = True                    # an ask queued while the failing one was in flight
+        asyncio.run(s._do_refresh_context())           # attempt 1 fails; the queued rerun must still run
+        self.assertEqual(s.client.calls, 2, "the queued ask reruns even when the attempt it waited on failed")
+        self.assertEqual(s._ctx_pct(), 40, "…and the rerun's answer lands")
+        self.assertFalse(s._ctx_refresh_again)
+
     def test_assistant_model_sets_badge_but_synthetic_does_not_corrupt_it(self):
         """The model 'doesn't show' mid-conversation (the user 2026-06-24): injected/synthetic assistant turns
         carry model='<synthetic>', which an unguarded assign wrote straight onto the statusline + timeline
@@ -2924,7 +2946,15 @@ class SpendRecord(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                                 "kernel", "sdk_backend.py")).read()
         self.assertIn("self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,", src,
-                      "the settle folds THIS turn's DELTAS — cost AND tokens are cumulative per process")
+                      "the settle folds THIS turn's cost DELTA and _turn_usage's token counts")
+        self.assertIn("turn_u = self._fold_turn_tokens(totals, cumulative)", src,
+                      "tokens come from the result's counters folded by _fold_turn_tokens; the flat usage "
+                      "dict is per-turn and is never diffed, and the settle calls the two halves itself so "
+                      "it can say when the fallback was taken")
+        self.assertIn("def _turn_usage(self, msg):", src,
+                      "upstream's name for the same fold (their #956) stays callable")
+        self.assertIn('totals = model_usage_totals(getattr(msg, "model_usage", None))', src,
+                      "the cumulative modelUsage map is the counter the token watermarks diff")
         self.assertIn("sid=self.thread_of or self.sid)   # the rail's spend", src,
                       "a comment THREAD bills its OWNING session (T144); a plain session bills itself "
                       "(T100's per-session attribution, completed)")
@@ -2936,8 +2966,8 @@ class SpendRecord(unittest.TestCase):
             ksrc = f.read()
         self.assertIn('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):',
                       ksrc, "_usage serves spend on the legacy marker OR a login-less machine with recorded spend")
-        self.assertIn('"spend": _spend_windows()', ksrc)
-        self.assertIn("def _spend_windows(keyed_only=False, now=None):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
+        self.assertIn('"spend": _spend_windows(doc=doc)', ksrc)              # doc: the ledger parsed once per _usage() call (perf round 4 P18)
+        self.assertIn("def _spend_windows(keyed_only=False, now=None, doc=None):", ksrc)   # keyed_only: the mixed-host API sum (test_session_auth)
 
     def test_cumulative_process_totals_fold_as_per_turn_deltas(self):
         """The CLI's total_cost_usd AND its modelUsage counters are CUMULATIVE per process (the result
@@ -3162,6 +3192,121 @@ class SpendRecord(unittest.TestCase):
         self.assertEqual(sb.result_token_totals(self._result(1.0, model_usage={"m": {"inputTokens": 3}})),
                          ({"input_tokens": 3, "output_tokens": 0, "cache_read_input_tokens": 0,
                            "cache_creation_input_tokens": 0}, True), "modelUsage: the cumulative counter")
+
+    # ── upstream's spend-ledger fold (their #956, 2026-09-06/07), on the fork's helpers: upstream's
+    # `_spend_session` returned (session, run, day); the fork's `_spend_session` / `_feed` / `_day` are
+    # the same three pieces, so these tests ride them (the fold of 2026-09-07 kept the fork's helpers) ────
+    @staticmethod
+    def _model_map(total_in, model="claude-x", out=0):
+        return {model: {"inputTokens": total_in, "outputTokens": out, "cacheReadInputTokens": 0,
+                        "cacheCreationInputTokens": 0, "webSearchRequests": 0, "costUSD": 0.0}}
+
+    def test_cost_and_model_usage_are_running_totals_folded_as_deltas(self):
+        """The CLI's total_cost_usd and its modelUsage map are CUMULATIVE per process — the CLI documents
+        the map as cumulative like the cost: read the latest result, never sum results — so folding the
+        raw values re-added the whole session-so-far on every turn (the dollars first: the user
+        2026-08-08, who did not believe the bottom line; then the tokens). Fold deltas for both; reset
+        the watermarks with each new CLI process; treat a shrunken counter as a reset we missed. The
+        flat `usage` dict rides every result as the TURN's own total and, with the map present, is
+        neither summed nor diffed — the map governs."""
+        s = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        def _result(total, map_in, turn_in):
+            r = _ResultMessage()
+            r.total_cost_usd = total
+            r.model_usage = self._model_map(map_in)
+            r.usage = {"input_tokens": 9999}         # deliberately NOT the map's delta: if the flat dict were read
+            return r                                 # or summed, tokIn would show it (review fold on #956)
+        self._feed(s, _result(1.0, 100, 100))    # first turn of the process: delta = the whole counter
+        self._feed(s, _result(2.5, 140, 40))     # second turn: deltas = 1.5 / 40 tokens, NOT another 2.5 / 140
+        d = self._day()
+        self.assertAlmostEqual(d["usd"], 2.5, msg="two turns fold to the process total, never more")
+        self.assertEqual(d["tokIn"], 140, "tokens fold as deltas of the modelUsage running total")
+        self.assertEqual(d["turns"], 2)
+        s._last_cost_total = 0.0       # the connect reset: a fresh CLI process starts at zero…
+        s._last_usage_totals = {}      # …on both counters
+        self._feed(s, _result(0.8, 30, 30))
+        self.assertAlmostEqual(self._day()["usd"], 3.3)
+        self.assertEqual(self._day()["tokIn"], 170)
+        self._feed(s, _result(0.5, 20, 20))      # a counter BELOW the watermark = a reset we missed → fold it whole
+        self.assertAlmostEqual(self._day()["usd"], 3.8)
+        self.assertEqual(self._day()["tokIn"], 190)
+
+    def test_a_clear_resets_the_watermarks_on_the_lastsid_flip_even_when_the_new_counter_is_higher(self):
+        # the /clear reset used to be inferred only from a counter that fell BELOW the watermark; a first
+        # post-clear turn larger than the whole pre-clear total was diffed against the old watermark and
+        # under-counted. The lastSid flip with `clearing` set IS the reset event (review find on #956,
+        # 2026-09-07): both watermarks go to zero there, so the next result folds whole.
+        s = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        def _result(total, map_in):
+            r = _ResultMessage(); r.total_cost_usd = total; r.model_usage = self._model_map(map_in)
+            r.usage = {"input_tokens": 9999}; return r
+        self._feed(s, _result(1.0, 100))
+        self.assertEqual(self._day()["tokIn"], 100)
+        s._clearing = True                                    # a /clear was delivered…
+        class _Init:                                          # …and the CLI's init lands on a NEW fsid
+            subtype = "init"
+            data = {"session_id": "11111111-2222-3333-4444-cccccccccccc", "model": "claude-x"}
+        import asyncio
+        async def go():
+            s._on_message(_Init(), _AssistantMessage, _ResultMessage, _Init)
+            await asyncio.sleep(0)
+        asyncio.run(go())
+        self.assertEqual((s._last_cost_total, s._last_usage_totals), (0.0, {}), "reset on the event, not on a guess")
+        self._feed(s, _result(2.0, 150))                      # HIGHER than the old watermark: the guess would diff it
+        self.assertEqual(self._day()["tokIn"], 250, "folded whole after the clear, not 150 - 100")
+        self.assertAlmostEqual(self._day()["usd"], 3.0)
+
+    def test_the_model_usage_map_sums_across_models_and_all_four_kinds(self):
+        # a mid-process model switch keeps BOTH models' running totals in the map — the process total
+        # is their sum, and every kind (in / out / cache read / cache write) folds
+        s = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        r = _ResultMessage(); r.total_cost_usd = 1.0
+        r.model_usage = {"claude-a": {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 1000, "cacheCreationInputTokens": 60}}
+        self._feed(s, r)
+        r2 = _ResultMessage(); r2.total_cost_usd = 2.0
+        r2.model_usage = {"claude-a": {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 1000, "cacheCreationInputTokens": 60},
+                          "claude-b": {"inputTokens": 5, "outputTokens": 7, "cacheReadInputTokens": 300, "cacheCreationInputTokens": 9}}
+        self._feed(s, r2)
+        d = self._day()
+        self.assertEqual((d["tokIn"], d["tokOut"], d["tokCacheR"], d["tokCacheW"]), (15, 27, 1300, 69))
+        self.assertEqual(d["turns"], 2)
+
+    def test_the_flat_usage_dict_is_the_turns_own_total_and_folds_whole(self):
+        """REGRESSION (the user 2026-09-06, who read the day's token count, asked how it was possible,
+        and was right in the other direction: the ledger held roughly HALF the true count). The flat
+        `usage` on a result is the TURN's own total — measured on CLI 2.1.263 against the transcript:
+        turn one's three API calls summed, turn two's single call alone — yet the settle diffed it
+        against the previous turn's like a running total, so a 100-token turn followed by a 140-token
+        turn recorded 140, not 240, and every turn but the first lost the previous turn's worth (a
+        SMALLER turn folded whole, by the shrunken-counter rule, which is why the loss looked random).
+        Without a modelUsage map (an older CLI) the flat dict folds WHOLE; it is never diffed. The
+        fork ADDS each whole fold to the per-field watermarks (upstream leaves them untouched), so a
+        modelUsage map appearing later in the same process cannot recount what landed here
+        (test_a_paid_result_without_model_usage_lands_the_usage_dict_as_this_turns_figure_and_says_so_once)."""
+        s = self._spend_session("11111111-2222-3333-4444-bbbbbbbbbbbb")
+        def _result(total, turn_in):
+            r = _ResultMessage()
+            r.total_cost_usd = total
+            r.usage = {"input_tokens": turn_in}
+            return r
+        self._feed(s, _result(1.0, 100))
+        self._feed(s, _result(2.5, 140))
+        self.assertEqual(self._day()["tokIn"], 240, "two turns of 100 and 140 tokens are 240 tokens — the bug recorded 140")
+        self._feed(s, _result(3.0, 60))
+        self.assertEqual(self._day()["tokIn"], 300, "a turn smaller than the last folds whole too — there is no watermark on a per-turn figure")
+        self.assertAlmostEqual(self._day()["usd"], 3.0, msg="the dollars stay a delta of their running total")
+        self.assertEqual(s._last_usage_totals["input_tokens"], 300,
+                         "the per-turn folds ADVANCE the watermark by what they recorded (the fork's rule)")
+
+    def test_the_keyed_sub_count_carries_the_by_kind_split(self):
+        # the hover splits each window's tokens by kind; a mixed host's API readout sums ONLY the keyed
+        # sub-counts, so the split must ride them too (2026-09-06) — and a login turn carries it forward
+        self.be._record_spend(0.02, {"input_tokens": 100, "output_tokens": 40,
+                                     "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 60}, keyed=True)
+        self.be._record_spend(0.03, {"input_tokens": 10, "output_tokens": 5}, keyed=False)
+        k = json.loads(self.p.read_text())["days"][self._today()]["key"]
+        self.assertEqual((k["tok"], k["tokIn"], k["tokOut"], k["tokCacheR"], k["tokCacheW"]), (1200, 100, 40, 1000, 60))
+        self.assertEqual(k["turns"], 1, "the login turn is carried forward, not counted")
 
     # ── the resume guard (2026-09-05): a CLI that RESTORES its cost counters must not double-count ──
     _FSID = "22222222-3333-4444-5555-dddddddddddd"
@@ -4631,6 +4776,19 @@ class BgTaskLifecycle(unittest.TestCase):
         self.assertEqual((snap[0]["desc"], snap[0]["lastTool"]), ("long build", "Bash"),
                          "a progress event for an id we never saw ADDS it (mid-task attach converges)")
 
+    def test_every_live_row_carries_its_lifecycle_task_id(self):
+        # the CLI keys an Agent task's lifecycle by the AGENT ID (probe-verified on 2.1.257; _on_task_event
+        # already retires the subagent by it). Shipping it on the row is what lets the kernel join the
+        # stream's row to the SubagentStart hook's — without it the same agent listed twice in the
+        # Awaiting box, once by type and once as "Running <description>" (2026-09-06).
+        s = self._sess()
+        self._feed(s, "task_started", {"task_id": "a1111111111111111", "description": "Running Map the parser",
+                                       "task_type": "local_agent", "tool_use_id": "toolu_01"})
+        self._feed(s, "task_started", {"task_id": "b2222", "description": "build the docs", "tool_use_id": "toolu_02"})
+        rows = s.snapshot()["bgTasks"]
+        self.assertEqual([(r["taskId"], r["toolUseId"]) for r in rows],
+                         [("a1111111111111111", "toolu_01"), ("b2222", "toolu_02")])
+
     def test_a_task_id_less_event_is_ignored(self):
         s = self._sess()
         self._feed(s, "task_started", {"description": "no id"})
@@ -4770,6 +4928,28 @@ class LiveSubagentsRetire(unittest.TestCase):
             e["agentId"] = aid
             e["startedAt"] = 2
         return e
+
+    def test_background_work_counts_as_busy_for_the_quiet_gate(self):
+        # T240: busy_count counted only in-flight turns, so a quiet deploy applied INSTANTLY over a
+        # session running a Workflow (no turn in flight between its own turns) and killed it — eight
+        # review runs lost in one night. Background work makes the session busy; the breakdown is
+        # separate so the manager can hold new turn starts only for turns that are actually in flight.
+        s = self._sess()
+        be = s.backend
+        be.sessions[s.sid] = s
+        self.assertEqual(be.busy_breakdown(), (0, 0))
+        self.assertEqual(be.busy_count(), 0)
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self.assertEqual(be.busy_breakdown(), (0, 1), "a live workflow with no turn in flight is background work")
+        self.assertEqual(be.busy_count(), 1)
+        s._on_task_event("task_notification", {"task_id": "w1", "status": "completed"})
+        self.assertEqual(be.busy_breakdown(), (0, 0), "ended → not busy")
+        self.assertEqual(be.busy_count(), 0)
+        self._start(s, "a1")
+        self.assertEqual(be.busy_breakdown(), (0, 1), "a live background agent counts the same way")
+        s.inflight = 1
+        self.assertEqual(be.busy_breakdown(), (1, 0), "a session is counted ONCE — in flight wins")
+        self.assertEqual(be.busy_count(), 1)
 
     def test_a_failed_workflow_agent_retires_on_the_runs_progress_list(self):
         """The shape the probe recorded: the run's task_progress re-ships the whole per-agent list on every

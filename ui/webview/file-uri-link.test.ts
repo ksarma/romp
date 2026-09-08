@@ -18,9 +18,11 @@ test("a bare file:// URL becomes a clickable .file-uri-link that opens the file 
   // clicking is ROUTED by openPath, never a blocked window.open(file://) — a file:// URI is absolute,
   // so it takes the shared openPathLink's no-session-id branch
   assert.match(LINKS, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
-  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts)
-  assert.match(LINKS, /\.replace\(\/\^file:/);
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/);   // with the click: a PDF's modified-click tab
+  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts); only a
+  // LOCAL URI (an empty authority, or localhost) is one; file://host/path names another machine and stays prose (2026-09-07)
+  assert.match(LINKS, /const FILE_URI_RE = \/\^file:\\\/\\\/\(\?:localhost\)\?\(\?=\\\/\)\/i;/);
+  assert.match(LINKS, /let p = uri\.replace\(FILE_URI_RE, ""\);/);
   assert.match(LINKS, /decodeURIComponent\(p\)/);
 });
 
@@ -43,8 +45,9 @@ test("linkify works inside INLINE backticks (agents backtick paths), skips only 
   // (the spaced pass in render.ts and the token walk in path-links.ts share the one skip list)
   assert.match(RENDER, /closest\("a, \.file-uri-link, pre"\)/);
   assert.doesNotMatch(RENDER, /closest\("a, \.file-uri-link, code, pre"\)/);
-  assert.match(LINKS, /closest\("a, \.file-uri-link, pre"\)/);
-  assert.doesNotMatch(LINKS, /closest\("a, \.file-uri-link, code, pre"\)/);
+  assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat's default skip list (a variable since the file viewer walks inside its <pre>; DEAD_TEXT is the link and the inline SVG)");
+  assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/);
+  assert.doesNotMatch(LINKS, /"a, \.file-uri-link, code, pre"|code, pre"/);
   assert.match(LINKS, /tok = tok\.slice\(0, tok\.length - trail\[0\]\.length\)/);
 });
 

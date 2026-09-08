@@ -13,3 +13,5 @@ Upstream ships the same silent verdict (their #543 plus the registry follow-on `
 Status detail (migrated from the table): **offered** — their PR #947 (2026-09-06), label `feature`
 
 MERGED 2026-09-07T00:36Z as their PR #947 (merge `318cab03`; head `a5191671`) after two review fold rounds (the tracking-ref memo without a drop event, the caption's nowrap dead end, `git symbolic-ref -q HEAD` for git < 2.22, a staged-only verdict `GH_STAGED`, the first-match refspec rule, a pending placeholder with a reconnect re-ask). The askpass item the reviewer asked for is its own entry (`github-link-ls-remote-askpass`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #947 is in the folded range).

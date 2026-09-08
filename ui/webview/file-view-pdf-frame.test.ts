@@ -207,6 +207,7 @@ win.getSelection = () => null;
 win.confirm = () => true;
 win.postMessage = () => { /* our own window: nothing listens here */ };
 (globalThis as any).window = win;
+(globalThis as any).location = { protocol: "http:" };   // the web dashboard: the viewer's discard ask is a confirm here (canPreview)
 (globalThis as any).document = doc;
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {

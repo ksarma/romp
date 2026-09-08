@@ -34,7 +34,10 @@ test("the gear has a User todos checkbox beside Thinking summaries, gesture-stam
   assert.ok(/Waiting on you/.test(row) && /card at the bottom/.test(row), "…and where it shows");
   assert.ok(/Off by default/.test(row), "says it is off by default");
   assert.ok(/this kernel keeps its own copy/.test(row) && /per machine/.test(row), "…and per machine");
-  assert.ok(GEAR.includes("post({ type: 'setUserTodos', enabled: utd.checked, gt: Date.now() })"),
+  // minted in the literal, through the gesture clock (upstream's follow-up on #879, 2026-09-07 fold: the
+  // stamp climbs above the store's last seen one; setting-stale.test.ts pins that no gear emitter uses the
+  // bare wall clock)
+  assert.ok(GEAR.includes("post({ type: 'setUserTodos', enabled: utd.checked, gt: gclock.stamp('user-todos') })"),
     "the click posts the kernel's designed message with the gesture stamp minted in the literal");
   assert.ok(GEAR.includes("utd.checked = !!v.userTodos"),
     "the box always shows the kernel's persisted answer, never a page default");

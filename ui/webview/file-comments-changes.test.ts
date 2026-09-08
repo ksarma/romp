@@ -242,7 +242,8 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(map, /fcreject: \(x, ev\) => \{ ev\.stopPropagation\(\); void this\.mutate\("reject", \{ ids: \[x\.dataset\.id!\] \}, "change:" \+ x\.dataset\.id!\); \}/);
   assert.match(map, /void this\.mutate\("accept-all", \{\}, "changes"\)/);
   assert.match(map, /fcrejectallgo: \(\) => \{ this\.rejectAllConfirm = false; void this\.mutate\("reject-all", \{\}, "changes"\); \}/, "Reject all goes after its pane-local confirm");
-  assert.match(map, /fcchange: \(x\) => \{ this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \}/, "an inline mark opens its card");
+  assert.match(map, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \}/,
+    "an inline mark opens its card, and cancels the click: a mark inside an author's target=_blank link must not also open the tab, and one inside a URL the viewer linked (file-view-links.ts) must not open it either");
   assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "…by keyboard too");
   // the fence: fileMtimeNs for reject and reject-all ONLY, from the last status/result reply
   assert.match(SRC, /const FILE_VERBS = new Set\(\["reject", "reject-all"\]\);/);
@@ -316,7 +317,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -542,7 +544,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired
@@ -615,9 +617,9 @@ test("the change cards render first, grouped by paragraph, in text order, the bu
   // Reply on the hosted comment is the reply verb into that comment
   act(hosted, "fcreply", bound.id)!.click();
   const input = aside.querySelector(".fc-input")!;
-  assert.ok(aside.querySelector(".fc-composer-ref")!.textContent.startsWith("Reply on "));
+  assert.ok(aside.querySelector('.fc-hosted[data-id="' + bound.id + '"] .fc-composer'), "the box opens inside the hosted comment (the reply follow-on)");
   input.value = "Trimmed is fine.";
-  dispatch(input, new Ev("keydown", { key: "Enter" })); await flush();
+  dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "reply");
   assert.deepEqual(m.args, { commentId: bound.id, note: "Trimmed is fine." });
 });
@@ -848,7 +850,7 @@ test("Reply on a change card writes a comment bound to the change: comment {sugg
   assert.equal(aside.querySelector(".fc-composer-ref")!.textContent, "Reply on the change reduced → cut");
   const input = aside.querySelector(".fc-input")!;
   input.value = "Keep reduced; the abstract uses it.";
-  dispatch(input, new Ev("keydown", { key: "Enter" })); await flush();
+  dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "comment");
   assert.ok(m, "the comment verb went");
   assert.deepEqual(m.args, { suggestionId: "h1", note: "Keep reduced; the abstract uses it." }, "bound by suggestionId, no anchor");

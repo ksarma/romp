@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -151,17 +151,60 @@ def _set_perf_log(on):
     return _PERF
 
 
+# glibc's mallinfo2 through ctypes (perf round 4, M1-lite, 2026-09-07): the large-object half of the heap.
+# The return type MUST be the struct: without `.restype` ctypes returns an int and the first field read
+# segfaults the process (the refuted M1 crashed the kernel on its first report, exit 139). Resolved once
+# at import; None where the symbol is absent (glibc before 2.33, musl, macOS), and the gauge is null then.
+try:
+    import ctypes as _ctypes
+
+    class _MallInfo2(_ctypes.Structure):
+        _fields_ = [(n, _ctypes.c_size_t) for n in ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks",
+                                                     "fsmblks", "uordblks", "fordblks", "keepcost")]
+    _MALLINFO2 = _ctypes.CDLL(None).mallinfo2
+    _MALLINFO2.restype = _MallInfo2
+    _MALLINFO2.argtypes = ()
+except Exception:
+    _MallInfo2 = None
+    _MALLINFO2 = None
+
+
+def _malloc_stats():
+    """{arena, hblkhd, uordblks, fordblks} in bytes from glibc's mallinfo2, or None where it is absent: the
+    main arena's size, the bytes in mmap'd blocks (large objects, the multi-MB frame strings), the bytes in
+    use and the free bytes held by the allocator. pymalloc's arenas are mmap'd by the interpreter itself and
+    invisible here, so this is the malloc half of the heap only."""
+    if _MALLINFO2 is None:
+        return None
+    try:
+        m = _MALLINFO2()
+    except Exception:
+        return None
+    return {"arena": int(m.arena), "hblkhd": int(m.hblkhd), "uordblks": int(m.uordblks), "fordblks": int(m.fordblks)}
+
+
 def _process_stats():
-    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
-    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
-    to KB and the field is still called rss_kb."""
-    rss = 0
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot, plus the exact memory gauges
+    (perf round 4, M1-lite): rss_anon_kb and hwm_kb (RssAnon and VmHWM from /proc/self/status, the
+    anonymous and the peak resident size), allocated_blocks (sys.getallocatedblocks, the interpreter's
+    live allocations), gc_gen2 (generation-2 collections so far) and malloc (_malloc_stats). Two
+    snapshots an hour apart answer the RSS question: blocks flat while rss climbs points at the
+    allocator, blocks climbing at an object graph, a `caches` gauge climbing at that cache.
+
+    VmRSS from /proc is the CURRENT resident size; where /proc is absent (macOS) ru_maxrss is the PEAK,
+    in bytes there, so it is scaled to KB and the field is still called rss_kb, and the two /proc gauges
+    are null with `source` "unavailable": a peak is never passed off as an anonymous or current figure."""
+    rss, anon, hwm, source = 0, None, None, "unavailable"
     try:
         with open("/proc/self/status") as fh:
             for line in fh:
                 if line.startswith("VmRSS:"):
                     rss = int(line.split()[1])
-                    break
+                elif line.startswith("RssAnon:"):
+                    anon = int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    hwm = int(line.split()[1])
+        source = "proc"
     except Exception:
         try:
             import resource
@@ -169,8 +212,90 @@ def _process_stats():
             rss = int(r // 1024) if sys.platform == "darwin" else int(r)
         except Exception:
             rss = 0
-    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
-            "pid": os.getpid()}
+    try:
+        blocks = int(sys.getallocatedblocks())
+    except Exception:
+        blocks = None
+    try:
+        gen2 = int(gc.get_stats()[2]["collections"])
+    except Exception:
+        gen2 = None
+    return {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
+            "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
+            "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+
+
+def _gauge_values(d, tries=3):
+    """A snapshot of a cache dict's values for a summed gauge. Under the GIL list(d.values()) is one C-level
+    pass and cannot see a concurrent resize; without it a resize raises RuntimeError, so the snapshot is
+    retried a few times and gives up as None (the count alone is then reported), never a guess."""
+    for _ in range(tries):
+        try:
+            return list(d.values())
+        except RuntimeError:
+            continue
+    return None
+
+
+def _gauge_bytes(d, pick):
+    """The summed length of the str/bytes values `pick` selects from a cache's entries, or None when the
+    snapshot could not be taken (see _gauge_values)."""
+    vals = _gauge_values(d)
+    if vals is None:
+        return None
+    n = 0
+    for v in vals:
+        try:
+            x = pick(v)
+        except Exception:
+            continue
+        if isinstance(x, (str, bytes)):
+            n += len(x)
+    return n
+
+
+def _cache_gauges():
+    """The `caches` block of the /perf snapshot (perf round 4, M1-lite): exact occupancy for every cache the
+    kernel, the judge and the event model keep, each a len() or a sum of len()s under the cache's own lock
+    where it has one, nothing estimated, O(entries) and always on. The event model's and the judge's
+    blocks come from their own cache_gauges(); the kernel's are: parse (_parse_cache, one parsed session
+    per transcript path), built_chat (the cached chat payloads and the bytes of their materialized
+    serializations), judge_usage (the judge-usage rows held), img (the data-URL previews and their bytes),
+    path_links and space_paths (the per-message link caches), session_stamp, task_seg and session_tok
+    (entries). A block whose accessor raises is left out, so the reader sees the gap instead of a number.
+    The memos keep their own occupancy under `memos`."""
+    out = {}
+    try:
+        out.update(em.cache_gauges())
+    except Exception:
+        pass
+    try:
+        out.update(jd.cache_gauges())
+    except Exception:
+        pass
+    kernel_blocks = (
+        ("parse", lambda: {"entries": len(_parse_cache)}),
+        ("built_chat", lambda: {"entries": len(_built_chat),
+                                "ms_bytes": _gauge_bytes(_built_chat, lambda v: v[2] if isinstance(v, tuple) and len(v) > 2 else None)}),
+        ("judge_usage", _judge_usage_rows_held),
+        ("img", lambda: {"entries": len(_img_cache), "bytes": _gauge_bytes(_img_cache, lambda v: v)}),
+        ("path_links", lambda: {"entries": len(_PATH_LINK_CACHE)}),
+        ("space_paths", lambda: {"entries": len(_SPACE_PATH_CACHE)}),
+        ("session_stamp", lambda: {"entries": len(_SESSION_STAMP_CACHE)}),
+        ("task_seg", lambda: {"entries": len(_task_seg_cache)}),
+        ("session_tok", lambda: {"entries": len(_session_tok_cache)}),
+    )
+    for name, fn in kernel_blocks:
+        try:
+            out[name] = fn()
+        except Exception:
+            pass
+    return out
+
+
+def _judge_usage_rows_held():
+    with _JUDGE_USAGE_LOCK:
+        return {"rows": len(_JUDGE_USAGE_CACHE["rows"])}
 
 
 class _PerfStats:
@@ -188,7 +313,22 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      process                      rss_kb, threads, cpu_s (time.process_time), pid, and the exact
+                                   memory gauges (perf round 4, M1-lite): rss_anon_kb / hwm_kb (RssAnon
+                                   and VmHWM from /proc; null with source "unavailable" where /proc is
+                                   absent), allocated_blocks (sys.getallocatedblocks), gc_gen2
+                                   (generation-2 collections) and malloc {arena, hblkhd, uordblks,
+                                   fordblks} (glibc mallinfo2 in bytes, the malloc half of the heap;
+                                   null where glibc 2.33+ is absent)
+      caches                       one block per cache the kernel, the judge and the event model keep,
+                                   each an EXACT occupancy (a len() or a sum of len()s under the
+                                   cache's lock, nothing estimated): jsonl {entries, file_bytes,
+                                   records}, asm / asm_keylocks / trailing {entries} (event_model),
+                                   judge_parse / judge_recon / judge_chain {entries} (judge), parse
+                                   {entries}, built_chat {entries, ms_bytes}, judge_usage {rows}, img
+                                   {entries, bytes}, path_links / space_paths / session_stamp /
+                                   task_seg / session_tok {entries}; see _cache_gauges. The memos'
+                                   own occupancy stays under `memos`
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
                                    call; a burst coalesces into one cycle), wakes_event /
                                    wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
@@ -206,7 +346,16 @@ class _PerfStats:
                                    caller, connect pushes on handler threads included, so their sum
                                    can exceed `push`
       builds                       chat / feed / timeline -> {cached, built, ms}: served from the
-                                   build cache vs rebuilt, and the rebuild time
+                                   build cache vs rebuilt, and the rebuild time. feed also carries
+                                   dirty, the rebuilds a kernel-side mutation forced past the view
+                                   signature (_mark_views_dirty); chat also carries active_built /
+                                   bg_built (rebuilds of the watched tab, served since
+                                   2026-09-03 while its exact key is unchanged, against rebuilds of
+                                   a background tab whose signature moved) and bg_miss {judge_gen, transcript, states, tasks, todos,
+                                   cut, note, needs, tmux, cold, nosig}: per labelled _chat_build_sig
+                                   component, the background rebuilds it caused (one count per
+                                   differing component, so the sum can exceed bg_built; cold = no
+                                   cached build, nosig = no signature could be taken)
       sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
                                    name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
                                    under "other"). A deduped frame was built and compared, not sent
@@ -229,7 +378,15 @@ class _PerfStats:
                                    unreadable_stores: a gauge, not a counter: the goals files in a
                                    read-failure episode (the file exists and did not read or parse on
                                    its last read; load_goals answers a fallback, the stages stand down
-                                   and save_goals refuses to publish over it until it reads)
+                                   and save_goals refuses to publish over it until it reads);
+                                   lineage_reads: judge.resume_lineage calls, each a read and parse of
+                                   a session's whole states file (the episode-boundary check's guard
+                                   for an unrecorded head; a recorded head returns on the episode
+                                   log's stat before it, so at steady state this stays near zero; a
+                                   steady non-zero rate is heads changing, a live session whose
+                                   current leaf is a recorded resume fork (never appended to the log,
+                                   so it reads its lineage every pass; benign, one read per such
+                                   session per pass), or a regressed guard order)
       judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -246,20 +403,46 @@ class _PerfStats:
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
                                    read from the live kernel rather than assumed; tiers: the
                                    evidence gate's per-tier counters (judge.tier_stats: ran,
-                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier,
-                                   plus stamps held), from which skipped / (ran + skipped) is the
-                                   share of per-session runs the gate declined
+                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier:
+                                   plan, close, unblock, courier, group, consolidate, distill and
+                                   index, the captioner and archiver; plus stamps held), from which
+                                   skipped / (ran + skipped) is the share of per-session runs the
+                                   gate declined; the courier's incomplete counts scans that
+                                   produced pending rows, or whose link repair found the sender's
+                                   tracker completed or the sender outside the discover window, so
+                                   the next pass scans the session again; the index tier's counts
+                                   sessions with a caption or an archive to write this pass, or
+                                   whose captions file, archive record or unit cache exists and did
+                                   not read, or whose unit-cache publish failed (one judge-errors
+                                   row per failure episode: captions-unreadable,
+                                   session-archive-unreadable, units-cache-unreadable,
+                                   units-cache-write-failed)
       memos                        one entry per memo the kernel keeps, each a flat dict of counters:
                                    goals_snap (the judge pass's stat-keyed goal-store snapshot, see
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs
                                    decoded, summed over passes), fail (versions that did not
                                    decode), evict (entries dropped for files gone from the
-                                   directory), punch (snapshot entries copied for a user gesture),
-                                   and the gauges entries / bytes (memoized paths and their summed
-                                   file size); lift_gate (the awaiting-lift job's per-session
-                                   identity gate, see _LIFT_GATE) -> skip / load (session-cycles
-                                   that took no store load vs the ones that did) and the gauge
-                                   entries (sids remembered); goals_shared (the shared read-only
+                                   directory), punch (sids whose snapshot entry was copied for a
+                                   user gesture, once per pass each), live / snap (_feed_goals_view serves: the live read through the
+                                   shared cache, or the pass snapshot), and the gauges entries /
+                                   bytes (memoized paths and their summed file size); lift_gate
+                                   (the awaiting-lift job's per-session
+                                   inputs gate, see _lift_seen) -> skip / load (session-cycles
+                                   that took no store read vs the ones that read it, the probe on
+                                   the shared view), shared (probes the shared cache answered),
+                                   writer (session-ticks that loaded the writer's copy because a
+                                   lift was due) / noop (writer loads whose fresh decision filed
+                                   nothing) and the gauge
+                                   entries (sids remembered); bg_tops (the placed-launch memo
+                                   behind the lift and the feed's task classification,
+                                   _bg_placed_tops, keyed on the parse and store objects) -> hit /
+                                   miss (calls answered from the per-version map vs looked up),
+                                   resolve (tids looked up on a miss, placed or not), walk /
+                                   walk_neg (transcript walks, and the walks that left a tid
+                                   unresolved: an upper bound on what a negative walk cache would
+                                   save), idx_build (placement indexes built, one per store object
+                                   asked, a writer's copy included) and the gauge
+                                   entries (sids holding a map); goals_shared (the shared read-only
                                    goal-store cache the pusher's read-only sites load through,
                                    jd.load_goals_shared) -> hit / miss / compare_miss (identity
                                    matched, bytes did not) / refuse / dup / absent / corrupt /
@@ -274,7 +457,53 @@ class _PerfStats:
                                    bars_sig_fallback (bars builds that could not be keyed and took
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
-                                   per encode; _wire_default says each type once on stderr)
+                                   per encode; _wire_default says each type once on stderr);
+                                   intr_marks (the _interrupt_marks memo) -> hit / miss / evict and
+                                   the gauge entries; sessions_scope (the cycle's discover memo) ->
+                                   hit / miss / wide_hit / wide_miss; the per-lane reader memos
+                                   (perf round 4, item C, 2026-09-07): captions (_captions, the
+                                   captioner store keyed on (inode, mtime_ns, size)) -> hit / miss /
+                                   fail (reads that failed after a good stat, not memoized) / evict
+                                   (a lane that left the timeline, the LRU bound, or the pop of an
+                                   entry whose file is absent) and the gauge entries; states_overlay
+                                   (_states_awaiting_overlay's fold through _fold_records) -> hit /
+                                   append / refold / fail (a read that failed on a file that exists,
+                                   not memoized) / evict (sessions that left the alive set) and
+                                   entries; thread_reg (_thread_reg, the SDK registry keyed like
+                                   captions) -> hit / miss / fail / evict (the LRU bound or the pop
+                                   of an absent file's entry) and entries;
+                                   feed_segs (build_feed's per-session memo of the seam maps, the
+                                   tree shape and the flattened goal trees, see _FeedSegs) -> hit /
+                                   miss / bypass_live (a live-merge copy) / bypass_degraded (a walk
+                                   that swallowed an exception) / bypass_unkeyed (a store key that
+                                   is a sentinel: a rewind hold, a failed punch, the shared cache
+                                   off, no store file) / bypass_unscoped (a build outside a pusher
+                                   cycle's names scope) / evict (entries dropped for sessions that
+                                   left the alive set), and the gauge entries; lanes (the
+                                   per-lane segment memo in build_timeline, item A: the bars,
+                                   seg_ends, last_t, compactions and judging marks of a lane, keyed
+                                   on the parse, store and captions objects and the other inputs
+                                   _lanes_memo's comment names) -> hit / miss / live_tail (a live
+                                   tail was merged: derived, not held) / complain_skip (the parse
+                                   or a stage complained) / unshared_skip (a non-frozen store with
+                                   content) / evict, the gauge entries, and segs_hit / segs_miss
+                                   (segments served against derived: the cost-weighted hit rate);
+                                   chat_merge_sets (the live-merge's transcript-side sets, one entry
+                                   per sid on the parsed session's identity, see _merge_tx_sets)
+                                   -> hit / miss (merges served from the memo vs derived) and the
+                                   gauge entries (sids held); chat_postal (the chat fold's sealed
+                                   postal cards, keyed on the values they embed, see
+                                   _postal_card_deps) -> gate (fold-gate checks that re-hydrated a
+                                   tab's sealed cards), hit (checks that verified them from their
+                                   recorded values), commit_new (raw postal events hydrated at fold
+                                   commits: newly sealed, or a demoted prefix rebuilt); chat_ledger
+                                   (build_session's goal-tree walk
+                                   and live roots per sid, interim, see _ledger_memo) -> hit / miss,
+                                   bypass_live (live atoms merged), bypass_hold (a rewind hold
+                                   armed), bypass_empty (a store with no nodes), evict, and the
+                                   gauge entries; chat_fold_tasks (the per-turn task fold, interim,
+                                   see _fold_tasks) -> hit / miss counted per TURN and the gauge
+                                   entries (sids held)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -288,6 +517,9 @@ class _PerfStats:
     SLOTS = 32
     STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
     BUILDS = ("chat", "feed", "timeline")
+    # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_TAIL plus the transcript and
+    # states sections), a tab with no cached build, and a tab whose signature could not be taken
+    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "tmux", "cold", "nosig")
     SEND_KINDS = ("full", "delta", "deduped")
 
     def __init__(self):
@@ -303,6 +535,9 @@ class _PerfStats:
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
+            self.builds["feed"]["dirty"] = 0       # rebuilds a kernel-side mutation forced past the view signature
+            self.builds["chat"].update({"active_built": 0, "bg_built": 0,
+                                        "bg_miss": {k: 0 for k in self.CHAT_MISS}})
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0}
@@ -334,7 +569,7 @@ class _PerfStats:
         with self.lock:
             self.stages[name] = self.stages.get(name, 0.0) + dt * 1000.0
 
-    def build(self, kind, cached, dt=0.0):
+    def build(self, kind, cached, dt=0.0, dirty=False):
         with self.lock:
             b = self.builds[kind]
             if cached:
@@ -342,6 +577,32 @@ class _PerfStats:
             else:
                 b["built"] += 1
                 b["ms"] += dt * 1000.0
+                if dirty and "dirty" in b:
+                    b["dirty"] += 1
+
+    def build_chat(self, cached, dt=0.0, active=False, miss=()):
+        """The chat builder's record: build("chat", ...) plus the attribution the round-4 plan's item P3
+        asked for (2026-09-07). A rebuild counts under active_built (the watched tab, which always
+        rebuilds) or bg_built (a background tab whose signature moved), and a background rebuild adds one
+        to bg_miss[label] for EVERY labelled _chat_build_sig component that differed from the cached
+        signature (`miss`, from _chat_sig_miss), so the sum over bg_miss can exceed bg_built when several
+        inputs moved together. `cold` is a tab with no cached build, `nosig` one whose signature could not
+        be taken (no transcript path)."""
+        ms = dt * 1000.0
+        with self.lock:
+            b = self.builds["chat"]
+            if cached:
+                b["cached"] += 1
+                return
+            b["built"] += 1
+            b["ms"] += ms
+            if active:
+                b["active_built"] += 1
+                return
+            b["bg_built"] += 1
+            bm = b["bg_miss"]
+            for lab in miss:
+                bm[lab] = bm.get(lab, 0) + 1
 
     def send(self, key, kind, nbytes):
         slot = key[0] if isinstance(key, tuple) else key
@@ -406,6 +667,7 @@ class _PerfStats:
             pusher = dict(self.pusher)
             stages = dict(self.stages)
             builds = {k: dict(v) for k, v in self.builds.items()}
+            builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
             sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
                      for k, d in self.sends.items()}
             judge = dict(self.judge)
@@ -436,8 +698,14 @@ class _PerfStats:
             goals = {}
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
+                             ("bg_tops", _bg_tops_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
-                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report)):
+                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
+                             ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
+                             ("thread_reg", _thread_reg_report),
+                             ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report),
+                             ("chat_merge_sets", _merge_sets_report), ("chat_postal", _chat_postal_report),
+                             ("chat_ledger", _ledger_memo_report), ("chat_fold_tasks", _task_fold_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -446,7 +714,7 @@ class _PerfStats:
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
                 "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
-                "memos": memos}
+                "memos": memos, "caches": _cache_gauges()}
 
 
 _PERF_STATS = _PerfStats()
@@ -1062,6 +1330,7 @@ def _version_info():
             "postalUnresolved": {"ids": len(_POSTAL_UNRESOLVED["seen"]),   # T234: unresolved postal ids
                                  "warned": _POSTAL_UNRESOLVED["warned"],    # (distinct pairs seen, lines
                                  "suppressed": _POSTAL_UNRESOLVED["suppressed"]},   # written, repeats held)
+            "views": dict(_VIEW_STATS),      # feed/timeline/chat rebuilt vs served from cache (2026-09-03)
             "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count (lifetime
             #                                          total), episodeCount (the current/last episode),
             #                                          open episode, last time; the silent degrade made visible
@@ -1104,7 +1373,12 @@ def _version_info():
                          "distillEffort": jd._state_str("distill-effort", "triage"),
                          "commentModel": jd._state_str("comment-model", "session"),
                          "commentEffort": jd._state_str("comment-effort", "session"),
-                         "commentFast": jd._state_str("comment-fast", "session")}}
+                         "commentFast": jd._state_str("comment-fast", "session")},
+            # every gt-gated store's last-applied gesture stamp (epoch-ms ints, nothing path-shaped):
+            # the gear stamps its next gesture above these instead of trusting the device clock.
+            # Top-level, not lifted into /tunnels rows — a remote's newer stamp reaches the dashboard
+            # through its settingStale frame, and Apply anyway is the designed path from there.
+            "settingsGt": _settings_gt()}
             # NO defaultDir or nativeDialogs here: /version is auth-exempt and this payload
             # carries no filesystem paths (see the handler's comment) — both ride the GATED
             # /defaults route instead, where the gear already fetches them.
@@ -1313,6 +1587,9 @@ def iso(t):
         return ""
 
 
+_names_entry_memo = {}   # entry name -> ((mtime_ns, size, ino), parts) — see _names_snapshot
+
+
 def _names_snapshot():
     """{sid: tab-fields list} for every names-registry entry, read once. The pusher cycle publishes
     this as its names scope (_live_scope.names): build_session re-resolves every path token through
@@ -1325,7 +1602,15 @@ def _names_snapshot():
     try:
         for f in NAMES.iterdir():
             try:
-                snap[f.name] = f.read_text().rstrip("\n").split("\t")
+                # per-entry memo on (mtime_ns, size, inode) (2026-09-03): entries are published by
+                # os.replace, so any rewrite moves the key; an unchanged entry costs one stat, not a read
+                st = f.stat()
+                key = (st.st_mtime_ns, st.st_size, st.st_ino)
+                hit = _names_entry_memo.get(f.name)
+                if hit is None or hit[0] != key:
+                    hit = (key, f.read_text().rstrip("\n").split("\t"))
+                    _names_entry_memo[f.name] = hit
+                snap[f.name] = hit[1]
             except Exception:   # OSError, but ALSO UnicodeDecodeError on a torn/raw-bytes entry — the
                 continue        # per-call readers this replaces caught bare Exception, and this function
         #                         runs on the pusher thread's bare loop, so it must NEVER raise (review
@@ -1333,6 +1618,8 @@ def _names_snapshot():
         #                         good, and again on every restart while the file persisted)
     except Exception:
         pass
+    for gone in [n for n in _names_entry_memo if n not in snap]:
+        _names_entry_memo.pop(gone, None)              # a removed entry drops its memo
     return snap
 
 
@@ -1435,6 +1722,18 @@ _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v i
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
 _learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
+# The learned-version scan runs on the pickers' hot paths — every /models read (one per picker open and per
+# models frame), every pick (_note_model_pick → _version_family falls through to it for any version-shaped
+# value the catalog does not list), the typed /model vouch, the judge tier setters and the SDK loop's
+# refusal hook — and re-opening and JSON-parsing every reg per call was the cost. The file is the truth,
+# so the key is exactly what changes when the file does: (mtime_ns, size, inode), the key list_regs'
+# _REG_CACHE uses (write_reg's os.replace mints a new inode, so a same-size same-instant rewrite still
+# misses). Only the one reported string is cached, never the derived rows: the derivation must run against
+# the LIVE catalog snapshot every call (a catalog that catches up drops the mark; _note_unknown_model must
+# see each sighting). Unlocked on purpose: dict get/set/pop are atomic, two threads racing on a changed
+# file both parse it and store equal tuples, and holding _catalog_lock around file I/O would stall the
+# catalog refresh thread.
+_learned_reg_cache = {}   # str(path) -> ((mtime_ns, size, ino), liveModelId or "") — see _reported_model_ids
 # Bumps on every pick-memory change and every catalog growth; rides the models frame (_models_changed) AND
 # the /models payload, so a picker can drop a response older than one it has applied. Seeded from the clock
 # rather than 0: the counter is per process, and a kernel restart must never hand a page that kept its
@@ -1618,13 +1917,10 @@ def _models_api_credential():
     fn = getattr(jd, "_WORK_KEY_FN", None)
     key = ""
     if fn is not None:
-        try:
-            key = fn() or ""
-        except Exception:
-            key = ""
+        key = fn() or ""  # A selected provider's failure must not borrow another credential.
     if key:
         return ("x-api-key", key)
-    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "") or ""
+    tok = jd._login_auth_env().get("ANTHROPIC_AUTH_TOKEN", "") or ""
     if tok:
         return ("Authorization", "Bearer " + tok)
     return None
@@ -1689,16 +1985,16 @@ def _refresh_model_catalog(reason, _async=True):
 
     def go():
         try:
-            cred = _models_api_credential()
-            if cred is None:
-                _catalog_status["lastError"] = "no API credential in the kernel's environment"
-                sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
-                                 "%s list; new models need ANTHROPIC_LP_API_KEY, or the manager's own API key "
-                                 "in its environment (the one the SDK backend claims and the judges bill to — "
-                                 "the manager's work key, never a session-auth key), or a MODEL_VERSIONS edit\n"
-                                 % (reason, _catalog_status["source"]))
-                return
             try:
+                cred = _models_api_credential()
+                if cred is None:
+                    _catalog_status["lastError"] = "no API credential in the kernel's environment"
+                    sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
+                                     "%s list; new models need ANTHROPIC_LP_API_KEY, or the manager's own API key "
+                                     "in its environment (the one the SDK backend claims and the judges bill to — "
+                                     "the manager's work key, never a session-auth key), or a MODEL_VERSIONS edit\n"
+                                     % (reason, _catalog_status["source"]))
+                    return
                 rows = _fetch_models_api(cred)
             except Exception as e:
                 _catalog_status["lastError"] = "%s: %s" % (type(e).__name__, str(e)[:200])
@@ -1818,6 +2114,46 @@ def _model_id_label(value):
     return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
 
 
+def _reported_model_ids():
+    """[liveModelId, …] across every reg under STATE/sdk (the same files _thread_reg reads), in reg-name
+    order, re-parsing only a reg whose file changed since it was last parsed (_learned_reg_cache, keyed
+    on the file's content-stat). Unreadable, non-JSON and non-dict regs and regs with no liveModelId
+    contribute nothing — exactly what the uncached scan skipped; a failed read or parse is not cached,
+    so the next call retries it, and a reg that vanished leaves the cache on the next scan."""
+    try:
+        entries = sorted(os.scandir(jd.STATE / "sdk"), key=lambda e: e.name)   # the glob was sorted: same order
+    except OSError:                              # a missing sdk/ dir included — no regs yet
+        return []
+    out, seen = [], set()
+    for de in entries:
+        if not de.name.endswith(".json"):        # write_reg's <sid>.json.<pid>.<hex>.tmp never counted
+            continue
+        seen.add(de.path)
+        try:
+            st = de.stat()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size, st.st_ino)
+        hit = _learned_reg_cache.get(de.path)
+        if hit is not None and hit[0] == key:
+            mid = hit[1]
+        else:
+            try:
+                reg = json.loads(Path(de.path).read_text())
+            except (OSError, ValueError):
+                _learned_reg_cache.pop(de.path, None)
+                continue
+            mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+            mid = mid if isinstance(mid, str) else ""
+            _learned_reg_cache[de.path] = (key, mid)
+        if mid:
+            out.append(mid)
+    for p in list(_learned_reg_cache):           # deleted regs leave the cache
+        if p not in seen:
+            _learned_reg_cache.pop(p, None)
+    return out
+
+
 def _learned_versions():
     """{family: [{"value", "label", "learned": True}, …]} — every model id a session's CLI has actually
     REPORTED (reg.liveModelId, persisted by the SDK backend's _learn_model from the init / assistant
@@ -1828,24 +2164,16 @@ def _learned_versions():
     kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
     drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
     covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
-    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
-    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
-    menu (the fail-loudly rule)."""
+    skipped. The reg scan re-parses a reg only when its file changed (_reported_model_ids); the
+    derivation against the catalog runs every call, so a catalog that catches up drops the mark at
+    once. A first sighting is announced once on stderr — and the pickers mark the row — so an
+    unlisted model is LOUD, never a silent gap behind a stale menu (the fail-loudly rule)."""
     out = {}
     fams = {c["value"] for c in MODEL_CHOICES}
     with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
         known = set(_VERSION_FAMILY)
         labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
-    try:
-        regs = sorted((jd.STATE / "sdk").glob("*.json"))
-    except OSError:
-        return out
-    for p in regs:
-        try:
-            reg = json.loads(p.read_text())
-        except (OSError, ValueError):
-            continue
-        mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+    for mid in _reported_model_ids():
         parts = _model_id_parts(mid)
         if not parts or parts[0] not in fams:
             continue
@@ -1891,12 +2219,16 @@ def _version_family(value, learned=None):
     """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
     added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
     alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
-    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on. A value
+    that is not even version-shaped is answered before the reg scan: a learned row's value is always
+    a first-party version id, so the bare alias every family click sends can match none."""
     v = str(value or "")
     with _catalog_lock:
         fam = _VERSION_FAMILY.get(v)
     if fam:
         return fam
+    if not _model_id_parts(v):                   # an alias, 'default', a typo: no learned row can equal it
+        return ""
     for f, vs in (_learned_versions() if learned is None else learned).items():
         if any(x["value"] == v for x in vs):
             return f
@@ -5167,6 +5499,15 @@ def _set_session_flag(sid, flag, value):
 # whose card left the feed are pruned on write (the card is gone; a fresh card is a fresh id), so
 # the file tracks the live feed instead of growing forever.
 NOTIFY_ALL_KEY = "*"
+# "*turns" is the SECOND reserved key (2026-09-05): the kernel-wide "also when a turn finishes" switch
+# behind the bell popover. It lives in this file rather than a sibling on purpose — it is read on the
+# same fire path as the master (both gate one push), so one cached read answers both; it rides the
+# same atomic write, the same mtime cache, and the same `__ncards__` watch that busts the feed sig
+# and repaints every dashboard when either flips. Off by default, and a real key only while on
+# (the master's own delete-on-off discipline). A card id can never collide with it: ids are
+# "<sid>:<node>" and the sid is a uuid.
+NOTIFY_TURNS_KEY = "*turns"
+_NOTIFY_RESERVED = frozenset((NOTIFY_ALL_KEY, NOTIFY_TURNS_KEY))
 _notify_cards_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 
 
@@ -5200,6 +5541,22 @@ def _set_notify_all(value):
         cur[NOTIFY_ALL_KEY] = True
     else:
         cur.pop(NOTIFY_ALL_KEY, None)
+    _atomic_write(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
+
+
+def _notify_turns_on():
+    """The turn-finished switch (bell popover, 2026-09-05): on = every session's turn end buzzes the
+    subscribed phones — gated by the master at the FIRE (see _turn_notify_tick), never here, so the
+    popover can show the row's own state while the master is off."""
+    return bool(_notify_cards().get(NOTIFY_TURNS_KEY))
+
+
+def _set_notify_turns(value):
+    cur = dict(_notify_cards())                      # copy: never mutate the cached dict in place
+    if value:
+        cur[NOTIFY_TURNS_KEY] = True
+    else:
+        cur.pop(NOTIFY_TURNS_KEY, None)
     _atomic_write(jd.STATE / "notify-cards.json", json.dumps(cur, sort_keys=True))
 
 
@@ -5256,11 +5613,12 @@ def _set_notify_session(sid, value):
 def _prune_notify_cards(live_ids):
     """Drop armed ids whose card is no longer in the feed (cleared/archived — the id never comes back).
     Called from the feed-diff detector, so the write happens only on the event of a card leaving.
-    The master key is not a card and never prunes; values are kept as stored (False = a mute)."""
+    The reserved keys (the master, the turn-finished switch) are not cards and never prune; values
+    are kept as stored (False = a mute)."""
     cur = _notify_cards()
-    gone = [i for i in cur if i not in live_ids and i != NOTIFY_ALL_KEY]
+    gone = [i for i in cur if i not in live_ids and i not in _NOTIFY_RESERVED]
     if gone:
-        kept = {i: cur[i] for i in cur if i in live_ids or i == NOTIFY_ALL_KEY}
+        kept = {i: cur[i] for i in cur if i in live_ids or i in _NOTIFY_RESERVED}
         _atomic_write(jd.STATE / "notify-cards.json", json.dumps(kept, sort_keys=True))
 
 
@@ -6451,7 +6809,7 @@ def _setting_stale(name, gt, applied_gt):
     _stale_seen.last = None
     if gt is None or gt > applied_gt:
         return False
-    _stale_seen.last = {"setting": name, "storedGt": applied_gt}
+    _stale_seen.last = {"setting": name, "storedGt": applied_gt, "gt": gt}
     sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
                      "no apply, no propagation\n" % (name, gt, applied_gt))
     return True
@@ -6920,11 +7278,30 @@ def _semver(tag):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
 
 
+def _release_remote():
+    """The git remote that carries romp's releases and its main: `upstream` when the clone has one,
+    else `origin`. A bootstrap install clones the canonical repo directly, so `origin` IS it; a
+    maintainer's clone follows the fork convention (the user 2026-09-06: `origin` = their fork,
+    `upstream` = the canonical repo), where `origin/main` is a stale mirror nobody advances. Every
+    updater probe and walk below goes through this, so the rename could not point the release
+    check, the drift notice, or auto-converge's checkout at the fork. Unreadable remotes (not a
+    git checkout, git missing) resolve to `origin`, the plain-install answer."""
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "remote"],
+                             capture_output=True, text=True, timeout=10)
+        if out.returncode == 0 and "upstream" in out.stdout.split():
+            return "upstream"
+    except Exception:
+        pass
+    return "origin"
+
+
 def _latest_release_tag():
-    """The newest release tag on the clone's `origin`, read from the REMOTE's refs (ls-remote) — never
-    from the local tag list, which says only what this clone last fetched (refs do not travel with
-    commits; _kernel_ver's lesson). Raises on any git/network failure so the caller can say so."""
-    r = subprocess.run(["git", "-C", str(ROOT), "ls-remote", "--tags", "origin"],
+    """The newest release tag on the clone's release remote (_release_remote), read from the REMOTE's
+    refs (ls-remote), never from the local tag list, which says only what this clone last fetched
+    (refs do not travel with commits; _kernel_ver's lesson). Raises on any git/network failure so
+    the caller can say so."""
+    r = subprocess.run(["git", "-C", str(ROOT), "ls-remote", "--tags", _release_remote()],
                        capture_output=True, text=True, timeout=20)
     if r.returncode != 0:
         raise RuntimeError((r.stderr or "git ls-remote failed").strip()[:200])
@@ -6993,8 +7370,8 @@ def _run_update(tag):
         "cd %s || exit 1\n" % q(str(ROOT))
         + "{ echo; echo \"== romp self-update to %s ==\"; date; } >> %s 2>&1\n" % (tag, log)
         + advance
-        + "if git fetch origin refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
-          "&& ./install.sh >> %s 2>&1; then\n" % (tag, tag, log, log)
+        + "if git fetch %s refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
+          "&& ./install.sh >> %s 2>&1; then\n" % (_release_remote(), tag, tag, log, log)
         + "  printf '%%s' %s > %s\n" % (q(json.dumps(ok_rep)), rep)
         + restart
         + "else\n"
@@ -7049,7 +7426,7 @@ def _update_check():
     try:
         latest = _latest_release_tag()
     except Exception as e:
-        sys.stderr.write("romp-kernel: update check could not read origin's tags: %s\n" % e)
+        sys.stderr.write("romp-kernel: update check could not read the release remote's tags: %s\n" % e)
         return
     lv = _semver(latest)
     if not lv or lv <= cur:
@@ -7112,14 +7489,20 @@ _MAIN_CHECK_EVERY_S = 300
 # no-op sleep with pytest printing nothing until the 15-minute cap.
 _CHECK_LOOP_STOP = threading.Event()
 _CONVERGE_COOLDOWN_S = float(os.environ.get("ROMP_CONVERGE_COOLDOWN", "1500"))   # min gap between AUTO converges (25 min → ≤2-3 restarts/hour on a hot main)
-_LAST_AUTO_CONVERGE = [0.0]   # when the last auto converge fired (module state; a restart resets it, which is fine — the restart WAS the converge)              # one ls-remote — cheap enough to notice a merge within minutes
+_LAST_AUTO_CONVERGE = [0.0]   # when THIS process last fired an auto converge — module memory that covers only
+#                               the seconds before the restart's own ledger row lands. It is NOT the cool-down's
+#                               source of truth: the converge's restart boots a fresh process with this at zero,
+#                               so the next merge converged again at once (05:19Z then 05:24Z against a 1500 s
+#                               window, T240). _last_deploy_restart_t reads the LANDED deploy restarts from the
+#                               restart-cuts ledger, which survives the restart it spaces.
 _MAIN_DRIFT = ["", ""]                 # [origin sha a notice fired for, checkout sha one fired for]
 
 
 def _origin_main_sha():
-    """origin/main's commit (short), '' when unreachable — offline is a normal state, never a crash."""
+    """The release remote's main commit (short; `upstream/main` in a fork layout, else `origin/main`),
+    '' when unreachable: offline is a normal state, never a crash."""
     try:
-        out = subprocess.run(["git", "ls-remote", "origin", "refs/heads/main"],
+        out = subprocess.run(["git", "ls-remote", _release_remote(), "refs/heads/main"],
                              cwd=str(ROOT), capture_output=True, text=True, timeout=15)
         return (out.stdout.split() or [""])[0][:8]
     except Exception:
@@ -7445,6 +7828,129 @@ def _in_place_converge(target):
     return False
 
 
+_DEPLOY_RESTART_REASONS = ("main-converge", "p2p-update", "self-update",   # ledger reasons that ARE a
+                           "kernel-asks-manager-restart-all: self-update")   # deploy restart of this kernel
+_NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle"}   # audit rows that restart no
+#                                                                              kernel (in-place converges; a
+#                                                                              session's own self-close ask)
+
+
+def _last_deploy_restart_t():
+    """When the last DEPLOY restart actually LANDED on this box, from the restart-cuts ledger — the
+    row a restarting kernel writes as it dies, with `reason` joined from the audit row that asked
+    (main-converge, or a p2p-update from a peer; a main-converge-skip never restarts, a rail-button or
+    self-close restart is not a converge; a clicked Update IS one — the user just restarted, and
+    spacing the next AUTO converge after it is exactly the rate the cool-down exists for). Durable
+    across the restart it spaces, which module memory is not (T240). 0.0 when the ledger has no such
+    row or cannot be read — the cool-down then rests on module memory alone, exactly today's
+    behavior. A row stamped in the FUTURE (a clock stepped back) is ignored rather than holding every
+    converge until the clock catches up (review find)."""
+    try:
+        lines = RESTART_CUTS_FILE.read_text().strip().splitlines()[-200:]
+    except Exception:
+        lines = []                      # no ledger yet (or unreadable): the audit file below still counts
+    horizon = time.time() + 60.0
+    best = 0.0
+    for line in reversed(lines):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        reason = str((r or {}).get("reason") or "")
+        if reason.startswith("main-converge-skip"):
+            continue
+        t = r.get("t")
+        if any(reason.startswith(p) for p in _DEPLOY_RESTART_REASONS) and isinstance(t, (int, float)) \
+                and t <= horizon:
+            best = float(t)
+            break
+    # The audit row is the SECOND source, and the one that survives the row-loss race (review find,
+    # reproduced by simulation): a converge that finds its manager stale takes the shutdownAll path,
+    # the manager exits ~0.8 s after the SIGTERM, and the kernel's parent-watch could os._exit before
+    # the graceful term finished its drain and wrote the cut row — the very path THIS change's own
+    # deploy takes. The old kernel writes its main-converge / self-update audit row BEFORE it posts
+    # the restart, and a peer's p2p-update row lands before its apply restarts us, so the request
+    # time anchors the window when the landing row is missing. A request counts only once the
+    # restart it asked for LANDED (event, not time): a boot at or after it exists — a boot row, or
+    # THIS process, since a running kernel has by construction booted after every request older than
+    # its start (its own boot row lands only after the first serve and the reconcile, and the drift
+    # loop's first pass runs before that, so a lost-row deploy anchored nothing on exactly the pass
+    # that matters — review find) — and NO cut row lies between the request and that boot unless the
+    # ledger joined it to this very request: a cut row in between means the ledger DID record that
+    # restart and attributed it elsewhere (an anonymous manual restart after a self-update click
+    # whose script failed), so this request restarted nothing (review find). The lost-row race is
+    # specifically "a boot, and no cut row between", and still counts. The newer source wins.
+    boots, cuts = [float(_STARTED)], []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(r, dict) or not isinstance(r.get("t"), (int, float)):
+            continue
+        if r.get("bootSettled"):
+            boots.append(float(r["t"]))
+        elif "cutTurns" in r:
+            cuts.append((float(r["t"]), float(r.get("auditT") or 0)))
+    try:
+        alines = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()[-200:]
+    except Exception:
+        alines = []
+    for line in reversed(alines):
+        try:
+            a = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(a, dict) or not isinstance(a.get("t"), (int, float)) or a["t"] > horizon:
+            continue
+        act, reason = str(a.get("action") or ""), str(a.get("reason") or "")
+        deploy = (act == "main-converge" and a.get("when") == "now") or act in ("p2p-update", "self-update") \
+            or (act == "kernel-asks-manager-restart-all" and reason.startswith("self-update"))
+        if not deploy:
+            continue
+        at = float(a["t"])
+        landed = min((b for b in boots if b >= at), default=None)
+        if landed is None:
+            continue                                  # requested, but nothing has booted since: not landed
+        if any(at < ct <= landed and aud != at for ct, aud in cuts):
+            continue                                  # the ledger recorded that restart and joined it elsewhere
+        best = max(best, at)
+        break
+    return best
+
+
+_QUIET_PARKED_LOGGED = [""]   # the checkout sha whose parked quiet deploy the drift check last said it was leaving alone
+
+
+def _parked_quiet_deploy(checkout, now=None):
+    """The `t` of a QUIET deploy request still pending for the code the checkout holds, else 0
+    (T240d): the newest restart-requesting audit row is a p2p-update (a peer's apply, which advanced
+    the checkout and asked the manager for a quiet restart) or a main-converge with when=quiet, its
+    sha is the checkout's, no cut row has consumed it (auditT), and it is inside the window a quiet
+    request stays pending — the far manager's backstop bound, exactly what _recent_restart_audit
+    already gives such a row for cut attribution. So a park lost with its manager self-heals at that
+    bound, and the cut row that lands the deploy consumes the row: events, not a timer of this
+    function's own. The p2p row's sha rides its reason ("from <host> to <sha>"); the converge row
+    carries `sha` outright, and so does the CLI's `romp refresh --quiet` row (bin/romp's
+    caller-attribution row, labeled `action: refresh` so the cut ledger joins it; review find: that
+    door parked a quiet restart the check pre-empted just the same). A row with no action is one
+    _recent_restart_audit never returns (an unlabeled refresh row from an older build is skipped, never
+    the answer), so it parks nothing here either; a quiet row naming no sha matches nothing (never guess)."""
+    rec = _recent_restart_audit(now=now)
+    if not isinstance(rec, dict) or rec.get("when") != "quiet" or not checkout:
+        return 0
+    act = str(rec.get("action") or "")
+    if act not in ("p2p-update", "main-converge", "refresh"):
+        return 0
+    sha = str(rec.get("sha") or "")
+    if not sha:
+        m = re.search(r"\bto ([0-9a-f]{7,40})\b", str(rec.get("reason") or ""))
+        sha = m.group(1) if m else ""
+    if not sha or not (checkout.startswith(sha) or sha.startswith(checkout)):
+        return 0
+    return int(rec["t"]) if isinstance(rec.get("t"), (int, float)) else 0
+
+
 def _main_drift_check():
     """One origin/checkout/running comparison pass; fires the SAME banner as the release check (the
     shell's offer() renders the main-drift wording off kind:"main"). Re-fires only when the target sha
@@ -7456,10 +7962,12 @@ def _main_drift_check():
         # one notice per new TAG, from _update_check — and must never hear about dev commits.
         # The maintainer's mesh keeps this watcher through its own signals (_main_channel_verdict).
         return
-    kind, target = _main_drift_verdict(_origin_main_sha(), _checkout_sha(), _kernel_sha())
+    checkout = _checkout_sha()      # ONE read each: the verdict's inputs and the parked-deploy
+    running = _kernel_sha()         # match below read the same shas the verdict examined
+    kind, target = _main_drift_verdict(_origin_main_sha(), checkout, running)
     if kind == "restart" and target == _REBUILT_FOR[0]:
         return                                        # already converged in place (UI-only rebuild)
-    if kind == "restart" and not _kernel_code_changed(_kernel_sha(), target):
+    if kind == "restart" and not _kernel_code_changed(running, target):
         # NO-KERNEL-CODE drift (the user 2026-08-23, widened T216): the checkout moved but nothing
         # the running process executes changed — converge in place, in EVERY mode and with no
         # cool-down (in-place converges cut no turns, which is the only thing the gates protect).
@@ -7470,6 +7978,7 @@ def _main_drift_check():
             return
     if not kind:
         _MAIN_DRIFT[0] = _MAIN_DRIFT[1] = ""          # in sync: a future drift is new information again
+        _QUIET_PARKED_LOGGED[0] = ""                  # whatever was parked has landed
         return
     slot = 0 if kind == "pull" else 1
     if _MAIN_DRIFT[slot] == target:
@@ -7482,7 +7991,38 @@ def _main_drift_check():
         # further auto converges HOLD for a cool-down; the slot is left unoffered so the first pass
         # past the window converges to the LATEST sha — N merges, one restart. A deliberate rate
         # policy on restart disruption, not a proxy for an event; a clicked Update never waits.
-        if time.time() - _LAST_AUTO_CONVERGE[0] < _CONVERGE_COOLDOWN_S:
+        # The window is measured from the last deploy restart that LANDED (the ledger), not from
+        # this process's memory: the converge's own restart forgets module state, and a p2p-update
+        # restart from a peer resets it the same way (T240). Module memory still covers the seconds
+        # before the ledger row exists.
+        #
+        # A QUIET deploy already parked for the code on disk STANDS THIS CHECK DOWN (T240d): a peer's
+        # p2p apply advanced the checkout and asked the manager for a quiet restart, then this check
+        # saw the checkout ahead of the kernel and posted an IMMEDIATE restart-all — 16:23Z quiet
+        # park, 16:27Z converge/now, ten sessions cut, the quiet window the peer asked for never ran
+        # (and 08:42Z the same, two seconds apart, on the pull side: origin read ahead of the just-reset
+        # checkout, and the pull's restart pre-empted the park). The restart is already on its way;
+        # leave it to the window — one restart, and any pull follows on the pass after it lands. Not
+        # marked acted on: the pass after the row is consumed (or expires) re-evaluates. Said once per
+        # sha, not once per pass. The immediate policy for a genuinely new pull (T160) and the
+        # cool-down are unchanged. Only while the restart is still OWED (the kernel does not yet run
+        # the checkout): a quiet deploy that landed but lost its cut row leaves its row unconsumed
+        # for the rest of the window, and a pull must not wait on a park that already delivered
+        # (review find). When a stand-down ends without that landing — the row expired, the park
+        # died with its manager — say so once and let the converge proceed on its own terms.
+        if running != checkout and _parked_quiet_deploy(checkout):
+            if _QUIET_PARKED_LOGGED[0] != checkout:
+                _QUIET_PARKED_LOGGED[0] = checkout
+                sys.stderr.write("romp-kernel: converge: %s already parked as a quiet deploy — leaving it "
+                                 "to the quiet window\n" % checkout[:8])
+            _MAIN_DRIFT[slot] = ""
+            return
+        if _QUIET_PARKED_LOGGED[0] == checkout:
+            _QUIET_PARKED_LOGGED[0] = ""
+            sys.stderr.write("romp-kernel: converge: the quiet deploy parked for %s is no longer pending — "
+                             "the converge proceeds on its own terms\n" % checkout[:8])
+        last = max(_LAST_AUTO_CONVERGE[0], _last_deploy_restart_t())
+        if time.time() - last < _CONVERGE_COOLDOWN_S:
             _MAIN_DRIFT[slot] = ""
             return
         _LAST_AUTO_CONVERGE[0] = time.time()
@@ -7491,7 +8031,7 @@ def _main_drift_check():
         if target in _dismissed_updates():
             return                    # Not-now'd THIS sha, durably — a NEW sha offers again
         _send_to_app("shell", {"type": "updateAvail", "kind": "main", "drift": kind,
-                               "cur": _kernel_sha() or "", "tag": target, "boot": _BOOT_ID})
+                               "cur": running or "", "tag": target, "boot": _BOOT_ID})
 
 
 # HTTP-triggered restarts resolve ROMP_MANAGER_PORT BEFORE their ack goes out (2026-08-27): the
@@ -7516,22 +8056,23 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
         try:
             dirty = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
                                    capture_output=True, text=True, timeout=10).stdout.strip()
+            remote = _release_remote()
             if dirty:
-                _sync_notice("main moved at origin, but the romp checkout has uncommitted work — "
-                             "not touching it. Commit or stash it, then Update again.", ok=False)
+                _sync_notice("main moved at %s, but the romp checkout has uncommitted work, so it "
+                             "was left alone. Commit or stash it, then Update again." % remote, ok=False)
                 _MAIN_DRIFT[0] = ""                   # let the notice re-fire once the tree is clean
                 return
-            subprocess.run(["git", "fetch", "origin", "main"], cwd=str(ROOT),
+            subprocess.run(["git", "fetch", remote, "main"], cwd=str(ROOT),
                            capture_output=True, text=True, timeout=60)
-            r = subprocess.run(["git", "checkout", "--detach", "origin/main"], cwd=str(ROOT),
+            r = subprocess.run(["git", "checkout", "--detach", "%s/main" % remote], cwd=str(ROOT),
                                capture_output=True, text=True, timeout=30)
             if r.returncode != 0:
-                _sync_notice("main moved at origin, but advancing the checkout failed: %s"
-                             % (r.stderr or r.stdout or "").strip()[-200:], ok=False)
+                _sync_notice("main moved at %s, but advancing the checkout failed: %s"
+                             % (remote, (r.stderr or r.stdout or "").strip()[-200:]), ok=False)
                 _MAIN_DRIFT[0] = ""
                 return
         except Exception as e:
-            _sync_notice("main moved at origin, but the pull step failed: %s" % e, ok=False)
+            _sync_notice("main moved at %s, but the pull step failed: %s" % (_release_remote(), e), ok=False)
             _MAIN_DRIFT[0] = ""
             return
     if kind == "pull":
@@ -7557,7 +8098,8 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
         import urllib.request
         # the reason joins the dying kernel's restart-cuts.jsonl row to WHO restarted it (see
         # _recent_restart_reason) — the auto converge used to leave the row anonymous
-        _audit_restart_request("main-converge", tag=kind, when=("now" if immediate else "quiet"))
+        _audit_restart_request("main-converge", tag=kind, when=("now" if immediate else "quiet"),
+                               sha=_checkout_sha())      # what a quiet row deploys (T240d: _parked_quiet_deploy)
         req = urllib.request.Request("http://127.0.0.1:%d/restart-all%s"
                                      % (int(manager_port or 7432),
                                         "" if immediate else "?when=quiet"), method="POST")
@@ -7674,6 +8216,14 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
         d["supersedes"] = prev.get("supersedes", 0)
     _RETRY_PAUSE_SEQ[0] += 1
     _atomic_write(jd.STATE / "retry-paused.json", json.dumps(d))
+    # No dirty mark and no wake HERE (perf batch 2 P1, 2026-09-06; kept at the 2026-09-07 upmerge over
+    # upstream's writer-side _mark_views_dirty of review 2026-09-05): every caller publishes the flip
+    # itself. The auto paths (_auto_pause_on_limit, _auto_pause_on_spend_limit, _lift_retry_pause) wake
+    # the pusher with _push_soon, the setGlobalRetryPaused gesture marks the views dirty, and the active
+    # tab's key stats this file (_active_chat_sig), so the queued bubble follows on that push. Neither
+    # build_feed nor build_timeline reads the flag, so a dirty mark here rebuilt both for nothing; and a
+    # bare write (a Resume landing on an already-unpaused file) delivers nothing, as the idempotent
+    # engage does (tests/test_kernel_usage_limit.py, tests/test_retry_pause_autoresume.py).
 
 
 def _retry_pause_reason():
@@ -7722,12 +8272,14 @@ def _retry_pause_lifted_at():
 
 def _account_limited():
     """The ACCOUNT-WIDE usage windows the report says are at 100% with their reset still ahead: the 5h and
-    7d keys of _usage().limited, never fable (model-scoped). The ONE authority for the limit pause's two
-    edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty and
-    _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says the
-    limit does and lifts at the reset with no session having to serve first. Raises what _usage raises;
-    both callers treat no reading as no change."""
-    lim = (_usage() or {}).get("limited") or {}
+    7d keys of _usage_limits()["limited"], never fable (model-scoped). The ONE authority for the limit
+    pause's two edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty
+    and _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says
+    the limit does and lifts at the reset with no session having to serve first. Reads the limits half
+    only: `limited` derives from usage.json and the clock, and the spend ledger _usage() parses for the
+    rail is not an input (perf round 4 P18, 2026-09-07). Raises what _usage_limits raises; both callers
+    treat no reading as no change."""
+    lim = (_usage_limits() or {}).get("limited") or {}
     return [k for k, v in lim.items() if v and k != "fable"]
 
 
@@ -7740,7 +8292,7 @@ def _retry_resume_at():
     if not _retry_paused_on():
         return None
     try:
-        u = _usage() or {}
+        u = _usage_limits() or {}              # the limits half: resetsAt is not a ledger figure
     except Exception:
         return None
     outs = []
@@ -8500,7 +9052,9 @@ def _interrupt_block_tick(now, tmux):
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
                 _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
                 _set_intr_blocked(sid, None)
-    _intr_marks_forget({s["sid"] for s in alive})       # a sid that left the alive set releases its memo entries
+    _alive_sids = {s["sid"] for s in alive}
+    _intr_marks_forget(_alive_sids)                     # a sid that left the alive set releases its memo entries
+    _states_overlay_forget(_alive_sids)                 # and its states-overlay fold entry (perf round 4, item C3)
     # a flip's writer marked the views dirty and woke the pusher: the next cycle carries it (docstring)
 
 
@@ -8717,6 +9271,28 @@ def _pure_delegation_top(nodes, top_id, sid=None, path=None):
     return bool(leaves) and all(isinstance(nodes.get(nid, {}).get("handoff"), dict) for nid in leaves)
 
 
+def _states_rows(sid):
+    """Every parsed row of states/<sid>.jsonl, served APPEND-INCREMENTALLY from event_model's jsonl cache
+    (the transcripts' own reader: one stat per call while the file is quiet, only the appended bytes
+    when it grew). Upstream's _fold_records now serves most per-push readers; the three that remain on this
+    path (the busy hint, the nudge times, the state intervals) used to open the file and json.loads
+    every line on every call — per session per pusher cycle, on a log that only ever grows (≈5k rows /
+    1 MB on a long-lived session): ~2 full reads per second per session with NOTHING changed, measured
+    2026-09-03 as the largest steady-state read volume in the kernel (the states logs were the most-opened
+    files in a 12 s descriptor sample). Rows are the cache's own objects — read-only by contract, never
+    mutate them. Missing/unreadable file → [] (the readers' old OSError branches)."""
+    return em._read_jsonl_incremental(jd.STATE / "states" / ("%s.jsonl" % sid))
+
+
+def _messages_rows(path=None):
+    """Every parsed row of the postal log (timeline/messages.jsonl), append-incremental like _states_rows —
+    the feed's parked-handoff scan, the timeline's connector join, the postal index and the wait maps each
+    re-read and re-parsed the whole 5 MB log per build. Read-only rows; [] when absent. `path` defaults to
+    jd.MESSAGES; readers that historically derived the path from jd.STATE at call time pass it (in
+    production both name the same file; tests re-point one or the other)."""
+    return em._read_jsonl_incremental(path if path is not None else jd.MESSAGES)
+
+
 def _last_state(sid):
     """(value, t) of the most-recent STATE transition in states/<sid>.jsonl ('working'/'waiting'/'idle'/…),
     ignoring the interleaved awaiting overlays; ('', 0) when there's no state file yet. The Stop hook (tmux) and
@@ -8725,22 +9301,25 @@ def _last_state(sid):
     state recorded AFTER the parsed turn's end means the session is genuinely still working (a newer turn the
     parse hasn't caught up to); one recorded BEFORE it means the turn ended and the post-turn 'waiting' write
     was lost (e.g. a kernel restart) — a stale record that must not block the nudge forever."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
     val, vt = "", 0
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"state"' not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(rec, dict) and isinstance(rec.get("state"), str):
-                    val = rec["state"]
-                    vt = rec.get("t", vt)
-    except OSError:
-        return ("", 0)
+    for rec in _states_rows(sid):
+        if isinstance(rec, dict) and isinstance(rec.get("state"), str):
+            val = rec["state"]
+            vt = rec.get("t", vt)
+    return (val, vt)
+
+
+def _last_natural_state(sid):
+    """(value, t) of the most-recent state transition the SESSION itself produced — the rows romp
+    appended for a Stop press (`by` set: _record_idle and the SDK interrupt) skipped. A finished-turn
+    signal reads this one: a Stop press is the user's own act, not a turn the session finished (review
+    find on #937, 2026-09-07). Served from _states_rows, the append-incremental cache every other states
+    reader uses, so the turn tick's per-cycle ask is a stat while the log is quiet."""
+    val, vt = "", 0
+    for rec in _states_rows(sid):
+        if isinstance(rec, dict) and isinstance(rec.get("state"), str) and not rec.get("by"):
+            val = rec["state"]
+            vt = rec.get("t", vt)
     return (val, vt)
 
 
@@ -8927,20 +9506,21 @@ def _compact_suggest_tick(sid, tm, now):
     with _NUDGE_LOCK:                                  # CLAIM BEFORE SEND (the double-send race,
         # 2026-09-01): the check above releases the lock before the fire-time gates, and this tick
         # has three concurrent entry points (the pusher's periodic pass, setAutoNudge's and
-        # setCompactSuggest's WS re-ticks) — latching only after the send let two entries pass the
-        # same unlatched check and inject the suggestion twice into one session. The latch write
-        # IS the claim: a fresh read under the lock re-derives what is still due (a concurrent
-        # entry may have claimed it in the gap), the winner latches and sends, the loser stands
-        # down right here. Same direction as the nudge machinery's own bookkeeping
-        # (_mark_auto_nudged records only after its send, so a failed send retries), inverted at
-        # this seam because the send must be single-shot — and the failure arm below rolls the
-        # claim back under the lock, so "never latch a fire that never went out" still holds
-        # durably: the next tick retries the same crossing. The claim (and the rollback) is
-        # durable against every OTHER ledger writer too: all of them hold _NUDGE_LOCK across
-        # their read-modify-write, and the ones with IO mid-span re-read fresh under the lock
-        # and mutate only their own keys — before that migration (2026-09-01), a debt reminder's
-        # pre-send snapshot written whole erased a concurrent claim (or resurrected a rolled-back
-        # one) and re-opened the double send through the side door.
+        # setCompactSuggest's WS re-ticks; single-flight since PR #943 via _AUTO_NUDGE_TICK_LOCK,
+        # but the latch is the SEND's own single-shot guarantee, so it stays) — latching only after
+        # the send let two entries pass the same unlatched check and inject the suggestion twice
+        # into one session. The latch write IS the claim: a fresh read under the lock re-derives
+        # what is still due (a concurrent entry may have claimed it in the gap), the winner latches
+        # and sends, the loser stands down right here. Same direction as the nudge machinery's own
+        # bookkeeping (_mark_auto_nudged records only after its send, so a failed send retries),
+        # inverted at this seam because the send must be single-shot — and the failure arm below
+        # rolls the claim back under the lock, so "never latch a fire that never went out" still
+        # holds durably: the next tick retries the same crossing. The claim (and the rollback) is
+        # durable against every OTHER ledger writer too: all of them hold _NUDGE_LOCK across their
+        # read-modify-write, and the ones with IO mid-span re-read fresh under the lock and mutate
+        # only their own keys — before that migration (2026-09-01), a debt reminder's pre-send
+        # snapshot written whole erased a concurrent claim (or resurrected a rolled-back one) and
+        # re-opened the double send through the side door.
         d = dict(_auto_nudge_data())                   # fresh read — a concurrent writer's blob is
         cs = dict(d.get("compactSuggested") or {})     # not clobbered
         held = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t]
@@ -8980,6 +9560,20 @@ def _compact_suggest_tick(sid, tm, now):
     return True
 
 
+# The tick is SINGLE-FLIGHT (PR #943 review): it has two concurrent entry points — the pusher's
+# periodic pass (0.5 s backstop) and the setAutoNudge / setCompactSuggest arms' act-now pass on the
+# WS handler thread — and the nudge send has no claim-before-send (_mark_auto_nudged records AFTER
+# the send so a failed send retries; _compact_suggest_tick's latch covers only its own seam), so two
+# passes that overlapped each derived the same due goal from the same store and injected the same
+# nudge twice into one session — reproduced from two threads at the 0.5 s cadence. A non-blocking
+# try-acquire, never a wait: the loser stands down whole, and loses nothing. The flag write precedes
+# the turn-on's tick, so a pass found in flight already reads the turned-on world (before the write
+# it would have returned at the enabled gate), and a pusher pass that meets the WS pass re-runs on
+# its own cadence — at worst an act-now degrades to the next cycle. A plain Lock, not an RLock: a
+# same-thread re-entry (a WS tick nested in a pass) must stand down the same way.
+_AUTO_NUDGE_TICK_LOCK = threading.Lock()
+
+
 def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     """One Auto-Nudge pass (from the periodic pusher). For each ALIVE, IDLE session (its turn ended) that
     isn't awaiting/compacting/api-error, isn't WAITING ON A LIVE PEER (a wait isn't a stall — the human's
@@ -8987,10 +9581,51 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     has an orphaned 'working' top goal, AND whose latest turn the closer has already classified (so 'working'
     is its considered verdict — a turn that ended by asking YOU a question is never nudged), inject the follow-up. RE-ARMS per stall episode, not once-ever: a goal is nudged again
     once a NEW GENUINE (work/user, not the agent's own nudge-response) ended turn leaves it still working, with
-    a count that climbs each fire (surfaced on the timeline; no cap — the warning is the alert). A no-op unless
-    the user turned it on."""
-    if not _auto_nudge_on():
-        return
+    a count that climbs each fire (surfaced on the timeline; no cap — the warning is the alert). Single-flight
+    (_AUTO_NUDGE_TICK_LOCK): a pass that finds another in flight stands down without sending. The NUDGE
+    legs are a no-op unless the user turned it on.
+
+    THE AWAITING DEAD-MAN RUNS REGARDLESS OF THE TOGGLE (2026-09-05). The toggle is the user opting out of
+    injected status checks; the 6h wake in _wake_goal is the reachability floor every Working card is
+    promised (the 2026-08-22 rule: nudged/woken until it lands) and the ONLY mechanism for a wait whose
+    ending romp cannot observe (kind=job). Behind the toggle it was unreachable: a kind=job stamp stood 17
+    hours over nothing pending because this tick returned before its goal walk. So the walk runs in
+    WAKE-ONLY mode when nudges are off — same session gates, only the awaiting branch of the goal loop —
+    the way _interrupt_block_tick runs every push independent of the toggle; and in that mode a due
+    dead-man INJECTS NOTHING (the user said no unprompted messages): it files the stamp's lift instead,
+    the row the orphan lift files (see _wake_goal). The plain nudge, the compaction suggestion, the debt
+    ladder and the dormant-owner sweep keep the toggle as before."""
+    if not _AUTO_NUDGE_TICK_LOCK.acquire(blocking=False):
+        return                                            # a pass is in flight: it owns this world's sends
+    try:
+        _auto_nudge_pass(now, tmux, run_dead_wait)
+    finally:
+        _AUTO_NUDGE_TICK_LOCK.release()
+
+
+def _ws_act_now_tick():
+    """The setAutoNudge / setCompactSuggest arms' act-now pass on the WS handler thread — ONE wrap for
+    both (PR #943 review). The reader loop (Handler._ws) re-raises OSError as a socket failure and its
+    outer handler tears the connection down silently, so an OSError out of the pass head (the
+    session-listing fork, a store read) closed the dashboard's socket with no log line — since #846 for
+    setCompactSuggest, for setAutoNudge once #943 restored its tick. Catches Exception as the pusher's
+    wrap does, and that is safe HERE because the tick never writes to the delivering socket: its only
+    push is _push_soon(), a wake flag, so nothing caught is that socket's own failure (a tick that wrote
+    to the client would have to let its socket errors through). Skips the dead-wait sweep: the death
+    transition has ONE observer, the pusher's tick (see _auto_nudge_tick), and this thread racing its
+    prev-swap could spend a transition uncorroborated. Single-flight against the pusher's pass through
+    _AUTO_NUDGE_TICK_LOCK, inside the call."""
+    try:
+        _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+    except Exception:
+        sys.stderr.write("auto-nudge (ws act-now): %s\n" % traceback.format_exc())
+
+
+def _auto_nudge_pass(now, tmux, run_dead_wait):
+    """The body of one pass — the walk, the sweeps, the push. Only _auto_nudge_tick calls it, under
+    the single-flight guard (split out the way _pusher_cycle_jobs is from _pusher_cycle). `on` is the auto-nudge toggle:
+    off, the walk runs WAKE-ONLY — the awaiting dead-man still fires (see _auto_nudge_tick)."""
+    on = _auto_nudge_on()
     nudged = dict(_auto_nudge_data().get("nudged", {}))   # {gid: {count, lastTurnId}}
     alive = list(_alive_sessions(now, tmux))
     alive_ids = {s["sid"] for s in alive}
@@ -9003,7 +9638,7 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
         # ticks over two days before anyone noticed; every session after the bad one in the
         # iteration lost its nudges. The failure still logs loudly, per session.
         try:
-            r = _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids)
+            r = _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids, wake_only=not on)
             fired = (r is True) or fired
             # the walk->sweep handoff journal (the user 2026-08-24): a session gate names itself as
             # the return value; the sweep owns gate-held records by the GATE'S CLASS, never by age
@@ -9014,13 +9649,15 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
             # the compaction suggestion rides the same walk (contract at _compact_suggest_tick).
             # Deliberately INSIDE the auto-nudge toggle: a user who turned injected follow-ups
             # off has said no unprompted messages, and this is exactly that class.
-            fired = _compact_suggest_tick(s["sid"], tmux.get(s["sid"]), now) or fired
+            if on:
+                fired = _compact_suggest_tick(s["sid"], tmux.get(s["sid"]), now) or fired
         except Exception:
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
     try:
-        _debt_backstop_tick(now)                       # reminder outcomes for debtors the walk can't reach
-        if run_dead_wait:
+        if on:
+            _debt_backstop_tick(now)                   # reminder outcomes for debtors the walk can't reach
+        if run_dead_wait and on:
             # THE DEATH TRANSITION HAS ONE OBSERVER: _dead_wait_sweep's prev-swap (_PREV_ALIVE)
             # is a lock-free read-modify-write, safe only because exactly one caller — the
             # pusher's periodic tick — ever runs it. setAutoNudge's WS-handler tick passes
@@ -9161,6 +9798,30 @@ def _lift_ev_t(nd, now):
     return nd.get("awaitingAt") or now
 
 
+def _bg_ended_after(every, tombs, sp, anchor, now, kind="task"):
+    """Did some in-harness background item END after `anchor`? The watermark for the dispatch-less
+    task/job lift in _lift_spent_awaiting: the registry says nothing runs NOW, and this says the
+    emptiness ARRIVED after the stamp — so the stamp stood over live work that has since ended, rather
+    than over a world already empty when the judge stamped (a wait on something outside the harness).
+    Every source is a recorded event, never a clock: a task's terminal record (`endT`), a Monitor's
+    recorded ceiling passing (its kill moment — em._bg_expired, deadline past the anchor), a launch-
+    ledger stop tombstone (`at`; a TaskStop suppresses the notification the transcript would pair), or
+    the CLI respawn `sp` that killed everything the stamp could have watched.
+
+    `kind` is the stamp's awaitingKind. For a JOB stamp (compute the kernel cannot observe: a CI run,
+    a remote queue) a CLI respawn and a Monitor's ceiling are CARRIER deaths, not the job ending — a
+    routine kernel restart alone used to lift a correctly-labelled job stamp that owned nothing (review
+    find on #936, 2026-09-07). A job lifts only on a real terminal record or a ledger stop tombstone."""
+    if kind != "job" and sp > anchor:
+        return True
+    for t in every:
+        if (t.get("endT") or 0) > anchor:
+            return True
+        if kind != "job" and t.get("status") == "running" and em._bg_expired(t, now) and (t.get("deadline") or 0) > anchor:
+            return True
+    return any((e.get("at") or 0) > anchor for e in tombs if isinstance(e, dict))
+
+
 def _stamp_written_at(nd):
     """WHEN the awaiting stamp was written — the ownership horizon for the time-window fallback below.
 
@@ -9187,56 +9848,61 @@ def _stamp_written_at(nd):
 
 
 # ── the awaiting-lift gate ──
-# _lift_spent_awaiting decides whether a session has anything to lift from the loaded store alone:
-# `stamped` and `rolled` below are functions of the nodes load_goals returns, and load_goals reads exactly
-# three files — the store, the override journal (replayed on every load) and, for a journal `restore`
-# row, the goals-archive (a restore re-inserts a node only when neither the store nor the archive holds
-# it, so the archive's contents decide whether a stamped payload comes back). With about 30 alive
-# sessions and a handful of them stamped, the job parsed every store every pusher cycle to find nothing:
-# the load alone was 3.1% of the pusher thread and the job 5.4% (pusher profile, 2026-09-06). The gate
-# remembers, per sid, the identity of those three files at the last load and whether that load found a
-# candidate; an unchanged identity whose last load found none is skipped BEFORE the parse, so an idle
-# session costs three stats per cycle instead of a parse. Every writer moves the identity: save_goals and
-# save_goal_archive publish by rename (a new inode and mtime), the journal appenders extend the file
-# (size). The key is taken BEFORE the read, so a writer racing the load leaves a key that mismatches next
-# cycle — one redundant load, never a wrong skip. A session whose last load found candidates is never
-# gated: the clock-dependent part of the job (em._bg_expired), the registry snapshot and the transcript
-# reads all sit behind `stamped or rolled` being non-empty, and they run every cycle exactly as before.
-# The postal read (_peer_answered, cached) is also skipped on a gated cycle; its answer is consulted only
-# for nodes in `stamped`, which that cycle's load would have found empty. A load that raises records
-# nothing, and neither does one that FELL BACK: load_goals answers an empty store when the store file
-# cannot be read or parsed, and _replay_overrides skips an unreadable journal — both swallow the error
-# and mark the store `_unread` (transient, like `_baseRev`), and a cycle whose store carries the mark
-# does not write an entry, so the next cycle retries and an error is never cached as a skip (before the
+# Every fact _lift_spent_awaiting rules on is recorded somewhere that stats: the goal store and its
+# override journal (the stamps; load_goals replays the journal on every load), the goals-archive (a
+# journal `restore` row re-inserts a node only when neither the store nor the archive holds it, so the
+# archive's contents decide whether a stamped payload comes back), the transcript (the returns), the
+# postal log (a peer's reply), the SDK reg (the CLI epoch) and the backend's live task set. Unchanged
+# since the last ruling → the ruling is unchanged → the load is skipped (2026-09-03: this ran a full
+# store load + journal replay per live session per 0.5 s cycle on a quiet board; with about 30 alive
+# sessions the load alone was 3.1% of the pusher thread and the job 5.4%, pusher profile 2026-09-06).
+# The fingerprint is taken BEFORE the read, so a writer racing the load leaves a key that mismatches
+# next cycle — one redundant load, never a wrong skip. A ruling that raises records nothing, and
+# neither does one whose load FELL BACK: load_goals answers an empty store when the store file cannot
+# be read or parsed, and _replay_overrides skips an unreadable journal — both swallow the error and
+# mark the store `_unread` (transient, like `_baseRev`), and a cycle whose store carries the mark
+# forgets its fingerprint, so the next cycle retries and an error is never cached as a skip (before the
 # mark, one EMFILE on a stamped store recorded "nothing to lift" against an identity that never moved
-# again, 2026-09-06). The archive's fallback needs no mark: an unreadable archive makes a restore row
-# re-insert its node, which errs toward a candidate, never toward a skip. Entries for sids that left the
-# alive set are dropped at the end of each tick. The key shares the coarse-mtime blind spot of every
-# stat-keyed memo here (two equal-size publishes inside one clock tick on a filesystem without
-# fine-grained timestamps); plan C1's byte compare closes it.
-_LIFT_GATE = {}                              # sid -> (identity key, bool(that load found a lift candidate))
-_lift_gate_stats = {"skip": 0, "load": 0}    # /perf memos.lift_gate: session-cycles skipped vs loaded
-
-
-def _lift_gate_key(sid):
-    """The identity of every file load_goals reads for `sid` — (store, override journal, goals-archive),
-    each (st_ino, st_mtime_ns, st_size), None when the file is absent. See _LIFT_GATE."""
-    def _ident(p):
+# again, 2026-09-06). Entries for sids that left the alive set are dropped at the end of each tick. The
+# key shares the coarse-mtime blind spot of every stat-keyed memo here (two equal-size publishes inside
+# one clock tick on a filesystem without fine-grained timestamps) except for an atomic republish, which
+# the inode catches; plan C1's byte compare closes the rest.
+# Since performance plan 4 (P16) the read the gate fronts is the shared read-only view
+# (jd.load_goals_shared), and a session whose candidates decide nothing costs that read alone; the
+# writer's load_goals runs only when a lift is due (_lift_spent_awaiting's two-phase note).
+def _sid_inputs_fp(sid, path, extra=()):
+    """(stat, …) of the recorded inputs a per-session tick ruling reads — the goal store, its override
+    journal, the goals-archive, the transcript, the postal log and the SDK reg — plus `extra` live facts.
+    Equal tuples across cycles mean the ruling's inputs did not move; None when nothing can be stat'd
+    (then never skip)."""
+    out = []
+    for p in (jd.GOALDIR / (str(sid) + ".json"), jd._overrides_dir() / (str(sid) + ".jsonl"),
+              jd.GOALARCHDIR / (str(sid) + ".json"),
+              path or "", jd.STATE / "timeline" / "messages.jsonl", jd.STATE / "sdk" / (str(sid) + ".json")):
         try:
-            st = p.stat()
-        except OSError:
-            return None
-        return (st.st_ino, st.st_mtime_ns, st.st_size)
-    return (_ident(jd.GOALDIR / (sid + ".json")),
-            _ident(jd._overrides_dir() / (sid + ".jsonl")),
-            _ident(jd.GOALARCHDIR / (sid + ".json")))
+            st = os.stat(p) if p else None
+            out.append((st.st_mtime_ns, st.st_size, st.st_ino) if st else None)   # ino: an atomic republish
+        except OSError:                                                            # of equal size in one
+            out.append(None)                                                       # timestamp tick still moves
+    if all(x is None for x in out):
+        return None
+    return tuple(out) + tuple(extra)
+
+
+_lift_seen = {}   # sid -> the inputs fingerprint the awaiting lift last ruled on — see _lift_spent_awaiting
+_lift_gate_stats = {"skip": 0, "load": 0, "shared": 0, "writer": 0, "noop": 0}   # /perf memos.lift_gate, see _lift_gate_report
 
 
 def _lift_gate_report():
-    """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no load, `load`
-    the ones that did, `entries` sids remembered."""
+    """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no read, `load` the
+    ones that read the store (phase 1 of _lift_spent_awaiting), `shared` the phase-1 reads the shared
+    read-only cache answered (the rest were load_goals' own store: no file, an unreadable journal, the cache
+    off), `writer` the phase-2 writer loads: one per session-tick that loaded the writer's copy because a
+    lift was due (a tick filing two lifts on one session counts once; the `noop` ones count too), `noop`
+    the writer loads whose fresh decision filed nothing (the store moved between the probe and the load),
+    `entries` sids remembered."""
     out = dict(_lift_gate_stats)
-    out["entries"] = len(_LIFT_GATE)
+    out["entries"] = len(_lift_seen)
     return out
 
 
@@ -9254,20 +9920,32 @@ def _lift_spent_awaiting(now, tmux):
     awaiting flavors are untouched: we lift only when this goal DID dispatch background work of its own by
     stamp time, every one of those has come back, and at least one came back AFTER the stamp's anchor —
     a return already sitting in a turn the stamping judge had audited can't be what the stamp waits on
-    (see the loop's _returned_after note, 2026-08-16). A stamp naming a CI run, a scheduled check-back or a
-    peer handoff owns no such dispatches, so it never matches and keeps its stamp — those still rely on the
-    6h awaiting wake (_wake_goal, in the nudge tick's goal walk), which is exactly the case a timer is the
-    only tool for. A kind=job stamp that DOES own dispatches (the standard shape: a watcher armed over an
-    external computation) lifts only on their REAL terminal records: a watcher dying with a restart or
+    (see _lift_decisions' _returned_after note, 2026-08-16). A stamp naming a CI run, a scheduled check-back
+    or a peer handoff owns no such dispatches, so it never matches and keeps its stamp — those still rely on
+    the 6h awaiting wake (_wake_goal, in the nudge tick's goal walk), which is exactly the case a timer is
+    the only tool for. A kind=job stamp that DOES own dispatches (the standard shape: a watcher armed over
+    an external computation) lifts only on their REAL terminal records: a watcher dying with a restart or
     expiring is the CARRIER going, not the job returning — before this, the watcher's silent death lifted
     the stamp while the slurm job ran on (the user 2026-08-15; the wake stays the backstop).
 
     Dormant sessions are skipped: their tasks died with their CLI, so the death notice is the truth there,
     not a lift (same rule as _session_awaiting's source 0.75).
 
-    An alive session whose store, override journal and goals-archive are all unchanged since a load that
-    found nothing stamped is skipped before the load (_LIFT_GATE above): the same decision, from three
-    stats instead of a parse."""
+    An alive session whose recorded inputs and live facts are all unchanged since the last ruling is
+    skipped before the load (_sid_inputs_fp / _lift_seen above): the same decision, from a few stats
+    instead of a parse.
+
+    TWO-PHASE READ (performance plan 4, P16). Every rule lives in _lift_decisions, which decides and writes
+    nothing. Phase 1 runs it on the shared read-only view (jd.load_goals_shared: one parse per store version
+    for every reader; the fingerprint is recorded before the probe, as before). Most stamped sessions end there:
+    the dispatch is still out, so nothing is due and no writer load happens — before this, every stamped
+    alive session paid a private load_goals (a full read plus the journal replay) every cycle to decide
+    nothing. Phase 2 runs only when phase 1 found a lift due: the writer's copy is loaded (jd.load_goals),
+    the decision is made AGAIN on that copy, and that second decision is what record_verdict files and
+    save_goals publishes — never the first. The frozen view is never written to and never reaches
+    save_goals (both would raise), and the copy a lift is written on is the copy it was decided on: a writer
+    that publishes between the probe and the load (the closer re-placing the deciding launch under another
+    card) costs one writer load that decides nothing (`noop`), never a lift from a stale decision."""
     seen = set()
     for s in _alive_sessions(now, tmux):
         sid = s["sid"]
@@ -9275,206 +9953,283 @@ def _lift_spent_awaiting(now, tmux):
         try:
             if tmux.get(sid) is None:                 # dormant → its tasks died with the CLI, don't rule
                 continue
-            key = _lift_gate_key(sid)                 # BEFORE the read: a racing writer costs one reload
-            gate = _LIFT_GATE.get(sid)
-            if gate is not None and gate[0] == key and not gate[1]:
-                _lift_gate_stats["skip"] += 1
-                continue                              # the same files held nothing to lift last time
-            _lift_gate_stats["load"] += 1
-            store = jd.load_goals(sid)
-            nodes = store.get("nodes") or {}
-            stamped = [nd for nd in nodes.values()
-                       if nd.get("awaitingWhy") and nd.get("awaitingAt") and not nd.get("rolledUp")]
-            # A stamped node the roll-down folded under a RESOLVED ancestor: its card's story ended, but
-            # the stamp survives invisibly (every reader skips rolledUp) — lift it explicitly so the
-            # diary says why it went, instead of an unretired wait no surface can show (the user
-            # 2026-07-27). Guarded on the diary so an unmaterialized lift never re-fires each tick.
-            rolled = [nd for nd in nodes.values()
-                      if nd.get("awaitingWhy") and nd.get("rolledUp")
-                      and not _last_awaiting_is_lift(nd)]
-            # recorded here, from the comprehensions alone: the peer-supersede arm below shrinks
-            # `stamped`, and a save moves the key anyway, so the entry says what THIS load found — unless
-            # the load fell back (`_unread`): an empty answer that is not the files' content is not cached
-            if not store.get("_unread"):
-                _LIFT_GATE[sid] = (key, bool(stamped or rolled))
-            changed = False
-            for nd in rolled:
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                    changed = True
-
-            def _top_of(x):
-                seen = set()
-                while x in nodes and nodes[x].get("parentId") is not None and x not in seen:
-                    seen.add(x); x = nodes[x]["parentId"]
-                return x
-            # SUPERSEDED PEER-WAIT LIFT (the user 2026-08-24): a peer's reply at/after a kind=peer (or
-            # kindless) stamp's WRITE time already ends that wait at every read — _goal_awaiting_stamp_full
-            # hides the stamp from the card and the chip, and the nudge walk (which reads the same
-            # predicate) then never arms the 6h wake. But that supersede was read-time only: it filed
-            # NOTHING, so the stamp sat invisibly forever — the closer was never re-nominated (its
-            # filed-since gate needs a diary row newer than closerLookT, and the newest row was the stamp
-            # itself), the plain-nudge fire gate read the RAW fields and vetoed every fire, and a LIVE
-            # session's Working card wore the quiet floor ("Paused — resumes when its wait ends")
-            # indefinitely — three live specimens on one board, one ~14h, breaking the recorded 2026-08-22
-            # promise that every Working card is nudged/woken until it lands (_dead_wait_block's docstring).
-            # File the lift the readers already act on: the reply is the wait's designed exact ending event
-            # (the reader's own rule), the lift row re-arms the closer's filed-since nomination (a re-audit
-            # can re-stamp a still-real wait with a fresh write time that out-orders the answer — the
-            # designed self-correction the read-only supersede promised but never delivered), and the
-            # ledger drop re-engages the nudge ladder exactly like the dispatch arms below. Peer-scoped
-            # exactly like the reader (job/agents/task/timer stamps stand through mail); DORMANT sessions
-            # never reach here (the sweep's own gate above) — the dead-wait conversion reads the stamp RAW
-            # on purpose (2026-08-23) and owns that ending.
-            answered = _peer_answered(sid)
-            for nd in (list(stamped) if answered[0] else ()):
-                if not _peer_stamp_superseded(nd, answered):
-                    continue
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                    changed = True
-                    stamped.remove(nd)
-                    _drop_auto_nudge_rec(_top_of(nd.get("id")))
-            if not stamped:
-                if changed:
-                    jd.rollup_status(store, False)
-                    jd.save_goals(sid, store)
-                    _mark_views_dirty()
-                continue
-            every = _bg_scan_all_cached(s["path"])
-            # the backend's lifecycle set (present-but-empty is AUTHORITATIVE — _bg_live_norm's own
-            # rule) and the CLI epoch it (re)started at: the restart-orphan reconciliation evidence
+            # Every fact this lift rules on is recorded somewhere that stats (see _sid_inputs_fp above):
+            # unchanged since the last cycle → the ruling is unchanged → skip the load.
             snap = tmux.get(sid) or {}
-            reg_ids = ({str(t.get("toolUseId") or "") for t in snap.get("bgTasks") or []
-                        if isinstance(t, dict)} if "bgTasks" in snap else None)
-            sp = _sdk_spawned_at(sid) or 0
-            if not every and reg_ids is None:
-                if changed:
-                    jd.rollup_status(store, False)
-                    jd.save_goals(sid, store)
-                    _mark_views_dirty()
+            # …plus the two facts the ruling reads that no file records: the live subagent count, and
+            # for every dispatch the transcript pairs, WHETHER its recorded deadline has passed (a
+            # watcher past deadline+grace counts as returned — a clock fact, keyed as the boolean it
+            # resolves to, so the crossing itself re-examines the session; review 2026-09-03).
+            every = _bg_scan_all_cached(s["path"]) if s.get("path") else []
+            gate = _sid_inputs_fp(sid, s.get("path"),
+                                  extra=(tuple(sorted(str(t.get("toolUseId") or "") for t in (snap.get("bgTasks") or ())
+                                                      if isinstance(t, dict))),
+                                         len(snap.get("subagents") or ()),
+                                         tuple(sorted((str(t.get("id") or ""), bool(em._bg_expired(t, now)))
+                                                      for t in every if isinstance(t, dict) and t.get("status") == "running"))))
+            if gate is not None and _lift_seen.get(sid) == gate:
+                _lift_gate_stats["skip"] += 1
+                continue                              # the same inputs were ruled on last cycle
+            _lift_gate_stats["load"] += 1
+            _lift_seen[sid] = gate                    # recorded now; a ruling that RAISES forgets it below,
+            #                                           so the next cycle retries instead of skipping
+            # PHASE 1, the probe: the shared read-only view. A FrozenStore is the cache's answer; anything
+            # else is load_goals' own store handed through (no file, an unreadable journal, the cache off).
+            store = jd.load_goals_shared(sid)
+            if isinstance(store, jd.FrozenStore):
+                _lift_gate_stats["shared"] += 1
+            stamped, rolled = _lift_candidates(store)
+            # a read that FELL BACK (`_unread`) answered an empty store that is not the files' content:
+            # forget the fingerprint so the next cycle retries instead of caching the error as a skip
+            if store.get("_unread"):
+                _lift_seen.pop(sid, None)
+            if not (stamped or rolled):
                 continue
-            # RESTART-ORPHAN reconciliation (the user 2026-08-24): a kernel/backend restart kills
-            # tracked subagents and workflows WITH the claude process — the terminal record never
-            # lands, the transcript pairing shows them "running" forever, and the stamp orphaned
-            # (16h of "awaiting agents" over an empty registry, nothing reconciling). A
-            # transcript-"running" task ABSENT from a PRESENT lifecycle set died with its process;
-            # its return event IS the backend's (re)spawn — an exact event, not a timer. kind=job
-            # stays registry-blind below: the watcher dying is the carrier going, not the job
-            # returning.
-            dead = (set() if reg_ids is None else
-                    {t.get("id") for t in every
-                     if t.get("status") == "running" and t.get("id") and str(t.get("id")) not in reg_ids})
-            # a monitor past its recorded lifetime ceiling counts as RETURNED even with no terminal
-            # record (its CLI died mid-watch; the notification can never arrive) — see em._bg_expired
-            running = {t.get("id") for t in every
-                       if t.get("status") == "running" and not em._bg_expired(t, now)
-                       and t.get("id") not in dead}
-            # kind=job: expiry is not a return (see docstring) — only a real terminal record lifts
-            running_job = {t.get("id") for t in every if t.get("status") == "running"}
-            placed = _bg_placed_tops(sid, s["path"], [t.get("id") for t in every])
-            for nd in stamped:
-                born = nd.get("t") or 0
-                top = _top_of(nd.get("id"))
-                # The dispatches this goal owns. Placement is authoritative when the judge has spoken:
-                # a task placed under ANOTHER card can never retire this stamp (the user 2026-07-27:
-                # unrelated returns were lifting CI-wait stamps — one lifted the same minute it was
-                # re-asserted). The time window survives only for placement-unknown launches (the
-                # conservative pre-verdict shape): launched during the goal's life, at or before the
-                # stamp it explains — bounded by when that stamp was WRITTEN, not by its turn-trigger
-                # anchor, which the launches of that very turn all postdate (see _stamp_written_at).
-                horizon = _stamp_written_at(nd)
-                own = []
-                for t in every:
-                    p = placed.get(t.get("id"))
-                    if p is not None:
-                        if p == top:
-                            own.append(t)             # the goal's own thread, before OR after the stamp:
-                            #                           anything of its own still out keeps the wait honest
-                    elif born <= (t.get("t") or 0) <= horizon:
-                        own.append(t)
-                if not own:                           # nothing dispatched → not a background wait; leave it
-                    # …EXCEPT a kind=agents stamp standing over an authoritatively EMPTY lifecycle
-                    # set with no live subagents and nothing running in the transcript (the user
-                    # 2026-08-24): an agents-kind wait ends with task notifications, and with no
-                    # dispatch recorded ANYWHERE no such event can ever arrive — the shape a closer
-                    # mints when it misreads peer sessions as agents, orphaned for good the moment a
-                    # restart clears the world it described. Same evidence-postdates-anchor rule as
-                    # every lift: the (re)spawn must be newer than the stamp's anchor.
-                    if (nd.get("awaitingKind") == "agents" and reg_ids is not None and not reg_ids
-                            and not snap.get("subagents") and not running
-                            and (sp > (nd.get("awaitingAt") or 0)
-                                 # …or the transcript itself shows NOTHING running at all (2026-08-25
-                                 # audit): the closer stamped agents over a world with zero live
-                                 # dispatches — the misread-peer-as-agents shape needs no respawn to
-                                 # prove the notification can never arrive; the pairing already did
-                                 or not any(t.get("status") == "running" for t in every))):
-                        if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                            changed = True
-                            _drop_auto_nudge_rec(top)
+            if not _lift_decisions(sid, s, store, now, tmux):
+                continue                              # nothing due: the common stamped case, no writer load
+            # PHASE 2, the write: a fresh private copy, decided on again, and only its own decisions filed.
+            _lift_gate_stats["writer"] += 1
+            wstore = jd.load_goals(sid)
+            wnodes = wstore.get("nodes") or {}
+            changed = False
+            for nid, top, drop_rec in _lift_decisions(sid, s, wstore, now, tmux):
+                nd = wnodes.get(nid)
+                if nd is None:
                     continue
-                live_set = running_job if nd.get("awaitingKind") == "job" else running
-                if any(t.get("id") in live_set for t in own):
-                    continue                          # at least one is genuinely still out
-                # The lift's event is a return the stamp was WAITING ON — one that landed after the
-                # stamp's ANCHOR (endT past the audited turn's trigger; a launch past it necessarily
-                # returned past it too; a kindless expiry "returns" at its recorded deadline). A
-                # dispatch already terminal in a turn the stamping judge had ALREADY AUDITED can't
-                # evidence the wait's end: the judge stamped knowing that completion, so the wait is
-                # about something else, and the goal keeps its stamp + 6h wake like any dispatch-less
-                # wait. The boundary is the anchor, NOT the write time (`horizon`): the write postdates
-                # the whole audited turn, so testing against it would also disown mid-turn and
-                # audit-lag returns the judge never saw (the suite pins those as lifting). Without
-                # this, a stamp about external cluster work lifted the same minute it was written off
-                # a workflow hours dead — and the lift row then MOOTED the nudge-failure evaluation,
-                # parking the card in Working with no reviver left (an idle experiment session,
-                # 2026-08-16).
-                _anchor = nd.get("awaitingAt") or 0
-                def _returned_after(t):
-                    return ((t.get("endT") or 0) > _anchor or (t.get("t") or 0) > _anchor
-                            or (t.get("status") == "running" and (t.get("deadline") or 0) > _anchor)
-                            or (t.get("id") in dead and sp > _anchor))
-                if not any(_returned_after(t) for t in own):
-                    continue
-                # THE STAND-DOWN RULE, joined (the 2026-08-19 audit): a writer whose evidence
-                # predates the diary yields — but only on a RE-ASSERT. The flap's signature is the
-                # closer re-affirming the wait AFTER a prior lift of this same stamp: everything
-                # this lift can cite (returns that preceded that lift) was already ruled on once,
-                # so lifting again off it produced the observed 2-3 second stamp↔lift flaps that
-                # reset the nudge ladder (fires 5s after a lift, three first-nudges in 21 minutes —
-                # the session had re-armed a watcher the ownership window cannot see). A FIRST
-                # stamp keeps the designed audit-lag lift: the write postdates the whole audited
-                # turn, and returns the judge never saw must still lift (the suite pins those).
-                _aw = [e for e in (nd.get("log") or []) if e.get("kind") == "awaiting"]
-                _last_lift = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if e.get("lift")), default=0)
-                _last_assert = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if not e.get("lift")), default=0)
-                _evidence = max((max(t.get("endT") or 0, t.get("t") or 0, t.get("deadline") or 0,
-                                     sp if t.get("id") in dead else 0)
-                                 for t in own), default=0)
-                if _last_lift and _last_assert > _last_lift and _evidence <= _last_lift:
-                    continue                          # every citable return was already ruled on by that
-                    #                                   lift — re-lifting off it is the flap. A return
-                    #                                   NEWER than the last lift is new information even
-                    #                                   when the re-assert's WRITE postdates it by seconds:
-                    #                                   the closer's audit segment ended before the return
-                    #                                   landed (2026-08-25 audit — a watcher's stamp written
-                    #                                   17s after its merge notification stood 9.5h because
-                    #                                   write-time was read as the epistemic boundary)
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
+                if jd.record_verdict(wstore, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
                     changed = True
-                    # The lift is NEW INFORMATION for the escalation ladder: the wait this goal's last
-                    # nudge/wake episode ended on has returned. Drop the goal's spent ledger record
-                    # (failed/moot/answered alike) so the next tick can re-engage — an idle session
-                    # never produces the genuine turn the arm-key dedup otherwise waits for, and a
-                    # latched record left its cards in Working forever (2026-08-16). Event-keyed and
-                    # bounded: record_verdict lifts a given stamp exactly once.
-                    _drop_auto_nudge_rec(top)
-            if changed:
-                jd.rollup_status(store, False)
-                jd.save_goals(sid, store)
-                _mark_views_dirty()
+                    if drop_rec:
+                        # The lift is NEW INFORMATION for the escalation ladder: the wait this goal's last
+                        # nudge/wake episode ended on has returned. Drop the goal's spent ledger record
+                        # (failed/moot/answered alike) so the next tick can re-engage — an idle session
+                        # never produces the genuine turn the arm-key dedup otherwise waits for, and a
+                        # latched record left its cards in Working forever (2026-08-16). Event-keyed and
+                        # bounded: record_verdict lifts a given stamp exactly once.
+                        _drop_auto_nudge_rec(top)
+            if not changed:
+                _lift_gate_stats["noop"] += 1        # the store moved between the probe and the load
+                continue
+            jd.rollup_status(wstore, False)
+            jd.save_goals(sid, wstore)
+            _mark_views_dirty()
         except Exception:
+            _lift_seen.pop(sid, None)                 # a raised ruling is not a ruling — re-run next cycle
             sys.stderr.write("awaiting-lift (session %s): %s\n" % (sid or "?", traceback.format_exc()))
-    for sid in [k for k in _LIFT_GATE if k not in seen]:
-        del _LIFT_GATE[sid]                           # the sid left the alive set: nothing to gate
+    for sid in [k for k in _lift_seen if k not in seen]:
+        del _lift_seen[sid]                           # the sid left the alive set: nothing to gate
+    for cache in (_BG_TOPS_CACHE, _PLACEMENT_IDX):    # …and nothing to place for: release the pinned parse
+        for sid in list(cache):                       # list(): the handler threads fill these concurrently
+            if sid not in seen:
+                cache.pop(sid, None)
+
+
+def _lift_candidates(store):
+    """(stamped, rolled): the (node key, node) pairs one lift tick can rule on, from the store alone. The
+    KEY is what a decision names and what phase 2 resolves on the writer's copy, so a node whose `id`
+    field differs from its key is still found there rather than dropped as a no-op. `stamped` carries a
+    live awaiting stamp. `rolled` is a stamped node the roll-down folded under a RESOLVED ancestor whose
+    newest awaiting row is not yet a lift: its card's story ended, but the stamp survives invisibly (every
+    reader skips rolledUp) — lifted explicitly so the diary says why it went, instead of an unretired wait
+    no surface can show (the user 2026-07-27); guarded on the diary so an unmaterialized lift never re-fires
+    each tick."""
+    nodes = store.get("nodes") or {}
+    stamped = [(nid, nd) for nid, nd in nodes.items()
+               if nd.get("awaitingWhy") and nd.get("awaitingAt") and not nd.get("rolledUp")]
+    rolled = [(nid, nd) for nid, nd in nodes.items()
+              if nd.get("awaitingWhy") and nd.get("rolledUp") and not _last_awaiting_is_lift(nd)]
+    return stamped, rolled
+
+
+def _lift_decisions(sid, s, store, now, tmux):
+    """The lifts due for one alive session, decided on `store` and written NOWHERE: [(nid, top, drop_rec)],
+    one per stamp the tick would retire — `top` the node's top ancestor, `drop_rec` whether the goal's spent
+    nudge record goes with the lift (the rolled-up arm drops none). Every rule of the lift lives here, and
+    the verdict gate is consulted read-only: jd.may_apply is exactly the gate record_verdict asks before it
+    appends, so a decision here is a record_verdict that would have returned True. A decision is a function
+    of (the store, the transcript's task pairing, the backend snapshot, the postal wait maps, now) and of
+    nothing this function writes, so _lift_spent_awaiting can run it on the shared read-only view to learn
+    whether a lift is due, then again on the writer's copy it loads, and file the second run's decisions on
+    that copy (the docstring there). Placement is read from the SAME store object through _bg_placed_tops,
+    so the stamps ruled on and the launches placed come from one version."""
+    out = []
+    nodes = store.get("nodes") or {}
+    stamped, rolled = _lift_candidates(store)
+    for nid, nd in rolled:
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, None, False))
+
+    def _top_of(x):
+        seen = set()
+        while x in nodes and nodes[x].get("parentId") is not None and x not in seen:
+            seen.add(x); x = nodes[x]["parentId"]
+        return x
+    # SUPERSEDED PEER-WAIT LIFT (the user 2026-08-24): a peer's reply at/after a kind=peer (or
+    # kindless) stamp's WRITE time already ends that wait at every read — _goal_awaiting_stamp_full
+    # hides the stamp from the card and the chip, and the nudge walk (which reads the same
+    # predicate) then never arms the 6h wake. But that supersede was read-time only: it filed
+    # NOTHING, so the stamp sat invisibly forever — the closer was never re-nominated (its
+    # filed-since gate needs a diary row newer than closerLookT, and the newest row was the stamp
+    # itself), the plain-nudge fire gate read the RAW fields and vetoed every fire, and a LIVE
+    # session's Working card wore the quiet floor ("Paused — resumes when its wait ends")
+    # indefinitely — three live specimens on one board, one ~14h, breaking the recorded 2026-08-22
+    # promise that every Working card is nudged/woken until it lands (_dead_wait_block's docstring).
+    # File the lift the readers already act on: the reply is the wait's designed exact ending event
+    # (the reader's own rule), the lift row re-arms the closer's filed-since nomination (a re-audit
+    # can re-stamp a still-real wait with a fresh write time that out-orders the answer — the
+    # designed self-correction the read-only supersede promised but never delivered), and the
+    # ledger drop re-engages the nudge ladder exactly like the dispatch arms below. Peer-scoped
+    # exactly like the reader (job/agents/task/timer stamps stand through mail); DORMANT sessions
+    # never reach here (the sweep's own gate) — the dead-wait conversion reads the stamp RAW
+    # on purpose (2026-08-23) and owns that ending.
+    answered = _peer_answered(sid)
+    for nid, nd in (list(stamped) if answered[0] else ()):
+        if not _peer_stamp_superseded(nd, answered):
+            continue
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, _top_of(nid), True))
+            stamped.remove((nid, nd))
+    if not stamped:
+        return out
+    every = _bg_scan_all_cached(s["path"])
+    # the backend's lifecycle set (present-but-empty is AUTHORITATIVE — _bg_live_norm's own
+    # rule) and the CLI epoch it (re)started at: the restart-orphan reconciliation evidence
+    snap = tmux.get(sid) or {}
+    reg_ids = ({str(t.get("toolUseId") or "") for t in snap.get("bgTasks") or []
+                if isinstance(t, dict)} if "bgTasks" in snap else None)
+    sp = _sdk_spawned_at(sid) or 0
+    # the launch ledger's stop tombstones (sdk_backend's bgLedgerEnded): a TaskStop suppresses
+    # the task notification, so the transcript never learns the Monitor ended — the hook did
+    tombs = ((_thread_reg(sid).get("bgLedgerEnded") or []) if reg_ids is not None else [])
+    if not every and reg_ids is None:
+        return out
+    # RESTART-ORPHAN reconciliation (the user 2026-08-24): a kernel/backend restart kills
+    # tracked subagents and workflows WITH the claude process — the terminal record never
+    # lands, the transcript pairing shows them "running" forever, and the stamp orphaned
+    # (16h of "awaiting agents" over an empty registry, nothing reconciling). A
+    # transcript-"running" task ABSENT from a PRESENT lifecycle set died with its process;
+    # its return event IS the backend's (re)spawn — an exact event, not a timer. kind=job
+    # stays registry-blind below: the watcher dying is the carrier going, not the job
+    # returning.
+    dead = (set() if reg_ids is None else
+            {t.get("id") for t in every
+             if t.get("status") == "running" and t.get("id") and str(t.get("id")) not in reg_ids})
+    # a monitor past its recorded lifetime ceiling counts as RETURNED even with no terminal
+    # record (its CLI died mid-watch; the notification can never arrive) — see em._bg_expired
+    running = {t.get("id") for t in every
+               if t.get("status") == "running" and not em._bg_expired(t, now)
+               and t.get("id") not in dead}
+    # kind=job: expiry is not a return (see docstring) — only a real terminal record lifts
+    running_job = {t.get("id") for t in every if t.get("status") == "running"}
+    placed = _bg_placed_tops(sid, s["path"], [t.get("id") for t in every], store=store)
+    for nid, nd in stamped:
+        born = nd.get("t") or 0
+        top = _top_of(nid)
+        # The dispatches this goal owns. Placement is authoritative when the judge has spoken:
+        # a task placed under ANOTHER card can never retire this stamp (the user 2026-07-27:
+        # unrelated returns were lifting CI-wait stamps — one lifted the same minute it was
+        # re-asserted). The time window survives only for placement-unknown launches (the
+        # conservative pre-verdict shape): launched during the goal's life, at or before the
+        # stamp it explains — bounded by when that stamp was WRITTEN, not by its turn-trigger
+        # anchor, which the launches of that very turn all postdate (see _stamp_written_at).
+        horizon = _stamp_written_at(nd)
+        own = []
+        for t in every:
+            p = placed.get(t.get("id"))
+            if p is not None:
+                if p == top:
+                    own.append(t)             # the goal's own thread, before OR after the stamp:
+                    #                           anything of its own still out keeps the wait honest
+            elif born <= (t.get("t") or 0) <= horizon:
+                own.append(t)
+        if not own:                           # nothing dispatched → not a background wait; leave it
+            # …EXCEPT a stamp standing over an authoritatively EMPTY in-harness world: the
+            # backend's lifecycle set present and empty, no live subagents, nothing running in
+            # the transcript. Two shapes, one writer:
+            #  - kind=agents (the user 2026-08-24): an agents-kind wait ends with task
+            #    notifications, and with no dispatch recorded ANYWHERE no such event can ever
+            #    arrive — the shape a closer mints when it misreads peer sessions as agents,
+            #    orphaned for good the moment a restart clears the world it described. Same
+            #    evidence-postdates-anchor rule as every lift: the (re)spawn must be newer than
+            #    the stamp's anchor — or the transcript itself shows NOTHING running at all
+            #    (2026-08-25 audit: the misread-peer-as-agents shape needs no respawn to prove
+            #    the notification can never arrive; the pairing already did).
+            #  - kind=task/job (2026-09-05): a closer stamped a top kind=job for a Monitor plus
+            #    a background command the session ITSELF was running, the planner placed both
+            #    launches on a sibling top, and this skip kept the stamp 17 hours over an empty
+            #    registry with nothing pending anywhere (the wake below it never reached it —
+            #    nudges off, top all-delegated). The deciding event is the LAST in-harness item
+            #    ENDING after the stamp (_bg_ended_after: a terminal record, a Monitor's recorded
+            #    ceiling, the launch ledger's stop tombstone, or the CLI respawn that killed
+            #    everything) — a world already empty when the judge stamped is a wait on
+            #    something the registry cannot see (a CI run), and stays the dead-man's. An
+            #    ARMED kernel watch for this sid (a PR watch) is a carrier still running: its
+            #    delivery is the ending, so the stamp stands. The owned-dispatch job rule below
+            #    ("the watcher dying is the carrier going") is untouched: it needs a dispatch of
+            #    the goal's OWN to protect, and this branch has none.
+            _kind, _anchor0 = nd.get("awaitingKind"), nd.get("awaitingAt") or 0
+            _empty = reg_ids is not None and not reg_ids and not snap.get("subagents") and not running
+            if _empty and (
+                    (_kind == "agents"
+                     and (sp > _anchor0 or not any(t.get("status") == "running" for t in every)))
+                    or (_kind in ("task", "job") and not _kernel_watch_armed(sid)
+                        # endings are measured from the stamp's WRITE time (_stamp_written_at), not
+                        # the audited turn's trigger: an item that returned mid-turn, before the
+                        # closer even wrote the stamp, is not the world emptying after it (review
+                        # find on #936, 2026-09-07)
+                        and _bg_ended_after(every, tombs, sp, _stamp_written_at(nd), now, kind=_kind))):
+                if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+                    out.append((nid, top, True))
+            continue
+        live_set = running_job if nd.get("awaitingKind") == "job" else running
+        if any(t.get("id") in live_set for t in own):
+            continue                          # at least one is genuinely still out
+        # The lift's event is a return the stamp was WAITING ON — one that landed after the
+        # stamp's ANCHOR (endT past the audited turn's trigger; a launch past it necessarily
+        # returned past it too; a kindless expiry "returns" at its recorded deadline). A
+        # dispatch already terminal in a turn the stamping judge had ALREADY AUDITED can't
+        # evidence the wait's end: the judge stamped knowing that completion, so the wait is
+        # about something else, and the goal keeps its stamp + 6h wake like any dispatch-less
+        # wait. The boundary is the anchor, NOT the write time (`horizon`): the write postdates
+        # the whole audited turn, so testing against it would also disown mid-turn and
+        # audit-lag returns the judge never saw (the suite pins those as lifting). Without
+        # this, a stamp about external cluster work lifted the same minute it was written off
+        # a workflow hours dead — and the lift row then MOOTED the nudge-failure evaluation,
+        # parking the card in Working with no reviver left (an idle experiment session,
+        # 2026-08-16).
+        _anchor = nd.get("awaitingAt") or 0
+        def _returned_after(t):
+            return ((t.get("endT") or 0) > _anchor or (t.get("t") or 0) > _anchor
+                    or (t.get("status") == "running" and (t.get("deadline") or 0) > _anchor)
+                    or (t.get("id") in dead and sp > _anchor))
+        if not any(_returned_after(t) for t in own):
+            continue
+        # THE STAND-DOWN RULE, joined (the 2026-08-19 audit): a writer whose evidence
+        # predates the diary yields — but only on a RE-ASSERT. The flap's signature is the
+        # closer re-affirming the wait AFTER a prior lift of this same stamp: everything
+        # this lift can cite (returns that preceded that lift) was already ruled on once,
+        # so lifting again off it produced the observed 2-3 second stamp↔lift flaps that
+        # reset the nudge ladder (fires 5s after a lift, three first-nudges in 21 minutes —
+        # the session had re-armed a watcher the ownership window cannot see). A FIRST
+        # stamp keeps the designed audit-lag lift: the write postdates the whole audited
+        # turn, and returns the judge never saw must still lift (the suite pins those).
+        _aw = [e for e in (nd.get("log") or []) if e.get("kind") == "awaiting"]
+        _last_lift = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if e.get("lift")), default=0)
+        _last_assert = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if not e.get("lift")), default=0)
+        _evidence = max((max(t.get("endT") or 0, t.get("t") or 0, t.get("deadline") or 0,
+                             sp if t.get("id") in dead else 0)
+                         for t in own), default=0)
+        if _last_lift and _last_assert > _last_lift and _evidence <= _last_lift:
+            continue                          # every citable return was already ruled on by that
+            #                                   lift — re-lifting off it is the flap. A return
+            #                                   NEWER than the last lift is new information even
+            #                                   when the re-assert's WRITE postdates it by seconds:
+            #                                   the closer's audit segment ended before the return
+            #                                   landed (2026-08-25 audit — a watcher's stamp written
+            #                                   17s after its merge notification stood 9.5h because
+            #                                   write-time was read as the epistemic boundary)
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, top, True))
+    return out
 
 
 _PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event
@@ -9803,7 +10558,7 @@ def _file_wake_answer(store, sid, gid, now):
     return False
 
 
-def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
+def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux, wake_only=False):
     """The AWAITING branch of _auto_nudge_session's goal walk — one stamped top goal. The stamp is a
     judged wait, so the plain status nudge stays off; but a wait is not an exemption from the ladder
     (the user 2026-08-11): fire the check-in past the backstop, track its outcome through the same record
@@ -9820,7 +10575,17 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
                 what made the one-shot design terminal).
       silent    no response within the same window (from the FIRE, rec["at"]) → _mark_nudge_failed(wake=True):
                 the block rides the normal ladder to Needs-you. A failed/moot record re-arms only on a
-                genuinely NEW stamp episode (anchor newer than the one that failed)."""
+                genuinely NEW stamp episode (anchor newer than the one that failed).
+    `wake_only` (auto-nudge OFF, 2026-09-05): the user turned unprompted messages off, so the due
+    dead-man injects NOTHING. It files instead the row _lift_spent_awaiting's orphan branch files — a
+    romp/awaiting LIFT at the stamp's anchor: romp withdraws a wait it can no longer vouch for, the
+    card returns to plain Working (the same shape every other stalled card wears with nudges off,
+    nothing hidden behind a claimed wait), and the lift row re-nominates the closer's filed-since
+    gate so the next audited turn can re-stamp a still-real wait. No block: every procedural block
+    copy asserts something untrue here (a check-in that got no answer, a follow-up, a dead session),
+    and the lift is the one existing filing whose words hold. Once per stamp by construction — the
+    lifted stamp no longer reads as a stamp, so this branch is never re-entered for it — and the
+    in-flight/outcome legs above still run for a wake that fired while nudges were on."""
     at, why = stamp[0], stamp[1]
     kind = stamp[2] if len(stamp) > 2 else None
     if tmux.get(sid) is None:
@@ -9891,6 +10656,7 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
     _defer = _revivers_pending(sid, store, turns, gid)
     if _defer and not _nudge_deferred_ok(gid, _defer, now, sid):
         return False
+    _fresh = None
     try:
         # last-moment fresh-store re-read (the judges run concurrently with this tick): the wake's whole
         # justification is "the stamp stands and the goal is open" — re-key on the store as written
@@ -9900,6 +10666,22 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
             return False
     except Exception:
         pass
+    if wake_only:
+        # AUTO-NUDGE OFF: no injection (docstring). File the orphan branch's lift on the FRESH store
+        # (a judge pass holding the tick's snapshot across its model call would otherwise be
+        # clobbered), on the node that carries THIS stamp; an unreadable fresh store files nothing
+        # and the next tick re-asks — never a write off stale evidence.
+        if _fresh is None:
+            return False
+        _sn = next((n for n in _fresh.get("nodes", {}).values()
+                    if n.get("awaitingWhy") and n.get("awaitingAt") == at and not n.get("rolledUp")), None)
+        if _sn is None or not jd.record_verdict(_fresh, _sn, "romp", "awaiting", at, lift=True):
+            return False
+        jd.rollup_status(_fresh, False)
+        jd.save_goals(sid, _fresh)
+        _mark_views_dirty()
+        _drop_auto_nudge_rec(gid)                    # the spent episode's residue goes with the wait
+        return True
     Sessions.backend_for(sid).send(sid, _followup_body(gid, None, AWAITING_BACKSTOP_TEXT,
                                                        injected=True, auto=True, wake=True))
     _nudge_deferred_ok(gid, "", now, sid)            # the hold is over — drop any deferral record
@@ -10457,11 +11239,15 @@ def _nudge_response_ready(turns, store, rec, gid, now):
     return True, resp
 
 
-def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
+def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only=False):
     """One session's slice of the auto-nudge tick: the session-level gates, then the fire/stamp
     walk over its still-'working' top goals. Split from _auto_nudge_tick so the tick isolates
     failures per session (see the tick's loop). Mutates `nudged` (the tick's in-memory mirror);
     returns True when it fired a nudge or stamped a failure — the tick pushes once at the end.
+    `wake_only` (auto-nudge OFF, 2026-09-05): the same session gates, but the goal loop takes only
+    its awaiting branch — the dead-man (which then files a lift, never an injection) and the wake
+    outcome leg — and never the plain nudge, the stall escalation or the debt reminder (see the
+    tick's and _wake_goal's docstrings).
     Same-tick fires COALESCE: every goal due this tick goes out as ONE bundled message (see
     _nudge_bundle_body), after a last-moment store re-read drops any goal the judges resolved
     while the tick was deciding (_nudge_fire_list — the user 2026-07-24). After the goal walk,
@@ -10601,14 +11387,23 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             continue                                 # top-level, live goals only
         if status.get(gid, "working") != "working":
             continue                                 # blocked/completed → the session resolved it; not orphaned
-        if _all_outstanding_delegated(nodes, gid):
-            _put_walk_gate(gid, "all-delegated", now)   # a wake record here is walk-unreachable → the sweep owns it
-            continue                                 # all open work handed to peers → nothing for THIS session
-        if sid in waitfor and nd.get("t", 0) <= waitfor[sid]["since"]:
-            _put_walk_gate(gid, "awaiting-peer", now)   # same: journaled so the sweep can evaluate its outcome
-            continue                                 # awaiting a live peer's reply to a question this goal predates
-        _pop_walk_gate(gid)                          # the walk reaches this goal — any per-goal hold is over
         _stamp = _goal_awaiting_stamp_full(nodes, gid, _kids, answered_at=_peer_answered(sid))
+        # THE SESSION'S OWN WAIT OUTRANKS THE PEER GATES (2026-09-05): the two skips below exist to
+        # suppress the plain status nudge for work that is a PEER's — all open leaves delegated, or
+        # a question to a live peer this goal predates. A job/agents/task/timer stamp is not that: it
+        # is a wait the session itself set running, and its dead-man (the wake branch below) is its
+        # only reviver — behind these gates a kind=job stamp on a top whose children had completed
+        # under a courier handoff stood 17 hours. A peer-kind or kindless stamp (which may well be a
+        # peer wait — the enum postdates it) keeps the gates, exactly as before.
+        _own_wait = bool(_stamp) and _stamp[2] in ("job", "agents", "task", "timer")
+        if not _own_wait:
+            if _all_outstanding_delegated(nodes, gid):
+                _put_walk_gate(gid, "all-delegated", now)   # a wake record here is walk-unreachable → the sweep owns it
+                continue                             # all open work handed to peers → nothing for THIS session
+            if sid in waitfor and nd.get("t", 0) <= waitfor[sid]["since"]:
+                _put_walk_gate(gid, "awaiting-peer", now)   # same: journaled so the sweep can evaluate its outcome
+                continue                             # awaiting a live peer's reply to a question this goal predates
+        _pop_walk_gate(gid)                          # the walk reaches this goal — any per-goal hold is over
         if _stamp:
             # The judge's durable ⏳ stamp (closer awaiting verdict): the goal's latest audited turn ended
             # waiting on async work it dispatched — not a stall, so the status nudge stays off. Restart-
@@ -10616,8 +11411,10 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             # done / block / user reply / a peer's answer superseding the stamp). But a wait is not an
             # exemption from the ladder (the user 2026-08-11): past the backstop the goal takes a WAKE —
             # same records, same response gates, same escalation, its own copy (see _wake_goal).
-            fired = _wake_goal(sid, gid, _stamp, nudged, turns, store, now, lt, tmux) or fired
+            fired = _wake_goal(sid, gid, _stamp, nudged, turns, store, now, lt, tmux, wake_only) or fired
             continue
+        if wake_only:
+            continue                                 # auto-nudge OFF: the dead-man was the whole errand
         # PARK GATE (the user 2026-08-30, the parked-tick round): a goal whose record holds the full
         # memo pair is PARKED — the ruling already said this exact world doesn't warrant a fire — so
         # it must not be re-evaluated (or logged) at every pass: 98.5% of a day's nudge-events rows
@@ -10923,7 +11720,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                          ev_t=recent_ts)             # it survived (the 2026-08-25 instrumentation)
         nudged[gid] = {"count": count, "lastTurnId": arm_id}   # mirror in-memory for the rest of this tick
         fired = True
-    if not fired:
+    if not fired and not wake_only:
         # DEBT REMINDER (the user 2026-07-26): this idle session asked for nothing itself, but it may
         # OWE a reply that is silently parking a peer ("Awaiting <us>" on their cards, which the goal
         # nudge deliberately skips). Same gates as the goal nudge (we only reach here idle, judged,
@@ -11647,8 +12444,12 @@ def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
                 row = {"name": e.name, "isDir": is_dir, "isLink": is_link,
                        "size": 0 if is_dir else size, "mtime": mtime}
                 if not is_dir:
-                    row["viewable"] = bool(_PREVIEW_MIME.get(os.path.splitext(e.name)[1].lower())) \
-                        or _is_text_path(e.name)
+                    # SIZE-AWARE (2026-09-06): the same caps /file applies, so a row the view route would 413
+                    # is download-only up front — a PDF can open in its own tab (a modified click), and an oversize one would
+                    # otherwise land that tab on the refusal instead of the viewer that offered the save
+                    _m = _PREVIEW_MIME.get(os.path.splitext(e.name)[1].lower())
+                    row["viewable"] = (bool(_m) and size <= _MEDIA_MAX_BYTES) \
+                        or (not _m and _is_text_path(e.name) and size <= _TEXT_MAX_BYTES)
                 (dirs if is_dir else files).append(row)
     except OSError as ex:
         return dict(err_ctx,
@@ -11740,6 +12541,8 @@ def _spawn_session(name, cwd=None):
     cwd = cwd or _default_create_dir()
     _commands_for_cwd(cwd)   # pre-warm the slash-command list — a new session predicts a composer (the user 2026-08-13)
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+    jd._keysrc.strip_tmux_env(env)   # op's credential stays with the kernel (a tmux launch may predate the backend's
+                                     # claim), and so does the startup key once a reference governs (2026-09-06)
     try:
         subprocess.run([str(BIN / "romp"), "new", "-t", "--detach", name], cwd=cwd, env=env, timeout=25,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -11793,7 +12596,37 @@ _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier 
 _ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
 
 
-def _env_error(env):
+def _envsrc_mod():
+    """kernel/envsource.py, the command source's module, for the read the kernel makes before the backend
+    exists: the object already loaded under its fixed name once sdk_backend has imported (that import
+    executes the module under this name, and the backend's construction pins the mode on it), else loaded
+    here under the same name, so there is one object and one mode for every reader (load_source's
+    sys.modules rule; judge.py reaches keysource the same way). Looked up per call, not at import: the
+    backend's import normally comes first, and a read before it sees the live configuration the backend
+    then pins from."""
+    return sys.modules.get("romp_envsource") or load_source("romp_envsource", HERE / "envsource.py")
+
+
+def _reserved_names_source():
+    """The descriptor _env_error's reserved-names rule decides on: the backend's mode-aware read once it
+    is built (sdk_backend.reserved_names_source: None in command mode, where nothing beyond the identity
+    names is reserved and the env file's source is never selected; the file/op descriptor otherwise).
+    Before the eager boot has built the backend (None) or when the SDK import failed for good (False),
+    the same two-step rule read here: the command source configured (kernel/envsource.py) answers None,
+    else keysource.select_source(), upstream's file/op descriptor. Without the seam a stale
+    ROMP_API_KEY_REF line refused a per-session token in command mode as reserved for a retrieval that
+    never runs (review find, 2026-09-07); the fallback then went straight to select_source, which on
+    that file did the same and durably wrote the service.env.source marker `op` for a source nobody
+    selected (fold review, 2026-09-07). The command-mode answer selects nothing and writes nothing."""
+    fn = getattr(_sdk_backend, "reserved_names_source", None)
+    if fn is not None:
+        return fn()
+    if _envsrc_mod().configured():
+        return None
+    return jd._keysrc.select_source()
+
+
+def _env_error(env, auth=""):
     """Why POST /new's "env" is not a valid per-session env payload — "" when it is. The kernel-side
     mirror of sdk_backend.env_request_error (that module loads lazily inside _sdk(), so the handler
     can't import it at the door): a dict of NAME → string-value pairs, names in the shell-identifier
@@ -11813,6 +12646,9 @@ def _env_error(env):
         if k in _ENV_RESERVED_NAMES:
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
+        if (k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+                and k in jd._keysrc.runtime_reserved_names(auth or "", _reserved_names_source())):
+            return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
         if "\x00" in v:
@@ -12069,8 +12905,10 @@ def _seed_fork_stores(parent_sid, sid, path, cut_uuid):
                 o["id"] = sid + cid[len(parent_sid):]
                 rows.append(json.dumps(o))
         if rows:
-            jd.CAPDIR.mkdir(parents=True, exist_ok=True)
-            (jd.CAPDIR / (sid + ".jsonl")).write_text("\n".join(rows) + "\n")
+            # published through a temp + os.replace, never written in place: _captions memoizes the
+            # file on (inode, mtime_ns, size), and an in-place write of equal size inside one mtime tick
+            # would keep all three (perf round 4, item C1); the write_reg idiom, a new inode per publish
+            _atomic_write(jd.CAPDIR / (sid + ".jsonl"), "\n".join(rows) + "\n")
         # 3) the goal store: fresh skeleton whose placements are the parent's, sealed
         pstore = jd.load_goals(parent_sid)
         store = jd.load_goals(sid)                      # the fresh-skeleton path (rompUuid=sid, CAS base set)
@@ -12295,13 +13133,83 @@ def _comment_msg_text(rec):
     return "\n".join(p for p in parts if p).strip()
 
 
+# The _thread_reg memo (perf round 4, item C4, 2026-09-07): tsid -> (key, reg). The key is
+# jd._file_key(STATE/sdk/<tsid>.json) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file
+# that changes between the stat and the read is caught by the next call's stat (one extra miss, never a
+# stale serve). The key is complete against how the file is written: sdk_backend.write_reg is the one
+# writer of a registry file and publishes through a writer-unique temp + os.replace, so every write is a
+# new inode and an equal-size rewrite inside one mtime tick still changes the key (the round-3 review's
+# hazard with in-place rewrites; jd._reg_spawned_at and sdk_backend._REG_CACHE record the same rule; the
+# kernel's seed-pin migration rewrites regs through _atomic_write, also os.replace). An absent file is {}
+# and its entry is popped; a stat that fails otherwise is a sentinel key that matches nothing (read, not
+# memoized); a read or parse failure after a successful stat is not memoized (the `fail` counter, one
+# stderr line per episode), since a permission or descriptor failure is not a file version. Dict order is
+# LRU (a hit reinserts), one eviction per insert past the cap, never clear-at-cap: sweeps over dormant
+# sids read through this too, and a clear at the cap would drop the live sessions' entries every cycle
+# (the _JSONL_CACHE lesson, event_model.py). Callers read the returned dict and never write it (a
+# source-text test pins that); a hit still hands out a SHALLOW COPY, the rule the 2026-09-03 memo this
+# one replaces set (a caller's edit never reaches the memo, whatever a future caller does). Counters
+# ride /perf under memos.thread_reg; the lock covers the dict ops and the counters, never the read.
+_thread_reg_memo = {}
+_THREAD_REG_MEMO_MAX = 512
+_thread_reg_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_thread_reg_failed = set()      # paths whose last read after a good stat failed: one stderr line per episode
+_THREAD_REG_LOCK = threading.Lock()
+
+
+def _thread_reg_report():
+    """The memo's counters plus its occupancy, for /perf (memos.thread_reg)."""
+    with _THREAD_REG_LOCK:
+        out = dict(_thread_reg_stats)
+        out["entries"] = len(_thread_reg_memo)
+    return out
+
+
 def _thread_reg(tsid):
-    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when unreadable."""
-    try:
-        d = json.loads((jd.STATE / "sdk" / (tsid + ".json")).read_text())
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent or
+    unreadable. Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and
+    a shallow copy each call so a caller's edit never leaks into the memo."""
+    p = str(jd.STATE / "sdk" / (tsid + ".json"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _THREAD_REG_LOCK:
+            if _thread_reg_memo.pop(tsid, None) is not None:
+                _thread_reg_stats["evict"] += 1
         return {}
+    with _THREAD_REG_LOCK:
+        ent = _thread_reg_memo.get(tsid)
+        if ent is not None and ent[0] == key:
+            _thread_reg_memo.pop(tsid, None)              # a served entry is a USED entry (LRU reinsert)
+            _thread_reg_memo[tsid] = ent
+            _thread_reg_stats["hit"] += 1
+            return dict(ent[1])
+        _thread_reg_stats["miss"] += 1
+    try:
+        with open(p) as fh:
+            d = json.loads(fh.read())
+    except FileNotFoundError:
+        return {}                                         # unlinked between the stat and the read: the next stat pops it
+    except (OSError, ValueError) as e:
+        with _THREAD_REG_LOCK:
+            _thread_reg_stats["fail"] += 1
+            first = p not in _thread_reg_failed
+            _thread_reg_failed.add(p)
+        if first:
+            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered {} and not memoized\n"
+                             % (os.path.basename(p), e))
+        return {}
+    if _thread_reg_failed:
+        with _THREAD_REG_LOCK:
+            _thread_reg_failed.discard(p)                 # a good read ends the episode; the next failure logs again
+    d = d if isinstance(d, dict) else {}
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _THREAD_REG_LOCK:
+            _thread_reg_memo.pop(tsid, None)
+            while len(_thread_reg_memo) >= _THREAD_REG_MEMO_MAX:
+                _thread_reg_memo.pop(next(iter(_thread_reg_memo)))   # the least recently used goes first
+                _thread_reg_stats["evict"] += 1
+            _thread_reg_memo[tsid] = (key, d)
+    return dict(d)
 
 
 def _thread_transcript_path(reg, tsid):
@@ -13472,6 +14380,8 @@ def _sdk_locked():
             jd._ENV_SET_FN = sbmod.credential_set
             jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
             jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
+            jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
+            jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -13561,7 +14471,13 @@ def _codex():
                     jd.STATE, notify=_send_to_app,
                     poke=_wake_kernel, push=_pusher_wake.set,
                     push_session=_push_session_now,
-                    codex_bin=shutil.which("codex"),   # None → the SDK's bundled binary resolver
+                    # Let the backend choose ROMP's managed runtime and helpers.
+                    # A separately installed CLI on PATH may use a different protocol.
+                    # …but honour the one EXPLICIT knob romp already has — ROMP_CODEX_BIN, which the judges read
+                    # (judge.py _judge_codex_bin) — so an operator who sets it governs both surfaces with one
+                    # switch: an opt-in override of the managed runtime, not the ambient PATH accident #929 closed
+                    # (review find, 2026-09-07). Unset → None → the backend picks the managed runtime.
+                    codex_bin=os.environ.get("ROMP_CODEX_BIN") or None,
                     log=lambda m: sys.stderr.write("codex-backend: %s\n" % m))
             except Exception:
                 sys.stderr.write("codex-backend unavailable: %s\n" % traceback.format_exc())
@@ -13628,7 +14544,7 @@ def _auth_key_present():
     display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
     attribute read off the backend singleton, safe per-push."""
     be = _sdk()
-    return bool(str(getattr(be, "work_key", "") or "") if be else "")
+    return bool(getattr(be, "work_key_configured", False)) if be else False
 
 
 def _work_key_fp():
@@ -13774,8 +14690,7 @@ def _sdk_problem_rows(limit=20, cap=400):
             pass   # a fake/older backend without a usable ring: the boot problems still ride
     # dropped dashboard sockets (_note_ws_drop) ride the same bell — a FEW, and RECENT: at most
     # _WS_DROP_BELL_ROWS of them, none older than _WS_DROP_TTL_S, merged by time with the rest. Appended
-    # last and sliced positionally, twenty drops in a kernel's life hid every later backend problem
-    # (the 2026-09-03 review).
+    # last and sliced positionally, twenty drops in a kernel's life would hide every later backend problem.
     cutoff = time.time() - _WS_DROP_TTL_S
     rows += [("ws", r) for r in _WS_DROPS if float(r.get("t") or 0) >= cutoff][-_WS_DROP_BELL_ROWS:]
     rows.sort(key=lambda sr: float(sr[1].get("t") or 0))   # stable: same-t rows keep boot → backend → ws order
@@ -14559,6 +15474,10 @@ def _drive(msg, client):
             err2 = _cancel_backend_queued(be, sid, -1, md)
             if err2 is None:
                 err = None
+        if err:
+            # evidence for the next report (T244): a ✕ whose cancel found nothing in either queue — the send
+            # had already gone through, or never reached this kernel. sid only: the body is the user's text
+            sys.stderr.write("queued-cancel miss: %s (body-only)\n" % sid)
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
                                    "md": md, "text": err or ""}))
         _push_soon()
@@ -14595,7 +15514,7 @@ def _drive(msg, client):
         # the chat's fast badge — /fast on|off delivered like any slash command; mid-compaction → parked.
         # LOUD on refusal (fail loudly, never degrade silently): a dormant SDK session has no live CLI to
         # apply it, and silently swallowing the click would leave a toggle that "did nothing".
-        if not _set_fast_or_park(be, sid, str(msg["value"])):
+        if not _set_fast_or_park(be, sid, str(msg["value"]))[0]:
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
         _push_soon()
@@ -14604,9 +15523,11 @@ def _drive(msg, client):
         # mode only through the shift+tab cycle, so Bypass — which the picker offers on SDK sessions —
         # has no keystroke there. Without this the badge just sat on the old mode with no reason given.
         if not be.set_mode(sid, str(msg["value"])):
-            client["send"](json.dumps({"type": "warn",
-                                       "text": "A terminal session can only reach the modes in its "
-                                               "shift+tab cycle — Normal, Accept, Auto, Plan."}))
+            text = ("Codex mode changes require an idle session. Choose Sandboxed or Auto "
+                    "after the current turn finishes." if be is _codex_backend else
+                    "A terminal session can only reach the modes in its "
+                    "shift+tab cycle — Normal, Accept, Auto, Plan.")
+            client["send"](json.dumps({"type": "warn", "text": text}))
         _push_soon()
     elif t == "setAuth" and msg.get("value") in ("login", "key"):
         # per-session billing (login vs the manager env's API key) — SDK-only, applied via reconnect
@@ -15028,7 +15949,8 @@ def _revive_session(sid, client=None):
             cwd = _cwd_of(sid)
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
             r = subprocess.run([str(BIN / "romp"), "resume", sid, "--name", name, "--detach"],
-                               cwd=workdir, capture_output=True, text=True, timeout=40)
+                               cwd=workdir, capture_output=True, text=True, timeout=40,
+                               env=jd._keysrc.strip_tmux_env(dict(os.environ)))
             ok = r.returncode == 0
             if not ok:
                 detail = (r.stderr or r.stdout or "romp exited %d" % r.returncode).strip()[:200]
@@ -15251,8 +16173,8 @@ class TmuxBackend(sb.SessionBackend):
     # "" before the first hook publish, an unknown spelling — is likewise no answer, never a hold.
     BUSY_STATES = ("working", "permission", "picker")
     QUIET_STATES = ("waiting", "idle")
-    corroborates_with_transcript = True   # busy() below may be overruled by the cached parse → the pusher keeps
-    #                                       it current for this backend's parked sids (_refresh_parked_parses)
+    corroborates_with_transcript = True   # busy() below may be overruled by the cached parse → the drain keeps
+    #                                       it current for a parked sid before reading busy() (_refresh_parked_parse)
 
     def busy(self, sid):
         """AUTHORITATIVE 'is a turn in flight' for a tmux session: the hook-maintained @claude-state,
@@ -15297,9 +16219,9 @@ class TmuxBackend(sb.SessionBackend):
 
         This never parses — it also serves the WS handler, which must stay cheap — so headless (no chat or
         timeline client, or every session after a kernel restart until one connects) nothing would fill
-        the cache and the row would stand verbatim; _refresh_parked_parses, at the head of every pusher
-        cycle, re-parses the moved transcripts of the sids that hold parked ops so the drain's gates read a
-        current transcript.
+        the cache and the row would stand verbatim; the drain (_apply_pending_ops) re-parses a parked sid's
+        moved transcript (_refresh_parked_parse) right before the gate that reads busy() — after the account
+        hold, so a session held by a usage limit is not re-parsed for a verdict nothing reads.
 
         None when there is no answer: no tmux row for the sid (the hook is not installed, or the pane is
         gone), a row another backend owns, a state no hook has published yet, an unknown word, or
@@ -15383,7 +16305,7 @@ class TmuxBackend(sb.SessionBackend):
 
     def interrupt(self, sid):
         _interrupt(_name_of(sid) or sid)                  # Esc to stop + clear the restored prompt
-        _record_idle(str(sid), int(time.time()))          # Esc writes no end_turn → settle idle (was done in the
+        _record_idle(str(sid), int(time.time()), by="interrupt")   # Esc writes no end_turn → settle idle (was done in the
         return True                                       #   dispatch; here so tmux+SDK interrupt both settle idle)
 
     def dismiss_dialog(self, sid):
@@ -15402,7 +16324,7 @@ class TmuxBackend(sb.SessionBackend):
         return True, ""
 
     def set_model(self, sid, value):
-        _tmux_send(_name_of(sid) or sid, "/model " + value, model_cmd=True)   # /model opens a confirm → 2nd Enter
+        _tmux_send(_name_of(sid) or sid, "/model " + value, model_cmd=True)   # /model opens a confirm → the 2nd Enter accepts it for the user
         return True
 
     def set_mode(self, sid, mode):
@@ -17623,9 +18545,12 @@ def list_remotes():
         return [_remote_public(r) for r in _remotes.values()]
 
 
-def _poll_remote_sids(r):
-    """GET the remote kernel's /sessions THROUGH the -L tunnel; return its session ids (for the wake-router's
-    host↔sid map). None on any failure — leave the last-known map in place.
+def _poll_remote_sessions(r):
+    """GET the remote kernel's /sessions THROUGH the -L tunnel; return its id-bearing rows (each `{id, name,
+    …}` — the same unified list _session_rows serves here). None on any failure — leave the last-known
+    snapshot in place. The supervisor reads BOTH the ids (the wake-router's host↔sid map) and the names
+    (_remote_names: the kernel's own copy of what that host calls each session, so a notification about a
+    remote session can be named without a round-trip — 2026-09-06) off ONE poll.
 
     Also files HOW it failed in r["_probe"], because the shape of the failure is the one thing that tells a
     live tunnel with no romp behind it apart from an ssh that is still holding its listener over a transport
@@ -17649,7 +18574,7 @@ def _poll_remote_sids(r):
             return None
         rows = json.loads(data.decode("utf-8"))
         r["_probe"] = "ok"
-        return [x.get("id") for x in rows if isinstance(x, dict) and x.get("id")]
+        return [x for x in rows if isinstance(x, dict) and x.get("id")]
     except (socket.timeout, TimeoutError):
         r["_probe"] = "timeout"
         return None
@@ -17663,6 +18588,30 @@ def _poll_remote_sids(r):
         # a malformed body still proves the far side spoke, so this is never a dead transport
         r["_probe"] = "refused"
         return None
+
+
+def _poll_remote_sids(r):
+    """The remote's session ids, off _poll_remote_sessions (None on failure, same verdict in r["_probe"])."""
+    rows = _poll_remote_sessions(r)
+    return None if rows is None else [x.get("id") for x in rows]
+
+
+def _remote_names(rows):
+    """{sid: name} from a host's /sessions rows — a string name only; a row without one files nothing
+    (never a coined name, so a miss stays a miss and the caller falls back on purpose)."""
+    return {str(x["id"]): x["name"] for x in (rows or [])
+            if isinstance(x, dict) and x.get("id") and isinstance(x.get("name"), str) and x["name"]}
+
+
+def _remote_name_of(host, sid):
+    """What the attached host `host` calls session `sid` (a BARE id), from the supervisor's last successful
+    poll of its /sessions — the kernel's authoritative local copy of that host's registry, the same
+    snapshot _host_for_sid routes by. None when this kernel has no such copy: the host never polled, a row
+    from before names were filed, or an id that host does not list."""
+    with _remotes_lock:
+        r = _remotes.get(str(host or ""))
+        names = (r or {}).get("names") or {}
+        return names.get(str(sid or "")) or None
 
 
 def _host_for_sid(sid):
@@ -17879,6 +18828,15 @@ def _pr_watches_load():
         # boot re-arm (the reconnect-intent precedent): fresh counters, poll immediately
         for r in _pr_watches:
             r["_next"], r["_fails"], r["_busy"] = 0, 0, False
+
+
+def _kernel_watch_armed(sid):
+    """Is the kernel itself still watching something FOR this session — an armed PR watch whose
+    delivery will end the session's wait? The awaiting-stamp lift asks before retiring a job/task
+    stamp over an empty in-harness registry: a kernel-side carrier is exactly the external wait
+    whose ending IS observable (the watch's mail), so the stamp stands while it is armed."""
+    with _pr_watch_lock:
+        return any(str(r.get("sid")) == str(sid) for r in _pr_watches)
 
 
 def _pr_watches_save():
@@ -18166,23 +19124,34 @@ def _watch_awaiting(sid):
     is event-true at both ends (armed at registration, removed when the predicate fires, times out, or
     is cancelled), and it's kernel-owned, so this source survives restarts like the watches themselves.
     `tasks` lists each watch in the registrant's own words (the --note, else an elided predicate), so a
-    plural wait can enumerate them in the box's fold."""
+    plural wait can enumerate them in the box's fold. `items` is the same set as awaited ROWS
+    (_awaiting_item: kind "watches"), one per watch: a generic watch carries `watchId` — the handle the
+    box's Cancel button hands to cancel_watch, the same path `romp watch --cancel <id>` takes — and its
+    predicate as `detail`; a PR watch has no cancel path (nothing retires a pr-watch early today), so
+    it carries no watchId and the box offers no button for it."""
     sid = str(sid)
     with _watch_lock:
         rows = [dict(r) for r in _watches if str(r.get("sid")) == sid]
     prs = [dict(r) for r in _pr_watches if str(r.get("sid")) == sid]   # tick-thread idiom: copy, no lock
-    descs = []
+    descs, items = [], []
     for r in rows:
         note = (r.get("note") or "").strip()
         cmd = str(r.get("cmd") or "")
-        descs.append(note or "a kernel watch: %s" % (cmd if len(cmd) <= 80 else cmd[:77] + "…"))
+        clipped = cmd if len(cmd) <= 80 else cmd[:77] + "…"
+        descs.append(note or "a kernel watch: %s" % clipped)
+        it = _awaiting_item("watches", "watch:%s" % r.get("id"), note or clipped, r.get("at"), detail=cmd)
+        if r.get("id"):
+            it["watchId"] = str(r["id"])
+        items.append(it)
     for r in prs:
         descs.append("PR #%s (%s) to land" % (r.get("pr"), r.get("repo")))
+        items.append(_awaiting_item("watches", "pr:%s#%s" % (r.get("repo"), r.get("pr")),
+                                    "PR #%s (%s)" % (r.get("pr"), r.get("repo")), r.get("at")))
     if not descs:
         return None
     since = min([r.get("at") for r in rows + prs if r.get("at")] or [None])
     why = ("waiting on " + descs[0]) if len(descs) == 1 else         ("waiting on %d armed watches — %s, …" % (len(descs), descs[0]))
-    return {"kind": "job", "why": why, "since": since, "tasks": descs, "count": len(descs)}
+    return {"kind": "job", "why": why, "since": since, "tasks": descs, "count": len(descs), "items": items}
 
 
 def _watch_notice(kind, row, detail=""):
@@ -18777,8 +19746,19 @@ def _update_remote(host):
         'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
         # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
         # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
-        # machine, to this sha) — nine restarts in three hours had no reason on record. The restart
-        # goes THROUGH THE FAR MANAGER'S QUIET WINDOW (restart-all --quiet: no in-flight turn is cut,
+        # machine, to this sha) — nine restarts in three hours had no reason on record. The QUIET row
+        # lands HERE, right after the reset and before the owner check (T240d): the far kernel's drift
+        # check stands down for a quiet deploy of the code its checkout holds by reading this row, and
+        # the owner check's manager status call was a window in which the checkout was already ahead
+        # with no row on disk. When no owning manager answers, the fallback below writes its own
+        # IMMEDIATE row, which is then the newest and supersedes this one for every reader. A host
+        # stopped by `romp down` (its marker, below) is the exception (fold review, 2026-09-07): with no
+        # owning manager its branch exits without a restart, so a quiet row written here was one nobody
+        # consumed, naming a restart nobody parked to the kernel `romp up` starts later (a pending quiet
+        # row outlives the kernel that filed it, _recent_restart_audit). So the row is written before the
+        # owner check when the marker is absent, and inside the owned branch when it is present: a manager
+        # running beside a marker still gets its quiet restart attributed, right before it is asked. The
+        # restart goes THROUGH THE FAR MANAGER'S QUIET WINDOW (restart-all --quiet: no in-flight turn is cut,
         # the 15-minute backstop still lands the deploy, a second apply arriving while one is pending
         # coalesces into the same bounce) — but ONLY when that manager actually OWNS the kernel on the
         # polled port (its /status lists it): a manager owning nothing, or a bare kernel beside a
@@ -18787,12 +19767,15 @@ def _update_remote(host):
         # = the immediate path below ran (no owning manager reachable — node absent, no manager, or
         # the polled kernel is bare). The quiet audit row says when=quiet; the fallback writes its own
         # row without it, so the cut row joins the right request with the right window.
+        'qrow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
+        '[ -f "$LOGDIR/down-by-romp" ] || qrow; '
         'OWNED=0; if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then '
         'OWNED="$("$R/bin/romp-manager" status 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); '
         'print(1 if any(int(k.get(\'port\') or 0)==%d for k in (d.get(\'kernels\') or [])) else 0)" 2>/dev/null || echo 0)"; fi; '
         'if [ "$OWNED" = 1 ]; then '
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        # a manager owning the kernel beside a `romp down` marker (see above): its quiet restart is attributed too
+        '[ ! -f "$LOGDIR/down-by-romp" ] || qrow; '
         'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '
@@ -18814,7 +19797,7 @@ def _update_remote(host):
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "SYNCED:$NEW:FALLBACK"'
     ) % (shlex.quote(rdir), _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
-         kport, _local_machine_label(), (_local_head(short=True) or lfull[:8]),
+         _local_machine_label(), (_local_head(short=True) or lfull[:8]), kport,
          _local_machine_label(), (_local_head(short=True) or lfull[:8]), kport)
     # The apply KILLS the running kernel before booting its replacement, so it must be immune to the
     # ssh dying between the two halves — exactly what a flaky link does (the user 2026-07-11:
@@ -19480,11 +20463,56 @@ def _going_down():
 EXIT_VERDICT_ACTIONS = ("signal", "parent-gone")
 
 
+
+def _audit_reason_text(rec):
+    """The cut row's `reason` for an audit row (or "" for none): action, plus its reason when it has one.
+    A `manager-sigterm` note answers with its `trigger` (`restart`, `restart-all`, `refresh`, `cli-down`,
+    `stop`) when it carries one, its `reason` otherwise, as _recent_restart_audit's walk reads it."""
+    if not isinstance(rec, dict):
+        return ""
+    action = str(rec.get("action") or "")
+    what = (rec.get("trigger") if action == "manager-sigterm" else None) or rec.get("reason")
+    return action + (": " + str(what) if what else "")
+
+
+def _consumed_audit_t():
+    """The `t` of the audit row the NEWEST cut row already joined (auditT) — a row consumed by the
+    restart it asked for must not name a later, anonymous cut too: a quiet p2p row stays inside its
+    20-minute window long after its restart landed, so an unaudited SIGTERM 15 minutes later
+    inherited its reason and even counted as a deploy for the cool-down (T240 review)."""
+    try:
+        lines = RESTART_CUTS_FILE.read_text().strip().splitlines()
+    except Exception:
+        return 0
+    for line in reversed(lines[-50:]):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue                                  # a torn or glued line never disables the guard
+        if isinstance(r, dict) and "cutTurns" in r and r.get("auditT"):
+            # the newest cut that CONSUMED a row — walked back past anonymous cuts (a service stop, a
+            # Ctrl+C, a bare kill), which used to reset consumption to 0 and let the next anonymous cut
+            # re-inherit the still-in-window row (review find: rows alternated consumed/anonymous/consumed)
+            return int(r["auditT"])
+    return 0
+
+
 def _recent_restart_reason(window=90, now=None, started=None):
-    """The request on record that explains a SIGTERM arriving now, from the restart-audit tail, or ""
-    when there is none (and _graceful_term then files a row of its own). Joins the cut row to WHO asked:
+    """The request on record that explains a SIGTERM arriving now, as the cut row's reason text, or ""
+    when there is none (and _graceful_term then files a row of its own): _audit_reason_text over the
+    row _recent_restart_audit picks."""
+    return _audit_reason_text(_recent_restart_audit(window=window, now=now, started=started))
+
+
+def _recent_restart_audit(window=90, now=None, started=None):
+    """The restart-audit ROW (dict) that explains a SIGTERM arriving now, or None when there is none.
+    The cut row joins it (its reason text, _audit_reason_text) and CONSUMES it (`auditT`, the row's t),
+    so the same row never names a later cut too (_consumed_audit_t). Joins the cut row to WHO asked:
     a deploy refresh, the kernel's self-update, the rail button, a `romp down`. The walk is newest-first
-    over the last eight rows, within `window` seconds of now, with these rules:
+    over the last two hundred rows, within `window` seconds of now, with these rules:
+      - a row whose action requested no restart (_NO_RESTART_ACTIONS: an in-place converge, a bus bounce,
+        a session's own end-on-idle) is walked past wherever it sits: it writes an audit row but cuts no
+        kernel, and reading only the last row named a real cut after it as the skip (T240 nit);
       - a row older than THIS kernel's start (`started`; the default is the process start, _STARTED) ends
         the walk: an immediate request that predates the process was delivered to a predecessor and cannot
         be the request for this exit. Without the bound, the self-update that restarted the previous kernel
@@ -19494,10 +20522,12 @@ def _recent_restart_reason(window=90, now=None, started=None):
         window, so it outlives the kernel that filed it. With the manager's note for us on record the note
         answers (below); with none (a manager build that wrote no notes) the parked row itself names the
         cut, unless a row above it shows it delivered or dropped: any `manager-sigterm` note (a restart the
-        manager sent clears the park in passing; a stop takes the park down with the manager) or a verdict
-        that the manager was gone (`parent-gone`, or `signal` with `managerStopped`). Round 2's bound
-        dropped the pending row too (review round 3, tests/test_kernel_tunnel_truth.py);
-      - a row with an action is a request and wins: `action`, plus `: reason` when it carries one;
+        manager sent clears the park in passing; a stop takes the park down with the manager), a verdict
+        that the manager was gone (`parent-gone`, or `signal` with `managerStopped`), or a cut row that
+        already joined it (`auditT`: the restart it asked for landed and consumed it; T240 review). Round
+        2's bound dropped the pending row too (review round 3, tests/test_kernel_tunnel_truth.py);
+      - a row with an action is a request and wins, unless a cut row already consumed it: spent on the
+        cut it asked for, this cut is anonymous;
       - a `when: quiet` request is pending until the restart it asked for lands, up to the far manager's
         15-minute backstop, so its window is RESTART_EXPECT_MAX_S and it names a cut well past the
         immediate window (T238); any other row older than the window ends the walk;
@@ -19522,13 +20552,17 @@ def _recent_restart_reason(window=90, now=None, started=None):
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
         if not tail:
-            return ""
+            return None
+        consumed = _consumed_audit_t()
         t0 = int(now if now is not None else time.time())
         born = int(_STARTED if started is None else started)
-        via_manager = ""
+        via_manager = None                                  # the newest manager-sigterm note about us, if any
         down_superseded = False
         park_settled = False                                # a row above showed a parked quiet request delivered or dropped
-        for line in reversed(tail[-8:]):
+        # a DEEP tail: every session self-close writes an end-on-idle row, and fifty of them inside a parked
+        # quiet window pushed the live park's row out of a short tail and un-parked it (T240d review find);
+        # the window and the start bound end the walk, not the tail
+        for line in reversed(tail[-200:]):
             try:
                 rec = json.loads(line)
             except Exception:
@@ -19536,14 +20570,18 @@ def _recent_restart_reason(window=90, now=None, started=None):
             if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
                 continue
             action = str(rec.get("action") or "")
+            if action in _NO_RESTART_ACTIONS:
+                continue                                    # restarted no kernel; says nothing about this cut
             quiet = rec.get("when") == "quiet"
             win = max(window, RESTART_EXPECT_MAX_S) if quiet else window
             if t0 - rec["t"] > win:
                 break                                       # older rows are older still
+            spent = bool(consumed) and rec["t"] == consumed  # a cut row already joined it (auditT)
             if rec["t"] < born:
                 # a predecessor's row; only a parked quiet request survives the kernel that filed it
-                if quiet and action and action not in EXIT_VERDICT_ACTIONS + ("manager-sigterm",) and not park_settled:
-                    return action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+                if quiet and action and action not in EXIT_VERDICT_ACTIONS + ("manager-sigterm",) \
+                        and not park_settled and not spent:
+                    return rec
                 break
             if not action or action in EXIT_VERDICT_ACTIONS:
                 if action == "parent-gone" or (action == "signal" and rec.get("managerStopped")):
@@ -19551,20 +20589,21 @@ def _recent_restart_reason(window=90, now=None, started=None):
                 continue                                    # no request in it; keep looking
             if action == "manager-sigterm":
                 park_settled = True                         # the manager restarted or stopped a kernel: the park went with it
-                if rec.get("pid") in (None, os.getpid()):   # a note about THIS kernel (or one naming none)
-                    what = rec.get("trigger") or rec.get("reason")
-                    via_manager = via_manager or (action + (": " + str(what) if what else ""))
+                if rec.get("pid") in (None, os.getpid()) and via_manager is None:
+                    via_manager = rec                       # a note about THIS kernel (or one naming none)
                 continue
             if action == "down-failed":
                 down_superseded = True
                 continue
             if action == "down" and down_superseded:
                 continue                                    # that stop did not land; this signal is not it
-            return action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+            if spent:
+                break                                       # spent on the cut it asked for: this cut is anonymous
+            return rec
         return via_manager
     except Exception:
         pass
-    return ""
+    return None
 
 
 def _local_machine_label():
@@ -19781,7 +20820,8 @@ def _tunnel_supervisor():
                 if skip:
                     continue
                 up = _port_open(r["local_port"])              # outside the lock (socket round-trip)
-                sids = _poll_remote_sids(r) if up else None
+                rows = _poll_remote_sessions(r) if up else None   # its session rows: ids for the wake-router, names for notifications
+                sids = None if rows is None else [x.get("id") for x in rows]
                 rver = _poll_remote_version(r) if up else None   # the code the remote is running (drift check)
                 rsha = (rver or {}).get("sha")
                 # …and which Claude account it burns, so the rail can draw a second set of bars when it is
@@ -19871,6 +20911,7 @@ def _tunnel_supervisor():
                         # _start_remote wrote it (the user 2026-07-11)
                     if sids is not None:
                         r["sids"] = sids
+                        r["names"] = _remote_names(rows)   # what that host calls each of them (_remote_name_of)
                     if rver and rver.get("pid"):
                         r["hub_pid"] = rver["pid"]   # the peer kernel's incarnation — a restart changes it (auto-reconnect 2026-08-24)
                     if rsha is not None:
@@ -20596,19 +21637,28 @@ def _record_death(sid, now, by):
     return True
 
 
-def _record_idle(sid, now):
+def _record_idle(sid, now, by=""):
     """Append a state:"idle" transition to states/<sid>.jsonl so the session reads as DONE on the next build.
     The chat status chip is driven by the event-model open-turn signal (open turn + no idle atom): a normal
     turn flips it via the transcript's end_turn, but an Esc INTERRUPT writes no end_turn and the Stop hook
     doesn't fire — so without this the chip stays 'working' after Stop (the user 2026-06-20). Backdated 1s so
-    synthesize_idle's [start,end] span is non-empty on the very next build (end=now > start=now-1)."""
+    synthesize_idle's [start,end] span is non-empty on the very next build (end=now > start=now-1).
+
+    `by` tags who wrote it, for the ONE reader that must tell a romp-written settle from a turn the
+    session finished — the turn-finished push (_last_natural_state, #937 fold). Default "" writes the
+    plain row every other reader keys on by "state"; an Esc interrupt passes "interrupt". The death
+    path leaves it "" on purpose: a dead session is not in _alive_sessions, so it never reaches the
+    turn push, and the row stays byte-identical to a Stop-hook idle (one state vocabulary)."""
     if not sid:
         return
     try:
         sdir = jd.STATE / "states"
         sdir.mkdir(parents=True, exist_ok=True)
+        rec = {"t": int(now) - 1, "state": "idle"}
+        if by:
+            rec["by"] = by
         with open(sdir / (sid + ".jsonl"), "a") as f:
-            f.write(json.dumps({"t": int(now) - 1, "state": "idle"}) + "\n")
+            f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
 
@@ -20989,6 +22039,22 @@ def _genuine_queued(text):
     if em.SYSTEM_WRAPPER_RE.match(t):
         return False
     return not ("romp-msg-id" in t or t.startswith("####################") or "\U0001F4EC" in t)
+
+
+def _queued_romp_flags(text):
+    """The flags a LANDED romp-injected message gets from its markers (romp / rompSystem / rompAuto — see the
+    user-event build), read off a QUEUED text so the client can draw the same gray romp notice grammar for a
+    notice romp itself queued (T243, the user 2026-09-07: a queued watch notice wore the user's own pending
+    bubble). The markers stay in the text; the client hides them the way the landed card does."""
+    t = text or ""
+    out = {}
+    if "<!-- romp-injected -->" in t:
+        out["romp"] = True
+    if "<!-- romp-system -->" in t:
+        out["rompSystem"] = True
+    if "<!-- romp-auto -->" in t:
+        out["rompAuto"] = True
+    return out
 
 
 def _postal_shaped(text):
@@ -21544,16 +22610,242 @@ def _session_delegated_identities(sid):
     return sorted((_peer_identity(p) for p in peers), key=lambda d: d["name"])
 
 
+# ── awaited ROWS (plans/subagent-transcripts.md slice 2, the user 2026-09-05) ─────────────────────────
+# _session_awaiting used to answer with ONE kind chosen by source precedence: live subagents, else the
+# pending background launches (kind agents only if EVERY pending row was an agent, else the generic
+# "task"), else armed watches. So one situation read "agents" or "tasks" depending on which source spoke
+# first, a background shell command plus a background agent read "Awaiting 2 tasks" with the agent
+# silently absorbed, and nothing on screen listed what was awaited. The user's call: the kinds are
+# different things — show them as SEPARATE ROWS grouped by kind. Every live source now contributes
+# `items` — one row per awaited thing — and the legacy single kind/count/why are DERIVED from the rows:
+# one kind present → that kind's word (precedence only ever chose the word); several → kind "mixed",
+# count = every row. Rows wear the GROUP vocabulary (agents / commands / watches / peer / timer); the
+# legacy kind keys (agents / task / job / peer / timer) stay for every consumer that still reads them,
+# _AWAIT_ITEM_LEGACY_KIND bridging the two.
+_AWAIT_ITEM_KINDS = ("agents", "commands", "watches", "peer", "timer")       # the row groups, in display order
+_AWAIT_ITEM_LEGACY_KIND = {"agents": "agents", "commands": "task", "watches": "job", "peer": "peer", "timer": "timer"}
+
+
+def _awaiting_item(kind, iid, label, since, agent_id=None, detail=None):
+    """One awaited row: {kind, id, label, since} plus agentId (an agent row — the open-transcript arrow)
+    and detail (a watch's predicate) only when known, so every row without them is byte-identical to the
+    minimal shape. `since` is the row's OWN event time (a dispatch stamp, a hook's start, a watch's
+    registration) or None — never wall-clock now (the user 2026-08-23)."""
+    assert kind in _AWAIT_ITEM_KINDS, kind
+    it = {"kind": kind, "id": str(iid or ""), "label": str(label or "").strip(), "since": (int(since) if since else None)}
+    if agent_id:
+        it["agentId"] = str(agent_id)
+    if detail:
+        it["detail"] = str(detail)
+    return it
+
+
+def _awaiting_kind_phrase(kind, n):
+    """The counted noun phrase for one row group — the mixed why's building block."""
+    if kind == "agents":
+        return "%d background agent%s" % (n, "" if n == 1 else "s")
+    if kind == "commands":
+        return "%d background command%s" % (n, "" if n == 1 else "s")
+    if kind == "watches":
+        return "%d armed watch%s" % (n, "" if n == 1 else "es")
+    if kind == "peer":
+        return "%d peer%s" % (n, "" if n == 1 else "s")
+    return "%d timer%s" % (n, "" if n == 1 else "s")
+
+
+def _awaiting_join_items(agents, commands, watch):
+    """The awaited rows in display order — agents, then commands, then the watch dict's rows — the ONE
+    concatenation both the idle read (_awaiting_from_items) and the turn-agnostic read
+    (_session_background_items) use, so the two can never list a different set."""
+    return list(agents) + list(commands) + list((watch or {}).get("items") or [])
+
+
+def _awaiting_from_items(agents, commands, watch):
+    """The awaiting answer DERIVED from the live rows — agents (source 0 + the pending agent launches),
+    commands (the pending shell/monitor launches) and `watch` (_watch_awaiting's dict, or None). None when
+    there are no rows. One kind present → its legacy kind word and the sentence that kind always wore
+    (byte-identical to the pre-rows whys, so nothing downstream re-learns them); several → kind "mixed",
+    count = every row, and a why that names each group ("waiting on 2 background agents, 1 background
+    command and 1 armed watch"). `since` is the oldest row's own time; `tasks` the labels, so the
+    payload's awaitingTasks fallback lists every awaited thing for consumers that still read that."""
+    items = _awaiting_join_items(agents, commands, watch)
+    if not items:
+        return None
+    kinds = [k for k in _AWAIT_ITEM_KINDS if any(it["kind"] == k for it in items)]
+    n = len(items)
+    since = min([it.get("since") for it in items if it.get("since")] or [None])
+    if kinds == ["agents"]:
+        why = "%d background agent%s still working" % (n, "" if n == 1 else "s")
+    elif kinds == ["commands"]:
+        d0 = commands[0]["label"]
+        why = ("waiting on a background command%s" % ((": " + d0) if d0 else "") if n == 1 else
+               "waiting on %d background commands%s" % (n, (" — " + d0 + ", …") if d0 else ""))
+    elif kinds == ["watches"]:
+        why = watch["why"]
+    else:
+        parts = [_awaiting_kind_phrase(k, sum(1 for it in items if it["kind"] == k)) for k in kinds]
+        why = "waiting on " + (", ".join(parts[:-1]) + " and " + parts[-1])
+    kind = _AWAIT_ITEM_LEGACY_KIND[kinds[0]] if len(kinds) == 1 else "mixed"
+    return {"kind": kind, "why": why, "since": since, "count": n, "items": items,
+            "tasks": [it["label"] or "background work" for it in items]}   # a label-less row keeps a kind-neutral word
+
+
+def _awaiting_peer_items(peers):
+    """Peer rows from the identities a stamp or the delegation graph names — label only (no sid: a nested
+    id would dodge federation's prefixing; the chip/box name and colour peers from awaitingPeers)."""
+    return [_awaiting_item("peer", "peer:%s" % (p.get("name") or ""), p.get("name") or "a peer", None)
+            for p in (peers or [])]
+
+
+def _awaiting_live_rows(sid, path, live):
+    """The live awaited-row SOURCES for a session, assembled REGARDLESS of whether its turn is open →
+    (agents, commands, watch): the agent rows (the backend snapshot's live subagents ⋈ the pending agent
+    launches — one row per agent, matched on agentId), the command rows (the pending shell / Monitor
+    launches) and _watch_awaiting's dict (the armed kernel watches; None when there are none). `live` is
+    the session's backend snapshot (_tmux_sessions().get(sid)) or None for a dormant one.
+    Factored out of _session_awaiting on 2026-09-06 so the chat's #bg-tasks box can list the SAME rows
+    while the turn is open: with the rows gated on idleness alongside the chip, the box swapped between
+    the grouped rows and the legacy tasks list at every turn boundary of a session with agents in flight
+    — two presentations of one set of facts (the user 2026-09-06, who watched the box vanish on send and
+    come back when the turn ended). _session_awaiting still answers None mid-turn — the chip's Awaiting is
+    idle-only, by design — while the rows alone are turn-agnostic (_session_background_items). Every
+    source here is event-true: the hook set, the lifecycle stream / transcript pairing, the watch
+    registry; nothing about the open turn changes what they say."""
+    # Source 0 (the user 2026-07-05, jld_audit): the backend snapshot's LIVE subagent count — the designed
+    # SubagentStart/Stop signal, held in memory, independent of any turn. It outranks the overlay because
+    # the overlay's stale-supersede heuristic reads ANY later 'working' state row as proof awaiting ended —
+    # but a turn interleaving mid-wait (the auto-nudge asking for status) writes exactly that row while the
+    # agents are still running, falsely clearing the verdict; the API-error floor then painted a red
+    # "API error" + "stalled" card over a session with two agents mid-flight. Tmux sessions carry no
+    # subagents field → None → fall through unchanged.
+    tm = live or {}
+    agents, commands = [], []
+    seen_agent = {}   # agentId → its row: a background agent is in BOTH the hook set and the task stream
+    subs = tm.get("subagents")
+    for sub in subs or []:
+        # `subagents` is the snapshot's LIST of live agents ({"type","since","agentId"} — the hook's
+        # agent_id since slice 1); the original source-0 code formatted the list itself with %d (latent
+        # TypeError since 3325771, masked because a subagent normally runs inside an open turn →
+        # idle=False → this branch never ran). The type is the row's label until its launch row (below)
+        # brings the dispatch's own description.
+        if not isinstance(sub, dict):
+            continue
+        aid = sub.get("agentId")
+        it = _awaiting_item("agents", aid or "", sub.get("type") or "agent", sub.get("since"), agent_id=aid)
+        if aid:
+            seen_agent[str(aid)] = it
+        agents.append(it)
+    tasks = _bg_live_norm(sid, path)
+    pending = _bg_pending(sid, path, tasks) if tasks else []
+    pending_tids = {t.get("tid") for t in pending}
+    meta = None   # the subagents sidecar map, read once and only if an agent launch lacks its agentId
+    for t in tasks:
+        # Sources 0.5/0.75 — a NEW row is added only for a PENDING task (launch not yet placed); a placed
+        # launch's story belongs to the judge's verdicts (see the docstring's 0.5 entry for the full
+        # rule). But the hook⋈stream JOIN runs over EVERY live agent task: once the judge places the
+        # launch turn (the ordinary idle-awaiting steady state) the launch left `pending`, the hook row
+        # never met its stream twin, and the row flapped between the hook's shape (id = agentId, label =
+        # the agent type) and the launch's (id = tid, label = the description) at each placement
+        # (review find on #938, 2026-09-07). A dispatched agent/workflow is an AGENT row even through the
+        # task stream; a shell command or a Monitor is a COMMAND row. No collapse: two kinds present read
+        # as two groups, never "task".
+        is_pending = t.get("tid") in pending_tids
+        is_agent = _bg_is_agent(t.get("type"))
+        if not is_agent:
+            if is_pending:
+                commands.append(_awaiting_item("commands", t.get("tid") or "", t.get("desc") or "background command", t.get("t")))
+            continue
+        aid = t.get("agentId")
+        if not aid and path and t.get("tid"):
+            meta = _subagent_meta_map(path) if meta is None else meta
+            aid = (meta.get(t["tid"]) or {}).get("agentId")
+        hit = seen_agent.get(str(aid)) if aid else None
+        if hit is not None:
+            # the SAME agent seen by the hook: one row, wearing the launch's id (Stop's handle), its
+            # description, and the earlier of the two start times (the launch's own time normally
+            # precedes the hook's stamp; until 2026-09-06 only a MISSING since was filled, so the later
+            # hook stamp won)
+            hit["id"] = t.get("tid") or hit["id"]
+            hit["label"] = t.get("desc") or hit["label"]
+            if t.get("t") and (not hit.get("since") or int(t["t"]) < hit["since"]):
+                hit["since"] = int(t["t"])
+            continue
+        if is_pending:   # unmatched by the hook set: a new row only while its launch is still unplaced
+            agents.append(_awaiting_item("agents", t.get("tid") or "", t.get("desc") or "background agent", t.get("t"), agent_id=aid))
+    # Source 0.9 — ARMED KERNEL WATCHES this session registered (`romp watch --cmd` / `romp watch-pr`):
+    # kernel-owned and restart-proof like the rows themselves, event-true at both ends (armed at
+    # registration, cleared when the predicate fires or the watch cancels/times out). The user's rule
+    # (2026-08-30): ANY awaited thing shows — an idle session holding only a watch used to read plain
+    # ready, its wait visible nowhere but `romp watch --list`.
+    return agents, commands, _watch_awaiting(sid)
+
+
+def _session_background_items(sid, path):
+    """Every row a session has in flight in the background — the SAME rows _session_awaiting groups for
+    the idle Awaiting read (agents, commands, watches; _awaiting_join_items order), whether or not the turn
+    is open. [] when nothing runs. This is what the session-scoped surfaces ship as awaitingItems while
+    the session works (2026-09-06; see _awaiting_items_payload); peer waits and timers exist only through
+    the idle-gated arms, so they simply do not appear mid-turn."""
+    live = _tmux_sessions().get(str(sid))
+    agents, commands, watch = _awaiting_live_rows(sid, path, live)
+    return _awaiting_join_items(agents, commands, watch)
+
+
+class _serve_live(object):
+    """Serve `tmux` — a liveness map the caller already took — to every _tmux_sessions() read on this thread
+    for the block: the pusher cycle's own one-snapshot mechanism (_live_scope, the 2026-08-10 CPU fix), lent
+    to a build that was HANDED a snapshot outside a cycle (a WS handler's build_session / build_timeline), so
+    the nested reads underneath (_bg_live_norm's row lookup, the awaiting sources) never fork tmux or sweep
+    the registry again — tests/test_kernel_pusher_snapshot.py: a provided snapshot is enough. A scope already
+    active (the cycle's) is left alone; None means the caller holds none, and the block reads fresh as before."""
+    def __init__(self, tmux):
+        self.tmux, self.set = tmux, False
+
+    def __enter__(self):
+        if self.tmux is not None and getattr(_live_scope, "snapshot", None) is None:
+            _live_scope.snapshot = self.tmux
+            self.set = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.set:
+            _live_scope.snapshot = None
+        return False
+
+
+def _awaiting_items_payload(aw, sid, path, tmux=None):
+    """The rows a session-scoped surface (the chat status, the timeline lane) ships as `awaitingItems`:
+    the wait's own rows when the session is idle-awaiting (`aw` = _session_awaiting's answer — for a
+    live-source wait these ARE the live rows; for a stamp, its peers; for an overlay row, nothing), else
+    everything in flight regardless of the turn. One expression, so the two surfaces can never disagree on
+    the set, and so the client contract holds under ONE key in both turn states: the box renders the rows
+    the same way either way and only its header follows awaitingWhy. `tmux` is the caller's liveness map
+    (build_session's / build_timeline's), served to the mid-turn read's nested lookups (_serve_live) so a
+    build handed a snapshot takes no fresh liveness read — the working path never did before this read
+    existed, and the pusher-snapshot test holds it to that."""
+    if aw:
+        return list(aw.get("items") or [])
+    with _serve_live(tmux):
+        return _session_background_items(sid, path)
+
+
 def _session_awaiting(sid, path, idle, stamp=False):
     """A session AWAITING dispatched/delegated background work (a WORKING flavor, the user 2026-06-22) →
-    {"kind", "why", "since"}: the one-line 'why' for the ⏳ awaiting badge plus WHAT the wait is on
+    {"kind", "why", "since", "count", "items"}: the one-line 'why' for the ⏳ awaiting badge plus WHAT the wait is on
     (jd.AWAIT_KINDS, the user 2026-08-15 — kind rides as DATA so surfaces can word it and rules can scope
     by it; None = kindless, the legacy shape) plus WHEN the wait began — each source's own event time
     (a dispatch stamp, an overlay row's t, the judge's awaitingAt), never wall-clock now, so the chips can
     say how long the wait has held (the user 2026-08-23: a stuck wait was invisible without a duration).
     `since` is None when the winning source carries no event time — the surfaces then show no duration
     rather than a guessed one. Falsy (None) when not awaiting, so truthiness callers read unchanged.
-    Only when IDLE — an actively producing turn is just 'working'. The EVENT-BASED sources, in order:
+    Only when IDLE — an actively producing turn is just 'working' (the ROWS alone are also readable
+    mid-turn through _session_background_items — the chat box lists them under a working header, 2026-09-06).
+    The EVENT-BASED sources, in order —
+    though sources 0, 0.5/0.75 and 0.9 no longer short-circuit one another: each contributes ROWS
+    (`items`, one per awaited thing, grouped agents / commands / watches — plans/subagent-transcripts.md
+    slice 2) and the single kind/count/why are derived from the union (_awaiting_from_items; several
+    kinds present → kind "mixed"). The order below still ranks those three over the overlay and the
+    stamp-gated arms, which answer only when no live row exists:
       0. the backend snapshot's LIVE subagent count (SubagentStart/Stop) — genuine delegated Claude
          AGENTS in flight, held in memory, independent of any turn.
       0.5 the backend snapshot's LIVE bg-task set — the CLI's DESIGNED task lifecycle stream
@@ -21599,57 +22891,23 @@ def _session_awaiting(sid, path, idle, stamp=False):
     MORE than the feed does. Postal peer-waits otherwise stay build_feed's."""
     if not idle:
         return None
-    # Source 0 (the user 2026-07-05, jld_audit): the backend snapshot's LIVE subagent count — the designed
-    # SubagentStart/Stop signal, held in memory, independent of any turn. It outranks the overlay because
-    # the overlay's stale-supersede heuristic reads ANY later 'working' state row as proof awaiting ended —
-    # but a turn interleaving mid-wait (the auto-nudge asking for status) writes exactly that row while the
-    # agents are still running, falsely clearing the verdict; the API-error floor then painted a red
-    # "API error" + "stalled" card over a session with two agents mid-flight. Tmux sessions carry no
-    # subagents field → None → fall through unchanged.
     live = _tmux_sessions().get(str(sid))    # None = not a live CLI (dormant); {}-like = live snapshot
-    tm = live or {}
-    subs = tm.get("subagents")
-    if subs:
-        # `subagents` is the snapshot's LIST of live agents ({"type","since"}); the original source-0 code
-        # formatted the list itself with %d (latent TypeError since 3325771, masked because a subagent
-        # normally runs inside an open turn → idle=False → this branch never ran) — count via len().
-        n = len(subs)
-        return {"kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
-                "count": n,   # how many are awaited — the chip/box word agrees in number with THIS (T225)
-                "since": min([s.get("since") for s in subs if s.get("since")] or [None])}   # the oldest live agent's start — the wait has held at least this long
-    tasks = _bg_live_norm(sid, path)
-    if tasks:
-        # Sources 0.5/0.75 — only the PENDING tasks (launch not yet placed) count; a placed launch's
-        # story belongs to the judge's verdicts (see the docstring's 0.5 entry for the full rule).
-        pending = _bg_pending(sid, path, tasks)
-        if pending:
-            d0 = pending[0]["desc"]
-            # a dispatched agent/workflow is kind agents even through the task stream; a mixed set
-            # (or plain shell work) is kind task — the generic word for in-harness background work
-            kind = ("agents" if all("agent" in (t.get("type") or "") or t.get("type") == "local_workflow"
-                                    for t in pending) else "task")
-            since = min([t.get("t") for t in pending if t.get("t")] or [None])   # the oldest pending dispatch
-            if len(pending) == 1:
-                return {"kind": kind, "since": since, "count": 1,
-                        "why": "waiting on a background task%s" % ((": " + d0) if d0 else "")}
-            return {"kind": kind, "since": since, "count": len(pending),
-                    "why": "waiting on %d background tasks%s"
-                           % (len(pending), (" — " + d0 + ", …") if d0 else "")}
-    # Source 0.9 — ARMED KERNEL WATCHES this session registered (`romp watch --cmd` / `romp watch-pr`):
-    # kernel-owned and restart-proof like the rows themselves, event-true at both ends (armed at
-    # registration, cleared when the predicate fires or the watch cancels/times out). The user's rule
-    # (2026-08-30): ANY awaited thing shows — an idle session holding only a watch used to read plain
-    # ready, its wait visible nowhere but `romp watch --list`.
-    w = _watch_awaiting(sid)
-    if w:
-        return w
+    # Sources 0, 0.5/0.75 and 0.9 are COMBINED into rows (2026-09-05; see _awaiting_from_items): each
+    # contributes what it knows, and the one answer is derived from all of them — the old first-source-
+    # wins short-circuit is what made one situation read "agents" or "tasks" by accident of ordering.
+    # The assembly itself is _awaiting_live_rows (2026-09-06), shared with the mid-turn read.
+    agents, commands, watch = _awaiting_live_rows(sid, path, live)
+    combined = _awaiting_from_items(agents, commands, watch)
+    if combined:
+        return combined
     ov = _states_awaiting_overlay(sid)
     if ov is not None and ov.get("awaiting"):         # a producer wrote a LIVE awaiting:true → trust its why
         ovk = ov.get("kind")
         return {"kind": ovk if ovk in jd.AWAIT_KINDS else None,
                 "since": ov.get("t") or None,          # the overlay row's own stamp — when the hook declared the wait
                 "count": ov["count"] if isinstance(ov.get("count"), int) and ov["count"] > 0 else None,   # only when the producer said (no parsing the why)
-                "why": ov.get("why") or "waiting on dispatched work"}
+                "why": ov.get("why") or "waiting on dispatched work",
+                "items": []}                           # an overlay row names no rows — the box shows its why alone
     # An awaiting:false overlay row is NOT a veto — it says only that THIS channel has nothing to add.
     # The SDK Stop hook has written an unconditional false at every turn end since 2026-07-07 while
     # nothing writes true, so treating "most recent row is false" as the session's answer made source 2
@@ -21675,33 +22933,60 @@ def _session_awaiting(sid, path, idle, stamp=False):
         # and nobody else's (the user 2026-08-08): the three surfaces answered one question two ways.
         y = _owned_yield_why(sid, path)
         if y:
-            return {"kind": "task", "why": y, "since": None, "count": 1}   # a live owned dispatch — in-harness work (no single event time to show)
+            return {"kind": "task", "why": y, "since": None, "count": 1, "items": []}   # a live owned dispatch — in-harness work (no single event time to show; the yield names no row)
         _gid, _at, st_why, st_kind, st_peers = _session_stamp_full(sid)
         if st_why:
             out = {"kind": st_kind, "why": st_why, "since": _at or None,   # the judge's own classification rides the stamp, with its awaitingAt
-                   "count": len(st_peers) if st_peers else None}   # a peer stamp knows its peers; other stamps carry no count
+                   "count": len(st_peers) if st_peers else None,   # a peer stamp knows its peers; other stamps carry no count
+                   "items": []}                                    # a stamp names no rows (a peer stamp names its peers, below)
             if st_kind == "peer" and st_peers:
                 # the stamp RECORDS who the wait is on (judge awaitPeers) — name them (2026-08-26);
                 # `peers` rides only when known, so every other arm's shape is byte-identical
                 out["peers"] = sorted((_peer_identity(p) for p in st_peers), key=lambda d_: d_["name"])
+                out["items"] = _awaiting_peer_items(out["peers"])
             return out
         d = _session_delegated_why(sid)
         if d:
-            out = {"kind": "peer", "why": d, "since": None}   # the courier handoff graph is peer by construction
+            out = {"kind": "peer", "why": d, "since": None, "items": []}   # the courier handoff graph is peer by construction
             pi = _session_delegated_identities(sid)
             if pi:
                 out["peers"] = pi
                 out["count"] = len(pi)
+                out["items"] = _awaiting_peer_items(pi)
             return out
     return None
 
 
+def _bg_is_agent(kind):
+    """Is a task-stream / scan row a dispatched AGENT (Agent/Task or a Workflow run) rather than a shell
+    command or a Monitor? The one type test every bg-task consumer applies."""
+    return "agent" in (kind or "") or kind == "local_workflow"
+
+
+def _agent_task_label(desc, kind):
+    """The words a background AGENT row wears: the dispatch description alone. The CLI's task lifecycle
+    stream describes an Agent task as "Running <description>" — the STATUS word beside every row already
+    says running, so the prefix only doubled it (the user 2026-09-06, whose box read "Running Check…"
+    beside RUNNING). Stripped for agent rows only: a shell command's description is the user's own words,
+    and one that happens to start with "Running" must keep them."""
+    d = str(desc or "").strip()
+    if _bg_is_agent(kind) and d.startswith("Running "):
+        d = d[len("Running "):].strip()
+    return d
+
+
 def _bg_live_norm(sid, path):
-    """A session's LIVE background tasks, normalized to {tid, desc, t} across BOTH sources: the backend
-    snapshot's lifecycle set (source 0.5 — toolUseId/desc/since; a present-but-empty set is authoritative,
-    never overridden) or, for a live CLI carrying no lifecycle set (tmux; SDK mid-reattach), the
-    transcript's launch↔notification pairing ghost-gated by the CLI spawn stamp (source 0.75 — id/summary/
-    launch t). [] for a dormant session: its tasks died with its CLI."""
+    """A session's LIVE background tasks, normalized to {tid, desc, t, type} (+ agentId on agent rows)
+    across BOTH sources: the backend snapshot's lifecycle set (source 0.5 — toolUseId/desc/since; a
+    present-but-empty set is authoritative, never overridden) or, for a live CLI carrying no lifecycle set
+    (tmux; SDK mid-reattach), the transcript's launch↔notification pairing ghost-gated by the CLI spawn
+    stamp (source 0.75 — id/summary/launch t). [] for a dormant session: its tasks died with its CLI.
+    `agentId` is the agent's own id — the join key _session_awaiting uses to fold a stream row into the
+    SubagentStart hook's row for the same agent. It comes from the row's OWN record of the launch: the
+    lifecycle stream keys an Agent task by its agent id (`taskId`, probe-verified on 2.1.257), and the
+    transcript ack names it (`agentId`). Both are designed fields; the sidecar meta map is only the
+    fallback (its key is the ORIGINAL launch's toolUseId, which a resumed agent's task no longer carries —
+    the 2026-09-06 duplicate rows were exactly the agents that fallback could not resolve)."""
     live = _tmux_sessions().get(str(sid))
     if live is None:
         return []
@@ -21719,24 +23004,34 @@ def _bg_live_norm(sid, path):
         for t in live.get("bgTasks") or []:
             if not isinstance(t, dict):
                 continue
-            row = {"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
-                   "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
+            kind = str(t.get("type") or "")
+            row = {"tid": t.get("toolUseId"), "desc": _agent_task_label(t.get("desc"), kind),
+                   "t": int(t.get("since") or 0), "type": kind}
             e = led.get(str(t.get("toolUseId")))
             if e and e.get("deadlineEpoch"):
                 row["deadline"] = float(e["deadlineEpoch"])
                 row["deadlineSrc"] = "hook"
-            if e and e.get("agentId"):
-                row["agentId"] = e["agentId"]
+            tid = str(t.get("taskId") or "")
+            if _bg_is_agent(kind) and _AGENT_ID_RE.match(tid):
+                row["agentId"] = tid       # the stream's own key for an Agent task is the agent's id
+            elif e and e.get("agentId"):
+                row["agentId"] = e["agentId"]   # the ledger's ACTING agent (a shell launched by a subagent)
             out.append(row)
         return [r for r in out if not em._bg_expired(r, time.time())]
     if not path:
         return []
     sp = _sdk_spawned_at(sid)
-    return [{"tid": tk.get("id"), "desc": str(tk.get("summary") or "").strip(), "t": int(tk.get("t") or 0),
-             "type": str(tk.get("type") or "")}
-            for tk in _bg_scan_cached(path)
-            if not (sp and tk.get("t") and tk["t"] < sp)
-            and not em._bg_expired(tk, time.time())]   # a monitor past its lifetime ceiling is not a live wait
+    out = []
+    for tk in _bg_scan_cached(path):
+        if (sp and tk.get("t") and tk["t"] < sp) or em._bg_expired(tk, time.time()):
+            continue                       # a ghost of the previous CLI / a monitor past its lifetime ceiling
+        kind = str(tk.get("type") or "")
+        row = {"tid": tk.get("id"), "desc": _agent_task_label(tk.get("summary"), kind),
+               "t": int(tk.get("t") or 0), "type": kind}
+        if tk.get("agentId"):
+            row["agentId"] = str(tk["agentId"])   # the async ack names the agent (em._scan_bg_tasks)
+        out.append(row)
+    return out
 
 
 def _bg_pending(sid, path, tasks):
@@ -21821,68 +23116,157 @@ def _seg_of_tool_uses(ps, store, tool_ids):
     return found
 
 
-_BG_TOPS_CACHE = {}    # sid -> ((transcript stat, goals stat, overrides stat, tid tuple), {tid: top})
+_BG_TOPS_CACHE = {}    # sid -> (parse object, store object, {tid: top or None}) — see _bg_placed_tops
+_PLACEMENT_IDX = {}    # sid -> (store object, {jd._seg_key(placement key): its first value in dict order})
+_bg_tops_stats = {"hit": 0, "miss": 0, "resolve": 0, "walk": 0, "walk_neg": 0, "idx_build": 0}
+_BG_TOPS_STATS_LOCK = threading.Lock()   # the counters are bumped from the pusher and the handler threads
 
 
-def _bg_placed_tops(sid, path, tids):
+def _bg_tops_bump(key, n=1):
+    with _BG_TOPS_STATS_LOCK:
+        _bg_tops_stats[key] += n
+
+
+def _bg_tops_report():
+    """The memo's counters plus its occupancy, for /perf (memos.bg_tops): `hit` calls answered from the
+    per-version map, `miss` calls that looked up at least one tid, `resolve` tids looked up on a miss (placed
+    or not), `walk` transcript walks (_seg_of_tool_uses) and `walk_neg` the walks that left at least one
+    asked tid unresolved (an upper bound on what a negative walk cache would save: such a cache, keyed per
+    parse to stay exact, saves only the re-walks under one parse), `idx_build` placement indexes built (one
+    per store object asked, a writer's private copy included), and the gauge `entries` (sids holding a
+    map)."""
+    with _BG_TOPS_STATS_LOCK:
+        out = dict(_bg_tops_stats)
+    out["entries"] = len(_BG_TOPS_CACHE)
+    return out
+
+
+def _placement_index(placements):
+    """{jd._seg_key(k): v} over a store's placements, the FIRST key in dict order winning (setdefault): for
+    any looked-up key that normalizes to a seg key, exactly the value jd._placement_of's scan returns for
+    it, a None-valued retired entry included."""
+    idx = {}
+    for k, v in placements.items():
+        idx.setdefault(jd._seg_key(k), v)
+    return idx
+
+
+def _placed_via_index(placements, idx, seg_id):
+    """jd._placement_of(placements, seg_id) answered from _placement_index: the exact key when it is
+    present (its value, None included, the scan never runs), else the normalized key's first match."""
+    if seg_id in placements:
+        return placements[seg_id]
+    return idx.get(jd._seg_key(seg_id))
+
+
+def _bg_placed_tops(sid, path, tids, store=None):
     """{tid: owning top node id} for the live background-task launches the JUDGE has PLACED: launch
     tool_use id → the transcript segment holding it (_seg_of_tool_uses via _task_seg_cache — a launch's
-    segment never changes) → the store's placement for that segment → the placed node's top ancestor.
+    segment never changes) → the store's placement for that segment, under the four suffixes
+    jd._placement_of accepts, read from a per-store index (_placement_index) → the placed node's top
+    ancestor.
 
     A tid ABSENT from the result is a launch the judge hasn't spoken for yet (segment unparsed or
     unplaced, no goal store, unreadable evidence) — the AWAITED-conservative default every consumer
-    keys on. Cached on the transcript + goal-store + override-journal file stats and the tid set (the
-    _session_stamp_read pattern): an idle session hits this every render, and load_goals is a full
-    read + override replay."""
+    keys on.
+
+    The answer is a function of (the parse object, the store object, the _task_seg_cache positives — the
+    standing "a launch's segment never changes" assumption), and the memo is keyed on exactly those two
+    objects: _BG_TOPS_CACHE[sid] = (ps, store, {tid: top or None}) holds every tid asked so far under one
+    (parse, store) pair, a hit iff both objects in hand ARE the entry's (identity, not a stat: the awaiting
+    lift asks with every task id the transcript records and the feed with the live ids, a subset that is
+    often empty, so one map answers both and the feed's ask never evicts the lift's fill, and a stat taken
+    after a read can describe a version the read did not see — a publish between the two recorded the new
+    version under the old placements, the 2026-07-27 own-thread misattribution shape). _parse returns one
+    object per transcript version and load_goals_shared one FrozenStore per store version, so identity is
+    the version. `store`: the caller's own store (the lift hands the store it decides on, so the placement
+    it reads and the stamps it rules on come from one object); None reads through load_goals_shared. A
+    store that is not the shared cache's FrozenStore (no file, the cache off, an unreadable journal, a
+    writer's private copy) is computed on and never published as an entry. _PLACEMENT_IDX[sid] = (store,
+    index) is keyed on the store object alone, so the writer's copy misses it harmlessly. While the shared
+    cache is off (_SHARED_OFF: a reader wrote to a shared view, a judge-errors row names the site, off until
+    the kernel restarts) every store=None call is a full load_goals and nothing is memoized; acceptable
+    because that state is a loud error, not a mode the kernel runs in.
+
+    Threads: the pusher and the handler threads (build_session, _session_awaiting) both run this. An entry
+    is read into locals once, a fill builds a NEW dict from it and publishes a NEW tuple; nothing writes
+    into an entry in place, so a reader holding the old tuple keeps a consistent (ps, store, map). Entries
+    are dropped when a session asks with no live tids and the pinned parse is no longer the transcript's
+    current one (below: the pin the bound is for), and when its sid leaves the alive set (the awaiting
+    lift's end-of-tick sweep)."""
     sid = str(sid)
     tids = tuple(sorted(t for t in tids if t))
     if not tids or not path:
+        # Nothing to answer. The feed, chat and timeline builds ask here with an EMPTY live set for a
+        # session whose tasks all returned, several times per cycle, while the lift's ask (every task id
+        # the transcript records) is what filled the entry; evicting on every empty ask made the lift miss
+        # every cycle and re-walk the transcript (review, 2026-09-07). Release the pinned parse only when it
+        # is no longer the transcript's current parse: _parse answers _parse_cache[path][1] on a hit, so an
+        # entry whose parse IS that object costs no memory beyond the parse every build holds anyway, and
+        # one whose parse is not (the transcript was re-parsed, or nothing is cached) is the stale pin the
+        # bound is for.
+        ent = _BG_TOPS_CACHE.get(sid)
+        cur = _parse_cache.get(path) if path else None
+        if ent is None or cur is None or ent[0] is not cur[1]:
+            _BG_TOPS_CACHE.pop(sid, None)
+            _PLACEMENT_IDX.pop(sid, None)
         return {}
     try:
-        st = os.stat(path)
-        tkey = (st.st_mtime, st.st_size)
-    except OSError:
-        tkey = None
-    try:
-        gs = (jd.GOALDIR / (sid + ".json")).stat()
-        gkey = (gs.st_mtime, gs.st_size)
-    except Exception:
-        return {}                                    # no store yet → nothing placed
-    try:
-        ostt = (jd._overrides_dir() / (sid + ".jsonl")).stat()
-        okey = (ostt.st_mtime, ostt.st_size)
-    except Exception:
-        okey = None                                  # no override journal is normal
-    key = (tkey, gkey, okey, tids)
-    hit = _BG_TOPS_CACHE.get(sid)
-    if hit and hit[0] == key:
-        return hit[1]
-    out = {}
-    try:
+        if store is None and not os.path.exists(str(jd.GOALDIR / (sid + ".json"))):
+            return {}                                # no store yet → nothing placed: no parse, no fallback load
         ps = _parse(path, sid, time.time())
-        store = jd.load_goals(sid)
-        nodes = (store or {}).get("nodes") or {}
+        if store is None:
+            store = jd.load_goals_shared(sid)
+        ent = _BG_TOPS_CACHE.get(sid)
+        known = ent[2] if (ent is not None and ent[0] is ps and ent[1] is store) else None
+        if known is not None and all(t in known for t in tids):
+            _bg_tops_bump("hit")
+            return {t: known[t] for t in tids if known[t] is not None}
+        _bg_tops_bump("miss")
+        nodes = store.get("nodes") or {}
         placements = store.get("placements") or {}
-        need = [t for t in tids if (sid, t) not in _task_seg_cache]
+        shared = isinstance(store, jd.FrozenStore)
+        pidx = _PLACEMENT_IDX.get(sid)
+        if pidx is not None and pidx[0] is store:
+            idx = pidx[1]
+        else:
+            idx = _placement_index(placements)
+            _bg_tops_bump("idx_build")
+            if shared:
+                _PLACEMENT_IDX[sid] = (store, idx)
+        todo = tids if known is None else tuple(t for t in tids if t not in known)
+        need = [t for t in todo if (sid, t) not in _task_seg_cache]
         if need and ps and nodes:
-            for tid, sgid in _seg_of_tool_uses(ps, store, need).items():
+            found = _seg_of_tool_uses(ps, store, need)
+            for tid, sgid in found.items():
                 _task_seg_cache[(sid, tid)] = sgid
-        for tid in tids:
+            _bg_tops_bump("walk")
+            if len(found) < len(need):
+                _bg_tops_bump("walk_neg")
+        fill = dict(known) if known is not None else {}
+        for tid in todo:
+            fill[tid] = None
             sgid = _task_seg_cache.get((sid, tid))
             if not sgid:
                 continue                             # unresolvable launch → unplaced (see docstring)
-            nid = next((v for v in (jd._placement_of(placements, sgid + suf)
-                                    for suf in ("", "#live", "#p", "#d")) if v), None)
+            nid = None
+            for suf in ("", "#live", "#p", "#d"):
+                v = _placed_via_index(placements, idx, sgid + suf)
+                if v:
+                    nid = v
+                    break
             seen = set()                             # placed node → its top ancestor (cycle-guarded)
             while nid in nodes and nodes[nid].get("parentId") is not None and nid not in seen:
                 seen.add(nid)
                 nid = nodes[nid]["parentId"]
             if nid in nodes:
-                out[tid] = nid
+                fill[tid] = nid
+        _bg_tops_bump("resolve", len(todo))
+        if shared:
+            _BG_TOPS_CACHE[sid] = (ps, store, fill)  # a new tuple, never a write into the old one
+        return {t: fill[t] for t in tids if fill[t] is not None}
     except Exception:
         return {}                                    # unreadable evidence → nothing placed (conservative)
-    _BG_TOPS_CACHE[sid] = (key, out)
-    return out
 
 
 def _bg_owner_tops(fsid, path, tasks):
@@ -21969,7 +23353,10 @@ def _owned_yield_why(sid, path):
         best = cand if best is None else max(best, cand)
     if best is None:
         return None
-    return "waiting on a background task%s" % ((": " + best[1]) if best[1] else "")
+    # worded "command" since 2026-09-05 (the awaiting vocabulary: agents / commands / watches — plans/
+    # subagent-transcripts.md slice 2): the owned dispatch is in-harness background work the chip words as
+    # a command; the kind stays the legacy "task" key every consumer already reads
+    return "waiting on a background command%s" % ((": " + best[1]) if best[1] else "")
 
 
 def _states_awaiting_overlay(sid):
@@ -21982,27 +23369,106 @@ def _states_awaiting_overlay(sid):
     chat off a stale awaiting:true from 08:57 — never cleared — while idle on the timeline; the chat's working
     signal is open_now OR awaiting, the timeline's is open_now alone, so a stale awaiting splits them). An
     idle/waiting state after an awaiting:true is consistent with awaiting (idle while the job runs) and does
-    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap."""
+    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap.
+
+    Folded append-incrementally since 2026-09-07 (perf round 4, item C3) through _fold_records, the reader
+    `_state_intervals` and `_machine_cut` already use on the same file: the carried state is (the last
+    overlay row or None, working_after), and each row steps it through _states_overlay_step. The identity
+    gate is the shared reader's: (st_mtime, st_size) plus the 64-byte tail compare on growth, a full re-fold
+    on a shrink or a same-size new mtime. Every states writer appends (sdk_backend's append_* helpers, the
+    kernel's _record_idle and picker check, hooks/tmux-status.sh), so an append is the only change the
+    file sees and the gate is exact for it. A missing file folds to the empty state, the None the whole-file
+    scan answered on OSError; a read that fails on a file that exists answers the same None, counts under
+    `fail`, is logged once per episode and is never memoized (_states_overlay_on). The shared reader serves
+    an UNCHANGED file's records from its cache without opening it, so a permission flip shows as a failure
+    only once the file changes (or its reader entry was evicted): `fail` counts reads that were attempted
+    and failed. Counters ride /perf under memos.states_overlay."""
     p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    last = None
-    working_after = False
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"awaiting"' in line:
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if isinstance(o, dict) and "awaiting" in o:
-                        last, working_after = o, False     # a fresh overlay record resets the supersede flag
-                elif '"state"' in line and '"working"' in line:
-                    working_after = True                   # a real work turn resumed since the last overlay record
-    except OSError:
-        return None
+    last, working_after = _fold_records(_states_overlay_cache, p, _states_overlay_init, _states_overlay_step,
+                                        on=functools.partial(_states_overlay_on, str(p)))
     if last is not None and last.get("awaiting") and working_after:
         return {"awaiting": False, "why": None}            # stale true — superseded by a later work turn
     return last
+
+
+_states_overlay_cache = {}    # str(states path) -> _fold_records entry over (last overlay row or None, working_after)
+_states_overlay_stats = {"hit": 0, "append": 0, "refold": 0, "fail": 0, "evict": 0}
+_states_overlay_failed = set()   # paths whose last read failed on a file that exists: one stderr line per episode
+_STATES_OVERLAY_LOCK = threading.Lock()   # the counters are bumped from the pusher, the chat's connect pushes on
+#                                           WS threads and GET /sessions at once: `+= 1` drifts low without the GIL
+
+
+def _states_overlay_init():
+    return (None, False)
+
+
+def _states_overlay_step(state, o):
+    """One states row into (last overlay row, working_after). Awaiting-first, the scan's if/elif order:
+    a row carrying an `awaiting` key is an overlay row whatever else it carries (it resets the supersede
+    flag and never sets it); a row whose `state` is "working" is a work turn (extra keys such as the
+    picker check's `tier` change nothing); every other row (idle/waiting states, retriesGaveUp,
+    orphanReply, cmdGesture, machineCut, resumeFork, effortApplied) leaves the state alone. Equal to the
+    whole-file scan for every row shape any states writer produces: the scan's substring tests matched a
+    quoted key, and a key's text inside a JSON string is escaped, so they never fired on a why or a
+    gesture's text. ONE deviation from that scan, stated here and pinned by a test: the scan set
+    working_after on an UNPARSEABLE line that happened to carry both substrings, without parsing it; the
+    fold sees parsed records only, so such a line changes nothing. No states writer produces one (every
+    row is one json.dumps and a newline), and a torn tail is the shared reader's business, not a substring
+    heuristic's."""
+    if "awaiting" in o:
+        return (o, False)
+    if o.get("state") == "working":
+        return (state[0], True)
+    return state
+
+
+def _states_overlay_bump(kind, n=1):
+    with _STATES_OVERLAY_LOCK:
+        _states_overlay_stats[kind] = _states_overlay_stats.get(kind, 0) + n
+
+
+def _states_overlay_on(path_s, kind):
+    """The fold's `on` for one states file: count the path the fold took, and on "fail" (the file exists and
+    could not be stat'ed, opened or read; the fold answered the empty state and memoized nothing) write one
+    stderr line per episode, so a failed read is told apart from a rewrite in /perf and in the log. A later
+    successful fold of the same file ends the episode."""
+    _states_overlay_bump(kind)
+    if kind == "fail":
+        with _STATES_OVERLAY_LOCK:
+            first = path_s not in _states_overlay_failed
+            _states_overlay_failed.add(path_s)
+        if first:
+            sys.stderr.write("states-overlay: %s unreadable (the file exists); answered no overlay and memoized nothing\n"
+                             % os.path.basename(path_s))
+    elif _states_overlay_failed:
+        with _STATES_OVERLAY_LOCK:
+            _states_overlay_failed.discard(path_s)
+
+
+def _states_overlay_forget(alive):
+    """Drop the fold entries for sessions outside `alive` (the interrupt tick's alive set, once per cycle):
+    the readers of this overlay are the session chips and lanes of live sessions, so a session leaving the
+    alive set is the event that retires its entry. The shared records stay in the event model's LRU reader;
+    a later read of a departed session's file re-folds them without re-reading the file."""
+    keep = {str(jd.STATE / "states" / ("%s.jsonl" % sid)) for sid in alive}
+    gone = [k for k in list(_states_overlay_cache) if k not in keep]
+    n = 0
+    for k in gone:
+        if _states_overlay_cache.pop(k, None) is not None:
+            n += 1
+    if n:
+        _states_overlay_bump("evict", n)
+
+
+def _states_overlay_report():
+    """The fold's counters plus its occupancy, for /perf (memos.states_overlay): hit (the records were the
+    cached ones), append (only the appended rows stepped), refold (every row stepped: a rewrite, a shrink, or
+    the first fold of a file), fail (a read that failed on a file that exists; not memoized), evict (entries
+    dropped for sessions that left the alive set), and the gauge entries."""
+    with _STATES_OVERLAY_LOCK:
+        out = dict(_states_overlay_stats)
+    out["entries"] = len(_states_overlay_cache)
+    return out
 
 
 def _session_retrying(sid, tm):
@@ -22023,21 +23489,16 @@ def _session_retrying(sid, tm):
         return None
     since = None
     try:
-        with open(jd.STATE / "states" / ("%s.jsonl" % sid), errors="replace") as f:
-            for line in f:
-                if '"state"' not in line:
-                    continue                               # overlay/recovery rows don't bound a stretch
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                st = o.get("state") if isinstance(o, dict) else None
-                if st == "retrying":
-                    if since is None:
-                        since = o.get("t")                 # first row of the current stretch
-                elif st:
-                    since = None                           # any real state transition ends the stretch
-    except OSError:
+        for o in _states_rows(sid):
+            st = o.get("state") if isinstance(o, dict) else None
+            if not st:
+                continue                                   # overlay/recovery rows don't bound a stretch
+            if st == "retrying":
+                if since is None:
+                    since = o.get("t")                     # first row of the current stretch
+            else:
+                since = None                               # any real state transition ends the stretch
+    except Exception:
         pass
     try:
         count = int(tm.get("retryCount") or 0)
@@ -22267,10 +23728,378 @@ def _bg_tasks(path, spawned_at=None, live=None):
     elif spawned_at:
         scan = [tk for tk in scan if not (tk.get("t") and tk["t"] < spawned_at)]
     out = []
+    meta = None                                   # the subagents sidecar map, read once and only if an agent row needs it
     for tk in scan[:30]:    # show up to 30 lines (the flat list scrolls); count below reports the true total
-        out.append({"id": tk["id"], "status": tk["status"], "summary": tk["summary"], "command": tk["command"],
-                    "output": _read_task_output(tk["outputFile"])})
+        row = {"id": tk["id"], "status": tk["status"], "summary": tk["summary"], "command": tk["command"],
+               "output": _read_task_output(tk["outputFile"])}
+        # an AGENT row names the agent whose own transcript it writes, so the box can offer the same
+        # open-transcript arrow the Agent tool head has (plans/subagent-transcripts.md). Three sources,
+        # any one suffices: the launch ack's agentId, the sidecar map, the output symlink's basename.
+        # Shell tasks (`b…` ids, plain-text output) get no agentId and keep their treatment.
+        if tk.get("type") in ("local_agent", None) or tk.get("agentId"):
+            aid = tk.get("agentId")
+            if not aid:
+                meta = _subagent_meta_map(path) if meta is None else meta
+                aid = (meta.get(tk["id"]) or {}).get("agentId") or _agent_id_of_output(tk.get("outputFile"))
+            if aid and _AGENT_ID_RE.match(str(aid)):
+                row["agentId"] = str(aid)
+        out.append(row)
     return {"count": len(scan), "tasks": out}
+
+
+# ───────────────────────── subagent transcripts (plans/subagent-transcripts.md, 2026-09-05) ─────────────────────────
+# Claude Code writes every subagent (the Agent tool; older transcripts say Task) its OWN complete JSONL
+# beside the parent transcript — <proj>/<fsid>/subagents/agent-<agentId>.jsonl — plus a sidecar
+# agent-<agentId>.meta.json whose toolUseId is the parent's tool_use block id. The dashboard reads THAT
+# file (the authoritative copy; the background task's /tmp output file is a symlink to it) rather than
+# un-dropping the SDK's sidechain stream, which the backend deliberately filters out of the parent's
+# conversation (tests/test_sidechain_atoms.py). Everything below is event-based: directory mtimes, file
+# (mtime, size) keys, the transcript's own launch↔notification pairing, and the SDK's live sets.
+_AGENT_ID_RE = re.compile(r"^a[0-9a-f]{16}$")
+_SUBAGENT_META_CACHE = {}       # subagents dir -> (dir mtime_ns, {toolUseId: {agentId, agentType, description, spawnDepth}})
+_AGENT_GIST_CACHE = {}          # agent jsonl path -> em.fold_records entry (the Agent head's steps fold state)
+_AGENT_LAUNCH_CACHE = {}        # parent jsonl path -> em.fold_records entry (foreground launches + their settles)
+_SUBAGENT_FRAMES = {}           # (sid, agentId) -> (change key, frame, serialized) — shared by every client with it open
+SUBAGENT_EVENT_CAP = 300        # events shipped per viewer frame — a bounded TAIL, honest about the cut (the episode fold's rule)
+SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSteps) — the newest; stepsTotal says the true count
+
+
+def _subagents_dir(path):
+    """The subagents directory for a transcript file: <dir>/<file stem>/subagents."""
+    return Path(str(path)).with_suffix("") / "subagents"
+
+
+def _subagent_meta_map(path):
+    """toolUseId → {agentId, agentType, description, spawnDepth} for every agent-*.meta.json beside the
+    transcript at `path`, cached on the DIRECTORY's mtime (a sidecar landing changes it — a stat, never a
+    timer). {} when the directory does not exist (older CLIs wrote no subagent files)."""
+    d = _subagents_dir(path)
+    try:
+        key = os.stat(d).st_mtime_ns
+    except OSError:
+        _SUBAGENT_META_CACHE.pop(str(d), None)
+        return {}
+    hit = _SUBAGENT_META_CACHE.get(str(d))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    out = {}
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        names = []
+    for nm in names:
+        if not (nm.startswith("agent-") and nm.endswith(".meta.json")):
+            continue
+        aid = nm[len("agent-"):-len(".meta.json")]
+        if not _AGENT_ID_RE.match(aid):
+            continue
+        try:
+            meta = json.loads((d / nm).read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or not meta.get("toolUseId"):
+            continue
+        out[str(meta["toolUseId"])] = {"agentId": aid, "agentType": meta.get("agentType") or "",
+                                       "description": meta.get("description") or "",
+                                       "spawnDepth": meta.get("spawnDepth")}
+    if len(_SUBAGENT_META_CACHE) > 256:
+        _SUBAGENT_META_CACHE.clear()
+    _SUBAGENT_META_CACHE[str(d)] = (key, out)
+    return out
+
+
+def _subagent_meta(path, agent_id):
+    """One agent's sidecar (agentType, description, spawnDepth, toolUseId) read directly; {} when absent."""
+    mp = _subagents_dir(path) / ("agent-%s.meta.json" % agent_id)
+    try:
+        meta = json.loads(mp.read_text())
+    except (OSError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _subagent_file(path, agent_id):
+    """The agent's own transcript beside the parent transcript `path`, or — when the sidecar dir has moved
+    under a /clear fork's fsid — the one file of that name anywhere in the project dir. None when missing."""
+    if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
+        return None
+    ap = _subagents_dir(path) / ("agent-%s.jsonl" % agent_id)
+    if ap.exists():
+        return ap
+    try:
+        for cand in Path(str(path)).parent.glob("*/subagents/agent-%s.jsonl" % agent_id):
+            return cand
+    except OSError:
+        pass
+    return None
+
+
+def _agent_id_of_output(output_file):
+    """The agent id a background task's output path names (…/tasks/<agentId>.output), else None."""
+    stem = os.path.splitext(os.path.basename(str(output_file or "")))[0]
+    return stem if _AGENT_ID_RE.match(stem) else None
+
+
+def _tool_gist_desc(name, inp):
+    """A tool call's one-line gist in the chat head's own vocabulary: input.description, else the file
+    path, else the command's first line, then a search's pattern/query before its scope path (the
+    pattern says what was looked for; the path only where), then url/skill/prompt — clipped."""
+    if not isinstance(inp, dict):
+        return ""
+    for k in ("description", "file_path", "command", "pattern", "query", "path", "url", "skill", "prompt"):
+        v = inp.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().splitlines()[0][:80]
+    return ""
+
+
+def _gist_fresh():
+    return {"steps": [], "calls": 0, "since": None, "last": None}
+
+
+def _gist_step(state, o):
+    ts = o.get("timestamp") if isinstance(o.get("timestamp"), str) else None
+    if ts:
+        state["since"] = state["since"] or ts
+        state["last"] = ts
+    if o.get("type") == "assistant":
+        c = (o.get("message") or {}).get("content")
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    state["calls"] += 1
+                    state["steps"] = (state["steps"] + [{"tool": b.get("name") or "tool",
+                                                         "desc": _tool_gist_desc(b.get("name"), b.get("input")),
+                                                         "ts": ts}])[-SUBAGENT_STEPS_CAP:]
+    return state
+
+
+def _agent_steps(agent_path):
+    """The Agent head's view of the agent's own file: every tool call so far in order (`steps`, the newest
+    SUBAGENT_STEPS_CAP of them), the true count (`calls`), and the first/last record stamps — folded
+    append-incrementally over the file (em.fold_records: a growing file steps only its new records; a
+    finished file costs one read, then a stat per build). None when unreadable or empty. Shipped on the
+    event as agentSteps + stepsTotal whether the agent runs or has finished (the fold shows the list
+    either way); the running preview's clock (agentGist: calls/since/last) rides only while it runs."""
+    try:
+        st = em.fold_records(_AGENT_GIST_CACHE, str(agent_path), _gist_fresh, _gist_step)
+    except Exception:
+        return None
+    if not st["since"]:
+        return None
+    return st
+
+
+def _stamp_steps(ev, st):
+    ev["agentSteps"] = [dict(r) for r in st["steps"]]
+    ev["stepsTotal"] = st["calls"]
+
+
+def _gist_of(st):
+    return {"calls": st["calls"], "since": st["since"], "last": st["last"]}
+
+
+def _launch_fresh():
+    return {"launched": {}, "settled": set()}
+
+
+def _launch_step(state, o):
+    """FOREGROUND agent launches (a tool_use named Agent/Task) and the tool_results that settle them — an
+    async ack is a launch acknowledgement, not a settle, and leaves the id open for the bg scan's pairing."""
+    t = o.get("type")
+    c = (o.get("message") or {}).get("content")
+    if t == "assistant" and isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in ("Agent", "Task") and b.get("id"):
+                state["launched"].setdefault(b["id"], em.parse_z(o.get("timestamp")))
+    elif t == "user" and isinstance(c, list):
+        tur = o.get("toolUseResult")
+        tur = tur if isinstance(tur, dict) else {}
+        if tur.get("isAsync") or tur.get("status") == "async_launched":
+            return state
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in state["launched"]:
+                state["settled"].add(b["tool_use_id"])
+    return state
+
+
+def _agent_launch_state(path):
+    return em.fold_records(_AGENT_LAUNCH_CACHE, str(path), _launch_fresh, _launch_step)
+
+
+def _agent_alive(row, agent_id, tm, spawned_at):
+    """Is a launched agent still running? `row` is its bg-scan row ({id, status, t, …}; a foreground launch
+    passes a synthetic running row) — the transcript's own pairing says whether a result has landed. The
+    live gate then says whether the CLI that would deliver one is still around: an SDK session's snapshot
+    carries the SubagentStart/Stop set (agent ids) and the task-lifecycle set (tool-use ids) — the agent is
+    alive iff either names it; a tmux or dormant session falls to the spawned-at ghost gate _bg_tasks
+    applies (a launch older than the current CLI epoch died with the previous CLI). Never a clock."""
+    if not row or row.get("status") != "running":
+        return False
+    if tm is not None and ("subagents" in tm or "bgTasks" in tm):
+        live_agents = {str(x.get("agentId")) for x in (tm.get("subagents") or []) if x.get("agentId")}
+        live_tools = {str(x.get("toolUseId")) for x in (tm.get("bgTasks") or []) if x.get("toolUseId")}
+        return (str(agent_id) in live_agents) or (str(row.get("id")) in live_tools)
+    return not (spawned_at and row.get("t") and row["t"] < spawned_at)
+
+
+def _agent_running_for(parent_path, tool_use_id, agent_id, tm, spawned_at):
+    """The viewer's `running` flag for one agent, from the parent transcript: a background launch is read
+    off the bg scan's pairing (its notification ends it), a foreground one off its own tool_result."""
+    if not tool_use_id:
+        return False
+    rows = {r["id"]: r for r in _bg_scan_all_cached(parent_path)}
+    row = rows.get(tool_use_id)
+    if row is not None:
+        return _agent_alive(row, agent_id, tm, spawned_at)
+    st = _agent_launch_state(parent_path)
+    if tool_use_id not in st["launched"] or tool_use_id in st["settled"]:
+        return False
+    return _agent_alive({"id": tool_use_id, "status": "running", "t": st["launched"][tool_use_id]}, agent_id, tm, spawned_at)
+
+
+def _stamp_agents(by_tool, scan_path, tm, spawned_at, meta_path=None):
+    """Post-pass over one build's Agent/Task tool events (plans/subagent-transcripts.md): every one gets
+    toolUseId + agentId (from the ack's toolUseResult or the sidecar map); a BACKGROUND launch that is
+    still running drops its launch-ack output (the ack is not a report — the client's existing no-output
+    rule then reads it as running), takes agentRunning and the live agentGist clock; one whose
+    <task-notification> has landed takes the notification's <result> as its output, so the head's report
+    fold shows the closing summary instead of the ack. A foreground agent's tool_result was always the
+    report and is left alone. Every one with a readable agent file carries agentSteps (its tool calls,
+    the newest SUBAGENT_STEPS_CAP) + stepsTotal, running or finished. Returns {toolUseId: "sync"|"running"|"report"|"pending"} for the fold's
+    sealed-agent gate (pending = launched, no result, and not alive — the ack stays as the honest output)."""
+    meta = None
+    rows = None
+    out = {}
+    for tid, ev in by_tool.items():
+        if ev.get("name") not in ("Agent", "Task"):
+            continue
+        if meta is None:
+            meta = _subagent_meta_map(meta_path or scan_path)
+        aid = ev.get("agentId") or (meta.get(tid) or {}).get("agentId")
+        ev["agentId"] = str(aid) if aid else None
+        # the agent's tool calls ride the head running OR finished — the fold lists them either way
+        ap = _subagent_file(meta_path or scan_path, aid) if aid else None
+        st = _agent_steps(ap) if ap is not None else None
+        if st:
+            _stamp_steps(ev, st)
+        if not ev.get("agentAsync"):
+            # a FOREGROUND agent still mid-turn (no tool_result yet) reads as running on the client (no
+            # output), so its preview clock ships too; its landed tool_result is the report
+            if st and not ev.get("resultUuid"):
+                ev["agentGist"] = _gist_of(st)
+            out[tid] = "sync"
+            continue
+        if rows is None:
+            rows = {r["id"]: r for r in _bg_scan_all_cached(scan_path)}
+        row = rows.get(tid)
+        if row is not None and row.get("status") != "running":
+            if row.get("result"):
+                ev["output"] = row["result"]
+                ev["isError"] = row["status"] not in ("completed", "done", "success")
+            out[tid] = "report"
+        elif _agent_alive(row, aid, tm, spawned_at):
+            ev["output"] = ""
+            ev["agentRunning"] = True
+            if st:
+                ev["agentGist"] = _gist_of(st)
+            out[tid] = "running"
+        else:
+            out[tid] = "pending"
+    return out
+
+
+def _chat_agent_open_at(events, lo):
+    """Index of the first RUNNING Agent card at/after `lo` — a launch turn the chat fold must not seal
+    while the agent runs (its preview and eventual report are rebuilt live in the tail). None when every
+    agent in range has settled. The undecided-seam rule's twin (see _chat_seam_open_at)."""
+    for i in range(lo, len(events)):
+        if events[i].get("kind") == "tool" and events[i].get("agentRunning"):
+            return i
+    return None
+
+
+def _chat_agents_moved(agents, path, tm, spawned_at):
+    """The fold's sealed-agent gate: True when a sealed Agent card would render differently now — a
+    launch sealed with no agent id has gained its sidecar, or a background launch sealed WITHOUT its
+    report (pending) has come to rest or is alive again. `agents` = [(toolUseId, agentId, pending)]."""
+    meta = None
+    rows = None
+    for tid, aid, pending in agents:
+        if aid is None:
+            meta = _subagent_meta_map(path) if meta is None else meta
+            if tid in meta:
+                return True
+        if pending:
+            rows = {r["id"]: r for r in _bg_scan_all_cached(path)} if rows is None else rows
+            row = rows.get(tid)
+            if row is not None and (row.get("status") != "running" or _agent_alive(row, aid, tm, spawned_at)):
+                return True
+    return False
+
+
+def build_subagent(sid, agent_id, now, tmux=None):
+    """The {type:"subagent"} viewer frame for one agent of session `sid`: its sidecar meta, whether it is
+    still running, and its transcript rendered through build_session's override mode — the SAME renderer
+    the chat uses, in sidechain mode (no parent side-store notes) — as a capped tail. FAIL LOUDLY (the
+    repo rule): a missing file is an `error` sentence the pane shows, never a blank."""
+    base = {"type": "subagent", "id": sid, "agentId": agent_id}
+    if not _AGENT_ID_RE.match(str(agent_id or "")):
+        return {**base, "error": "That is not a subagent id, so there is no transcript to open."}
+    tmux = _tmux_sessions() if tmux is None else tmux
+    ppath = _path_of(sid, now)
+    if not ppath:
+        return {**base, "error": "This session's transcript can't be found, so its agents can't be opened."}
+    apath = _subagent_file(ppath, agent_id)
+    if apath is None:
+        return {**base, "error": "The transcript file for agent %s is missing beside this session's transcript "
+                                 "(subagents/agent-%s.jsonl), so it can't be shown." % (agent_id, agent_id)}
+    meta = _subagent_meta(ppath, agent_id)
+    full = build_session(sid, now, tmux, path_override=str(apath), sidechain=True, meta_path=ppath)
+    if not full:
+        return {**base, "error": "This session isn't known to romp any more, so its agent can't be shown."}
+    evs = full.get("events") or []
+    return {**base,
+            "meta": {"agentType": meta.get("agentType") or "", "description": meta.get("description") or "",
+                     "spawnDepth": meta.get("spawnDepth"), "toolUseId": meta.get("toolUseId") or ""},
+            "running": _agent_running_for(ppath, meta.get("toolUseId"), agent_id, tmux.get(str(sid)), _sdk_spawned_at(sid)),
+            "events": evs[-SUBAGENT_EVENT_CAP:], "truncated": len(evs) > SUBAGENT_EVENT_CAP}
+
+
+def _subagent_frame_cached(sid, agent_id, now, tmux=None):
+    """(frame, serialized) for an OPEN viewer, rebuilt only when its change key moved: the agent file's
+    (mtime, size), the running flag, and whether the sidecar exists. Shared across clients; the per-client
+    dedup slot ("subagent", sid, agentId) absorbs an unchanged re-send."""
+    tmux = _tmux_sessions() if tmux is None else tmux
+    ppath = _path_of(sid, now)
+    apath = _subagent_file(ppath, agent_id) if ppath else None
+    meta = _subagent_meta(ppath, agent_id) if ppath else {}
+    running = (_agent_running_for(ppath, meta.get("toolUseId"), agent_id, tmux.get(str(sid)), _sdk_spawned_at(sid))
+               if ppath else False)
+    key = (ppath, _chat_stat_key(str(apath)) if apath is not None else None, running, bool(meta))
+    hit = _SUBAGENT_FRAMES.get((sid, agent_id))
+    if hit is not None and hit[0] == key:
+        return hit[1], hit[2]
+    fr = build_subagent(sid, agent_id, now, tmux)
+    pre = json.dumps(fr)
+    if len(_SUBAGENT_FRAMES) > 64:
+        _SUBAGENT_FRAMES.clear()
+    _SUBAGENT_FRAMES[(sid, agent_id)] = (key, fr, pre)
+    return fr, pre
+
+
+def _push_subagents(clients, now, tmux):
+    """Re-push every OPEN subagent viewer on these chat clients (client["subagents"], set by openSubagent,
+    cleared by closeSubagent or the socket going away). Rides the pusher's existing per-cycle chat pass —
+    no polling loop of its own — and costs a stat per open viewer when nothing changed."""
+    for c in clients:
+        for (ssid, aid) in list((c.get("subagents") or {}).keys()):
+            try:
+                fr, pre = _subagent_frame_cached(ssid, aid, now, tmux)
+            except Exception:
+                sys.stderr.write("subagent frame failed for %s/%s: %s\n" % (ssid, aid, traceback.format_exc()))
+                continue
+            _send_client(c, ("subagent", ssid, aid), fr, pre=pre)
 
 
 # The MONTHLY SPEND CAP error (the user 2026-07-14): a billing limit ("You've hit your monthly spend
@@ -22624,18 +24453,146 @@ def _ask_poll_once():
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
+# The _captions memo (perf round 4, items C1 and C2, 2026-09-07): fsid -> (key, _Caps). The key is
+# jd._file_key(CAPDIR/<fsid>.jsonl) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file that
+# changes between the stat and the read is caught by the next call's stat (one extra miss, never a stale
+# serve). The key is complete against how the file is written: jd.append_caption opens it in append mode
+# (every row grows st_size), and _seed_fork_stores publishes the forked child's file through a temp +
+# os.replace (a new inode). No writer rewrites a captions file in place, so there is no equal-size rewrite
+# inside one mtime tick for the three components to miss (the round-3 review's hazard; a source-text test
+# pins both writers). An absent file is an empty _Caps and its entry is popped; a stat that fails otherwise
+# is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
+# not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
+# is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
+# build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
+# The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
+# reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
+# session outside the lanes is released at the next full build and read again only when that session's
+# transcript changes (the join's own per-session mtime gate). `evict` counts all three drops: a lane that
+# left the timeline, the LRU bound, and the pop of an entry whose file is now absent. Every caller reads the
+# object and never writes it (a source-text test pins that), so a hit hands out the same _Caps, indexes
+# included. Counters ride /perf under memos.captions; the lock covers the dict ops and the counters, never
+# the read or the parse.
+_caps_memo = {}
+_CAPS_MEMO_MAX = 512
+_caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_caps_failed = set()            # paths whose last read after a good stat failed: one stderr line per episode
+_CAPS_LOCK = threading.Lock()
+
+
+class _Caps(dict):
+    """One transcript's captions, {id: row}, as _captions memoizes it, with two indexes built on first use
+    and never while the lines are parsed: they describe the FINAL dict, so a duplicate id (a live caption row
+    and then the final row) is indexed once, by the row the dict serves. `pidx` maps _seg_key(id) to the
+    row for the '#p' (message) rows, first inserted wins, which is what _seg_caption's scan (`next` in
+    dict order) returned. `sidx` maps _seg_key(id) to the grain-'segment' rows in insertion order, the
+    sequence _seg_work_caption's scan visited, so its strict '<' nearest-t pick resolves a tie to the same
+    row. Each index is built into a local and assigned once, so a concurrent reader sees None or a complete
+    index, never a partial one. Read-only by contract for every caller."""
+    __slots__ = ("_pidx", "_sidx")
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._pidx = None
+        self._sidx = None
+
+    @property
+    def pidx(self):
+        idx = self._pidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if k.endswith("#p"):
+                    idx.setdefault(_seg_key(k), v)
+            self._pidx = idx
+        return idx
+
+    @property
+    def sidx(self):
+        idx = self._sidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if v.get("grain") == "segment":
+                    idx.setdefault(_seg_key(k), []).append(v)
+            self._sidx = idx
+        return idx
+
+
+def _caps_memo_report():
+    """The memo's counters plus its occupancy, for /perf (memos.captions)."""
+    with _CAPS_LOCK:
+        out = dict(_caps_memo_stats)
+        out["entries"] = len(_caps_memo)
+    return out
+
+
+def _caps_forget(keep):
+    """Drop the memo entries for transcripts outside `keep`: build_timeline's lane set at a full build
+    (live sessions plus the dead lanes inside its 12 h window). The feed's callers read a subset of it; the
+    postal join reads discover's 48 h window, a superset, and an entry of its outside the lanes is dropped
+    here and read again only when that transcript changes. Iterates a key snapshot under the lock; a
+    connect-push build on another thread may insert concurrently."""
+    with _CAPS_LOCK:
+        gone = [k for k in _caps_memo if k not in keep]
+        for k in gone:
+            _caps_memo.pop(k, None)
+        if gone:
+            _caps_memo_stats["evict"] += len(gone)
+
+
 def _captions(fsid):
-    out = {}
+    """{id: row} of the captioner's store for one transcript, the last row per id winning (a live caption
+    and then its final), MEMOIZED on the file's identity (see _caps_memo). A hit returns the same _Caps
+    object; an absent file is a fresh empty _Caps and is never memoized. A row that is not a JSON object
+    is skipped like an unparseable line."""
+    p = str(jd.CAPDIR / (fsid + ".jsonl"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _CAPS_LOCK:
+            if _caps_memo.pop(fsid, None) is not None:
+                _caps_memo_stats["evict"] += 1
+        return _Caps()
+    with _CAPS_LOCK:
+        ent = _caps_memo.get(fsid)
+        if ent is not None and ent[0] == key:
+            _caps_memo.pop(fsid, None)                    # a served entry is a USED entry (LRU reinsert)
+            _caps_memo[fsid] = ent
+            _caps_memo_stats["hit"] += 1
+            return ent[1]
+        _caps_memo_stats["miss"] += 1
+    out = _Caps()
     try:
-        for line in (jd.CAPDIR / (fsid + ".jsonl")).read_text(errors="replace").splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if o.get("id"):
-                out[o["id"]] = o
-    except OSError:
-        pass
+        with open(p, errors="replace") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        return out                                        # unlinked between the stat and the read: the next stat pops it
+    except OSError as e:
+        with _CAPS_LOCK:
+            _caps_memo_stats["fail"] += 1
+            first = p not in _caps_failed
+            _caps_failed.add(p)
+        if first:
+            sys.stderr.write("captions: %s unreadable after a successful stat (%r); answered empty and not memoized\n"
+                             % (os.path.basename(p), e))
+        return out
+    if _caps_failed:
+        with _CAPS_LOCK:
+            _caps_failed.discard(p)                       # a good read ends the episode; the next failure logs again
+    for line in text.splitlines():
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(o, dict) and o.get("id"):
+            out[o["id"]] = o
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _CAPS_LOCK:
+            _caps_memo.pop(fsid, None)
+            while len(_caps_memo) >= _CAPS_MEMO_MAX:
+                _caps_memo.pop(next(iter(_caps_memo)))    # the least recently used goes first, never the whole memo
+                _caps_memo_stats["evict"] += 1
+            _caps_memo[fsid] = (key, out)
     return out
 
 
@@ -22716,7 +24673,20 @@ def _split_reminders(text):
             reminders.append(text[j + len(OPEN):].strip()); break
         reminders.append(text[j + len(OPEN):k].strip())
         i = k + len(CLOSE)
-    return " ".join("".join(out).split()), [r for r in reminders if r]
+    # Rejoin the fragments around the peeled blocks. Each SEAM collapses to one separator — a paragraph
+    # break if the whitespace the block sat in held a blank line, a newline if it held one, else a space —
+    # and the prompt's OWN whitespace is kept. This used to be " ".join(prompt.split()), which flattened
+    # every newline in a message that happened to arrive with a reminder attached (the first prompt of a
+    # session rides with the CLAUDE.md block; a prompt after a background task rides with its notification),
+    # so a message typed with Shift+Enter line breaks rendered as one run-together line (the user 2026-09-06).
+    prompt = out[0]
+    for seg in out[1:]:
+        left, right = prompt.rstrip(), seg.lstrip()
+        lws, rws = prompt[len(left):], seg[:len(seg) - len(right)]     # the whitespace on each side of the block
+        nl = max(lws.count("\n"), rws.count("\n"))                     # per side: a blank line on either side is a paragraph break
+        sep = "\n\n" if nl >= 2 else "\n" if nl else " " if (lws or rws) else ""
+        prompt = left + sep + right
+    return prompt.strip(), [r for r in reminders if r]
 
 
 # The extension set is the CLI's, not romp's: the composer paste hook's one image-path test,
@@ -22827,14 +24797,8 @@ def _postal_index():
     if hit is not None and hit[0] == key:
         return hit[1]
     idx = {}
-    try:
-        lines = p.read_text(errors="replace").splitlines()
-    except OSError:
-        return idx
-    for ln in lines:
-        try:
-            o = json.loads(ln)
-        except Exception:
+    for o in _messages_rows(p):                       # append-incremental rows (2026-09-03): a send no
+        if not isinstance(o, dict):                   # longer re-decodes the whole log on the active tab
             continue
         if o.get("ev") == "sent" and o.get("id"):
             idx[o["id"]] = {"id": o["id"], "from": o.get("from", "?"), "fromId": o.get("from_id", ""),
@@ -23001,11 +24965,19 @@ def _POSTAL_UNRESOLVED_RESET():
     _POSTAL_UNRESOLVED["suppressed"] = 0
 
 
-def _hydrate_postal(events, index, sid=None):
+def _hydrate_postal(events, index, sid=None, captions=None):
     """Replace postal traffic with clean cards: a send_message tool (or `romp mail send` Bash) → an
     OUTGOING card; a user event (or a MAIL READER's output — see _reads_mail) carrying romp-msg-id
     marker(s) addressed to `sid` → INCOMING card(s) with the clean body from the log. Anything not
-    fully resolved passes through unchanged."""
+    fully resolved passes through unchanged.
+
+    `captions`: a zero-argument callable returning the {msg id: caption} map, or None for
+    _msg_summaries() on first need. build_session hands its three hydrations (the fold gate's check,
+    the tail pass, the commit) one shared getter, so they read ONE map and the fold entry records
+    exactly the captions its cards embed; a caption appended between two of them would otherwise be
+    embedded by one and recorded by another. Per-event independent: hydrate(A + B) == hydrate(A) +
+    hydrate(B) (pinned in tests/test_postal_hydrate_scope.py), which is what lets the fold's commit
+    hydrate only the raw events new since the seal (round-4 plan, P17 merged with P3(c), 2026-09-07)."""
     out = []
     # {id: Haiku caption} → show the ≤9-word caption, not the verbose body. Computed LAZILY (the user
     # 2026-07-03: "startup is slow"): _msg_summaries() re-scans the WHOLE fleet's captioned transcripts,
@@ -23015,7 +24987,7 @@ def _hydrate_postal(events, index, sid=None):
     _bodies = [None]   # the index's body map, fetched on the first outgoing card (none → never)
     def caption_for(mid):
         if _msgsum[0] is None:
-            _msgsum[0] = _msg_summaries()
+            _msgsum[0] = captions() if captions is not None else _msg_summaries()
         return _msgsum[0].get(mid)
     def enrich_out(card, ev):
         # OUTGOING gist (the user 2026-07-25): the sender's card used to show a raw body prefix while the
@@ -23116,6 +25088,53 @@ def _hydrate_postal(events, index, sid=None):
     return out
 
 
+_chat_postal_stats = {"gate": 0, "hit": 0, "commit_new": 0}   # /perf memos.chat_postal — see _postal_card_deps
+
+
+def _chat_postal_report():
+    """/perf memos.chat_postal: `gate`, fold-gate checks that re-hydrated a tab's sealed postal cards (the
+    log or a value a card embeds moved, or the entry was unverified); `hit`, checks that verified the
+    sealed cards from their recorded values without hydrating; `commit_new`, raw postal events hydrated
+    at fold commits: the events a folding build newly seals, or every relevant event of the prefix a
+    demoted build rebuilds (a demotion counts its rebuilt tail again); the sealed cards a folding build
+    reuses are not counted."""
+    return dict(_chat_postal_stats)
+
+
+def _postal_card_deps(cards, index, captions):
+    """What the fold's sealed postal cards EMBED from outside the transcript, read from the same objects a
+    re-hydration in this build would read: per card its mid, the caption under that mid, and its peer's
+    identity (the sender's name and colour for an incoming card, the recipient's colour for an outgoing
+    one); a raw event that did not hydrate contributes None, its rendering depending on the log alone,
+    which the gate keys beside this by the log's identity (_chat_postal_key). Everything else a card
+    carries comes from the raw event or the log row. `captions` is the build's caption-map getter and is
+    called only when a card carries a mid, so a tab whose cards join no caption never pays for the map.
+    The gate re-hydrates when this tuple moved (round-4 plan, P17 merged with P3(c)).
+
+    Per-build cost: O(cards) dict lookups, plus one name and one colour lookup per card from the cycle's
+    names snapshot. The caption map is the cycle's (_msg_summaries_scoped): on the pusher one
+    threading.local read per build, with _msg_sum_key's stats (four files per discovered session) run
+    once per cycle; a handler-thread build with a captioned card pays one _msg_summaries() call, the
+    same it paid to hydrate. Against the ~400 whole-list re-hydrations per 120 s the _judge_gen key
+    cost."""
+    deps = []
+    _map = [None]                                    # the caption map, fetched once on the first mid
+    for c in cards:
+        if c.get("kind") != "postal-service":
+            deps.append(None)
+            continue
+        mid = c.get("mid")
+        if mid and _map[0] is None:
+            _map[0] = captions()
+        cap = _map[0].get(mid) if mid else None
+        if c.get("direction") == "in":
+            fid = ((index.get(mid) or {}).get("fromId") or "") if mid else ""
+            deps.append((mid, cap, _name_of(fid) if fid else None, _name_color(fid) if fid else None))
+        else:
+            deps.append((mid, cap, _name_color_by_name(c.get("peer") or "")))
+    return tuple(deps)
+
+
 def _tasks_base():
     """Claude Code's live task-store root (~/.claude/tasks, or under $CLAUDE_CONFIG_DIR). Each session's
     to-do list lives at <root>/<fsid>/<N>.json — the AUTHORITATIVE state TaskList/TaskGet read."""
@@ -23210,11 +25229,24 @@ def _task_store_fp(fsid):
     if d is None:
         return None
     try:
-        ents = [(e.name, e.stat().st_mtime) for e in os.scandir(d)
-                if e.name.endswith(".json")]
+        ents = []
+        with os.scandir(d) as it:
+            for e in it:
+                if not e.name.endswith(".json"):
+                    continue
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue                              # unlinked between readdir and stat → not in the store
+                ents.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))   # ns + size + inode: a same-size
+        #                                                    rename-publish inside one coarse timestamp tick
+        #                                                    still moves the key (review 2026-09-03)
     except OSError:
         return None
     return tuple(sorted(ents))
+
+
+_task_store_memo = {}   # store dir -> (per-file fingerprint, task list) — see _read_task_store
 
 
 def _read_task_store(fsid, fold=None):
@@ -23239,6 +25271,26 @@ def _read_task_store(fsid, fold=None):
     d = _task_store_resolve(fsid, fold)
     if d is None:
         return None                                       # store unlocatable → the caller surfaces an error
+    # Memoized on the resolved dir + every N.json's (name, mtime, size) (2026-09-03): the active tab's
+    # build listed and decoded every task file per cycle. The fingerprint is the same shape
+    # _task_store_fp already stats for the chat-build key. Callers get their own copy.
+    try:
+        fp = []
+        with os.scandir(d) as it:
+            for e in it:
+                if not e.name.endswith(".json"):
+                    continue
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue                              # unlinked between readdir and stat → not part of the store
+                fp.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))
+        fp = tuple(sorted(fp))
+    except OSError:
+        return None                                       # store unreadable → the caller surfaces an error
+    hit = _task_store_memo.get(str(d))
+    if hit is not None and hit[0] == fp:
+        return [dict(t) for t in hit[1]]
     try:
         names = [n for n in os.listdir(d) if n.endswith(".json")]
     except OSError:
@@ -23258,59 +25310,126 @@ def _read_task_store(fsid, fold=None):
                       "status": str(t.get("status") or "pending"),
                       "_order": int(tid) if tid.isdigit() else (1 << 30)})
     tasks.sort(key=lambda t: (t["_order"], t["id"]))       # readable dir → authoritative (empty list included)
-    return [{"id": t["id"], "subject": t["subject"], "activeForm": t["activeForm"], "status": t["status"]}
-            for t in tasks]
+    out = [{"id": t["id"], "subject": t["subject"], "activeForm": t["activeForm"], "status": t["status"]}
+           for t in tasks]
+    if len(_task_store_memo) > 512:
+        _task_store_memo.pop(next(iter(_task_store_memo)))
+    _task_store_memo[str(d)] = (fp, out)
+    return [dict(t) for t in out]
 
 
-def _fold_tasks(session):
+_task_fold_memo = {}                             # sid → {id(turn atoms): (atoms, fp, partial)} — see _fold_tasks
+_task_fold_stats = {"hit": 0, "miss": 0}         # per TURN: turns served from the memo vs scanned
+
+
+def _task_fold_report():
+    """/perf memos.chat_fold_tasks: hit / miss count TURNS (served from the memo vs scanned): a
+    live-merged build over an unchanged parse of N turns is N-1 hits and 1 miss, a build after a re-parse
+    is N misses. Plus the gauge entries (sids held)."""
+    return dict(_task_fold_stats, entries=len(_task_fold_memo))
+
+
+def _fold_tasks_turn(atoms):
+    """One turn's share of _fold_tasks, pure over its atoms: (results, rejected, ops). results: tool_use_id →
+    the content of the turn's tool_result blocks (a TaskCreate's carries 'Task #N'); rejected: the
+    tool_use_ids whose result came back is_error (the CLI refused the call: nothing created, nothing moved);
+    ops: the turn's TaskCreate and TaskUpdate tool_use blocks in order, as (name, input, tool_use_id)."""
+    results, rejected, ops = {}, set(), []
+    for a in atoms:
+        if a.get("type") == "user":
+            for b in (a.get("message") or {}).get("content", []) or []:
+                if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
+                    results[b["tool_use_id"]] = b.get("content")
+                    if b.get("is_error"):
+                        rejected.add(b["tool_use_id"])
+        elif a.get("type") == "assistant":
+            for b in (a.get("message") or {}).get("content", []) or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in ("TaskCreate", "TaskUpdate"):
+                    ops.append((b["name"], b.get("input") or {}, b.get("id")))
+    return results, rejected, ops
+
+
+def _fold_tasks(session, sid=None):
     """Fold a session's TaskCreate/TaskUpdate tool calls into ONE checklist — the FALLBACK for _read_task_store
     when a session has no live task store (mirrors the old TS transcript.foldTasks the Python rewrite dropped).
     Task id = the number in TaskCreate's RESULT text ('Task #N created…'); status rides each TaskUpdate
-    {taskId,status}. NOTE this is lossy — it can't see a completion a subagent wrote only to the store (see
+    {taskId,status} the CLI accepted. NOTE this is lossy — it can't see a completion a subagent wrote only to the store (see
     _read_task_store). Returns the tasks in creation
     order, or None if there were none. The webview renders this as a todo card (kind:'todo') and hides the
-    raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events."""
-    out = {}                                              # tool_use_id → result content (a TaskCreate's carries 'Task #N')
+    raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events.
+
+    PER-TURN MEMO (INTERIM, round-4 plan P3 (b), 2026-09-07; P4's complete chat signature removes most of
+    the rebuilds this serves). The scan over a turn's atoms is pure over those atoms (_fold_tasks_turn),
+    so each turn's partial is kept per `sid` keyed on its atoms list's identity (held) plus _chat_turn_fp,
+    the fingerprint the chat fold trusts for a turn's atoms. What it hits: repeated builds over ONE
+    parse, the parse cache's object or its live-merged copy, whose earlier turns share the parse's atom
+    lists, so only the last turn, which the live merge rebuilds, is rescanned (the active tab's builds
+    between transcript writes, the background rebuilds a judge pass or a states row causes). What it does
+    not hit: a build after a transcript write. Every parse, the fold path included, mints new atom lists,
+    so that build scans every turn again; the long-transcript builds that follow each write, the plan's
+    cost-weighted case, are not served. The combine over the partials (the result join, the ops replay)
+    runs in full on every call and returns a fresh list, so a caller may keep or alter the result without
+    reaching the memo. No sid: no memo (a direct call)."""
+    prev = _task_fold_memo.get(sid) if sid is not None else None
+    cur, parts = {}, []
     for turn in session["turns"]:
-        for a in turn["atoms"]:
-            if a.get("type") != "user":
-                continue
-            for b in (a.get("message") or {}).get("content", []) or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
-                    out[b["tool_use_id"]] = b.get("content")
+        atoms = turn["atoms"]
+        fp = _chat_turn_fp(turn)
+        ent = prev.get(id(atoms)) if prev else None
+        if ent is not None and ent[0] is atoms and ent[1] == fp:
+            _chat_memo_bump(_task_fold_stats, "hit")
+            part = ent[2]
+        else:
+            _chat_memo_bump(_task_fold_stats, "miss")
+            part = _fold_tasks_turn(atoms)
+        if sid is not None:
+            cur[id(atoms)] = (atoms, fp, part)
+        parts.append(part)
+    if sid is not None:
+        _task_fold_memo[sid] = cur                   # only this session's current turns: the memo shrinks with a rewrite
+    out = {}                                          # tool_use_id → result content (a TaskCreate's carries 'Task #N')
+    rejected = set()                                  # tool_use_ids whose result came back is_error
+    for results, rej, _ops in parts:
+        out.update(results)
+        rejected |= rej
     tasks, order = {}, 0
-    for turn in session["turns"]:
-        for a in turn["atoms"]:
-            if a.get("type") != "assistant":
-                continue
-            for b in (a.get("message") or {}).get("content", []) or []:
-                if not isinstance(b, dict) or b.get("type") != "tool_use":
+    for _results, _rejected, ops in parts:
+        for name, inp, bid in ops:
+            if name == "TaskCreate":
+                # A TaskCreate the CLI REJECTED is not a checklist item. A malformed call — no `subject`
+                # ({agent_hint, prompt}), or a {tasks: [...]} batch — draws a paired tool_result with
+                # is_error set and an InputValidationError naming the missing field: nothing was created,
+                # nothing launched, and nothing renders it (the chat skips every raw TaskCreate row).
+                # Folded as a pending task it gave a session whose only TaskCreate was rejected a phantom
+                # open item, which tripped the card's "can't read the task store" error the moment the
+                # store was unresolvable. The skip keys on the result's is_error — the event that says no
+                # task exists — not on the input's key names, which would miss every other rejected
+                # shape. A create whose result has not landed yet still folds under its creation-order
+                # id, as before.
+                if bid in rejected:
                     continue
-                inp = b.get("input") or {}
-                if b.get("name") == "TaskCreate":
-                    # A BACKGROUND-AGENT TaskCreate (the Task tool's {agent_hint, prompt} shape, no
-                    # `subject`; its result is an agent id, not "Task #N") is not a to-do checklist item.
-                    # Folding it as a pending task gave a session that only launched background agents a
-                    # phantom open task, which tripped the card's "can't read the task store" error the
-                    # moment the store was unresolvable (the user 2026-09-03, a session whose only Task calls were background-agent launches). Only a checklist create (it carries a `subject`) folds; the background
-                    # task has its own rendering (bgTasks / TaskStop).
-                    if not str(inp.get("subject") or "").strip() and ("prompt" in inp or "agent_hint" in inp):
-                        continue
-                    # Only a TaskCreate's result is ever read, so only it is encoded, here, to the same text
-                    # the regex saw when every result was encoded up front. Encoding every Bash and Read
-                    # output (list-shaped ones, image blocks) for a value nothing read was 0.3% of the pusher
-                    # (kernel4 profile, 2026-09-06).
-                    r = out.get(b.get("id"), "")
-                    m = re.search(r"Task #(\d+)", (r if isinstance(r, str) else json.dumps(r)) or "")
-                    tid = m.group(1) if m else "c%d" % order
-                    af = inp.get("activeForm")
-                    tasks[tid] = {"_order": order, "id": tid, "subject": str(inp.get("subject") or ""),
-                                  "activeForm": str(af) if af else None, "status": "pending"}
-                    order += 1
-                elif b.get("name") == "TaskUpdate":
-                    t = tasks.get(str(inp.get("taskId", "")))
-                    if t:
-                        t["status"] = str(inp.get("status") or t["status"])
+                # Only a TaskCreate's result is ever read, so only it is encoded, here, to the same text
+                # the regex saw when every result was encoded up front. Encoding every Bash and Read
+                # output (list-shaped ones, image blocks) for a value nothing read was 0.3% of the pusher
+                # (kernel4 profile, 2026-09-06).
+                r = out.get(bid, "")
+                m = re.search(r"Task #(\d+)", (r if isinstance(r, str) else json.dumps(r)) or "")
+                tid = m.group(1) if m else "c%d" % order
+                af = inp.get("activeForm")
+                tasks[tid] = {"_order": order, "id": tid, "subject": str(inp.get("subject") or ""),
+                              "activeForm": str(af) if af else None, "status": "pending"}
+                order += 1
+            else:                                     # TaskUpdate
+                # A TaskUpdate the CLI REJECTED — its paired tool_result carries is_error (a status value
+                # outside its set, a transition it refused) — wrote nothing to the store, so it moves no
+                # checklist item; applied, the refused status stood in for the store's. Keyed on the
+                # result's is_error like the TaskCreate skip above, so this fold and event_model's
+                # declared_plan stay identical. An update whose result has not landed still applies.
+                if bid in rejected:
+                    continue
+                t = tasks.get(str(inp.get("taskId", "")))
+                if t:
+                    t["status"] = str(inp.get("status") or t["status"])
     if not tasks:
         return None
     ordered = sorted(tasks.values(), key=lambda t: t["_order"])
@@ -23324,11 +25443,54 @@ _parse_cache = {}                                # realpath → ((mtime, size, p
 # every 0.5s poll — a full transcript reshape into ChatEvent[] AND a json.dumps of the whole chat, per tab,
 # even when nothing changed. With transcripts now tens of MB, that pegged the kernel and starved the
 # webview. Cache each session's built payload + its serialized string, keyed on the transcript+states
-# (mtime,size) — the same trust model as _parse_cache. The ACTIVE tab(s) always rebuild (so what the user
-# is watching stays live, incl. SDK live-tail atoms that lead the disk); an unchanged BACKGROUND tab reuses
-# the cache → one stat() instead of a reshape+serialize. A real change (or switching to the tab) rebuilds.
-_built_chat = {}                                 # sid → (sig, payload_dict, serialized_str)
-_judge_gen = [0]                                 # bumped each producer pass → busts the cache when the judge
+# (mtime,size) — the same trust model as _parse_cache. The ACTIVE tab(s) are served while _active_chat_sig
+# is unchanged (its key carries what no file records: the owning backend's live tail and queue, the snapshot
+# facts, the side files, the clock predicates — 2026-09-03/05); an unchanged BACKGROUND tab reuses the
+# cache on its file-stat + snapshot key → one stat() instead of a reshape+serialize. A real change (or
+# switching to the tab) rebuilds.
+_built_chat = {}                                 # sid → (sig, payload_dict, serialized_str, active_sig, build_started_at)
+def _judge_store_fp():
+    """Fingerprint of every store a judge pass can WRITE — goal trees, captions, archives, the cleared
+    archive and the episode log: (dir, name, mtime_ns, size) per file, from one scandir each. Two equal
+    fingerprints around a pass prove the pass changed nothing a view reads; that is the exact event
+    _judge_gen now keys on (2026-09-03). Before, the generation bumped after EVERY producer pass (≤3 s
+    cadence), so the feed, the timeline and every background chat tab rebuilt every pass on a quiet
+    board — the dominant clock-like input to the view signatures, measured in the offline replay."""
+    out = []
+    for d in (jd.GOALDIR, jd.CAPDIR, jd.ARCHDIR, jd.STATE / "goals-archive", jd.STATE / "episodes"):
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        st = e.stat()
+                    except OSError:
+                        continue
+                    out.append((d.name, e.name, st.st_mtime_ns, st.st_size, st.st_ino))
+        except OSError:
+            continue
+    out.sort()
+    return tuple(out)
+
+
+_last_judge_fp = [None]   # the stores' fingerprint at the END of the last producer pass — see below
+
+
+def _bump_judge_gen_if_changed(before_fp=None):
+    """Advance the judge generation when the judge-written stores changed since the LAST time this looked
+    (the end of the previous pass) — not merely during the pass: a kernel-side save between passes (a
+    user's clear or resolve, the awaiting lift, a nudge verdict) moves a store too, and the background
+    chat tabs refresh on this generation alone (review 2026-09-03). `before_fp` is accepted for callers
+    that hold one but the comparison anchor is the previous look. Returns True when it advanced."""
+    cur = _judge_store_fp()
+    anchor = _last_judge_fp[0] if _last_judge_fp[0] is not None else before_fp
+    _last_judge_fp[0] = cur
+    if cur != anchor:
+        _judge_gen[0] += 1
+        return True
+    return False
+
+
+_judge_gen = [0]                                 # bumped when a producer pass CHANGED a store → busts the cache when the judge
                                                  # may have changed goal/caption state without a transcript write
 
 # ATOMIC JUDGE-PASS VISIBILITY (the user 2026-06-30): the triage judges (planner → closer → courier →
@@ -23369,7 +25531,8 @@ _goals_snap_lock = threading.Lock()
 # (plan C1) when it lands.
 _goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
 _GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
-_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0,   # observability + tests (/perf memos)
+                     "live": 0, "snap": 0}           # _feed_goals_view serves: the live branch / the snapshot branch
 
 
 def _goals_memo_decode(data):
@@ -23481,18 +25644,57 @@ def _feed_goals(sid):
     ladder the judge already encodes (user > judges) applied to the view, and it is how a CLEAR has always
     behaved (cleared.jsonl is read live, outside the snapshot). Replay is idempotent, but rollup_status is
     not free, so a sid re-punches only when its mark MOVES — a second gesture in the same pass must land
-    too, which a plain already-done flag would have swallowed."""
+    too, which a plain already-done flag would have swallowed.
+
+    The store only; _feed_goals_view returns it with the key a memo can hold for it."""
+    return _feed_goals_view(sid)[0]
+
+
+def _feed_goals_view(sid):
+    """`(store, key)`: the store _feed_goals serves for `sid` and a KEY that stands for its content.
+
+    Two served stores with the same key (compared by identity, `is`) have equal content, so a consumer
+    that derives values from the store may keep them under the key (build_feed's per-session memo).
+    The key is the served object itself where that object's identity already implies its content, and a
+    fresh `object()` (equal to nothing, so every consumer misses) where it does not:
+    - LIVE branch (no pass in flight, or a sid the pass did not snapshot): the store is read through
+      jd.load_goals_shared, the shared read-only cache (round-4 plan P1; the plain jd.load_goals here
+      was the pusher's single largest raw_decode caller, re-parsing stores the timeline and the chat
+      already held in the cache). A FrozenStore from the cache is the key: the cache hands one object
+      per (store identity, journal identity, archive identity) AND compares the store's bytes on a hit,
+      so equal objects mean equal bytes, and a publish, a journal append or an archive move yields a new
+      object. Anything else the loader answers (the cache switched off after a write attempt, no store
+      file, an unreadable journal, an archive that moved under the fill) is a private object per call
+      with no identity guarantee: the key is a sentinel.
+    - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it.
+      Every user gesture recorded since the snapshot is replayed onto a FRESH private copy (one per
+      moved mark, never in place on an earlier copy), and that copy is the key once the replay
+      succeeded, so an object an earlier build derived from is never re-punched under its identity. A
+      punch that FAILED (the mark is newer than the snapshot and not recorded done) retries on the next
+      read onto another fresh copy; until it succeeds the key is a sentinel.
+    - A REWIND HOLD armed on the sid: _apply_rewind_hold serves a filtered view built per call, whose
+      content also depends on the transcript (the kept-chain lookup); the key is a sentinel for as long
+      as the hold stands.
+    build_feed is read-only on the store (tests/test_feed_goals_shared.py pins it): a write on the
+    shared object raises FrozenStoreError and switches the cache off, loudly (memos.goals_shared `off`).
+    Serve counters ride memos.goals_snap: `live` and `snap` count the branch taken, `punch` the copies."""
+    hold = _rewind_hold_get(sid)
     with _goals_snap_lock:
         snap = _goals_snap[0]
         if snap is not None and sid in snap:
+            _goals_memo_stats["snap"] += 1
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                # COPY-ON-PUNCH, a FRESH copy per gesture: the entry is the memo's object, shared with every
+                # later pass that finds the file unchanged, so the replay and rollup below land on a copy
+                # of it (the _apply_rewind_hold idiom) — and a second gesture in the same pass copies
+                # again instead of re-punching the first copy in place. The served object's identity is
+                # the key build_feed's per-session memo holds a session's rows under, so an object an
+                # earlier build saw must never change under it (review 2026-09-07: re-punching the first
+                # copy in place made the memo serve the pre-gesture rows for the rest of the pass). One
+                # json round trip per gesture; `punch` counts the sids copied, once per pass each.
+                store = snap[sid] = json.loads(json.dumps(store))
                 if sid not in _goals_snap_owned:
-                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
-                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
-                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
-                    # same pass punches the copy this one made.
-                    store = snap[sid] = json.loads(json.dumps(store))
                     _goals_snap_owned.add(sid)
                     _goals_memo_stats["punch"] += 1
                 try:
@@ -23503,9 +25705,14 @@ def _feed_goals(sid):
                     #                                    card for the whole pass (the user 2026-07-23)
                 except Exception:
                     sys.stderr.write("feed-goals: user-override replay: %s\n" % traceback.format_exc())
-            return _apply_rewind_hold(sid, store)      # a pending rewind's cards are hidden NOW (latched
-            #                                            at the gesture; archive lands at the branch-take)
-    return _apply_rewind_hold(sid, jd.load_goals(sid))   # no pass in flight → live read, outside the lock
+            settled = not (mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark)
+            key = store if (settled and not hold) else object()
+            return _apply_rewind_hold(sid, store), key   # a pending rewind's cards are hidden NOW (latched
+            #                                              at the gesture; archive lands at the branch-take)
+        _goals_memo_stats["live"] += 1
+    store = jd.load_goals_shared(sid)                    # no pass in flight → the shared read-only view, outside the lock
+    key = store if (isinstance(store, jd.FrozenStore) and not hold) else object()
+    return _apply_rewind_hold(sid, store), key
 
 # Delta-send (the user 2026-06-25, who wanted to stop re-sending what didn't change): the chat pusher used to send the
 # FULL events array (~8MB for a 34MB transcript) on every change, even when one event was appended. Keep the
@@ -23513,6 +25720,178 @@ def _feed_goals(sid):
 # events holds the last-built events per session; _chat_diff finds the first index that differs from it — the
 # exact point content changed (a new event OR a tool output that just filled an earlier card). Diffing by
 # CONTENT (not a fixed window) is robust to _hydrate_postal turning one event into several cards mid-array.
+def _clock_predicates(sid, tm, now, path=None):
+    """The clock-derived facts build_session renders, as the booleans they resolve to — so a cache key
+    that carries them changes EXACTLY when the rendered payload would (the flip is the event), never on a
+    tick: the faded look at an hour idle (_idle_faded), an interrupt whose 120 s in-flight cap has run
+    out (_interrupting), a model switch whose 20 s cap has (_model_pending_now), a compaction whose 180 s
+    optimistic cap has (_compacting_optimistic), and each live background task past its recorded
+    deadline (em._bg_expired). These are the only reasons an identical-input build can differ."""
+    tm = tm or {}
+    since = tm.get("since") or 0
+    ic = _interrupt_clicked.get(sid)
+    mp = _model_switch_pending.get(sid) or {}
+    cc = _compact_clicked.get(sid)
+    # the live-task set AFTER the build's own expiry filter (_bg_live_norm joins each task's recorded
+    # deadline from the launch ledger and drops the expired ones) — a task expiring is a tid dropping
+    # out of this tuple. The raw snapshot rows carry no deadline, so a predicate over them could never
+    # flip (review 2026-09-03).
+    try:
+        live_ids = tuple(sorted(str(r.get("tid") or "") for r in _bg_live_norm(sid, path) if isinstance(r, dict)))
+    except Exception:
+        live_ids = None
+    return (bool(since) and bool(_idle_faded(tm.get("state") or "", since, now)),
+            bool(since) and (now - since > FADED_S),   # the hour mark itself: the build derives the chip's
+            #                                            state (a stuck 'compacting' overridden, "" → ready),
+            #                                            so key the flip whatever the raw state says
+            bool(ic) and (now - ic > 120),
+            bool(mp) and (now > (mp.get("until") or 0)),
+            bool(cc) and (now - cc > 180),
+            live_ids)
+
+
+_ACTIVE_SIG_FILES = ("sdk/{sid}.json", "sdk", "goals/{sid}.json", "overrides/{sid}.jsonl", "archive/{sid}.json",
+                     "goals-archive/{sid}.json", "captions/{sid}.jsonl", "episodes/{sid}.jsonl", "cleared.jsonl",
+                     "timeline/messages.jsonl", "colormap", "session-flags.json", "notify-cards.json",
+                     "retry-suppressed.json", "auto-nudge.json",
+                     "watches.json", "pr-watches.json",   # the kernel-owned watch set the awaiting box renders
+                     "usage.json",                        # the account limit hold behind the queued bubble
+                     "retry-paused.json")                 # the spend hold the queued bubble renders (review 2026-09-05)
+
+
+def _claudemd_paths(cwd):
+    """The CLAUDE.md files _claudemd_docs reads for `cwd`, in load order — the global file, then each project
+    file from the git root down to cwd. Shared with the active-tab key so an edit to any of them is a
+    keyed event, not a silent lag."""
+    out = [str(_GLOBAL_CLAUDE_MD)]
+    home = os.path.expanduser("~")
+    chain = []
+    d = os.path.abspath(os.path.expanduser(cwd)) if cwd else None
+    while d:
+        chain.append(d)
+        if os.path.isdir(os.path.join(d, ".git")):
+            break
+        parent = os.path.dirname(d)
+        if parent == d or d == home:
+            break
+        d = parent
+    out += [os.path.join(dd, "CLAUDE.md") for dd in reversed(chain)]
+    return out
+
+
+def _external_sig(sid, path=None):
+    """(stat, …) of the inputs OUTSIDE the state root that build_session renders: the account file the
+    billing badge reads; the HEAD files of the git trees its branch rows read — the registered cwd's
+    tree AND the tree of the last edited file (the per-session worktree, under this repo's convention),
+    both resolved through _tree_of exactly as the build does, so a subdirectory cwd keys its repo's
+    HEAD too; the CLAUDE.md chain (the docs card); and the output file of every running background
+    task, whose tail the task box shows live. cwd falls back to the transcript's own stamp when the
+    registry has none, as the build's does. These are external edits with no romp event; a stat is the
+    honest key (review 2026-09-03). Accepted lag, documented: a path token that becomes a link because a
+    PEER created the file it names re-resolves on the next keyed change, not on the file's creation."""
+    meta = _session_meta(path) if path else {}
+    cwd = _cwd_of(sid) or (meta.get("cwd") if isinstance(meta, dict) else "") or ""
+    paths = [os.path.expanduser("~/.claude.json")]
+    _ks = getattr(jd, "_keysrc", None)                  # the env file's key line decides authBoth (read live since b4ca13e7)
+    if _ks is not None:
+        try:
+            paths.append(_ks.service_env_path())
+        except Exception:
+            pass
+    tops = []
+    for d in (os.path.expanduser(cwd) if cwd else "",
+              os.path.dirname((meta.get("lastEditPath") if isinstance(meta, dict) else "") or "")):
+        if not d:
+            continue
+        try:
+            top = _tree_of(d)[0]
+        except Exception:
+            top = ""
+        if top and top not in tops:
+            tops.append(top)
+    for top in tops:
+        try:
+            hp = _git_head_file(top)
+        except Exception:
+            hp = ""
+        if hp:
+            paths.append(hp)
+    paths += _claudemd_paths(cwd) if cwd else [str(_GLOBAL_CLAUDE_MD)]
+    if path:
+        try:
+            for tk in _bg_scan_cached(path):
+                if isinstance(tk, dict) and tk.get("status") == "running" and tk.get("outputFile"):
+                    paths.append(os.path.expanduser(str(tk["outputFile"])))
+        except Exception:
+            pass
+    out = []
+    for p in paths:
+        try:
+            st = os.stat(p)
+            out.append((st.st_mtime_ns, st.st_size, st.st_ino))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _active_chat_sig(sess, tm, now, base=None):
+    """The exact change key for the WATCHED chat tab (2026-09-03). The active tab used to rebuild on every
+    pusher cycle "by design" — its payload moves with inputs no file records: the SDK live tail, the
+    snapshot facts, the send queue, the compacting/clearing brackets, kernel-side stamps — so the
+    background tabs' file-stat signature could not serve it, and an 80 MB session cost ~0.4-0.9 s of
+    reshape per 0.5 s cycle whether or not anything moved (the offline replay). This key names each of
+    those inputs: _chat_build_sig (transcript/states/judge gen/task store/pending cut) + the backend's live
+    revision, queue, brackets + the snapshot row minus its volatile timestamp + the stat of every side file
+    the build reads + the names registry + the clock predicates that flip the rendered output + the
+    in-flight judge set. Kernel-side stamps that lack a stat are covered by _views_dirty at the serve
+    site (the _cached_feed idiom). None → never cache (no transcript, or an input we cannot key).
+    `base` is the pusher's already-computed _chat_build_sig for this tab (one stat pass, not two)."""
+    base = _chat_build_sig(sess, tm) if base is None else base
+    if base is None:
+        return None
+    sid = str(sess.get("sid") or "")
+    try:
+        snap = json.dumps({kk: vv for kk, vv in (tm or {}).items() if kk != "snapT"}, sort_keys=True, default=str)
+    except Exception:
+        return None
+    # The live tail of the backend that OWNS the session — not only the SDK's (review 2026-09-05: a tmux
+    # session's composer echo and a Codex session's queue live in their own stores, which the build renders
+    # but no file records; keyed on _sdk() alone the watched tmux tab served its last build with the send
+    # missing until some file moved). The SDK backend counts its mutations (live_rev); the others are
+    # digested from exactly what the build reads: each live atom's identity and dropped flag, the queue,
+    # the brackets and the launch error.
+    be = Sessions.backend_for(sid)
+    live = ()
+    if be is not None:
+        try:
+            if hasattr(be, "live_rev"):
+                live = (be.live_rev(sid), tuple(be.pending_queued(sid) or ()), be.compacting(sid), be.clearing(sid))
+            else:
+                atoms = tuple((str(a.get("uuid") or a.get("id") or ""), bool(a.get("dropped")), str(a.get("text") or "")[:64])
+                              for a in (be.live_atoms(sid) or ()) if isinstance(a, dict))
+                le = be.launch_error(sid) if hasattr(be, "launch_error") else None
+                live = (atoms, tuple(be.pending_queued(sid) or ()),
+                        be.compacting(sid) if hasattr(be, "compacting") else None,
+                        be.clearing(sid) if hasattr(be, "clearing") else None, bool(le))
+        except Exception:
+            return None
+    files = []
+    for rel in _ACTIVE_SIG_FILES:
+        try:
+            st = os.stat(jd.STATE / rel.format(sid=sid))
+            files.append((st.st_mtime_ns, st.st_size, st.st_ino))
+        except OSError:
+            files.append(None)
+    try:
+        ext = _external_sig(sid, sess.get("path"))
+    except Exception:
+        return None
+    names = getattr(_live_scope, "names", None)
+    names_key = hash(repr(sorted(names.items()))) if isinstance(names, dict) else None
+    return base + (snap, live, tuple(files), names_key, _clock_predicates(sid, tm, now, sess.get("path")),
+                   jd.active_change(), ext)
+
+
 _prev_chat_events = {}                           # sid → the events list from the previous build (to diff against)
 # ── the chat-payload FOLD (issue 903, 2026-09-03) ──────────────────────────────────────────────────
 # build_session reshaped a working session's WHOLE event list on every push (0.3-1 ms/event; 26k
@@ -23568,6 +25947,17 @@ def _chat_fold_demote(reason):
     """Count WHY a build could not reuse its cached prefix (g:<reason>) — the hit-rate diagnosis
     this cache lives or dies by, mirroring event_model._asm_demote."""
     _chat_fold_count("g:" + reason)
+
+
+_chat_memo_lock = threading.Lock()               # the chat memos' counters: one lock, dict increments only
+
+
+def _chat_memo_bump(stats, key, n=1):
+    """One counter increment on a chat-memo stats dict (_merge_sets_stats, _chat_postal_stats,
+    _ledger_memo_stats, _task_fold_stats) under one lock, the _chat_fold_count shape: the pusher, the WS
+    handlers and the backends all build, and a bare `+= 1` from two threads loses counts."""
+    with _chat_memo_lock:
+        stats[key] = stats.get(key, 0) + n
 
 
 def _chat_turn_fp(turn):
@@ -23648,6 +26038,34 @@ def _chat_postal_key():
         return None
 _prev_chat_ledger = {}                           # sid → the previous build's ledger (so a delta carries it only when changed)
 
+# The ledger memo (INTERIM, round-4 plan P3 (a), 2026-09-07): build_session's goal-tree walk and live
+# roots per sid, keyed on every input of the walk (see the ledger section of build_session for the list).
+# P4's complete chat signature removes most of the background rebuilds this serves; the plan keeps it for
+# the active tab and for what P4 leaves, and its counters say what that is worth.
+_LEDGER_TREE_ROWS = 80                           # rows the ledger ships (tree[:80]); the walk appends no row past it
+_ledger_memo = {}                                # sid → (key, parsed, gstore, tree, live_roots); parsed and gstore held by identity
+_ledger_memo_stats = {"hit": 0, "miss": 0, "bypass_live": 0, "bypass_hold": 0, "bypass_empty": 0, "evict": 0}
+
+
+def _ledger_memo_report():
+    """/perf memos.chat_ledger: hit / miss (ledgers served from the memo vs walked), bypass_live (builds
+    that merged live atoms: the last turn's segments differ from the parse's), bypass_hold (an armed
+    rewind hold filters a store copy per build), bypass_empty (a store with no nodes: no file, so
+    load_goals_shared mints a fresh object per call and the walk is empty anyway), evict (entries the
+    pusher dropped for tabs no longer shown) and the gauge entries."""
+    return dict(_ledger_memo_stats, entries=len(_ledger_memo))
+
+
+def _chat_cleared_key():
+    """cleared.jsonl's (mtime_ns, size), or None when absent: the ledger memo's identity for the set
+    _cleared_ids reads from it. Taken BEFORE the read (stat-then-read), so a row landing between the two
+    pairs an old key with new content, one extra miss next build, never a stale hit."""
+    try:
+        st = os.stat(jd.STATE / "cleared.jsonl")
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
 # Wire tail-windowing (the user 2026-06-25, who found startup slow): delta-send already trims STEADY-STATE pushes,
 # but a FRESH connect still got every open tab's WHOLE transcript (the 42MB active session + the others) —
 # tens of MB transferred + parsed before the dashboard settled. So a full send now ships only the last
@@ -23675,12 +26093,18 @@ def _chat_diff(prev, cur):
     return i
 
 
-def _chat_build_sig(sess):
+def _chat_build_sig(sess, tm=None):
     """A cheap (transcript mtime,size, states mtime,size) signature for the chat-build cache — busts on any
-    new content OR a state transition (idle/working), the two things that change a session's chat payload.
-    A new caption (TOC headline) lags for a background tab until its transcript next changes or it's opened,
-    which is acceptable for a tab the user isn't looking at. Returns None (→ never cache, always rebuild) if
-    the session has no transcript path or it can't be stat'd."""
+    new content OR a state transition (idle/working), the two things that change a session's chat payload,
+    plus the judge generation, the task store, the pending cut, and — when the caller hands the session's
+    snapshot row `tm` — the facts the build renders from it (state, model, ctx, effort, subagents, background
+    tasks, pending picks, retry count, connected, spawning). The judge generation used to advance every pass
+    and so rebuilt every background tab within ~3 s whatever changed; it now advances only when a judge-
+    written store moved, so the snapshot digest is what keeps a background tab's chips within one cycle of
+    the truth (review 2026-09-05). What still lags for a BACKGROUND tab until one of those inputs moves: the
+    side files only the active key stats (watches, usage, cleared cards, notify cards) — acceptable for a tab
+    the user isn't looking at; it is rebuilt the moment it becomes the active one. Returns None (→ never
+    cache, always rebuild) if the session has no transcript path or it can't be stat'd."""
     path = sess.get("path")
     if not path:
         return None
@@ -23734,7 +26158,55 @@ def _chat_build_sig(sess):
     # every tab a None sig on the first push and a False one on the next (0.5 s later) and rebuilt the
     # whole strip once for a value the row reads the same (needsInput === true). Only True is a verdict.
     sig.append(_feed_needs_input_of(sess.get("sid") or "") is True)
+    # the push's row for this sid (its live facts; 2026-09-03 upstream), ONE component so the tail keeps a
+    # fixed length for _chat_sig_labels: None when the push has no row for the sid
+    t = tm
+    sig.append(None if t is None else
+               (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"),
+                len(t.get("subagents") or ()), len(t.get("bgTasks") or ()), bool(t.get("interrupting")),
+                bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
+                int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
+                t.get("auth"), t.get("authLive")))
     return tuple(sig)
+
+
+# The labels of _chat_build_sig's components after the two transcript values and the per-states-file
+# pairs, in append order. The sig stays a flat tuple (its callers compare it whole, and test pins read
+# its source), so the labels are derived from the tuple's SHAPE: the states section is the only one
+# whose length varies (one or two files, two values each); the head and the tail are fixed. A component
+# appended to _chat_build_sig must be appended here too; tests/test_chat_fixed_cost_memos.py pins the
+# appends against this tuple.
+_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "cut", "note", "needs", "tmux")
+
+
+def _chat_sig_labels(sig):
+    """One label per position of a _chat_build_sig tuple (see _CHAT_SIG_TAIL)."""
+    n_states = len(sig) - 2 - len(_CHAT_SIG_TAIL)
+    return ("transcript", "transcript") + ("states",) * max(n_states, 0) + _CHAT_SIG_TAIL
+
+
+def _chat_sig_miss(old, new):
+    """Why a background tab rebuilt: the sorted labels of every _chat_build_sig component that differs
+    between the cached signature `old` and the fresh one `new` (the bg_miss attribution under
+    builds.chat in /perf). No cached build is ("cold",); a fresh signature of None (no transcript path,
+    or one that cannot be stat'd) is ("nosig",). Signatures of different lengths differ in their states
+    section (the session's anchor appeared or went), so that label is set and the fixed head and tail
+    are compared from their own ends."""
+    if new is None:
+        return ("nosig",)
+    if old is None:
+        return ("cold",)
+    labels = _chat_sig_labels(new)
+    if len(old) == len(new):
+        return tuple(sorted({labels[i] for i in range(len(new)) if old[i] != new[i]}))
+    out = {"states"}
+    for i in range(2):                                 # the head: the transcript's (mtime, size)
+        if old[i] != new[i]:
+            out.add(labels[i])
+    for j in range(1, len(_CHAT_SIG_TAIL) + 1):        # the tail, aligned from the end
+        if old[-j] != new[-j]:
+            out.add(_CHAT_SIG_TAIL[-j])
+    return tuple(sorted(out))
 
 
 def _parse(path, sid, now):
@@ -24717,6 +27189,26 @@ def _session_chip(sid, path, session, tm, now):
 # the moment compaction ends. A repeated model/effort pick REPLACES its earlier parked op in place (last
 # pick wins — one queued chip, not a pile), since only the final setting can matter.
 _PENDING_OPS_FILE = Path(jd.STATE) / "pending-ops.json"
+# ONE lock around every MUTATION of _pending_ops (2026-09-05): the WS/HTTP handler threads park and cancel,
+# the move thread re-inserts a head, and the pusher thread drains — all on this dict, and since the drain
+# moved onto the pusher cycle (#904) it runs every 0.5 s and on every wake. Unlocked, two races were
+# confirmed by review: (1) a ✕ — or the move thread's head re-insert — changed a sid's list between the
+# drain's head read and its pop, so the drain popped a list the ✕ had just emptied (an IndexError the
+# blanket except turned into a dropped queue) or the ✕, re-locating by index+body and then popping,
+# removed the op BEHIND the one clicked once the drain's pop had shifted the list; (2) two writers tore the
+# disk mirror through one shared temp path (a kernel death then restored a wrong queue). The lock guards the
+# mutations ONLY: no backend call ever runs under it (CodexBackend.send can synchronously spawn and
+# initialize `codex app-server` with no request timeout; SdkBackend.busy/turn_seq take the backend's own
+# lock), and a handler evaluates only the queue-presence check under it (_park_behind_queue) — its
+# expensive gates (_compacting_now / _working_now / _limit_hold: a tmux fork, a discover sweep, the usage
+# file) run outside. So a holder owns it for a dict read, a list append or pop, and the mirror write —
+# microseconds. Re-entrant, because _park_op and _save_pending_ops take it and are called from under it.
+# The drain takes it NON-BLOCKING at the top of its walk (_apply_pending_ops). No backend thread ever takes
+# it (the poke, push and push_session callbacks the backends hold touch no queue). Reads stay unlocked
+# (build_session's chip list, the nudge guard, _ops_gate's advisory queue read; the parked-parse refresh reads no queue — the drain hands it each sid from a snapshot taken under the lock): a dict
+# get or list iteration under the GIL never raises, and a chip one cycle early or late is corrected by the
+# next push.
+_pending_ops_lock = threading.RLock()
 
 
 def _load_pending_ops():
@@ -24737,13 +27229,18 @@ def _load_pending_ops():
 
 def _save_pending_ops():
     """Mirror _pending_ops to disk on every mutation, atomically, so parked ops survive a kernel
-    death. Tiny file, mutation-rate writes (a park or a delivery), not a hot path."""
-    try:
-        tmp = _PENDING_OPS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}))
-        os.replace(tmp, _PENDING_OPS_FILE)
-    except Exception:
-        sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
+    death. Tiny file, mutation-rate writes (a park or a delivery), not a hot path. Under the queue lock,
+    so the snapshot is whole (an unlocked writer iterating the dict while a handler parked raised
+    "dictionary changed size during iteration" and skipped the save), and through _atomic_write's
+    per-writer temp: the old fixed `pending-ops.tmp` was shared by every thread, so the loser renamed a
+    temp the winner had already moved, or wrote into one mid-rename — a torn mirror that the next boot
+    restored as the queue (review find on #904, 2026-09-05)."""
+    with _pending_ops_lock:
+        try:
+            _atomic_write(_PENDING_OPS_FILE,
+                          json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}))
+        except Exception:
+            sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
 
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
@@ -24807,9 +27304,20 @@ def _working_now(sid):
     return _session_working(session["turns"])
 
 
+_UNSET = object()
+_UNREADABLE = object()   # _live_scope.usage when the drain's one usage.json read failed: 'no hold', never 'empty usage'
+
+
 def _limit_hold(sid):
     """Is this session's input HELD because the ACCOUNT cannot serve it yet — a 5h/7d rate window sitting
     at its cap, or the monthly spend cap? Returns the hold {reason, resetsAt, what} or None.
+
+    Inside the parked-op drain the readings of usage.json (with its colormap ramps) and of the retry-pause
+    file come from the drain's scope (_live_scope.usage / _live_scope.spend_pause — the same thread-confined
+    idiom as the cycle's liveness snapshot and path memo), read ONCE per drain instead of once per held
+    session: an account limit parks every session's input for hours, and the per-session re-read was most
+    of the drain's 46 ms on a seventeen-session board (measured 2026-09-05). Elsewhere it reads fresh. Both
+    readings are the limits half (_usage_limits): the spend ledger is not an input of this gate (P18).
 
     The gap this closes (the user 2026-07-24): hitting a usage limit turned every following gesture into
     its own failure. /compact came back refused ("this would take you over your limit"), the message typed
@@ -24820,8 +27328,8 @@ def _limit_hold(sid):
     /model and /effort are exactly as un-servable as a message, and they hold their place in the sequence.
 
     RELEASE is read from the event, never a timer romp invents:
-      - a rate window carries the API's own resetsAt, and _usage().limited goes false the moment that
-        stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
+      - a rate window carries the API's own resetsAt, and _usage_limits()["limited"] goes false the moment
+        that stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
       (its 0.5 s backstop) of the reset;
       - a spend cap has no readable reset (it lifts when the user raises it), so the hold rides the
         retry-pause _auto_pause_on_spend_limit engaged and lifts when that lifts: the user resumes it, or
@@ -24844,10 +27352,15 @@ def _limit_hold(sid):
     if _le and _le.get("limit"):
         return {"reason": "limit", "resetsAt": None,
                 "what": "waiting for your usage limit to reset", "detail": _le.get("text") or ""}
-    try:
-        u = _usage() or {}
-    except Exception:
-        return None                                   # unreadable usage → never invent a hold
+    usage = getattr(_live_scope, "usage", _UNSET)
+    if usage is _UNSET:
+        try:
+            usage = _usage_limits()                   # the limits half: this gate runs per parked session
+        except Exception:                             # per cycle and reads no ledger figure (P18)
+            usage = _UNREADABLE
+    if usage is _UNREADABLE:
+        return None                                   # unreadable usage → never invent a hold (the drain's
+    u = usage or {}                                   # hoisted reading says so the same way: review find 2026-09-05)
     lim = u.get("limited") or {}
     resets = [(u.get(k) or {}).get("resetsAt") for k in ("fiveHour", "sevenDay") if lim.get(k)]
     if resets:
@@ -24858,7 +27371,8 @@ def _limit_hold(sid):
                 # epoch) → nothing to count down to, so promise no clock rather than a wrong one.
                 "resetsAt": max(known) if len(known) == len(resets) else None,
                 "what": "waiting for your usage limit to reset"}
-    spend = _retry_paused_on() and _retry_pause_reason() == "spend"
+    spend_pause = getattr(_live_scope, "spend_pause", None)
+    spend = (_retry_paused_on() and _retry_pause_reason() == "spend") if spend_pause is None else spend_pause
     if not spend:
         path = _path_of(sid)                          # the pause is account-wide, but the transcript is the
         e = _api_error(path) if path else None        # first place the cap shows — hold from that edge too
@@ -24881,13 +27395,61 @@ def _ops_gate(sid):
     sid = str(sid)
     return (_compacting_now(sid) or _working_now(sid) or bool(_pending_ops.get(sid))
             or sid in _moving or _limit_hold(sid) is not None)   # a move in flight holds the queue too
+    # ^ EXPENSIVE (a tmux fork, a discover sweep, the usage file, the backend's busy()) — the handlers call
+    #   it OUTSIDE _pending_ops_lock; its queue read is advisory, and the one that decides is the locked
+    #   re-check in _park_behind_queue (_gate_or_park). A backend must never be called under that lock.
+
+
+def _gate_or_park(sid, op):
+    """The park-or-hand-over decision every drive op except a send takes (a send composes its own gates in
+    _send_or_park, same shape). Returns True when PARKED — the caller answers "queued" — and False when the
+    caller should hand the op to the backend now. Two steps, in this order (2026-09-05): the EXPENSIVE gates
+    (_ops_gate) run outside the queue lock, since they fork tmux, sweep discover, read the usage file and
+    call the backend's busy() — none of which a lock that the pusher's drain also takes may wait on; then
+    the CHEAP queue-presence check and the park run as ONE locked step (_park_behind_queue), so an op never
+    slips past a queue that another handler filled between the two reads."""
+    sid = str(sid)
+    if _ops_gate(sid):
+        _park_op(sid, op)
+        return True
+    return _park_behind_queue(sid, op)
+
+
+def _park_behind_queue(sid, op):
+    """A handler's cheap gate — does a queue exist for this sid right now? — and its park, as ONE step under
+    _pending_ops_lock (2026-09-05). True when parked behind the existing queue; False when there is none
+    (the caller hands over). The only gate a handler evaluates under the lock: a queue-presence read is a
+    dict get and the park is an append plus the tiny mirror write, so a handler owns the lock for
+    microseconds, and the drain — which takes it non-blocking at the top of its walk and blocks on it per
+    pop — is never held behind a backend call. Why this pair is all press order needs: a park that completed
+    before this read is seen here, and this op lines up behind it; two handlers that both find no queue both
+    hand over, and reach the backend in call order — the same order a lock held across the handover would
+    have imposed, as lock-acquisition order. Nothing is lost by releasing before the backend call, and a
+    slow backend (a Codex client connect can take seconds) stalls no other handler and no push."""
+    sid = str(sid)
+    with _pending_ops_lock:
+        if not _pending_ops.get(sid):
+            return False
+        _park_op_locked(sid, op)
+    _mark_views_dirty()               # the wake AFTER the release, so the cycle it brings finds the lock free
+    return True
 
 
 def _park_op(sid, op):
     """Park one mid-compaction drive op in the sid's FIFO queue and push at once (the queued bubble
     appears immediately, never waiting out the backstop poll). A repeat model/effort pick REPLACES the
     earlier parked op of the same kind IN PLACE — its queue position stands, its value updates — so the
-    chat shows one "/model …" chip carrying the latest pick. Messages always append."""
+    chat shows one "/model …" chip carrying the latest pick. Messages always append. The mutation runs
+    under the queue lock (_park_op_locked: the drain's pops, a ✕, the move thread's re-park all touch this
+    list); the pusher wake comes AFTER the release, so the cycle it brings finds the lock free."""
+    with _pending_ops_lock:
+        _park_op_locked(sid, op)
+    _mark_views_dirty()               # the queue lives in memory — no sig sees it; the woken push renders the chip
+
+
+def _park_op_locked(sid, op):
+    """_park_op's mutation + mirror write, for a caller that already holds _pending_ops_lock and will wake
+    the pusher itself after releasing (_park_behind_queue)."""
     q = _pending_ops.setdefault(str(sid), [])
     if op[0] in ("model", "effort", "fast", "env", "cwd"):
         for i, o in enumerate(q):
@@ -24899,7 +27461,6 @@ def _park_op(sid, op):
     else:
         q.append(op)
     _save_pending_ops()               # mirror the park to disk (survives a kernel death)
-    _mark_views_dirty()               # the queue lives in memory — no sig sees it; the woken push renders the chip
 
 
 def _parked_md(op):
@@ -24943,7 +27504,16 @@ _TMUX_PROMPT_HOLD_S = 3.0        # the prompt hold's clock FALLBACK: after the d
                                  # (a paste tmux refused, a builtin that opens no prompt turn), until this many seconds
 _drain_hold: dict = {}           # sid -> (time.monotonic() deadline, until_busy); _apply_pending_ops skips the sid
                                  # while the hold is open (_drain_hold_open)
-_refresh_parse_failures: dict = {}   # sid -> consecutive cycles its parked-parse refresh raised (_refresh_parked_parses)
+_refresh_parse_failures: dict = {}   # sid -> consecutive cycles its parked-parse refresh raised (_refresh_parked_parse)
+_inflight_ops: dict = {}         # sid -> the HEAD op the drain has handed to the backend, lock released, and not yet
+                                 # popped (2026-09-05; never a cwd op — a move hands nothing over while its turn_seq
+                                 # is read, so a ✕ on a waiting move must still succeed). It stays the visible head
+                                 # for the whole call, so every handler's gate still sees the queue and parks BEHIND
+                                 # it (SdkBackend.send runs _ensure before it enqueues, CodexBackend.send may spawn
+                                 # the app server first — busy() flips only once the backend has the op, so an empty
+                                 # queue in that window let a pane send hand over AHEAD of a parked /clear), and a ✕
+                                 # on it is refused as too late (_cancel_parked). Popped only if still the head when
+                                 # the call returns (_apply_pending_ops). Read and written under _pending_ops_lock.
 
 
 def _hold_drain(sid, seconds, until_busy=False):
@@ -25028,8 +27598,7 @@ def _move_or_park(be, sid, path, client=None):
     fires at the turn's end (_apply_pending_ops); quiet, it fires now."""
     sid = str(sid)
     wid = (client or {}).get("wid") or ""
-    if _ops_gate(sid):
-        _park_op(sid, ("cwd", path, 0))
+    if _gate_or_park(sid, ("cwd", path, 0)):
         _move_askers[sid] = wid
         return None
     return _fire_move(be, sid, path, 0, wid)
@@ -25071,11 +27640,14 @@ def _move_now(be, sid, path, tries, wid):
             res = "%s: %s" % (type(e).__name__, str(e)[:200])
         if res == "busy":
             # re-park and hold BEFORE `_moving` releases the queue (review find, #904): a drain cycle landing
-            # between the release and the re-park would fire the op behind the move, or burn a retry
+            # between the release and the re-park would fire the op behind the move, or burn a retry. The
+            # backend's turn_seq is read OUTSIDE the queue lock (it takes the backend's own); the re-insert
+            # and its hold are one locked step against a handler's park and the drain's pops (2026-09-05)
             seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None  # the turn end this retry waits on
-            _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
-            _move_askers[sid] = wid
-            _hold_drain(sid, _MOVE_BUSY_RETRY_S)   # the retry waits out the CLI's post-result window (_hold_drain)
+            with _pending_ops_lock:
+                _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
+                _move_askers[sid] = wid
+                _hold_drain(sid, _MOVE_BUSY_RETRY_S)   # the retry waits out the CLI's post-result window (_hold_drain)
     finally:
         _moving.discard(sid)
     if res == "busy":
@@ -25117,19 +27689,39 @@ def _cancel_parked(sid, park, md):
     read as a successful cancel while the message got answered anyway (the user 2026-07-20). Persists +
     wakes the pusher like every queue mutation. LOGGED — sid and op kind, never the body, which is user
     text — so an emptied queue can be told apart from one that was never delivered: the 2026-09-03
-    diagnosis of a parked /clear that vanished had to infer this ✕ by elimination."""
+    diagnosis of a parked /clear that vanished had to infer this ✕ by elimination. The locate and the
+    pop are ONE step under the queue lock: unlocked, the drain could pop its head between the body check
+    and the pop, and the ✕ removed whatever had shifted into the clicked slot (2026-09-05). An op the
+    drain has already popped for delivery is simply gone from here — the honest 'too late' below — and
+    the op the drain is handing to the backend RIGHT NOW (_inflight_ops: still the head, so the chip
+    still shows) is the same miss: the backend has it, and a ✕ must never report a delivered op as
+    cancelled. That refusal keys on the HEAD SLOT, not on identity alone: the in-flight op is always
+    ops[0] while it is listed (read as the head, its own ✕ refused, a replace-in-place swaps in a new
+    object; a handler-fired move can only start on an empty queue (_park_behind_queue), and the
+    drain-fired one holds _moving until it has re-inserted) — and identity alone would be wrong, because
+    _compact_or_park parks the literal ("compact",), one interned tuple per code object, so a second
+    compact press appends an op that `is` the first; a ✕ on that SECOND chip while the first is with the
+    backend is a cancel, and the redundant compaction must not run. The body re-locate skips that head
+    slot too, so a STALE index for the second chip (a send ahead delivered between the push and the
+    click) lands on the chip and not on the head it cannot take; with only the in-flight op listed it
+    finds nothing, the same miss as today."""
     sid = str(sid)
-    ops = _pending_ops.get(sid) or []
-    if not (0 <= park < len(ops)) or (md and _parked_md(ops[park]) != md):
-        park = next((j for j, op in enumerate(ops) if _parked_md(op) == md), -1) if md else -1
-        if park < 0:
-            return _cancel_miss_text(md)
-    sys.stderr.write("parked-op cancel: %s %s\n" % (sid, ops[park][0]))
-    ops.pop(park)
-    if not ops:
-        _pending_ops.pop(sid, None)
-        _drain_hold.pop(sid, None)        # an emptied queue leaves no hold behind (nothing left for it to protect)
-    _save_pending_ops()
+    with _pending_ops_lock:
+        ops = _pending_ops.get(sid) or []
+        inflight_head = bool(ops) and ops[0] is _inflight_ops.get(sid)   # the head is with the backend this instant
+        if not (0 <= park < len(ops)) or (md and _parked_md(ops[park]) != md):
+            park = next((j for j, op in enumerate(ops)
+                         if _parked_md(op) == md and not (j == 0 and inflight_head)), -1) if md else -1
+            if park < 0:
+                return _cancel_miss_text(md)
+        if park == 0 and inflight_head:
+            return _cancel_miss_text(md)          # too late, not a wrong-op removal
+        sys.stderr.write("parked-op cancel: %s %s\n" % (sid, ops[park][0]))
+        ops.pop(park)
+        if not ops:
+            _pending_ops.pop(sid, None)
+            _drain_hold.pop(sid, None)    # an emptied queue leaves no hold behind (nothing left for it to protect)
+        _save_pending_ops()
     _mark_views_dirty()
     return None
 
@@ -25189,6 +27781,19 @@ def _forwards_sends(be):
     backend / test fake without the capability reads as False (tmux-like: hold while a turn runs, merge on
     delivery)."""
     fn = getattr(be, "forwards_sends", None)
+    try:
+        return bool(fn()) if fn else False
+    except Exception:
+        return False
+
+
+def _model_switches_live(be):
+    """True if this backend applies a model pick to a RUNNING session mid-turn (no shipped backend yet: the
+    SDK has the channel for it but declares False for now — see SdkBackend.model_switches_live), so
+    _set_model_or_park fires the pick into an open turn instead of parking it until the turn ends.
+    getattr-guarded like _forwards_sends: a backend / test fake without the capability reads as False (park
+    while a turn runs, fire at its end — the pre-#923 rule)."""
+    fn = getattr(be, "model_switches_live", None)
     try:
         return bool(fn()) if fn else False
     except Exception:
@@ -25259,7 +27864,18 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
     way to know the command was waiting for that turn to end (2026-09-03, a /clear that then never
     fired). `user_todo` is that caller's todo id: it rides the parked op as a 4th slot and stamps
     'answered' only when the op actually drains into a send (_deliver_send_batch) — never at park
-    time, where the ✕ can still recall the answer."""
+    time, where the ✕ can still recall the answer.
+
+    THE LOCK (2026-09-05): the gates above are EXPENSIVE — _compacting_now and _working_now fork tmux or
+    sweep discover and call the backend's busy(), _limit_hold reads the usage file — so they run OUTSIDE
+    _pending_ops_lock, on this handler thread, as they always did (the queue read among them is advisory).
+    What runs under the lock is the cheap queue-presence re-check and the park, as ONE step
+    (_park_behind_queue), so a queue another handler filled between the two reads is never slipped past.
+    The handover (_backend_send) runs outside the lock too: it is not a queue mutation, and a backend call can
+    be slow (a Codex client connect takes seconds), during which no other handler's park and no drain pop
+    may wait. Press order loses nothing: two handovers reach the backend in call order — a lock held across
+    them would only have substituted lock-acquisition order — and a park behind an existing queue is atomic
+    with the check that found the queue."""
     cmd = _is_slash_command(text)
     op = ("command", text, echo) if cmd else (
         ("send", text, echo, user_todo) if user_todo else ("send", text, echo))
@@ -25268,6 +27884,8 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
         return "parked"
     if _working_now(sid) and (cmd or not _forwards_sends(be)):
         _park_op(sid, op)
+        return "parked"
+    if _park_behind_queue(sid, op):
         return "parked"
     got = _backend_send(be, sid, text, user_todo)    # an answer's id rides the queue entry itself
     if echo:
@@ -25281,8 +27899,7 @@ def _compact_or_park(be, sid):
     account hold) → park as a ("compact",) op, which fires ALONE at turn end; quiet → /compact NOW with
     the instant 'compacting' cue. Returns True when parked (queued), False when fired now — the route
     tells its caller which ("compacting now" vs "queued")."""
-    if _ops_gate(sid):
-        _park_op(sid, ("compact",))
+    if _gate_or_park(sid, ("compact",)):
         return True
     be.send(sid, "/compact")
     _mark_compacting(sid)
@@ -25330,25 +27947,53 @@ def _set_model_or_park(be, sid, value, floating=False):
     version submenu's "Latest" row: the value is a family alias AND the family's remembered pin is
     forgotten, so the family follows the CLI's newest again — the one picker gesture back from a pin (the
     family row sends the pin, the version rows pin, and a typed bare alias leaves the memory alone by
-    design). Meaningless on a non-alias value."""
+    design). Meaningless on a non-alias value. Returns True when the pick PARKED, False when it fired now."""
     if floating and value in _MODEL_VALUES:
         _forget_model_pick(value)
     _mark_model_pending(sid, value)
     _note_model_pick(value)          # a version pick becomes its family's remembered default (2026-08-25)
-    if _ops_gate(sid):
+    # A model change is NOT connect-time, and on the SDK it is NOT a slash injection: SDKBackend.set_model
+    # applies it over the SDK control channel (set_model_live) and never touches the input stream, so the
+    # reason _send_or_park parks a typed slash command mid-turn (the CLI only EXECUTES one arriving as a
+    # fresh top-level prompt) does not apply here — on an hours-long agentic turn a parked pick sat as a
+    # queued chip for a day while the session kept answering on the old model (PR #923, 2026-09-04). So an
+    # open turn parks a pick only when the backend cannot take a switch mid-turn, and that is the backend's
+    # OWN word, _model_switches_live, NOT forwards_sends: forwarding a plain send mid-turn says nothing about
+    # how a backend applies a model change — Codex forwards sends (they STEER the live turn) but its
+    # set_model lands at the NEXT turn_start, so a pick fired there mid-turn would let the send typed after
+    # it steer the OLD model first, the exact inversion the press-order rule forbids; tmux's set_model TYPES
+    # /model into the pane, never mid-turn; and the SDK says no for now too, because the CLI mis-parents a
+    # mid-turn switch's transcript breadcrumbs and the rest of the turn is lost as a rewound branch (the
+    # evidence and the conditions for flipping it live in SdkBackend.model_switches_live; review fold,
+    # 2026-09-04). Every OTHER park reason stands, and each is a case no control channel can answer: a
+    # compaction or a move is tearing the client down, a limit hold means the account cannot serve a request
+    # at all, and an existing FIFO means an earlier op is still owed its turn, so press order must hold (the
+    # user 2026-07-02 x2). Press order is kept when it fires too: no queue is created, and the pick's control
+    # request reaches the CLI before any send typed after it. Returns True when PARKED, False when handed
+    # over now — _route_meta_command reads it so POST /send answers `queued` truthfully (it used to infer
+    # the park from _ops_gate, which this setter no longer parks under).
+    if _compacting_now(sid) or str(sid) in _moving or _limit_hold(sid) is not None:
         _park_op(sid, ("model", value))
-    else:
-        be.set_model(sid, value)
+        return True
+    if _working_now(sid) and not _model_switches_live(be):
+        _park_op(sid, ("model", value))
+        return True
+    # the queue-presence check and the park are ONE locked step, as _gate_or_park's second step (#954):
+    # an op must never slip past a queue another handler filled between an unlocked read and the park
+    if _park_behind_queue(sid, ("model", value)):
+        return True
+    be.set_model(sid, value)
+    return False
 
 
 def _set_effort_or_park(be, sid, value):
     """Apply an effort change now — or park it while the session compacts (the user 2026-07-02: /effort
     is a slash command like /model, so it must queue the same way — it used to slip straight through,
     with no queued chip and the same derail risk the /model park was built for)."""
-    if _ops_gate(sid):
-        _park_op(sid, ("effort", value))
-    else:
+    parked = _gate_or_park(sid, ("effort", value))
+    if not parked:
         be.set_effort(sid, value)
+    return parked
 
 
 def _set_env_or_park(be, sid, value):
@@ -25356,9 +28001,7 @@ def _set_env_or_park(be, sid, value):
     the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
     (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
     way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
-    if _ops_gate(sid):
-        _park_op(sid, ("env", value))
-    else:
+    if not _gate_or_park(sid, ("env", value)):
         be.set_env(sid, value)
 
 
@@ -25368,22 +28011,23 @@ def _set_auth_or_park(be, sid, value):
     exactly the way a model switch would). Returns the backend's verdict so the caller can be loud."""
     if value not in ("login", "key"):
         return False
-    if _ops_gate(sid):
-        _park_op(sid, ("auth", value))
+    if _gate_or_park(sid, ("auth", value)):
         return True
     return be.set_auth(sid, value)
 
 
 def _set_fast_or_park(be, sid, value):
     """Apply a fast-mode toggle now — or park it while the session compacts, exactly like /model and
-    /effort (it is a slash command and must keep press order in the same FIFO). Returns the backend's
-    verdict so the caller can be loud when a live apply refuses (dormant SDK session)."""
+    /effort (it is a slash command and must keep press order in the same FIFO). Returns (took, parked):
+    `took` is False on a bad value or a dormant SDK session's refused live apply (the caller is loud);
+    `parked` is True when the toggle queued (mid-compaction or behind a queue), so POST /send answers
+    queued truthfully from the setter's own locked decision rather than a second advisory gate read
+    (review find on #954, 2026-09-07)."""
     if value not in ("on", "off"):
-        return False
-    if _ops_gate(sid):
-        _park_op(sid, ("fast", value))
-        return True
-    return be.set_fast(sid, value)
+        return (False, False)
+    if _gate_or_park(sid, ("fast", value)):
+        return (True, True)
+    return (be.set_fast(sid, value), False)
 
 
 def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
@@ -25393,13 +28037,21 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     The CLI would execute the text (verified on 2.1.257), but that path bypasses romp: the registry,
     sdk-defaults.json, the pick memory and the reconnect's --model all kept the OLD value, so a switch
     typed into the composer silently reverted at the next reconnect or restart. The setters are also
-    what parks the change mid-compaction. Returns True when it took the command. Anything else —
-    another slash command, a bare "/model" (the CLI's own picker), plain text that merely contains one
-    — is the caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
+    what parks the change mid-compaction. Returns True when it took the command. Whichever surface
+    typed it — the composer, the lane menu, POST /send — the command is one gesture with one outcome;
+    how the setter then LANDS it is the backend's: an SDK session switches model live but reconnects
+    to apply an effort change (SdkBackend.set_effort), a tmux session gets the CLI's own command typed
+    into its pane with /model's confirmation accepted for the user (TmuxBackend.set_model) — the
+    SessionBackend.set_model / set_effort docstrings hold the split. Anything else — another slash
+    command, a bare "/model" (the CLI's own picker), plain text that merely contains one — is the
+    caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
     the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
     used to at least draw the CLI's own refusal. `state`, when given, receives {"queued": bool} — whether
-    the setter PARKED the change (they park under _ops_gate, read here) — so POST /send answers `queued`
-    for a meta command exactly as for a text send (2026-09-03: a parked /model read as plain 'ok')."""
+    the change PARKED, read from each setter's own return: the effort/fast setters say whether they parked
+    under _ops_gate, the model setter has its own rule (_set_model_or_park); nothing is inferred from the
+    gate here (upstream's #923 line re-evaluated _ops_gate, a tmux fork, a discover sweep and a usage read,
+    for a value nothing read; dropped in the 2026-09-07 fold) — so POST /send answers `queued` for a meta
+    command exactly as for a text send (2026-09-03: a parked /model read as plain 'ok')."""
     head, _, rest = (text or "").strip().partition(" ")
     value = rest.strip()
     # ONE token, and one the kernel can vouch for: the setters PERSIST their value — set_model's lands
@@ -25408,16 +28060,15 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     # ours to swallow: it stays the CLI's, verbatim, and the user sees the CLI's own error.
     if not value or len(value.split()) != 1:
         return False
-    gate = _ops_gate(sid)                  # the setters park under exactly this gate; read here so `state` can say so
     if head == "/model" and _vouched_model(value):
-        _set_model_or_park(be, sid, value, floating=floating)     # mid-compaction → parked as a queued command
-        parked = gate
+        # the model setter has its OWN rule (an open turn fires it live only on a backend that declares
+        # model_switches_live — none shipped does yet, so the SDK still parks; #923), so its verdict is
+        # read, not inferred from _ops_gate — which would say `queued` for a pick that had already applied
+        parked = _set_model_or_park(be, sid, value, floating=floating)
     elif head == "/effort" and value in _EFFORT_VALUES:
-        _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
-        parked = gate
+        parked = _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
     elif head == "/fast" and value in ("on", "off"):
-        took = _set_fast_or_park(be, sid, value)                  # mid-compaction → parked
-        parked = bool(took) and gate
+        took, parked = _set_fast_or_park(be, sid, value)          # took: applied or parked; parked: queued
         if not took and client:
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
@@ -25525,9 +28176,9 @@ def _deliver_send_batch(be, sid, run):
             _stamp_user_todo_answered(sid, tid, "\n\n".join(bodies), nonce=nonces.get(tid))
 
 
-def _refresh_parked_parses(now):
-    """Before the drain: re-parse the transcript of every sid that HOLDS PARKED OPS and whose cached parse
-    has gone stale (second review of the tmux busy change, 2026-09-03). TmuxBackend.busy corroborates the
+def _refresh_parked_parse(sid, now):
+    """For ONE sid the drain is about to gate: re-parse its transcript when it HOLDS PARKED OPS and its cached
+    parse has gone stale (second review of the tmux busy change, 2026-09-03). TmuxBackend.busy corroborates the
     hook row against the CACHED parse and can overrule a stranded row (an Esc fires no hook) only when
     _parse_cached returns a session — and _parse_cached never parses. The cache is filled by client builds
     (build_session, build_timeline), the client-gated warmer, and a few gesture paths; headless — no chat or
@@ -25546,31 +28197,30 @@ def _refresh_parked_parses(now):
     know: a headless `romp send` typed right after a pane Esc parks ONCE (at that instant the hook is all
     busy() has), and the next cycle's refresh lets the drain deliver it — within the 0.5 s backstop instead
     of ~2 minutes."""
-    for sid in list(_pending_ops):
-        try:
-            be = Sessions.backend_for(sid)
-        except Exception:
-            be = None
-        if be is None or not getattr(be, "corroborates_with_transcript", False):
-            continue                                  # its busy() is the whole truth: nothing here reads its cache
-        try:                                          # per sid: one sid whose parse raises must not starve the
-            path = _path_of(sid)                      # OTHER parked sids' refresh, cycle after cycle (review find,
-            if path and _parse_cached(path) is None:  # 2026-09-04) — that sid stays held on its hook row, and the
-                _parse(path, sid, now)                # failure is on the record
-            _refresh_parse_failures.pop(sid, None)    # a parse that came back clears its count
-        except Exception:
-            # the failing sid is retried every cycle (a parse that raises writes nothing to _parse_cache), so the
-            # line is count-gated like _chat_fold_warned: the first with its traceback, then at 10, 100, 1000
-            n = _refresh_parse_failures.get(sid, 0) + 1
-            if len(_refresh_parse_failures) > 256:
-                _refresh_parse_failures.clear()
-            _refresh_parse_failures[sid] = n
-            if n in (1, 10, 100, 1000):
-                sys.stderr.write("parked-parse refresh %s (failure %d): %s\n"
-                                 % (sid, n, traceback.format_exc() if n == 1 else repr(sys.exc_info()[1])))
+    try:
+        be = Sessions.backend_for(sid)
+    except Exception:
+        be = None
+    if be is None or not getattr(be, "corroborates_with_transcript", False):
+        return                                        # its busy() is the whole truth: nothing here reads its cache
+    try:                                              # per sid: one sid whose parse raises must not starve the
+        path = _path_of(sid)                          # OTHER parked sids' refresh, cycle after cycle (review find,
+        if path and _parse_cached(path) is None:      # 2026-09-04) — that sid stays held on its hook row, and the
+            _parse(path, sid, now)                    # failure is on the record
+        _refresh_parse_failures.pop(sid, None)        # a parse that came back clears its count
+    except Exception:
+        # the failing sid is retried every cycle (a parse that raises writes nothing to _parse_cache), so the
+        # line is count-gated like _chat_fold_warned: the first with its traceback, then at 10, 100, 1000
+        n = _refresh_parse_failures.get(sid, 0) + 1
+        if len(_refresh_parse_failures) > 256:
+            _refresh_parse_failures.clear()
+        _refresh_parse_failures[sid] = n
+        if n in (1, 10, 100, 1000):
+            sys.stderr.write("parked-parse refresh %s (failure %d): %s\n"
+                             % (sid, n, traceback.format_exc() if n == 1 else repr(sys.exc_info()[1])))
 
 
-def _apply_pending_ops():
+def _apply_pending_ops(now=None):
     """Pusher cycle: FIFO-deliver parked ops once the session is QUIET (neither compacting nor an open
     turn) — in exactly the order they were parked, which is exactly the order the chat rendered their
     queued bubbles (the user 2026-07-02: what you see is what runs). SEQUENTIAL by construction (the user
@@ -25583,6 +28233,43 @@ def _apply_pending_ops():
     _limit_hold's account gate — a queue held by a usage limit drains on the cycle after the API's own
     reset stamp passes, so the whole sequence goes in at the reset in the order it was typed); a dead
     session's queue is dropped (fails once, logged), never retried.
+
+    ONE LOCK, HELD FOR THE MUTATIONS ONLY (2026-09-05): every writer of _pending_ops — a handler's park or
+    cancel, the move thread's head re-insert, this walk — takes _pending_ops_lock, and this walk takes it
+    for exactly two things: reading a sid's head, and popping what a step has delivered. Every backend
+    call — send, set_*, turn_seq, busy() inside the gates and the hold check — runs with the lock
+    RELEASED, because a backend call can be slow (CodexBackend.send may synchronously spawn and initialize
+    `codex app-server`, with no request timeout) and every handler's queue check + park would otherwise
+    wait behind it. The lock closes the two races review confirmed: (1) a ✕, or the move thread's head
+    re-insert, changing the list between this walk's head read and its pop — the pop landed on a list the
+    ✕ had emptied (an IndexError the except below turned into a dropped queue), or the ✕'s own check-then-
+    pop landed on a list this walk had shifted (the op BEHIND the clicked one vanished); (2) two writers
+    tearing the mirror through one shared temp (_save_pending_ops). Only this one thread ever walks the
+    queue (the pusher); the handlers and the move thread are the other writers.
+
+    THE HEAD STAYS VISIBLE WHILE THE BACKEND HAS IT (2026-09-05, second review): every gate a handler
+    decides on keys on queue presence (_ops_gate, _send_or_park's first gate, _park_behind_queue) and
+    otherwise on busy() — which flips only once the backend has REGISTERED the op (SdkBackend.send runs
+    _ensure under the backend lock before it enqueues; CodexBackend.send may spawn the app server first).
+    So a command / compact / settings op is NOT popped before its call: it is read under the lock and
+    recorded in _inflight_ops, the call runs with the lock released and the op still at the head, and
+    afterwards the head is popped only if it `is` still that op — a same-kind pick that replaced it in
+    place meanwhile is a new tuple, so the identity fails and the replacement delivers on the next
+    iteration; a ✕ on the in-flight head is refused as too late (_cancel_parked). A cwd op takes the same
+    read-then-identity-pop shape but is NOT recorded: its only mid-call action is the turn_seq read,
+    nothing is handed over, and a ✕ on a move still waiting for its turn end must succeed — recorded, it
+    was refused with a message-shaped 'already reached the session' every cycle the move waited (delta
+    review, 2026-09-05). A pane send landing during the call therefore sees the queue and parks BEHIND
+    the parked /clear, as it did before the drain moved (the parent called first and popped after for
+    these kinds), and the chip retires only once the backend accepted the op. The SEND run alone is
+    popped before delivery — pre-existing on the parent, and kept as is: the batch is handed over as one
+    unit, and a ✕ on it after the pop is the same honest 'too late' it always was. The top-of-walk
+    acquire is NON-BLOCKING: a handler that owns the lock skips the drain for this cycle rather than
+    stalling every session's push, and its own park wakes the pusher after it releases; the per-step
+    acquires inside the walk block, since every holder owns the lock for a dict read, a list mutation and
+    the tiny mirror write. No backend thread takes this lock (the poke, push and push_session callbacks
+    touch no queue), so it never nests inside a backend's. The failure contract is UNCHANGED: a raise
+    anywhere in a sid's pass drops that sid's queue once, logged.
 
     WHO runs this (2026-09-03): the pusher cycle (_pusher_cycle_jobs), woken by the backends' turn-end poke
     (_wake_kernel), by /tick, by every park / cancel / move, and by its own 0.5 s backstop — NOT the tail
@@ -25598,96 +28285,152 @@ def _apply_pending_ops():
     Two sids are skipped even when they read quiet — a move the CLI answered busy (a clock: its window
     emits no event), and a session just handed a turn-opening op whose busy gate has not yet been SEEN
     closed (until its backend reads busy — tmux's UserPromptSubmit flip — or the fallback clock passes) —
-    see _hold_drain."""
-    for sid, ops in list(_pending_ops.items()):
-        if not ops:
-            _pending_ops.pop(sid, None)
-            _drain_hold.pop(sid, None)                # no queue, no hold
-            continue
-        if sid in _moving:
-            continue                                  # a move is mid-flight: its relocation must finish first
-        hold = _drain_hold.get(sid)
-        if hold is not None:
-            if _drain_hold_open(sid, hold):
-                continue                              # this sid's window is still open (_hold_drain)
-            _drain_hold.pop(sid, None)
-        if _compacting_now(sid) or _working_now(sid) or _limit_hold(sid):
-            continue                                  # …or the account can't serve a request yet
-        changed = False                               # a real mutation below → save the mirror + wake the pusher
+    see _hold_drain.
+
+    COST ORDER (2026-09-05): `now` is the drain's clock — the pusher calls it bare and it stamps its own
+    (a caller may hand one in); the liveness snapshot already reaches every gate through the cycle's
+    scope. usage.json and the retry-pause file are read ONCE per drain, not once per held session (an
+    account limit parks every session's input for hours — that re-read was most of a 46 ms drain on a
+    seventeen-session board); and each sid's gates run cheapest first: the move and hold windows, then the
+    account hold, and only for a sid that passes those the transcript refresh a tmux busy() needs and the
+    compacting/working reads — a held session's transcript is not re-parsed for a verdict nothing reads.
+    The one hold that READS busy() — an until-busy drain hold (_hold_drain) — gets the refresh first, so a
+    tmux row the transcript overrules can still release it (review find 2026-09-05). The gates, and so the
+    refresh — a full transcript parse when the cache is stale, seconds on a large file — run OUTSIDE
+    _pending_ops_lock, as this walk's gates always have: the lock guards the queue's reads and pops only
+    and is never held across anything slow. A cycle the lock yields to a handler reads nothing at all."""
+    now = int(time.time()) if now is None else now
+    if not _pending_ops:
+        return                                        # nothing parked: no lock, no reads
+    if not _pending_ops_lock.acquire(blocking=False):
+        return                                        # a handler owns the queue mid-park: its wake brings the next cycle
+    try:
+        sids = list(_pending_ops)
+    finally:
+        _pending_ops_lock.release()
+    try:
+        # ONE reading each for the whole drain, on the cycle's thread-confined scope (see _limit_hold): an
+        # unreadable usage.json is stored as _UNREADABLE, which _limit_hold answers with "no hold" exactly as
+        # its own failed read does (None would read as an EMPTY usage and fall through to the spend arm —
+        # a verdict the WS thread's fresh _ops_gate would not share; review find 2026-09-05). Inside the
+        # try, so a raise from either read still clears the scope below.
         try:
-            be = Sessions.backend_for(sid)
-            while ops:
-                op = ops[0]
-                if op[0] == "cwd":
-                    # a parked move: fires on its own thread and CLAIMS _moving before this cycle ends, so
-                    # the ops behind it wait for the relocation to finish (the next cycle skips the sid
-                    # until then) — a send fed mid-move could make the CLI reject the move as busy
-                    tries = int(op[2]) if len(op) > 2 else 0
-                    seq = op[3] if len(op) > 3 else None
-                    if (seq is not None and tries >= _MOVE_BUSY_RETRIES and hasattr(be, "turn_seq")
-                            and be.turn_seq(sid) == seq):
-                        break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
-                    ops.pop(0)
-                    changed = True
-                    _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
-                    break
-                changed = True                        # every arm below pops at least one op
-                if op[0] == "send":
-                    run = []                          # coalesce the leading run of sends → deliver them AT ONCE
-                    while ops and ops[0][0] == "send":
-                        run.append(ops.pop(0))
-                    _deliver_send_batch(be, sid, run)
-                    _after_turn_opening(be, sid, ops)
-                    break                             # the delivered turn must END before any op behind it fires
-                elif op[0] == "command":
-                    # a typed slash command fires ALONE as its own fresh top-level prompt — folded into a
-                    # send batch (or forwarded mid-turn) it reaches the model as text instead of executing
-                    # (the user 2026-08-13: /autocompact absorbed mid-turn got a polite reply and no
-                    # setting change). Echo stamped at fire time, like a delivered send.
-                    be.send(sid, op[1])
-                    if len(op) > 2 and op[2]:
-                        _optimistic_echo(sid, op[1], author=op[2])
-                    if op[1].strip().split()[0] == "/compact":
-                        _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
-                    ops.pop(0)
-                    _after_turn_opening(be, sid, ops)
-                    break                             # its turn must end before anything behind it fires
-                elif op[0] == "compact":
-                    be.send(sid, "/compact")
-                    _mark_compacting(sid)
-                    ops.pop(0)
-                    _after_turn_opening(be, sid, ops)
-                    break                             # the compaction must finish first
-                elif op[0] == "model":
-                    be.set_model(sid, op[1])
-                    ops.pop(0)
-                elif op[0] == "effort":
-                    be.set_effort(sid, op[1])
-                    ops.pop(0)
-                elif op[0] == "fast":
-                    # fast ops parked by a pre-2026-08-09 kernel stored a BOOL; set_fast validates
-                    # against "on"/"off", so coerce here or a queue that survived the upgrade wedges.
-                    v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
-                    be.set_fast(sid, v)
-                    ops.pop(0)
-                elif op[0] == "auth":
-                    be.set_auth(sid, op[1])
-                    ops.pop(0)
-                elif op[0] == "env":
-                    be.set_env(sid, op[1])
-                    ops.pop(0)
-                else:
-                    ops.pop(0)                        # unknown op kind → drop, never wedge the queue
+            _live_scope.usage = _usage_limits()       # the limits half: the hold reads no ledger figure (P18)
         except Exception:
-            sys.stderr.write("pending ops apply: %s\n" % traceback.format_exc())
-            _pending_ops.pop(sid, None)               # a dead session's queue is dropped, never retried
-            _drain_hold.pop(sid, None)                # …and its hold with it
-            changed = True
-        if not _pending_ops.get(sid):
-            _pending_ops.pop(sid, None)
-        if changed:
-            _save_pending_ops()           # every delivery/drop shrinks the disk mirror too
-            _mark_views_dirty()           # the queue shrank (in-memory) → rebuild past the sig so chips retire
+            _live_scope.usage = _UNREADABLE
+        _live_scope.spend_pause = _retry_paused_on() and _retry_pause_reason() == "spend"
+        for sid in sids:
+            with _pending_ops_lock:
+                if not _pending_ops.get(sid):
+                    _pending_ops.pop(sid, None)
+                    _drain_hold.pop(sid, None)        # no queue, no hold
+                    continue
+            if sid in _moving:
+                continue                              # a move is mid-flight: its relocation must finish first
+            hold = _drain_hold.get(sid)
+            if hold is not None:
+                if hold[1]:                           # an until-busy hold READS busy(), which a tmux backend
+                    _refresh_parked_parse(sid, now)   # corroborates against the cached parse: keep it current
+                if _drain_hold_open(sid, hold):       # for that read (only a held sid pays; the refresh below
+                    continue                          # finds the cache fresh). Window still open → next cycle.
+                _drain_hold.pop(sid, None)
+            if _limit_hold(sid):
+                continue                              # the account can't serve a request yet: no parse, no gates
+            _refresh_parked_parse(sid, now)           # a stranded hook row can be overruled by what the transcript says
+            if _compacting_now(sid) or _working_now(sid):
+                continue
+            changed = False                               # a real mutation below → save the mirror + wake the pusher
+            try:
+                be = Sessions.backend_for(sid)
+                while True:
+                    with _pending_ops_lock:               # READ the head. A send run is popped here (pre-existing on the
+                        ops = _pending_ops.get(sid) or [] # parent); every other kind stays the visible head, recorded
+                        if not ops:                       # in flight, until the backend has it
+                            break
+                        op = ops[0]
+                        if op[0] == "send":
+                            run = []                      # coalesce the leading run of sends → deliver them AT ONCE
+                            while ops and ops[0][0] == "send":
+                                run.append(ops.pop(0))
+                        elif op[0] != "cwd":
+                            _inflight_ops[sid] = op       # (a move hands nothing over below: not recorded)
+                    if op[0] == "send":
+                        changed = True
+                        _deliver_send_batch(be, sid, run)
+                        _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
+                        break                             # the delivered turn must END before any op behind it fires
+                    # every other kind: the backend call runs with the lock RELEASED and the op still at the head
+                    if op[0] == "cwd":
+                        # a parked move: fires on its own thread and CLAIMS _moving before this cycle ends, so
+                        # the ops behind it wait for the relocation to finish (the next cycle skips the sid
+                        # until then) — a send fed mid-move could make the CLI reject the move as busy
+                        tries = int(op[2]) if len(op) > 2 else 0
+                        seq = op[3] if len(op) > 3 else None
+                        if (seq is not None and tries >= _MOVE_BUSY_RETRIES and hasattr(be, "turn_seq")
+                                and be.turn_seq(sid) == seq):
+                            break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
+                    elif op[0] == "command":
+                        # a typed slash command fires ALONE as its own fresh top-level prompt — folded into a
+                        # send batch (or forwarded mid-turn) it reaches the model as text instead of executing
+                        # (the user 2026-08-13: /autocompact absorbed mid-turn got a polite reply and no
+                        # setting change). Echo stamped at fire time, like a delivered send.
+                        be.send(sid, op[1])
+                    elif op[0] == "compact":
+                        be.send(sid, "/compact")
+                    elif op[0] == "model":
+                        be.set_model(sid, op[1])
+                    elif op[0] == "effort":
+                        be.set_effort(sid, op[1])
+                    elif op[0] == "fast":
+                        # fast ops parked by a pre-2026-08-09 kernel stored a BOOL; set_fast validates
+                        # against "on"/"off", so coerce here or a queue that survived the upgrade wedges.
+                        v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
+                        be.set_fast(sid, v)
+                    elif op[0] == "auth":
+                        be.set_auth(sid, op[1])
+                    elif op[0] == "env":
+                        be.set_env(sid, op[1])
+                    # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
+                    with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
+                        _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)
+                        ops = _pending_ops.get(sid) or []
+                        took = bool(ops) and ops[0] is op
+                        if took:
+                            ops.pop(0)
+                            changed = True
+                    if op[0] == "cwd":
+                        if not took:
+                            continue                      # a repeat pick replaced the head while turn_seq was read: read it
+                        _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
+                        break
+                    if op[0] in ("command", "compact"):
+                        # the backend HAS a turn-opening op: its cue, the hold and the end of this pass follow
+                        # regardless of `took` (which is always True here — a ✕ on an in-flight op is refused and
+                        # these kinds are never replaced in place)
+                        if op[0] == "command" and len(op) > 2 and op[2]:
+                            _optimistic_echo(sid, op[1], author=op[2])
+                        if op[0] == "compact" or op[1].strip().split()[0] == "/compact":
+                            _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
+                        _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
+                        break                             # its turn / compaction must end before anything behind it fires
+                    # a settings op (or an unknown kind): delivery continues. `took` False means a same-kind pick
+                    # replaced the head in place while it was with the backend — the replacement delivers next
+            except Exception:
+                sys.stderr.write("pending ops apply: %s\n" % traceback.format_exc())
+                with _pending_ops_lock:
+                    _inflight_ops.pop(sid, None)
+                    _pending_ops.pop(sid, None)           # a dead session's queue is dropped, never retried
+                    _drain_hold.pop(sid, None)            # …and its hold with it
+                changed = True
+            with _pending_ops_lock:
+                if not _pending_ops.get(sid):
+                    _pending_ops.pop(sid, None)
+            if changed:
+                _save_pending_ops()           # every delivery/drop shrinks the disk mirror too
+                _mark_views_dirty()           # the queue shrank (in-memory) → rebuild past the sig so chips retire
+    finally:
+        _live_scope.usage = _UNSET
+        _live_scope.spend_pause = None
 
 
 # ── the chat's pinned "system context" card (the user 2026-06-19) ──────────────────────────────────
@@ -25699,6 +28442,7 @@ def _apply_pending_ops():
 # rides each assistant message — it writes no system:init atom, so the event model never carries them.
 _GLOBAL_CLAUDE_MD = Path(os.path.expanduser("~/.claude/CLAUDE.md"))   # overridable in tests
 _session_meta_cache = {}   # path -> ((mtime,size), {...})
+
 
 
 def _tilde(p):
@@ -26381,6 +29125,52 @@ def _sendvis_diag(sid):
     return out
 
 
+_merge_sets_memo = {}                            # sid → (parsed session object, its sets) — see _merge_tx_sets
+_merge_sets_stats = {"hit": 0, "miss": 0}        # /perf memos.chat_merge_sets
+
+
+def _merge_sets_report():
+    """/perf memos.chat_merge_sets: the counters plus the entries held (one per sid merged since start,
+    less the pusher's eviction of sids neither shown as a tab nor alive)."""
+    return dict(_merge_sets_stats, entries=len(_merge_sets_memo))
+
+
+def _merge_tx_sets(session, sid):
+    """The transcript-side sets _merge_live_atoms derives from the parsed session, memoized per sid on the
+    session OBJECT's identity: (tx_uuids, tx_text_uuids, tx_texts, tx_text_t, human_floor). Inputs: the
+    atoms under session["turns"], and nothing else. The callers pass the parse cache's object
+    (build_session's `parsed`, build_feed's _parse_cached row, build_timeline's _parse result), which
+    _parse hands back unchanged while the transcript's (mtime, size, cut, states) key holds and replaces
+    on any change, so identity stands for content; a live-merged copy is this function's consumer and is
+    never passed in. The entry holds the session object, so an id cannot be recycled onto a new parse,
+    and one entry per sid serves the chat, feed and timeline builds of one cycle, which merge the same
+    object. The three sets are frozen: the callers and the backends' prune_live only read them, and an
+    in-place write would corrupt every later hit, so a write raises instead; tx_text_t stays a dict
+    because sdk_backend.prune_live dispatches on isinstance(dict). Round-4 plan P3 (d), 2026-09-07."""
+    ent = _merge_sets_memo.get(sid)
+    if ent is not None and ent[0] is session:
+        _chat_memo_bump(_merge_sets_stats, "hit")
+        return ent[1]
+    _chat_memo_bump(_merge_sets_stats, "miss")
+    turns = session["turns"]
+    tx_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"] if a.get("uuid"))
+    tx_text_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"]
+                              if a.get("uuid") and _atom_prose_chars(a) > 0)
+    # text → the NEWEST record time carrying it: prune_live retires an echo by text only through a record
+    # written at or after the echo's send (T237b A); the plain set keeps the display dedup in the caller
+    tx_texts, tx_text_t = set(), {}
+    for turn in turns:
+        for a in turn["atoms"]:
+            for t in _atom_user_texts(a):
+                tx_texts.add(t)
+                tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
+    sets = (tx_uuids, tx_text_uuids, frozenset(tx_texts), tx_text_t, _human_turn_floor(session))
+    if len(_merge_sets_memo) > 512:
+        _merge_sets_memo.clear()                     # bounded by the sessions alive; a wholesale clear costs one miss each
+    _merge_sets_memo[sid] = (session, sets)
+    return sets
+
+
 def _merge_live_atoms(session, sid, shown_texts=()):
     """Merge in-memory LIVE-TAIL atoms into the parsed session, AHEAD of the transcript on disk, so messages
     appear instantly (the stream / a composer send leads the disk write). NON-MUTATING — `session` is the
@@ -26400,7 +29190,10 @@ def _merge_live_atoms(session, sid, shown_texts=()):
     live = be.live_atoms(sid)
     if not live:
         return session
-    tx_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"] if a.get("uuid")}
+    # The transcript-side sets come from the per-sid memo (_merge_tx_sets): a function of the parsed
+    # session alone, which the parse cache hands back as the same object until the transcript changes,
+    # and which every build of a cycle (chat, feed, timeline) used to derive again from every atom.
+    tx_uuids, tx_text_uuids, tx_texts, tx_text_t, human_floor = _merge_tx_sets(session, sid)
     # A TEXTLESS disk twin must not land a texty live atom (the user 2026-07-28): on some model+tool
     # combinations (observed: fable-5 replying before an AskUserQuestion) the CLI persists the reply
     # text that streamed before the tool call as an EMPTY thinking record under the SAME uuid. The
@@ -26409,21 +29202,12 @@ def _merge_live_atoms(session, sid, shown_texts=()):
     # those uuids: the live text stays visible until settle, where the orphan-reply salvage makes it
     # durable (event_model._orphan_replies interleaves it back; its dedup is text-aware for the same
     # reason). Self-neutralizing: a twin that DOES carry the text lands the atom exactly as before.
-    tx_text_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"]
-                     if a.get("uuid") and _atom_prose_chars(a) > 0}
     live_text_uuids = {a.get("uuid") for a in live
                        if not a.get("_echo_text") and not a.get("command")
                        and _atom_prose_chars(a) > 0}
-    tx_uuids -= (live_text_uuids - tx_text_uuids)
-    tx_texts = {t for turn in session["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
-    # text → the NEWEST record time carrying it: prune_live retires an echo by text only through a record
-    # written at or after the echo's send (T237b A) — the plain set above keeps the display dedup below
-    tx_text_t = {}
-    for turn in session["turns"]:
-        for a in turn["atoms"]:
-            for t in _atom_user_texts(a):
-                tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
-    human_floor = _human_turn_floor(session)
+    withheld = live_text_uuids - tx_text_uuids
+    if withheld:
+        tx_uuids = tx_uuids - withheld           # a NEW set: the memoized one is shared with every later build
     be.prune_live(sid, tx_uuids, tx_text_t, human_floor)
     hide = tx_texts | {sb.echo_text_key(t) for t in shown_texts if t}    # transcript dups + already-shown queued msgs
     # `live` was snapshotted before the prune, so each of prune_live's three exits has its paint-side twin
@@ -26714,9 +29498,14 @@ def _stamp_interrupt_causes(events):
     return events
 
 
-def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
+def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, sidechain=False, meta_path=None):
     """A {type:"session"} message the render.js bundle consumes: the event tree reshaped to
     ChatEvent[], plus the TOC ledger (archiver headline + turn captions) and a status chip.
+
+    sidechain (build_subagent, plans/subagent-transcripts.md): the override file is a SUBAGENT's own
+    transcript — render it through the same pipeline, but keep the parent's side-store notes (retry
+    recoveries, orphan replies, effort/gesture chips — all sid-keyed) out of a conversation they never
+    belonged to. meta_path names the PARENT transcript whose subagents/ sidecars join nested Agent calls.
 
     path_override (build_episode, the user 2026-07-27): parse THAT transcript instead of the session's
     current one — the single sid→path resolution point the episode plan reserved (plans/clear-episodes.md).
@@ -26831,6 +29620,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # retry that re-replied must not double. Match exact, and either-way prefix (a partial stream vs its full
     # retry). NB: build the disk-text set from the SAME session["turns"] atoms this loop renders.
     orphans = _past_floor(_orphan_replies(sid)); _oi = 0
+    if sidechain:
+        # a subagent's transcript carries none of the parent's side-store notes (see the docstring)
+        recoveries, gaveups, efforts, gestures, orphans = [], [], [], [], []
     _disk_texts = set()
     _turn_texts = {}                          # turn index → that turn's disk texts (built on demand, see the fold)
     def _texts_of_turn(_i):
@@ -26860,6 +29652,19 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _pref_len = 0
     _seams_sig = json.dumps((_bs_store or {}).get("seams") or [], sort_keys=True, default=str)
     _pk = _chat_postal_key()
+    # ONE postal index and ONE caption map per build: the fold gate's check, the tail pass and the commit
+    # hydrate against the same objects, so the entry records exactly the values its cards embed (a caption
+    # appended between two of them would otherwise be embedded by one hydration and recorded by another).
+    _pidx = _postal_index()
+    _msum_slot = [None]
+    def _msum():                              # the cycle's map on the pusher (_msg_summaries_scoped), fetched
+        if _msum_slot[0] is None:             # once per build on a handler thread
+            _msum_slot[0] = _msg_summaries_scoped()
+        return _msum_slot[0]
+    # The sealed cards' recorded values are trusted only when this build read names from the pusher's
+    # cycle snapshot (_live_scope.names): a handler-thread build reads the registry per card, so the values
+    # it embeds and the values it would record are two reads, not one. Such a build records None.
+    _scoped = getattr(_live_scope, "names", None) is not None
     if path_override:
         _chat_fold_count("bypass")
     elif _n_pref > 0:
@@ -26889,6 +29694,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 _fold_why = "gesture"                 # a gesture chip the live tail pruned now renders durably
             elif _fe["orphan_uuids"] & _landed_uuids:
                 _fold_why = "landed"                  # an interleaved orphan reply landed on some branch after all
+            elif _fe.get("agents") and _chat_agents_moved(_fe["agents"], sess["path"], tm0, _sdk_spawned_at(sid)):
+                _fold_why = "agent"                   # a sealed Agent card's report landed / sidecar appeared / liveness flipped
             else:
                 _k = _fe["n"]
                 _tail_tr = set()
@@ -26915,16 +29722,31 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                         if _ot in _tail_texts or any(dt.startswith(_ot) or _ot.startswith(dt) for dt in _tail_texts):
                             _fold_why = "orphan"      # a new reply retires an interleaved orphan in the prefix
                             break
-            if _fold_why is None and _fe["postal_raw"] and (_pk != _fe["postal_key"] or _judge_gen[0] != _fe["judge_gen"]):
-                # re-hydrate just the sealed RAW postal events against the current index and captions; a
-                # different card means the prefix must be rebuilt. Every card, not only the pending ones
-                # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
-                # with the final one, and a peer's colour can change — a card sealed complete was frozen
-                _cards = _hydrate_postal(list(_fe["postal_raw"]), _postal_index(), sid)
-                if _cards != _fe["postal_cards"]:
-                    _fold_why = "postal"
+            if _fold_why is None and _fe["postal_raw"]:
+                # The sealed postal cards are keyed on the VALUES they embed from outside the transcript
+                # (round-4 plan, P17 merged with P3(c), 2026-09-07): the log's identity (_pk, the index
+                # memo's own key) and, per card, its caption and its peer's name and colour, read from the
+                # same index and caption map a re-hydration in this build would read (_postal_card_deps).
+                # They used to be re-hydrated on every judge pass (_judge_gen), although the only
+                # judge-written input a card embeds is its caption: about 400 whole-list re-hydrations per
+                # 120 s on a 31-tab kernel against a caption row moving in one round of ten. A deps tuple
+                # of None is an entry sealed outside the pusher's names scope (see _scoped): unverified,
+                # so it re-hydrates once here and is recorded by this build if it is scoped.
+                _deps = _fe["postal_deps"]
+                if _pk != _fe["postal_key"] or _deps is None or _postal_card_deps(_fe["postal_cards"], _pidx, _msum) != _deps:
+                    # re-hydrate just the sealed RAW postal events against the current index and captions; a
+                    # different card means the prefix must be rebuilt. Every card, not only the pending ones
+                    # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
+                    # with the final one, and a peer's colour can change — a card sealed complete was frozen
+                    _chat_memo_bump(_chat_postal_stats, "gate")
+                    _cards = _hydrate_postal(list(_fe["postal_raw"]), _pidx, sid, captions=_msum)
+                    if _cards != _fe["postal_cards"]:
+                        _fold_why = "postal"
+                    else:
+                        _fe["postal_key"] = _pk         # the values observed NOW, never a fresh read at the commit
+                        _fe["postal_deps"] = _postal_card_deps(_cards, _pidx, _msum) if _scoped else None
                 else:
-                    _fe["postal_key"], _fe["judge_gen"] = _pk, _judge_gen[0]
+                    _chat_memo_bump(_chat_postal_stats, "hit")
             if _fold_why is None and _fe["task_outs"]:
                 # a sealed task-notification card carries its output file's tail: a file that grew, appeared
                 # or vanished since the seal renders differently (review find 2026-09-03), so re-stat each
@@ -27044,6 +29866,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                             ev["output"] = (c if isinstance(c, str) else json.dumps(c))[:16000]
                             ev["isError"] = bool(tr.get("is_error"))
                             ev["resultUuid"] = a.get("uuid")
+                            if tur and ev.get("name") in ("Agent", "Task"):
+                                # the ack names the agent whose own transcript this launch writes, and
+                                # says whether it was a BACKGROUND launch (the ack is then not the
+                                # report — _stamp_agents fills the real one when the notification lands)
+                                if tur.get("agentId"):
+                                    ev["agentId"] = str(tur["agentId"])
+                                if tur.get("isAsync") or tur.get("status") == "async_launched":
+                                    ev["agentAsync"] = True
                             # Edit/MultiEdit: Claude Code records a structuredPatch (toolUseResult) carrying REAL
                             # file line numbers + context — turn it into numbered diff rows so the chat shows a
                             # true line-number gutter (the user 2026-06-29). filePath-matched so the right result
@@ -27241,6 +30071,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                               "desc": str(inp.get("description") or "")[:200],
                               "input": json.dumps(inp) if _full else json.dumps(inp)[:4000], "output": "", "isError": False,
                               "uuid": a.get("uuid"), "ts": ts,
+                              "toolUseId": b.get("id"),   # the tool_use BLOCK id (uuid is the record's) — the join
+                              #   key a subagent's sidecar / a task-notification names (plans/subagent-transcripts.md)
                               "file": inp.get("file_path") or inp.get("path") or "",
                               "diff": _edit_diff(inp) if b.get("name") in ("Edit", "MultiEdit", "Write") else ""}
                         if b.get("name") == "AskUserQuestion":
@@ -27277,6 +30109,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 events.append({"kind": "modelFallback", "uuid": a.get("uuid"), "ts": ts,
                                "from": a.get("fallback_from") or "", "to": a.get("fallback_to") or "",
                                "md": a.get("content") or ""})
+    # Agent/Task cards: the agent join, the running preview, the landed report (plans/subagent-transcripts.md).
+    # Tail events only in fold mode — the sealed prefix's cards are gated by _chat_agents_moved and held
+    # open by _chat_agent_open_at below.
+    _agent_states = _stamp_agents(by_tool, sess["path"], tm0, _sdk_spawned_at(sid), meta_path=meta_path)
     _flush_recoveries(tail_cap_t)                       # a recovery on the still-open tail turn (t past the last atom) → bottom of the flow
     #                                                     (tail_cap_t: an episode render stops at its /clear — later notes belong to the next episode)
     # The post-passes run over the TAIL only (issue 903): the prefix was hydrated, stamped and tlId'd
@@ -27293,7 +30129,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         _raw_turn[id(_ev)] = _ti
         if _ev.get("uuid") and _ev["uuid"] not in _raw_turn:
             _raw_turn[_ev["uuid"]] = _ti
-    events = _hydrate_postal(events, _postal_index(), sid)   # swap postal traffic for clean in/out cards (no boilerplate)
+    events = _hydrate_postal(events, _pidx, sid, captions=_msum)   # swap postal traffic for clean in/out cards (no boilerplate)
     _stamp_interrupt_causes(events)                     # a restart/crash resume notice names the seam's cause
     for ev in events:
         # tlId = the timeline atom a chat hover lights: a message/prompt → the DOT (segment promptId),
@@ -27321,6 +30157,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                           len(events))
                 _open = _chat_seam_open_at(events[:_b], _pref_len)   # an undecided seam holds the boundary
                 if _open is None:
+                    _open = _chat_agent_open_at(events[:_b], _pref_len)   # …and so does a RUNNING agent's launch turn
+                if _open is None:
                     break
                 _np = _turn_of(events[_open])   # may equal _fk: the next pass then finds _b == _pref_len and no
                 #                                 marker, and the entry is re-committed UNCHANGED. (Review find
@@ -27338,8 +30176,26 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 _cur = _tsnap[_np][0] if _np in _tsnap else _fe["cursors"]
                 _lt, _lm = (_tsnap[_np][1], _tsnap[_np][2]) if _np in _tsnap else (_fe["last_t"], _fe["last_model"])
                 _raw_new = [_e for _e in _raw_tail if _raw_turn.get(id(_e), _fk) < _np]
-                _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + [_e for _e in _raw_new if _chat_postal_relevant(_e)]
-                _pcards = _hydrate_postal(list(_praw), _postal_index(), sid) if _praw else []
+                _praw_new = [_e for _e in _raw_new if _chat_postal_relevant(_e)]
+                _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + _praw_new
+                # Only the raw events NEW since the seal are hydrated here: the gate above verified the sealed
+                # cards (or re-hydrated them and found them equal) against the same index and caption map,
+                # and _hydrate_postal is per-event independent, so sealed + hydrate(new) == hydrate(all).
+                _pcards_new = _hydrate_postal(list(_praw_new), _pidx, sid, captions=_msum) if _praw_new else []
+                if _praw_new:
+                    _chat_memo_bump(_chat_postal_stats, "commit_new", len(_praw_new))
+                _pcards = (list(_fe["postal_cards"]) if _fold_ok else []) + _pcards_new
+                # The values the entry's cards embed (_postal_card_deps): the sealed part as the gate observed
+                # it, the new part read now from the objects the new cards were just built from. None
+                # (unverified; the next scoped build re-hydrates once) when the sealed part was unverified, or
+                # when this build hydrated anything outside the pusher's names scope.
+                _pdeps_sealed = _fe["postal_deps"] if _fold_ok else ()
+                if not _praw:
+                    _pdeps = ()
+                elif _pdeps_sealed is None or (_praw_new and not _scoped):
+                    _pdeps = None
+                else:
+                    _pdeps = tuple(_pdeps_sealed) + _postal_card_deps(_pcards_new, _pidx, _msum)
                 _plp = list(_fe["pl_pending"]) if _fold_ok else []
                 _touts = list(_fe["task_outs"]) if _fold_ok else []
                 for _e in _newpart:
@@ -27384,8 +30240,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                                     + [(_e.get("md") or "").strip() for _e in _newpart if _e.get("orphaned")],
                     "open_tools": _open_tools, "skill_unfilled": _skill_unf,
                     "postal_raw": _praw, "postal_cards": _pcards,
-                    "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp,
-                    "task_outs": _touts})
+                    "postal_key": _pk, "postal_deps": _pdeps, "pl_pending": _plp,
+                    "task_outs": _touts,
+                    # the sealed Agent cards, for _chat_agents_moved: (toolUseId, agentId, pending) —
+                    # pending = a background launch sealed without its report (the ack stands as output)
+                    "agents": (list(_fe["agents"]) if _fold_ok and _fe.get("agents") else [])
+                              + [(_e.get("toolUseId"), _e.get("agentId"),
+                                  _agent_states.get(_e.get("toolUseId")) == "pending")
+                                 for _e in _newpart if _e.get("kind") == "tool" and _e.get("name") in ("Agent", "Task")]})
             _chat_fold_last.info["prefix_next"] = _b
         except Exception:
             with _chat_fold_lock:
@@ -27408,7 +30270,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # error worth alarming on. Only while work is OUTSTANDING does a card show at all — a fully
     # completed/cancelled list isn't a live to-do (the user 2026-06-10).
     _fsid = os.path.basename(sess["path"]).rsplit(".", 1)[0] if sess.get("path") else ""
-    fold = _fold_tasks(session)                       # the transcript's own task record — feeds the store
+    fold = _fold_tasks(session, sid)                  # the transcript's own task record — feeds the store
     todo = _read_task_store(_fsid, fold)              # content join for team-named interactive stores
     # USER TODOS (plans/user-todos.md): the needs this session registered with the person it works
     # for, sharing the checklist's transcript-bottom card — two sections, each auto-hiding when
@@ -27499,7 +30361,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 # backend _pending position for cancelQueued.
                 continue
             goal, body, fu, ctx = _split_followup(t)
-            m = {"md": body, "idx": i, "cancelable": cancelable}   # idx ↔ the backend's _pending position (cancelQueued)
+            m = {"md": body, "idx": i, "cancelable": cancelable, **_queued_romp_flags(t)}   # idx ↔ the backend's _pending position (cancelQueued)
             if fu:
                 m["followUp"] = True
                 if goal:
@@ -27516,7 +30378,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         # romp-owned on EVERY backend — `park` is the op's _pending_ops position, and the body doubles as
         # the ✕ handshake (_parked_md/_cancel_parked verify it so a shifted queue never drops the wrong op).
         for j, op in enumerate(pending_ops):
-            m = {"md": _parked_md(op), "park": j, "cancelable": True}
+            m = {"md": _parked_md(op), "park": j, "cancelable": True, **(_queued_romp_flags(op[1]) if op[0] == "send" else {})}
             if op[0] == "send":
                 goal, _, fu, ctx = _split_followup(op[1])
                 if fu:
@@ -27556,16 +30418,20 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
     _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True)
-    # Armed kernel watches stay visible even MID-TURN (the user 2026-08-30, whose cluster-job watch
-    # showed only a chip tooltip while the box at the chat bottom stayed dark): _session_awaiting
-    # answers None while the turn is open BY DESIGN — the chip must keep reading "working" (the shared
-    # state formula is untouched) — but the awaited CONTENT still rides the payload, and the box keys
-    # on the fields' presence, never on the state. Idle sessions get watches through
-    # _session_awaiting's own source 0.9, which also stamps the awaitingBg chip.
-    if not _aw and open_now:
-        _aw = _watch_awaiting(sid)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
+    # The in-flight ROWS ride the payload in BOTH turn states (2026-09-06): _session_awaiting answers
+    # None while the turn is open BY DESIGN — the chip must keep reading "working" (the shared state
+    # formula is untouched) — but what the session has running in the background does not change at a
+    # turn boundary, so the #bg-tasks box lists the same rows either way and only its header follows
+    # the chip ("Awaiting …" idle, "In the background …" working). This REPLACES the 2026-08-30 mid-turn
+    # arm that re-ran _watch_awaiting alone into awaitingWhy while the turn was open: it kept armed
+    # watches visible mid-turn (the user's rule then — anything awaited shows, even while working) but
+    # made the box read "Awaiting" under a Working chip and left every OTHER in-flight row to the legacy
+    # tasks list, so the box swapped presentations at every turn boundary of a session with agents in
+    # flight. Watches ride awaitingItems mid-turn like everything else now, and awaitingWhy means one
+    # thing on every surface: idle and waiting on these — the chip's Awaiting.
+    _aw_items = _awaiting_items_payload(_aw, sid, sess["path"], tmux)
     # API error → the session is BLOCKED until retried: a bottom card (renderApiError, a RED dot) AND the chip
     # flips to "blocked" below. Detected event-based from the transcript (isApiErrorMessage), so the exact
     # text (500 / timeout / model-not-found) doesn't matter (the user 2026-06-16). GATED on the session NOT
@@ -27618,131 +30484,175 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     #                                            doomed asks for the whole armed window while the
     #                                            feed hid them (the "one chokepoint" premise was
     #                                            false; the window is unbounded on a bare delete)
-    gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
-    gkids = {}
-    for _gid, _gn in gnodes.items():
-        gkids.setdefault(_gn.get("parentId"), []).append(_gid)
-    g_agent_open = _agent_open_set(gnodes, gkids)   # authoritative-open subtree → never 'done' (mirrors build_feed / the judge)
-    focus = gstore.get("lastNode")
-    tree = []
+    # ── the ledger memo (INTERIM: round-4 plan P3 (a), 2026-09-07; P4's complete chat signature removes
+    # most of the background rebuilds this serves, and the plan keeps it for the active tab and for what
+    # P4 leaves; its counters ride /perf under memos.chat_ledger). The tree walk and the live roots below
+    # are a function of exactly these inputs, each in the key or held by identity: the parse (seg_trig and
+    # seg_work come from it; by the parsed object's identity, and only while no live atoms were merged,
+    # since the merge reshapes the last turn's segments); the store's seams (_seams_sig, which decide the
+    # seg ids); the store itself (by identity: load_goals_shared hands back one object until the store,
+    # its override journal or its archive changes; a rewind hold filters a copy per build, so a held sid
+    # bypasses; a store with no nodes is a fresh object per call, so it bypasses too and its walk is
+    # empty anyway); cleared.jsonl (its (mtime_ns, size), stat'd BEFORE _cleared_ids reads it: a write
+    # landing between the two pairs an old key with new content, one extra miss next build, never a
+    # stale hit); and the warm-anchor table's per-sid revision (_node_anchor_rev, read BEFORE the walk
+    # and stored as read: a resolve another build lands during the walk bumps it after this read, so the
+    # next build misses instead of serving the pre-resolve tree). jd.junk_quote, _agent_open_set and the
+    # seg helpers are pure over those inputs; _session_flag (the mute) is applied after the memo, live.
+    _ck = _chat_cleared_key()
+    _lkey, _lhit = None, None
+    if session is not parsed:
+        _chat_memo_bump(_ledger_memo_stats, "bypass_live")
+    elif _rewind_hold_get(sid):
+        _chat_memo_bump(_ledger_memo_stats, "bypass_hold")
+    elif not gstore.get("nodes"):
+        _chat_memo_bump(_ledger_memo_stats, "bypass_empty")
+    else:
+        _lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))
+        _lent = _ledger_memo.get(sid)
+        if _lent is not None and _lent[0] == _lkey and _lent[1] is parsed and _lent[2] is gstore:
+            _lhit = _lent
+    if _lhit is not None:
+        _chat_memo_bump(_ledger_memo_stats, "hit")
+        tree, _live_roots = _lhit[3], _lhit[4]       # the memo's own lists: the ledger slices them, nothing writes a row
+    else:
+        gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
+        gkids = {}
+        for _gid, _gn in gnodes.items():
+            gkids.setdefault(_gn.get("parentId"), []).append(_gid)
+        g_agent_open = _agent_open_set(gnodes, gkids)   # authoritative-open subtree → never 'done' (mirrors build_feed / the judge)
+        focus = gstore.get("lastNode")
+        tree = []
 
-    def _cleared(cid):
-        cn = gnodes.get(cid)
-        return bool(cn) and (cn.get("cleared") or cid in gcleared or gstatus.get(cid) == "cleared")
+        def _cleared(cid):
+            cn = gnodes.get(cid)
+            return bool(cn) and (cn.get("cleared") or cid in gcleared or gstatus.get(cid) == "cleared")
 
-    # VERDICTS ONLY (the user 2026-07-15; was roll-UP since 2026-06-16): a node shows done if it's
-    # explicitly nodeComplete (a judge/agent/user verdict, or the roll-down cache under a verdicted
-    # ancestor). CLEARED is a SEPARATE axis, not a flavor of done (the user 2026-07-26: the box means
-    # done, and only done — a cleared-but-unfinished node keeps its open ring; the strike + chip say
-    # dismissed). The old derived arm — all children done ⇒ dimmed ✓ on the parent — painted an
-    # authored-looking check on a goal nobody ruled done (children are filed prerequisites/retries,
-    # not a promised breakdown: the load-testing card's unrun experiment wore a ✓ because its "retry
-    # the connection" child closed). The judge-side twin (rollup_status is_complete's bottom-up arm)
-    # is gone the same way; the closer now RULES such nodes via _subtree_done_candidates, so an
-    # honest check appears when the verdict lands.
-    _dmemo = {}
-    def _subtree_done(nid):
-        if nid in _dmemo:
-            return _dmemo[nid]
-        nd = gnodes.get(nid)
-        if not nd:
-            _dmemo[nid] = False
-            return False
-        res = bool(nd.get("nodeComplete"))
-        if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
-            # ones dissolve every rollup) — history still renders structurally-complete: the
-            # mint asserted "this node IS its children"; cleared kids are out of the closure either
-            # way (neither done nor holding it open), mirroring build_feed's _closure_done
-            kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
-            res = bool(kids) and not nd.get("blocked") and all(_subtree_done(c) for c in kids)
-        _dmemo[nid] = res
-        return res
+        # VERDICTS ONLY (the user 2026-07-15; was roll-UP since 2026-06-16): a node shows done if it's
+        # explicitly nodeComplete (a judge/agent/user verdict, or the roll-down cache under a verdicted
+        # ancestor). CLEARED is a SEPARATE axis, not a flavor of done (the user 2026-07-26: the box means
+        # done, and only done — a cleared-but-unfinished node keeps its open ring; the strike + chip say
+        # dismissed). The old derived arm — all children done ⇒ dimmed ✓ on the parent — painted an
+        # authored-looking check on a goal nobody ruled done (children are filed prerequisites/retries,
+        # not a promised breakdown: the load-testing card's unrun experiment wore a ✓ because its "retry
+        # the connection" child closed). The judge-side twin (rollup_status is_complete's bottom-up arm)
+        # is gone the same way; the closer now RULES such nodes via _subtree_done_candidates, so an
+        # honest check appears when the verdict lands.
+        _dmemo = {}
+        def _subtree_done(nid):
+            if nid in _dmemo:
+                return _dmemo[nid]
+            nd = gnodes.get(nid)
+            if not nd:
+                _dmemo[nid] = False
+                return False
+            res = bool(nd.get("nodeComplete"))
+            if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
+                # ones dissolve every rollup) — history still renders structurally-complete: the
+                # mint asserted "this node IS its children"; cleared kids are out of the closure either
+                # way (neither done nor holding it open), mirroring build_feed's _closure_done
+                kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
+                res = bool(kids) and not nd.get("blocked") and all(_subtree_done(c) for c in kids)
+            _dmemo[nid] = res
+            return res
 
-    # mt = node last-modified (the judge writes it on create / amend / done / block); fall back to t for
-    # pre-rename nodes. Recency orders the tree (top goals + children freshest-first) and picks the single
-    # most-recently-CHANGED node; the render marks it → and auto-expands the path (onpath) down to it.
-    def _mt(cid):
-        cn = gnodes.get(cid) or {}
-        return cn.get("mt", cn.get("t", 0))
-    _smemo = {}
-    def _submax(cid):
-        if cid in _smemo:
-            return _smemo[cid]
-        m = _mt(cid)
-        for c in gkids.get(cid, []):
-            m = max(m, _submax(c))
-        _smemo[cid] = m
-        return m
-    # ONE "here" marker (the user 2026-06-17): the highlight (current) and the → arrow (recent) mark the SAME
-    # node now — the working cursor, lastNode/focus. They used to be computed DIFFERENTLY — the highlight from
-    # the stored lastNode pointer, the arrow from the node with the freshest mt — so nothing forced them onto
-    # the same node, and they read as two competing "current" claims when a re-touched older node out-stamped
-    # the cursor. Keying the arrow + the auto-expand path to focus collapses them to one. (_submax above is the
-    # tree-ORDERING key — still mt-based, unchanged.)
-    recent = focus
-    onpath = set()                                         # the marked node + its ancestors → the render auto-expands
-    _p = recent
-    while _p:
-        onpath.add(_p)
-        _p = gnodes.get(_p, {}).get("parentId")
+        # mt = node last-modified (the judge writes it on create / amend / done / block); fall back to t for
+        # pre-rename nodes. Recency orders the tree (top goals + children freshest-first) and picks the single
+        # most-recently-CHANGED node; the render marks it → and auto-expands the path (onpath) down to it.
+        def _mt(cid):
+            cn = gnodes.get(cid) or {}
+            return cn.get("mt", cn.get("t", 0))
+        _smemo = {}
+        def _submax(cid):
+            if cid in _smemo:
+                return _smemo[cid]
+            m = _mt(cid)
+            for c in gkids.get(cid, []):
+                m = max(m, _submax(c))
+            _smemo[cid] = m
+            return m
+        # ONE "here" marker (the user 2026-06-17): the highlight (current) and the → arrow (recent) mark the SAME
+        # node now — the working cursor, lastNode/focus. They used to be computed DIFFERENTLY — the highlight from
+        # the stored lastNode pointer, the arrow from the node with the freshest mt — so nothing forced them onto
+        # the same node, and they read as two competing "current" claims when a re-touched older node out-stamped
+        # the cursor. Keying the arrow + the auto-expand path to focus collapses them to one. (_submax above is the
+        # tree-ORDERING key — still mt-based, unchanged.)
+        recent = focus
+        onpath = set()                                         # the marked node + its ancestors → the render auto-expands
+        _p = recent
+        while _p:
+            onpath.add(_p)
+            _p = gnodes.get(_p, {}).get("parentId")
 
-    # Emit the FULL goal tree — every node, with its child ids — so the RENDER can fold / expand at ANY
-    # level (the user 2026-06-16): completed / cleared nodes fold by default, the recent path + open work
-    # expand. Pruning moved to the render; the kernel just supplies the structure + done / derived /
-    # cleared / recent / onpath flags. Cleared nodes are INCLUDED now (shown faded), not skipped.
-    def _twalk(nid, depth, ancestor_done=False, ancestor_cleared=False):
-        nd = gnodes.get(nid)
-        if not nd:
-            return
-        # cleared rolls DOWN (replacing the old cleared→done roll-down): dismissing a parent dismisses
-        # its subtree, so the children fade + strike with it instead of sitting as live-looking open
-        # rings under a struck parent — while every box keeps meaning done (the user 2026-07-26).
-        clr = _cleared(nid) or ancestor_cleared
-        # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella holding
-        # one — is never 'done' here either, so the ledger matches the feed + the judge (see _agent_open_set).
-        # A CLEARED node is still dismissed (the strike + chip carry that), so the override only applies live.
-        aopen = (nid in g_agent_open) and not clr
-        explicit = bool(nd.get("nodeComplete")) and not aopen
-        # done rolls BOTH ways, like the ask-tree flatten() (the user 2026-06-16): a node under a done
-        # parent is derived-done too (roll-DOWN via ancestor_done), not just when its own subtree is done
-        # (roll-UP via _subtree_done). So a completed subtree reads as all-dimmed-✓, instead of a child
-        # showing ○ under a done top. CLEARED no longer counts as done for any of this (the user
-        # 2026-07-26: the box means done) — a dismissed-unfinished node keeps its ring under the strike.
-        derived = (not explicit) and (not aopen) and (_subtree_done(nid) or ancestor_done)
-        kids = sorted(gkids.get(nid, []), key=_submax, reverse=True)
-        # EXACT deep-link anchors (the user 2026-06-19): a ledger TOC click lands on the precise chat turn
-        # BY UUID — the SAME anchors build_feed gives its cards — so the ledger and the feed for one node
-        # land identically, replacing the ledger's old nearest-time landing. promptAnchorUuid → the minting
-        # user message (text zone); anchorUuid → the newest trail segment (mark + time zones).
-        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_work)
-        tree.append({"id": nid, "text": nd["text"], "depth": depth,
-                     "done": explicit or derived, "derived": derived, "cleared": clr,
-                     "blocked": bool(nd.get("blocked")), "t": nd["t"],
-                     # mt = the segment where this node was last touched (resolved/blocked) — the click-
-                     # to-jump nav lands done/blocked goals on their mt (the assistant turn that finished
-                     # them), open goals on t (where they began). Matches build_feed (the user 2026-06-16).
-                     "mt": nd.get("mt", nd["t"]), "current": nid == focus,
-                     "onpath": nid in onpath,
-                     "promptAnchorUuid": _pa, "anchorUuid": _wa,
-                     # the distiller's takeaway (done) / the block-distiller's decision brief (blocked),
-                     # null until produced — the ledger row's ⊕ expander reveals it inline (the user 2026-06-21)
-                     "summary": nd.get("summary"), "blockSummary": nd.get("blockSummary"),
-                     "children": [c for c in kids if c in gnodes]})
-        for c in kids:
-            _twalk(c, depth + 1, ancestor_done=explicit or derived, ancestor_cleared=clr)
-    for _rid in sorted(gkids.get(None, []), key=_submax, reverse=True):
-        _twalk(_rid, 0)
-    # "Recent" for the tab-hover (the user 2026-06-30): the up-to-5 most-recently-touched TOP-level tasks across
-    # the LIVE store AND the archive, REGARDLESS of status (done / blocked / cleared) — so a session whose tops
-    # were all crossed off still lists the last 5 things it did, not just its summary. Roots only (tasks, not
-    # steps). The live tree usually holds ≤1 open top; the rest are cleared+archived, hence the archive merge.
-    _live_roots = [{"text": nd["text"], "t": nd.get("mt", nd.get("t", 0))}
-                   for nid, nd in gnodes.items()
-                   if nd.get("parentId") is None and (nd.get("text") or "").strip()]
+        # Emit the FULL goal tree — every node, with its child ids — so the RENDER can fold / expand at ANY
+        # level (the user 2026-06-16): completed / cleared nodes fold by default, the recent path + open work
+        # expand. Pruning moved to the render; the kernel just supplies the structure + done / derived /
+        # cleared / recent / onpath flags. Cleared nodes are INCLUDED now (shown faded), not skipped.
+        def _twalk(nid, depth, ancestor_done=False, ancestor_cleared=False):
+            nd = gnodes.get(nid)
+            if not nd:
+                return
+            if len(tree) >= _LEDGER_TREE_ROWS:
+                # Past the rows the ledger ships (tree[:_LEDGER_TREE_ROWS] is its only reader; the walk is
+                # pre-order with sorted children, so the rows appended before this point are the full walk's
+                # first rows): no row and no flags, but the anchor resolve still runs for every node, so
+                # _node_anchor_last learns exactly what the full walk taught it (round-4 plan P3 (a)).
+                _node_anchor_uuids(nd, seg_trig, seg_work, sid=sid)
+                for c in gkids.get(nid, []):
+                    _twalk(c, depth + 1)
+                return
+            # cleared rolls DOWN (replacing the old cleared→done roll-down): dismissing a parent dismisses
+            # its subtree, so the children fade + strike with it instead of sitting as live-looking open
+            # rings under a struck parent — while every box keeps meaning done (the user 2026-07-26).
+            clr = _cleared(nid) or ancestor_cleared
+            # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella holding
+            # one — is never 'done' here either, so the ledger matches the feed + the judge (see _agent_open_set).
+            # A CLEARED node is still dismissed (the strike + chip carry that), so the override only applies live.
+            aopen = (nid in g_agent_open) and not clr
+            explicit = bool(nd.get("nodeComplete")) and not aopen
+            # done rolls BOTH ways, like the ask-tree flatten() (the user 2026-06-16): a node under a done
+            # parent is derived-done too (roll-DOWN via ancestor_done), not just when its own subtree is done
+            # (roll-UP via _subtree_done). So a completed subtree reads as all-dimmed-✓, instead of a child
+            # showing ○ under a done top. CLEARED no longer counts as done for any of this (the user
+            # 2026-07-26: the box means done) — a dismissed-unfinished node keeps its ring under the strike.
+            derived = (not explicit) and (not aopen) and (_subtree_done(nid) or ancestor_done)
+            kids = sorted(gkids.get(nid, []), key=_submax, reverse=True)
+            # EXACT deep-link anchors (the user 2026-06-19): a ledger TOC click lands on the precise chat turn
+            # BY UUID — the SAME anchors build_feed gives its cards — so the ledger and the feed for one node
+            # land identically, replacing the ledger's old nearest-time landing. promptAnchorUuid → the minting
+            # user message (text zone); anchorUuid → the newest trail segment (mark + time zones).
+            _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_work, sid=sid)
+            tree.append({"id": nid, "text": nd["text"], "depth": depth,
+                         "done": explicit or derived, "derived": derived, "cleared": clr,
+                         "blocked": bool(nd.get("blocked")), "t": nd["t"],
+                         # mt = the segment where this node was last touched (resolved/blocked) — the click-
+                         # to-jump nav lands done/blocked goals on their mt (the assistant turn that finished
+                         # them), open goals on t (where they began). Matches build_feed (the user 2026-06-16).
+                         "mt": nd.get("mt", nd["t"]), "current": nid == focus,
+                         "onpath": nid in onpath,
+                         "promptAnchorUuid": _pa, "anchorUuid": _wa,
+                         # the distiller's takeaway (done) / the block-distiller's decision brief (blocked),
+                         # null until produced — the ledger row's ⊕ expander reveals it inline (the user 2026-06-21)
+                         "summary": nd.get("summary"), "blockSummary": nd.get("blockSummary"),
+                         "children": [c for c in kids if c in gnodes]})
+            for c in kids:
+                _twalk(c, depth + 1, ancestor_done=explicit or derived, ancestor_cleared=clr)
+        for _rid in sorted(gkids.get(None, []), key=_submax, reverse=True):
+            _twalk(_rid, 0)
+        # "Recent" for the tab-hover (the user 2026-06-30): the up-to-5 most-recently-touched TOP-level tasks across
+        # the LIVE store AND the archive, REGARDLESS of status (done / blocked / cleared) — so a session whose tops
+        # were all crossed off still lists the last 5 things it did, not just its summary. Roots only (tasks, not
+        # steps). The live tree usually holds ≤1 open top; the rest are cleared+archived, hence the archive merge.
+        _live_roots = [{"text": nd["text"], "t": nd.get("mt", nd.get("t", 0))}
+                       for nid, nd in gnodes.items()
+                       if nd.get("parentId") is None and (nd.get("text") or "").strip()]
+        if _lkey is not None:
+            _chat_memo_bump(_ledger_memo_stats, "miss")
+            _ledger_memo[sid] = (_lkey, parsed, gstore, tree, _live_roots)
     recent_tops = sorted(_live_roots + _archive_roots(sid), key=lambda r: r["t"] or 0, reverse=True)[:5]
     if _session_flag(sid, "hideFromFeed"):       # muted → out of task tracking: the ledger shows no goal tree / current task
         tree, current, recent_tops = [], None, []
-    ledger = {"summary": arch.get("headline", ""), "tree": tree[:80],
+    ledger = {"summary": arch.get("headline", ""), "tree": tree[:_LEDGER_TREE_ROWS],
               "current": current, "recent": recent_tops,
               # the session's own claim of what it is doing (the postal set_working note, the store
               # list_agents reads): the chat's section snapshot shows it as a row's own second line
@@ -27823,6 +30733,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # number — a single agent is not "agents") — the chip and the box derive the word from
                   # this one number; None when the source cannot know (an untyped stamp, a bare overlay)
                   "awaitingCount": ((_aw or {}).get("count") if isinstance((_aw or {}).get("count"), int) else None),
+                  # …and the in-flight ROWS themselves — [{kind, id, label, since, agentId?, detail?,
+                  # watchId?}], grouped by the box and worded by the chip's tooltip (slice 2, 2026-09-05);
+                  # shipped in BOTH turn states since 2026-09-06 (_aw_items above): the wait's rows when
+                  # idle-awaiting, everything running in the background otherwise; [] for a wait no
+                  # source can enumerate (a judge stamp, a bare overlay row) and when nothing runs
+                  "awaitingItems": _aw_items,
                   "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
                                       (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
@@ -28165,7 +31081,8 @@ def _episode_boundary_tick(now):
     in the producer thread BEFORE the judge tiers and the pre-pass goals snapshot, so the same pass's
     planner/closer/nudge already see the settled store. Cheap when nothing changed: _sessions() is the
     cached discover, the episode log read is an mtime memo, and a transcript's head record is cached
-    per path (immutable once written)."""
+    per path (immutable once written); the states-file lineage read runs only for a head the log does
+    not hold yet (see the guard order in _episode_boundary_check)."""
     for s in _sessions(now):
         try:
             _episode_boundary_check(s["sid"], s["path"], now)
@@ -28178,6 +31095,17 @@ def _episode_boundary_check(sid, path, now):
     if not head or not head["root"]:
         return                       # no head yet, or a resume-style leaf (chains into a prior file):
     #                                  either way the recorded episode is still the current one
+    # The two guards below are pure predicates on the same early return, so their order is free to
+    # choose, and it is chosen for cost (2026-09-07, the judge-pass performance round): the episode
+    # log read is an mtime memo, one stat per session on a hit; the lineage read parses every row of
+    # the session's states file. A recorded head, which is every session on every pass but the one
+    # where its head changed, returns on the stat and never reads the states file; the lineage is
+    # consulted only for an unrecorded head, still before the append that would record it.
+    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
+        return                       # this head is already recorded — the current episode, or a
+    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
+    #                                  mid-transition). A re-sighting is never a new boundary, and
+    #                                  skipping its append keeps the race below from growing the log.
     if any(l.get("to") == Path(path).stem for l in jd.resume_lineage(sid)):
         return                       # a RECORDED resume fork: the CLI resumed a machine-cut turn onto a
     #                                  fresh-headed file, byte-identical to a /clear on disk. The
@@ -28185,11 +31113,6 @@ def _episode_boundary_check(sid, path, now):
     #                                  same states/ rows), so this head is no boundary — treating it as
     #                                  one settled the session's open cards mid-turn and the cut turn's
     #                                  work never carded (the lost PR-watch finding, the user 2026-08-14).
-    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
-        return                       # this head is already recorded — the current episode, or a
-    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
-    #                                  mid-transition). A re-sighting is never a new boundary, and
-    #                                  skipping its append keeps the race below from growing the log.
     jd.append_episode(sid, head["uuid"], Path(path).stem, head["t"] or int(now))
     # Seed-vs-boundary is decided by RE-READING the log AFTER the append, never from the pre-append
     # read. Two kernel instances overlapped for about a second on 2026-07-27 (a restart-churn
@@ -28676,7 +31599,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
         text = pre + g if g else prompt[:140].strip()
     t = held.get("t", lt["t"])
     return {"itemId": "provisional:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -28685,7 +31608,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
             "provisional": True, "judging": not turn_open, "tree": []}
 
 
-def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, count=None):
+def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, count=None, items=None):
     """A lightweight WORKING-column placeholder for a LIVE, IDLE session AWAITING a dispatched BACKGROUND
     TASK when there is NO open goal to floor to awaiting (the user 2026-07-13). The turn ended and every
     card is done/cleared/placed, so the goal loop has nothing to floor AND _provisional_card bows out (its
@@ -28708,11 +31631,11 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, 
             t = turns[-1].get("t", now)              # last activity → recency tint, sorts with the working column
     except Exception:
         pass
-    # _session_awaiting already phrases the why ("waiting on a background task: <desc>"); capitalize it for
+    # _session_awaiting already phrases the why ("waiting on a background command: <desc>"); capitalize it for
     # the headline. The task list rides `awaiting` for the pill, so the headline needn't repeat every task.
-    text = (why[:1].upper() + why[1:]) if why else "Waiting on a background task"
+    text = (why[:1].upper() + why[1:]) if why else "Waiting on a background command"
     return {"itemId": "awaiting:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -28721,6 +31644,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, 
             # "Working…"/"Analyzing…" chip, carries the state (feed.ts defers the provisional chip when awaiting).
             "awaiting": {"why": why, "kind": kind, "since": since,
                          "count": count if isinstance(count, int) else None,   # the feed pill's word agrees in number (T225)
+                         "items": list(items or []),   # the awaited rows the pill lists, grouped (slice 2)
                          "tasks": _awaiting_task_descs(fsid, s["path"])},
             "provisional": True, "judging": False, "tree": []}
 
@@ -28777,7 +31701,7 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
     if not text:
         text = "Awaiting your input" if perm_state == "picker" else "Awaiting your approval"
     return {"itemId": "blocked:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": perm_state,
@@ -28809,7 +31733,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
     if len(todos) > 1:
         text += "  (+%d more)" % (len(todos) - 1)
     return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
+            "t": newest, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
@@ -28849,11 +31773,9 @@ def _postal_wait_maps():
     try:
         rows = []
         alias = {}   # "host:name" -> sid, learned from every row a remote sender stamped
-        for line in jd.MESSAGES.read_text(errors="replace").splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
+        for o in _messages_rows():                    # append-incremental rows (2026-09-03); the fold
+            if not isinstance(o, dict):               # itself stays whole-log: aliases learned from LATER
+                continue                              # rows resolve EARLIER peer: rows
             rows.append(o)
             if o.get("from_host") and o.get("from") and o.get("from_id"):
                 alias[str(o["from_host"]) + ":" + str(o["from"])] = str(o["from_id"])
@@ -29131,6 +32053,366 @@ def _state_unknown_names(alive, tmux, working, awaiting):
     return out
 
 
+# ── build_feed's per-session memo (round-4 plan P2-A, 2026-09-07) ──────────────────────────────────
+# The per-session loop held 1306 of build_feed's 1362 pusher samples in the steady profile, and most
+# of that was spent recomputing values that are pure functions of the session's parse and its goal
+# store: the seam maps (the per-turn anchor walk: _segs_seam, _seg_anchors, _seg_last_text,
+# _atom_prose_chars, jd._prompt_anchor_uuid), the tree shape (children, the agent-open set, the
+# parked rows, the done/blocked/watermark closures) and each top goal's flattened tree. An idle
+# session's parse and store do not change between builds (31 sessions, 36 ticks: 0.78 transcript and
+# 0.39 store changes per 5 s), so those values are kept per session and reused while their inputs
+# hold. The memo may only return what the uncached computation would return NOW, so every input is
+# in the key or bypasses it:
+#   1. the PARSE: the _parse_cached object, by identity (held strongly, so `is` is exact); a build
+#      whose parse is a live-merge copy (_merge_live_atoms returned a new object) bypasses, counted
+#      bypass_live, because that object exists for this build only;
+#   2. the STORE: _feed_goals_view's key, by identity; the key IS the served store where its identity
+#      implies its content (the shared cache's FrozenStore; the pass snapshot's object, or the fresh
+#      copy a settled gesture replay minted — one copy per gesture, so a store an earlier build saw is
+#      never re-punched under the same identity), and a never-equal sentinel otherwise (a rewind hold,
+#      a failed punch that will retry, the shared cache switched off, no store file), which bypasses,
+#      counted bypass_unkeyed;
+#   3. the NAMES registry, by value (_names_key over the cycle's snapshot): flatten resolves the
+#      session's colour and every handoff row's recipient name and colour through it;
+#   4. who_working, by value: every row carries it;
+#   5. the session row's name and colour, by value (the row's name is not always the registry's:
+#      a live session outside the discover window, an SDK session with no transcript yet);
+#   6. the remembered warm anchors a cold row read (_node_anchor_last, global state a warm resolve
+#      writes and a cold resolve reads): every such read is recorded per node with the value read,
+#      and an entry whose recorded values no longer match misses; the warm resolves an entry made
+#      are re-applied when its tree is served, so the global state after a hit equals the state
+#      after a fresh build.
+# jd.CITE_MIN_CHARS and the helpers above are constants of the process. A walk that swallowed an
+# exception is computed for its build and never stored (bypass_degraded). A build outside a pusher
+# cycle's names scope (a gesture build on a WS thread) reads the memo but never fills it
+# (bypass_unscoped), so the pusher is the one writer of entries; get, store and evict run under one
+# lock and the build itself runs outside it. Entries for sessions that left the alive set are
+# dropped at the end of every build (evict). Trees are served as a fresh list of shared row dicts:
+# nothing in build_feed writes into a row (the serving fold's commit copies the row it re-parents
+# under), and the clock-derived tint is stamped onto copies at serialization (_stamp_trgb), so a
+# row is a fixed value while its inputs hold. Counters ride /perf under memos.feed_segs.
+_feed_segs_memo = {}                             # sid -> _FeedSegs
+_FEED_SEGS_LOCK = threading.Lock()               # get / store / evict, and the counters
+_feed_segs_stats = {"hit": 0, "miss": 0, "bypass_live": 0, "bypass_degraded": 0, "bypass_unkeyed": 0,
+                    "bypass_unscoped": 0, "evict": 0}
+
+
+def _feed_segs_bump(key, n=1):
+    with _FEED_SEGS_LOCK:
+        _feed_segs_stats[key] += n
+
+
+def _feed_segs_report():
+    """The memo's counters plus its occupancy, for /perf (memos.feed_segs)."""
+    with _FEED_SEGS_LOCK:
+        out = dict(_feed_segs_stats)
+        out["entries"] = len(_feed_segs_memo)
+    return out
+
+
+def _feed_segs_forget(alive):
+    """Drop every entry whose sid is not in `alive` (the build's alive set): a session leaving it is
+    the event that releases the parse and store its entry pins."""
+    with _FEED_SEGS_LOCK:
+        gone = [k for k in _feed_segs_memo if k not in alive]
+        for k in gone:
+            del _feed_segs_memo[k]
+        _feed_segs_stats["evict"] += len(gone)
+
+
+def _names_key(snap):
+    """A value key for a names snapshot ({sid: tab fields}): equal keys mean every registry entry
+    reads the same, so every name and colour the feed resolves through it is the same."""
+    return tuple(sorted((k, tuple(v)) for k, v in snap.items()))
+
+
+class _FeedSegs:
+    """One session's store-and-parse-derived feed values (see the memo note above): the seam maps,
+    the tree shape and its closures, and the flattened tree per top goal, computed on demand and kept.
+    `tree(nid)` serves a top's rows as a fresh list; the row dicts are shared and never written."""
+    __slots__ = ("ps", "store", "names_key", "who_working", "name", "color", "nodes",
+                 "seg_uuid", "seg_trig", "seg_best", "cite_uuids", "children", "agent_open", "parked_rows",
+                 "subtree", "closure_done", "fsubmax", "closure_blocked", "block_check_floor",
+                 "flatten", "trees", "anchor_deps", "degraded")
+
+    def __init__(self, ps, store, who_working, name, color, nodes, seg_uuid, seg_trig, seg_best, cite_uuids,
+                 children, agent_open, parked_rows, subtree, closure_done, fsubmax, closure_blocked,
+                 block_check_floor, flatten, degraded):
+        self.ps, self.store, self.names_key = ps, store, None
+        self.who_working, self.name, self.color, self.nodes = who_working, name, color, nodes
+        self.seg_uuid, self.seg_trig, self.seg_best, self.cite_uuids = seg_uuid, seg_trig, seg_best, cite_uuids
+        self.children, self.agent_open, self.parked_rows = children, agent_open, parked_rows
+        self.subtree, self.closure_done, self.fsubmax = subtree, closure_done, fsubmax
+        self.closure_blocked, self.block_check_floor, self.flatten = closure_blocked, block_check_floor, flatten
+        self.trees = {}                              # top nid -> (rows, the warm anchors the flatten recorded)
+        self.anchor_deps = {}                        # nid -> the remembered anchor a cold row read (None = none held)
+        self.degraded = degraded
+
+    def anchors_hold(self):
+        """True while every remembered anchor a cold row of this entry read still reads the same. The
+        dependency map is read as a snapshot taken under the memo lock: a concurrent build (a gesture
+        build on a handler thread beside the pusher's) may be filling another top's tree into it, and
+        iterating the live dict raised on the size change (review 2026-09-07)."""
+        with _FEED_SEGS_LOCK:
+            deps = list(self.anchor_deps.items())
+        return all(_node_anchor_last.get(nid) == held for nid, held in deps)
+
+    def tree(self, nid):
+        e = self.trees.get(nid)
+        if e is None:
+            rows, deps, writes = [], {}, {}
+            self.flatten(nid, rows, deps, writes, boundary=jd.review_boundary(self.nodes[nid]))
+            with _FEED_SEGS_LOCK:                    # the flatten ran on locals; publish them in one step
+                self.anchor_deps.update(deps)
+                e = self.trees.get(nid)
+                if e is None:                        # a concurrent fill of the same top published first:
+                    e = self.trees[nid] = (rows, writes)   # one object for every reader of it
+                rows, writes = e
+        else:
+            rows, writes = e
+            if writes:
+                _node_anchor_last.update(writes)   # what a fresh flatten would have remembered
+        return list(rows)
+
+
+def _feed_segs_build(fsid, name, color, ps, store, who_working):
+    """Compute one session's _FeedSegs from its parse and store (the code build_feed's loop ran per
+    session until 2026-09-07; see the memo note above for what may vary it)."""
+    nodes = store.get("nodes", {})
+    degraded = False
+    # Exact click-to-jump anchors: map each goal segment → the work/reply uuid — the SAME anchors the
+    # timeline/ledger already use — so a card click deep-links to the precise turn BY ID instead of the
+    # old time-nearest heuristic. _parse is cache-backed (cheap); reply uuid preferred (the readable
+    # assistant text). A missing entry → anchorUuid None → feed falls back to time. (the user 2026-06-17.)
+    # seg_uuid → the WORK anchor (reply/work assistant atom, for the mark/time zones); seg_trig → the
+    # PROMPT anchor (the segment's TRIGGER atom = the user's message that opened it, for the TITLE). A
+    # title is prompt-intent and must land on the USER turn — passing the trigger uuid (which the chat
+    # tags + the kind guard accepts as turn-user) lets it resolve BY ID instead of a kind-restricted
+    # nearest-time landing (the user 2026-06-17). (Both are emitted .turn[data-uuid]s in the chat.)
+    seg_uuid, seg_trig, seg_best, cite_uuids = {}, {}, {}, set()
+    try:
+        for turn in (ps["turns"] if ps else []):     # cached parse only; anchors fill in after _warm_fleet_bg
+            for seg in _segs_seam(turn, store):
+                w, r = _seg_anchors(seg["atoms"])
+                seg_uuid[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # timestamp-invariant key; landable
+                #                                  anchors only — never a thinking-only uuid (SDK echo/real drift)
+                seg_trig[_seg_key(seg["id"])] = jd._prompt_anchor_uuid(seg)   # attachment-safe: a
+                #                                  title click must land on the USER message, never an
+                #                                  attachment record no chat event carries (2026-08-25)
+                _lu, _lsub = _seg_last_text(seg["atoms"])
+                seg_best[_seg_key(seg["id"])] = (_lu, _lsub, seg.get("t", 0))   # latest prose → summary deep-link fallback
+                for _a in seg["atoms"]:              # citable-uuid set: gates the distiller's CITED anchor.
+                    # Resolvable in THIS parse AND substantive (the user 2026-07-14): a stored citation
+                    # pointing at a connective stub (a lead-in that merely names the goal) is a wrong
+                    # link by construction — the outcome never lives there — so it falls through to the
+                    # deterministic fallback below, healing bad anchors already in stores at read time.
+                    if _a.get("uuid") and _atom_prose_chars(_a) >= jd.CITE_MIN_CHARS:
+                        cite_uuids.add(_a["uuid"])
+    except Exception:
+        degraded = True                          # a partial walk: computed for this build, never memoized
+    children = {}
+    for nid, nd in nodes.items():
+        children.setdefault(nd.get("parentId"), []).append(nid)
+    agent_open = _agent_open_set(nodes, children)   # authoritative-open subtree → never rendered 'done' (see helper)
+    parked_rows = _parked_rows(nodes, children)     # leapfrogged open rows → the quiet "parked" row cue (see helper)
+
+    def _subtree(root):                          # all node ids at/under root (pre-order)
+        stack, acc = [root], []
+        while stack:
+            x = stack.pop(); acc.append(x); stack.extend(children.get(x, []))
+        return acc
+
+    # VERDICTS ONLY (the user 2026-07-15; roll-UP removed — it painted an authored-looking ✓ on a
+    # goal nobody ruled done, see build_session's _subtree_done twin): a node is "done" if it's
+    # explicitly nodeComplete (verdict or roll-down cache), OR if a done ancestor checks it off
+    # (roll-DOWN, threaded by flatten through ancestor_done — dimmed disc). All-children-done alone
+    # no longer checks a parent; the closer rules those (_subtree_done_candidates) and the check
+    # appears when its verdict lands.
+    _cdone = {}
+    def _closure_done(nid):
+        if nid in _cdone:
+            return _cdone[nid]
+        nd = nodes.get(nid)
+        if not nd:
+            _cdone[nid] = False
+            return False
+        res = bool(nd.get("nodeComplete"))
+        if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
+            # structurally-complete (mints retired; live ones dissolve every rollup): the
+            kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
+            res = bool(kids) and all(_closure_done(c) for c in kids)
+        _cdone[nid] = res
+        return res
+
+    # Order children MOST-RECENT-FIRST by subtree-max mt — the SAME recency key the ledger tree uses
+    # (build_session _submax), so every goal-tree view reads newest-first: the card's inline sub-goal
+    # checklist, the modal tree, and the ledger TOC all agree (the user 2026-06-17). mt (last-touched)
+    # falls back to t for never-modified nodes.
+    _fsmemo = {}
+    def _fsubmax(cid):
+        if cid in _fsmemo:
+            return _fsmemo[cid]
+        cn = nodes.get(cid) or {}
+        m = cn.get("mt", cn.get("t", 0))
+        for k in children.get(cid, []):
+            m = max(m, _fsubmax(k))
+        _fsmemo[cid] = m
+        return m
+
+    # BLOCKED rolls UP the tree (the user 2026-07-11: nimbus's Needs-you traced to a block buried
+    # under a collapsed row — "shouldn't the block propagate up so I see it?"). Mirror of the judge's
+    # any_blocked: a node reads "question" when it — or any descendant chain not inside a completed
+    # subtree — holds an open block (a done subtree's block is moot, same short-circuit). This is
+    # also what the CLIENT was designed for: hasQuestionDescendant exists to find the LOWEST ? (the
+    # actual ask) beneath rolled-up ancestors.
+    _qmemo = {}
+    def _closure_blocked(nid):
+        if nid in _qmemo:
+            return _qmemo[nid]
+        nd = nodes.get(nid)
+        if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
+            _qmemo[nid] = False
+            return False
+        res = bool(nd.get("blocked")) or any(_closure_blocked(c) for c in children.get(nid, []))
+        _qmemo[nid] = res
+        return res
+
+    # The rejudging latch's CLEAR bound (the user 2026-07-31): the block a top card surfaces may
+    # live on a DESCENDANT (blocked rolls up, _closure_blocked above), and the unblocker stamps
+    # blockCheckT on the node it EXAMINES — the blocked child — never on the top. The latch used
+    # to read the top's own watermark, which for a child-held block stays None forever: every
+    # plain reply dropped the card to Working (plain_user_t > 0 is always true) and every landing
+    # turn advanced disp_t past the reply and lifted it back to Needs-You — the same strobe the
+    # watermark bound fixed for top-level blocks (PR #144), reintroduced one level down. The
+    # audited card flipped seconds-apart pairs at every conversational turn for half an hour.
+    # The bound is therefore the OLDEST watermark among the subtree's OPEN blocked nodes (the
+    # exact closure _closure_blocked walks, same done/cleared gates): the card returns to
+    # Needs-You only once EVERY block it is surfacing has been re-examined with evidence
+    # covering the reply. None when the walk finds no open block (a stale rollup) — the caller
+    # falls back to the top's own watermark, the pre-existing semantics.
+    _bcmemo = {}
+    def _block_check_floor(nid):
+        if nid in _bcmemo:
+            return _bcmemo[nid]
+        nd = nodes.get(nid)
+        if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
+            _bcmemo[nid] = None
+            return None
+        vals = [int(nd.get("blockCheckT") or 0)] if nd.get("blocked") else []
+        vals += [v for v in (_block_check_floor(c) for c in children.get(nid, [])) if v is not None]
+        res = min(vals) if vals else None
+        _bcmemo[nid] = res
+        return res
+
+    def flatten(nid, out, deps, writes, ancestor_done=False, boundary=None):  # AskTreeNode flat list, root first; nest via children ids
+        nd = nodes[nid]
+        kids = sorted(children.get(nid, []), key=_fsubmax, reverse=True)   # most-recent-first (matches the ledger)
+        explicit = bool(nd.get("nodeComplete"))
+        # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella
+        # holding one — is NEVER done, even if a nodeComplete ancestor would roll 'done' down onto it.
+        # Mirrors the judge's rollup_status; without it the open item read 'done' → the "checked off" hover.
+        done = (explicit or _closure_done(nid) or ancestor_done) and nid not in agent_open
+        derived = done and not explicit            # roll-up / roll-down → DIMMED ✓ disc, not the full one
+        st = "done" if done else ("question" if _closure_blocked(nid) else "open")
+        # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
+        # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
+        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid, deps, writes, sid=fsid)   # sid: the ledger memo's revision (see _node_anchor_rev)
+        # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
+        # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
+        # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
+        # showed a bare text row with no recipient identity and no visible cross-card LINK (the user
+        # 2026-08-16, who watched a clear take the linked card with it and had no way to see why).
+        # who/whoSid/whoColor become the RECIPIENT's identity for these rows — exact, from the
+        # courier-recorded handoff.peer, never inferred.
+        _ho = nd.get("handoff") if isinstance(nd.get("handoff"), dict) else None
+        _ho_sid = str(_ho.get("peer") or "") if _ho else ""
+        out.append({"id": nid, "kind": "handoff" if _ho_sid else "ask", "text": nd["text"],
+                    "who": (_name_of(_ho_sid) or _ho_sid[:8]) if _ho_sid else name,
+                    "whoSid": _ho_sid or fsid,
+                    "whoColor": _name_color(_ho_sid) if _ho_sid else color,
+                    "whoWorking": who_working, "status": st, "derived": derived,
+                    # user-cleared sub (nodeOverride op:clear) → renders struck-through + faded with a
+                    # "cleared" chip; `status` above stays honest (box = done, the user 2026-07-26)
+                    "cleared": bool(nd.get("cleared")),
+                    # this DONE sub's outcome was already REVIEWED: its done predates the top's
+                    # review boundary (jd.review_boundary — the same boundary the distiller scopes
+                    # the takeaway with, so the fold and the summary can never disagree). The card
+                    # collapses these behind one "N reviewed earlier" row instead of re-presenting
+                    # them on every re-completion (the user 2026-08-19). `out` is empty only for
+                    # the ROOT row, which is the card head, never a checklist row.
+                    "reviewedEarlier": bool(boundary and out and done
+                                            and jd._done_since(nd) <= boundary) or None,
+                    # a rolled-UP question (the block lives in a descendant, not here) — the client's
+                    # mark tooltip says "blocked inside", and the actual ask keeps its own ⏸ below
+                    "qderived": st == "question" and not nd.get("blocked"),
+                    # LEAPFROGGED row (the user 2026-08-24): open, nothing filed under it, while N
+                    # younger siblings were dispatched past it — the quiet "parked" tag + the card's
+                    # dim sub-goals suffix. Gated on the OPEN render state so a rolled-down or
+                    # closed row can never wear it; mint/retire events live in _parked_rows.
+                    "parked": ({"n": parked_rows[nid]} if (st == "open" and nid in parked_rows) else None),
+                    # AUTHORITATIVE tier: this node mirrors an item on the agent's OWN to-do list, so its
+                    # open/done is agent-asserted (solidity = authority in the disc render). None = a plain
+                    # judge-inferred node. (the user 2026-07-01)
+                    "auth": (nd.get("agentTask") or {}).get("status"),
+                    # `last` drives each row's "(Xm ago)" age + recency tint: the node's LAST ACTIVITY
+                    # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
+                    # the modal tree just as its card does — not pinned to the mint `t` (the user
+                    # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
+                    "t": nd["t"], "last": _fsubmax(nid),   # the age tint is stamped at serialization (_stamp_trgb)
+                    # mt = last-modified (the segment the planner applied done / block) → a blocked or
+                    # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
+                    # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
+                    "mt": nd.get("mt", nd["t"]),
+                    # anchorUuid = the WORK anchor (reply assistant atom of the resolve/mint segment) →
+                    # the mark/time zones deep-link here. promptAnchorUuid = the PROMPT anchor (the
+                    # MINTING segment's trigger = the user's message) → the TITLE deep-links here, by id,
+                    # landing on the user turn (no kind-restricted nearest-time needed). (2026-06-17.)
+                    "anchorUuid": _wa,
+                    "promptAnchorUuid": _pa,
+                    "summary": nd.get("summary"),                   # distiller's key takeaway — shown in the MODAL only — the user 2026-06-17
+                    "blockSummary": nd.get("blockSummary"),         # block-distiller's DECISION BRIEF (MODAL); null until produced — the user 2026-06-18
+                    "followupPending": nd.get("followupPending"),   # per-node "Followed up" chip in the modal tree (business 2026-06-17)
+                    # the per-item story (MODAL, non-done only): newest block/unblock/verdict rows with
+                    # anchors, so an open sub answers 'is this still active?' in place (the user 2026-07-20)
+                    "log": _node_log_rows(nd, seg_uuid) if st != "done" else None,
+                    "children": kids})
+        for c in kids:
+            flatten(c, out, deps, writes, ancestor_done=done, boundary=boundary)
+        return out
+
+    return _FeedSegs(ps, store, who_working, name, color, nodes, seg_uuid, seg_trig, seg_best, cite_uuids,
+                     children, agent_open, parked_rows, _subtree, _closure_done, _fsubmax, _closure_blocked,
+                     _block_check_floor, flatten, degraded)
+
+
+def _feed_segs_for(fsid, name, color, ps, live_merged, store, store_key, names_key, who_working, scoped):
+    """The session's _FeedSegs for this build: the memo's entry when every input holds, else a fresh
+    computation, stored only when it may stand for later builds (see the memo note above)."""
+    if live_merged:
+        _feed_segs_bump("bypass_live")
+        return _feed_segs_build(fsid, name, color, ps, store, who_working)
+    if store_key is not store:
+        _feed_segs_bump("bypass_unkeyed")
+        return _feed_segs_build(fsid, name, color, ps, store, who_working)
+    with _FEED_SEGS_LOCK:
+        e = _feed_segs_memo.get(fsid)
+    if (e is not None and e.ps is ps and e.store is store and e.names_key == names_key
+            and e.who_working == who_working and e.name == name and e.color == color and e.anchors_hold()):
+        _feed_segs_bump("hit")
+        return e
+    e = _feed_segs_build(fsid, name, color, ps, store, who_working)
+    e.names_key = names_key
+    if e.degraded:
+        _feed_segs_bump("bypass_degraded")
+    elif not scoped:
+        _feed_segs_bump("bypass_unscoped")
+    else:
+        _feed_segs_bump("miss")
+        with _FEED_SEGS_LOCK:
+            _feed_segs_memo[fsid] = e
+    return e
+
+
 def build_feed(now, tmux=None):
     """The {type:"feed"} message the tuned feed.js bundle consumes (ui-parity.md: feed = ADAPT).
     Goals map onto the AskItem/AskTreeNode shape the render already speaks: the goal tree IS the
@@ -29140,6 +32422,11 @@ def build_feed(now, tmux=None):
     if tmux is None:
         tmux = _tmux_sessions()
     cleared = _cleared_ids()
+    _names = getattr(_live_scope, "names", None)
+    _scoped = _names is not None                 # inside a pusher cycle's names scope: the per-session memo below
+    #                                              may be filled; a build outside one (a gesture build on a WS
+    #                                              thread) reads it and never fills it (see _feed_segs_for)
+    names_key = _names_key(_names if _scoped else _names_snapshot())
     # Debug mode (the user 2026-07-09): join judge-failure rows onto each card so a rejection is
     # inspectable from the card modal (judge, kind, evidence, and in-debug capture: input + reply).
     # Zero cost when off: no rows read, no key emitted.
@@ -29168,12 +32455,13 @@ def build_feed(now, tmux=None):
         # once on a cold start, so the working-dot + the deep-link anchors read the parse ONLY if it's already
         # cached — never paying the ~1s cold parse here. _warm_fleet_bg fills the cache + re-pushes; the dots
         # and anchors snap in a beat later.
-        ps = _parse_cached(s["path"])
+        ps0 = ps = _parse_cached(s["path"])
         if ps is None:
             cold_parse = True
         else:
             ps = _merge_live_atoms(ps, fsid)         # the same LIVE-MERGED session the chat chip + timeline lane read
             #                                          (the feed was the one surface deriving from the bare cache, 2026-07-05)
+        _live_merged = ps is not ps0                 # a live-merge copy exists for this build only (the memo bypasses)
         try:                                             # WORKING from the EVENT MODEL (open turn), not tmux state —
             who_working = _session_working(ps["turns"]) if ps else False   # one backend-agnostic dot signal
         except Exception:
@@ -29212,8 +32500,9 @@ def build_feed(now, tmux=None):
         # (aerr) only fires once the session is idle-stalled, so without this a storm reads as plain
         # healthy Working for its whole life — nimbus's card said Working through an ~80-minute storm.
         sess_retrying = _session_retrying(fsid, tm)
-        store = _feed_goals(fsid)                # pre-pass snapshot while a judge pass is mid-flight → the card's
-                                                 # status never shows a half-applied intermediate (atomic visibility)
+        store, _skey = _feed_goals_view(fsid)    # pre-pass snapshot while a judge pass is mid-flight → the card's
+                                                 # status never shows a half-applied intermediate (atomic visibility);
+                                                 # _skey: the store's identity key for the per-session memo below
         # ANALYZING (the user 2026-07-13; broadened 2026-08-12): the card must say when romp is working
         # on it. Two prongs, either lights the swirl:
         #   * the SETTLE GAP — the turn just settled but the closer hasn't delivered its verdict yet
@@ -29234,205 +32523,13 @@ def build_feed(now, tmux=None):
                                  or (live and ps and _closer_pending(fsid, s["path"], now, store))))
         nodes, status = store.get("nodes", {}), store.get("status", {})
         confirming = set(store.get("confirming") or ())   # rollup export: done verdict in, settle pending (judge rollup_status, the user 2026-07-24)
-        # Exact click-to-jump anchors: map each goal segment → the work/reply uuid — the SAME anchors the
-        # timeline/ledger already use — so a card click deep-links to the precise turn BY ID instead of the
-        # old time-nearest heuristic. _parse is cache-backed (cheap); reply uuid preferred (the readable
-        # assistant text). A missing entry → anchorUuid None → feed falls back to time. (the user 2026-06-17.)
-        # seg_uuid → the WORK anchor (reply/work assistant atom, for the mark/time zones); seg_trig → the
-        # PROMPT anchor (the segment's TRIGGER atom = the user's message that opened it, for the TITLE). A
-        # title is prompt-intent and must land on the USER turn — passing the trigger uuid (which the chat
-        # tags + the kind guard accepts as turn-user) lets it resolve BY ID instead of a kind-restricted
-        # nearest-time landing (the user 2026-06-17). (Both are emitted .turn[data-uuid]s in the chat.)
-        seg_uuid, seg_trig, seg_best, cite_uuids = {}, {}, {}, set()
-        try:
-            for turn in (ps["turns"] if ps else []):     # cached parse only; anchors fill in after _warm_fleet_bg
-                for seg in _segs_seam(turn, store):
-                    w, r = _seg_anchors(seg["atoms"])
-                    seg_uuid[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # timestamp-invariant key; landable
-                    #                                  anchors only — never a thinking-only uuid (SDK echo/real drift)
-                    seg_trig[_seg_key(seg["id"])] = jd._prompt_anchor_uuid(seg)   # attachment-safe: a
-                    #                                  title click must land on the USER message, never an
-                    #                                  attachment record no chat event carries (2026-08-25)
-                    _lu, _lsub = _seg_last_text(seg["atoms"])
-                    seg_best[_seg_key(seg["id"])] = (_lu, _lsub, seg.get("t", 0))   # latest prose → summary deep-link fallback
-                    for _a in seg["atoms"]:              # citable-uuid set: gates the distiller's CITED anchor.
-                        # Resolvable in THIS parse AND substantive (the user 2026-07-14): a stored citation
-                        # pointing at a connective stub (a lead-in that merely names the goal) is a wrong
-                        # link by construction — the outcome never lives there — so it falls through to the
-                        # deterministic fallback below, healing bad anchors already in stores at read time.
-                        if _a.get("uuid") and _atom_prose_chars(_a) >= jd.CITE_MIN_CHARS:
-                            cite_uuids.add(_a["uuid"])
-        except Exception:
-            pass
-        children = {}
-        for nid, nd in nodes.items():
-            children.setdefault(nd.get("parentId"), []).append(nid)
-        agent_open = _agent_open_set(nodes, children)   # authoritative-open subtree → never rendered 'done' (see helper)
-        parked_rows = _parked_rows(nodes, children)     # leapfrogged open rows → the quiet "parked" row cue (see helper)
-
-        def _subtree(root):                          # all node ids at/under root (pre-order)
-            stack, acc = [root], []
-            while stack:
-                x = stack.pop(); acc.append(x); stack.extend(children.get(x, []))
-            return acc
-
-        # VERDICTS ONLY (the user 2026-07-15; roll-UP removed — it painted an authored-looking ✓ on a
-        # goal nobody ruled done, see build_session's _subtree_done twin): a node is "done" if it's
-        # explicitly nodeComplete (verdict or roll-down cache), OR if a done ancestor checks it off
-        # (roll-DOWN, threaded by flatten through ancestor_done — dimmed disc). All-children-done alone
-        # no longer checks a parent; the closer rules those (_subtree_done_candidates) and the check
-        # appears when its verdict lands.
-        _cdone = {}
-        def _closure_done(nid):
-            if nid in _cdone:
-                return _cdone[nid]
-            nd = nodes.get(nid)
-            if not nd:
-                _cdone[nid] = False
-                return False
-            res = bool(nd.get("nodeComplete"))
-            if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
-                # structurally-complete (mints retired; live ones dissolve every rollup): the
-                kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
-                res = bool(kids) and all(_closure_done(c) for c in kids)
-            _cdone[nid] = res
-            return res
-
-        # Order children MOST-RECENT-FIRST by subtree-max mt — the SAME recency key the ledger tree uses
-        # (build_session _submax), so every goal-tree view reads newest-first: the card's inline sub-goal
-        # checklist, the modal tree, and the ledger TOC all agree (the user 2026-06-17). mt (last-touched)
-        # falls back to t for never-modified nodes.
-        _fsmemo = {}
-        def _fsubmax(cid):
-            if cid in _fsmemo:
-                return _fsmemo[cid]
-            cn = nodes.get(cid) or {}
-            m = cn.get("mt", cn.get("t", 0))
-            for k in children.get(cid, []):
-                m = max(m, _fsubmax(k))
-            _fsmemo[cid] = m
-            return m
-
-        # BLOCKED rolls UP the tree (the user 2026-07-11: nimbus's Needs-you traced to a block buried
-        # under a collapsed row — "shouldn't the block propagate up so I see it?"). Mirror of the judge's
-        # any_blocked: a node reads "question" when it — or any descendant chain not inside a completed
-        # subtree — holds an open block (a done subtree's block is moot, same short-circuit). This is
-        # also what the CLIENT was designed for: hasQuestionDescendant exists to find the LOWEST ? (the
-        # actual ask) beneath rolled-up ancestors.
-        _qmemo = {}
-        def _closure_blocked(nid):
-            if nid in _qmemo:
-                return _qmemo[nid]
-            nd = nodes.get(nid)
-            if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
-                _qmemo[nid] = False
-                return False
-            res = bool(nd.get("blocked")) or any(_closure_blocked(c) for c in children.get(nid, []))
-            _qmemo[nid] = res
-            return res
-
-        # The rejudging latch's CLEAR bound (the user 2026-07-31): the block a top card surfaces may
-        # live on a DESCENDANT (blocked rolls up, _closure_blocked above), and the unblocker stamps
-        # blockCheckT on the node it EXAMINES — the blocked child — never on the top. The latch used
-        # to read the top's own watermark, which for a child-held block stays None forever: every
-        # plain reply dropped the card to Working (plain_user_t > 0 is always true) and every landing
-        # turn advanced disp_t past the reply and lifted it back to Needs-You — the same strobe the
-        # watermark bound fixed for top-level blocks (PR #144), reintroduced one level down. The
-        # audited card flipped seconds-apart pairs at every conversational turn for half an hour.
-        # The bound is therefore the OLDEST watermark among the subtree's OPEN blocked nodes (the
-        # exact closure _closure_blocked walks, same done/cleared gates): the card returns to
-        # Needs-You only once EVERY block it is surfacing has been re-examined with evidence
-        # covering the reply. None when the walk finds no open block (a stale rollup) — the caller
-        # falls back to the top's own watermark, the pre-existing semantics.
-        _bcmemo = {}
-        def _block_check_floor(nid):
-            if nid in _bcmemo:
-                return _bcmemo[nid]
-            nd = nodes.get(nid)
-            if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
-                _bcmemo[nid] = None
-                return None
-            vals = [int(nd.get("blockCheckT") or 0)] if nd.get("blocked") else []
-            vals += [v for v in (_block_check_floor(c) for c in children.get(nid, [])) if v is not None]
-            res = min(vals) if vals else None
-            _bcmemo[nid] = res
-            return res
-
-        def flatten(nid, out, ancestor_done=False, boundary=None):  # AskTreeNode flat list, root first; nest via children ids
-            nd = nodes[nid]
-            kids = sorted(children.get(nid, []), key=_fsubmax, reverse=True)   # most-recent-first (matches the ledger)
-            explicit = bool(nd.get("nodeComplete"))
-            # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella
-            # holding one — is NEVER done, even if a nodeComplete ancestor would roll 'done' down onto it.
-            # Mirrors the judge's rollup_status; without it the open item read 'done' → the "checked off" hover.
-            done = (explicit or _closure_done(nid) or ancestor_done) and nid not in agent_open
-            derived = done and not explicit            # roll-up / roll-down → DIMMED ✓ disc, not the full one
-            st = "done" if done else ("question" if _closure_blocked(nid) else "open")
-            # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
-            # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
-            _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid)
-            # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
-            # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
-            # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
-            # showed a bare text row with no recipient identity and no visible cross-card LINK (the user
-            # 2026-08-16, who watched a clear take the linked card with it and had no way to see why).
-            # who/whoSid/whoColor become the RECIPIENT's identity for these rows — exact, from the
-            # courier-recorded handoff.peer, never inferred.
-            _ho = nd.get("handoff") if isinstance(nd.get("handoff"), dict) else None
-            _ho_sid = str(_ho.get("peer") or "") if _ho else ""
-            out.append({"id": nid, "kind": "handoff" if _ho_sid else "ask", "text": nd["text"],
-                        "who": (_name_of(_ho_sid) or _ho_sid[:8]) if _ho_sid else name,
-                        "whoSid": _ho_sid or fsid,
-                        "whoColor": _name_color(_ho_sid) if _ho_sid else color,
-                        "whoWorking": who_working, "status": st, "derived": derived,
-                        # user-cleared sub (nodeOverride op:clear) → renders struck-through + faded with a
-                        # "cleared" chip; `status` above stays honest (box = done, the user 2026-07-26)
-                        "cleared": bool(nd.get("cleared")),
-                        # this DONE sub's outcome was already REVIEWED: its done predates the top's
-                        # review boundary (jd.review_boundary — the same boundary the distiller scopes
-                        # the takeaway with, so the fold and the summary can never disagree). The card
-                        # collapses these behind one "N reviewed earlier" row instead of re-presenting
-                        # them on every re-completion (the user 2026-08-19). `out` is empty only for
-                        # the ROOT row, which is the card head, never a checklist row.
-                        "reviewedEarlier": bool(boundary and out and done
-                                                and jd._done_since(nd) <= boundary) or None,
-                        # a rolled-UP question (the block lives in a descendant, not here) — the client's
-                        # mark tooltip says "blocked inside", and the actual ask keeps its own ⏸ below
-                        "qderived": st == "question" and not nd.get("blocked"),
-                        # LEAPFROGGED row (the user 2026-08-24): open, nothing filed under it, while N
-                        # younger siblings were dispatched past it — the quiet "parked" tag + the card's
-                        # dim sub-goals suffix. Gated on the OPEN render state so a rolled-down or
-                        # closed row can never wear it; mint/retire events live in _parked_rows.
-                        "parked": ({"n": parked_rows[nid]} if (st == "open" and nid in parked_rows) else None),
-                        # AUTHORITATIVE tier: this node mirrors an item on the agent's OWN to-do list, so its
-                        # open/done is agent-asserted (solidity = authority in the disc render). None = a plain
-                        # judge-inferred node. (the user 2026-07-01)
-                        "auth": (nd.get("agentTask") or {}).get("status"),
-                        # `last` drives each row's "(Xm ago)" age + recency tint: the node's LAST ACTIVITY
-                        # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
-                        # the modal tree just as its card does — not pinned to the mint `t` (the user
-                        # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
-                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), _colormap())),
-                        # mt = last-modified (the segment the planner applied done / block) → a blocked or
-                        # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
-                        # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
-                        "mt": nd.get("mt", nd["t"]),
-                        # anchorUuid = the WORK anchor (reply assistant atom of the resolve/mint segment) →
-                        # the mark/time zones deep-link here. promptAnchorUuid = the PROMPT anchor (the
-                        # MINTING segment's trigger = the user's message) → the TITLE deep-links here, by id,
-                        # landing on the user turn (no kind-restricted nearest-time needed). (2026-06-17.)
-                        "anchorUuid": _wa,
-                        "promptAnchorUuid": _pa,
-                        "summary": nd.get("summary"),                   # distiller's key takeaway — shown in the MODAL only — the user 2026-06-17
-                        "blockSummary": nd.get("blockSummary"),         # block-distiller's DECISION BRIEF (MODAL); null until produced — the user 2026-06-18
-                        "followupPending": nd.get("followupPending"),   # per-node "Followed up" chip in the modal tree (business 2026-06-17)
-                        # the per-item story (MODAL, non-done only): newest block/unblock/verdict rows with
-                        # anchors, so an open sub answers 'is this still active?' in place (the user 2026-07-20)
-                        "log": _node_log_rows(nd, seg_uuid) if st != "done" else None,
-                        "children": kids})
-            for c in kids:
-                flatten(c, out, ancestor_done=done, boundary=boundary)
-            return out
+        # THE PER-SESSION MEMO (round-4 plan P2-A): the seam maps, the tree shape with its closures and each
+        # top's flattened tree are pure functions of the parse, the store, the names registry and the
+        # working bit, so they are kept per session across builds — _feed_segs_for names every input.
+        E = _feed_segs_for(fsid, name, color, ps, _live_merged, store, _skey, names_key, who_working, _scoped)
+        seg_uuid, seg_best, cite_uuids, children = E.seg_uuid, E.seg_best, E.cite_uuids, E.children
+        _subtree, _closure_done, _fsubmax = E.subtree, E.closure_done, E.fsubmax
+        _closure_blocked, _block_check_floor = E.closure_blocked, E.block_check_floor
         # HARD blocked floor: a session stopped RIGHT NOW on a live permission prompt (tmux state)
         # floors its ACTIVE-FOCUS card under BLOCKED — the strongest signal, beats the goal's planner
         # status. (The planner's SOFT block, nd["blocked"], is the model's "needs user" verdict; this is
@@ -29461,6 +32558,7 @@ def build_feed(now, tmux=None):
         sess_awaiting_since = _sess_aw.get("since") if _sess_aw else None   # the wait's own event time (the user 2026-08-23)
         sess_awaiting_count = _sess_aw.get("count") if _sess_aw else None   # how many are awaited — the pill's word agrees in number (T225)
         sess_awaiting_peers = _sess_aw.get("peers") if _sess_aw else None   # named identities when the arm knows them (2026-08-26)
+        sess_awaiting_items = list(_sess_aw.get("items") or []) if _sess_aw else []   # the awaited rows (slice 2) — the pill lists them grouped
         if sess_awaiting_why and not who_working:
             awaiting.append(name)                    # the AWAITING dot list (await-green, the user 2026-07-13) — the
             #                                          same split _session_chip makes; feed/chat dots match the chip
@@ -29620,7 +32718,7 @@ def build_feed(now, tmux=None):
                 # the blocked card's own thread still proves the thread moved past the block.
                 _await_ok = bool(_own) and _own["since"] >= _blk_t
                 if _await_ok:
-                    _owned_why = "waiting on a background task%s" % (
+                    _owned_why = "waiting on a background command%s" % (   # the chip's word for in-harness work (2026-09-05)
                         (": " + _own["descs"][0]) if _own["descs"] else "")
                     _owned_since = _own["since"]           # the dispatch event that proved the yield
             # The JUDGE's durable ⏳ stamp (the closer's awaiting verdict, kernel/judge.py): this goal's
@@ -29717,14 +32815,15 @@ def build_feed(now, tmux=None):
             await_since = None                       # mirroring the or-chain exactly (a kindless winner
             await_peers = None                       # stays kindless; since = the wait's own event time).
             await_count = None                       # how many are awaited — the SAME number the chat chip words itself
+            await_items = []                         # the awaited ROWS the pill lists, grouped by kind (slice 2, 2026-09-05)
             if col == "awaiting":                    # from (T228, the user's one-count rule): the live snapshot's own
                 # count, the peers a stamp or delegation names, one owned dispatch; None when the arm cannot know
-                for _w, _k, _s, _p, _n in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers, sess_awaiting_count),
-                                           (_stamp_why, _stamp_kind, _stamp_since, _stamp_peers, (len(_stamp_peers) if _stamp_peers else None)),
-                                           (_deleg_why, "peer", _deleg_since, _deleg_peers, (len(_deleg_peers) if _deleg_peers else None)),
-                                           (_owned_why, "task", _owned_since, None, 1)):
+                for _w, _k, _s, _p, _n, _it in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers, sess_awaiting_count, sess_awaiting_items),
+                                                (_stamp_why, _stamp_kind, _stamp_since, _stamp_peers, (len(_stamp_peers) if _stamp_peers else None), _awaiting_peer_items(_stamp_peers)),
+                                                (_deleg_why, "peer", _deleg_since, _deleg_peers, (len(_deleg_peers) if _deleg_peers else None), _awaiting_peer_items(_deleg_peers)),
+                                                (_owned_why, "task", _owned_since, None, 1, [])):
                     if _w:
-                        await_kind, await_since, await_peers = _k, _s, _p
+                        await_kind, await_since, await_peers, await_items = _k, _s, _p, _it
                         await_count = _n if isinstance(_n, int) and _n > 0 else None
                         break
             # The card's TIME reflects its CURRENT STATE, not when the goal was minted: a COMPLETED card
@@ -29994,8 +33093,7 @@ def build_feed(now, tmux=None):
                 _sa_u = _cited
             card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
-                "t": disp_t, "live": live,
-                "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
+                "t": disp_t, "live": live,       # the age tint (trgb) is stamped at serialization (_stamp_trgb)
                 "turnId": nid, "origin": origin,
                 **({"handoffTo": handoff_to} if handoff_to else {}),
                 **({"delegTracked": _tracked_peers} if _tracked_peers else {}),
@@ -30022,6 +33120,7 @@ def build_feed(now, tmux=None):
                 "awaiting": ({"why": await_why, "kind": await_kind, "since": await_since,
                               "count": await_count,   # the one number every surface words itself from (T228)
                               "peers": await_peers,   # delegation wait → [{name, host, sid, color}] for the identity-coloured box (the user 2026-08-23)
+                              "items": await_items,   # the awaited rows, grouped by the pill's expansion (slice 2)
                               "tasks": _awaiting_task_descs(fsid, s["path"])} if col == "awaiting" else None),
                 "summary": nodes[nid].get("summary"),    # the distiller's key takeaway for a completed goal (modal) — the user 2026-06-17
                 "distillState": distill_state,   # "completed" | "blocked" | null — the GENUINE state the distiller line keys on, so the brief/takeaway doesn't flicker off when recheck/rejudging drops `column` to working (the user 2026-07-21)
@@ -30116,7 +33215,7 @@ def build_feed(now, tmux=None):
                 "warnRows": (_card_warn_rows(dbg_rows, fsid, set(_subtree(nid)),
                                              store.get("placements") or {}) or None)
                             if dbg_rows is not None else None,   # debug mode only: the card's judge failures, modal "Warnings" section
-                "tree": flatten(nid, [], boundary=jd.review_boundary(nodes[nid]))}
+                "tree": E.tree(nid)}             # the memoized rows, in a fresh list (never written into)
             # THE SERVING FOLD, candidate side (the user 2026-08-28, T137: fan-out lives inside the
             # ask card — the T101 ruling applied to the mirror, view-side): a to-do mirror top the
             # sync stamped as SERVING a dispatch folds into the sender's ask card instead of
@@ -30178,7 +33277,7 @@ def build_feed(now, tmux=None):
                 # hit ("there's no card there"). Ephemeral: gone the moment sess_awaiting_why clears.
                 asks.append(_awaiting_card(s, name, color, fsid, live, now, sess_awaiting_why,
                                            kind=sess_awaiting_kind, since=sess_awaiting_since,
-                                           count=sess_awaiting_count))
+                                           count=sess_awaiting_count, items=sess_awaiting_items))
     # THE SERVING FOLD, commit side (T137): join each candidate's rows under its dispatch's
     # tracker row — a read-only render-time join across stores (the node itself stays in the
     # WORKER's store, where plan-sync completion, nudge freshness, and clears live; node ids are
@@ -30188,18 +33287,22 @@ def build_feed(now, tmux=None):
     if serving_folds:
         _byrow = {}
         for _c in asks:
-            for _r in _c.get("tree") or []:
+            for _i, _r in enumerate(_c.get("tree") or []):
                 if _r.get("kind") == "handoff":
-                    _byrow[_r["id"]] = (_c, _r)
+                    _byrow[_r["id"]] = (_c, _i)
         for _f in serving_folds:
             _hit = _byrow.get(_f["tracker"])
             if not _hit:
                 asks.append(_f["card"])
                 continue
-            _c, _r = _hit
+            _c, _i = _hit
             _rows = _f["card"].get("tree") or []
             if _rows:
-                _r.setdefault("children", []).append(_rows[0]["id"])
+                # COPY-ON-WRITE: the tracker row is a memoized row shared with later builds (_FeedSegs), so
+                # the re-parent lands on a copy in this build's own tree list, never on the shared dict
+                _r = dict(_c["tree"][_i])
+                _r["children"] = list(_r.get("children") or []) + [_rows[0]["id"]]
+                _c["tree"][_i] = _r
                 _c["tree"].extend(_rows)
     if cold_parse:
         _warm_fleet_bg(now)                          # a living session wasn't parsed yet → warm it + re-push (dots/anchors)
@@ -30220,7 +33323,6 @@ def build_feed(now, tmux=None):
             "itemId": item_id, "sid": ph["toId"], "name": ph["toName"], "color": _name_color(ph["toId"]),
             "text": "Hand-off parked for %s (offline)" % ph["toName"],
             "t": ph["t"], "live": False,
-            "trgb": list(cm.age_rgb(now - ph["t"], _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -30241,6 +33343,7 @@ def build_feed(now, tmux=None):
     _ncards = _notify_cards()
     for _a in asks:
         _a["notify"] = True if _notify_card_effective(_ncards, _a["itemId"], str(_a.get("sid") or "")) else None
+    _feed_segs_forget({s["sid"] for s in alive})     # a session that left the alive set releases its memo entry
     return {"type": "feed", "asks": asks, "now": now,
             # sid -> open user-todo count (plans/user-todos.md): the quiet per-card marker's data +
             # the badge's todo half. Sorted so the serialized payload is byte-stable across builds
@@ -30375,16 +33478,18 @@ def _login_state():
 
 
 def _login_abort_locked(err=""):
-    pid, fd = _login_flow["pid"], _login_flow["fd"]
+    """End the flow: clear the record and SIGTERM the CLI. The PTY master fd is NOT closed here — the
+    reader thread owns it and closes it when it exits (within one 0.5 s select timeout once the pid
+    check fails). Closing it from here while the reader was parked in select on that fd number let the
+    next _login_start reuse the same number for ITS master, and the old thread's os.read then swallowed
+    the new flow's first output — the trust prompt never seen, the new flow hung until its timeout
+    (review find on #931, 2026-09-07; the PR's own flow tests tripped it: tearDown cancels, the next
+    test starts)."""
+    pid = _login_flow["pid"]
     _login_flow.update(state=("error" if err else ""), url="", err=err, pid=0, fd=-1)
     if pid:
         try:
             os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
-    if fd >= 0:
-        try:
-            os.close(fd)
         except Exception:
             pass
 
@@ -30417,6 +33522,7 @@ def _login_code(code):
 
 def _login_start():
     """Spawn the PTY login flow; the reader thread drives the gates and parses the URL."""
+    import fcntl, struct, termios
     import pty as _pty
     with _login_lock:
         if _login_flow["state"] in ("starting", "url", "verifying"):
@@ -30431,6 +33537,9 @@ def _login_start():
         env.pop("CLAUDE_CODE_CHILD_SESSION", None)  # a plain top-level CLI
         try:
             m, s = _pty.openpty()
+            # There is no visible terminal. Give the CLI room to print its OAuth URL intact
+            # instead of hard-wrapping it at the default 80 columns (including inside OSC-8).
+            fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 4096, 0, 0))
             proc = subprocess.Popen([_claude_bin()], stdin=s, stdout=s, stderr=s,
                                     env=env, cwd=str(scratch), close_fds=True)
             os.close(s)
@@ -30444,7 +33553,40 @@ def _login_start():
     return ""
 
 
-_LOGIN_URL_RE = re.compile(r"https://claude\.com/[^\s\x1b\x07]*oauth[^\s\x1b\x07]*")
+_LOGIN_URL_RE = re.compile(
+    r"https://(?:claude\.com/(?:cai/)?|claude\.ai/)oauth/authorize\?[^\s\x1b\x07]*")
+_LOGIN_OSC_RE = re.compile(r"\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)")
+
+
+def _login_url(buf):
+    """Return a complete CLI-issued URL, never the first line or an unfinished PTY read.
+
+    OSC-8's terminator bounds the actual link even when its visible label is wrapped. Some
+    CLI versions also wrap the target: remove only its layout whitespace, preserving all OAuth
+    values, including the CLI's registered code-display redirect and PKCE challenge/state.
+    """
+    def valid(url):
+        if not _LOGIN_URL_RE.fullmatch(url):
+            return False
+        q = parse_qs(urlparse(url).query)
+        required = ("client_id", "redirect_uri", "scope", "state", "code_challenge")
+        return (all(len(q.get(key, [])) == 1 and q[key][0] for key in required)
+                and q.get("code") == ["true"] and q.get("response_type") == ["code"]
+                and q.get("code_challenge_method") == ["S256"])
+
+    for link in _LOGIN_OSC_RE.finditer(buf):
+        url = re.sub(r"\s+", "", link.group(1))
+        if valid(url):
+            return url
+    # Plain output is usable only when a delimiter has arrived. End-of-buffer can be mid-URL,
+    # even after every required parameter has begun; publishing then permanently latches it.
+    plain = _LOGIN_OSC_RE.sub("", buf)
+    # An unfinished OSC target belongs to the next read, not to the plain-text fallback.
+    plain = plain.split("\x1b]", 1)[0]
+    for link in _LOGIN_URL_RE.finditer(plain):
+        if link.end() < len(plain) and valid(link.group(0)):
+            return link.group(0)
+    return ""
 
 
 def trust_gate_passed(low0):
@@ -30458,6 +33600,16 @@ def _login_reader(fd, proc):
     nothing from this stream is ever logged verbatim (the paste prompt window can contain the code
     echo), and the buffer dies with the thread."""
     import select as _select
+    try:
+        _login_reader_loop(fd, proc, _select)
+    finally:
+        try:
+            os.close(fd)                         # the reader is the fd's sole owner (see _login_abort_locked)
+        except OSError:
+            pass
+
+
+def _login_reader_loop(fd, proc, _select):
     buf = ""
     sent_login = sent_pick = trust_answered = False
     t0 = time.time()
@@ -30465,14 +33617,17 @@ def _login_reader(fd, proc):
         with _login_lock:
             if _login_flow["pid"] != proc.pid:      # cancelled/superseded
                 break
-        r, _, _ = _select.select([fd], [], [], 0.5)
+        try:
+            r, _, _ = _select.select([fd], [], [], 0.5)
+        except (OSError, ValueError):               # Cancel can close the PTY during select.
+            break
         if r:
             try:
                 chunk = os.read(fd, 8192).decode("utf-8", "replace")
             except OSError:
                 break
             buf = (buf + chunk)[-20000:]
-        plain = re.sub(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)", "", buf)
+        plain = re.sub(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)", "", buf)
         plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", plain)
         low0 = plain.lower().replace(" ", "")
         if not trust_answered and "trustthisfolder" in low0:
@@ -30492,11 +33647,11 @@ def _login_reader(fd, proc):
             sent_pick = True
             buf = ""
             continue
-        murl = _LOGIN_URL_RE.search(plain)
-        if murl:
+        url = _login_url(buf)
+        if url:
             with _login_lock:
                 if _login_flow["pid"] == proc.pid and _login_flow["state"] in ("starting",):
-                    _login_flow.update(state="url", url=murl.group(0), t=time.time())
+                    _login_flow.update(state="url", url=url, t=time.time())
             _push_soon()
         low = plain.lower()
         # the VERDICT WINDOW is anchored on the paste prompt itself, not a buffer clear (a clear
@@ -30506,6 +33661,17 @@ def _login_reader(fd, proc):
         low0all = low.replace(" ", "")
         pidx = low0all.rfind("pastecodehere")
         low0v = low0all[pidx:] if pidx >= 0 else ""
+        if pidx >= 0 and not url:
+            # The CLI is already asking for the code, so it HAS printed its sign-in link — and _login_url
+            # found none it will stand behind (the allowlist rejected it, or the shape moved). Waiting on
+            # would only report a timeout ten minutes later; the event is here, so say what happened now
+            # (review find on #931, 2026-09-07).
+            with _login_lock:
+                if _login_flow["pid"] == proc.pid and _login_flow["state"] == "starting":
+                    _login_abort_locked("the sign-in link the CLI printed could not be read — log in from a "
+                                        "terminal with `claude /login`, or update the CLI")
+                    _push_soon()
+                    return
         if "loggedinas" in low0v or "loginsuccessful" in low0v:
             with _login_lock:
                 if _login_flow["pid"] == proc.pid:
@@ -30585,20 +33751,43 @@ def _acct_read():
     _ACCT_CACHE["mtime"], _ACCT_CACHE["val"], _ACCT_CACHE["label"] = m, val, label
 
 
-def _usage():
-    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None. File-based, like the
-    obsidian timeline's readUsage. `fable` is the included-Fable-5 weekly allowance Claude Code added to
-    /usage (the user 2026-07-02) — the CLI's window type is `seven_day_overage_included`, labeled
-    'Fable 5 limit'; the SDK backend writes it to usage.json as `fable` (the statusline payload does NOT
-    carry it — five_hour/seven_day only — so events are its one in-band source)."""
+def _usage_doc():
+    """usage.json parsed, or {} when it is absent or unreadable. A pure API-key host NEVER writes usage.json
+    (both snapshot writers skip keyed sessions), so bailing on the missing file starved the no-login spend
+    arm of _usage() of exactly the machine it was written for — the devbox answered /usage with {} and its
+    spend vanished from the summed spend across hosts (the user 2026-08-13). An empty snapshot falls through
+    instead; every read of it tolerates absence."""
     try:
-        o = json.loads((jd.STATE / "usage.json").read_text())
+        return json.loads((jd.STATE / "usage.json").read_text())
     except Exception:
-        # A pure API-key host NEVER writes usage.json (both snapshot writers skip keyed sessions), so
-        # bailing here starved the no-login spend arm below of exactly the machine it was written for —
-        # the devbox answered /usage with {} and its spend vanished from the fleet sum (the user
-        # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
-        o = {}
+        return {}
+
+
+def _usage_limits(doc=None):
+    """The rate-limit half of _usage(): the 5h, weekly and Fable 5 windows usage.json holds for the CURRENT
+    login, with `limited` derived — and nothing from the spend ledger. Always a dict, {fiveHour, sevenDay,
+    fable, t, acct, acctLabel, limited}: the three windows are None when the file names none (absent,
+    windowless, or stamped by a login that is gone), and `limited` is None when no window is at its cap.
+
+    This is the reading the pause and the hold take — _account_limited (both edges of the limit pause),
+    _retry_resume_at (the API-error card's countdown) and _limit_hold (the queue's account gate). They read
+    `limited` and the windows' resetsAt, which derive from the file's segments, the acct stamp and the clock;
+    spend.json is not an input of any of them, yet every call went through _usage(), which parsed the ledger
+    twice (200 KB, about 6 ms per call, once per pusher cycle for the pause alone) to attach spend figures
+    those callers never read — and on a host in the spend arm, for a `limited` key that arm does not even
+    produce (perf round 4 P18, 2026-09-07). `doc` is the parsed usage.json (_usage_doc); None reads it here.
+    No memo: every call reads the file as it is now, and the clock it reads is the module's. One decision
+    changed with the split, on purpose: a ledger the spend readers cannot use (valid JSON that is not an
+    object) used to raise inside _usage() and read as "no reading" to the three callers, so a capped window
+    never engaged the pause and an engaged pause never lifted; the limits half decides from usage.json alone,
+    so such a ledger no longer disables the pause and the hold (romp never writes that shape, and the file
+    heals on the next recorded turn; the rail's _usage() still fails on it as before).
+
+    `fable` is the included-Fable-5 weekly allowance Claude Code added to /usage (the user 2026-07-02) — the
+    CLI's window type is `seven_day_overage_included`, labeled 'Fable 5 limit'; the SDK backend writes it to
+    usage.json as `fable` (the statusline payload does NOT carry it — five_hour/seven_day only — so events are
+    its one in-band source)."""
+    o = _usage_doc() if doc is None else doc
 
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
@@ -30623,7 +33812,49 @@ def _usage():
         stamped = o.get("acct") or ""
         if stamped and stamped != _claude_account():
             five = seven = fable = None
-    if not five and not seven and not fable:
+    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
+    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
+    # (its pct is stale until the next reading) → not limited.
+    def _lim(s):
+        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
+    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
+    t = o.get("t")
+    return {"fiveHour": five, "sevenDay": seven, "fable": fable,
+            "t": t if isinstance(t, (int, float)) else None,
+            # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
+            # SAME account share one set of numbers and must not be drawn twice; two machines on
+            # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
+            # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
+            "acct": _claude_account(),
+            # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
+            # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
+            # this is display only, "" when no login.
+            "acctLabel": _claude_account_label(),
+            "limited": limited if any(limited.values()) else None}
+
+
+def _spend_doc():
+    """spend.json parsed, or {} when it is absent or unreadable: the ONE parse a _usage() call makes of the
+    ledger, handed to _spend_windows and _spend_series as `doc` (each read the file itself before, so one
+    call parsed 200 KB twice; perf round 4 P18, 2026-09-07). {} is what both readers fall to when their own
+    read fails — zero-filled windows, no series — so an unreadable ledger reads the same through either
+    path. A file that parses to something other than an object reaches the readers as it is, and they fail
+    on it as they did."""
+    try:
+        return json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        return {}
+
+
+def _usage():
+    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None: _usage_limits() with the
+    spend figures the rail draws beside or instead of the bars attached. File-based, like the obsidian
+    timeline's readUsage. This is the reading for what is DRAWN (_usage_for_client per timeline build,
+    GET /usage, the per-host rows); the pause and the hold read _usage_limits() directly and parse no ledger.
+    The ledger is parsed once per call here (_spend_doc) and handed to both spend readers."""
+    o = _usage_doc()
+    out = _usage_limits(o)
+    if not out["fiveHour"] and not out["sevenDay"] and not out["fable"]:
         # No windows. A machine with NO Claude login shows SPEND where the bars sat (the user
         # 2026-08-04): today's accumulated per-result cost from spend.json. The deciding evidence is
         # the CREDENTIAL STORE (the login's own lifecycle), not a per-session auth report: one session
@@ -30633,8 +33864,8 @@ def _usage():
         # requires spend.json to EXIST: a keyless machine with no recorded spend has nothing to show —
         # and the guard is what keeps unstamped fixtures/CI (temp STATE, no credential file, no spend)
         # reading None instead of coupling to the runner's real login (the deliberate decoupling the
-        # acct-stamp comment above records). A window-less file on a LOGGED-IN machine stays None —
-        # nothing known, draw nothing (never a confident zero).
+        # acct-stamp comment in _usage_limits records). A window-less file on a LOGGED-IN machine stays
+        # None — nothing known, draw nothing (never a confident zero).
         if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):
             # The spend WINDOWS mirror the subscription bars (5h / 7d / month) so the two auth modes
             # read identically; _spend_windows always returns all three, zero-filled on a fresh kernel
@@ -30642,15 +33873,14 @@ def _usage():
             # keyed split: on a no-login machine every turn bills the key, and legacy files predate
             # the split. The rail's label is the constant 'API' — no fragment of the key travels
             # (the user 2026-08-08; hosts are told apart by name in the hover, not by key).
-            out = {"apiKey": True, "spend": _spend_windows(),
-                   "t": o.get("t") if isinstance(o.get("t"), (int, float)) else None,
-                   "acct": _claude_account()}
+            doc = _spend_doc()                # the ledger, parsed once for the windows and the series
+            out = {"apiKey": True, "spend": _spend_windows(doc=doc), "t": out["t"], "acct": out["acct"]}
             # (The telemetryUnavailable flag + its "rate-limit telemetry unavailable under API-key
             # auth" hover line are GONE — the user 2026-08-24: they know which machines are
             # key-only and want the spend without a notice about rate limits that don't apply.
             # Absence of windows on a keyed host is the designed state and now simply looks like
             # what it is: no windows.)
-            ss = _spend_series()          # TOTAL, like the windows above: everything here bills the key
+            ss = _spend_series(doc=doc)       # TOTAL, like the windows above: everything here bills the key
             if ss:
                 out["spendSeries"] = ss   # the hover's money-rate graph (the user 2026-08-13)
             sa = _spend_recorded_at()
@@ -30659,25 +33889,6 @@ def _usage():
                                           # stale "updated 9h ago" sat over the spend and read as its age)
             return out
         return None
-    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
-    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
-    # (its pct is stale until the next reading) → not limited.
-    def _lim(s):
-        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
-    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
-    t = o.get("t")
-    out = {"fiveHour": five, "sevenDay": seven, "fable": fable,
-           "t": t if isinstance(t, (int, float)) else None,
-           # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
-           # SAME account share one set of numbers and must not be drawn twice; two machines on
-           # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
-           # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
-           "acct": _claude_account(),
-           # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
-           # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
-           # this is display only, "" when no login.
-           "acctLabel": _claude_account_label(),
-           "limited": limited if any(limited.values()) else None}
     # API-KEY spend BESIDE the bars — the KEYED split only (turns whose session billed the key; a login
     # turn's computed cost is dollars nobody pays), attached only when key turns actually exist, so a
     # host that never uses its key shows nothing extra. This supersedes the same-day rule that bars
@@ -30685,17 +33896,18 @@ def _usage():
     # share one auth; per-session auth (same day, evening) makes one host BOTH, and the key's real
     # dollars belong on the rail next to the login's real %.
     if _auth_key_present():
-        ksp = _spend_windows(keyed_only=True)
+        doc = _spend_doc()                    # once, for the keyed windows and the keyed series
+        ksp = _spend_windows(keyed_only=True, doc=doc)
         if any((ksp.get(k) or {}).get("turns") for k in ("day", "week", "month")):
             out["spend"] = ksp
-            ss = _spend_series(keyed_only=True)   # the keyed split, like the windows it graphs
+            ss = _spend_series(keyed_only=True, doc=doc)   # the keyed split, like the windows it graphs
             if ss:
                 out["spendSeries"] = ss
             sa = _spend_recorded_at()
             if sa:
                 out["spendAt"] = sa               # same own-freshness stamp as the key-only arm
     # (the winSeries per-window utilization series is gone — the user 2026-08-14, who wanted the one
-    # fleet $/h graph and nothing per window. usage-history.json keeps recording — sdk_backend
+    # $/h graph summed across hosts and nothing per window. usage-history.json keeps recording — sdk_backend
     # _record_usage_history — so a future graph starts with history instead of a blank.)
     return out
 
@@ -30770,7 +33982,7 @@ def _ledger_key_unplaced(key, err, effect):
                  "bucket is removed." % (jd.STATE / "spend.json", err, effect))
 
 
-def _spend_series(keyed_only=False, now=None):
+def _spend_series(keyed_only=False, now=None, doc=None):
     """The hover graph's money-rate series (the user 2026-08-13): $/hour over the last 192 hours, a
     DENSE array plus a base hour (h0, epoch-hours), so cross-host summing is an index-wise add after
     aligning on h0 — correct without dedup, because each host records only its own turns even on a
@@ -30779,11 +33991,15 @@ def _spend_series(keyed_only=False, now=None):
     reason. `now` anchors h0 — injectable so a caller with a frozen evidence clock (tests) can't
     straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run). A
     key the rule cannot place is left out and reported once (_ledger_key_unplaced): this runs in every
-    usage build, and a raise here took the whole timeline down with it."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        return None
+    usage build, and a raise here took the whole timeline down with it. `doc` is the parsed ledger when
+    the caller already holds it (_usage parses it once for this and _spend_windows); None reads the file
+    here, as every standalone caller does."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            return None
+    d = doc
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
     if not hours:
         return None
@@ -30854,7 +34070,7 @@ def _spend_pre_fix(key):
     return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
 
 
-def _spend_windows(keyed_only=False, now=None):
+def _spend_windows(keyed_only=False, now=None, doc=None):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
@@ -30867,18 +34083,31 @@ def _spend_windows(keyed_only=False, now=None):
     user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
     files predate the split). `now` is the clock the windows end at — the wall clock by default; the
     analytics build passes its own so the modal's keyed guard reads the rail's windows at the modal's
-    instant."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        d = {}
+    instant. `doc` is the parsed ledger when the caller already holds it (_usage parses it once for this
+    and _spend_series); None reads the file here, as the analytics build and every other caller do."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            doc = {}
+    d = doc
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
 
+    KINDS = ("tokIn", "tokOut", "tokCacheR", "tokCacheW")
+
     def _sum(items):
-        """Sum (bucket key, bucket) pairs; a window that folds a bucket dated before the per-turn fix
-        says so (`preFix`, see SPEND_PRE_FIX_DATE) — the figure stays as recorded."""
+        """Sum (bucket key, bucket) pairs to {usd, tok, turns} plus the by-KIND split of `tok` (the user
+        2026-09-06, who read a day's token count and could not see how it was possible: cache reads —
+        every API call of a turn re-reads the whole context — are most of it, at a tenth of the input
+        price, and the hover now says so). The split is emitted only when EVERY contributing bucket
+        carried it: a keyed sub-count written before 2026-09-06 has `tok` alone, and a half-split window
+        would read as a whole one. Bucket totals have carried the four kinds since tokens were first
+        recorded. A window that folds a bucket dated before the per-turn fix says so (`preFix`, see
+        SPEND_PRE_FIX_DATE) — the figure stays as recorded."""
         out = {"usd": 0.0, "tok": 0, "turns": 0}
+        kinds = {kind: 0 for kind in KINDS}
+        complete = True
         for k, e in items:
             if isinstance(e, dict):
                 if _spend_pre_fix(k):
@@ -30891,7 +34120,14 @@ def _spend_windows(keyed_only=False, now=None):
                 else:
                     out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
                     out["turns"] += int(e.get("turns") or 0)
-                    out["tok"] += sum(int(e.get(k) or 0) for k in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+                    out["tok"] += sum(int(e.get(kind) or 0) for kind in KINDS)
+                if any(kind in e for kind in KINDS):
+                    for kind in KINDS:
+                        kinds[kind] += int(e.get(kind) or 0)
+                elif e:
+                    complete = False
+        if complete:
+            out.update(kinds)
         return out
 
     now = time.time() if now is None else now
@@ -30984,6 +34220,45 @@ def _msg_sum_scan_session(sid, path, now):
     return sub
 
 
+def _msg_sum_key(s):
+    """The key of one session's _msg_summaries submap: every input _msg_sum_scan_session reads, by
+    identity, stat'd BEFORE the scan. The parse's own three components, so the submap follows exactly
+    the parse the scan reads: the transcript's (mtime, size) (stat'd here; the row's mtime, discovery's
+    cycle snapshot, stands in when the file cannot be stat'd), the backend's pending cut for the sid and
+    the states file's (mtime, size) (_parse keys on the same three). Then the session's
+    captions/<sid>.jsonl as (st_mtime_ns, st_size) (the captions its segments join to) and its goal
+    store's identity (jd._store_identity: the store, its override journal and its archive, each
+    (ino, mtime_ns, size) or None; the seams decide which segment a message id belongs to). The key was
+    the transcript mtime alone until 2026-09-07: a caption the judge wrote after the segment's last
+    transcript record never reached the union until the session's next turn, and a seam change never
+    did (round-4 plan, the P17/P3(c) item). Stat-then-read: a write landing between the stat and the
+    scan pairs an old key with new content, which is one extra rescan on the next call, never a stale
+    hit. The store component shares the coarse-mtime blind spot of every stat-keyed memo here (two
+    equal-size publishes of one store inside one clock tick on a filesystem without fine-grained
+    timestamps reproduce the key; plan C1's byte compare closes it). It is not keyed on the shared
+    store object's identity: load_goals_shared mints a fresh object for an absent or corrupt store, so
+    identity would never hit there."""
+    sid = s["sid"]
+    try:
+        st = os.stat(s["path"])
+        tx = (st.st_mtime, st.st_size)
+    except OSError:
+        tx = (s.get("mtime"), None)
+    _be = _sdk()
+    cut = _be.pending_cut(sid) if _be else ""
+    try:
+        sst = os.stat(jd.STATE / "states" / (sid + ".jsonl"))
+        states = (sst.st_mtime, sst.st_size)
+    except OSError:
+        states = None
+    try:
+        cst = os.stat(jd.CAPDIR / (sid + ".jsonl"))
+        caps = (cst.st_mtime_ns, cst.st_size)
+    except OSError:
+        caps = None
+    return (tx, cut, states, caps, jd._store_identity(sid)[1:])
+
+
 def _msg_summaries():
     """{msg id: caption} — the caption of the recipient segment a peer message triggered. Join the
     msgId (its `romp-msg-id` marker, via _seg_mids) to the segment that bore it, then to that segment's
@@ -30993,9 +34268,11 @@ def _msg_summaries():
     PER-SESSION incremental cache (the user 2026-07-03, who found startup slow and opening each session slow). The
     old memo keyed the WHOLE map on the fleet's (path, mtime) signature — so ANY session writing (a busy
     fleet is always writing) invalidated it and every build_session re-scanned all ~15 transcripts, ~1.2s
-    per chat-open. Now each session's submap is cached against its OWN mtime: a build re-scans only the
-    sessions that actually changed (usually just the one being viewed) and unions the rest from cache. The
-    parses are _parse-mtime-cached too, so an unchanged session costs nothing."""
+    per chat-open. Now each session's submap is cached against its OWN inputs (_msg_sum_key: the parse's
+    key, its captions file and its goal store, whose seams place each message id in a segment): a build
+    re-scans only the sessions whose inputs changed (usually just the one being viewed)
+    and unions the rest from cache. The parses are _parse-mtime-cached too, so an unchanged session
+    costs nothing but the key's stats."""
     now = time.time()
     try:
         sess = _sessions(now)
@@ -31015,13 +34292,14 @@ def _msg_summaries():
         sid = s["sid"]
         live.add(sid)
         ent = per.get(sid)
-        if ent and ent[0] == s["mtime"]:             # unchanged since last scan → reuse its submap
+        key = _msg_sum_key(s)                        # taken BEFORE the scan (see _msg_sum_key)
+        if ent and ent[0] == key:                    # unchanged since last scan → reuse its submap
             continue
         try:
             sub = _msg_sum_scan_session(sid, s["path"], now)
         except Exception:
             sub = ent[1] if ent else {}              # keep last-known on a transient error
-        per[sid] = (s["mtime"], sub)
+        per[sid] = (key, sub)
         dirty = True
     for sid in [k for k in per if k not in live]:    # forget dead sessions so `per` can't grow unbounded
         del per[sid]
@@ -31033,6 +34311,27 @@ def _msg_summaries():
                 m.update(sub)
             _msg_sum_cache["per"], _msg_sum_cache["map"] = per, m
         return _msg_sum_cache["map"]
+
+
+_MSGSUM_UNSET = object()                          # the cycle slot's "not fetched yet" mark (_msg_summaries_scoped)
+
+
+def _msg_summaries_scoped():
+    """_msg_summaries() once per pusher cycle. _pusher_cycle opens _live_scope.msgsum as a one-slot list
+    holding _MSGSUM_UNSET (thread-confined, the _live_scope.names idiom); the first build of the cycle
+    that needs the caption map fetches it into the slot and every later build of the cycle reads the
+    slot, so the fold gate's per-card caption check (_postal_card_deps) is one threading.local read per
+    build and _msg_sum_key's stats (four files per discovered session) run once per cycle instead of
+    once per build: 31 sessions x 4 stats x 72-156 builds per 30 s before this. Within a cycle the map
+    is the cycle's snapshot: a caption appended mid-cycle is seen next cycle, the staleness every
+    _live_scope memo tolerates by construction (see _sessions). A thread with no scope, a handler-thread
+    build, takes the direct path. Review of perf4-chat, should-fix 2 (2026-09-07)."""
+    slot = getattr(_live_scope, "msgsum", None)
+    if slot is None:
+        return _msg_summaries()
+    if slot[0] is _MSGSUM_UNSET:
+        slot[0] = _msg_summaries()
+    return slot[0]
 
 
 _postal_log_cache = {}        # messages.jsonl -> _fold_records entry; every timeline rebuild used to re-parse the whole log
@@ -31147,14 +34446,8 @@ def _parked_handoffs(now, alive_sids):
     [{msgId, fromId, fromName, toId, toName, body, t}]. Best-effort []."""
     base = jd.STATE / "postal"
     out = []
-    try:
-        lines = jd.MESSAGES.read_text(errors="replace").splitlines()
-    except OSError:
-        return out
-    for line in lines:
-        try:
-            o = json.loads(line)
-        except Exception:
+    for o in _messages_rows():
+        if not isinstance(o, dict):
             continue
         mid, to_id, from_id = o.get("id"), o.get("to_id"), o.get("from_id")
         if not (o.get("park") and mid and to_id and from_id):
@@ -31208,7 +34501,6 @@ def _quarantine_cards(now, cleared):
             "color": _name_color(rec.get("toId") or ""),
             "text": "New message",
             "t": t, "live": False,
-            "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -31398,11 +34690,19 @@ def _seg_caption(caps, seg_id):
     """The captioner's MESSAGE caption for a segment (store id '<seg>#p'), resilient to the same seg-id
     timestamp drift as _seg_placed — the captioner keys its store from the JUDGE's parse. The drift made
     the provisional card silently fall back to the raw prompt instead of its 'Analyzing: <gist>' line, and
-    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent."""
+    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `pidx` index (perf round 4, item C2: first
+    inserted wins, the same row the scan's `next` returned); a plain dict (the tests' fixtures) takes
+    the scan."""
     hit = caps.get(seg_id + "#p")
     if hit is None:
         want = _seg_key(seg_id + "#p")
-        hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
+        pidx = getattr(caps, "pidx", None)
+        if pidx is not None:
+            hit = pidx.get(want)
+        else:
+            hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
     return (hit or {}).get("caption", "")
 
 
@@ -31417,7 +34717,11 @@ def _seg_work_caption(caps, seg_id):
     _seg_key (em._segment_id anchors them on their atom uuid, the user 2026-07-22), so they no longer
     collide with each other; the nearest-t pick remains only to absorb a drifted t and to disambiguate
     the rare TWO segments that share real trigger text (e.g. two 'continue's) — drift runs seconds,
-    distinct segments sit minutes apart. '' when absent."""
+    distinct segments sit minutes apart. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `sidx` index (perf round 4, item C2: the
+    grain-'segment' rows under this key in insertion order, the rows the scan visited, so the strict '<'
+    below resolves a tie to the same row); a plain dict takes the scan."""
     hit = caps.get(seg_id)
     if hit is not None:
         return hit.get("caption", "")
@@ -31429,10 +34733,13 @@ def _seg_work_caption(caps, seg_id):
     except ValueError:
         return ""
     want = _seg_key(seg_id)
+    sidx = getattr(caps, "sidx", None)
+    if sidx is not None:
+        rows = sidx.get(want, ())
+    else:
+        rows = (v for k, v in caps.items() if v.get("grain") == "segment" and _seg_key(k) == want)
     best = None
-    for k, v in caps.items():
-        if v.get("grain") != "segment" or _seg_key(k) != want:
-            continue
+    for v in rows:
         d = abs((v.get("t") or 0) - seg_t)
         if best is None or d < best[0]:
             best = (d, v)
@@ -31455,9 +34762,18 @@ def _node_log_rows(nd, seg_work, cap=8):
 
 
 _node_anchor_last = {}   # node id → its last WARM-resolved (prompt, work) anchors — see _node_anchor_uuids
+_node_anchor_rev = {}    # sid → how many times _node_anchor_last CHANGED for a node resolved under that sid: the
+#                          ledger memo's key for the table (build_session). Bumped AFTER the entry is written,
+#                          so a reader that took the rev before its walk and stored it misses on the next build
+#                          whenever a resolve landed during the walk, and can never serve the pre-resolve tree.
+#                          The feed memo's hit path (_FeedSegs.tree_for) re-applies the warm writes its flatten
+#                          recorded with a plain update and no bump: for one session those are the values the
+#                          table already holds (the same parse and store resolve the same anchors), so the
+#                          re-apply changes an entry only when another session's node of the same bare id
+#                          overwrote it in between, the collision named in _node_anchor_uuids' docstring.
 
 
-def _node_anchor_uuids(nd, seg_trig, seg_work):
+def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None, sid=None):
     """(promptAnchorUuid, anchorUuid) — the EXACT chat .turn[data-uuid]s a goal node's ledger/feed zones
     deep-link to. promptAnchorUuid = the MINTING segment's trigger (the user message that asked — the
     text/title zones for DONE nodes, landing on the user turn). anchorUuid = the WORK anchor (reply
@@ -31488,7 +34804,19 @@ def _node_anchor_uuids(nd, seg_trig, seg_work):
     (_node_anchor_last, per kernel run) and a cold/missed one serves, in order: the remembered warm
     anchor (exact — at worst one resolve behind), the node's stored summaryAnchor (the distiller's
     validated citation, the same fallback family as build_feed's card-level cold fix), else None — the
-    honest-fail toast stays for the truly unanchorable."""
+    honest-fail toast stays for the truly unanchorable.
+
+    `deps` and `writes` (build_feed's per-session memo, 2026-09-07): when given, a cold resolve records
+    the remembered anchor it READ under the node's id in `deps` (None when none was held) and a warm
+    resolve records what it WROTE in `writes`, so a memoized tree can say exactly which global state
+    it depends on and re-apply its own writes when served.
+
+    `sid`: the session whose build resolves this node. A warm resolve that CHANGES the table's entry
+    bumps _node_anchor_rev[sid] after the write, so build_session's ledger memo, which keys on the rev it
+    read before its walk, misses on the next build instead of serving a tree whose cold nodes read an
+    older entry (round-4 plan P3 (a), 2026-09-07). Node ids are bare (g1, g2), so a resolve under one
+    session names the same key as another session's node of the same id; that collision predates the
+    rev and is the hygiene item the plan lists, not something the rev widens."""
     trail = nd.get("trail") or []
     anchor_seg = trail[-1] if trail else None
     prompt = nd.get("promptUuid") or seg_trig.get(_seg_key(trail[0] if trail else None))
@@ -31498,9 +34826,16 @@ def _node_anchor_uuids(nd, seg_trig, seg_work):
     nid = nd.get("id")
     if work is not None:
         if nid:
-            _node_anchor_last[nid] = (prompt, work)
+            if _node_anchor_last.get(nid) != (prompt, work):
+                _node_anchor_last[nid] = (prompt, work)  # the entry first, then the revision (see _node_anchor_rev)
+                if sid is not None:
+                    _node_anchor_rev[sid] = _node_anchor_rev.get(sid, 0) + 1
+            if writes is not None:
+                writes[nid] = (prompt, work)
     else:
         held = _node_anchor_last.get(nid) if nid else None
+        if deps is not None and nid:
+            deps[nid] = held
         if held:
             prompt = prompt or held[0]
             work = held[1]
@@ -31627,12 +34962,32 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
     trailing AFTER it — reading as if the judge ran before the work (the user 2026-06-19). `seg_ends`
     maps each segment's start t → its work-END t; a completion mark resolves through it to land just
     after the bar, where the work actually finished. CREATION marks (mint/sub) + captions stay at the
-    start — a goal IS born when asked. Absent seg_ends (e.g. unit tests) → the old mt placement."""
+    start — a goal IS born when asked. Absent seg_ends (e.g. unit tests) → the old mt placement.
+
+    Two halves since perf round 4 (item A): _derive_judging_marks derives every mark with no clock in
+    hand, so build_timeline's per-lane memo can hold the result, and _judging_assemble applies the
+    horizon t0 and the caption cap. Together they emit exactly what this function emitted in one pass."""
+    cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+    _judging_assemble(cap_marks, other_marks, t0, out)
+
+
+def _derive_judging_marks(sid, caps, goals, seg_ends=None):
+    """This session's judging marks UNFILTERED by the timeline horizon: (cap_marks, other_marks).
+    cap_marks are the captioner's marks in caption-time order, one per caption row carrying a t
+    (a row without one is dropped here, as _derive_judging dropped it). other_marks are
+    [(filter_t, mark)] pairs for every other judge in the order _derive_judging emitted them (nodes in
+    store order, the archiver last), each paired with the time _derive_judging filtered it against the
+    horizon: the mark's own t for a mint, plant, group or index mark, the diary event's ev_t for a
+    done, block or close, distilledMt or briefedMt for the distiller's two marks. That time differs
+    from the mark's plotted t whenever seg_ends moved a completion to its segment's work end, which is
+    why the pair is kept rather than re-derived from the mark. A synth diary row is dropped here (its
+    skip never depended on the horizon). Reads caps, goals["nodes"] and STATE/archive/<sid>.json, and
+    no clock; the horizon and JUDGE_CAP_LIMIT belong to _judging_assemble."""
     endt = (lambda tt: seg_ends.get(tt, tt)) if seg_ends else (lambda tt: tt)   # completion → its segment's work-END
-    caps_in = sorted((c for c in caps.values() if c.get("t") and c["t"] >= t0), key=lambda c: c["t"])
-    for c in caps_in[-JUDGE_CAP_LIMIT:]:
-        out.append({"judge": "captioner", "sid": sid, "t": c["t"],
-                    "kind": c.get("grain", "segment"), "text": c.get("caption", "")})
+    caps_in = sorted((c for c in caps.values() if c.get("t")), key=lambda c: c["t"])
+    cap_marks = [{"judge": "captioner", "sid": sid, "t": c["t"],
+                  "kind": c.get("grain", "segment"), "text": c.get("caption", "")} for c in caps_in]
+    out = []
     for n in goals.get("nodes", {}).values():
         t = n.get("t")
         if not t:
@@ -31640,62 +34995,73 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
         text = n.get("text", "")
         mt = n.get("mt") or t
         go = n.get("groupOp")
-        if isinstance(go, dict) and (go.get("t") or 0) >= t0:
+        if isinstance(go, dict):
             # the grouper's surviving housekeeping (T103): merge/split/retitle append no diary
             # events by design, so the lane keys on the apply-time structure stamp — additive
             # beside the node's own mint/plant mark (a merged survivor is both)
-            out.append({"judge": "grouper", "sid": sid, "t": go["t"],
-                        "kind": go.get("kind") or "group", "text": text})
+            out.append((go.get("t") or 0, {"judge": "grouper", "sid": sid, "t": go.get("t"),
+                                           "kind": go.get("kind") or "group", "text": text}))
         if n.get("origin"):                                   # courier planted it from a peer's handoff
-            if t >= t0:
-                out.append({"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text})
+            out.append((t, {"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text}))
         elif n.get("umbrella"):                               # ARCHIVED-history rendering only (T101
             # retired every umbrella mint; live containers dissolve each rollup) — an archived
             # pre-T101 container still shows the grouper mark it earned
-            if mt >= t0:
-                out.append({"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text})
-        elif t >= t0:                                         # planner placed it (top = mint, else a step)
-            out.append({"judge": "planner", "sid": sid, "t": t,
-                        "kind": ("mint" if not n.get("parentId") else "sub"), "text": text})
+            out.append((mt, {"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text}))
+        else:                                                 # planner placed it (top = mint, else a step)
+            out.append((t, {"judge": "planner", "sid": sid, "t": t,
+                            "kind": ("mint" if not n.get("parentId") else "sub"), "text": text}))
         # done/block attribution reads the DIARY now (P3.4 2026-07-07): the event's src field IS the
         # provenance (negComplete/negBlock flags retired), each verdict gets its own mark at its own
         # evidence time, and reconstructed (synth) history never fakes a judging mark.
         for _e in (n.get("log") or []):
-            if _e.get("synth") or (_e.get("ev_t") or 0) < t0:
+            if _e.get("synth"):
                 continue
             if _e.get("src") in ("planner", "closer") and _e.get("kind") in ("done", "block"):
-                out.append({"judge": _e["src"] if _e["src"] == "planner" else "closer", "sid": sid,
-                            "t": endt(_e["ev_t"]),
-                            "kind": ("done" if _e["src"] == "planner" else "close") if _e["kind"] == "done" else "block",
-                            "text": _e.get("why") or text})
+                out.append((_e.get("ev_t") or 0,
+                            {"judge": _e["src"] if _e["src"] == "planner" else "closer", "sid": sid,
+                             "t": endt(_e.get("ev_t")),
+                             "kind": ("done" if _e["src"] == "planner" else "close") if _e["kind"] == "done" else "block",
+                             "text": _e.get("why") or text}))
         # distiller — key takeaway on a completed top goal. distilledMt == the goal's completion mt (the
         # completing segment's START); endt() lands the mark at that segment's work-END, just after the bar.
         # (The distiller LLM runs a pass later; the mark shows the work it summarizes, aligned to that work's
         # finish, not the judge's wall-clock run. A first sweep over the backlog still back-dates to old
         # completions, expected — the user 2026-06-17.)
-        if n.get("distilledMt") and n["distilledMt"] >= t0:
-            out.append({"judge": "distiller", "sid": sid, "t": endt(n["distilledMt"]), "kind": "distill",
-                        "text": n.get("summary") or text})
+        if n.get("distilledMt"):
+            out.append((n["distilledMt"], {"judge": "distiller", "sid": sid, "t": endt(n["distilledMt"]),
+                                           "kind": "distill", "text": n.get("summary") or text}))
         # block-distiller — the DECISION BRIEF on a BLOCKED top (briefedMt), the done-distiller's twin run
         # in the same pass. Same distiller row, a distinct kind ("brief"). Without this the brief popped up
         # on the card but left NO mark on the timeline, so the distiller row read as dead whenever the
         # recent work was blocks rather than completions (the user 2026-06-18). Lands at the block segment's
         # work-END via endt(), like the other completion marks.
-        if n.get("briefedMt") and n["briefedMt"] >= t0:
-            out.append({"judge": "distiller", "sid": sid, "t": endt(n["briefedMt"]), "kind": "brief",
-                        "text": n.get("blockSummary") or text})
+        if n.get("briefedMt"):
+            out.append((n["briefedMt"], {"judge": "distiller", "sid": sid, "t": endt(n["briefedMt"]),
+                                         "kind": "brief", "text": n.get("blockSummary") or text}))
     try:                                                      # archiver — the headline/abstract refresh
         arch = json.loads((jd.STATE / "archive" / (sid + ".json")).read_text(errors="replace"))
-        if arch.get("t") and arch["t"] >= t0:
-            out.append({"judge": "archiver", "sid": sid, "t": arch["t"], "kind": "index",
-                        "text": arch.get("headline", "")})
+        if arch.get("t"):
+            out.append((arch["t"], {"judge": "archiver", "sid": sid, "t": arch["t"], "kind": "index",
+                                    "text": arch.get("headline", "")}))
     except (OSError, ValueError):
         pass
+    return cap_marks, out
 
 
-_session_tok_cache = {}   # path -> (fingerprint, [(t, in, out, cache_w, cache_r, model), ...]): one token row
-#                           per API RESPONSE (message.id) across the main transcript and every subagent
-#                           transcript under it; the fingerprint is every contributing file's path + mtime
+def _judging_assemble(cap_marks, other_marks, t0, out):
+    """Append the marks _derive_judging_marks derived, filtered on the horizon t0 exactly as
+    _derive_judging filtered them: the captioner's marks at or after t0 and, of those, the newest
+    JUDGE_CAP_LIMIT (the marks are in t order, so the tail is the newest); then every other mark whose
+    filter time is at or after t0, in derivation order. Runs per build (the horizon moves with the
+    clock; JUDGE_CAP_LIMIT is read here, not at derivation), on a memo hit as on a miss."""
+    kept = [m for m in cap_marks if m["t"] >= t0]
+    out.extend(kept[-JUDGE_CAP_LIMIT:])
+    out.extend(m for ft, m in other_marks if ft >= t0)
+
+
+_session_tok_cache = {}   # transcript path -> ((mtime, size), [(t, in, out, cache_w, cache_r, model), ...]): one
+#                           token row per API RESPONSE (message.id) in THAT file. The main transcript and each
+#                           subagent transcript cache separately, so a file that moved re-parses itself alone
 
 
 def _subagent_transcripts(path):
@@ -31703,8 +35069,8 @@ def _subagent_transcripts(path):
     spawned agent's conversation under `<sid>/subagents/` next to `<sid>.jsonl`: Task agents as
     `agent-<id>.jsonl` at the top, and (Claude Code 2.1.261) Workflow agents one level down at
     `workflows/wf_<id>/agent-<id>.jsonl` — its path parser takes any extra segments — so the walk is
-    RECURSIVE (2026-09-06: the flat listing missed every nested file; on the box that found it those
-    held a quarter of the sessions' tokens and 62% of their output tokens). Bounded to the session's own
+    RECURSIVE (a flat listing misses every nested file; measured on one installation, those held a
+    quarter of the sessions' tokens and 62% of their output tokens). Bounded to the session's own
     subagents tree: no symlink is followed — not a directory (os.walk's followlinks=False), not a FILE
     (os.walk lists a symlinked file like any other and the reader would open it wherever it points; the
     CLI writes none, so one is a user's, and it is skipped), and not the subagents directory itself.
@@ -31734,69 +35100,81 @@ def _msg_epoch(o):
         return None
 
 
-def _session_tok_rows(path):
-    """Refresh and return a session's per-response token rows (_session_tok_cache) — one row per API
-    response over the main transcript and every subagent transcript under it — or None when the main
-    transcript is unreadable. The fingerprint is every contributing file's path + mtime, so a subagent
-    that lands or grows refreshes the rows while the main file rests; a subagent file gone between the
-    listing and the read drops out and the rest still count. Cost per call: the subagents walk (one
-    directory read per directory) plus one stat per file; the parse runs only on a changed fingerprint.
-    The analytics build calls this ONCE per session (_session_usage).
+def _transcript_tok_rows(p):
+    """ONE transcript file's per-response token rows, cached in _session_tok_cache on the file's
+    (mtime, size) stamp — the parse runs only when the stamp moved — or None when the file is unreadable.
 
-    ONE row per API response, not per transcript record (2026-09-05): the CLI writes a response with
-    several content blocks as several assistant records that share one `message.id`, so summing records
-    counted each response 2.3-3.0x (the analytics read 1.55x the ledger over a day). The row kept is the
-    one with the LARGEST output count, and that rule is load-bearing, not defensive: a MAIN transcript's
+    ONE row per API response, not per transcript record: the CLI writes a response with several content
+    blocks as several assistant records that share one `message.id`, so summing records counted each
+    response 2.3-3.0x (the analytics read 1.55x the spend ledger over a day). The row kept is the one
+    with the LARGEST output count, and that rule is load-bearing, not defensive: a MAIN transcript's
     same-id records repeat one usage block, but a SUBAGENT transcript's carry the stream-start snapshot
-    (a few output tokens) on every record but the last, which holds the final tally — measured
-    2026-09-06 over 30 days of subagent files, 94% of multi-record groups differ and the last record
-    holds the maximum in every one; a first-record fold would keep about a tenth of the subagents'
-    output tokens. A record with no id counts on its own."""
-    files = [str(path)] + _subagent_transcripts(path)
-    fp = []
-    for p in files:
-        try:
-            fp.append((p, os.path.getmtime(p)))
-        except OSError:
-            if p == files[0]:
-                return None
-            continue                                  # a subagent file gone since the listing
-    fp = tuple(fp)
-    hit = _session_tok_cache.get(path)
-    if hit and hit[0] == fp:
+    (a few output tokens) on every record but the last, which holds the final tally — measured on one
+    installation's subagent files, about nine in ten multi-record groups differ (88% and 94% on two
+    samples) and the last record holds the maximum in every one; a first-record fold would keep about a
+    tenth of the subagents' output tokens. That is an observed regularity of the CLI's writer, not a
+    documented contract: a writer that logged per-block usage DELTAS under one id would be under-counted
+    by it. A record with no id counts on its own. The fold is per FILE: each API response is logged in
+    exactly one transcript, the conversation that made it (no id shared between a main transcript and
+    its subagents' in 130k measured), so the session's rows are the files' rows concatenated."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    stamp = (st.st_mtime, st.st_size)
+    hit = _session_tok_cache.get(p)
+    if hit and hit[0] == stamp:
         return hit[1]
     rows, by_id = [], {}
-    for p, _mt in fp:
-        try:
-            with open(p, errors="replace") as f:
-                for line in f:
-                    try:
-                        o = json.loads(line)
-                    except Exception:
+    try:
+        with open(p, errors="replace") as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(o, dict) or o.get("type") != "assistant":
+                    continue
+                m = o.get("message") or {}
+                u = m.get("usage") or {}
+                row = (_msg_epoch(o),
+                       int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                       int(u.get("cache_creation_input_tokens") or 0),
+                       int(u.get("cache_read_input_tokens") or 0),
+                       m.get("model") or "")   # for cost weighting (price is per-model)
+                mid = m.get("id")
+                if mid:
+                    j = by_id.get(mid)
+                    if j is not None:            # the same response again (another content block)
+                        if row[2] > rows[j][2]:
+                            rows[j] = (rows[j][0],) + row[1:]
                         continue
-                    if not isinstance(o, dict) or o.get("type") != "assistant":
-                        continue
-                    m = o.get("message") or {}
-                    u = m.get("usage") or {}
-                    row = (_msg_epoch(o),
-                           int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
-                           int(u.get("cache_creation_input_tokens") or 0),
-                           int(u.get("cache_read_input_tokens") or 0),
-                           m.get("model") or "")   # for cost weighting (price is per-model)
-                    mid = m.get("id")
-                    if mid:
-                        j = by_id.get(mid)
-                        if j is not None:            # the same response again (another content block)
-                            if row[2] > rows[j][2]:
-                                rows[j] = (rows[j][0],) + row[1:]
-                            continue
-                        by_id[mid] = len(rows)
-                    rows.append(row)
-        except OSError:
-            if p == files[0]:
-                return None
-            continue   # a subagent file gone between the listing and the read — the rest still count
-    _session_tok_cache[path] = (fp, rows)
+                    by_id[mid] = len(rows)
+                rows.append(row)
+    except OSError:
+        return None
+    _session_tok_cache[p] = (stamp, rows)
+    return rows
+
+
+def _session_tok_rows(path):
+    """A session's per-response token rows — the main transcript's and every subagent transcript's
+    under it (_transcript_tok_rows each) — or None when the main transcript is unreadable. Each file
+    caches on its OWN stamp, so a subagent that lands or grows parses that one file while the main
+    transcript's rows (the largest file by far) stay cached, and the main file moving leaves every
+    subagent's rows in place; a per-session fingerprint would re-parse the whole tree whenever any one
+    file moved, which on a session with Workflow agents running is every build. A subagent file gone
+    between the listing and the read drops out and the rest still count. Cost per call: the subagents
+    walk (one directory read per directory), one stat per file, and the concatenation; parsing only for
+    the files whose stamp moved. The analytics build calls this ONCE per session (_session_usage)."""
+    rows = _transcript_tok_rows(str(path))
+    if rows is None:
+        return None
+    rows = list(rows)
+    for p in _subagent_transcripts(path):
+        sub = _transcript_tok_rows(p)
+        if sub is not None:                      # None: gone since the listing
+            rows.extend(sub)
     return rows
 
 
@@ -31808,8 +35186,9 @@ def _session_usage(path, t0, prices, split=None):
     unlike judges — with cache reads priced too, cheap per token but huge in volume), and, when `split`
     is given, that estimate over [t0, split) alone (`costBefore`: the part of the window before the
     ledger's first bucket, which the modal adds to the ledger's dollars — see _token_analytics).
-    Undated rows count in the totals and the whole-window estimate (defensive) and never in
-    `costBefore` (they cannot be placed against a bound). Zeros when the transcript is unreadable."""
+    `prices` None skips the pricing. Undated rows count in the totals and the whole-window estimate
+    (defensive) and never in `costBefore` (they cannot be placed against a bound). Zeros when the
+    transcript is unreadable."""
     out = {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0, "cost": 0.0, "costBefore": 0.0}
     rows = _session_tok_rows(path)
     if rows is None:
@@ -31842,12 +35221,25 @@ def _session_tokens(path, t0):
 # window (30 days, plus a day of slack) are pruned so memory stays bounded. A shrunken file (rotation,
 # a fresh install) resets cleanly.
 _JUDGE_USAGE_RETAIN = 31 * 86400
-_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": []}
+_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": [], "monotone": True, "hi": None}
 _JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is ONE transaction: the pusher's build
 #                                        and an HTTP analytics call each read from the shared offset and appended,
 #                                        double-counting every row of the chunk (the 2026-09-06 free-threading
 #                                        review, race 6). The file it covers is a local append-only log; nothing
 #                                        under it takes another lock.
+_JUDGE_USAGE_SLACK = 2                 # seconds a row's t may fall below the running maximum and keep the order
+#                                        fact (_judge_usage_row_fault): the writer's pool threads stamp t = int(
+#                                        time.time()) and then append under no lock, so two calls finishing in the
+#                                        same second can land in either order; the bound is what the horizon
+#                                        bisect in _run_judging backs off by.
+
+
+class _JudgeUsageSnapshot(list):
+    """The rows _judge_usage_rows hands out, plus `monotone`: the order fact the reader established for
+    exactly these rows (see _judge_usage_row_fault). The two ride one object because they are read under
+    one lock; a consumer that bisects on t decides from the same state its rows were cut from, never
+    from the cache's current flag, which a later append may have cleared or a reset re-armed."""
+    __slots__ = ("monotone",)
 
 
 def _judge_usage_rows():
@@ -31855,9 +35247,37 @@ def _judge_usage_rows():
     a missing or garbled log never breaks a build; a mid-append partial line is left for the next read.
     Keyed on the PATH too (a test repointing jd.STATE must never inherit another dir's offset — the
     overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite). Returns a
-    snapshot list: the cached one keeps growing and pruning under later reads."""
+    snapshot list (a _JudgeUsageSnapshot carrying the rows' `monotone` flag): the cached one keeps
+    growing and pruning under later reads."""
     with _JUDGE_USAGE_LOCK:
-        return list(_judge_usage_rows_locked())
+        snap = _JudgeUsageSnapshot(_judge_usage_rows_locked())
+        snap.monotone = _JUDGE_USAGE_CACHE["monotone"]
+        return snap
+
+
+def _judge_usage_row_fault(o, hi):
+    """None when a row keeps the order fact _run_judging's horizon bisect needs, else one phrase naming
+    the fact it breaks. Checked ONCE per row, when the reader appends it (round-4 item B). The facts:
+    `t` is a number; `t >= hi - _JUDGE_USAGE_SLACK`, where `hi` is the largest t among the rows before
+    it (None at the head of the list) — bounded disorder, so the writer's pool threads landing two
+    same-second rows in either order keep the fact; and the row's run end — recv, else sent, else t,
+    the same choice _run_judging makes — is at most t + 1. Under the three, every row before a probed
+    index m has t <= hi_(m-1) <= t_m + S, so a probed row with t_m < t0 - 1 - S puts every row before
+    it at t < t0 - 1, hence run end <= t + 1 < t0: exactly the rows the horizon filter drops. The
+    writer stamps t = int(time.time()) after recv, so real rows satisfy the third by construction
+    (measured max recv - t 0.9998 over 43k rows); the reader verifies it rather than trusting it."""
+    t = o.get("t")
+    if not isinstance(t, (int, float)) or t != t:       # absent, a non-number, or NaN: NaN compares False
+        return "t is not a number"                       # against everything, so it is named here rather
+    if hi is not None and t < hi - _JUDGE_USAGE_SLACK:   # than left to the comparisons below
+        return "t is %.1f s below the running maximum" % (hi - t)
+    sent, recv = o.get("sent"), o.get("recv")
+    end = recv if isinstance(recv, (int, float)) else (sent if isinstance(sent, (int, float)) else t)
+    if end != end:
+        return "run end is not a number"
+    if not end <= t + 1:
+        return "run end is %.2f s past t + 1" % (end - t - 1)
+    return None
 
 
 def _judge_usage_rows_locked():
@@ -31867,14 +35287,14 @@ def _judge_usage_rows_locked():
         st = os.stat(p)
         size = st.st_size
     except OSError:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"], c["hi"] = str(p), -1, [], True, None
         return c["rows"]
     if str(p) != c["path"]:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"], c["hi"] = str(p), -1, [], True, None
     if size == c["size"] and st.st_mtime == c["mtime"]:
         return c["rows"]
     if size <= c["size"] or c["size"] < 0:
-        c["size"], c["rows"] = 0, []                    # rotated/truncated/rewritten, or the first read
+        c["size"], c["rows"], c["monotone"], c["hi"] = 0, [], True, None   # rotated/truncated/rewritten, or the first read
     try:
         with open(p, "rb") as fh:
             fh.seek(c["size"])
@@ -31884,6 +35304,13 @@ def _judge_usage_rows_locked():
     cut = chunk.rfind(b"\n")
     if cut < 0:
         return c["rows"]                                # nothing complete beyond the offset yet
+    # the order fact rides the append: while it holds, `hi` is the largest t so far (an upper bound
+    # for every row still in the list once the retention prune below trims the head); once a row
+    # breaks it, it stays cleared for this list and says so once (a reset above re-arms it for the
+    # next list). An empty list holds it. Kept as a flag rather than sorting a late row into place
+    # because an insort would change the order the band draws rows in; the flag keeps the consumer's
+    # output identical to the full scan in every case.
+    monotone, hi = c["monotone"], c["hi"]
     for ln in chunk[:cut].split(b"\n"):
         if not ln.strip():
             continue
@@ -31893,6 +35320,17 @@ def _judge_usage_rows_locked():
             continue
         if isinstance(o, dict):
             c["rows"].append(o)
+            if monotone:
+                fault = _judge_usage_row_fault(o, hi)
+                if fault is None:
+                    t = o["t"]
+                    hi = t if (hi is None or t > hi) else hi
+                else:
+                    monotone = False
+                    sys.stderr.write("judge-usage reader: row %d of the log breaks the time-order fact (%s); the "
+                                     "judging band walks every retained row until the log is rotated or the "
+                                     "kernel restarts\n" % (len(c["rows"]), fault))
+    c["monotone"], c["hi"] = monotone, hi
     c["size"] += cut + 1
     c["mtime"] = st.st_mtime
     # retention keyed to the DATA's own newest row, never the wall clock (a replayed/synthetic log's
@@ -31957,9 +35395,9 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
                            # exact ids), so they just need to be sane when offline / before the first fetch.
     "claude-fable-5":            {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 1e-6},
     "claude-fable-5-1":          {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 0.25e-6},   # its
-    #   own row (2026-09-05): without one the family fallback priced Fable 5.1's cache reads at Fable 5's
-    #   $1/Mtok — 4x the list rate. Rates read from Claude Code 2.1.261's baked-in model catalog, where
-    #   claude-fable-5-1 carries the tier `tier_10_50_cache_read_0_25` (10 / 50 / 12.5 / 0.25 $/Mtok;
+    #   own row: without one the family fallback priced Fable 5.1's cache reads at Fable 5's $1/Mtok — 4x
+    #   the list rate. Rates read from Claude Code's baked-in model catalog (2.1.261, checked on 2.1.263),
+    #   where claude-fable-5-1 carries the tier `tier_10_50_cache_read_0_25` (10 / 50 / 12.5 / 0.25 $/Mtok;
     #   1h cache writes are 20 and are folded into cache_w here at the 5m rate, a known simplification)
     "claude-opus-4-8":           {"in": 5e-6, "out": 25e-6, "cache_w": 6.25e-6, "cache_r": 0.5e-6},
     "claude-sonnet-5":           {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
@@ -32553,9 +35991,10 @@ def _token_analytics(now, window):
     rail's day/week/month windows; with a key alone, a key never used, or no key it is the total. Where the ledger
     began inside the period, `ledger.estBefore` is the estimate for [from, ledger.sinceT) — the part the
     ledger predates, priced from every session's transcript (the estimate cannot tell a login turn from
-    a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_tok_rows
-    caches per-path rows (one walk + stats per session per build, parse only on change) and
-    _judge_usage reads the shared incremental row cache, so this re-sums memory."""
+    a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_usage
+    makes ONE pass per session over _session_tok_rows' cached rows (per-file stamps: one walk + stats per
+    session per build, parse only for a file that moved) and _judge_usage reads the shared incremental
+    row cache, so this re-sums memory."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
     # judge row (cache size moved) invalidates early so the numbers never sit stale behind live judging
@@ -32667,6 +36106,210 @@ def _bars_complain(who, stage, e):
                      % (str(who)[:8], stage, head))
 
 
+# ── the per-lane segment memo (perf round 4, item A) ──
+# build_timeline's per-lane SEGMENT part (the turn loop that makes the bars, seg_ends, last_t and the
+# compaction markers, plus this lane's judging marks) is a pure function of a handful of inputs, and on
+# a steady timeline most lanes' inputs are the very objects of the previous build: _parse serves the
+# same session object while the transcript is unchanged, load_goals_shared the same FrozenStore while
+# the store, its journal and its archive are unchanged, _captions the same _Caps while the captions
+# file is unchanged. The memo holds one entry per lane and serves it while every input is the same
+# object or value. Everything else on the lane (the chip, the awaiting overlay, the intervals, the
+# flags, comments, episodes, the branch endpoint) is derived per build as before: PLAN-2's P11 memoized
+# the whole lane and was refuted on those inputs. The inputs, each in the key:
+#   session   the object after _parse and _merge_live_atoms, by IDENTITY, held in the entry so the
+#             identity cannot be recycled. The loop reads its turns (t, end, ended, trigger, atoms).
+#             A live tail (the merge returned a new object) is derived and not held, since it is a new
+#             object every build (live_tail).
+#   goals     the store the loop reads seams from (_segs_seam) and nodes from (_derive_judging_marks):
+#             a FrozenStore by identity; a non-frozen store with neither seams nor nodes as ("empty",),
+#             since the two fields read are empty whatever its identity; any other non-frozen store is
+#             not memoized (unshared_skip: a private, mutable store could change under the entry).
+#   caps      the _Caps object _captions served, by identity. Its stat precedes its read, so a row
+#             appended between the two lands under the OLD identity and the next build's new object
+#             misses; a stat of the captions file taken here would follow the read and admit a stale
+#             entry, so none is taken. An empty caps as ("empty",), as for the store.
+#   live      an open bar needs a live lane (turn_open).
+#   bft       the branch clip, the fork time while the parent's lane is in the build and None otherwise
+#             (build_timeline's branch_of); it drops the copied pre-branch segments and boundaries.
+#   downtime  tuple(_downtime): _awake_spans excises the host's suspensions and _suspended_after closes
+#             a turn stranded before one. The tuple, not the length: the suite rebinds and slices it.
+#   archive   jd._file_key of STATE/archive/<sid>.json (the archiver mark's file), taken BEFORE the
+#             derivation reads it; a sentinel (the stat failed) matches nothing and nothing is stored
+#             under it.
+#   sid       the entry's key; the bars and marks carry it.
+# NOT inputs: the clock. The horizon (now - TL_HORIZON) and JUDGE_CAP_LIMIT are applied per build by
+# _judging_assemble, and nothing else in the segment part reads a time. _seg_key, em.segments,
+# jd.apply_seams, em.split_segment and POSTAL_RE are pure functions of their arguments.
+# A lane whose parse failed, or whose seams or marks stage complained (the derivation's own try/excepts),
+# is derived and not held (complain_skip). The held bars are shared by identity into every later build's
+# turns[sid], the bars wire cache and the delta parts, none of which writes to them (_bind_message_execs
+# mutates the messages only; _timeline_skeleton copies the frame), and the held marks into `semantic`,
+# which _run_judging only reads. Entries are dropped for lanes outside a full build's lane set
+# (_lanes_forget, beside _caps_forget) and past _LANES_MEMO_MAX, the least recently served first; an
+# entry whose parse object is no longer the cache's is dropped when seen, since it cannot hit again
+# and it holds that parse. One lock around get, put, evict and the counters; the derivation runs
+# unlocked, so two threads deriving one lane both store an exact entry and the last wins.
+_lanes_memo = {}          # sid -> (session, goals_obj, caps_obj, key, value); value = _lane_segments' tuple
+_LANES_MEMO_MAX = 256
+_lanes_stats = {"hit": 0, "miss": 0, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0, "evict": 0,
+                "segs_hit": 0, "segs_miss": 0}
+_LANES_LOCK = threading.Lock()
+
+
+def _lanes_memo_report():
+    """The memo's counters plus its occupancy, for /perf (memos.lanes)."""
+    with _LANES_LOCK:
+        out = dict(_lanes_stats)
+        out["entries"] = len(_lanes_memo)
+    return out
+
+
+def _lanes_forget(keep):
+    """Drop the entries for lanes outside `keep`, a full build's lane set (the sids build_timeline
+    drew). Iterates a key snapshot under the lock; a connect-push build on another thread may insert
+    concurrently."""
+    with _LANES_LOCK:
+        gone = [k for k in _lanes_memo if k not in keep]
+        for k in gone:
+            _lanes_memo.pop(k, None)
+        if gone:
+            _lanes_stats["evict"] += len(gone)
+
+
+def _lane_segments(sid, session, goals, caps, live, bft):
+    """The SEGMENT part of one timeline lane: the turn loop build_timeline ran inline until perf round 4
+    (item A), moved here so the per-lane memo (_lane_memo; the comment above it names every input) can
+    hold its result: (bars, seg_ends, last_t, compactions, cap_marks, other_marks, nsegs, complained).
+    bars are the lane's work bars in turn order; seg_ends maps a segment's start t to its work-END t;
+    last_t is the lane's last awake activity (its `since` when tmux has none); compactions are the
+    compact_boundary markers; cap_marks and other_marks are this lane's judging marks, unfiltered
+    (_derive_judging_marks); nsegs counts the segments visited (the cost a memo hit saves); complained
+    is True when the seams or the marks stage failed, or a mark carries a time the assembly could not
+    compare, and _bars_complain said so; such a lane is not memoized. No clock is read here."""
+    st_turns = session["turns"]
+    bars, last_t, seg_ends, nsegs, complained = [], None, {}, 0, False   # seg_ends: seg-start t → work-END t (for completion marks)
+    for ti, turn in enumerate(st_turns):
+        turn_open = (live and ti == len(st_turns) - 1 and not turn["ended"]
+                     and not any(x["type"] == "idle" for x in turn["atoms"])
+                     and not _suspended_after(turn["end"]))   # dead lane (live False) or pre-sleep freeze → not an open bar
+        try:
+            segs = _segs_seam(turn, goals)
+        except Exception as e:
+            # a malformed goals row must cost the SEAMS, not the lane's bars (2026-08-18: any
+            # exception here used to abort the whole bars frame after the skeleton had shipped)
+            _bars_complain(sid, "seams", e)
+            complained = True
+            try:
+                segs = em.segments(turn)
+            except Exception:
+                segs = []
+        for si, seg in enumerate(segs):
+            if bft and (seg.get("end") or seg["t"]) <= bft:
+                continue                                       # copied pre-branch history — the parent's lane owns it
+            nsegs += 1
+            # A bar must not span a host sleep. EXCISE every suspension inside the segment → one bar per
+            # awake stretch, so work done AFTER the lid reopened isn't erased (the user 2026-06-22). The
+            # asleep gaps between pieces read as idle (and collapse under 'collapse gaps'). The segment's
+            # atom times go in too: an awake stretch with NO activity in it is a dark-wake sliver, not
+            # work, and drawing it redrew this segment's summary all night long (the user 2026-07-23).
+            spans = _awake_spans(seg["t"], seg["end"], [a.get("t") for a in seg["atoms"]])
+            last_t = max(last_t or 0, spans[-1][1])            # the true work END (last awake activity) — drives the lane `since`
+            seg_ends[seg["t"]] = spans[-1][1]                  # a completion mark lands at its segment's END (after the work)
+            cap = _seg_work_caption(caps, seg["id"])       # WORK caption (the bar) — drift-safe
+            msg_cap = _seg_caption(caps, seg["id"])    # MESSAGE caption (the dot) — gist of the ask, ready early; drift-safe
+            work_uuid, reply_uuid = _seg_anchors(seg["atoms"])
+            trig = next((x for x in seg["atoms"] if x.get("uuid") == seg.get("trigger")), None)
+            author = (trig or {}).get("author")
+            src = "queued" if isinstance(author, dict) else "typed"
+            for sj, (bstart, bend) in enumerate(spans):
+                bars.append({
+                    # promptId = the prompt atom (the DOT), workId = the first work atom (the BAR) — so a
+                    # chat message-hover lights only the dot and a work-hover only the bar (dotLit/barLit
+                    # in the view). Restores the old romp-events split lost in the kernel rewrite.
+                    "id": seg["id"], "promptId": seg.get("trigger"), "workId": work_uuid,
+                    "start": bstart, "end": bend,
+                    "open": turn_open and si == len(segs) - 1 and sj == len(spans) - 1 and bend == seg["end"],
+                    "cont": sj > 0,                   # a post-sleep continuation piece: NO new prompt dot (the one prompt was at the first piece)
+                    "prompt": _seg_prompt(seg), "summary": cap, "msgCaption": msg_cap,
+                    "src": src, "mids": _seg_mids(seg), "pending": False,
+                    "tid": sid, "uuid": seg.get("trigger"),
+                    "nudgeAuto": bool((trig or {}).get("rompAuto")),   # an AUTO-nudge specifically → the tip captions it 'romp · nudge'
+                    # ANY romp-authored prompt (auto-nudge, Nudge button, auto-retry — author 'romp' via
+                    # ROMP_INJECT_RE) wears the romp logo on its dot (the user 2026-07-16: an auto-retry
+                    # "rendered as a user prompt instead of a ROMP logo thing"). This mirrors the chat, where
+                    # the 2026-07-05 rule already superseded 2026-06-23's auto-only logo: at the data level a
+                    # retry and a nudge are both just romp-injected, and either way it wasn't the human typing.
+                    "romp": bool(author == "romp"),
+                    "workUuid": work_uuid, "replyUuid": reply_uuid})
+    try:
+        cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+        # The horizon comparisons run in _judging_assemble, per build, outside this lane's guard; the
+        # one-pass form compared every time here and a malformed one (a string t on a captions row, a
+        # non-numeric groupOp.t, ev_t, distilledMt, briefedMt or archive t) cost this lane its marks.
+        # The same here, before the lane can be memoized: a time the assembly could not compare is a
+        # failed marks stage, not a frame lost on every build until the data changes (review 2026-09-07).
+        if (any(not isinstance(m["t"], (int, float)) for m in cap_marks)
+                or any(not isinstance(ft, (int, float)) for ft, _m in other_marks)):
+            raise TypeError("a judging mark carries a non-numeric time")
+    except Exception as e:
+        _bars_complain(sid, "judging-marks", e)   # this lane loses its marks, the frame ships
+        complained = True
+        cap_marks, other_marks = [], []
+    compactions = [{"t": a["t"]} for turn in st_turns for a in turn["atoms"]
+                   if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and a.get("t")
+                   and not (bft and a["t"] <= bft)]           # copied boundaries stay on the parent's lane
+    return bars, seg_ends, last_t, compactions, cap_marks, other_marks, nsegs, complained
+
+
+def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
+    """_lane_segments through the per-lane memo (the comment above _lanes_memo names every input): the
+    six pieces build_timeline reads, bars, seg_ends, last_t, compactions, cap_marks and other_marks,
+    served from the lane's entry when its inputs are the previous build's and derived otherwise.
+    `parsed` is the _parse object and `session` the one after _merge_live_atoms, the same object
+    unless a live tail was merged; `parse_ok` is False when the parse failed and `session` is the
+    empty stand-in."""
+    if isinstance(goals, jd.FrozenStore):
+        gobj, gtag = goals, "shared"
+    elif not goals.get("seams") and not goals.get("nodes"):
+        gobj, gtag = None, "empty"
+    else:
+        gobj, gtag = None, None
+    cobj, ctag = (caps, "obj") if caps else (None, "empty")
+    arch_key = jd._file_key(str(jd.STATE / "archive" / (sid + ".json")))   # BEFORE the derivation reads it
+    key = (live, bft, tuple(_downtime), gtag, ctag, arch_key)
+    if not parse_ok:
+        skip = "complain_skip"
+    elif session is not parsed:
+        skip = "live_tail"
+    elif gtag is None:
+        skip = "unshared_skip"
+    else:
+        skip = None
+    with _LANES_LOCK:
+        ent = _lanes_memo.get(sid)
+        if ent is not None:
+            if skip is None and ent[0] is session and ent[1] is gobj and ent[2] is cobj and ent[3] == key:
+                _lanes_memo.pop(sid, None)                    # a served entry is a USED entry (LRU reinsert)
+                _lanes_memo[sid] = ent
+                _lanes_stats["hit"] += 1
+                _lanes_stats["segs_hit"] += ent[4][6]
+                return ent[4][:6]
+            if ent[0] is not parsed:
+                _lanes_memo.pop(sid, None)                    # its parse object left the cache: it cannot hit again
+    value = _lane_segments(sid, session, goals, caps, live, bft)
+    outcome = skip or ("complain_skip" if value[7] else "miss")
+    with _LANES_LOCK:
+        _lanes_stats[outcome] += 1
+        _lanes_stats["segs_miss"] += value[6]
+        if outcome == "miss" and (arch_key is None or isinstance(arch_key, tuple)):
+            _lanes_memo.pop(sid, None)
+            while len(_lanes_memo) >= _LANES_MEMO_MAX:
+                _lanes_memo.pop(next(iter(_lanes_memo)))      # the least recently served goes first, never the whole memo
+                _lanes_stats["evict"] += 1
+            _lanes_memo[sid] = (session, gobj, cobj, key, value)
+    return value[:6]
+
+
 _JUDGING_ROW_CAP = 20000     # judging marks per bars frame — far above any legible band density,
                              # far below the 147k-mark storm frame that starved bars (2026-08-18)
 _JUDGING_TRIMMED = {}        # transition latch for the trim log line (order-of-magnitude keyed)
@@ -32680,12 +36323,33 @@ def _run_judging(t0, alive_sids, semantic):
     sits at the old completion, off the live edge), and a COORDINATING courier classification (which plants
     no node, so it had no mark at all). Each call borrows its gloss text/kind best-effort from the nearest
     `semantic` artifact mark of the same (sid, judge) — the usage log records timing + tokens but not the
-    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t."""
-    by = {}
+    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t.
+
+    Two bisects instead of two scans (round-4 item B, 2026-09-07; the function was 15% of a timeline
+    build, 56% of it the gloss comprehension and 25% the walk over every retained row). Both lists
+    are sorted by t, so both answers are prefix boundaries: the gloss is the last same-(sid, judge)
+    mark with t <= end + 1, found by bisect_right on the marks' times (ties included, as the <=
+    comparison included them); and the walk over the retained rows starts at bisect_left on the rows'
+    t at t0 - 1 - _JUDGE_USAGE_SLACK — sound only under the order facts the reader verified for this
+    snapshot (_judge_usage_row_fault: every row skipped that way ended before t0), so a snapshot
+    whose flag is clear walks every row as before. Output identical to the scans, in the same order."""
+    by, times = {}, {}
     for mk in semantic:
         by.setdefault((mk["sid"], mk["judge"]), []).append(mk)
-    for v in by.values():
+    for k, v in by.items():
         v.sort(key=lambda m: m["t"])
+        times[k] = [m["t"] for m in v]
+
+    def gloss(sid, judge, t):
+        """The most recent same-judge artifact mark with m["t"] <= t, or None. A NaN t (a row whose
+        recv is NaN passes the horizon filter, since NaN < t0 is False) matches no mark: the scan's
+        <= was False for every mark, where bisect_right would have answered the newest."""
+        marks = by.get((sid, judge))
+        if not marks or t != t:
+            return None
+        i = bisect.bisect_right(times[(sid, judge)], t)
+        return marks[i - 1] if i else None
+
     out = []
     # The SHARED incremental reader, not a per-build full read: this used to read_text + json.loads
     # the whole of judge-usage.jsonl on EVERY bars build (measured 2026-08-18 during the captioner
@@ -32694,8 +36358,14 @@ def _run_judging(t0, alive_sids, semantic):
     # working sessions painted lanes with no bars. _judge_usage_rows already existed for exactly
     # this (the 2026-08-13 analytics freeze); the band just never adopted it.
     rows = _judge_usage_rows()
+    # Start the walk at the horizon when the snapshot's order fact holds: every row the bisect leaves
+    # behind has t < t0 - 1 (the slack covers the bounded disorder the fact allows), so its run end is
+    # at most t + 1 < t0, exactly the rows the filter below drops. A bare list (a test double for the
+    # reader) carries no fact and walks from the head.
+    i0 = (bisect.bisect_left(rows, t0 - 1 - _JUDGE_USAGE_SLACK, key=lambda o: o["t"])
+          if getattr(rows, "monotone", False) else 0)
     done = set()                                      # (sid, judge, sent) of completed runs — to dedup live ones
-    for o in rows:
+    for o in rows[i0:]:
         sid, judge = o.get("fsid"), o.get("judge")
         judge = _JUDGE_FAMILY.get(judge, judge)
         if sid not in alive_sids:
@@ -32708,8 +36378,7 @@ def _run_judging(t0, alive_sids, semantic):
         if isinstance(sent, (int, float)):
             done.add((sid, judge, sent))
         # gloss = the most recent same-judge artifact mark that finished by this call's run time
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= end + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, end + 1)
         out.append({"judge": judge, "sid": sid, "t": start, "t1": end,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": int(o.get("ms") or 0), "in": int(o.get("in") or 0), "out": int(o.get("out") or 0),
@@ -32726,8 +36395,7 @@ def _run_judging(t0, alive_sids, semantic):
             continue
         if sent < t0 or (sid, judge, sent) in done:
             continue
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= now + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, now + 1)
         out.append({"judge": judge, "sid": sid, "t": sent, "t1": now,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": 0, "in": 0, "out": 0, "sent": sent, "recv": None, "open": True})
@@ -32766,16 +36434,9 @@ def _nudge_times():
     if hit is not None and hit[0] == key:
         return hit[1]
     idx = {}
-    try:
-        for line in p.read_text(errors="replace").splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(o, dict) and o.get("gid") and o.get("t"):
-                idx.setdefault(o["gid"], []).append(int(o["t"]))
-    except OSError:
-        return {}
+    for o in em._read_jsonl_incremental(p):          # append-incremental (2026-09-03): the log grows on
+        if isinstance(o, dict) and o.get("gid") and o.get("t"):   # most nudge ticks; only new rows decode
+            idx.setdefault(o["gid"], []).append(int(o["t"]))
     _nudge_times_cache[str(p)] = (key, idx)
     return idx
 
@@ -32829,12 +36490,15 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
         # load — the largest per-lane cost of the skeleton build — was never read (2026-09-06).
         goals = jd.load_goals_shared(sid) if with_bars else None   # read-only: seams + judging marks
+        parse_ok = True
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
             except Exception as e:
                 _bars_complain(sid, "parse", e)           # a lane with zero bars must SAY why
                 session = {"turns": []}
+                parse_ok = False
+            parsed = session                              # the parse object, the lane memo's key (below)
             if live:
                 # Merge the LIVE TAIL like the chat does (the user 2026-07-02): a /model change streams the
                 # CLI's confirmation as a live command atom, but the CLI persists no transcript record until
@@ -32898,76 +36562,27 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
-        bars, last_t, seg_ends = [], None, {}            # seg_ends: seg-start t → work-END t (for completion marks)
-        for ti, turn in enumerate(st_turns):
-            turn_open = (live and ti == len(st_turns) - 1 and not turn["ended"]
-                         and not any(x["type"] == "idle" for x in turn["atoms"])
-                         and not _suspended_after(turn["end"]))   # dead lane (live False) or pre-sleep freeze → not an open bar
+        if not with_bars:
+            # SKELETON: no bars, no marks, no memo (the cold live-first connect only). The lane's `since`
+            # falls back to the transcript's last write (last activity), with no parse.
+            compactions = []
             try:
-                segs = _segs_seam(turn, goals)
-            except Exception as e:
-                # a malformed goals row must cost the SEAMS, not the lane's bars (2026-08-18: any
-                # exception here used to abort the whole bars frame after the skeleton had shipped)
-                _bars_complain(sid, "seams", e)
-                try:
-                    segs = em.segments(turn)
-                except Exception:
-                    segs = []
-            _bft = (branch_of.get(sid) or {}).get("t")
-            for si, seg in enumerate(segs):
-                if _bft and (seg.get("end") or seg["t"]) <= _bft:
-                    continue                                       # copied pre-branch history — the parent's lane owns it
-                # A bar must not span a host sleep. EXCISE every suspension inside the segment → one bar per
-                # awake stretch, so work done AFTER the lid reopened isn't erased (the user 2026-06-22). The
-                # asleep gaps between pieces read as idle (and collapse under 'collapse gaps'). The segment's
-                # atom times go in too: an awake stretch with NO activity in it is a dark-wake sliver, not
-                # work, and drawing it redrew this segment's summary all night long (the user 2026-07-23).
-                spans = _awake_spans(seg["t"], seg["end"], [a.get("t") for a in seg["atoms"]])
-                last_t = max(last_t or 0, spans[-1][1])            # the true work END (last awake activity) — drives the lane `since`
-                seg_ends[seg["t"]] = spans[-1][1]                  # a completion mark lands at its segment's END (after the work)
-                if not with_bars:
-                    continue                                       # SKELETON: lane `since` needs last_t, but not the bar dicts/captions
-                cap = _seg_work_caption(caps, seg["id"])       # WORK caption (the bar) — drift-safe
-                msg_cap = _seg_caption(caps, seg["id"])    # MESSAGE caption (the dot) — gist of the ask, ready early; drift-safe
-                work_uuid, reply_uuid = _seg_anchors(seg["atoms"])
-                trig = next((x for x in seg["atoms"] if x.get("uuid") == seg.get("trigger")), None)
-                author = (trig or {}).get("author")
-                src = "queued" if isinstance(author, dict) else "typed"
-                for sj, (bstart, bend) in enumerate(spans):
-                    bars.append({
-                        # promptId = the prompt atom (the DOT), workId = the first work atom (the BAR) — so a
-                        # chat message-hover lights only the dot and a work-hover only the bar (dotLit/barLit
-                        # in the view). Restores the old romp-events split lost in the kernel rewrite.
-                        "id": seg["id"], "promptId": seg.get("trigger"), "workId": work_uuid,
-                        "start": bstart, "end": bend,
-                        "open": turn_open and si == len(segs) - 1 and sj == len(spans) - 1 and bend == seg["end"],
-                        "cont": sj > 0,                   # a post-sleep continuation piece: NO new prompt dot (the one prompt was at the first piece)
-                        "prompt": _seg_prompt(seg), "summary": cap, "msgCaption": msg_cap,
-                        "src": src, "mids": _seg_mids(seg), "pending": False,
-                        "tid": sid, "uuid": seg.get("trigger"),
-                        "nudgeAuto": bool((trig or {}).get("rompAuto")),   # an AUTO-nudge specifically → the tip captions it 'romp · nudge'
-                        # ANY romp-authored prompt (auto-nudge, Nudge button, auto-retry — author 'romp' via
-                        # ROMP_INJECT_RE) wears the romp logo on its dot (the user 2026-07-16: an auto-retry
-                        # "rendered as a user prompt instead of a ROMP logo thing"). This mirrors the chat, where
-                        # the 2026-07-05 rule already superseded 2026-06-23's auto-only logo: at the data level a
-                        # retry and a nudge are both just romp-injected, and either way it wasn't the human typing.
-                        "romp": bool(author == "romp"),
-                        "workUuid": work_uuid, "replyUuid": reply_uuid})
-        if not with_bars and last_t is None:
-            try:
-                last_t = os.stat(s["path"]).st_mtime     # lane `since` ≈ the transcript's last write (last activity), no parse
+                last_t = os.stat(s["path"]).st_mtime
             except OSError:
-                pass
-        if with_bars:
+                last_t = None
+        else:
+            # The SEGMENT part of the lane — the turn loop that makes the bars, seg_ends, last_t and the
+            # compaction markers, plus this lane's judging marks — comes through the per-lane memo (perf
+            # round 4, item A): a lane whose inputs are the previous build's objects costs a lookup, and
+            # _lanes_memo's comment names every input in the key. The badge row below is per build.
+            _bft = (branch_of.get(sid) or {}).get("t")
+            bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo(
+                sid, parsed, session, goals, caps, live, _bft, parse_ok)
             turns[sid] = bars
             try:
-                _derive_judging(sid, caps, goals, now - TL_HORIZON, semantic, seg_ends)
+                _judging_assemble(cap_marks, other_marks, now - TL_HORIZON, semantic)   # the horizon is the build's
             except Exception as e:
-                _bars_complain(sid, "judging-marks", e)   # this lane loses its marks, the frame ships
-        _bft = (branch_of.get(sid) or {}).get("t")
-        compactions = [{"t": a["t"]} for turn in st_turns for a in turn["atoms"]
-                       if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and a.get("t")
-                       and not (_bft and a["t"] <= _bft)]           # copied boundaries stay on the parent's lane
+                _bars_complain(sid, "judging-marks", e)   # guarded per lane like every bars stage (2026-08-18)
         # Idle fade: the SAME rule the chat tab uses (ready + idle > 1h — see the `faded` beside the chat
         # chip), keyed on the DERIVED chip `state` computed above, not the raw tmux state. The old form read
         # tmux's vocabulary and counted "waiting" as active — but "waiting" IS the post-turn idle state, so
@@ -32988,6 +36603,7 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             "id": sid, "name": name, "live": live, "state": state, "awaitingBg": awaiting_bg,
             "awaitingKind": awaiting_kind,
             "awaitingCount": ((_aw_bg or {}).get("count") if isinstance((_aw_bg or {}).get("count"), int) else None),   # the lane badge agrees in number (T228)
+            "awaitingItems": (_awaiting_items_payload(_aw_bg, sid, s["path"], tmux) if live else []),   # the in-flight rows — the same set as the chat box, in both turn states (slice 2; turn-agnostic since 2026-09-06)
             "awaitingPeers": ((_aw_bg or {}).get("peers") or None),   # named identities for a peer wait (2026-08-26)
             # the live bg-task descriptions behind awaitingBg (the user 2026-07-13): the lane draws the
             # idle-but-waiting stretch as a thin dashed segment whose hover lists exactly what's pending
@@ -33059,6 +36675,16 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             judging = []
     else:                                                # SKELETON: the heavy time-plotted detail rides the {type:"bars"} message
         messages, judging = [], []
+    if with_bars and not live_only:
+        # The captions memo releases the lanes that left the timeline here (perf round 4, item C1): a full
+        # build's lane set (live sessions plus the dead lanes inside the 12 h window, dismissed dead lanes
+        # dropped) is the set this build read. The feed's held-card path reads live sessions, a subset; the
+        # postal join (_msg_summaries) reads discover's 48 h window, a superset, so an entry it made for a
+        # session outside the lanes goes here and is read again only when that session's transcript changes
+        # (the join's per-session mtime gate). A skeleton or live-only build reads a subset of the lanes and
+        # so must not evict on it.
+        _caps_forget(set(id2name))
+        _lanes_forget(set(id2name))
     # compaction-sweep gradient (widest→narrowest): the timeline's scan-bar has no client-side colormap, so
     # ship the GLOBAL map sampled at the same scaleX stops the chat surface uses (render.ts applyCompactSweep),
     # letting the bar slide through the map's hues as it compresses — mirroring the context battery fill.
@@ -33153,11 +36779,11 @@ def _mk_ws_send(q, sock, client):
                 except OSError:
                     pass
                 # Raise: every caller already treats an exception from send as "mark this client dead".
-                # Logged HERE, once per client (_note_ws_drop), so the drop is loud whichever of the ~60
-                # direct callers' frames tipped the budget — not only the push paths' (_client_send).
-                e = OSError("ws client %s is %d bytes behind — dropping" % (client.get("app"), client["qbytes"]))
-                _note_ws_drop(client, e, len(s))
-                raise e
+                # Logged HERE, once per client (_note_ws_drop): the drop is loud whichever caller's frame
+                # tipped the budget — the ~60 direct client["send"] replies as much as the push paths.
+                why = "%d bytes behind" % client["qbytes"]
+                _note_ws_drop(client, why, len(s))
+                raise OSError("ws client %s is %s — dropping" % (client.get("app"), why))
             client["qbytes"] += len(s)
         q.put(s)                               # unbounded; the byte budget above is the real bound
     return send
@@ -33240,6 +36866,7 @@ def _note_ws_inbound(client, now=None):
     else:
         client["lastIn"] = now if now is not None else _ws_clock()
         client["pingAt"] = None
+    _reveal_proven(client)     # a push tap handed to this socket while it was unproven has landed (2026-09-06)
 
 
 def _drop_dead_ws_client(client, why):
@@ -33430,8 +37057,9 @@ def _keepalive_all(now=None):
             # not judged this beat — but still BEATEN: the ka must keep flowing to a client the kernel is
             # busy serving, or the shim's own silence watchdog closes a connection that is merely waiting
             # on a long build (review 2026-09-03, residual).
-        # the beat goes through _client_send so a drop is logged where it is decided (_note_ws_drop, one line
-        # per client); the ping rides behind it on the same socket — pingAt is stamped by the sender, on the wire
+        # the beat goes through _client_send so a drop is logged where it is decided (_note_ws_drop, one
+        # line per client); the ping rides behind it on the same socket — pingAt is stamped by the sender,
+        # on the wire
         if _client_send(c, s) and c.get("sock") is not None:
             try:
                 c["send"](_ws_ping_frame(str(int(now)).encode()))
@@ -33684,11 +37312,42 @@ _DEDUP_VOLATILE = ("now", "buildId")
 _DEDUP_REPOST_S = 60.0
 
 
+def _stamp_trgb(card, now, cmap):
+    """A shallow copy of a feed card wearing the clock-derived `trgb` tint at the top level (from its `t`) and
+    on every tree row (from the row's `last`, its newest activity) — the tint the builders computed per card
+    until 2026-09-07 (round-4 plan P2-A, decision 4). Stamping at serialization keeps the built cards and
+    their memoized tree rows fixed values (_FeedSegs), so the per-card wire strings hold across builds; the
+    tint itself is unchanged: `now` is the BUILD's clock, as it was."""
+    out = dict(card)
+    out["trgb"] = list(cm.age_rgb(now - card["t"], cmap))
+    tree = card.get("tree")
+    if isinstance(tree, list) and tree:
+        out["tree"] = [(dict(r, trgb=list(cm.age_rgb(now - r.get("last", r.get("t", now)), cmap)))
+                        if isinstance(r, dict) else r) for r in tree]
+    return out
+
+
+def _tinted_asks(feed):
+    """The frame's cards as the tinted legacy form every whole frame carries: one _stamp_trgb copy per card,
+    the colormap read once."""
+    asks = feed.get("asks")
+    if not isinstance(asks, list):
+        return asks
+    now, cmap = feed.get("now"), _colormap()
+    return [_stamp_trgb(a, now, cmap) if isinstance(a, dict) else a for a in asks]
+
+
 def _strip_trgb(card):
     """A feed card minus its clock-derived `trgb` tint — at the top level and in every sub-goal node — for the
     delta path and the dedup signature. The tint is a function of (`t`, the clock), so it steps on every build
-    with nothing having happened; a full frame still carries it for older bundles (see _DEDUP_REPOST_S)."""
+    with nothing having happened; a full frame still carries it for older bundles (see _DEDUP_REPOST_S). A card
+    that carries no tint anywhere (every build since 2026-09-07: the tint is stamped at serialization) is
+    returned as it is, so the per-card encode reads the built dict itself."""
     if not isinstance(card, dict):
+        return card
+    tree = card.get("tree")
+    if "trgb" not in card and not (isinstance(tree, list)
+                                   and any(isinstance(n, dict) and "trgb" in n for n in tree)):
         return card
     out = dict(card)                      # C-level copies + a pop: ~4 ms for 600 cards x 24 nodes, vs 13 ms as comprehensions
     out.pop("trgb", None)
@@ -33714,6 +37373,14 @@ def _dedup_sig(msg, s):
         if msg.get("type") == "feed" and isinstance(stable.get("asks"), list):
             stable["asks"] = [_strip_trgb(a) for a in stable["asks"]]
         return json.dumps(stable, sort_keys=True, default=str)
+    # The timeline SKELETON rides as {"type": "data", "data": {..., "now": ...}}: its clock is nested one
+    # level down, where the strip above never looked, so an unchanged skeleton re-sent on every cycle and
+    # the timeline pane rebuilt its whole SVG each time — with nothing on screen having moved (measured
+    # 2026-09-04: only `now` differs across a clock step). Strip the nested clock the same way.
+    if isinstance(msg, dict) and msg.get("type") == "data" and isinstance(msg.get("data"), dict) \
+            and any(k in msg["data"] for k in _DEDUP_VOLATILE):
+        inner = {k: v for k, v in msg["data"].items() if k not in _DEDUP_VOLATILE}
+        return json.dumps(dict(msg, data=inner), sort_keys=True, default=str)
     return s
 
 
@@ -33813,44 +37480,48 @@ def _wire_len(pre):
     return len(pre) if isinstance(pre, str) else pre.size()
 
 
-# Dropped clients are LOUD (2026-09-02). _mk_ws_send raises when a client is WS_QUEUE_BYTES behind and every
-# caller caught that with a bare `c["alive"] = False` — so a dashboard being dropped every few minutes for a
-# day (~120 times, the flashing "may be stale" banner) left NO trace in the kernel log, and the shim logged
-# nothing on its side either; it was diagnosed as a network problem for weeks. One stderr line per drop,
-# naming the pane, the dashboard, how far behind it was and the frame that tipped it — and one row for the
-# dashboard's bell (rides _sdk_problem_rows → feed `sdkNotices`, the existing kernel-problems channel), so
-# the user is told rather than left to wonder why the pane reloaded. Logged at the RAISE site (_note_ws_drop
-# from _mk_ws_send), so every caller is covered — the ~60 one-shot `client["send"]` replies included, not
-# only the push/keepalive paths that go through _client_send (the 2026-09-03 review found the gap). Latched
-# per client: the sends after the first failure in the same cycle raise too, and would otherwise log the one
-# drop several times.
+# A dropped client is LOUD. _mk_ws_send raises when a client is WS_QUEUE_BYTES behind, and every caller
+# caught that with a bare `c["alive"] = False` — so a dashboard dropped every few minutes for a day (the
+# flashing "may be stale" prompt) left NO trace in the kernel log, the shim logged nothing on its side, and
+# it read as a flaky network. _drop_dead_ws_client already writes a line for the ping-timeout and
+# supersession drops; this is the same line for the budget drop, plus a row for the dashboard's bell (it
+# rides _sdk_problem_rows → the feed's `sdkNotices`, the existing kernel-problems channel), so the person at
+# the dashboard is told rather than left to wonder why the pane reloaded. Logged at the RAISE site
+# (_note_ws_drop from _mk_ws_send), so every caller is covered — the direct one-shot `client["send"]`
+# replies included, not only the push and keepalive paths that go through _client_send. Latched per client:
+# the sends after the first failure in the same cycle raise too, and would otherwise log the one drop
+# several times.
 _WS_DROPS = []           # {"seq", "t", "text"} rows, newest last, bounded — the bell's source
 _WS_DROP_SEQ = [0]
 _WS_DROP_BELL_ROWS = 5   # at most this many drop rows in the bell at once: they must not crowd a backend problem out
 _WS_DROP_TTL_S = 3600.0  # …and none older than this: a drop is news for an hour, then it is the log's business
 
 
-def _note_ws_drop(c, e, frame_len, key=None):
+def _note_ws_drop(c, why, frame_len, key=None):
     """Log one client's drop, once: the stderr line and — for the kernel's OWN drop (a client that fell
     WS_QUEUE_BYTES behind; a socket that simply died is not news) — the bell row. `key` is the push slot
-    that tipped the budget; the raise site (_mk_ws_send) has none of its own and reads the one _client_send
-    left on the client for the length of its call (`curSlot`), so the line names the frame — a direct
-    one-shot `client["send"]` finds it unset and the line reads `slot=-`, honestly."""
+    whose frame tipped the budget; the raise site (_mk_ws_send) has none of its own and reads the one
+    _client_send leaves on the client for the length of its call (`curSlot`), so the line names the frame
+    — a direct one-shot `client["send"]` finds it unset and the line reads `slot=-`, honestly."""
     if c.get("dropLogged"):
         return
     c["dropLogged"] = True
     if key is None:
         key = c.get("curSlot")
     try:
-        sys.stderr.write("ws drop: app=%s wid=%s slot=%s queued=%dB frame=%dB — %s\n"
-                         % (c.get("app"), c.get("wid") or "-", _perf_slot(key) if key else "-",
-                            int(c.get("qbytes") or 0), int(frame_len), e))
-        if "bytes behind" in str(e):
+        sys.stderr.write("ws: dropping %s client — %s (wid=%s slot=%s queued=%dB frame=%dB)\n"
+                         % (c.get("app"), why, c.get("wid") or "-", _perf_slot(key) if key else "-",
+                            int(c.get("qbytes") or 0), int(frame_len)))
+        if "bytes behind" in str(why):
             _WS_DROP_SEQ[0] += 1
+            # the row names the pane as the rail does — _PANE_ORDER's label, so the Outline pane is not its
+            # internal app id to the person reading it; an app with no rail label keeps its id. The stderr
+            # line above keeps the id: it is the log's word for the pane, shared with _drop_dead_ws_client.
+            app = c.get("app") or "?"
             _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
                               "text": "The %s pane's live connection was dropped: it had %.1f MB of "
                                       "updates waiting and had stopped reading them. It reconnects on "
-                                      "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+                                      "its own." % (dict(_PANE_ORDER).get(app, app), int(c.get("qbytes") or 0) / 1e6)})
             del _WS_DROPS[:-20]
     except Exception:
         pass
@@ -33873,7 +37544,7 @@ def _client_send(c, s, key=None):
         return True
     except Exception as e:
         c["alive"] = False
-        _note_ws_drop(c, e, len(s), key)
+        _note_ws_drop(c, str(e), len(s), key)
         return False
     finally:
         c.pop("curSlot", None)
@@ -34582,8 +38253,12 @@ def _feed_body(feed):
     the delta cap — once per build at most; a rebuild whose clients all hold a base never serializes the
     frame. This is the tinted legacy body for every whole frame, cap clients' first frame included (the pane
     computes its tints from `t` and ignores these). The `default` is _wire_default like _feed_parts', so a
-    value the per-card encode can carry never makes the whole frame raise where the delta went."""
-    return json.dumps({k: v for k, v in feed.items() if k != "now"}, default=_wire_default_in("_feed_body"))
+    value the per-card encode can carry never makes the whole frame raise where the delta went. The cards are
+    stamped with their age tints here (_tinted_asks): the built frame carries none since 2026-09-07."""
+    body = {k: v for k, v in feed.items() if k != "now"}
+    if isinstance(body.get("asks"), list):
+        body["asks"] = _tinted_asks(feed)
+    return json.dumps(body, default=_wire_default_in("_feed_body"))
 
 
 def _feed_ms(body, now):
@@ -35031,7 +38706,54 @@ def _setting_kept_value(name):
     return jd._state_str(name, "")   # the judge-tier stores are bare value files
 
 
-def _tell_stale_gesture(client):
+# Every gt-gated store, by the name _setting_stale is called with — the vocabulary the settingStale
+# frame and the gear's STALE_LABELS already share, so /version's settingsGt speaks the same one.
+_GT_STORES = ("auto-nudge", "compact-suggest", "file-editing", "update-mode", "thinking-summaries",
+              "judge-model", "index-model", "judge-effort", "index-effort",
+              "distill-model", "distill-effort", "comment-model", "comment-effort", "comment-fast",
+              "user-todos")   # the fork's per-install switch (_set_user_todos), gt-gated like the rest
+
+
+def _setting_stored_gt(name):
+    """The last-APPLIED gesture stamp a store holds — _setting_kept_value's switch, for the stamp
+    beside the value. Absent file, absent field or garbled content all read 0 (nothing to outrank),
+    the same defensive shape the setters use for `prev`."""
+    if name == "auto-nudge":
+        return _gt_int(_auto_nudge_data().get("gt"))
+    if name == "compact-suggest":
+        return _gt_int(_auto_nudge_data().get("compactSuggestGt"))
+    if name == "update-mode":
+        return _update_mode_gt()
+    if name in ("file-editing", "thinking-summaries"):
+        try:
+            d = json.loads((jd.STATE / (THINKING_SUMMARIES_FILE if name == "thinking-summaries"
+                                        else "file-editing.json")).read_text())
+            return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+        except Exception:
+            return 0
+    if name == "user-todos":
+        # the fork's switch file ({"enabled", "gt"}, _set_user_todos): without this arm the store fell to
+        # the sidecar below, which the switch never writes, so /version taught a dashboard 0 and its
+        # first toggle after another device's stood down as stale (fold follow-up, 2026-09-07)
+        try:
+            d = json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text())
+            return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+        except Exception:
+            return 0
+    return _judge_state_gt(name)   # the judge-tier stores keep theirs in a `<name>.gt` sidecar
+
+
+def _settings_gt():
+    """/version's `settingsGt`: every gt-gated store's last-applied gesture stamp, keyed by the
+    store name the settingStale frame uses (PR #879 follow-up). Gesture stamps are minted on the
+    DEVICE, so a clock running ahead used to stamp every store into the future and lock every
+    correctly-clocked device out until the skew elapsed; a dashboard that reads this on open stamps
+    its next gesture at max(Date.now(), gt + 1) instead of trusting its own wall clock
+    (ui/webview/gesture-clock.js). Epoch-ms integers only — fine for the auth-exempt route."""
+    return {n: _setting_stored_gt(n) for n in _GT_STORES}
+
+
+def _tell_stale_gesture(client, msg):
     """A gt-gated setter just refused: if that refusal was a stale STAND-DOWN (recorded on this
     thread by _setting_stale), answer the DELIVERING socket with a small settingStale frame — the
     same targeted _reply idiom the saveFile acks use, never a broadcast. Without it the refusal
@@ -35039,12 +38761,20 @@ def _tell_stale_gesture(client):
     pick as applied (the gear fills only on open), and with the mesh AGREEING on the kept value
     the mixed marks showed nothing. The gear toasts the frame and re-fills if open — event-keyed,
     the frame IS the deciding event; no polling. A refusal for any other cause (invalid value,
-    OSError) records no notice and sends nothing."""
+    OSError) records no notice and sends nothing.
+    The frame echoes `gesture`: the refused message itself, WITHOUT its stamp, so the toast can
+    offer to re-issue it as a new gesture (a fresh click is legitimate new information) stamped
+    above the stored one. The stamp is dropped on purpose — a re-issue can never reuse the stale
+    one — and the gear only re-issues a type that matches the setting the frame names.
+    It also carries `gt`, the refused gesture's OWN stamp: a dashboard's broadcast reaches every
+    linked kernel, so one stale flush draws one refusal per kernel — all sharing this stamp — and
+    the gear folds them into one toast naming the refusing hosts (setting + gt is the fold key)."""
     st = _pop_stale_notice()
     if not st:
         return
     _reply(client, {"type": "settingStale", "setting": st["setting"],
-                    "storedGt": st["storedGt"], "kept": _setting_kept_value(st["setting"])})
+                    "storedGt": st["storedGt"], "gt": st["gt"], "kept": _setting_kept_value(st["setting"]),
+                    "gesture": {k: v for k, v in msg.items() if k != "gt"}})
 
 
 # ---- pasted-image hydration + dropped-file handling (ported from the old TS kernel chat-view/src/
@@ -35115,16 +38845,43 @@ _TEXT_MAX_BYTES = 2 * 1024 * 1024                # 2 MB of source is already pas
 _DOWNLOAD_CHUNK = 256 * 1024                     # fixed stream chunk: bounded memory whatever the file size
 
 
-def _attachment_disposition(name):
-    """Content-Disposition for the download path. The basename lands inside a quoted-string, so anything
-    that could terminate or extend the HEADER is replaced: CR/LF (header injection), the quote and the
-    backslash (quoted-string escapes), other control bytes. A name the ASCII form had to mangle also
-    rides the RFC 6266/5987 `filename*` form, so a browser that speaks it saves the real name."""
+def _attachment_disposition(name, kind="attachment"):
+    """Content-Disposition for the download path — and, with kind="inline", for a PDF served to its own
+    browser tab (the tab's title and a Save's name come from it; 2026-09-06). The basename lands inside a
+    quoted-string, so anything that could terminate or extend the HEADER is replaced: CR/LF (header
+    injection), the quote and the backslash (quoted-string escapes), other control bytes. A name the
+    ASCII form had to mangle also rides the RFC 6266/5987 `filename*` form, so a browser that speaks it
+    saves the real name."""
     safe = "".join(c if " " <= c < "\x7f" and c not in '"\\' else "_" for c in name) or "download"
-    disp = 'attachment; filename="%s"' % safe
+    disp = '%s; filename="%s"' % (kind, safe)
     if safe != name:
         disp += "; filename*=UTF-8''" + quote(name, safe="")
     return disp
+
+
+def _html_esc(s):
+    """The five characters HTML gives meaning to, escaped — for the one static page /file renders."""
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _too_large_page(msg, name, q, route="/file"):
+    """The 413 a PDF's OWN TAB shows (2026-09-06): the same sentence the text form carries, plus the way
+    out — a link to the download half of the SAME route (`route`: /file, or a federated session's
+    /remote/<host>/file relay) for the same path and sid. Same-origin, so the cookie rides the download
+    exactly as it rode the view. Built from the parsed query, never the raw request line, and every value
+    is escaped; the page has no script and inherits _send's nosniff."""
+    dq = {"path": (q.get("path") or [""])[0], "download": "1"}
+    sid = (q.get("sid") or [""])[0]
+    if sid:
+        dq["sid"] = sid
+    href = route + "?" + urlencode(dq)
+    return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
+            "<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+            "background:#1e1e1e;color:#cccccc;font:15px/1.5 system-ui,sans-serif}main{max-width:40em;padding:2em}"
+            "a{color:#9cd2ff}</style></head><body><main><p>%s</p>"
+            "<p><a href=\"%s\" download=\"%s\">Download %s</a> instead.</p></main></body></html>"
+            % (_html_esc(name), _html_esc(msg), _html_esc(href), _html_esc(name), _html_esc(name)))
 
 
 def _is_text_path(fp):
@@ -36342,9 +40099,15 @@ def _git_net_out(args, cwd, timeout, env):
     """_git_out for the one query that leaves the machine (ls-remote): git runs in its OWN session, and
     the deadline kills the whole process group. subprocess.run's timeout kill reaches its direct child
     alone, and the ssh git had spawned sat in its TCP connect for minutes after the viewer had already
-    been told "could not check" (reproduced 2026-09-05). A fresh session also has no controlling
-    terminal, so an ssh that wants a passphrase fails instead of waiting for one. Same shape as
-    envsource.run_command; not shared, because that module is the env source's and this is a git call."""
+    been told "could not check" (reproduced 2026-09-05). No prompt of any kind reaches the user: the
+    caller's env closes every route (GIT_TERMINAL_PROMPT=0 for the terminal; GIT_ASKPASS="" for git's
+    askpass, which also overrides core.askPass and git's SSH_ASKPASS fallback; SSH_ASKPASS_REQUIRE=never
+    for ssh's own), so a query that would need a credential fails at once and the viewer reads "could not
+    check". That is the choice made (the #947 review): an editor's askpass helper that would have
+    answered silently for a signed-in user is refused too, and such an origin reads "could not check"
+    rather than a verdict. A configured credential.helper is not disabled and may still answer silently.
+    Same shape as envsource.run_command; not shared, because that module is the env source's and this is
+    a git call."""
     try:
         p = subprocess.Popen(["git", "-C", cwd] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
@@ -36383,43 +40146,101 @@ _GITHUB_REMOTE = re.compile(
     r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 
 
-# The no-link verdicts, as the viewer shows them (the user 2026-09-05, who could not tell "not
-# committed yet" from "the link is broken" when the button simply never appeared). Plain phrases,
-# a fixed set: the viewer puts one in the disabled button's tooltip verbatim.
+# The no-link verdicts, as the viewer shows them (the user 2026-09-05, who could not tell an
+# uncommitted file from a broken link when the button simply never appeared). Plain phrases, a
+# fixed set: the viewer puts one in the disabled button's tooltip verbatim.
 GH_NO_REPO = "not in a git repository"
 GH_UNTRACKED = "not committed (untracked file)"
 GH_NO_COMMITS = "not committed (no commits yet)"
+GH_STAGED = "not committed (staged only)"
 GH_NO_ORIGIN = "no origin remote"
 GH_NOT_GITHUB = "the origin remote is not on GitHub"
+GH_NO_BASE = "relative path with no session directory to resolve it against"
 # ...and the two notes a link can carry anyway: the branch is real but GitHub has not seen it
 GH_NOT_ON_ORIGIN = "branch %s is not on origin"
 GH_ORIGIN_UNCHECKED = "could not check whether branch %s is on origin"
 GH_LS_REMOTE_S = 3          # the viewer is waiting on this reply; a remote that has not answered by then is "unchecked"
 
 
-# ls-remote's answers, memoized per (repo top, branch) — EVENT-keyed, no expiry: an answer holds until
+# ls-remote's answers, memoized per (repo top, branch) — EVENT-keyed, no expiry: an entry holds until
 # the free local check (the tracking ref) changes its verdict, which is the event a push or fetch
 # produces. A never-pushed branch otherwise paid a network round trip on every viewer open, with as
-# many in flight as opens (2026-09-05). Only answers are kept (True/False); "did not answer" is asked
-# again next time. _ORIGIN_INFLIGHT dedupes concurrent askers of one key: they wait on the leader's
-# Event and share its answer, whatever it is, instead of each paying the timeout in turn.
-_ORIGIN_MEMO = {}                       # (top, ref) -> bool
+# many in flight as opens (2026-09-05). Only a False is kept, and only where the clone's fetch refspec
+# maps the branch onto that tracking ref (_origin_tracks), so that a push or a fetch CAN contradict
+# it. A True with no tracking ref has no drop event — a deletion on GitHub writes nothing here, and
+# `fetch --prune` has no ref to prune — and a False in a `--single-branch` clone would outlive the
+# push, since that push writes no tracking ref (both found in review, 2026-09-06); neither is stored,
+# and each open asks. "did not answer" is asked again next time. _ORIGIN_INFLIGHT dedupes concurrent
+# askers of one key: they wait on the leader's Event and share its answer, whatever it is, instead of
+# each paying the timeout in turn.
+_ORIGIN_MEMO = {}                       # (top, ref) -> False
 _ORIGIN_INFLIGHT = {}                   # (top, ref) -> [threading.Event, answer]
 _ORIGIN_LOCK = threading.Lock()
+
+
+def _refspec_match(pattern, name):
+    """What one side of a fetch refspec's single `*` stands for when `pattern` covers `name` ("" for an
+    exact match), or None when it does not cover it."""
+    if "*" not in pattern:
+        return "" if pattern == name else None
+    head, _, tail = pattern.partition("*")
+    if len(name) >= len(head) + len(tail) and name.startswith(head) and name.endswith(tail):
+        return name[len(head):len(name) - len(tail)]
+    return None
+
+
+def _origin_tracks(top, ref):
+    """Whether this clone's fetch refspecs for origin map refs/heads/<ref> onto refs/remotes/origin/<ref>
+    — so that a push of the branch from here (git updates the tracking ref a matching fetch refspec
+    names) or a fetch WRITES the ref _origin_has_branch reads for free. A default clone's
+    `+refs/heads/*:refs/remotes/origin/*` does; a `--single-branch` clone's
+    `+refs/heads/main:refs/remotes/origin/main` does for main alone; a negative refspec (^refs/heads/x)
+    excludes. Among the positive refspecs the FIRST one whose source covers the branch decides, as in
+    git: a push updates the tracking ref of the first match alone (remote.c query_refspecs), so with a
+    `refs/remotes/other/*` line ahead of the default one the push writes other's ref and not ours —
+    and a memo the earlier any-match reading kept would have outlived that push until the next fetch
+    (found in review). A source-only refspec (no destination) is skipped, as git skips it. A shape
+    not understood reads as untracked: the side that asks origin instead of trusting a memo nothing
+    could refresh."""
+    specs = _git_out(["config", "--get-all", "remote.origin.fetch"], top)
+    if not specs:
+        return False
+    src_ref, dst_ref = "refs/heads/" + ref, "refs/remotes/origin/" + ref
+    first = None                                    # the first positive match's verdict, once found
+    for spec in specs.splitlines():
+        spec = spec.strip()
+        if spec.startswith("^"):
+            if _refspec_match(spec[1:], src_ref) is not None:
+                return False                        # excluded from every fetch, wherever the line sits
+            continue
+        if first is not None:
+            continue                                # a later positive match never wins over the first
+        src, colon, dst = spec.lstrip("+").partition(":")
+        if not colon:
+            continue                                # source-only: fetched into FETCH_HEAD, writes no ref
+        star = _refspec_match(src, src_ref)
+        if star is not None:
+            first = dst.replace("*", star, 1) == dst_ref
+    return bool(first)
 
 
 def _origin_has_branch(top, ref):
     """Whether origin carries branch `ref`: True / False / None (unknown — origin did not answer in
     time, or refused). The local tracking ref answers first and for free (`refs/remotes/origin/<ref>`
     exists once the branch has been pushed or fetched); only its absence pays one `ls-remote` — a
-    worktree branch never pushed has no tracking ref, and that is the case the note exists for — and
-    only ONCE per (repo, branch): the answer is memoized until the tracking ref appears, which a push
-    from the session writes, so the free check sees the change and the memo entry is dropped (its
-    disappearance later, a `fetch --prune` after a deletion on GitHub, asks origin afresh). The check
-    trusts the local tracking ref: a branch deleted on GitHub keeps reading as present until a prune.
-    The query gets a short timeout and no terminal prompt: the viewer must never hang on it. The
-    pattern is the full ref and the answer is matched on it exactly, because ls-remote patterns match
-    a ref's TAIL (`main` would also match `refs/heads/x/main`)."""
+    worktree branch never pushed has no tracking ref, and that is the case the note exists for. That
+    False is memoized, where the clone's fetch refspec maps the branch onto the tracking ref
+    (_origin_tracks), until the ref appears: the push from the session writes it (so does a fetch,
+    after a push from another clone), the free check sees it and drops the entry. What no local event
+    can contradict is asked again on every open: a True with the tracking ref absent (the branch was
+    pushed from another clone and never fetched here; a deletion on GitHub then writes nothing
+    locally), and any answer in a clone whose refspec leaves the branch untracked (`--single-branch`).
+    The verdict is as fresh as this clone's refs, then: a branch deleted on GitHub reads as present
+    until `fetch --prune`, one pushed from elsewhere as absent until a fetch. The query gets a short
+    timeout and no prompt of any kind (terminal, git's askpass, ssh's askpass): the viewer must never
+    hang on it. The pattern is the full ref and
+    the answer is matched on it exactly, because ls-remote patterns match a ref's TAIL (`main` would
+    also match `refs/heads/x/main`)."""
     key = (top, ref)
     if _git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + ref], top):
         with _ORIGIN_LOCK:
@@ -36438,14 +40259,21 @@ def _origin_has_branch(top, ref):
     on = None
     try:
         full = "refs/heads/" + ref
+        # GIT_TERMINAL_PROMPT=0 closes the terminal route only. git reads GIT_ASKPASS before core.askPass
+        # and before its SSH_ASKPASS fallback, and tests the variable's PRESENCE, so a set-EMPTY
+        # GIT_ASKPASS overrides all three (unsetting it would not); SSH_ASKPASS_REQUIRE=never closes
+        # ssh's own askpass (OpenSSH 8.4+, ignored by older ssh). Without these a kernel started from a
+        # shell exporting an askpass program showed a GUI prompt on every viewer open of a file under a
+        # credential-wanting private origin, and the deadline then killed it (the #947 review).
         out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
-                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS_REQUIRE="never"))
         if out is not None:
             on = any(line.split("\t")[-1] == full for line in out.splitlines())
     finally:
+        keep = on is False and _origin_tracks(top, ref)    # a git read: outside the lock
         with _ORIGIN_LOCK:
-            if on is not None:
-                _ORIGIN_MEMO[key] = on
+            if keep:
+                _ORIGIN_MEMO[key] = False
             _ORIGIN_INFLIGHT.pop(key, None)
         flight[1] = on
         flight[0].set()
@@ -36460,16 +40288,18 @@ def _file_github_link(raw, sid, check_origin=True):
     /file byte path (thumbnails must not pay the git subprocesses).
 
     An empty url is a VERDICT, not an error, and the reason names it: an untracked file, a non-repo
-    path, a repo with no origin, or a non-GitHub origin all honestly have no link (GH_NO_REPO /
-    GH_UNTRACKED / GH_NO_COMMITS / GH_NO_ORIGIN / GH_NOT_GITHUB — a fixed set of plain phrases the
-    viewer shows verbatim). The ref is the current
-    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached. A
-    branch that was never pushed 404s on GitHub's end, so with check_origin the url still comes back
-    (it is the right one, once pushed) but carries GH_NOT_ON_ORIGIN as its reason — or
-    GH_ORIGIN_UNCHECKED when origin did not answer in time; a detached sha is never checked."""
+    path, a file staged but in no commit, a repo with no origin, a non-GitHub origin, or a relative
+    path with no session cwd to place it all honestly have no link (GH_NO_REPO / GH_UNTRACKED /
+    GH_NO_COMMITS / GH_STAGED / GH_NO_ORIGIN / GH_NOT_GITHUB / GH_NO_BASE — a fixed set of plain
+    phrases the viewer shows verbatim). The ref is the current branch (what a human expects to read
+    on GitHub), or the commit sha when HEAD is detached. A branch that was never pushed 404s on
+    GitHub's end, so with check_origin the url still comes back (it is the right one, once pushed)
+    but carries GH_NOT_ON_ORIGIN as its reason — or GH_ORIGIN_UNCHECKED when origin did not answer in
+    time; a detached sha is never checked."""
     p = _resolve_open_path(str(raw or ""), sid)
     if not os.path.isabs(p):
-        return "", GH_NO_REPO                       # a relative path with no base can be placed in no repo
+        return "", GH_NO_BASE                       # a relative path with no base can be placed in no repo —
+    #                                                 and no repo was consulted, so the verdict says THAT
     # realpath, not normpath (two executed repros): a lexical '..' collapse built a URL for a
     # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
     # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
@@ -36495,11 +40325,20 @@ def _file_github_link(raw, sid, check_origin=True):
     sha = _git_out(["rev-parse", "--verify", "--quiet", "HEAD"], top)
     if not sha:
         return "", GH_NO_COMMITS                    # staged into an unborn branch: in the index, on no commit
-    # `branch --show-current` (git >= 2.22), NOT `rev-parse --abbrev-ref HEAD`: the latter spells a
-    # branch that shares its name with a tag as `heads/<branch>` to disambiguate, which GitHub 404s and
-    # which named a branch nobody has ("branch heads/main is not on origin") — reproduced 2026-09-05.
-    # Empty when HEAD is detached, and then the sha is the only honest ref.
-    branch = _git_out(["branch", "--show-current"], top) or None
+    if _git_out(["cat-file", "-e", "HEAD:" + rel.replace(os.sep, "/")], top) is None:
+        return "", GH_STAGED                        # in the index, not in HEAD's tree: ls-files reads the
+    #                                                 INDEX, so a file staged on a branch with commits passed
+    #                                                 it and got a live URL at a path GitHub has on no ref —
+    #                                                 an enabled button that 404s (found in review). The
+    #                                                 commit HEAD names is what a push can put on GitHub
+    # `symbolic-ref -q HEAD` reads the branch HEAD names, NOT `rev-parse --abbrev-ref HEAD`: the latter
+    # spells a branch that shares its name with a tag as `heads/<branch>` to disambiguate, which GitHub
+    # 404s and which named a branch nobody has ("branch heads/main is not on origin") — reproduced
+    # 2026-09-05. Nor `branch --show-current`: git below 2.22 lacks it, and the failed query silently
+    # gave EVERY file a sha URL (found in review). Fails when HEAD is detached, and then the sha is the
+    # only honest ref.
+    head = _git_out(["symbolic-ref", "-q", "HEAD"], top) or ""
+    branch = head[len("refs/heads/"):] if head.startswith("refs/heads/") else None
     ref = branch or sha
     url = "https://github.com/%s/%s/blob/%s/%s" % (
         # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
@@ -37141,14 +40980,25 @@ def _push(targets, connect=False, tmux=None):
             build_order = sorted(chat_list, key=lambda s: 0 if s["sid"] in active
                                  or not os.path.exists(s["path"]) else 1)
             for s in build_order:
-                is_active = s["sid"] in active           # the watched tab(s) always rebuild → stay live
-                sig = _chat_build_sig(s)
+                is_active = s["sid"] in active           # the watched tab(s): rebuilt only when an input moved
+                sig = _chat_build_sig(s, tmux.get(s["sid"]))
                 hit = _built_chat.get(s["sid"])
-                if not is_active and hit is not None and sig is not None and hit[0] == sig:
-                    m, ms = hit[1], hit[2]               # unchanged background tab → reuse, no reshape/serialize
-                    _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
-                    _PERF_STATS.build("chat", True)
+                # The active tab is served from its last build when its EXACT key is unchanged and no
+                # kernel-side mutation postdates that build's start (2026-09-03; before, it rebuilt on
+                # every cycle by design — see _active_chat_sig). Background tabs keep their file-stat key.
+                asig = _active_chat_sig(s, tmux.get(s["sid"]), now, base=sig) if is_active else None
+                if is_active:
+                    fresh = (hit is not None and asig is not None and hit[3] == asig and _views_dirty[0] <= hit[4])
                 else:
+                    fresh = (hit is not None and sig is not None and hit[0] == sig)
+                if fresh:
+                    m, ms, asig, started = hit[1], hit[2], hit[3], hit[4]   # unchanged → reuse, no reshape/serialize
+                    _VIEW_STATS["chatServeActive" if is_active else "chatServeBg"] += 1
+                    _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
+                    _PERF_STATS.build_chat(True)
+                else:
+                    _VIEW_STATS["chatBuildActive" if is_active else "chatBuildBg"] += 1
+                    started = time.time()                # the _views_dirty floor for this build (start-keyed)
                     _t0 = time.monotonic()
                     try:
                         m = build_session(s["sid"], now, chat_tmux)
@@ -37170,10 +41020,14 @@ def _push(targets, connect=False, tmux=None):
                     # session pays on every single push. If chat ever feels slow again, this number and
                     # the deduped= on the matching send say which half is at fault.
                     _dt = time.monotonic() - _t0
-                    _PERF_STATS.build("chat", False, _dt)
+                    # WHY a background tab rebuilt (round-4 plan P3): the labelled _chat_build_sig
+                    # components that moved against the cached signature, so /perf can say which input
+                    # drives the background rebuilds (the active tab rebuilds by design and is not attributed)
+                    _miss = () if is_active else _chat_sig_miss(hit[0] if hit is not None else None, sig)
+                    _PERF_STATS.build_chat(False, _dt, active=is_active, miss=_miss)
                     if _PERF:                            # the keyword values below cost lookups; skip them when off
                         _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
-                              ms=round(_dt * 1000, 1),
+                              ms=round(_dt * 1000, 1), miss=",".join(_miss),
                               events=(len(m.get("events") or []) if m else 0),
                               fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
                               prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
@@ -37208,9 +41062,9 @@ def _push(targets, connect=False, tmux=None):
                 # cache AFTER the sends, so a serialization a full send just paid for is kept — the next
                 # connect-push for this unchanged tab reuses it instead of dumping again
                 if sig is not None:
-                    if len(_built_chat) > 256:           # bounded by fleet size; a wholesale clear is fine
-                        _built_chat.clear()
-                    _built_chat[s["sid"]] = (sig, m, ms)
+                    while len(_built_chat) > 256:        # bounded by the session count; evict oldest-inserted, never clear
+                        _built_chat.pop(next(iter(_built_chat)))
+                    _built_chat[s["sid"]] = (sig, m, ms, asig, started)
             if tab_order is not None:                    # "no longer shown" is only a trustworthy claim when the
                 #                                          tab list itself is: a sentinel cycle's SDK-only list
                 #                                          must not evict the tmux tabs' build caches/delta baselines
@@ -37224,6 +41078,16 @@ def _push(targets, connect=False, tmux=None):
                     for sid in list(_chat_fold):             # including ones _built_chat never held (thread sids,
                         if sid not in shown_sids:            # loadOlder / connect-push builds)
                             _chat_fold.pop(sid, None)
+                for sid in list(_merge_sets_memo):           # …and the live-merge sets of a sid neither shown nor
+                    if sid not in shown_sids and sid not in tmux:   # alive (the feed and timeline merge every
+                        _merge_sets_memo.pop(sid, None)      # alive session, tab or not)
+                for sid in list(_ledger_memo):               # …and the two chat-only memos of tabs no longer shown
+                    if sid not in shown_sids:
+                        _ledger_memo.pop(sid, None)
+                        _chat_memo_bump(_ledger_memo_stats, "evict")
+                for sid in list(_task_fold_memo):
+                    if sid not in shown_sids:
+                        _task_fold_memo.pop(sid, None)
             _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN
@@ -37238,6 +41102,9 @@ def _push(targets, connect=False, tmux=None):
                 if fr:
                     for c in chat_clients:
                         _send_client(c, ("comments", s["sid"]), fr)
+            # OPEN SUBAGENT VIEWERS (plans/subagent-transcripts.md): each rides its own per-client dedup slot
+            # like the comment frames, rebuilt only when the agent's file or liveness moved.
+            _push_subagents(chat_clients, now, tmux)
         _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage)
         _t_stage = time.monotonic()
         fsig = _fleet_view_sig(now, tmux) if (want_feed or want_tl) else None
@@ -37362,7 +41229,8 @@ def _push(targets, connect=False, tmux=None):
     # per-entry), about 0.6 s of a 1.6 s rebuild cycle on the 2026-09-06 profile. Every whole frame is the
     # tinted legacy body, a cap client's first frame included (the pane tints from `t` and ignores it); a
     # ?delta=1 feed client WITHOUT the cap (a pre-09-05 Outline tab) takes the view-delta slot path, whose
-    # _delta_parts("feed") encodes every card again with its tint — zero such clients today, left until seen.
+    # _delta_parts("feed") encodes every card again, tint-free since 2026-09-07 (the builders no longer
+    # stamp it; _feed_body does, for whole frames) — zero such clients today, left until seen.
     # The section runs after the build try above: a raise here used to escape _push, ride _push_all (no
     # except) into _pusher's while-True and kill the pusher thread for the life of the process — every
     # dashboard frozen until a restart. A fill that raises stands its slot down for THIS cycle (its clients
@@ -37699,6 +41567,12 @@ def _producer_sig(browser):
 # dashboard re-does it every tick. Cache each payload, keyed on a fleet fingerprint; an UNCHANGED fleet (a
 # reload, an idle tick) reuses the last build instead of rebuilding.
 _built_feed = [None, None, 0.0, 0.0]              # [fleet_sig, payload, built_at, build_started_at]
+# How often each view is REBUILT vs SERVED from its cache — the pusher's cost, as numbers (2026-09-03).
+# Exposed on the version route beside the parse counters, so "the kernel is pegged" can be read as
+# "the timeline rebuilt 900 times in 30 min with 12 sessions idle" instead of inferred from top. A
+# rebuild is justified only by a changed input; a rising build count on a quiet board is a bug signature.
+_VIEW_STATS = {"feedBuild": 0, "feedServe": 0, "tlBuild": 0, "tlServe": 0,
+               "chatBuildActive": 0, "chatBuildBg": 0, "chatServeActive": 0, "chatServeBg": 0}
 _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_at, build_started_at]
 # The sids the LAST feed build filed under needs_input (review 2026-09-06): the per-session form of the
 # feed's Blocked column, read by build_session's ledger (needsInput) so the chat's section snapshot
@@ -37761,7 +41635,10 @@ def _fleet_view_sig(now, tmux):
     or a 5s time bucket so 'X ago'/elapsed keeps advancing when nothing else changes."""
     sig = _producer_sig(True)
     sig["__judge__"] = _judge_gen[0]
-    sig["__bucket__"] = now // 5
+    sig["__jrun__"] = jd.active_change()     # a judge call starting/ending → the card's judging swirl (exact event)
+    sig["__bucket__"] = now // 5             # the one remaining CLOCK input — kept until the age tints, the
+    #                                          hostNow ages and the timeline live edge tick client-side and the
+    #                                          build-time thresholds arm due marks (see the 2026-09-03 audit)
     sig["__sdkp__"] = _sdk_problem_count()   # a fresh SDK failure is its own event → rebuild now, don't wait
     sig["__syncn__"] = _sync_notice_count()  # …and so is a finished automatic sync
     for p, k in ((jd.STATE / "colormap", "__cmap__"), (jd.STATE / "session-flags.json", "__flags__"),
@@ -37788,23 +41665,29 @@ def _fleet_view_sig(now, tmux):
                  # resolve on a dormant thread or a watch firing changes only the store, and used to reach
                  # the lane at the bucket (review 2026-09-06)
                  (jd.STATE / "comments", "__comments__"),
-                 (WATCH_FILE, "__watches__")):
+                 (WATCH_FILE, "__watches__"),
+                 (jd.STATE / "auto-nudge.json", "__nudge__"),      # stalled section, nudge counts/failed stamps
+                 (jd.STATE / "nudge-events.jsonl", "__nudgev__"),  # ⚡ marks
+                 (jd.STATE / "judge-auth.json", "__jauth__"),      # judge billing refusal latch
+                 (jd.STATE / "judge-limit.json", "__jlimit__")):   # judge quota latch
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
             pass
     for s in sorted(tmux):
         t = tmux[s]
-        # Every row field the lanes and the chat chip derive from (2026-09-06). `context` is the row's
-        # key (the tmux vars and the SDK merge both write it); the sig read `ctx`, which no row carries,
-        # so a context-% change never busted the cache and the lane's battery waited on the bucket.
-        # The rest were never keyed: the fast-mode refusal reason (the lane's `fast` blanks on it), the
-        # model-switch bit (the chip's switching dots), the subagent pill, and the background-task ids
-        # behind the awaiting badge. Not keyed on purpose: `snapT` (the snapshot's clock, not a fact
-        # about the session) and `interrupting` (the merged row never carries it — the SDK merge copies
-        # an explicit key list — and the stop click marks the views dirty itself).
+        # Every row field the lanes, the chat chip, the feed and the timeline derive from (2026-09-06, and
+        # the 2026-09-03 audit). `context` is the row's key (the tmux vars and the SDK merge both write
+        # it); the sig read `ctx`, which no row carries, so a context-% change never busted the cache and
+        # the lane's battery waited on the bucket. The rest were never keyed: the fast-mode refusal reason
+        # (the lane's `fast` blanks on it), the model/effort/auth switch bits (the chip's switching dots),
+        # the subagent pill and the background-task ids behind the awaiting badge (the SDK snapshot facts
+        # that touch no file), an interrupt in flight, a retry storm, the connected/spawning bits.
+        # Not keyed on purpose: `snapT` (the snapshot's clock, not a fact about the session).
         sig["t:" + s] = (t.get("state"), t.get("model"), t.get("context"), t.get("effort"), t.get("mode"),
                          t.get("fast"), t.get("since"), t.get("fastReason"), bool(t.get("modelPending")),
+                         bool(t.get("effortPending")), bool(t.get("authPending")), bool(t.get("interrupting")),
+                         int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
                          _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")))
     return tuple(sorted(sig.items()))
 
@@ -37842,26 +41725,44 @@ def _cached_feed(now, tmux, sig, connect=False):
     # so back-to-back starts must not shrink its window.
     dirty = not connect and _views_dirty[0] > e[3]        # connect still serves the warmed build (never rebuilds)
     if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _VIEW_STATS["feedServe"] += 1
         _PERF_STATS.build("feed", True)
         return built
+    _VIEW_STATS["feedBuild"] += 1
     bid = _next_feed_build_id()          # claimed BEFORE the read, so an ack issued during this build outranks it
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
     _t0 = time.monotonic()
     feed = build_feed(now, tmux)         # instant may be invisible to the build below → must rebuild
-    _PERF_STATS.build("feed", False, time.monotonic() - _t0)
+    _PERF_STATS.build("feed", False, time.monotonic() - _t0, dirty=dirty)
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
     _feed_needs_input[0] = _needs_input_sids(feed)        # the per-session needs-you the session ledgers read
     _badge = _needs_you_count(feed)
     _fired = _feed_notifications(feed)                    # armed bells: fresh builds are the transition event
-    for _t, _b, _sid in _fired:
+    _buzzed = []
+    for _t, _b, _sid, _iid in _fired:
         _system_notify(_t, _b)
-        _push_notify(_t, _b, _sid, _badge)                # same events to subscribed phones (plans/ios-app.md)
-    if _fired:
+        # ONE phone buzz per session per turn end (the 2026-09-05 rule, see _buzz_claim): a card
+        # moving because its session just stopped shares that stop with the turn-finished push —
+        # whichever of the two files first buzzes, the other yields. The desktop notice above and
+        # the badge below are not the buzz and never yield.
+        if not _buzz_claim(_sid, _turn_end_key(_sid), "bell"):
+            # the turn push already buzzed for this turn end, but carried no badge — and a CLOSED
+            # installed app learns the needs-you count only from a push (review find on #937,
+            # 2026-09-07). Send the card push QUIET: no sound, no re-alert; the per-session tag
+            # replaces the turn notification with the more informative card one, and the icon count
+            # stays current. Local only — the count is this kernel's.
+            _push_notify(_t, _b, _sid, _badge, kind="card", card_id=_iid, quiet=True)
+            continue
+        # same events to subscribed phones (plans/ios-app.md); kind + card id are what the tap acts on
+        _push_notify(_t, _b, _sid, _badge, kind="card", card_id=_iid)
+        _buzzed.append({"title": _t, "body": _b, "sid": _sid, "kind": "card", "cardId": _iid})
+    if _buzzed:
         # …and to trusted peers' devices (plans/federated-push.md): the phone subscribed at the
         # always-on box must buzz for THIS kernel's cards too — which kernel detected an event is
-        # romp's business, never the user's.
-        _push_forward([{"title": _t, "body": _b, "sid": _sid} for _t, _b, _sid in _fired])
+        # romp's business, never the user's. Only what buzzed HERE travels, so a peer's phone
+        # hears each turn end once too.
+        _push_forward(_buzzed)
     _badge_push(_badge)                                   # app-icon count for installed shells (proposal 3)
     return feed
 
@@ -37936,14 +41837,15 @@ def _system_notify(title, body):
 
 
 def _feed_notifications(feed):
-    """Diff this feed build against the last; return [(title, body, sid)] for every ARMED card that
-    newly entered needs_input or completed (including a card appearing already there — work can
-    surface blocked). Also advances the prev map, prunes armed ids whose card left the feed, and
-    on the baseline build seeds the todo-floor latch from the already-floored cards (see
+    """Diff this feed build against the last; return [(title, body, sid, itemId)] for every ARMED
+    card that newly entered needs_input or completed (including a card appearing already there —
+    work can surface blocked). Also advances the prev map, prunes armed ids whose card left the
+    feed, and on the baseline build seeds the todo-floor latch from the already-floored cards (see
     _NOTIFY_UT_FIRED). Todo-FLOORED cards are judged by their floored-set diff on every build,
     not the column transition — the set is the news test for them (round 2, 2026-08-22).
-    sid rides along so a push notification's tap can land ON the session that fired (the user
-    2026-08-08, whose first real push opened the app on a different session)."""
+    sid rides along so a push notification's tap can land ON the session that fired (the
+    user 2026-08-08, whose first real push opened the app on a different session); itemId joined
+    it 2026-09-06 so the same tap can also scroll the feed to the card itself."""
     prev = _NOTIFY_PREV[0]
     cur = {}
     for a in feed.get("asks") or []:
@@ -38002,7 +41904,7 @@ def _feed_notifications(feed):
         txt = str(a.get("text") or "").strip()
         out.append(("romp: %s" % (a.get("name") or "session"),
                     "%s: %s" % (what, txt[:140] if txt else "a task changed state"),
-                    str(a.get("sid") or "")))
+                    str(a.get("sid") or ""), iid))
     return out
 
 
@@ -38351,10 +42253,17 @@ def _vapid_auth(endpoint):
     return "vapid t=%s.%s, k=%s" % (signing.decode(), _b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big")), pub)
 
 
-def _push_send_one(sub, payload):
-    """POST one encrypted notification to one subscription. Returns False only when the push
-    service says the subscription is DEAD (404/410 — the sole prune signal, per the plan); a
-    network blip keeps it."""
+_PUSH_DEAD_STATUSES = (404, 410)   # the push service's "this subscription is gone" — the sole prune signal
+
+
+def _push_post(sub, payload):
+    """POST one encrypted notification to one subscription and report what the push service SAID:
+    (status, detail). status is the HTTP status (a 2xx = accepted — Apple/Google answer 201), or 0
+    when the request never got an answer (DNS, timeout, TLS), with the error in detail. Never
+    raises on the network path: the caller decides what an outcome means — _push_send_one turns
+    it into keep/prune for the fan-out, /push/test hands it to the user verbatim (2026-09-05, the
+    popover's test button: before it, every failure short of a dead subscription was swallowed as
+    success and a phone that never buzzed had nothing to show for it)."""
     import urllib.request, urllib.error
     req = urllib.request.Request(
         sub["endpoint"], method="POST",
@@ -38362,23 +42271,147 @@ def _push_send_one(sub, payload):
         headers={"Authorization": _vapid_auth(sub["endpoint"]),
                  "Content-Encoding": "aes128gcm", "TTL": "86400", "Urgency": "high"})
     try:
-        urllib.request.urlopen(req, timeout=10).read()
-        return True
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+            return int(r.status or 200), str(r.reason or "accepted")
     except urllib.error.HTTPError as e:
-        return e.code not in (404, 410)
-    except Exception:
-        return True
+        try:
+            body = e.read().decode("utf-8", "replace").strip()
+        except Exception:
+            body = ""
+        detail = str(e.reason or "")
+        if body:
+            detail = ("%s: %s" % (detail, body[:200])) if detail else body[:200]
+        return int(e.code), detail or ("HTTP %d" % e.code)
+    except Exception as e:
+        return 0, ("%s: %s" % (type(e).__name__, e)).strip(": ")
 
 
-def _push_notify(title, body, sid="", badge=None):
+def _push_send_one(sub, payload):
+    """POST one encrypted notification to one subscription. Returns False only when the push
+    service says the subscription is DEAD (404/410 — the sole prune signal, per the plan); a
+    network blip keeps it. Built on _push_post, which keeps the status for the callers that need
+    it; the fan-out only needs keep-or-prune."""
+    status, _detail = _push_post(sub, payload)
+    return status not in _PUSH_DEAD_STATUSES
+
+
+PUSH_LABEL_MAX = 80    # the shell's tab label, as a last-resort session name: display text, clipped
+
+
+def _push_test(endpoint, sid="", host="", label=""):
+    """The popover's "Send a test notification" (2026-09-05): ONE plain notification to ONE
+    subscription — the asking device's — and the push service's answer back to it as
+    {ok, status, detail}. Synchronous on purpose: the whole point is to show the user what the
+    service said. An endpoint nobody subscribed answers ok:false with the reason (the shell shows
+    it under the button); a dead subscription (404/410) is pruned exactly as the fan-out would
+    prune it, and the detail says so. Raises RuntimeError when the crypto dependency is missing —
+    the route turns that into the same loud 500 /push/subscribe gives.
+
+    ADDRESSED TO A SESSION (the user 2026-09-06, who wants to try the tap for real: press the
+    button while looking at one session, switch to another session and another browser tab, tap
+    the notification, and be brought back to the first). `sid` is the session the shell had in
+    front when the button was pressed — the chat pane's active tab, host-prefixed for a federated
+    one — and `host` the courtesy copy _push_payload documents. It rides the payload's routing
+    block under kind "test", so the tap lands exactly the way a turn's does (the shell POSTs
+    /reveal for any sid; only a card kind adds the card scroll), and the body names the session so
+    the lock screen says where the tap goes. The answer carries `sid` and `name` back so the
+    popover's result line says the same thing in the same words. With no session active the shell
+    sends no sid and the test is what it was: a sid-less probe that just brings romp forward.
+
+    THE NAME, in order of authority (the user 2026-09-06, whose test for a session on another
+    machine named its short id): a local session's is the names registry's (_name_of); a federated
+    one's is what its host calls it in the tunnel supervisor's snapshot of that host's /sessions
+    (_remote_name_of), worn host-prefixed the way the merged dashboard shows it. When the kernel
+    truly has no name — a host not polled yet, a kernel too old to file names — the shell's
+    `label` stands in: the active tab's own text, the user's UI text and nothing more, so it is
+    clipped and flattened here and never consulted ahead of the kernel's own copy. Neither → the
+    short id, as before."""
+    sub = _push_subs().get(str(endpoint or ""))
+    if not sub:
+        return {"ok": False, "status": 0, "detail": "this device isn't subscribed yet"}
+    _vapid_keys()                                          # RuntimeError without cryptography → the route's 500
+    sid, host, name = str(sid or ""), str(host or ""), ""
+    label = " ".join(str(label or "").split())[:PUSH_LABEL_MAX]
+    if sid:
+        if ":" in sid:
+            pfx, bare = sid.split(":", 1)
+            rn = _remote_name_of(pfx, bare)
+            name = ("%s:%s" % (pfx, rn)) if rn else ""
+        else:
+            bare = sid
+            name = _name_of(bare) or ""
+        name = name or label or bare[:8]
+        body = "Test notification — tap to come back to %s." % name
+    else:
+        body = "Test notification — this device is set up."
+    payload = json.dumps(_push_payload("romp", body, sid=sid, kind="test", host=host)).encode()
+    status, detail = _push_post(sub, payload)
+    ok = 200 <= status < 300
+    if status in _PUSH_DEAD_STATUSES:
+        _del_push_sub(sub["endpoint"])
+        detail = "%s — the push service says this subscription is gone, so it was removed; turn This device off and on again" % detail
+    res = {"ok": ok, "status": status, "detail": detail}
+    if sid:
+        res["sid"], res["name"] = sid, name
+    return res
+
+
+def _push_payload(title, body, sid="", badge=None, kind="card", card_id="", host="", quiet=False):
+    """The JSON one web push carries — the ONE builder every push kind goes through, so a tap on
+    any of them lands the same way (the user 2026-09-06, who wants a tap to focus the romp
+    window they already have open and put them on the session — and card — that buzzed).
+
+    Content is the gist and nothing more: title + body. Everything else is ROUTING metadata the
+    service worker acts on, never text it shows:
+      sid   — top level, for a worker of the previous build still installed on some phone (it
+              read d.sid; a worker updates on the next push or app open, not before);
+      tag   — one notification per SESSION: a second push for the same session replaces the
+              first on the lock screen instead of stacking (renotify keeps the buzz), and a
+              sid-less push wears a fixed tag so tests collapse too;
+      badge — the needs-you count the worker paints on the app icon while the app is closed;
+              None OMITS the key and the worker leaves the count alone — the shape a mirrored
+              federated event wears, because the origin's count is not ours;
+      data  — {sid, host, kind, cardId, url}: what the worker hands the shell on a tap (or puts
+              in the URL it opens when no window exists). kind names the leg that fired ("card":
+              a card entered needs-you/completed; "turn": a turn ended; "test": the popover's
+              probe, carrying the session the user was looking at when they pressed the button —
+              2026-09-06 — so its tap comes back there like a turn's; sid-less, and nowhere to
+              land, only when no session was in front); cardId (a card kind only) is the goal id the feed
+              scrolls to; url is the same-origin deep link the shell already parses at boot
+              (?push-reveal=<sid>, plus &push-card=<id> for a card) — "/" when there is no
+              session to land on. host is the origin kernel of a relayed event ("" = local);
+              the sid already wears it as a prefix (host:sid, the merged dashboard's own tab
+              address), so this is a courtesy copy, not a second source of truth."""
+    import urllib.parse
+    sid, card_id, kind = str(sid or ""), str(card_id or ""), str(kind or "card")
+    host = str(host or "") or (sid.split(":", 1)[0] if ":" in sid else "")
+    url = "/"
+    if sid:
+        q = [("push-reveal", sid)] + ([("push-card", card_id)] if card_id else [])
+        url = "/?" + urllib.parse.urlencode(q)
+    d = {"title": str(title), "body": str(body), "sid": sid,
+         "tag": "romp:" + (sid or kind),
+         "data": {"sid": sid, "host": host, "kind": kind, "cardId": card_id, "url": url}}
+    if badge is not None:
+        d["badge"] = int(badge or 0)
+    if quiet:
+        # a card push that yields the BUZZ to an already-fired turn push, but still carries the badge
+        # (#937 fold): the worker shows it silent, without re-alerting, so the per-session tag replaces
+        # the turn notification and the icon count stays current
+        d["quiet"] = True
+    return d
+
+
+def _push_notify(title, body, sid="", badge=None, kind="card", card_id="", host="", quiet=False):
     """_system_notify's sibling sink: the same (title, body) — the card's gist and nothing more —
-    to every subscribed device, plus two pieces of ROUTING metadata, not content: sid, so tapping
-    the notification lands on the session that fired (the user 2026-08-08), and badge, the
-    needs-you count the service worker paints on the app icon while the app is closed. badge=None
-    OMITS the key and the worker leaves the icon's count alone — the shape a mirrored federated
-    event wears, because the origin kernel's count is not this kernel's count
-    (plans/federated-push.md). Runs on the pusher thread, so all network work moves to a daemon
-    thread (the _refresh_remote_prices discipline) and this never blocks or raises."""
+    to every subscribed device, plus the ROUTING metadata _push_payload documents: sid, so
+    tapping the notification lands on the session that fired (the user 2026-08-08); badge, the
+    needs-you count for the app icon (None omits it — the mirrored federated shape,
+    plans/federated-push.md); and kind/card_id/host, so the tap can also scroll the feed to the
+    card and name the origin of a relayed event. Runs on the pusher thread, so all network work
+    moves to a daemon thread (the _refresh_remote_prices discipline) and this never blocks or
+    raises."""
     subs = _push_subs()
     if not subs:
         return
@@ -38388,10 +42421,7 @@ def _push_notify(title, body, sid="", badge=None):
         print("romp: web push: %d subscription(s) on file but the python 'cryptography' package "
               "is missing — notification not delivered" % len(subs), file=sys.stderr)
         return
-    d = {"title": str(title), "body": str(body), "sid": str(sid or "")}
-    if badge is not None:
-        d["badge"] = int(badge or 0)
-    payload = json.dumps(d).encode()
+    payload = json.dumps(_push_payload(title, body, sid, badge, kind, card_id, host, quiet=quiet)).encode()
 
     def run():
         dead = []
@@ -38410,8 +42440,9 @@ def _push_notify(title, body, sid="", badge=None):
 def _push_forward(events):
     """The federated half of the push sink (plans/federated-push.md; the user 2026-08-08, who wants
     one device subscription to buzz for EVERY connected kernel): hand this kernel's fresh bell
-    events — [{title, body, sid}] — to every attached TRUSTED peer, and each peer delivers them to
-    the devices subscribed to IT. Rides the channel every kernel-to-kernel control call already
+    events — [{title, body, sid, kind, cardId}] — to every attached TRUSTED peer, and each peer
+    delivers them to the devices subscribed to IT (kind/cardId ride so a tap on the mirrored
+    notification lands on the card, not just the session; a peer of an older build ignores them). Rides the channel every kernel-to-kernel control call already
     rides (_peer_call: the pair's tunnel + the token exchanged at attach) — no new legs, no new
     trust surface. Only events THIS kernel detected are ever forwarded, and /push/relay mirrors to
     devices only, never onward, so a cycle of attachments cannot echo an event back. Fire-and-forget
@@ -38438,6 +42469,96 @@ def _push_forward(events):
     threading.Thread(target=run, daemon=True).start()
 
 
+# ── the turn-finished push (the bell popover's third row, 2026-09-05) ─────────────────────────────
+# With the master AND the turn switch on, every session's turn end buzzes the subscribed phones:
+# {title: the session's name, body: the first line of what it said, sid}. The EVENT is the session's
+# recorded settle — the Stop hook's `lastStopAt` stamp (SDK sessions) or the states/ 'waiting'/'idle'
+# transition the Stop hook writes (tmux) — read per pusher cycle, which the very same settle wakes
+# (/tick, the backend's poke). No timer, no transcript-mtime inference. The first sight of a session
+# is a silent baseline (existing state is status, not news — the _NOTIFY_PREV policy), and a session
+# the user muted (its own bell off) stays quiet here too: the master's "on unless muted" model.
+#
+# ONE BUZZ PER TURN END (the no-double-buzz rule): a turn that ends by asking a question also moves
+# its card into needs_input a few seconds later, once the judges rule — a bell event. Both writers
+# claim (sid, turn-end key) through _buzz_claim; whoever files first buzzes and the other yields.
+# Within one cycle the feed builds before this tick, so when the judges have already ruled the more
+# informative bell event wins; across cycles the turn push usually lands first and the later bell
+# event yields on the phone (the desktop notice and the badge still fire — they are not the buzz).
+# Bell events never yield to EACH OTHER: two cards of one session moving in one build buzz twice,
+# exactly as before this rule existed.
+_TURN_PREV = {}      # sid -> turn-end key at the last tick; absent = baseline pending
+_PUSH_BUZZED = {}    # sid -> (turn-end key, "turn"|"bell") of the last phone buzz filed for it
+_TURN_BODY_CAP = 120
+
+
+def _turn_end_key(sid):
+    """The session's newest TURN-END as an opaque key, 0 when there is no settle evidence. Like
+    _settle_event_key, the Stop hook's lastStopAt is primary; the fallback is stricter — only a
+    STOPPED states/ transition ('waiting'/'idle') counts, because _last_state also moves when a
+    turn STARTS and a start must never read as an end here."""
+    try:
+        t = int((_thread_reg(sid) or {}).get("lastStopAt") or 0)
+    except Exception:
+        t = 0
+    if t:
+        return t
+    val, vt = _last_natural_state(sid)          # the session's own settle — never the idle romp wrote for a Stop press
+    return (vt or 0) if val in ("waiting", "idle") else 0
+
+
+
+
+def _buzz_claim(sid, key, kind):
+    """File a phone buzz for (sid, key) from `kind` ("turn" | "bell"). True = go ahead; False = a
+    buzz for this same turn end already went out and this one yields. A bell event yields only to a
+    TURN claim (bell events never suppress each other); a turn push yields to any claim. A sid-less
+    event (a card with no session) has nothing to share a turn with and always passes."""
+    if not sid:
+        return True
+    cur = _PUSH_BUZZED.get(sid)
+    if cur is not None and cur[0] == key and (kind == "turn" or cur[1] == "turn"):
+        return False
+    if cur is None or cur[0] != key or kind == "turn":
+        _PUSH_BUZZED[sid] = (key, kind)
+    return True
+
+
+def _first_line(text, cap=_TURN_BODY_CAP):
+    """The first non-empty line of a reply, clipped to `cap` characters with an ellipsis."""
+    for line in str(text or "").splitlines():
+        s = line.strip()
+        if s:
+            return s if len(s) <= cap else s[:cap - 1].rstrip() + "…"
+    return ""
+
+
+def _turn_notify_tick(now, tmux):
+    """One pusher-cycle pass over the live sessions: a session whose turn-end key MOVED since the
+    last pass finished a turn. Fires only with both switches on and the session unmuted; every
+    sighting advances the memo regardless, so switching the row on later never replays old ends."""
+    fired = []
+    for s in _alive_sessions(now, tmux):
+        sid = str(s.get("sid") or "")
+        if not sid:
+            continue
+        key = _turn_end_key(sid)
+        prev = _TURN_PREV.get(sid)
+        _TURN_PREV[sid] = key
+        if prev is None or key == prev or not key:
+            continue                                     # baseline / nothing new / no settle evidence
+        if not (_notify_all_on() and _notify_turns_on() and _notify_session_effective(sid)):
+            continue
+        if not _buzz_claim(sid, key, "turn"):
+            continue                                     # a bell event already buzzed for this turn end
+        body = _first_line(_last_assistant_text(s.get("path") or "")) or "finished a turn"
+        title = str(s.get("name") or _name_of(sid) or sid[:8])
+        _push_notify(title, body, sid, kind="turn")                 # badge omitted: the count rides its own push
+        fired.append({"title": title, "body": body, "sid": sid, "kind": "turn"})   # the kind rides to peers too, so their tap lands the same way
+    if fired:
+        _push_forward(fired)                             # peers' phones hear it too, the bell-event way
+    return fired
+
+
 # The whole service worker. Push delivery ONLY — deliberately NO fetch handler: romp is useless
 # offline by nature, and a caching worker would fight the stale-bundle machinery (?v= cache-bust +
 # the rstale banner), which assumes the network serves every load (plans/ios-app.md proposal 2).
@@ -38453,8 +42574,15 @@ self.addEventListener('install',function(e){self.skipWaiting();});
 self.addEventListener('activate',function(e){e.waitUntil(clients.claim());});
 self.addEventListener('push',function(e){
 var d={};try{d=e.data?e.data.json():{};}catch(err){}
-var work=[self.registration.showNotification(d.title||'romp',
-{body:d.body||'',icon:'/media/romp-app-192.png',badge:'/media/romp-app-192.png',data:{sid:d.sid||''}})];
+// data = the ROUTING block the kernel built (_push_payload: sid, host, kind, cardId, url) — what the
+// tap below acts on; a payload from an older kernel carries only a flat sid, so that is the fallback.
+// tag: one notification per session — a second buzz for the same session REPLACES the first on the
+// lock screen instead of stacking (renotify keeps it audible); the kernel picks the tag.
+var opts={body:d.body||'',icon:'/media/romp-app-192.png',badge:'/media/romp-app-192.png',
+data:(d.data&&typeof d.data==='object')?d.data:{sid:d.sid||''}};
+if(d.tag){opts.tag=d.tag;opts.renotify=!d.quiet;}   // a quiet push replaces without re-alerting
+if(d.quiet)opts.silent=true;
+var work=[self.registration.showNotification(d.title||'romp',opts)];
 // the app-icon count, kept current while the app is CLOSED (the open shell re-paints it live over
 // its own WS). setAppBadge exists in the SW only where badging works at all (iOS installed apps).
 // Numeric-only on purpose: a mirrored federated event omits badge (the ORIGIN kernel's count is
@@ -38464,15 +42592,33 @@ if('setAppBadge' in self.navigator&&typeof d.badge==='number')work.push(self.nav
 e.waitUntil(Promise.all(work));
 });
 // Land ON the thing that notified (the user 2026-08-08, whose first push opened a different
-// session): a live window gets focus + the sid over postMessage (the shell relays it into the
-// chat pane); no window -> open one with the sid in the URL, and the shell asks the kernel to
-// aim the focus at it once its chat pane connects (POST /reveal).
+// session; 2026-09-06, who wants the tap to come back to the romp they already have open): the
+// notification closes; then the window the user last had in front (matchAll orders most-recently-
+// focused first) is focused and handed the routing block over postMessage — the shell turns that
+// into the chat focus + the feed's card reveal. No window at all -> open one on the deep link the
+// kernel built (the shell parses it at boot). focus() can REJECT (an installed iOS app has refused
+// it) — then the tap still lands: fall through to openWindow rather than dropping it. Everything
+// rides waitUntil, so the worker is kept alive until the tap has landed; no timers anywhere.
+// TOP-LEVEL windows only (the user 2026-09-06, whose tap on the phone did nothing): the dashboard's
+// panes are same-origin iframes under this worker's scope, and matchAll lists each of them as a
+// window client too (frameType 'nested') — most recently FOCUSED first, which after a tap in the
+// chat pane's session picker is the chat iframe. Only the shell (the top-level document) carries
+// the reveal listener; posting into a pane dropped the tap on the floor. A client that reports no
+// frameType is treated as a window rather than dropped.
 self.addEventListener('notificationclick',function(e){
 e.notification.close();
-var sid=(e.notification.data&&e.notification.data.sid)||'';
+var d=e.notification.data||{};var sid=d.sid||'';
+var url=d.url||(sid?'/?push-reveal='+encodeURIComponent(sid):'/');
+var msg={romp:'notificationClick',sid:sid,host:d.host||'',kind:d.kind||'',cardId:d.cardId||''};
+function open(){return clients.openWindow(url);}
+function shell(w){return !w.frameType||w.frameType==='top-level'||w.frameType==='auxiliary';}
 e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(function(ws){
-if(ws.length)return ws[0].focus().then(function(w){try{(w||ws[0]).postMessage({romp:'pushReveal',sid:sid});}catch(err){}});
-return clients.openWindow(sid?'/?push-reveal='+encodeURIComponent(sid):'/');}));
+var tops=ws.filter(shell);
+if(!tops.length)return open();
+var w=tops[0];
+return Promise.resolve().then(function(){return w.focus();}).then(function(fw){
+try{(fw||w).postMessage(msg);}catch(err){}},open);
+}));
 });
 """
 
@@ -38484,7 +42630,9 @@ return clients.openWindow(sid?'/?push-reveal='+encodeURIComponent(sid):'/');}));
 # for: that window's chat pane saying "ready" (matched by wid — the per-dashboard id the shell
 # mints and every same-window pane shares — so a second dashboard's reload cannot steal it). One
 # slot, latest wins: two taps before a boot completes should land on the newer notification.
-_PENDING_REVEAL = [None]                     # {"sid": ..., "wid": ...} or None
+# `sent` (2026-09-06): the clients a LIVE tap was already handed to while unproven — see
+# _reveal_request; a pong from one of them retires the slot, a redial's ready consumes it.
+_PENDING_REVEAL = [None]                     # {"sid": ..., "wid": ...[, "sent": [clients]]} or None
 
 
 def _reveal_msg(sid):
@@ -38503,22 +42651,52 @@ def _reveal_msg(sid):
     return {"type": "focus", "id": sid, "live": True}
 
 
-def _reveal_request(sid, wid):
+def _reveal_request(sid, wid, boot=False):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
-    WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately."""
+    WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately.
+
+    Two ways a same-wid chat socket the kernel holds is NOT the pane this tap is for (the user
+    2026-09-06, whose tap on the phone did nothing — the phone is where sockets die without a
+    close: a suspended app, a VPN link that dropped with the screen):
+      boot  — the shell says the page is BOOTING (the deep-link arrival: iOS opens the installed
+              app's one window on the link, or the app comes back from a kill). Its own chat pane
+              cannot be connected yet, so a socket wearing its wid is the PREVIOUS page's
+              (sessionStorage keeps the wid across a reload) — dead, and the ping timeout has up to
+              WS_DEAD_S to say so. Park only; "delivering" there parked nothing and the new pane's
+              ready found nothing to consume.
+      unproven — a live tap, but the target has a ping on the wire nobody has answered (pingAt set:
+              the peer is unproven since the last heartbeat). Deliver as before AND keep a copy
+              parked, tagged with who it went to: the pong that proves that socket alive retires it
+              (_note_ws_inbound — the focus frame is ordered behind the ping it answers); a dead
+              socket never pongs, the pane redials, and its ready consumes the copy instead of
+              finding nothing. A socket with no ping outstanding is proven: nothing parked, so a
+              later ready never replays a landed tap."""
     with _clients_lock:                          # a held chat pane (READY_GATE_CAP) is "not yet": parked, delivered at its `ready`
-        targets = [c for c in _clients if c["app"] == "chat" and (c.get("wid") or "") == wid and _client_ready(c)]
-    delivered = False
+        targets = [] if boot else [c for c in _clients
+                                   if c["app"] == "chat" and (c.get("wid") or "") == wid and _client_ready(c)]
+    delivered, sent = False, []
     for c in targets:
         try:
             c["send"](json.dumps(_reveal_msg(sid)))
             delivered = True
+            if c.get("pingAt") is not None:
+                sent.append(c)
         except Exception:
             pass
     if not delivered:
         _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or "")}
+    elif sent:
+        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
     return delivered
+
+
+def _reveal_proven(client):
+    """A pong or message from `client`: if the parked reveal was HANDED to it while unproven, the
+    socket is alive and the focus frame ahead of this pong has landed — retire the copy."""
+    p = _PENDING_REVEAL[0]
+    if p and any(c is client for c in (p.get("sent") or ())):
+        _PENDING_REVEAL[0] = None
 
 
 def _consume_pending_reveal(client):
@@ -38543,8 +42721,10 @@ def _cached_timeline(now, tmux, sig, connect=False):
     built = e[1]                                          # read once, as _cached_feed does
     dirty = not connect and _views_dirty[0] > e[3]        # start-keyed, same as _cached_feed above
     if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+        _VIEW_STATS["tlServe"] += 1
         _PERF_STATS.build("timeline", True)
         return built
+    _VIEW_STATS["tlBuild"] += 1
     started = time.time()
     _t0 = time.monotonic()
     tl = build_timeline(now, tmux)
@@ -38617,6 +42797,8 @@ def _producer():
                 _episode_boundary_tick(time.time())    # this same pass's planner/closer/nudge see a settled store
             except Exception:                          # instead of carrying dead cards into the fresh conversation
                 sys.stderr.write("episode: %s\n" % traceback.format_exc())
+            _pass_fp = _judge_store_fp() if _last_judge_fp[0] is None else None   # the first pass anchors on the
+                                                       # pre-pass look; later passes anchor on the previous look
             _begin_goals_pass()                        # snapshot PRE-pass goal stores → the feed serves them for the
                                                        # whole pass, so no half-applied intermediate ever shows
             _own_frame = jd.begin_pass_frame()         # ONE evidence frame for BOTH tiers and their worker pools:
@@ -38642,9 +42824,10 @@ def _producer():
                 sys.stderr.write("rearm-on-recovery: %s\n" % traceback.format_exc())
             _end_goals_pass()      # pass + compact done → drop the snapshot BEFORE bumping the gen, so the cache-
                                    # busting rebuild below reads the fully-applied (post-pass) state, not pre-pass.
-            _judge_gen[0] += 1     # a judge pass may have changed goal/caption state WITHOUT touching any
-                                   # transcript → bump the generation so the chat-build cache re-builds the
-                                   # background tabs once, keeping their Fleet status/ledger fresh (≤ this cadence).
+            _bump_judge_gen_if_changed(_pass_fp)   # a judge pass may have changed goal/caption state WITHOUT
+                                   # touching any transcript → bump the generation so the chat-build cache
+                                   # re-builds the background tabs once. Only when a store actually moved: a
+                                   # quiet pass leaves every view's signature alone (2026-09-03).
             try:                      # sessions with ARMED TIMERS need a LIVE CLI (the user 2026-08-28:
                 _sbe = _sdk()         # crons/wakeups never fired on dormant sessions — the CLI's scheduler
                 if _sbe and _sdk_ready():   # is in-process; see SdkBackend.ensure_scheduled)
@@ -38702,12 +42885,16 @@ def _pusher_cycle():
         #                                       token and per postal card (~38% of pusher wall, py-spy
         #                                       2026-08-31). INSIDE the try: a raise here must still hit
         #                                       the finally, or the liveness scope above leaks set
+        _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped):
+        #                                       filled by the first chat build that needs the map, read by
+        #                                       every later build of the cycle
         _pusher_cycle_jobs(now, tmux, any_client)
     finally:
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
         _live_scope.sessions = None
+        _live_scope.msgsum = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 
@@ -38743,12 +42930,10 @@ def _unreadable_store_warns(now):
 def _pusher_cycle_jobs(now, tmux, any_client):
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
     _t_push = 0.0
-    try:                                  # the drain's gates read the CACHED parse: re-parse the parked sids'
-        _refresh_parked_parses(now)       # moved transcripts first, so a stranded hook row can be overruled by
-    except Exception:                     # what the transcript says (headless, nobody else fills the cache)
-        sys.stderr.write("parked-parse refresh: %s\n" % traceback.format_exc())
     try:                                  # parked ops deliver on the settle EVENT this cycle was woken for
         _apply_pending_ops()              # (_wake_kernel, /tick, a park/cancel/move, the 0.5 s backstop) —
+        #                                   the parked-parse refresh runs inside, per sid, after the
+        #                                   holds (2026-09-05)
     except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
@@ -38775,6 +42960,10 @@ def _pusher_cycle_jobs(now, tmux, any_client):
             #                               an hours-old world as live tabs (2026-08-18)
         except Exception:
             sys.stderr.write("tab-carry maintain: %s\n" % traceback.format_exc())
+    try:                                  # the turn-finished push (bell popover): AFTER the feed build above,
+        _turn_notify_tick(now, tmux)      # so a bell event the same settle produced files its buzz first
+    except Exception:
+        sys.stderr.write("turn-notify: %s\n" % traceback.format_exc())
     # (the WS keepalive lives on its own _heartbeat thread — NOT here — so a slow push can't starve it)
     try:                                  # a goals file that does not read hides a session's cards everywhere:
         _unreadable_store_warns(now)      # say so once per episode (the judge-errors row reaches no surface)
@@ -38796,8 +42985,9 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _deferral_sweep_tick(now)         # the walk, independent of the nudge toggle (the stall/swirl
     except Exception:                     # surfaces read these records regardless)
         sys.stderr.write("deferral-sweep: %s\n" % traceback.format_exc())
-    try:                                  # Auto Nudge runs server-side even with no browser open (cheap when
-        _auto_nudge_tick(now, tmux)       # off); the awaiting WAKE rides its goal walk (see _wake_goal)
+    try:                                  # Auto Nudge runs server-side even with no browser open; the awaiting
+        _auto_nudge_tick(now, tmux)       # WAKE rides its goal walk (see _wake_goal) and runs even when the
+    #                                       nudge is OFF — the toggle scopes the nudge legs, not the dead-man
     except Exception:
         sys.stderr.write("auto-nudge: %s\n" % traceback.format_exc())
     try:                                  # Interrupt → Blocked runs EVERY push, independent of the nudge toggle
@@ -38969,18 +43159,21 @@ if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}
 // reconnect, so raising immediately made the prompt FLASH up and straight back down on nearly every
 // dashboard open — visual noise for a problem that fixed itself. clearStale above disarms it the moment
 // the resync frame arrives. The arm used to be a 1s TIMER, on the argument that "the resync failed to
-// arrive" has no event of its own. It has two (2026-09-02): the SECOND KEEPALIVE landing on the
-// reconnected socket while the resync is still pending — one full heartbeat period, bracketed by two
-// kernel heartbeats on this very socket with no resync between them: the kernel is alive and talking to
-// it and has not resynced it, exactly the state the prompt warns about — and the reconnected socket
-// CLOSING again before its resync — no frame is coming on it. Both fire in onmessage/onclose below. ONE
-// keepalive is not the event: the heartbeat thread can enqueue a beat the instant a socket is accepted,
-// ahead of the resync frame the ready handshake then serves, and raising on it flashed the banner exactly
-// as the timer did (the 2026-09-03 review). The timer was approximating all this, and it fired a beat
-// BEFORE the resync on nearly every reconnect once frames grew: ~300 raises a day on one dashboard, each
-// a drop→reconnect→resync cycle (the kernel now serves the frame on `ready` at once, and streams deltas,
-// so those cycles are gone too). stalePending holds the PATH that armed ("reconnect"/"foreground") for
-// the breadcrumb; empty = not armed; staleKa counts the keepalives since the arm. pendingWhy carries the
+// arrive" has no event of its own. It has two: the SECOND KEEPALIVE landing on the reconnected socket
+// while the resync is still pending — one full heartbeat period, bracketed by two kernel heartbeats on
+// this very socket with no resync between them: the kernel is alive and talking to it and has not
+// resynced it, exactly the state the prompt warns about — and the reconnected socket CLOSING again before
+// its resync — no frame is coming on it. Both fire in onmessage/onclose below; abandon() runs the close
+// rule itself for a socket the shim gives up on as quiet (the watchdog's tick or the foreground path), since
+// it disowns that socket's onclose — a kernel that accepts the reconnect and then never speaks on it
+// sends no keepalive to count and no close to rule on, and without this the next open re-armed from zero
+// on every 30 s cycle: the loader flapped and the prompt never came. ONE keepalive is not the
+// event: the heartbeat thread can enqueue a beat the instant a socket is accepted, ahead of the connect
+// push, and raising on it flashed the banner exactly as the timer did. The timer was approximating all
+// this, and on a board of several hundred cards the connect push is a multi-megabyte frame that takes
+// longer than a second to land over a forwarded or tunnelled link, so it fired a beat BEFORE the resync
+// on nearly every reconnect. stalePending holds the PATH that armed ("reconnect"/"foreground") for the
+// breadcrumb; empty = not armed; staleKa counts the keepalives since the arm. pendingWhy carries the
 // foreground path's reason to the reconnect that arms for it; openSock/openT identify the socket that
 // last opened (the close rule applies to a socket that OPENED and armed, never to the one the foreground
 // path itself closes).
@@ -39043,13 +43236,16 @@ else if(msg&&DELTA_KINDS[msg.type]){var keys=msg._keys;delete msg._keys;LAST[msg
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
-// every close of a socket that OPENED leaves a breadcrumb with the CLOSE CODE and reason (2026-09-02): a
-// kernel-side drop (the client fell WS_QUEUE_BYTES behind — shutdown, no close frame → 1006), a clean
-// kernel restart, a proxy timeout and the watchdog's own close all looked identical from here, and a day
-// of drops read as a flaky network. send() queues while the socket is down, so the row rides the
-// reconnect. A handshake that never opened fires onclose too (every 1.5 s redial of an outage — an 8 h
-// outage is ~19k of them, and their timings would be the PREVIOUS socket's): those are counted and
-// reported as one wsconnfail row on the next open, never queued one by one (the 2026-09-03 review).
+// Every close the BROWSER reports for a socket that OPENED leaves a breadcrumb with the CLOSE CODE and
+// reason: a kernel-side drop (the client fell WS_QUEUE_BYTES behind — shutdown, no close frame → 1006), a
+// clean kernel restart and a proxy timeout all looked identical from here, and a day of drops read as a
+// flaky network. A socket the shim ABANDONS leaves no wsclose row (abandon() disowns its onclose). Its
+// watchdog-close row, when there is one, went down the quiet socket before the abandon (the foreground
+// path sends none), so it lands only if that socket still carried writes; for an armed socket the "-quiet"
+// raise abandon() queues for the redial is the record that survives. send() queues while the socket is
+// down, so the row rides the reconnect. A handshake that never opened fires onclose too (every 1.5 s redial
+// of an outage — an 8 h outage is ~19k of them, and their timings would be the PREVIOUS socket's): those
+// are counted and reported as one wsconnfail row on the next open, never queued one by one.
 ws.onclose=function(ev){netState("down");
 if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}});}catch(e){}}
 else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
@@ -39110,8 +43306,12 @@ setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}
 // the audited phone panes came back 64s after their own watchdog-close for exactly this reason (a pane's
 // quiet socket → close() → nothing → the reconnect only when the browser gave up). Detach its handlers
 // (its eventual onclose is nobody's event — it must not fire wsdown or a second redial), close it for
-// hygiene, do what onclose did (flag the shell, re-show the loader), and let the caller dial NOW.
+// hygiene, do what onclose did (flag the shell, run the close rule, re-show the loader), and let the caller
+// dial NOW. The close rule runs AFTER ws is nulled so its breadcrumb queues and rides the reconnect. (The
+// watchdog's own watchdog-close row goes down the quiet socket before this call and lands only if that
+// socket still carries writes; the raise's row does not depend on that.)
 function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;
+if(stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}   // the reconnected socket armed and then said nothing before its resync: nothing is coming on it, and the view IS stale — the disowned onclose cannot rule on it, and the redial's open would otherwise re-arm from zero
 netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 // progress watchdog (state-keyed, one per socket state): OPEN but silent past STALE_MS = half-open, no
 // onclose will ever fire — force-close (the user 2026-06-29). CONNECTING past its deadline = the browser is
@@ -39856,6 +44056,26 @@ setTimeout(hide,5000);})();
 # posts {romp:'wsState',app,state}; the timeline/feed/etc. are pushed from the kernel, so a drop silently
 # freezes them), the usage-limit + judge-degraded signatures (see _LANDING_USAGE_JS), and any
 # {romp:'notify',kind,text} a pane posts. window.__rompNotify(kind,text) is the one write path.
+#
+# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
+# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
+# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
+# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
+# is a band, not a column). The desktop rail buttons (_rail_buttons_html), the mobile #mtabs buttons
+# (_mtab_buttons_html), the WS drop row (_note_ws_drop) and the bell's pane-label map (PN, in the
+# script below) all render from this one constant — reorder or rename here and every surface moves
+# together; a second hardcoded list is the bug this replaces (the bell's PN was the last one, the
+# #957 review). Defined above _LANDING_ERRS_JS because that string is built from it at import.
+# Keys stay internal (timeline/fleet); labels are the user-facing names.
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"),
+               ("files", "Files"))
+
+# The mobile layout's media query — narrow, OR a touch device up to 1024px — ONE constant for the stylesheet
+# rule that collapses the grid to one pane + bottom tabs (_landing()'s CSS) and for the shell script's
+# matchMedia (_LANDING_MOBILE_JS, __rompMobileOn: the pane-set broadcast and the viewFile relay ask it which
+# layout is up). Spliced, so the JS can never test a different query than the CSS lays out by.
+_MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
+
 _LANDING_ERRS_JS = """
 (function(){var icon=document.getElementById('rail-errs'),micon=document.getElementById('merr'),
 back=document.getElementById('rerr-back'),list=document.getElementById('rerr-list'),
@@ -39963,7 +44183,7 @@ if(m&&m.romp==='notify'&&m.text)window.__rompNotify(m.kind||'error',m.text,
 var st={};
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}return false;}
-var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting',files:'Files'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
@@ -40003,8 +44223,10 @@ if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose
 else if(ru&&ru.classList.contains('on')&&window.__rompUsageClose){window.__rompUsageClose();closed=true;}
 else{var er=document.getElementById('rerr-back');
 if(er&&!er.hidden&&window.__rompCloseErrs){window.__rompCloseErrs();closed=true;}
+else{var bp=document.getElementById('rbell-back');
+if(bp&&!bp.hidden&&window.__rompCloseBellPop){window.__rompCloseBellPop();closed=true;}
 else{var nt=document.getElementById('rnet-back');
-if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}
+if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}}
 if(closed){e.preventDefault();e.stopPropagation();}}
 document.addEventListener('keydown',onEsc,true);
 ['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
@@ -40112,7 +44334,7 @@ var legacy=(sp.month&&typeof sp.month.usd==='number'&&!sp.monthToDate);
 if(legacy){det._spendLegacyMonth=true;}
 SPEND_WINS.forEach(function(w){var k=w[0];if(legacy&&k==='monthToDate')k='month';else if(legacy&&k==='month')return;
 var seg=sp[k];if(!seg||typeof seg.usd!=='number')return;
-var row=(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};
+var row=(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0,tokIn:seg.tokIn,tokOut:seg.tokOut,tokCacheR:seg.tokCacheR,tokCacheW:seg.tokCacheW};
 if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;   // a ledger younger than the window says so
 if(seg.preFix)row.preFix=true;});   // the window folds a day recorded before the per-turn fix (inflated as recorded)
 if(u.spendSeries&&u.spendSeries.usd)det._spendSeries=u.spendSeries;}   // $/hour, for the hover graph (the user 2026-08-13)
@@ -40311,9 +44533,14 @@ function fleetSpendHTML(sets){var sum={},series=null,hosts=0,per=[],legacyN=0;
 sets.forEach(function(e){var sp=e.det&&e.det._spend;if(!sp)return;hosts++;
 if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd});
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
-var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0});
+var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0,tokIn:0,tokOut:0,tokCacheR:0,tokCacheW:0,split:true});
 t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;
 if(v.preFix)t.preFix=true;   // any host's pre-fix day in the sum marks the summed row
+// the by-KIND split of the tokens (the user 2026-09-06, who read the day's count and could not see
+// how it was possible — cache reads, every API call of a turn re-reading the whole context, are most
+// of it at a tenth of the price). A host whose kernel ships no split (older build) leaves the summed
+// row UNSPLIT rather than half-split: a partial breakdown would read as a whole one.
+if(typeof v.tokCacheR==='number'){t.tokIn+=v.tokIn||0;t.tokOut+=v.tokOut||0;t.tokCacheR+=v.tokCacheR;t.tokCacheW+=v.tokCacheW||0;}else t.split=false;
 if(v.since&&(!t.since||v.since>t.since))t.since=v.since;});   // the YOUNGEST ledger bounds the sum (T235b): it is complete only from there
 if(e.det._spendLegacyMonth)legacyN++;
 var ss=e.det._spendSeries;
@@ -40336,8 +44563,12 @@ if(k==='month'&&legacyN)lab+=' \u00b7 '+legacyN+' machine'+(legacyN>1?'s':'')+' 
 // days before the per-turn fix were recorded inflated (each result re-added the session so far) and
 // are kept as recorded; a window that folds one says so instead of reading as a clean figure
 if(v.preFix)lab+=' \u00b7 includes days recorded before the per-turn fix';
-return '<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
-+'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('');
+var row='<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
++'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';
+// the split sits under its window, largest kind first, as a sub-line (the .ru-tip-reset annotation grammar)
+if(v.split&&(v.tokIn+v.tokOut+v.tokCacheR+v.tokCacheW)>0)row+='<div class="ru-tip-row ru-tip-sub"><span class=ru-tip-k></span>'
++'<span class=ru-tip-v>'+fmtTok(v.tokCacheR)+' cache read \u00b7 '+fmtTok(v.tokCacheW)+' cache write \u00b7 '+fmtTok(v.tokIn)+' in \u00b7 '+fmtTok(v.tokOut)+' out</span></div>';
+return row;}).join('');
 // every machine in the sum, BY NAME (the user 2026-08-13: a host with no login \u2014 the devbox \u2014 vanished
 // from the hover entirely when the per-host spend rows collapsed into this one section; '3 machines'
 // with two names visible reads as a bug). One line, largest first, week numbers like the graph.
@@ -40672,6 +44903,10 @@ if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffVie
 // whole into the chat pane, whose composer seeds the labeled quote chip for the session the file was opened
 // for (m.sid beats the active tab there). The chat-hosted viewer posts to its own window and never gets here.
 if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');
+  // the chat pane may be toggled OFF (hidden by CSS, iframe still loaded): the chip would seed a composer
+  // nobody can see, a silent gesture (review find on #970, 2026-09-07). Bring the pane forward first, the
+  // way the browseFiles arm does for the feed — desktop only; the phone's one-pane tab swap is untouched.
+  if(!document.body.classList.contains('po-chat')){try{window.__rompPaneToggle&&window.__rompPaneToggle('chat',true);}catch(e){}}
   try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}
 // A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
 // column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
@@ -41512,6 +45747,7 @@ try{(m.n?navigator.setAppBadge(m.n):navigator.clearAppBadge())['catch'](function
 else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotifyAllPaint(!!m.on);
 // the bottom bar's API health cell: one frame, painted by _LANDING_APIH_JS (sent on change + on ready)
 else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
+else if(m&&m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint)window.__rompNotifyTurnsPaint(!!m.on);
 // the boot check found a newer romp release — raise the update banner on every open dashboard
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'');};
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
@@ -41523,37 +45759,74 @@ var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}
 """
 
 
-# The bell in the bottom bar's action cluster / mobile tab bar: the MASTER notification switch
-# (the user 2026-08-09, who expected the bottom-right bell to turn notifications on for every task,
-# with per-item bells as the way to mute some — not a switch that arms nothing by itself). ON = the
-# kernel arms every card by default (notify-cards.json "*", POST /notify-all) and the session/card
-# bells read as mutes; the same tap also opts THIS device into the web pushes where the Push API
-# exists (plans/ios-app.md proposal 2 — on iOS that means the installed home-screen app), so one
-# gesture buys the arming and the delivery together. The bell paints from the KERNEL's state (GET
-# /notify-all at boot, a {type:'notifyAll'} shell push on every toggle) — never from the device
-# subscription, so every device's bell agrees. The push-subscribe leg is best-effort ON TOP of the
-# master flip: a denied permission lands in the Log but leaves notifications on (the kernel box
-# still speaks, other devices still buzz). Notification.requestPermission runs synchronously in the
-# tap (iOS voids the gesture across an await), which is why it is kicked off BEFORE the /notify-all
-# round-trip rather than chained after it.
+# The bell in the bottom bar's action cluster / mobile tab bar opens the NOTIFICATION POPOVER
+# (2026-09-05). Before it, one tap did two jobs at once: it flipped the kernel-wide master switch
+# (the user 2026-08-09's model — on = every task notifies, the session/card bells read as mutes;
+# notify-cards.json "*", POST /notify-all) AND subscribed or unsubscribed THIS device's Web Push
+# (plans/ios-app.md proposal 2) — so turning the bell off on a phone silenced every device, a denied
+# permission left the master on with only a Log line to show for it, and nothing ever told the user
+# whether the push service had accepted a subscription at all. The popover pulls the two apart as
+# rows — "Notifications" (the master, kernel-authoritative: GET /notify-all at boot, a {type:'notifyAll'}
+# shell push on every toggle so every dashboard agrees) and, nested under it, "This device" (this
+# browser's subscription; Notification.requestPermission still runs synchronously in the tap's own
+# stack because iOS voids the gesture across an await) — adds the turn-finished switch (/notify-turns,
+# its own {type:'notifyTurns'} push), and a test button that POSTs /push/test with this device's
+# endpoint AND the session the chat pane has in front (2026-09-06: the test is addressed to it, so
+# its tap brings the user back there — read off the chat iframe's active tab at the press, the same
+# same-origin DOM the mobile header's current-session chip mirrors, no second channel) and shows
+# the push service's answer as one sentence under itself, plus where the tap goes. The master's paint
+# also dims the nested rows (#rbell-pop.master-off) while it is off and the device sub-line says the
+# device is set up but nothing arrives — the same kernel bit, so the dim follows every notifyAll
+# push with no polling; the rows stay operable. The test button ignores the switches on purpose
+# (it answers "is this phone wired up?"), so with the master off its result adds one sentence
+# saying real notifications will not arrive until the main switch is on. The bell GLYPH now
+# reflects this device: lit only when the master is on AND this browser is subscribed; a browser
+# with no Push API has no subscription half to reflect, so the master alone paints it there. The
+# tooltip names which half is off. Where push is blocked or unavailable the This-device row is
+# disabled and its sub-line says why and how to fix it — never a silent no-op.
 _LANDING_PUSH_JS = """
 (function(){var bells=[].slice.call(document.querySelectorAll('#mbell,#rail-bell'));if(!bells.length)return;
 bells.forEach(function(b){b.hidden=false;});
 var canPush=('serviceWorker' in navigator)&&('PushManager' in window)&&('Notification' in window);
-var isOn=false,busy=false;
-function paint(){bells.forEach(function(b){b.classList.toggle('on',isOn);
-var t=isOn?'Notifications on for every task — tap to turn off':'Notify when any task needs you or completes';
-b.setAttribute('title',t);b.setAttribute('aria-label',t);});}
-window.__rompNotifyAllPaint=function(on){isOn=!!on;paint();};   // the shell WS repaints every open dashboard on a toggle
+var back=document.getElementById('rbell-back'),pop=document.getElementById('rbell-pop');if(!back||!pop)return;
+var rows={};['all','dev','turns'].forEach(function(k){rows[k]=pop.querySelector('[data-act='+k+']');});
+var devSubEl=document.getElementById('rbp-dev-sub'),testBtn=document.getElementById('rbp-test'),testOut=document.getElementById('rbp-test-out');
+var isOn=false,turnsOn=false,devOn=false,busy={};
+function perm(){return canPush?Notification.permission:'';}
+function sw(k,on,ok){var r=rows[k];if(!r)return;r.classList.toggle('off',!ok);r.setAttribute('aria-checked',on?'true':'false');
+r.setAttribute('aria-disabled',ok?'false':'true');var s=r.querySelector('.rbp-sw');if(s)s.classList.toggle('on',!!on);}
+function paint(){
+var devOk=canPush&&perm()!=='denied';
+var lit=isOn&&(canPush?devOn:true);   // the glyph is THIS device's truth: master AND its subscription
+var t;
+if(lit)t='Notifications on — tap for options';
+else if(!isOn&&canPush&&!devOn)t='Notifications off — for all devices, and on this device';
+else if(!isOn)t='Notifications off for all devices';
+else t='Notifications off on this device';
+bells.forEach(function(b){b.classList.toggle('on',lit);b.setAttribute('title',t);b.setAttribute('aria-label',t);});
+sw('all',isOn,true);sw('dev',devOn,devOk);sw('turns',turnsOn,true);
+pop.classList.toggle('master-off',!isOn);   // the rows under the master dim while it is off — same kernel bit as its pill, same repaint
+var sub;
+if(!canPush)sub="Push isn't available in this browser. On iPhone, add romp to the Home Screen first and open it from there.";
+else if(perm()==='denied')sub="Notifications are blocked for this site. On iPhone: Settings, then Notifications, then Romp. In a desktop browser: the site permission beside the address.";
+else if(devOn&&!isOn)sub="This device is set up, but nothing arrives until the main switch is on.";
+else if(devOn)sub="This browser gets a notification when a session needs you or finishes.";
+else sub="Turn on to get them on this device.";
+if(devSubEl)devSubEl.textContent=sub;}
+window.__rompNotifyAllPaint=function(on){isOn=!!on;paint();};     // the shell WS repaints every open dashboard on a toggle
+window.__rompNotifyTurnsPaint=function(on){turnsOn=!!on;paint();};
 fetch('/notify-all').then(function(r){return r.json();}).then(function(d){isOn=!!(d&&d.on);paint();}).catch(function(e){});
-function sub(){return navigator.serviceWorker.getRegistration('/').then(function(r){return r?r.pushManager.getSubscription():null;});}
+fetch('/notify-turns').then(function(r){return r.json();}).then(function(d){turnsOn=!!(d&&d.on);paint();}).catch(function(e){});
+function sub(){if(!canPush)return Promise.resolve(null);
+return navigator.serviceWorker.getRegistration('/').then(function(r){return r?r.pushManager.getSubscription():null;}).catch(function(e){return null;});}
+sub().then(function(s){devOn=!!s;paint();});
 function fail(e){try{window.__rompNotify&&window.__rompNotify('error','Notifications: '+((e&&e.message)||e));}catch(err){}}
 function post(path,obj){return fetch(path,{method:'POST',body:JSON.stringify(obj)}).then(function(r){
-if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});});}
+if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});
+return r.json().catch(function(){return {};});});}
 function b64u(s){var raw=atob((s+'==='.slice((s.length+3)%4)).replace(/-/g,'+').replace(/_/g,'/'));
 var a=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i);return a;}
-function done(){busy=false;bells.forEach(function(b){b.classList.remove('busy');});}
-function devSub(perm){return perm.then(function(p){
+function devSubscribe(permP){return permP.then(function(p){
 if(p!=='granted')throw new Error('push not allowed on this device');
 return navigator.serviceWorker.register('/sw.js');
 }).then(function(){return fetch('/push/vapid-key').then(function(r){
@@ -41561,39 +45834,108 @@ if(!r.ok)return r.text().then(function(t){throw new Error(t||'no server key');})
 }).then(function(k){return navigator.serviceWorker.ready.then(function(reg){
 return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(k.key)});});
 }).then(function(s){return post('/push/subscribe',s.toJSON());});}
-function devUnsub(){return sub().then(function(s){var ep=s?s.endpoint:'';
+function devUnsubscribe(){return sub().then(function(s){var ep=s?s.endpoint:'';
 return (s?s.unsubscribe():Promise.resolve()).then(function(){return ep?post('/push/unsubscribe',{endpoint:ep}):null;});});}
-bells.forEach(function(bl){bl.addEventListener('click',function(){
-if(busy)return;busy=true;bells.forEach(function(b){b.classList.add('busy');});   // acknowledge the tap before any round-trip
-var want=!isOn;
-var perm=(want&&canPush)?Notification.requestPermission():null;   // in the tap's own stack, before any await
-post('/notify-all',{on:want}).then(function(){
-isOn=want;paint();                       // the master flipped — the bell says so even if the push leg fails below
-if(!canPush)return;
-return want?devSub(perm):devUnsub();
-}).then(function(){done();},function(e){fail(e);done();});
-});});
+// the session the user is LOOKING AT: the chat pane's active tab, read off the same-origin iframe's DOM — the very
+// nodes the mobile header's current-session chip mirrors (_CHAT_MOBILE_JS reads #tabs .tab.active), so one truth and
+// no second channel. A federated tab's id is already host-prefixed (host:sid); the host rides along as the payload's
+// courtesy copy. No tab in front → no sid, and the test is the plain probe it always was. The tab's LABEL rides
+// along too (2026-09-06): the kernel names the session from its own registry or its snapshot of the owning host and
+// falls back to this — the user's own UI text, display-only, clipped here as well as there.
+function activeSession(){var t=null;try{var f=document.getElementById('f-chat'),d=f&&f.contentDocument;t=d&&d.querySelector('#tabs .tab.active[data-id]');}catch(e){}
+var id=t?String(t.getAttribute('data-id')||''):'';var i=id.indexOf(':');
+var lab=t&&t.querySelector('.tab-label');
+return {sid:id,host:i>0?id.slice(0,i):'',label:String((lab&&lab.textContent)||'').replace(/\\s+/g,' ').trim().slice(0,80)};}
+function place(anchor){var r=anchor.getBoundingClientRect();   // beside the rail bell / above the tab bar: both sit at the bottom edge
+pop.style.bottom=Math.max(8,window.innerHeight-r.top+6)+'px';pop.style.right=Math.max(8,window.innerWidth-r.right)+'px';}
+function open(anchor){place(anchor);back.hidden=false;}
+function close(){back.hidden=true;}
+window.__rompCloseBellPop=close;                                  // Escape (the shell's shared chain) closes it like every panel
+back.addEventListener('click',function(e){if(e.target===back)close();});   // an outside tap: the backdrop is everything outside the card
+bells.forEach(function(bl){bl.addEventListener('click',function(){if(!back.hidden){close();return;}open(bl);});});
+function setBusy(k,on){busy[k]=on;var r=rows[k];if(r)r.classList.toggle('busy',on);}   // acknowledge the tap before any round-trip
+pop.addEventListener('click',function(e){var el=e.target;
+while(el&&el!==pop&&!(el.getAttribute&&el.getAttribute('data-act')))el=el.parentNode;
+if(!el||el===pop)return;var act=el.getAttribute('data-act');
+if(act==='all'){if(busy.all)return;setBusy('all',true);var want=!isOn;
+post('/notify-all',{on:want}).then(function(){isOn=want;paint();},fail).then(function(){setBusy('all',false);});}
+else if(act==='dev'){if(busy.dev||el.classList.contains('off'))return;setBusy('dev',true);var wantD=!devOn;
+var perm0=(wantD&&canPush)?Notification.requestPermission():null;   // in the tap's own stack, before any await
+(wantD?devSubscribe(perm0):devUnsubscribe()).then(function(){devOn=wantD;},function(e){fail(e);return sub().then(function(s){devOn=!!s;});})
+.then(function(){setBusy('dev',false);paint();});}
+else if(act==='turns'){if(busy.turns)return;setBusy('turns',true);var wantT=!turnsOn;
+post('/notify-turns',{on:wantT}).then(function(){turnsOn=wantT;paint();},fail).then(function(){setBusy('turns',false);});}
+else if(act==='test'){if(!testBtn||testBtn.disabled)return;testBtn.disabled=true;var label=testBtn.textContent;testBtn.textContent='Sending…';
+testOut.className='rbp-sub';testOut.textContent='';
+var at=activeSession();   // read AT the press, before any await: the session you were looking at, not the one you switch to while it sends
+sub().then(function(s){if(!s)return {ok:false,status:0,detail:'',nosub:true};return post('/push/test',{endpoint:s.endpoint,sid:at.sid,host:at.host,label:at.label});}).then(function(d){
+var ok=!!(d&&d.ok);testOut.classList.toggle('bad',!ok);
+testOut.textContent=ok?'The push service accepted it.':(d&&d.nosub?"This device isn't subscribed yet.":
+(d&&d.status?('The push service refused it: '+d.status+' '+(d.detail||'')+'.'):('Could not reach the push service: '+((d&&d.detail)||'no answer')+'.')));
+if(ok&&d.name)testOut.textContent+=' Tapping it brings you back to '+d.name+'.';   // addressed to a session: say where the tap goes, in the kernel's words (the body names it the same way)
+if(!isOn)testOut.textContent+=" Real notifications won't arrive until the main switch is on.";   // the test ignores the switches on purpose; say so
+},function(e){testOut.classList.add('bad');testOut.textContent='Test failed: '+((e&&e.message)||e)+'.';})
+.then(function(){testBtn.disabled=false;testBtn.textContent=label;});}
+});
 })();
-// Landing a push tap on the session that fired (the user 2026-08-08). Two arrivals:
-//  - live window: the SW focused us and posted {romp:'pushReveal',sid} — relay a focus straight
-//    into the chat iframe. Its own handler does the rest (tab select, come forward on mobile via
-//    revealSelfPane), same as a kernel-sent focus — the shim delivers those over postMessage too.
-//  - cold start: the SW opened '/?push-reveal=sid' — the chat pane's WS does not exist yet, so
-//    ask the kernel to park the focus for OUR wid (POST /reveal, consumed on the pane's ready).
-//    The param is then stripped so a later manual reload does not replay the jump.
-// Separate IIFE from the bell on purpose: the bell bails where the Push API is missing, but a
-// pushReveal can only ever arrive where it exists, and this block must not ride that bail.
+"""
+
+
+# Landing a notification tap on what fired (the user 2026-08-08, whose first push opened a different
+# session; 2026-09-06, who wants the tap to come back to the romp already open and put them on the
+# session — and the card — that buzzed). Two arrivals, ONE activation path: both ask the KERNEL to
+# aim the chat focus at THIS dashboard (POST /reveal {sid, wid}) — never a focus posted straight
+# into the chat iframe, which could only ever address a tab that is already there. The kernel
+# answers a live session with the focus (chat pane connected → delivered now; not yet → parked for
+# that wid and consumed on the pane's ready — the exact event, no delay heuristics) and a dead or
+# unknown one with the revive prompt (_reveal_msg), so no sid ever ends in a silent no-op.
+#  - live window: the SW focused us and posted {romp:'notificationClick', sid, host, kind, cardId}.
+#  - cold start: the SW opened the kernel's deep link '/?push-reveal=<sid>[&push-card=<id>]'. The
+#    params are stripped (history.replaceState) the moment they are read, so a manual reload later
+#    does not replay the jump. This arrival POSTs boot:true — the page is booting, so its chat pane
+#    is not connected yet, and the kernel must park for it rather than hand the focus to a same-wid
+#    socket the previous page left behind (the phone, 2026-09-06: iOS reopens the installed app's
+#    one window on the link and sessionStorage keeps the wid; the old pane's socket died without a
+#    close and sat in the kernel's client list until the ping timeout).
+# A card kind ALSO scrolls the feed to its card: {romp:'revealCard'} into the feed iframe — the same
+# message the Log's bell entries post — but only once the feed has its cards, which it announces
+# with {romp:'ready', app:'feed'} after its first payload renders (before that the iframe may have
+# no listener yet, or nothing to scroll to); a tap that arrives earlier waits for exactly that
+# message. ANY sid lands, whatever the kind: a test notification carries the session the user was
+# looking at when they pressed the button (2026-09-06) and comes back to it exactly like a turn's;
+# only a card kind adds the card scroll. A sid-less tap (a test pressed with no session in front)
+# has nowhere to land: the SW's focus/openWindow was the whole action. A /reveal the kernel refuses
+# lands in the Log rather than vanishing.
+# Its own <script>, like every shell behaviour (test_kernel_mobile's count pin): a throw in the
+# bell's script must not strand a tap, and a bell that bails where the Push API is missing must
+# not take the deep-link half with it.
+_LANDING_REVEAL_JS = """
 (function(){
-function reveal(sid){if(!sid)return;var f=document.getElementById('f-chat');
-try{f&&f.contentWindow&&f.contentWindow.postMessage({type:'focus',id:sid,live:true},'*');}catch(e){}}
-if('serviceWorker' in navigator&&navigator.serviceWorker.addEventListener){
-navigator.serviceWorker.addEventListener('message',function(ev){
-var m=ev.data;if(m&&m.romp==='pushReveal'&&m.sid)reveal(m.sid);});}
-var u=new URL(location.href),pr=u.searchParams.get('push-reveal');
-if(pr){var wid='';try{wid=sessionStorage.getItem('romp:wid')||'';}catch(e){}
-fetch('/reveal',{method:'POST',body:JSON.stringify({sid:pr,wid:wid})})['catch'](function(e){});
-u.searchParams['delete']('push-reveal');
-try{history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.searchParams.toString():''));}catch(e){}}
+function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}
+function fail(e){try{window.__rompNotify&&window.__rompNotify('error','Could not open the session this notification was about: '+((e&&e.message)||e));}catch(err){}}
+var feedReady=false,pendingCard=null;
+function revealCard(itemId,sid){if(!feedReady){pendingCard={itemId:itemId,sid:sid};return;}
+var f=document.getElementById('f-feed');
+try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:itemId,sid:sid},'*');}catch(e){}}
+window.addEventListener('message',function(e){var m=e&&e.data;
+if(!(m&&m.romp==='ready'&&m.app==='feed'))return;
+feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.itemId,c.sid);}});
+function land(sid,kind,cardId,boot){
+var body={sid:sid,wid:wid()};if(boot)body.boot=true;   // booting: our chat pane is not connected yet — park for it
+if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});})['catch'](fail);
+if(sid&&kind==='card'&&cardId)revealCard(cardId,sid);}
+if('serviceWorker' in navigator&&navigator.serviceWorker&&navigator.serviceWorker.addEventListener){
+navigator.serviceWorker.addEventListener('message',function(ev){var m=ev&&ev.data;
+if(m&&m.romp==='notificationClick')land(String(m.sid||''),String(m.kind||''),String(m.cardId||''),false);});}
+var u=new URL(location.href),pr=u.searchParams.get('push-reveal'),pc=u.searchParams.get('push-card');
+// push-card is a goal id; a crafted link with a quote or bracket would reach the feed's
+// [data-key="a:..."] lookup as a selector and throw a SyntaxError that skips the openSession fallback
+// too (review find on #940, 2026-09-07). Drop a non-id value before it lands.
+if(pc&&!/^[A-Za-z0-9_.:-]{1,128}$/.test(pc))pc='';
+if(pr||pc){land(pr||'',pc?'card':'',pc||'',true);
+u.searchParams['delete']('push-reveal');u.searchParams['delete']('push-card');
+try{history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.searchParams.toString():'')+u.hash);}catch(e){}}
 })();
 """
 
@@ -41977,23 +46319,6 @@ _REFRESH_SVG = (
     "<path d='M9.5 5.4 L11.7 1.6 L13.5 5.2 Z' fill='currentColor'/></svg>")
 
 
-# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
-# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
-# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
-# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
-# is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
-# from this one constant — reorder here and both surfaces move together; a second hardcoded list
-# is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"),
-               ("files", "Files"))
-
-# The mobile layout's media query — narrow, OR a touch device up to 1024px — ONE constant for the stylesheet
-# rule that collapses the grid to one pane + bottom tabs (_landing()'s CSS) and for the shell script's
-# matchMedia (_LANDING_MOBILE_JS, __rompMobileOn: the pane-set broadcast and the viewFile relay ask it which
-# layout is up). Spliced, so the JS can never test a different query than the CSS lays out by.
-_MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
-
-
 def _rail_buttons_html():
     """The desktop rail's pane toggles, in _PANE_ORDER."""
     return "".join("<div class=rail-btn data-pane=%s>%s</div>" % kv for kv in _PANE_ORDER)
@@ -42057,6 +46382,11 @@ def _landing():
             "<meta name=theme-color id=meta-theme content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
+            # The menu vocabulary's tokens (CLAUDE.md "Menus and dropdowns wear ONE vocabulary"), defined
+            # HERE because the shell loads no sheet: the bell popover reads them, with the same dark
+            # literals as var() fallbacks in its rules. Byte-equal to styles.css's :root values.
+            ":root{--menu-bg:#252526;--menu-fg:#cccccc;--menu-border:rgba(255,255,255,0.12);--menu-hover:rgba(255,255,255,0.09);"
+            "--radius-menu:6px;--shadow-menu:0 4px 12px rgba(0,0,0,0.35);--check-bg:#1EA1EB}"
             # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
             # sans stack below, but @font-face never crosses an iframe boundary — without these two
             # rules the panes rendered Inter while the shell around them silently kept the system
@@ -42163,6 +46493,46 @@ def _landing():
             # pixel-identical (the user 2026-09-02)
             ".bell-slash{display:none}"
             "#rail-bell:not(.on) .bell-slash,#mbell:not(.on) .bell-slash{display:block}"
+            # ── the bell popover (2026-09-05): the bell's tap opens this instead of flipping anything.
+            # The house menu dress through the menu TOKENS (defined in the shell's :root / theme-light
+            # blocks), each with its dark literal as the var() fallback (menu-theme-tokens.test.ts
+            # bans a raw hex anywhere else). Anchored by _LANDING_PUSH_JS at open time — bottom/right
+            # measured from the tapped bell — so it sits beside the rail bell on desktop and above the
+            # tab bar on a phone; the transparent full-window backdrop is what catches an outside tap
+            # (a tap on an iframe never reaches this document otherwise). z 205: above the network
+            # panel (200), below the Log (210) — the Escape chain closes topmost first. Global scope on
+            # purpose: the bell state rules further down sit inside the mobile media block.
+            "#rbell-back{position:fixed;inset:0;z-index:205;background:transparent}#rbell-back[hidden]{display:none}"
+            "#rbell-pop{position:fixed;width:min(320px,calc(100vw - 16px));box-sizing:border-box;padding:4px;"
+            "background:var(--menu-bg,#252526);color:var(--menu-fg,#cccccc);border:1px solid var(--menu-border,rgba(255,255,255,0.12));"
+            "border-radius:var(--radius-menu,6px);box-shadow:var(--shadow-menu,0 4px 12px rgba(0,0,0,0.35));"
+            "font:12px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;text-align:left}"
+            ".rbp-row{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:4px;cursor:pointer;user-select:none;"
+            "-webkit-tap-highlight-color:transparent}"
+            ".rbp-row:hover{background:var(--menu-hover,rgba(255,255,255,0.09))}"
+            ".rbp-row.off{opacity:.55;cursor:default}.rbp-row.off:hover{background:none}"   # a switch that cannot be flipped here
+            ".rbp-row.busy{opacity:.55}"                                                     # the tap's acknowledgement
+            ".rbp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:600}"
+            ".rbp-sub{font-size:0.82em;opacity:.6}"                                          # every sub-line: one size, one weight
+            ".rbp-sw{flex:0 0 auto;width:26px;height:14px;border-radius:7px;background:rgba(127,127,127,0.35);position:relative;"
+            "transition:background .15s}"
+            ".rbp-sw::after{content:'';position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;"
+            "background:var(--menu-fg,#cccccc);transition:transform .15s}"
+            ".rbp-sw.on{background:var(--accent)}.rbp-sw.on::after{background:var(--accent-fg);transform:translateX(12px)}"
+            # the switches under the master: one indent and one hairline — the popover's own hairline
+            # token, at the master label's left edge — so the hierarchy is visible, not just implied
+            ".rbp-nest{margin-left:10px;padding-left:4px;border-left:1px solid var(--menu-border,rgba(255,255,255,0.12))}"
+            # master off: the nested rows dim in the wash .off and .busy already wear — but keep their
+            # cursor and hover, because they still take a tap (set the phone up first, switch on later)
+            "#rbell-pop.master-off .rbp-nest>.rbp-row{opacity:.55}"
+            ".rbp-div{height:1px;background:var(--menu-border,rgba(255,255,255,0.12));margin:3px 6px}"
+            ".rbp-act{cursor:default}.rbp-act:hover{background:none}"
+            "#rbp-test{display:block;width:100%;box-sizing:border-box;background:none;border:1px solid var(--menu-border,rgba(255,255,255,0.12));"
+            "border-radius:4px;color:var(--menu-fg,#cccccc);font:inherit;font-weight:600;padding:5px 10px;cursor:pointer;text-align:left}"
+            "#rbp-test:hover{background:var(--menu-hover,rgba(255,255,255,0.09))}"
+            "#rbp-test[disabled]{opacity:.55;cursor:default}"
+            "#rbp-test-out{padding-top:4px}#rbp-test-out:empty{display:none}"
+            "#rbp-test-out.bad{color:#e5484d;opacity:1}"    # a refusal is a STATUS, so it wears the status red, not the accent
             # Per-node fleet colour on the network glyph (the user 2026-07-29). The nodes carry their own
             # fill, so they override the icon's currentColor: accent = connected and on this build,
             # grey = attached but not answering (romp is dialing), red = needs you (drift, no kernel, or
@@ -42414,6 +46784,8 @@ def _landing():
             ".ru-tip-reset{font-weight:400;opacity:.6;font-size:10px}"
             ".ru-tip-row{display:flex;align-items:center;gap:6px;margin-top:3px}"
             ".ru-tip-k{opacity:.55;min-width:46px}"
+            # the by-kind token split under a spend row: the sub-annotation grammar .ru-tip-reset wears
+            ".ru-tip-sub{margin-top:0}.ru-tip-sub .ru-tip-v{opacity:.6;font-size:10px}"
             ".ru-tip-track{width:64px;height:6px;border-radius:3px;background:rgba(255,255,255,0.10);overflow:hidden;display:inline-block}"
             # the fleet $/h chart (the user 2026-08-14): full tip width, framed by a faint backing
             # plate, with overlay y-labels (px offsets against the fixed 56px plot) and a
@@ -42642,6 +47014,10 @@ def _landing():
             # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
             # every accent consumer already reads.
             "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}"
+            # the light theme's menu tokens — the values styles.css's body.theme-light block resolves
+            # them to, so the bell popover is the same cream card every other menu is
+            "body.theme-light{--menu-bg:#FBF6EF;--menu-fg:#1F1E1D;--menu-border:rgba(0,0,0,0.12);--menu-hover:rgba(0,0,0,0.06);"
+            "--shadow-menu:0 4px 12px rgba(31,26,20,0.16);--check-bg:#C2410C}"
             # the html element keeps its dark background otherwise (body.theme-light can't reach an
             # ancestor without :has); body covers the viewport, but paint the canvas right too
             "html:has(> body.theme-light){background:#F1EAE2}"
@@ -42712,7 +47088,33 @@ def _landing():
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
-            # the notification popover (hidden until the bell is clicked; backdrop click closes). No
+            # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
+            # tap used to flip together — the kernel-wide master and this device's push subscription —
+            # as separate rows, plus the turn-finished switch and a test button that shows the push
+            # service's answer. Sub-lines are the one-sentence "why"; the This-device sub-line is
+            # rewritten by the JS to say what this browser can and cannot do. Hidden until the bell is
+            # tapped; the transparent backdrop closes it, as does Escape (_LANDING_ESC_JS).
+            # The master is NAMED as the master and the other two switches NEST under it (.rbp-nest):
+            # its first label, "All devices", sat beside "This device" and read as a scope choice — and
+            # with the master off the device row still painted ON, since it reads only this browser's
+            # subscription (the user 2026-09-05, confused by exactly that pair). The nest dims while the
+            # master is off (#rbell-pop.master-off, painted by the JS) but its rows stay operable, so a
+            # phone can be set up before anything is switched on.
+            "<div id=rbell-back hidden><div id=rbell-pop role=dialog aria-label='Notification settings'>"
+            "<div class=rbp-row data-act=all role=switch aria-checked=false><div class=rbp-head>Notifications<span class=rbp-sw></span></div>"
+            "<div class=rbp-sub>The main switch: off silences every device subscribed to this romp, and this desktop. "
+            "The bells on sessions and cards are mutes under it.</div></div>"
+            "<div class=rbp-nest>"
+            "<div class=rbp-row data-act=dev role=switch aria-checked=false><div class=rbp-head>This device<span class=rbp-sw></span></div>"
+            "<div class=rbp-sub id=rbp-dev-sub>Turn on to get them on this device.</div></div>"
+            "<div class=rbp-row data-act=turns role=switch aria-checked=false><div class=rbp-head>Also when a turn finishes<span class=rbp-sw></span></div>"
+            "<div class=rbp-sub>Buzzes every time any session finishes a turn. With many sessions running, that is a lot of buzzing.</div></div>"
+            "</div>"
+            "<div class=rbp-div></div>"
+            "<div class='rbp-row rbp-act'><button id=rbp-test data-act=test>Send a test notification</button>"
+            "<div class=rbp-sub id=rbp-test-out></div></div>"
+            "</div></div>"
+            # the Log popover (hidden until the triangle is clicked; backdrop click closes). No
             # Reload button (the user 2026-07-27: redundant next to the rail's own restart/refresh —
             # and a dead page is one browser-refresh away regardless).
             "<div id=rerr-back hidden><div id=rerr-panel>"
@@ -42942,6 +47344,7 @@ def _landing():
             # the mobile script tests the SAME media query the CSS above lays out by (__rompMobileOn)
             "<script>" + _LANDING_MOBILE_JS.replace("__MOBILE_MQ__", json.dumps(_MOBILE_MQ)) + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
+            "<script>" + _LANDING_REVEAL_JS + "</script>"
             # the pane controller broadcasts the pane set to every pane iframe by KEY — spliced from
             # _PANE_ORDER (the one list of panes), never a second hand-written list
             "<script>" + _LANDING_COLLAPSE_JS.replace("__PANE_KEYS__", json.dumps([k for k, _ in _PANE_ORDER])) + "</script>"
@@ -43125,10 +47528,19 @@ class Handler(BaseHTTPRequestHandler):
         size = os.path.getsize(fp)
         cap = _TEXT_MAX_BYTES if text else _MEDIA_MAX_BYTES
         if size > cap:
-            return self._send(413, b"" if head else
-                              "too large to show: %s (%s, limit %s)"
-                              % (_tilde(fp), _human_bytes(size), _human_bytes(cap)),
-                              "text/plain")
+            msg = "too large to show: %s (%s, limit %s)" % (_tilde(fp), _human_bytes(size), _human_bytes(cap))
+            if not head and mime == "application/pdf" and self._is_navigation():
+                # A PDF opens in its OWN TAB now (preview.ts openPdfTab, 2026-09-06), decided by extension
+                # inside the click — so an oversize one lands its whole tab on this refusal, with no viewer
+                # around it to offer the Download button the in-pane path used to (review find). A refusal
+                # to RENDER is never a dead end: the tab itself gets the sentence and the way out — a link to
+                # the download half of this very route. Only a request that will be SHOWN (a navigation,
+                # or the lightbox's <iframe> fallback — _is_navigation) gets the page; the viewer's fetch
+                # and the card's HEAD probe keep the plain text
+                # they parse. Static markup, every value escaped, no script — nosniff rides as always.
+                return self._send(413, _too_large_page(msg, os.path.basename(fp), q), "text/html; charset=utf-8",
+                                  cache="no-cache")
+            return self._send(413, b"" if head else msg, "text/plain")
         # The file's mtime rides every success twice: Last-Modified (the standard form) and
         # X-Romp-Mtime-Ns — NANOSECONDS, the anchor saveFile's conflict floor actually compares,
         # because the HTTP date's whole seconds let an agent write landing in the same second slip
@@ -43142,6 +47554,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(size))   # the real length, no body (HEAD semantics)
             self.send_header("Last-Modified", lastmod)
             self.send_header("X-Romp-Mtime-Ns", mtime_ns)
+            if mime == "application/pdf":                     # the probe agrees with the GET (below) on the tab's name
+                self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(fp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
@@ -43197,8 +47611,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, body, mime, cache="no-cache",
                               headers={"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns,
                                        "X-Romp-Text-Utf8": u8})
-        return self._send(200, raw, mime, cache="no-cache",
-                          headers={"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns})
+        extra = {"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns}
+        if mime == "application/pdf":
+            # INLINE, with the file's name (2026-09-06): a PDF opens in its own browser tab now (preview.ts
+            # openPdfTab), and the browser titles that tab and names a Save from this header — without it
+            # the tab reads as the route's name and a save lands as file.pdf. inline, never attachment: the
+            # tab must RENDER it, not download it. Images get none: an <img> reads no disposition.
+            extra["Content-Disposition"] = _attachment_disposition(os.path.basename(fp), kind="inline")
+        return self._send(200, raw, mime, cache="no-cache", headers=extra)
+
+    def _is_navigation(self):
+        """Is this request going to be SHOWN as a page — a browser navigating a tab to the URL
+        (Sec-Fetch-Dest: document) or loading it into an <iframe> (the PDF card's lightbox fallback when
+        the popup is blocked) — as opposed to a fetch, an <img> load or a HEAD probe that parses the plain
+        text? Browsers attach the Sec-Fetch-* headers only to potentially trustworthy origins (https,
+        localhost); a dashboard reached over plain http on a LAN or through an http proxy sends none, and
+        reading that as "not a navigation" left the oversize-PDF tab on the bare text with no way out
+        (review find on #959, 2026-09-07). Without the header the Accept header decides: a navigation or
+        an iframe asks for text/html first, a fetch() sends */*. Absent both, "not a navigation" — the
+        conservative answer, the plain text the viewer's catch parses."""
+        h = getattr(self, "headers", None) or {}
+        dest = (h.get("Sec-Fetch-Dest") or "").strip().lower()
+        if dest:
+            return dest in ("document", "iframe")
+        return "text/html" in (h.get("Accept") or "").lower()
 
     def _file_download(self, fp, head=False):
         """GET/HEAD /file?download=1 — the SAVE half of the route (the user 2026-08-09): any file that
@@ -43325,17 +47761,37 @@ class Handler(BaseHTTPRequestHandler):
                 # but arms nothing; the manager reads the serve-token file and sends X-Romp-Token.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
+                # the breakdown rides beside the total (T240): the manager defers on EITHER kind of
+                # busyness but asks for the drain hold only while turns are actually in flight —
+                # background work must never freeze other sessions' queued prompts
+                inflight, background = (be.busy_breakdown() if be and hasattr(be, "busy_breakdown") else (n, 0))
+                # ?park=<since> (T240c): the manager's park identity, on EVERY parked poll — the drain
+                # episode (its "parked" line, its 5-minute ring) keys on it, not on a time window, and a
+                # park held only by background work (plain polls, no hold) still rings. Never a hold —
+                # but the episode clock and the 5-minute problem ring ARE writable state (a drive-by
+                # loopback GET could reset a live park's ring, or fabricate one — review find), so it
+                # rides the same explicit token as the arm: the manager sends X-Romp-Token on every
+                # poll, and an older manager sends no park at all.
+                park = (q.get("park", [""])[0] or "")[:32]
+                if park and be is not None and hasattr(be, "note_parked_poll") and self._write_token_ok(q):
+                    be.note_parked_poll(park)
                 draining = False
                 if be is not None and hasattr(be, "refresh_drain_hold"):
                     if q.get("drain", [""])[0] == "1":
                         if self._write_token_ok(q):
-                            be.refresh_drain_hold()
+                            # The keyword only when a park arrived: a backend without it (an older
+                            # build, a test stand-in) keeps arming the hold the old way.
+                            if park:
+                                be.refresh_drain_hold(park=park)
+                            else:
+                                be.refresh_drain_hold()
                             _note_drain_armed()
                         else:
                             _note_drain_refused()    # T224: the one event the gate exists for —
                             #                          read LOUDLY, once per episode (see the helper)
                     draining = be.drain_holding()
-                return self._send(200, json.dumps({"busy": n, "draining": draining}),
+                return self._send(200, json.dumps({"busy": n, "inflight": inflight, "background": background,
+                                                   "draining": draining}),
                                   "application/json", cache="no-cache")
             if p == "/manifest.webmanifest":
                 # the install manifest — auth-exempt like /healthz, and for a hard reason: the
@@ -43460,8 +47916,8 @@ class Handler(BaseHTTPRequestHandler):
                 # from the pusher's warmed build (the connect semantics: never triggers a rebuild;
                 # a cold kernel builds once, a read like any client connect). Token-gated like its
                 # stateful siblings; read-only, no side effects.
-                return self._send(200, json.dumps(_cached_feed(time.time(), _tmux_sessions(), None,
-                                                               connect=True)),
+                _fj = _cached_feed(time.time(), _tmux_sessions(), None, connect=True)
+                return self._send(200, json.dumps(dict(_fj, asks=_tinted_asks(_fj))),   # tinted, as the board's frame is
                                   "application/json", cache="no-cache")
             if p == "/classify":
                 # One session's LIVE classification as the kernel derives it right now (both teams'
@@ -43754,6 +48210,10 @@ class Handler(BaseHTTPRequestHandler):
                 # blocks on you or completes, unless its session/card bell mutes it. The shell
                 # paints the bottom-right bell from this at boot.
                 return self._send(200, json.dumps({"on": _notify_all_on()}), "application/json", cache="no-cache")
+            if p == "/notify-turns":
+                # the popover's turn-finished switch (2026-09-05): its OWN state, ungated by the
+                # master, so the row can show what it is set to while the master is off
+                return self._send(200, json.dumps({"on": _notify_turns_on()}), "application/json", cache="no-cache")
             if p == "/push/vapid-key":
                 # the public key the shell subscribes with (applicationServerKey). Gated like every
                 # page fetch; the 500 carries the missing-package message for the bell to surface.
@@ -43953,6 +48413,43 @@ class Handler(BaseHTTPRequestHandler):
                 _mark_views_dirty()
                 _send_to_app("shell", {"type": "notifyAll", "on": _on})
                 return self._send(200, json.dumps({"ok": True, "on": _on}), "application/json")
+            if u.path == "/notify-turns":
+                # the popover's turn-finished switch (2026-09-05): kernel-authoritative like the
+                # master, its own shell push so every open dashboard's row agrees. No dirty mark —
+                # the feed carries nothing that reads it.
+                try:
+                    _on = bool(json.loads(raw_body or b"{}").get("on"))
+                except (ValueError, AttributeError):
+                    return self._send(400, "bad json", "text/plain")
+                _set_notify_turns(_on)
+                _send_to_app("shell", {"type": "notifyTurns", "on": _on})
+                return self._send(200, json.dumps({"ok": True, "on": _on}), "application/json")
+            if u.path == "/push/test":
+                # the popover's test button (2026-09-05): one notification to THIS device's
+                # subscription, the push service's answer back verbatim — {ok, status, detail}.
+                # Since 2026-09-06 addressed to the session the shell had in front (sid, host-
+                # prefixed for a federated one, plus host), so the tap comes back to it; no sid is
+                # the plain probe. Missing crypto is the same loud 500 the subscribe route gives.
+                # `label` (2026-09-06): the active tab's text, the fallback name when this kernel
+                # holds none for the id — a string, clipped in _push_test, or a 400.
+                try:
+                    _tb = json.loads(raw_body or b"{}")
+                    _ep = str(_tb.get("endpoint") or "")
+                    _tsid, _thost = _tb.get("sid") or "", _tb.get("host") or ""
+                    _tlabel = _tb.get("label") or ""
+                except (ValueError, AttributeError):
+                    return self._send(400, "bad json", "text/plain")
+                if not _ep:
+                    return self._send(400, "missing endpoint", "text/plain")
+                if not isinstance(_tsid, str) or not isinstance(_thost, str):
+                    return self._send(400, "bad sid", "text/plain")
+                if not isinstance(_tlabel, str):
+                    return self._send(400, "bad label", "text/plain")
+                try:
+                    _res = _push_test(_ep, _tsid, _thost, _tlabel)
+                except RuntimeError as e:
+                    return self._send(500, str(e), "text/plain")
+                return self._send(200, json.dumps(_res), "application/json")
             if u.path == "/push/subscribe":
                 # A device opting into the bell pushes (plans/ios-app.md proposal 2): body is the
                 # browser's own PushSubscription JSON, stored keyed by endpoint — so re-subscribing
@@ -44005,6 +48502,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "mirrored": 0,
                                                        "tier": tier or "unknown"}), "application/json")
                 n = 0
+                held = {"all": 0, "turn": 0}
                 for ev in events[:16]:            # a bell mirror, not a bulk pipe — cap the fan-in
                     if not isinstance(ev, dict):
                         continue
@@ -44012,6 +48510,18 @@ class Handler(BaseHTTPRequestHandler):
                     b = str(ev.get("body") or "")
                     sid = str(ev.get("sid") or "")
                     if not (t or b):
+                        continue
+                    # THIS kernel's switches gate what reaches the devices subscribed HERE (review find on
+                    # #937, 2026-09-07): the origin gated on ITS switches, so a peer whose turn switch was
+                    # on buzzed a phone whose own kernel had the switch off — and the popover copy said the
+                    # main switch silenced every device. The subscriber's kernel is authoritative for its
+                    # own devices: the master drops everything, the turn switch drops the turn events.
+                    kind = str(ev.get("kind") or "card")
+                    if not _notify_all_on():
+                        held["all"] += 1
+                        continue
+                    if kind == "turn" and not _notify_turns_on():
+                        held["turn"] += 1
                         continue
                     # Wear the origin the way every federated surface wears it (host-prefix.ts):
                     # the sid gains "origin:" so a tap routes through the merged dashboard's own
@@ -44022,22 +48532,35 @@ class Handler(BaseHTTPRequestHandler):
                         sid = "%s:%s" % (origin, sid)
                     if t.startswith("romp: "):
                         t = "romp: %s:%s" % (origin, t[len("romp: "):])
-                    _push_notify(t, b, sid)       # badge omitted: the origin's count is not ours
+                    # badge omitted: the origin's count is not ours. kind/cardId pass through
+                    # (an older peer sends neither → the card default, which is all it had);
+                    # the card id is a goal id, globally unique and never host-prefixed
+                    # (federation.ts), so the merged feed finds it as-is.
+                    _push_notify(t, b, sid, kind=kind, card_id=str(ev.get("cardId") or ""), host=origin)
                     n += 1
+                if held["all"] or held["turn"]:
+                    print("romp: web push: held %d event(s) relayed from '%s' — %d under this kernel's "
+                          "main notification switch (off), %d turn-finished event(s) under its turn switch "
+                          "(off); the switches here decide what reaches the devices subscribed here"
+                          % (held["all"] + held["turn"], origin, held["all"], held["turn"]), file=sys.stderr)
                 return self._send(200, json.dumps({"ok": True, "mirrored": n}), "application/json")
             if u.path == "/reveal":
                 # The cold-start half of a push tap (see _PENDING_REVEAL): the freshly opened
                 # shell asks for the focus its ?push-reveal= URL named, aimed by its own wid so
                 # no other open dashboard gets dragged along (the 2026-07-29 rule).
+                # `boot` (2026-09-06): the deep-link arrival — the page is booting, so its own chat
+                # pane is not connected yet; the kernel parks for it and never counts a same-wid
+                # socket the previous page left behind as delivery (_reveal_request has the why).
                 try:
                     body = json.loads(raw_body or b"{}")
                     sid = str(body.get("sid") or "")
                     wid = str(body.get("wid") or "")
+                    boot = bool(body.get("boot"))
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
                 if not sid:
                     return self._send(400, "missing sid", "text/plain")
-                now_ = _reveal_request(sid, wid)
+                now_ = _reveal_request(sid, wid, boot=boot)
                 return self._send(200, json.dumps({"ok": True, "delivered": now_}), "application/json")
             if u.path == "/tick":
                 # Event-driven wake: the Stop / UserPromptSubmit / PostCompact hooks (and the postal drain) poke
@@ -44183,11 +48706,42 @@ class Handler(BaseHTTPRequestHandler):
                             refreshed = fn()
                         except Exception as e:
                             refreshed = {"error": str(e)[:80]}
-                keyfp = _work_key_fp()
                 try:
                     kstat = getattr(be, "key_source_status", lambda: {})() or {}
                 except Exception as e:
                     kstat = {"err": "status failed: %s" % str(e)[:80]}
+                try:
+                    source_reader = getattr(be, "_work_key_source", None)
+                    if source_reader is not None:
+                        source = source_reader()
+                        source.validate()
+                        sourcefp = source.fingerprint()
+                        if kstat.get("source") == "command":
+                            # COMMAND mode (fork): the descriptor is the set's ANTHROPIC_API_KEY line,
+                            # empty on the key-free install whose sessions bill through the apiKeyHelper,
+                            # so its fingerprint says nothing about what a launch bills. keyFp is the
+                            # credential a launch bills NOW (the set's key, or the helper's output) as
+                            # key_source_status fingerprinted it from its ONE read of the set; `romp
+                            # keyswap` compares that against its own run and stops a cycle on MISMATCH.
+                            # (The fold's first cut answered "" here beside keyKind "helper", 2026-09-07.)
+                            keyfp = kstat.get("fp") or ""
+                        else:
+                            # A status read must never fetch a provider. Its reference identity is
+                            # sufficient to confirm that keyswap and this kernel see the same source.
+                            keyfp = "" if source.kind == "op" else sourcefp
+                    else:
+                        keyfp = sourcefp = _work_key_fp()  # older backend/test doubles
+                except Exception as e:
+                    return self._send(200, json.dumps({"ok": False,
+                        "error": jd._credential_error_note(e)}), "application/json")
+                expected_source_fp = b.get("expectedSourceFp")
+                if "expectedSourceFp" in b:
+                    if not isinstance(expected_source_fp, str):
+                        return self._send(400, json.dumps({"ok": False,
+                            "error": "expectedSourceFp must be a string"}), "application/json")
+                    if expected_source_fp != sourcefp:
+                        return self._send(409, json.dumps({"ok": False,
+                            "error": "API key source changed; check it before cycling again"}), "application/json")
                 rows = []
                 if b.get("all"):
                     # every LIVE SDK session: the dormant ones need nothing (their next launch reads
@@ -44201,17 +48755,52 @@ class Handler(BaseHTTPRequestHandler):
                                                            "error": "sessions must be a list"}),
                                           "application/json")
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
+                # Resolve the key ONCE for the whole request (an `op read` may take seconds): every session
+                # below is compared against this fingerprint instead of each retrieving its own — a dozen
+                # quiet sessions used to mean a dozen serial retrievals on this thread, past the CLI's
+                # timeout (review find, 2026-09-05). Only when there is a session to cycle: a status read
+                # retrieves nothing. A failure, or a source that changed while retrieving, is reported on
+                # every row and reconnects nothing — the per-session contract, kept. The reconnects this
+                # schedules still resolve afresh at launch.
+                current_key_fp, resolve_error = None, None
+                probes = {}
+                if source_reader is not None and hasattr(be, "_work_key_and_source"):
+                    for who, sid in who_list:
+                        try:
+                            probes[sid] = be.cycle_key(sid, probe=True)
+                        except Exception as e:
+                            probes[sid] = "error: %s" % jd._credential_error_note(e)
+                needs_key = any(v == "cycle" for v in probes.values())
+                if needs_key:
+                    try:
+                        key, _src = be._work_key_and_source(source)
+                        if not key:
+                            raise jd._keysrc.KeySourceError("API key billing selected but no API key source is configured")
+                        after = source_reader()
+                        after.validate()
+                        if after.fingerprint() != sourcefp:
+                            raise jd._keysrc.KeySourceError("API key source changed during retrieval; check it before cycling again")
+                        current_key_fp = jd._keysrc.fingerprint(key)
+                    except Exception as e:
+                        resolve_error = jd._credential_error_note(e)
                 for who, sid in who_list:
                     live = (getattr(be, "sessions", None) or {}).get(sid)
                     frm = str(getattr(live, "_launched_key_fp", "") or "") if live is not None else ""
                     try:
-                        status = be.cycle_key(sid)
+                        pre = probes.get(sid)
+                        if pre is not None and pre != "cycle":
+                            status = pre                       # unknown / dormant / login / working: needs no key
+                        elif source_reader is not None and hasattr(be, "_work_key_and_source"):
+                            status = be.cycle_key(sid, expected_source_fp=expected_source_fp,
+                                                  current_key_fp=current_key_fp, resolve_error=resolve_error)
+                        else:
+                            status = be.cycle_key(sid)
                     except Exception as e:
-                        status = "error: %s" % str(e)[:80]
+                        status = "error: %s" % jd._credential_error_note(e)
                     rows.append({"session": _name_of(sid) or who, "status": status, "from": frm})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
-                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows,
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "sourceFp": sourcefp, "rows": rows,
                                                    "keySource": kstat.get("source") or "file",
                                                    "keyKind": kstat.get("fpKind") or "",
                                                    "keyErr": kstat.get("err") or "",
@@ -44313,7 +48902,7 @@ class Handler(BaseHTTPRequestHandler):
                 # swallowed as "not asked" while the caller reads ok:true as the env applying.
                 env_req = (b or {}).get("env")
                 if env_req is not None:
-                    eerr = _env_error(env_req)
+                    eerr = _env_error(env_req, str((b or {}).get("auth") or ""))
                     if eerr:
                         return self._send(400, json.dumps({"ok": False, "error": eerr}),
                                           "application/json")
@@ -44563,8 +49152,7 @@ class Handler(BaseHTTPRequestHandler):
                         'no live session named "%s" (a dormant one can be moved by sid)' % target}),
                                       "application/json")
                 be = Sessions.backend_for(tsid)
-                if _ops_gate(tsid):
-                    _park_op(tsid, ("cwd", path, 0))
+                if _gate_or_park(tsid, ("cwd", path, 0)):
                     return self._send(200, json.dumps({"ok": True, "id": tsid, "queued": True, "dir": path}),
                                       "application/json")
                 _moving.add(tsid)
@@ -45374,6 +49962,37 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 sys.stderr.write("loadEpisode: %s\n" % traceback.format_exc())
             return
+        if msg and msg.get("type") in ("openSubagent", "closeSubagent") and msg.get("id") and msg.get("agentId"):
+            # A subagent viewer opened/closed (plans/subagent-transcripts.md): openSubagent answers NOW with
+            # the frame and registers the viewer on this client, so the pusher's chat pass re-sends it while
+            # the agent's file changes (_push_subagents); closeSubagent unregisters it. The dedup slot is
+            # dropped on both, so a reopen of an UNCHANGED agent is never swallowed as a duplicate.
+            sid, aid = str(msg["id"]), str(msg["agentId"])
+            with _client_lock(client):
+                client.setdefault("sent", {}).pop(("subagent", sid, aid), None)
+            if msg["type"] == "closeSubagent":
+                (client.get("subagents") or {}).pop((sid, aid), None)
+                return
+            client.setdefault("subagents", {})[(sid, aid)] = True
+            try:
+                fr, pre = _subagent_frame_cached(sid, aid, int(time.time()))
+                _send_client(client, ("subagent", sid, aid), fr, pre=pre)
+            except Exception:
+                sys.stderr.write("openSubagent %s/%s: %s\n" % (sid, aid, traceback.format_exc()))
+                client["send"](json.dumps({"type": "subagent", "id": sid, "agentId": aid,
+                                           "error": "romp couldn't build this agent's transcript — the kernel log has the traceback."}))
+            return
+        if msg and msg.get("type") == "cancelWatch" and msg.get("watchId"):
+            # The awaiting box's Cancel on a generic `romp watch --cmd` row (slice 2, 2026-09-05): the SAME
+            # cancel_watch the CLI's `romp watch --cancel <id>` and POST /watch {"cancel"} reach — no new
+            # retire path, one more door to it. `id` (the session) rides only so federation routes the
+            # message to the kernel that owns the watch. LOUD on a miss (fail loudly, never degrade
+            # silently): the watch may have fired or been cancelled from the CLI a moment earlier.
+            if not cancel_watch(str(msg["watchId"]).strip()):
+                client["send"](json.dumps({"type": "warn",
+                                           "text": "Couldn't cancel that watch — it may have already fired or been cancelled."}))
+            _push_soon()
+            return
         if msg and msg.get("type") == "setGlobalRetryPaused":
             _set_retry_paused(msg.get("value"))
             _mark_views_dirty()
@@ -45604,41 +50223,44 @@ class Handler(BaseHTTPRequestHandler):
             _set_conserve(bool(msg.get("enabled")))
             _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
-            # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down
-            # (no apply — and no tick: a stood-down toggle is not new information)
+            # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down (no
+            # apply — and no tick: a stood-down toggle is not new information), and the dashboard
+            # that made the losing gesture hears it
             if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
-                # act immediately on turn-on (don't wait 4s) — but skip the dead-wait sweep: the
-                # death transition has ONE observer (the pusher's tick; see _auto_nudge_tick), and
-                # this WS thread racing its prev-swap could spend a transition uncorroborated
-                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+                # turn-ON acts at once instead of waiting out the pusher's 0.5 s backstop; turning off
+                # has nothing to act on (the tick is a no-op when off, so this also spares the WS
+                # thread the listing fork). The single-flight rule, the dead-wait sweep skip and the
+                # try/except that keeps a failing tick from reading as a socket failure are all
+                # _ws_act_now_tick's; the stale reply below stays outside it (a real client write)
+                if msg["enabled"]:
+                    _ws_act_now_tick()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
             # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
-            # real apply acts immediately on turn-on (don't wait 4s) — a stood-down toggle is not
-            # new information — and the tick skips the dead-wait sweep: the death transition has
-            # ONE observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing
-            # its prev-swap could spend a transition uncorroborated
+            # real apply acts at once on turn-on (instead of waiting out the pusher's 0.5 s backstop)
+            # — a stood-down toggle is not new information — through the same wrap as setAutoNudge
+            # (_ws_act_now_tick: single-flight, no dead-wait sweep, a failure logged not raised)
             if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
-                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+                _ws_act_now_tick()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
             # feed gear → how romp handles new releases at boot; gt-gated like every queued setting
             if _set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setFileEditing" and msg.get("enabled") is not None:
             # The viewer's Edit consent popup (the user 2026-08-22) — a kernel-side setting like
             # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
             # A stale gesture stamp stands down (a queued flush must not undo a newer choice).
             if _set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setThinkingSummaries" and msg.get("enabled") is not None:
             # The gear's Thinking summaries checkbox (2026-09-01) — kernel-side like setFileEditing but
             # PER-INSTALL (not a KERNEL_SETTING: nothing to propagate), gt-gated all the same; the SDK
             # backend reads the store at each session's next connect, so nothing else to do here.
             if _set_thinking_summaries(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setUserTodos" and msg.get("enabled") is not None:
             # The gear's User todos checkbox (the user 2026-09-03) — kernel-side like setThinkingSummaries
             # and PER-INSTALL like it: deliberately NOT in federation.ts's KERNEL_SETTING set, so the
@@ -45647,7 +50269,7 @@ class Handler(BaseHTTPRequestHandler):
             # on the switch), so mark the views dirty and wake the pusher: the card, glyph and marker
             # repaint now, not at the next unrelated rebuild.
             if _set_user_todos(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
             else:
                 _mark_views_dirty()
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
@@ -46233,28 +50855,28 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
                                  args=({"judgeModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setIndexModel" and msg.get("model"):
             _jgt = _set_index_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Indexing model" dropdown
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"indexModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setJudgeEffort":
             _jgt = _set_judge_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Triage effort" ("" = default/none)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setIndexEffort":
             _jgt = _set_index_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Indexing effort"
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setJudgeFast":
             _set_judge_fast("on" if msg.get("on") else "")    # gear "Fast judging" — Opus fast mode on judge calls
         elif msg and msg.get("type") == "setDistillModel" and msg.get("model"):
@@ -46263,35 +50885,35 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"distillModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setDistillEffort" and msg.get("effort"):
             _jgt = _set_distill_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"distillEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentModel" and msg.get("model"):
             _jgt = _set_comment_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Comment model" ("session" = same as the session)
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentEffort" and msg.get("effort"):
             _jgt = _set_comment_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Comment effort"
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCommentFast" and msg.get("fast"):
             _jgt = _set_comment_fast(str(msg["fast"]), gt=_gesture_ms(msg))     # gear "Fast comment threads" ("on" / "session")
             if _jgt is not None:
                 threading.Thread(target=_propagate_judge_settings,
                                  args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
             else:
-                _tell_stale_gesture(client)
+                _tell_stale_gesture(client, msg)
         else:
             # no arm took it: say so once per type, and answer the poster (see _note_unknown_op)
             _note_unknown_op(msg, client)
@@ -46551,6 +51173,22 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
+        if status not in (200, 206):
+            # The remote's non-success verdict (404 / 413 / 415 / 502…) is PROSE from its own _file_preview,
+            # never file bytes — label it as such. It used to ride out under OUR media mime, which an <img>
+            # or the lightbox iframe merely failed on; a PDF opens in its own TAB now (2026-09-06), and a
+            # tab handed prose labelled application/pdf shows a corrupt-PDF error instead of the sentence
+            # (skeptic find). An oversize PDF navigated to gets the same way-out page the local route
+            # serves, linking THIS relay's download half — the remote never sees Sec-Fetch-Dest, so the
+            # decision is made here. Body only; the remote's own headers are not mirrored on this arm.
+            if head:
+                return self._send(status, b"", "text/plain")
+            if status == 413 and mime == "application/pdf" and self._is_navigation():
+                return self._send(413, _too_large_page(_decode_text(body) or "too large to show",
+                                                       os.path.basename(rp), q,
+                                                       route="/remote/%s/file" % quote(host, safe="")),
+                                  "text/html; charset=utf-8", cache="no-cache")
+            return self._send(status, body, "text/plain", cache="no-cache")
         if head:
             # mirror _file_preview's HEAD: the remote's verdict + real length, no body
             self.send_response(status)
@@ -46561,6 +51199,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Last-Modified", lastmod)
             if r_ns:
                 self.send_header("X-Romp-Mtime-Ns", r_ns)
+            if status == 200 and mime == "application/pdf":   # the tab's name — OURS, from the requested path
+                self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(rp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -46590,6 +51230,11 @@ class Handler(BaseHTTPRequestHandler):
         # and the Edit gate ride on them, and deriving them locally would lie about a remote disk.
         mirrored = {k: v for k, v in (("Last-Modified", lastmod), ("X-Romp-Mtime-Ns", r_ns),
                                       ("X-Romp-Text-Utf8", r_u8)) if v}
+        if status == 200 and mime == "application/pdf":
+            # A remote session's PDF opens in its own tab too (2026-09-06): the tab's title and a Save's name
+            # come from this header — derived HERE from the requested basename, like the Content-Type, never
+            # mirrored: a remote's disposition is an instruction to this browser, not a fact about its disk.
+            mirrored["Content-Disposition"] = _attachment_disposition(os.path.basename(rp), kind="inline")
         return self._send(status, body, ctype, cache="no-cache", headers=mirrored or None)
 
     def _relay_download(self, host, port, rtok, q, head=False):
@@ -46770,22 +51415,30 @@ _EXIT_ONCE = threading.Lock()   # ONE exit path runs to completion: a second SIG
 #                                 cut row from a second, partial drain and exited, discarding the first
 #                                 drain's count; the parent watch noticing the manager gone while the
 #                                 handler drains would do the same. Whoever takes this lock finishes.
+_TERMINATING = [False]   # set the moment an exit path takes the lock: the watchdog below must not exit
+#                          under a running graceful term (T240 review), and readers that only need to
+#                          know an exit is underway ask this instead of touching the lock
 
 
 def _parent_watch():
     """Exit if the manager that spawned us (ROMP_MANAGER_PID) dies, so a supervisor crash doesn't
     orphan the kernel. No-op when launched standalone (no ROMP_MANAGER_PID). The exit leaves the same
     two rows every other exit does (an audit row, action `parent-gone`, and a cut row with the drained
-    turns), so a manager crash is not the one outage with no first cause on disk (review 2026-09-06);
-    if the SIGTERM handler is already on its way out, it owns the exit and this stands down."""
+    turns), so a manager crash is not the one outage with no first cause on disk (review 2026-09-06).
+    STANDS DOWN while a graceful term is already running (_TERMINATING / _EXIT_ONCE; T240 review): a
+    stale manager's shutdownAll SIGTERMs us and exits ~0.8 s later, and this watchdog used to os._exit
+    the kernel mid-drain — before the cut row was written — losing the ledger row the deploy cool-down
+    and the T121 metrics depend on. The graceful term owns the exit then; it is bounded (~2 s) and ends
+    in os._exit itself."""
     pid = os.environ.get("ROMP_MANAGER_PID")
     if not (pid and pid.isdigit()):
         return
     pid = int(pid)
     while _pid_alive(pid):
         time.sleep(2)
-    if not _EXIT_ONCE.acquire(blocking=False):
-        return
+    if _TERMINATING[0] or not _EXIT_ONCE.acquire(blocking=False):
+        return                                       # the graceful term is finishing the job
+    _TERMINATING[0] = True
     _drain_and_exit(_audit_parent_gone(pid), what="the manager is gone")
 
 
@@ -46800,21 +51453,26 @@ def _graceful_term(signum, frame):
     is draining returns at once (_EXIT_ONCE): the first finishes and exits."""
     if not _EXIT_ONCE.acquire(blocking=False):
         return
+    _TERMINATING[0] = True                          # the parent-watch stands down (see _parent_watch)
     _broadcast_restarting()                        # T217: announce the death FIRST — the frame is
     #                                                the shims' eager-reconnect event, and its
     #                                                sub-second budget cannot widen the shutdown
     # WHO asked, read NOW, at signal time: the audit tail names the requester, or the manager's own
     # note of a kill it sent (written before the kill, so it is here already if the manager sent
-    # this). A row that lands during the drain below did not send this signal.
-    _drain_and_exit(_recent_restart_reason(), signum=signum, what="SIGTERM")
+    # this). A row that lands during the drain below did not send this signal. The row itself rides
+    # along so the cut row can join it and consume it (auditT; see _recent_restart_audit).
+    rec = _recent_restart_audit()
+    _drain_and_exit(_audit_reason_text(rec), signum=signum, what="SIGTERM", audit=rec)
 
 
-def _drain_and_exit(reason, signum=None, what="SIGTERM"):
+def _drain_and_exit(reason, signum=None, what="SIGTERM", audit=None):
     """Drain the SDK sessions, write the restart-cut row, exit: the tail every kernel exit shares
-    (_graceful_term, _parent_watch). `reason` is the request on record when the exit was decided;
-    empty with a `signum` means the signal reached this pid with no request on record, which is worth a
-    row of its own plus a cut reason that says so (_unrequested_signal_reason; 2026-09-06: an empty
-    reason was all the ledger had for the restart that started a two-hour outage)."""
+    (_graceful_term, _parent_watch). `reason` is the request on record when the exit was decided, and
+    `audit` the audit row it was read from (the cut row records its t as `auditT`, so the same request
+    never names a later, anonymous cut too); empty with a `signum` means the signal reached this pid
+    with no request on record, which is worth a row of its own plus a cut reason that says so
+    (_unrequested_signal_reason; 2026-09-06: an empty reason was all the ledger had for the restart
+    that started a two-hour outage)."""
     res = {}
     err = ""
     be = _sdk_backend or None
@@ -46834,6 +51492,8 @@ def _drain_and_exit(reason, signum=None, what="SIGTERM"):
                 reason = _unrequested_signal_reason(signum, be)
             row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),
                                    audit_reason=reason)
+            if audit:
+                row["auditT"] = int(audit["t"])     # the audit row this cut CONSUMED (see _recent_restart_audit)
             if err:
                 row["drainError"] = err.strip().splitlines()[-1][:200]
             _append_restart_cut(row)
@@ -46848,6 +51508,13 @@ def main():
     # (a federated host) has no ~/.local/bin on PATH — bare `claude` exec-failed silently there.
     os.environ.setdefault("ROMP_CLAUDE_BIN", _claude_bin())
     signal.signal(signal.SIGTERM, _graceful_term)             # drain, don't die mid-flight (see _graceful_term)
+    # op's own credential (a service-account token in service.env) leaves the environment BEFORE anything
+    # is spawned — the bundler, the postal bus, tmux launches, the SDK backend's own claim later is a
+    # no-op re-assert — and the tmux server the manager started with that environment is scrubbed too,
+    # since every pane inherits the SERVER's globals, not the launching client's (review, 2026-09-05).
+    # The scrub lives INSIDE the claim since 2026-09-06 (keysource.claim_op_env): a keyswap to a reference
+    # with no restart makes romp the op consumer mid-run, and the server must be scrubbed then too.
+    jd._keysrc.claim_op_env()
     _ensure_bundles()
     try:                                                      # the diary boot sweep (2026-07-07): migrate every
         _death_boot_pass()                                    # deaths no kernel was up to see: stamp them

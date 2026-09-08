@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { CARD_GAP } from "./card-layout";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -333,6 +334,7 @@ function mediaStatus(file: string, comments: StoreComment[]): Status {
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop, rows
 // from `reflowAt` on shifted down by `reflowBy` (a block above them opened); a card is CARD tall, OPEN when expanded.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, BODY_VIEW = 200, TRACK = BODY_VIEW - OFFSET - FOOTER;
+const BOX = 30;                                                 // a reply's box inside an open card: the card's last BOX px, above its buttons (placeComposer)
 const CONTENT = ROW * ROWS;                                     // 2040: the Raw view's own height
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
@@ -390,6 +392,10 @@ function baseWorld(body: El, content: number): World {
     if (el.classList.contains("fc-imgwrap")) { const img = el.childNodes.find((c) => c instanceof El && c.tagName === "IMG") as El | undefined; return img ? img.getBoundingClientRect() : ZERO; }
     if (el.classList.contains("fc-overlay")) return el.parentNode ? el.parentNode.getBoundingClientRect() : ZERO;   // inset 0 in its wrap or its page's shell
     if (el.classList.contains("fc-region")) return el.parentNode ? regionBox(el, el.parentNode.getBoundingClientRect()) : ZERO;
+    if (el.classList.contains("fc-composer")) {   // the reply's box in its card: the card's placed top in the viewport, plus the card's height less the box's
+      const card = el.closest(".fc-card");
+      if (card) return R(412, 100 + OFFSET + (parseFloat((card.style.top as string) || "0") || 0) - w.track().scrollTop + OPEN - BOX, 316, BOX);
+    }
     if (el.parentNode && el.parentNode.classList.contains("fc-cards")) return R(412, 0, 316, 20);   // a loader, a row, a fold button
     return ZERO;
   };
@@ -412,7 +418,7 @@ function ctxBase(w: World, over: Partial<FileViewActionCtx>): FileViewActionCtx 
     body: () => w.body as unknown as HTMLElement, mode: () => "raw", text: () => DOC, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: noop, onSaved: noop, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ }, guardClose: noop,   // the viewer's close ask (main, 2026-09-07): the stand-in asks nothing
     aside: (node) => { w.main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); w.main.appendChild(n); } },
     setMode: noop, scrollToOffset: noop, reload: noop,
     ...over,
@@ -769,9 +775,9 @@ test("a PDF: a region on a page with a box is placed beside its rectangle on the
 // ── at source ──────────────────────────────────────────────────────────────────────────────────────
 
 test("at source: the id selectors are escaped; the moves that can detach a focused control run through the one helper that gives the focus back; the body's content joins the observer per pass", () => {
-  assert.match(SRC, /const cssStr = \(v: string\): string =>/);
-  assert.match(SRC, /querySelectorAll\('\[data-act="' \+ act \+ '"\]\[data-id="' \+ cssStr\(id\) \+ '"\]'\)/, "ownMarks");
-  assert.match(SRC, /'\.fc-card\[data-id="' \+ cssStr\(k\.card\) \+ '"\]'/, "focusNear");
+  assert.match(SRC, /function cssId\(s: string\): string \{/, "one escape helper for the panel: the composer follow-on's cssId");
+  assert.match(SRC, /querySelectorAll\('\[data-act="' \+ act \+ '"\]\[data-id="' \+ cssId\(id\) \+ '"\]'\)/, "ownMarks");
+  assert.match(SRC, /'\.fc-card\[data-id="' \+ cssId\(k\.card\) \+ '"\]'/, "focusNear");
   assert.match(SRC, /private moving\(nodes: HTMLElement\[\], move: \(\) => void\): void \{\n\s*const held = document\.activeElement/);
   assert.match(SRC, /this\.moving\(rows, \(\) => \{\n\s*if \(foot\) this\.sections\.send\.insertBefore\(foot, this\.sections\.send\.firstChild\);\n\s*for \(const r of rows\) if \(r !== foot\) send\.insertBefore\(r, box\);/, "the rows' move: the foot first, the others in the list's order");
   assert.match(SRC, /this\.moving\(order, \(\) => \{ for \(const node of order\) list\.appendChild\(node\); \}\);/, "the reorder");
@@ -779,4 +785,43 @@ test("at source: the id selectors are escaped; the moves that can detach a focus
   assert.match(SRC, /this\.watchContent\(body\);\n\s*const kids = /, "each pass, before the cards are read");
   assert.match(SRC, /private padBody\(body: HTMLElement, px: number\): void/);
   assert.match(SRC, /if \(this\.margin\) this\.layoutOff\(\);\s*\/\/ the body's end padding/, "closePanel ends the layout");
+});
+
+// ── the reply's box in its card (the composer follow-on, merged 2026-09-08) ─────────────────────────
+
+test("a reply's box stands inside its card in the track: the pass leaves it there (no row of the footer's, no child of the list the sheet positions), and Reply brings it into the track's box through both scrollers, after the pass, not by a track-only scrollIntoView", async (t) => {
+  const { w } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  headOf(w, closing.id).click(); await tick();           // the last line's card opens (its Reply is in the open card) and its mark is centered
+  body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));   // back to the top of the text: the card, at row 33, is far below the track's box
+  assert.equal(track.scrollTop, 0);
+  scrolledInto.length = 0;
+  actIn(w.card(closing.id)!, "fcreply")!.click(); await tick();
+  const card = w.card(closing.id)!, box = w.aside().querySelector(".fc-composer")!;
+  assert.ok(card.contains(box), "the box stands in the card (placeComposer)");
+  assert.notEqual(box.parentNode, w.list(), "a descendant of the card, not a child of the list: the sheet's absolute positioning does not reach it");
+  assert.ok(!w.send().contains(box), "and not a row moveRows takes to the footer");
+  assert.ok(card.classList.contains("open") && w.top(closing.id) === desired(33), "the card is open and placed at its mark");
+  // the box's bottom plus the gap into the track's box, by the least scroll — the body's position too (scrollBoth)
+  const want = desired(33) + OPEN + CARD_GAP - TRACK;
+  assert.equal(track.scrollTop, want, "the track shows the box's end");
+  assert.equal(body.scrollTop, want, "the body came along: one range, so the next pass has nothing to pull back");
+  assert.equal(scrolledInto.length, 0, "no scrollIntoView: the track alone would be pulled back to the body by the next pass");
+  resize(); flush();                                     // a pass leaves the position
+  assert.equal(track.scrollTop, want); assert.equal(body.scrollTop, want);
+  // the words survive the poll's re-render around the box (swapCards), and the box's card keeps its place
+  const input = box.querySelector("textarea")!;
+  input.value = "Agreed"; w.repaint(); await tick();
+  assert.equal(w.aside().querySelector(".fc-composer")!, box, "the same node");
+  assert.equal(input.value, "Agreed");
+  assert.ok(w.card(closing.id)!.contains(box) && w.top(closing.id) === desired(33));
+  w.close();
+});
+
+test("at source: the box's scroll runs after the margin pass and through showComposer; outside the margin layout showComposer is scrollIntoView's nearest", () => {
+  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n\s*if \(moved\) this\.showComposer\(\);/, "render: after the pass");
+  assert.match(SRC, /this\.render\(\);\n\s*this\.showComposer\(\);/, "startReply");
+  assert.doesNotMatch(SRC, /this\.composerBox\.scrollIntoView/, "never the track alone");
+  assert.match(SRC, /private showComposer\(\): void \{\n\s*const box = this\.composerBox, track = this\.sections\.cards;\n\s*if \(!this\.margin \|\| !track\.contains\(box\)\) \{ box\.scrollIntoView\(\{ block: "nearest" \}\); return; \}/, "the list layout, and the slot above the track, as before");
+  assert.match(SRC, /else if \(top \+ r\.height \+ CARD_GAP > at \+ view\) want = top \+ r\.height \+ CARD_GAP - view;\n\s*this\.scrollBoth\(want\);/, "the least scroll that shows the box, onto both scrollers");
 });

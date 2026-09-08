@@ -18,6 +18,7 @@ Sessions, Outline, Feed and Waiting, with the gear's "File links open in" gainin
 
 SYNTHETIC fixtures only (the notes-api demo world); no session data is minted here.
 """
+import json
 import os
 import re
 import tempfile
@@ -166,7 +167,10 @@ class Shell(unittest.TestCase):
         self.assertIn("'f-files':'files-pane'", km._LANDING_FOCUS_JS)
         self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
         self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", self.html)   # Esc wiring
-        self.assertIn("files:'Files'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
+        # the Log's connection-lost label: PN is json.dumps(dict(_PANE_ORDER)) since the 2026-09-07 fold (upstream's
+        # one-list map, adopted whole), so the pin is the map plus the pane's row in _PANE_ORDER
+        self.assertIn("var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)
+        self.assertEqual(dict(km._PANE_ORDER).get("files"), "Files")
         self.assertIn("files:document.getElementById('f-files')", km._LANDING_MOBILE_JS)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
         self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)
@@ -218,7 +222,7 @@ class Relay(unittest.TestCase):
         # the receiving end reads it as a string or nothing, and hands it to the viewer's open
         files = (UI / "files.ts").read_text()
         self.assertIn('typeof m.todoId === "string" ? m.todoId : null', files)
-        self.assertIn("openFileView(path, sid, { todoId })", files)
+        self.assertIn("openFileView(path, sid, { todoId, line, frag })", files)
 
     def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
         """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the

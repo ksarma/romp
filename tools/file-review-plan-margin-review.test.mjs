@@ -71,7 +71,7 @@ test('the one range is stated as the code makes it: the body padded by the foote
   assert.ok(/this\.padBody\(body, Math\.ceil\(footer \+ hang\)\);/.test(panel), 'the pass pads by the footer plus the overhang');
   assert.ok(built.includes('cleared by `layoutOff` when the layout ends: the fold, edit mode, the panel\'s close'));
   assert.ok(/private layoutOff\(\): void \{[^}]*this\.padBody\(this\.ctx\.body\(\), 0\);/.test(panel), 'layoutOff clears the padding');
-  assert.ok(/if \(this\.margin\) this\.layoutOff\(\);[\s\S]*?this\.stopPoll\(\);\n\s*\}\n\s*dispose\(\): void \{\n\s*this\.stopPoll\(\);\n\s*if \(this\.margin\) this\.layoutOff\(\);/.test(panel), 'closePanel and dispose end the layout');
+  assert.ok(/if \(this\.margin\) this\.layoutOff\(\);[\s\S]*?this\.stopPoll\(\);\n\s*\}\n[\s\S]*?\n  dispose\(\): void \{\n(?:\s*this\.clearLanding\(\);[^\n]*\n)?\s*this\.stopPoll\(\);\n\s*if \(this\.margin\) this\.layoutOff\(\);/.test(panel), 'closePanel and dispose end the layout (since the inline-display follow-on, draftAsk stands between the two and dispose clears the Reveal landing cue first)');
   assert.ok(built.includes('makes the list as tall as puts the track\'s farthest position at the body\'s, or as the last card\'s end, whichever is more'));
   assert.ok(/list\.style\.height = Math\.max\(body\.scrollHeight - body\.clientHeight \+ track\.clientHeight, out\.bottom \+ CARD_GAP\) \+ "px";/.test(panel), 'the list is the range or the cards');
   assert.ok(!/list\.style\.height = Math\.max\(body\.scrollHeight - offset, /.test(panel), 'the pre-review sizing is gone');
@@ -102,9 +102,9 @@ test('the content observer, the placement order, the focus fixup and the escapin
   assert.ok(/private moving\(nodes: HTMLElement\[\], move: \(\) => void\): void \{/.test(panel));
   assert.ok(/if \(kept\) kept\.focus\(\{ preventScroll: true \}\);/.test(panel), 'the focus is given back');
   assert.ok((panel.match(/this\.moving\(/g) || []).length >= 2, 'the rows\' move and the reorder both use it');
-  assert.ok(built.includes('the selectors the pass builds from a comment id are CSS-escaped (`cssStr`)'));
-  assert.ok(/const cssStr = \(v: string\): string =>/.test(panel));
-  assert.ok((panel.match(/cssStr\(/g) || []).length >= 4, 'ownMarks, goTo, scrollCard and focusNear escape the id');
+  assert.ok(built.includes('the selectors the pass builds from a comment id are CSS-escaped (`cssId`)'));
+  assert.ok(/function cssId\(s: string\): string \{/.test(panel));
+  assert.ok((panel.match(/cssId\(/g) || []).length >= 4, 'ownMarks, goTo, scrollCard and focusNear escape the id');
 });
 
 test('the footer\'s floor and yield rule are stated, and both sheets carry the clip, the floor, the sticky toggle and Send and Log sections that scroll inside themselves', () => {

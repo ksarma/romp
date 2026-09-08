@@ -202,8 +202,10 @@ class LandingShell(unittest.TestCase):
         # ios-standalone viewport flip and the push bell 2026-08-07, plans/ios-app.md; + the shared
         # Escape-closes-the-topmost-modal block 2026-08-09; + the release-update banner 2026-08-09).
         html = km._landing()
-        self.assertEqual(html.count("<script>"), 18)   # +1 2026-08-28: the theme reader right after <body>;
-        #                                                  +1 2026-09-07: the bottom bar's API health cell
+        # +1 2026-08-28: the theme reader right after <body>; +1 2026-09-06: the notification-tap landing
+        # script (_LANDING_REVEAL_JS), its own script so a throw in the bell's cannot strand a tap;
+        # +1 2026-09-07: the bottom bar's API health cell (_LANDING_APIH_JS)
+        self.assertEqual(html.count("<script>"), 19)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -282,6 +284,17 @@ class LandingShell(unittest.TestCase):
         self.assertEqual(html.count("env(safe-area-inset"), 1)        # exactly the standalone rule below
         self.assertIn("html.ios-standalone #mtabs{padding-bottom:env(safe-area-inset-bottom,0px)}", html)
         self.assertIn("#mtabs{display:flex;position:fixed;left:0;right:0;bottom:0", html)
+
+    def test_the_shell_forwards_a_quote_seed_from_a_composerless_pane_into_the_chat(self):
+        # A passage selected in the file viewer hosted by the FEED pane (the file browser's document)
+        # has no composer in its own document; file-view.ts posts the editorSelection message up to the
+        # shell, which forwards it whole into the chat iframe, whose existing handler seeds the labeled
+        # quote chip for m.sid. The arm sits in the same listener as the browseFiles relay, and the chat
+        # iframe carries the id it keys on.
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');", js)
+        self.assertIn("try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}", js)
+        self.assertIn("<iframe id=f-chat class=m-on src=/chat>", km._landing())
 
 
 class TimelineTouchSurface(unittest.TestCase):

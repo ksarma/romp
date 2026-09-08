@@ -71,7 +71,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -361,7 +361,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: (n) => { offsets.push(n); }, reload: noop,
     ...ctxOver,
@@ -400,7 +400,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     /** The one tag on a card's head. */
     tag: (id: string) => main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head .fc-tag')!,
     float: () => { const f = doc.body.querySelectorAll(".fc-float"); return f[f.length - 1]; },
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -555,7 +555,7 @@ test("a region composer whose embed line was rewritten under it (the poll reload
   assert.notEqual(img2, img, "a new picture node");
   assert.ok((img2.parentNode as E).querySelector(".fc-overlay .fc-region-pending"), "the pending rectangle followed the figure, found by its src");
   assert.ok(h.q('.fc-composer [data-act="fcsave"]'), "Save is offered: the host rules on the anchor");
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -597,7 +597,7 @@ test("a figure embedded as a%26b.png, rewritten through /file: a drag saves a re
   assert.equal(h.q(".fc-composer-ref .fc-refused"), null, "the embed was found: no refusal");
   assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.17, 0.20, 0.33, 0.30");
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.deepEqual(h.last().args.target, { kind: "image", region: REGION, src: "a%26b.png" }, "src exactly as the embed writes it");
@@ -641,9 +641,9 @@ test("a region on a figure the source holds no embed for: the refusal offers Swi
   assert.equal(h.q('.fc-composer [data-act="fcsave"]'), null, "still nothing to save to");
   assert.equal(h.q(".fc-region-pending"), null, "the drawn rectangle leaves the overlay: there is no region to save");
   const before = h.posted.length;
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
-  assert.equal(h.posted.length, before, "Enter saves nothing to the wrong place");
+  assert.equal(h.posted.length, before, "the chord saves nothing to the wrong place");
   assert.equal(h.input().value, "Wrong chart.");
   h.dispose();
 });

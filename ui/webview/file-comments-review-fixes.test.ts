@@ -17,7 +17,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -67,7 +68,7 @@ class El {
     contains: (c: string) => this.classes.includes(c),
   };
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
@@ -260,7 +261,7 @@ function world(over: { path?: string; sid?: string | null } = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: () => { /* inert */ }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ }, reload: () => { /* inert */ },
   };
@@ -301,13 +302,15 @@ async function openPanel(w: World, s: Status = status()): Promise<{ unit: El; bu
 }
 const input = (aside: El): El => aside.querySelector(".fc-input")!;
 const press = (el: El, key: string) => dispatch(el, new Ev("keydown", { key }));
+/** The save chord (Ctrl+Enter; Cmd+Enter is the same key policy): a plain Enter is a newline in the box now. */
+const chord = (el: El) => dispatch(el, new Ev("keydown", { key: "Enter", ctrlKey: true }));
 const cards = (aside: El): number => aside.querySelectorAll(".fc-card").length;
 const sendLabel = (aside: El): string => aside.querySelector('[data-act="fcsend"]')!.textContent;
 /** Comment on this file, a note, Enter: the `comment` ask that goes out. */
 async function enterComment(w: World, aside: El, note: string): Promise<any> {
   aside.querySelector('[data-act="fcfile"]')!.click();
   input(aside).value = note;
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.ok(post, "Enter posted the comment");
   return post;

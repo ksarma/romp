@@ -23,8 +23,9 @@ also runs on every push to main).
    with no PR), unless the base is the branch of the other PR in the same call, which then merges
    first.
 2. Give it one tier label: `fix`, `tests-only`, `feature`, or `major-feature`
-   (`gh pr edit N --add-label fix`). A `major-feature` PR is discussed before it joins a batch; a
-   `hold` label keeps a PR out of the next batch.
+   (`gh pr edit N --add-label fix`); `docs`, upstream's coming name for tests-only, is accepted
+   too. A `major-feature` PR is discussed before it joins a batch; a `hold` label keeps a PR out
+   of the next batch.
 3. Optionally end the body with a trailer the batch body reads:
    `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
    A missing trailer is not a failure; the member is listed under "Read these first" with "not
@@ -133,7 +134,9 @@ subject; `verify` refuses the branch otherwise.
    batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
    new commits are merges; read what tripped and fix the member or ask. Never bypass the hook. Then
-   `scripts/batch.py summarize <name>` and watch the one CI run. If CI is red:
+   `scripts/batch.py summarize <name>` and watch the one CI run. The batch PR carries the `batch`
+   label and no tier; the fork's copy of the `PR tier` check counts `batch` as its one label, so
+   that check is green on it. If CI is red:
    `scripts/batch.py bisect <name> -- <failing test>` names the member;
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run

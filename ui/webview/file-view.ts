@@ -18,12 +18,21 @@
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { fileUrl } from "./preview";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
+import { fileUrl } from "./preview";
+import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
+import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
-import { fileCommentsAction } from "./file-comments";
+import { fileCommentsAction, panelMark } from "./file-comments";
+import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
+import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
+import { delegate } from "./actions";
+import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs } from "./md-links";
+import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -118,11 +127,76 @@ function saveFmt(f: FileViewFmt): void {
   try { localStorage.setItem(FMT_KEY, JSON.stringify(f)); } catch { /* storage full */ }
 }
 
+// ── text size (the user 2026-09-07: the rendered markdown had to be zoomable) ──────────────────────
+// The viewer's text sizes, as percentages of the page's own size: a FIXED table with ends, not a free
+// multiplier, so the buttons, the wheel and the stored value all land on the same few sizes and a size can
+// never run away or go negative. 100 is the default and leaves every size exactly as before. The chosen
+// step rides the viewer root as `data-fv-text`, and the sheets turn it into the ONE property the text
+// views read (`--fv-scale`; the "text size and measure" block in styles.css / feed.css). Persisted like
+// the Rendered ⇄ Raw choice above: per browser, in localStorage, under its own key, and any malformed or
+// foreign value reads as the default (parseFmt's contract). The value stays a percentage, never a
+// multiplier, so the stored text and the readout say the same thing.
+export const TEXT_SIZES: readonly number[] = [70, 80, 90, 100, 115, 130, 150, 175, 200];
+export const TEXT_SIZE_DEFAULT = 100;
+const TEXT_SIZE_KEY = "romp:fileviewTextSize";
+/** A stored value back to a step of the table; anything else (absent, garbage, a size the table does not
+ *  hold) is the default, so a corrupt entry may cost the preference, never the viewer. */
+export function parseTextSize(raw: string | null | undefined): number {
+  if (raw === null || raw === undefined) return TEXT_SIZE_DEFAULT;
+  const n = Number(String(raw).trim());
+  return TEXT_SIZES.includes(n) ? n : TEXT_SIZE_DEFAULT;
+}
+/** The next step from `pct` in `dir`, clamped at the table's ends: at 200 a +1 answers 200. A `pct` off the
+ *  table (never stored, but the function is pure) steps from the default. */
+export function stepTextSize(pct: number, dir: 1 | -1): number {
+  const at = TEXT_SIZES.indexOf(TEXT_SIZES.includes(pct) ? pct : TEXT_SIZE_DEFAULT);
+  return TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + dir))];
+}
+function loadTextSize(): number {
+  try { return parseTextSize(localStorage.getItem(TEXT_SIZE_KEY)); } catch { return TEXT_SIZE_DEFAULT; }
+}
+function saveTextSize(pct: number): void {
+  try { localStorage.setItem(TEXT_SIZE_KEY, String(pct)); } catch { /* storage full */ }
+}
+// Ctrl/Cmd + wheel over the text is the pointer's way to the same steps. A wheel notch is one event of about
+// 100 pixels (Chrome) or a few LINES (Firefox, deltaMode 1); a trackpad pinch (which browsers report as a
+// ctrlKey wheel) is a burst of events a few pixels each. Stepping once per event would run a pinch through the
+// whole table in a moment, so the deltas are FOLDED: normalized to pixels, summed, and a step is taken each time
+// the sum passes WHEEL_STEP_PX (then cleared); a change of direction clears it too, so a reversal does not have to
+// pay off the other way's remainder first. Pure over the event's fields, so the fold is testable: `acc` is the
+// running sum the caller keeps, `dir` the step to take now (0 for none). Events without the modifier are not
+// the gesture (the caller lets them scroll) and never reach this.
+export const WHEEL_STEP_PX = 40;
+export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number): { acc: number; dir: 0 | 1 | -1 } {
+  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  if (!px) return { acc, dir: 0 };
+  const sum = (acc === 0 || Math.sign(acc) === Math.sign(px)) ? acc + px : px;
+  if (Math.abs(sum) < WHEEL_STEP_PX) return { acc: sum, dir: 0 };
+  return { acc: 0, dir: sum < 0 ? 1 : -1 };   // wheel up (negative deltaY) is larger, as in every zooming surface
+}
+
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   return e;
 }
+
+// The romp loader (swirl + wordmark + three pulsing accent dots), per the loading-state rule: the
+// FIRST thing up on any wait, fading the instant real content lands. The viewer's earlier waits
+// build this markup inline; the URL viewer reaches for it here.
+function loaderEl(): HTMLElement {
+  const load = el("div", "fileview-load");
+  load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+    + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+  return load;
+}
+
+// The 2 MB body cap for a URL document — a MIRROR of the kernel's _TEXT_MAX_BYTES (kernel.py), which
+// is what a local .md is already held to on the /file route. The URL viewer fetches from the browser,
+// so no kernel ever sees the body; the cap is applied here — a declared Content-Length refuses before
+// the body is read, and otherwise the streaming reader (capped-read.ts) counts the bytes as they
+// arrive and cancels the source the moment they pass it. md-url-view.test.ts pins the two numbers equal.
+const URL_TEXT_MAX_BYTES = 2 * 1024 * 1024;
 
 // ── raw-mode editing (the file browser's slice 2, the user 2026-08-14) ─────────────────────────────
 // The save op rides the WS poster the pane's boot hands initFileView; replies route back to the OPEN
@@ -130,12 +204,12 @@ function el(tag: string, cls?: string): HTMLElement {
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileView */ };
 
 // ── the session the file was opened from (the user 2026-09-03) ────────────────────────────────────
-// The viewer knows only a sid, and its openers mostly know no more: the shell's viewFile relay and the
-// conflict Reload live in this module, the file browser hands over a bare sid. So the session's name
-// and colour are RESOLVED from the sid here, through a lookup each hosting document registers once
-// at boot beside initFileView (render.ts reads its tab set, feed.ts its session list). Unregistered,
-// or a sid the document cannot name, the title bar carries no chip: an identity is looked up, never
-// invented.
+// The viewer knows only a sid, and its openers mostly know no more: the relay branch initFileView
+// keeps and the conflict Reload live in this module, the file browser hands over a bare sid. So the
+// session's name and colour are RESOLVED from the sid here, through a lookup each hosting document
+// registers once at boot beside initFileView (render.ts reads its tab set, feed.ts its session list).
+// Unregistered, or a sid the document cannot name, the title bar carries no chip: an identity is
+// looked up, never invented.
 export interface FileViewIdentity { name: string; color: { bg: string; fg: string } | null }
 let identityOf: (sid: string) => FileViewIdentity | null = () => null;
 export function setFileViewIdentity(fn: typeof identityOf): void { identityOf = fn; }
@@ -148,12 +222,24 @@ export function hostStub(sid: string): FileViewIdentity | null {
   const host = hostOf(sid);
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
+// Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
+// reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
+// pane's openHere, so the file enters its Recent list and names its session), else the shared viewer in place,
+// replacing the file that carried the link. The same document either way: the person is reading here.
+let openLinkedFile: (path: string, sid: string | null, line: number | null, frag: string | null) => void =
+  (path, sid, line, frag) => { openFileView(path, sid, { line, frag }); };
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
-// handler both close through it without knowing an edit is in progress.
+// handler both close through it without knowing an edit is in progress. It runs the editor's own ask
+// and then every ask an action registered through the seam (ctx.guardClose: the comments panel's, for a
+// note typed and not yet saved), so a close or a replace-open (a link followed inside the shown file, a
+// Files-pane row, the shell's relay) meets ONE code path whatever the person has unsaved, and nothing is
+// dropped silently (the 2026-09-07 review: a link click under a comment draft replaced the file and the
+// draft with it, with no ask).
 let closeGuard: (() => boolean) | null = null;
+let closeAsks: Array<() => CloseAsk | null> = [];
 // ONE live Escape handler at a time. Every open registers its own document-level onKey closure, and
 // the previous one must be UNREGISTERED when its viewer goes: the replace path used to leave it
 // behind, where — with a NEW viewer up, so its `!getElementById` guard no longer no-ops — its stale
@@ -189,12 +275,23 @@ function dropMediaUrl(): void {
 // means the browser is taking the pane over, and the shell moves the restore onto the browser's
 // flag rather than hearing a close that would hide the pane mid-open.
 let viaRelay = false;
+// ONE in-flight URL read at a time, the same shape as mediaUrlLive: the URL viewer registers its
+// AbortController here and BOTH exits (closeFileView and either replace path) abort it, so a modal
+// torn down mid-body cancels its fetch and its stream — a stale read must never keep pulling bytes
+// for a viewer that is gone.
+let urlAbort: AbortController | null = null;
+function dropUrlRead(): void {
+  if (urlAbort) {
+    try { urlAbort.abort(); } catch { /* already settled */ }
+    urlAbort = null;
+  }
+}
 
 // ── viewer action registry (the user 2026-08-22) ── INTERNAL SEAM, no compatibility promise:
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
 // openFileView's action row, where every file-viewer change used to collide. mount() runs once per
 // open and returns the action's element for the row (or null to sit this file out); an action that
-// answers asynchronously (the GitHub link's kernel ask) mounts hidden and reveals itself when its
+// answers asynchronously (the GitHub link's kernel ask) mounts a placeholder and fills it in when its
 // reply lands. Ordering is registration order, after the built-ins.
 // `todoId`: the user todo the file was opened FROM, when it was (the Waiting-on-you pane's detail link,
 // plans/file-review.md Slice 0) — so an action can tie its work back to the todo; absent for every other open.
@@ -239,7 +336,13 @@ export interface FileViewActionCtx {
    *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back */
+   *  repaint hands the read-mode state back.
+   *  Also after a text view REFLOWS with its text unchanged: a text-size step (the A− / A+ buttons, the wheel) and a
+   *  change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body, so the
+   *  event is the layout's own, never a timer, folded to one call per animation frame and none when the width is back
+   *  where the last call left it). Every position measured from the text has moved by then, so the panel's paint pass
+   *  runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and the
+   *  editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -267,7 +370,18 @@ export interface FileViewActionCtx {
   /** the panel's half of editing over a tracked file (Slice 5): registered once per open, null removes it. Read at every
    *  Edit and Save, never cached — the panel's status is the truth about what is pending and where Save must go */
   setTrackedEdit(t: TrackedEdit | null): void;
+  /** register an ask the viewer puts before this open ends by a close or a replace-open (a link followed inside the
+   *  file, a Files-pane row, the shell's relay). The callback answers null when the action has nothing unsaved, else
+   *  what to ask (CloseAsk); the VIEWER puts the ask, the way it puts the editor's own unsaved-changes ask, which runs
+   *  first: a confirm dialog on the web, and in the VS Code webview (no dialog) the notice bar with `kept`, the thing
+   *  kept. A declined ask vetoes the close and the viewer stays as it was. So nothing the person typed is dropped
+   *  without a word, in one code path for every host. Per open; dropped with it */
+  guardClose(ask: () => CloseAsk | null): void;
 }
+/** An action's answer to the close guard when it holds something unsaved: `question`, the yes/no put to the person where a
+ *  dialog exists ("Discard the unsaved comment on app.py?"), and `kept`, the notice shown where none does and the thing is
+ *  kept ("The unsaved comment on app.py is kept: ..."). */
+export interface CloseAsk { question: string; kept: string }
 /** One decision taken inside the editor (an accept or a reject of a pending change), as the chunk's decisions report
  *  it. "Decisions" is the plan's word for the save verb's two lists and the chunk's canonical name (editor-chunk.ts,
  *  TrackDecisions); the comments log is the OTHER record of these same decisions, on disk, in the host's hands. */
@@ -313,29 +427,46 @@ function runCloseHooks(): void {
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
 // One unit in the action row: the control and, when the kernel gave one, its reason as a caption
-// beside it. Hidden until the OWNING kernel answers the lazy fileGitLink ask, and the answer ALWAYS
-// shows it (the user 2026-09-05, who could not tell "not committed yet" from "the link is broken" when
-// the button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
+// beside it. The OWNING kernel answers the lazy fileGitLink ask, and until it does the unit holds a
+// PLACEHOLDER — a dimmed disabled button and the loader's pulsing dots where the caption will go —
+// because the check takes up to 3 s when the kernel must ask origin, and an empty slot for that long
+// read as the old no-button state (found in review; the loading-state rule). The answer ALWAYS fills
+// the slot (the user 2026-09-05, who could not tell an uncommitted file from a broken link when the
+// button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
 // a real disabled <button>: assistive tech reads the state and the label, and there is no href to
 // follow or to go stale. The reason rides in the tooltip AND as the caption, because a tooltip alone
 // needs a mouse — touch has no hover, and a disabled button takes no focus — so the caption is what
-// makes the reason glanceable; the sheet truncates it and the tooltip carries the full text. A URL
+// makes the reason glanceable, and it is shown whole: the sheet wraps it inside a bounded width, since
+// nothing in the unit takes a tap, click or focus that could finish a truncated sentence. A URL
 // whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
-// 404s it until the push. One question per open, reqId-guarded. Exported for the DOM-shape test.
+// 404s it until the push. One question per open, reqId-guarded; a socket drop while it is out is
+// the one thing that loses the reply, and the shim's reconnect event re-asks (initFileView), so the
+// placeholder never outlives its wait. Exported for the DOM-shape test.
 const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
 /** The note bar's words when a save's late ack finds a new editor mounted over the pre-save file (doSave, the late-ack
  *  branch): what happened, then what Save and Cancel do from here. The bar carries the Reload offer itself. */
 export const SAVE_LANDED_UNDER_NEW_EDITOR = "Your earlier save landed after you reopened the editor, so this editor shows the file as it was before that save. "
   + "Save from it will refuse; Cancel shows the saved file.";
 let gitSeq = 0;
-let gitHooks: { reqId: number; apply: (url: string, reason: string) => void } | null = null;
+let gitHooks: { reqId: number; apply: (url: string, reason: string) => void; ask: () => void } | null = null;
 export const githubLinkAction: FileViewAction = {
   id: "github-link",
   mount({ path, sid }) {
     const unit = el("span", "fileview-gh");
-    unit.hidden = true;
+    // pending: a real disabled button (never an hrefless anchor, which has no role to read) and the
+    // loader's three dots in the caption's place; aria-busy names the wait for assistive tech
+    const wait = el("button", "fileview-btn") as HTMLButtonElement;
+    wait.type = "button"; wait.disabled = true; wait.textContent = "GitHub ↗";
+    wait.title = "Checking GitHub…"; wait.setAttribute("aria-label", wait.title);
+    const dots = el("span", "fileview-gh-dots");
+    for (let i = 0; i < 3; i++) dots.appendChild(el("i", "fileview-dot"));
+    unit.setAttribute("aria-busy", "true");
+    unit.appendChild(dots); unit.appendChild(wait);
+    const reqId = ++gitSeq;
+    const ask = () => post({ type: "fileGitLink", path, sid: sid || undefined, reqId });
     gitHooks = {
-      reqId: ++gitSeq,
+      reqId,
+      ask,
       apply: (url, reason) => {
         let ctl: HTMLElement;
         if (url) {
@@ -354,16 +485,18 @@ export const githubLinkAction: FileViewAction = {
         }
         ctl.textContent = "GitHub ↗";
         const why = reason || (url ? "" : GH_REASONLESS);
+        const parts: HTMLElement[] = [];
         if (why) {
           const cap = el("span", "fileview-gh-why");
-          cap.textContent = why; cap.title = why;            // the sheet truncates; the full text one hover away
-          unit.appendChild(cap);                             // before the control: it annotates what follows
+          cap.textContent = why;                             // whole, wrapped by the sheet — no tooltip to reach for
+          parts.push(cap);                                   // before the control: it annotates what follows
         }
-        unit.appendChild(ctl);
-        unit.hidden = false;
+        parts.push(ctl);
+        unit.replaceChildren(...parts);                      // the placeholder leaves with the wait
+        unit.removeAttribute("aria-busy");
       },
     };
-    post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
+    ask();
     return unit;
   },
 };
@@ -389,7 +522,9 @@ registerFileViewAction(fileCommentsAction);
  *    copy pointing at a popup the local flag keeps from ever re-showing. The same consent is re-offered
  *    here naming the refusing machine; a yes re-broadcasts and the caller retries. Any other refusal
  *    text resolves false at once: there is nothing to re-offer.
- *  The `gt` stamp is the consent's own click time: federation queues the setting per host across a
+ *  The `gt` stamp is the consent's own click, minted through the gesture clock (gesture-clock.js) so it
+ *  lands above every stamp this page has seen for the file-editing store (the /version read on the first
+ *  path teaches the clock every store's current stamp): federation queues the setting per host across a
  *  down socket, and the kernel orders applies by the stamp, so a flush hours later cannot outrank a
  *  newer gesture. Resolves true when the caller may proceed (or retry). */
 export async function ensureEditingAllowed(sid: string | null | undefined, refusal?: string): Promise<boolean> {
@@ -406,26 +541,31 @@ export async function ensureEditingAllowed(sid: string | null | undefined, refus
     if (!window.confirm(
       "Editing is off on " + (host ? "“" + host + "”" : "this machine")
       + (host ? " — it may have connected after you allowed editing here" : "") + ".\n\n" + COPY)) return false;
-    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+    post({ type: "setFileEditing", enabled: true, gt: gclock.stamp("file-editing") });
     return true;
   }
   let on = false;
-  try { on = !!(await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json()).fileEditing; } catch { /* ask below */ }
+  try {
+    const v = await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json();
+    on = !!v.fileEditing;
+    gclock.learnAll(v.settingsGt);   // the same read teaches the clock every store's current stamp
+  } catch { /* ask below */ }
   if (on) return true;
   if (!window.confirm(COPY)) return false;
-  post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+  post({ type: "setFileEditing", enabled: true, gt: gclock.stamp("file-editing") });
   return true;
 }
 
 // ── quote a passage into the composer (the user 2026-08-23, the three-verbs consolidation) ────────
 // Selecting text in the viewer seeds the SAME labeled quote chip a VS Code editor highlight does:
-// the selection posts to our own window in the editorSelection shape, so render.ts's existing
-// handler owns the chip end to end (no import cycle — the browseFiles precedent), labeled path:line
-// via quoteSrcLabel. From there the flow is the chat's own: type a note (or none), Stage, keep
-// going, send once. This REPLACED the viewer's separate review layer — the per-file comment store
-// (romp:fileviewComments), the painted marks, and the one-shot Submit that assembled a message —
-// because batching notes for one hand-off is exactly what quote chips + ⌘⏎ staging already do,
-// and "comment" now means only the transcript's live threads.
+// the selection posts in the editorSelection shape to the composer's window — this document's, or
+// the shell's chat pane (composerWindow below) — so render.ts's existing handler owns the chip end
+// to end (no import cycle — the browseFiles precedent), labeled path:line via quoteSrcLabel. From
+// there the flow is the chat's own: type a note (or none), Stage, keep going, send once. This
+// REPLACED the viewer's separate review layer — the per-file comment store (romp:fileviewComments),
+// the painted marks, and the one-shot Submit that assembled a message — because batching notes for
+// one hand-off is exactly what quote chips + ⌘⏎ staging already do, and "comment" now means only
+// the transcript's live threads.
 
 // The retired store's data would otherwise sit in localStorage forever on every browser that
 // ever commented — sweep it on load.
@@ -434,9 +574,10 @@ try { localStorage.removeItem("romp:fileviewComments"); } catch { /* storage may
 // Where a quote seed lands (2026-09-03, with the Files pane): the composer in THIS document when there
 // is one (the chat-hosted viewer posts to its own window, and render.ts's editorSelection handler owns
 // the chip end to end); otherwise the SHELL, when this document is framed by one. The Files pane and
-// the feed host the viewer without a composer, and the shell forwards the seed into the chat pane (the
-// editorSelection arm in kernel.py's landing shell). Before this, a selection in the feed-hosted viewer
-// was dead air by design. No composer and no shell (a VS Code webview's cross-origin parent throws; a
+// the feed (the file browser's document) host the viewer without a composer, and the shell forwards
+// the seed into the chat pane (the editorSelection arm in kernel.py's landing shell). Before this, a
+// selection in the feed-hosted viewer was dead air. No composer and no shell (a VS Code webview's
+// cross-origin parent throws; a
 // standalone pane has none) → null, and the gesture stands down without a fresh read. Presence is the
 // DOM id, the Back button's import-free idiom (render.ts's inRompShell keys on the same node).
 function composerWindow(): Window | null {
@@ -449,12 +590,14 @@ function composerWindow(): Window | null {
 export function closeFileView(): void {
   const wrap = document.getElementById("romp-fileview");
   if (!wrap) return;
-  if (closeGuard && !closeGuard()) return;   // unsaved edits, and the user chose to keep them
+  if (closeGuard && !closeGuard()) return;   // unsaved edits (or an unsaved comment), and the user chose to keep them
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
+  dropUrlRead();                                       // …and a URL view's in-flight read is cancelled
   runCloseHooks();                                     // the panel's poll and listeners leave with the viewer
   wrap.remove();
   document.body.classList.remove("fileview-open");
@@ -476,21 +619,45 @@ export function closeFileView(): void {
   }
 }
 
+/** A click on a file — a path in the chat, a file-browser row — WITH its gesture. A Cmd/Ctrl- or
+ *  middle-click on a PDF (or Cmd/Ctrl+Enter on a file-browser row) opens the browser's own tab (preview.ts
+ *  openPdfTab); a plain click opens the
+ *  viewer below, like an image (the user 2026-09-07). Decided by EXTENSION, synchronously, inside the
+ *  gesture: deciding on the fetched Content-Type would lose the gesture, and every browser would then
+ *  block the tab. Every clicked file lands here, so this is the one place the choice lives; a relayed
+ *  viewFile or a Reload has no gesture and opens the viewer directly. A BLOCKED popup falls through to
+ *  the viewer, so the PDF is never unreachable, and a non-PDF is simply not the opener's business.
+ *  `open`: the plain click's opener when the hosting document has its own (the file browser's BrowseHost.openFile,
+ *  which the Files pane routes through files.ts openHere); absent, the viewer here. The gesture is read first either
+ *  way, so a modified click on a PDF means the tab whichever document hosts the browser. */
+export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined, path: string, sid?: string | null,
+                              open?: (path: string, sid: string | null) => void): void {
+  if (wantsOwnTab(ev) && openPdfTab(path, sid ?? null)) return;
+  if (open) open(path, sid ?? null); else openFileView(path, sid);
+}
+
 /** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks.
  *  Returns whether the open actually happened: false means the dirty-edit guard kept the PREVIOUS
  *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
- *  survivor as relay-opened nor arm a restore for an open that never happened). */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null }): boolean {
+*  survivor as relay-opened nor arm a restore for an open that never happened).
+ *  `opts.todoId`: the user todo the file was opened from (the Waiting-on-you pane's detail link).
+ *  `opts.line`: a line the open should show (a `path:12` link in another file, file-view-links.ts): the code view
+ *  scrolls its row into view once the text lands; a markdown file opens in its Raw view for THIS open (the Rendered
+ *  view has no rows), without touching the saved preference.
+ *  `opts.frag`: a sibling link's `#fragment` (`[see](report.md#results)`) to land on after the first rendered paint. */
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; line?: number | null; frag?: string | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
-  dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
   runCloseHooks();                                     // …and the old viewer's panel hooks
+  dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
+  dropUrlRead();                                       // …and a URL viewer's in-flight read, if that is what was up
   document.getElementById("romp-fileview")?.remove();
   // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
   // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
@@ -499,6 +666,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.id = "romp-fileview";
   wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
   const box = el("div", "fileview");
+  // A sibling link's `#fragment` (`[see](report.md#results)`: data-frag on the path link, file-view-links.ts
+  // linkMarkdownAnchors) lands on its heading after the FIRST rendered paint — once; a Raw view has no ids to
+  // land on, so the landing waits for the Rendered toggle rather than being spent (review find on #958, 2026-09-07).
+  let pendingFrag: string | null = opts?.frag || null;
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
@@ -535,9 +706,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     });
   }
   name.appendChild(dir); name.appendChild(base);
-  // The SESSION this file was opened from, in the waiting pane's chip idiom: identity colour, "host:"
-  // quiet for a remote session (and marked while its link is down). Resolved through the hosting
-  // document's registered lookup — no sid, or a sid it cannot name, and there is no chip.
+  // The SESSION this file was opened from: a pill in the session's identity colour (the colour its
+  // tab wears), "host:" quiet for a remote session (and marked while its link is down). Resolved
+  // through the hosting document's registered lookup — no sid, or a sid it cannot name, and there is
+  // no chip.
   const owner = sid ? identityOf(sid) : null;
   let sess: HTMLElement | null = null;
   if (owner) {
@@ -691,6 +863,46 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       acts.appendChild(b);
     }
   }
+  // ── text size (the user 2026-09-07) ── A− and A+ step the text views through TEXT_SIZES; between them the
+  // current size, said only once it is not the default, is the reset (progressive disclosure: at 100% there is
+  // nothing to reset and nothing to say). The readout's SLOT is there from the start, empty at the default
+  // (the sheet's .fileview-size-default, visibility not display): a slot that appeared after the first press
+  // moved A− under the pointer, and the second press landed on the reset and undid the first (review
+  // 2026-09-07). Built once per open like the format toggles above, so direct listeners are click-safe; each
+  // click acknowledges in the same tick (the readout, the dimmed end, the reflow itself). An end of the table
+  // is said with aria-disabled, not `disabled`: a button that disables under keyboard focus drops it (the ring
+  // vanished on the third Enter, and a fourth did nothing with no visible reason), while an aria-disabled one
+  // keeps the focus, wears the sheet's disabled dress, and its click is the no-op setTextSize already makes of
+  // a step to the size in force. The three hide until a TEXT body is known (renderBody, off the fetch that
+  // brought the kernel's Content-Type: a picture or a PDF opened over a slow link showed them beside the
+  // loader and then took them away), with the format toggles in edit mode (the editor keeps its own size) and
+  // over a media body (nothing there reads the property); the SVG Source view is a text view and keeps them.
+  // The step is applied as `data-fv-text` on the viewer root, which the sheets read (the "text size and
+  // measure" block).
+  let sizePct = loadTextSize();
+  const sizeDown = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeDown.type = "button"; sizeDown.textContent = "A−"; sizeDown.title = "Smaller text (Ctrl/Cmd + wheel)";
+  sizeDown.setAttribute("aria-label", "Smaller text");
+  const sizeReset = el("button", "fileview-btn fileview-size fileview-size-reset") as HTMLButtonElement;
+  sizeReset.type = "button"; sizeReset.title = "Reset the text size";
+  const sizeUp = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeUp.type = "button"; sizeUp.textContent = "A+"; sizeUp.title = "Larger text (Ctrl/Cmd + wheel)";
+  sizeUp.setAttribute("aria-label", "Larger text");
+  sizeDown.hidden = true; sizeReset.hidden = true; sizeUp.hidden = true;   // until renderBody knows a text body
+  // an end of the table: dimmed and inert, focus kept (the sheet dresses [aria-disabled="true"] as :disabled)
+  const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
+  // the property on the root, and the control's own state, from sizePct
+  const applyTextSize = () => {
+    box.dataset.fvText = String(sizePct);
+    sizeReset.textContent = sizePct + "%";
+    sizeReset.setAttribute("aria-label", "Text size " + sizePct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
+    atEnd(sizeDown, sizePct === TEXT_SIZES[0]);
+    atEnd(sizeUp, sizePct === TEXT_SIZES[TEXT_SIZES.length - 1]);
+    sizeReset.classList.toggle("fileview-size-default", sizePct === TEXT_SIZE_DEFAULT);   // the empty slot
+  };
+  applyTextSize();
+  acts.appendChild(sizeDown); acts.appendChild(sizeReset); acts.appendChild(sizeUp);
+
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
   // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
@@ -717,8 +929,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editBtn.hidden = true;
   // The consent gate (the user 2026-08-22): editing is a kernel-side opt-in the SAVE ROUTE enforces —
   // the popup where the one yes happens is ensureEditingAllowed (module level, shared with the comments
-  // panel's verbs since Slice 1 of plans/file-review.md). While a decision the panel sent is still OUT the
-  // button refuses instead, in words, in place (setEditBlocked, held by the panel from the send to the
+  // panel's verbs since Slice 1 of plans/file-review.md; its consent post stamps through the gesture clock,
+  // and its /version read teaches the clock every store's stamp). While a decision the panel sent is still
+  // OUT the button refuses instead, in words, in place (setEditBlocked, held by the panel from the send to the
   // reply: an editor opened meanwhile would carry records that decision is dropping, and no Save from it
   // could land). Slices 2 to 4 held it for every pending change; Slice 5's editor carries those as marks.
   // The button stays a real button rather than a disabled one so the reason reaches touch and keyboard users too.
@@ -764,6 +977,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
+  // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
+  // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
+  // ONE listener on the body reads the clicks (below, after the selection wiring: it is installed once per open, so
+  // it is click-safe across the Rendered ⇄ Raw swaps that rebuild the body's children). The chat's document-level
+  // anchor delegate (render.ts) leaves an anchor with no href alone, so the click reaches here in the chat document
+  // and in the feed document alike. The URL viewer below keeps a delegate of its own for its fv-anchor stamp.
   // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
   // over an ssh tunnel to a phone is a real wait.
   const load = el("div", "fileview-load");
@@ -780,6 +1000,39 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const selHooks: Array<(sel: Selection) => void> = [];
   const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
   const fireRendered = () => { for (const cb of renderHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
+  // A REFLOW's paint keeps the person's selection. The panel answers onRendered by unwrapping and re-wrapping every
+  // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
+  // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
+  // 2026-09-07, round 2). The text has not changed, only its elements, so each end is kept before the hooks run
+  // (keepPoint: its node and offset, its offset into the body's text, and which side of a text node it sat on) and
+  // put back after (pointBack), direction kept (setBaseAndExtent), but only when the paint cost the selection an
+  // end. A selection the paint left standing (both ends in connected nodes, the same text between them) is not
+  // touched: the browser's record of it is exact where the offsets are not. A selection holding NO text (a figure
+  // alone, the shape a drag across a picture makes) has one offset for both ends, and put back from them it collapsed
+  // after every reflow though the paint had touched nothing near it (review 2026-09-07, round 3); such a selection is
+  // never rebuilt from offsets, so when a paint does disturb it, it stays as the paint left it. The test is the text,
+  // not the offsets alone: a selection of one line break, from the end of a highlight's text to the next row's first
+  // column, has one offset for both ends too, and skipped by the offsets its start was left where the repaint had put
+  // it, outside the new mark, so the highlighted word showed and copied with the newline (round 5); its ends go back
+  // like any other pair, the side bits below placing the start at the new mark's end. An end whose own node
+  // came through the paint (moved into a mark, or untouched) goes back to that node, and only an end whose node is
+  // gone is mapped from its offset (round 4: an end on a text-less line boundary, the end of a row's text or the first
+  // column of the next, has the offset of both sides, and mapped by its role as start or end it landed on the wrong
+  // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
+  // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
+  // keep nothing: there the text itself is new.
+  const fireRenderedKeepingSelection = () => {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
+      && typeof document.createRange === "function"
+      ? { a: keepPoint(body, sel.anchorNode, sel.anchorOffset), f: keepPoint(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
+    fireRendered();
+    if (!sel || !kept || !kept.a || !kept.f) return;
+    if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
+    if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
+    const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
+    try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
+  };
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
@@ -827,7 +1080,74 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     reload: () => { if (!editing) fetchFile(); },
     editing: () => editing,
     setTrackedEdit: (t) => { trackedEdit = t; },
+    guardClose: (ask) => { closeAsks.push(ask); },
   };
+  // A text view is showing: the editor does not hold the body, the body is not a picture or a PDF frame, and the
+  // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
+  // triggers below: a paint hook is for a body whose text has positions to re-measure.
+  const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
+  // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
+  // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
+  // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
+  // see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
+  // move only on new information (CLAUDE.md), and no paint happened.
+  const setTextSize = (pct: number) => {
+    if (pct === sizePct) return;
+    sizePct = pct;
+    saveTextSize(pct);
+    applyTextSize();
+    if (textShowing()) fireRenderedKeepingSelection();
+  };
+  sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
+  sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
+  sizeReset.addEventListener("click", () => setTextSize(TEXT_SIZE_DEFAULT));
+  // Ctrl/Cmd + wheel over the BODY (not the bar, not the aside): the browser's page zoom is the same gesture, so it
+  // is taken over the viewer's text only, and only with the modifier held; a plain wheel scrolls as ever, and the
+  // keyboard's Ctrl+plus/minus stays the browser's. Non-passive so the page zoom can be prevented; the fold is
+  // foldWheel's (a pinch is a burst of small deltas).
+  let wheelAcc = 0;
+  body.addEventListener("wheel", (e: WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!textShowing()) return;
+    e.preventDefault();
+    const r = foldWheel(e, wheelAcc);
+    wheelAcc = r.acc;
+    if (r.dir) setTextSize(stepTextSize(sizePct, r.dir));
+  }, { passive: false });
+  // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
+  // The text reflows (the prose measure follows the pane up to its cap, a table takes the room or scrolls in its
+  // own box) and every position measured from it has moved, so the panel's paint pass runs again, off the
+  // layout's own report of the change (a ResizeObserver, never a timer). The observer's first report describes
+  // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
+  // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
+  // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
+  // moved and came back, the body growing taller as a figure loaded) costs one paint pass or none. The panel's
+  // pass re-wraps every highlight and rebuilds its cards (file-comments.ts paintAll, about 10ms with twenty
+  // comments), so a drag at one report per frame still pays it per frame; a narrower reaction is the panel's to
+  // choose. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
+  // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
+  // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
+  if (typeof ResizeObserver !== "undefined") {
+    let paintedWidth = -1;   // the width the last repaint (or the first report) saw
+    let seenWidth = -1;      // the latest report's width
+    let frame = 0;           // the pending frame's handle, 0 for none
+    const repaint = () => {
+      frame = 0;
+      if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
+      paintedWidth = seenWidth;
+      if (textShowing()) fireRenderedKeepingSelection();
+    };
+    const widthObserver = new ResizeObserver((entries) => {
+      const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
+      seenWidth = w;
+      if (w === paintedWidth || frame) return;
+      if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(repaint); else repaint();
+    });
+    widthObserver.observe(body);
+    ctx.onClose(() => { widthObserver.disconnect(); if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); frame = 0; });
+  }
+
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
   for (const a of fileViewActions) {
@@ -915,6 +1235,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.hidden = editing;                       // format choices leave with edit mode; Save/Cancel own the bar
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
+    // the text-size control shows over a text view only, and only once one is KNOWN (textShowing: the bytes and
+    // the kernel's Content-Type landed, no editor, no picture or PDF frame; renderBody is every paint, so this
+    // follows every flip: the fetch landing, Source on an SVG, the editor taking the body, the exit handing it
+    // back). The readout's slot goes with the two buttons; the slot's own emptiness at the default is applyTextSize's
+    const sizeHidden = !textShowing();
+    sizeDown.hidden = sizeHidden; sizeUp.hidden = sizeHidden;
+    sizeReset.hidden = sizeHidden;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -945,8 +1272,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    body.replaceChildren(rendered ? mdBlock(text, path, sid) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
+    if (rendered && pendingFrag) {
+      const h = pendingFrag; pendingFrag = null;
+      requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
+    }
   };
 
   // Selection → labeled quote chip (the user 2026-08-23): mouseup is the gesture's settle point.
@@ -956,8 +1287,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // chip lands in the session the file was opened FOR even if the active tab changed while the
   // modal was up (the 2026-08-19 routing rule: the gesture's session, never activeId-at-gesture).
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
-  const onSelect = () => {
+  const onSelect = (ev: Event) => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
+    // A press on a title-bar CONTROL (A−, A+, the readout, Raw, Copy path, the GitHub link...) settles no selection:
+    // the mouseup lands on the button while a passage may still stand selected in the body, and running the hooks
+    // again re-seeded the quote chip and re-fetched the file for its label on every step of the text size (review
+    // 2026-09-07, round 1). The gate is the control under the lift, not the bar: a drag that starts in the body and
+    // is released over the bar's path or its padding (the overshoot when selecting back to a file's first line) is a
+    // selection like any other and settles (round 2: the round-1 guard read the whole bar and swallowed it, so the
+    // passage stood selected with no Comment button and no quote chip). The listener sits on the viewer root so a
+    // drag that ends over the aside or the margins settles too.
+    const at = ev.target as Element | null;
+    if (at && bar.contains(at) && typeof at.closest === "function" && at.closest("button, a")) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).
@@ -995,12 +1336,112 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   box.addEventListener("mouseup", onSelect);
   box.addEventListener("touchend", onSelect);   // the phone's selection settles on the lift, with no mouseup
 
+  // Links inside the file (file-view-links.ts): one listener on the body, which every paint keeps and only
+  // refills (click-safe, ui/CLAUDE.md). The gesture is the project's (the PDF and folder rule, preview.ts
+  // wantsOwnTab): a PLAIN click acts inside the dashboard, and a Cmd/Ctrl-click or a middle-click opens the
+  // link in a tab of its own. Plain: a path link opens the file through the host's opener, with this viewer's
+  // session (a relative path was already joined onto this file's directory at mark time; the kernel reads `~`
+  // and the session's machine); a URL anchor opens itself (target _blank) and is left to the browser (the
+  // chat's document-level opener takes it first there, the same way); a section link scrolls to its target
+  // in this document, or does nothing where there is none (its title says so), and never moves the hosting
+  // document. Modified: a path link opens in the browser's own tab off the kernel's /file route (openFileTab;
+  // a blocked popup falls through to the viewer, so the file is never unreachable), a URL anchor in a tab from
+  // here. One click does one thing (ui/CLAUDE.md): a click on a mark the comments panel painted over the link
+  // (a highlight, a change mark) is the card's opening and only that, so a plain one is cancelled here when
+  // the link is an anchor (the anchor's own open would follow the card's otherwise) and left to the panel's
+  // delegate on the row, as render.ts yields to panelMark (the 2026-09-06 precedent); a modified click on a
+  // mark is the link's and only the link's, so it stops before the row. A PLAIN click is not stopped: it goes on
+  // to the document's own listeners (the feed's window listener that returns focus to the chat, the chat's menu
+  // closers), which a stop here starved (the 2026-09-07 review). The chat's body delegate routes the same
+  // data-act="openpath" for the todo card's links (render.ts), and would have opened the file a second time from
+  // a click that reached it (a plain open tears this viewer down first, but an open the close guard DECLINES, an
+  // unsaved comment, leaves the span in the document); that delegate now serves only the todo card and its Reply
+  // modal, checked at the click, so a viewer link that reaches it opens nothing there (file-view-links-browser.test.ts,
+  // the chat page). A click that ends a drag which selected text (the selection is still open at click time; a
+  // press on text collapses it first, so a plain click never sees one) selects and navigates nowhere; the chat's
+  // capture-phase opener reads the same selection and yields too (path-links.ts selectionOpenIn). Enter on a
+  // focused path link is its click (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
+  const openUrlTab = (href: string) => {
+    if (!href) return;
+    if (canPreview()) window.open(href, "_blank", "noopener,noreferrer");   // the web dashboard: the browser's tab
+    else post({ type: "openLink", href });                                  // the VS Code webview: the host's openExternal
+  };
+  const linkOf = (t: Element | null): HTMLElement | null => {
+    const x = t && typeof t.closest === "function" ? t.closest('[data-act="openpath"], a.' + URL_LINK_CLASS + ", a." + FRAG_LINK_CLASS) as HTMLElement | null : null;
+    return x && body.contains(x) ? x : null;
+  };
+  const openLink = (x: HTMLElement, ev: MouseEvent) => {
+    const own = wantsOwnTab(ev);
+    if (x.classList.contains(FRAG_LINK_CLASS)) {                // a section of this document: this document's scroll, never the page's
+      ev.preventDefault();
+      // the rendered document's own headings, ids and named anchors, as mark time read them (scrollToFragment, over the
+      // .fileview-md box through file-view-links.ts fragmentTarget): the viewer's chrome carries ids of its own (the
+      // notice bar), and a lookup over the whole box scrolled to one of those on a colliding name
+      scrollToFragment(body, x.getAttribute("href") || "");
+      return;
+    }
+    if (x.dataset.act !== "openpath") {                          // the URL anchor
+      if (!own) return;                                          // a plain click: the browser's own open
+      ev.preventDefault(); ev.stopPropagation();                 // a modified one: one tab, from here, and the row's delegate never sees it
+      openUrlTab(x.getAttribute("href") || "");
+      return;
+    }
+    ev.preventDefault();
+    const p = x.dataset.path;
+    if (!p) return;
+    if (own) {
+      ev.stopPropagation();                                      // the row's delegate never sees the modified click (the mark's card would open too)
+      if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
+    }
+    const ln = Number(x.dataset.line);
+    openLinkedFile(p, sid || null, ln > 0 ? ln : null, x.dataset.frag || null);
+  };
+  body.addEventListener("click", (ev) => {
+    const t = ev.target as Element | null;
+    const x = linkOf(t);
+    if (!x) return;
+    if (panelMark(t) && !wantsOwnTab(ev)) {                      // a plain click on the panel's mark: the card's, and only the card's
+      if (x.dataset.act !== "openpath") ev.preventDefault();
+      return;
+    }
+    if (selectionOpenIn(box)) { ev.preventDefault(); return; }   // a drag-select ended on the link
+    openLink(x, ev);
+  });
+  // The middle button: its press would start the browser's autoscroll on a path link (a span, unlike an anchor)
+  // and swallow the auxclick, so the press is cancelled there; the auxclick is the link's own tab. A URL anchor's
+  // middle-click is the browser's (it opens the href in a new tab itself), so neither listener touches one. A
+  // section link's middle-click is this document's scroll, as its plain click is: the browser's own opened a second
+  // copy of the hosting page at `/files#id`, and a section of the shown file has no tab of its own (the 2026-09-07
+  // review, round 3).
+  body.addEventListener("mousedown", (ev) => {
+    const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
+    if (x && x.dataset.act === "openpath") ev.preventDefault();
+  });
+  body.addEventListener("auxclick", (ev) => {
+    if (ev.button !== 1) return;
+    const x = linkOf(ev.target as Element | null);
+    if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
+  });
+
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
   // mtime floor does the real safety work (agents edit these same trees — see _save_file).
+  // The ask before something typed and unsaved is dropped: the editor's buffer here, an action's draft through the
+  // close guard (the comments panel's typed note, ctx.guardClose). ONE function for both. On the web dashboard it is a
+  // confirm dialog. The VS Code webview shows no dialog: window.confirm returns false there without showing anything,
+  // so the ask read as a dead click (the 2026-09-07 review; the editor's Cancel and every close met the same wall). There
+  // the unsaved thing is kept and the notice bar says what is unsaved and what clears it, which is loud where the
+  // dialog was silent (CLAUDE.md, fail loudly): saving or undoing the edit, sending or clearing the note.
+  const askDiscard = (question: string, kept: string): boolean => {
+    if (canPreview()) return window.confirm(question);
+    noteBar(kept);
+    return false;
+  };
   const confirmDiscard = (): boolean =>
-    !editing || !dirty || window.confirm("Discard unsaved changes to " + path.slice(cut + 1) + "?");
-  closeGuard = confirmDiscard;
+    !editing || !dirty || askDiscard("Discard unsaved changes to " + path.slice(cut + 1) + "?",
+      "The editor stays open: " + path.slice(cut + 1) + " has unsaved changes. Save or undo them, then try again.");
+  // the editor's ask, then the actions' (ctx.guardClose): each names what it would drop, and the ask is put here
+  closeGuard = () => confirmDiscard() && closeAsks.every((ask) => { const q = ask(); return q === null || askDiscard(q.question, q.kept); });
   const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
@@ -1503,6 +1944,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   the edit ends (exitEdit, refetchAfterEdit): the exit is the event, not a timer.
   let fetchSeq = 0;
   let refetchAfterEdit = false;
+  // The row for a 1-based line of the code view, scrolled to the middle (scrollToOffset's own gesture); `pendingLine`
+  // is the open's `line`, spent on the first text that lands. A reload keeps the reader's place and does not scroll.
+  // A line past the end (a stale `x.py:400` in a file that shrank) lands on the last row AND says so in the viewer's
+  // notice dress: a silent landing on the wrong row reads as the file's truth (CLAUDE.md, fail loudly).
+  const scrollToLine = (n: number) => {
+    const rows = body.querySelectorAll("code.hljs .fv-cl");
+    if (!rows.length) return;
+    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
+    (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+  };
+  let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
@@ -1563,7 +2015,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       text = t;
+      // a line the link named: the Raw view for this open (unsaved: the preference stays), then the row
+      if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
+      if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
     }).catch((err) => {
       if (!document.getElementById("romp-fileview")) return;
       if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
@@ -1600,6 +2055,202 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
 // A 404 is genuinely missing, and gets nothing.
 function offersDownload(status: number | undefined): boolean {
   return status === 413 || status === 415;
+}
+
+// ── URL mode (the user 2026-09-06) ─────────────────────────────────────────────────────────────────
+// A chat message linking a markdown file on the dashboard's OWN origin (`https://<this host>/figs/
+// run-1/evidence.md` — a published report, an evidence doc) used to open the raw text in a new tab.
+// It presents here instead: same modal, same Rendered ⇄ Raw preference (FMT_KEY), same loader-first
+// wait, same mdBlock — fetched by the BROWSER from the URL itself, with no kernel in the loop. Zero new
+// kernel surface is the point: the kernel's /file relay is a preview relay and has stayed one on
+// purpose (_remote_file's docstring), and a same-origin URL needs no relay — the browser already has
+// the cookie. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
+//
+// The shell is built here rather than threaded through openFileView because almost everything in that
+// row is keyed on the KERNEL's reply — Edit on the text/plain + mtime verdicts, Download on the
+// ?download=1 route, the GitHub link on a fileGitLink ask, ‹ Files on the browser overlay — and none
+// of it exists for a URL. What both modes share is shared by construction: el/loaderEl, the format
+// pref, mdBlock/codeBlock, closeFileView and the module-level teardown registrations.
+export function openUrlView(href: string): void {
+  // The same replace path as openFileView: an editor holding unsaved changes is asked first, and
+  // every module-level registration the old viewer made is dropped before it is torn down.
+  if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return;
+  closeGuard = null;
+  editHooks = null;
+  gitHooks = null;
+  dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
+  runCloseHooks();                                     // …and the old viewer's panel hooks
+  dropMediaUrl();
+  dropUrlRead();                                       // a previous URL viewer's read stops pulling bytes
+  document.getElementById("romp-fileview")?.remove();
+  // THIS open's read, registered for the teardowns above (the mediaUrlLive pattern): the fetch and the
+  // streaming body read both ride ctrl.signal, so a close or a replace mid-body cancels them.
+  const ctrl = new AbortController();
+  urlAbort = ctrl;
+  const wrap = el("div");
+  wrap.id = "romp-fileview";
+  wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
+  const box = el("div", "fileview");
+  document.body.classList.add("fileview-open");
+
+  // Title: host/dir/ dimmed then the basename, the local viewer's two-element treatment — but the
+  // directory half is NOT a browse link here: there is no listing to open for a URL. Drawn from the
+  // clicked href now and RE-DRAWN from the response's URL once it lands (a redirect moves the document).
+  const bar = el("div", "fileview-bar");
+  const name = el("div", "fileview-name");
+  name.title = href;                                   // the full URL, one hover away
+  let parts = urlTitleParts(href);
+  let loc = href;                                      // where the document LIVES: the response URL once it lands
+  const dir = el("span", "fileview-dir");
+  dir.textContent = parts.dir;
+  const base = el("span", "fileview-base");
+  base.textContent = parts.base;
+  name.appendChild(dir); name.appendChild(base);
+  const acts = el("div", "fileview-acts");
+
+  const fmt = loadFmt();
+  let text: string | null = null;
+  const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
+  for (const mode of ["rendered", "raw"] as const) {
+    const b = el("button", "fileview-btn") as HTMLButtonElement;
+    b.type = "button";
+    b.textContent = mode === "rendered" ? "Rendered" : "Raw";
+    b.title = mode === "rendered" ? "The prose the markdown means" : "The document's actual bytes";
+    b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); });
+    segBtns.push([mode, b]);
+    acts.appendChild(b);
+  }
+  // The way OUT to the URL itself, in a new tab — an anchor wearing the button treatment, the
+  // GitHub link's dress: the browser owns the tab. It is also every failure pane's exit below.
+  // data-new-tab: this href IS a same-origin .md, exactly what the chat's anchor delegate routes
+  // back into this viewer — the marker tells it this one click means the tab.
+  const linkOut = (): HTMLAnchorElement => {
+    const a = el("a", "fileview-btn fileview-gh") as HTMLAnchorElement;
+    a.href = href; a.target = "_blank"; a.rel = "noopener";
+    a.dataset.newTab = "1";
+    a.textContent = "Open ↗"; a.title = "Open the URL in a new tab";
+    return a;
+  };
+  acts.appendChild(linkOut());
+  const copy = el("button", "fileview-btn") as HTMLButtonElement;
+  copy.type = "button"; copy.textContent = "Copy URL"; copy.title = href;
+  copy.addEventListener("click", () => {
+    navigator.clipboard?.writeText(href).then(
+      () => { copy.textContent = "Copied"; setTimeout(() => { copy.textContent = "Copy URL"; }, 1200); },
+      () => { copy.textContent = "Copy failed"; });
+  });
+  const close = el("button", "fileview-btn fileview-close") as HTMLButtonElement;
+  close.type = "button"; close.textContent = "✕"; close.title = "Close (Esc)";
+  close.setAttribute("aria-label", "Close the file viewer");
+  close.addEventListener("click", closeFileView);
+  acts.appendChild(copy); acts.appendChild(close);
+  bar.appendChild(name); bar.appendChild(acts);
+
+  const body = el("div", "fileview-body");
+  // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
+  // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
+  // the chat's own anchor delegate routes them.
+  delegate(body, {
+    "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
+  });
+  body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
+  box.appendChild(bar); box.appendChild(body);
+  wrap.appendChild(box);
+  document.body.appendChild(wrap);
+
+  // The URL's own #fragment (`evidence.md#results`) lands after the FIRST RENDERED paint — once. A
+  // Raw view has no heading ids, so a saved Raw preference does not SPEND the landing: it waits for
+  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check).
+  let landed = false;
+  const landFragment = () => {
+    if (landed) return;
+    let hash = "";
+    try { hash = new URL(href).hash; } catch { /* not a URL — nothing to land on */ }
+    if (!hash) { landed = true; return; }
+    if (fmt.md !== "rendered") return;                 // nothing to land on yet; the next rendered paint tries again
+    landed = true;
+    requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, hash); });
+  };
+  const renderBody = () => {
+    for (const [mode, b] of segBtns) {
+      const on = fmt.md === mode;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    if (text === null) return;                         // the loader holds the body until the bytes land
+    body.replaceChildren(fmt.md === "rendered"
+      ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
+      : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    landFragment();                                    // after the paint, and only a rendered one lands
+  };
+  renderBody();
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !document.getElementById("romp-fileview")) return;
+    e.preventDefault();
+    closeFileView();
+    document.removeEventListener("keydown", onKey);
+  };
+  document.addEventListener("keydown", onKey);
+  onKeyLive = onKey;                                   // registered for BOTH exits' dropOnKey, like the local viewer's
+
+  // Every failure says WHY, in the pane, with the way out: never a console-only failure, never a
+  // blank pane. The lines name the host and the URL rather than the viewer's mechanics.
+  const fail = (words: string) => {
+    if (!wrap.isConnected) return;                     // closed or replaced while in flight — paint nothing
+    const why = el("div", "fileview-err");
+    why.textContent = words;
+    const hint = el("div", "fileview-err-hint");
+    hint.textContent = href;
+    why.appendChild(hint);
+    why.appendChild(linkOut());
+    body.replaceChildren(why);
+  };
+  const hostWord = (u: string) => urlTitleParts(u).dir.split("/")[0] || u;
+  // Redraw the title from where the response actually CAME from: `/latest.md` → 302 →
+  // `/reports/run-1/evidence.md` names the second, and relative figures resolve against it (loc feeds
+  // mdBlock). The clicked href stays what Open ↗ and Copy URL hand back — the link the user was given.
+  const relocate = (r: Response) => {
+    loc = r.url || href;
+    parts = urlTitleParts(loc);
+    dir.textContent = parts.dir; base.textContent = parts.base; name.title = loc;
+  };
+  // Same-origin, cookie-authed, cache: no-store like every viewer fetch, on this open's abort signal.
+  // mode: "same-origin" holds the rule through REDIRECTS too: the clicked URL passed isMarkdownUrl, but
+  // a same-origin alias that 302s to a foreign host answering with a permissive CORS header would
+  // otherwise be fetched and rendered with that host as the base for every relative figure (review
+  // find on #958, 2026-09-07); the browser now rejects such a redirect and the .catch below says so.
+  // No Content-Type sniffing beyond one refusal: the URL was intercepted because its PATH is markdown,
+  // so the body is read as text and rendered as markdown whatever the server labelled it — except a
+  // 200 labelled text/html, which is a web page standing in for the document (settleUrlResponse).
+  fetch(href, { cache: "no-store", mode: "same-origin", signal: ctrl.signal }).then(async (r) => {
+    // EVERY exit that stops short of consuming the body aborts this open's controller — once the
+    // response has resolved that is what tears the transfer down (the review: a refused response's
+    // bytes kept arriving for a modal already closed, because .finally had let go of the controller
+    // and nothing had aborted it). settleUrlResponse fires the abort itself on each refusal verdict.
+    if (!wrap.isConnected) { ctrl.abort(); return; }
+    relocate(r);
+    const v = settleUrlResponse(r, URL_TEXT_MAX_BYTES, () => ctrl.abort());
+    if (v.kind === "http") { fail("HTTP " + v.status + " from " + hostWord(loc)); return; }
+    if (v.kind === "not-document") { fail("the server answered with a web page, not a document (" + v.type + ")"); return; }
+    if (v.kind === "declared-too-large") { fail(overCapWords(v.bytes, URL_TEXT_MAX_BYTES)); return; }
+    if (v.kind === "no-body") { fail("this document could not be loaded from this page — the response carried no body"); return; }
+    // Streamed under the cap: bytes counted as they arrive, the source cancelled the moment they pass
+    // it (never the whole body buffered first), decoded as a stream so a codepoint split across two
+    // chunks survives, and aborted with the viewer (ctrl.signal).
+    const got = await readTextCapped(r.body!, URL_TEXT_MAX_BYTES, ctrl.signal);   // read verdict: the body is there
+    if (!wrap.isConnected) { ctrl.abort(); return; }
+    if ("tooLarge" in got) { ctrl.abort(); fail(overCapWords(null, URL_TEXT_MAX_BYTES)); return; }
+    text = got.text;
+    renderBody();                                      // paints, and lands the fragment if this paint is rendered
+  }).catch((err) => {
+    // Only the TEARDOWN's abort is silent (the modal is gone, or a refusal already painted its words);
+    // an independently errored stream that merely wears the AbortError name still paints its failure.
+    if (ctrl.signal.aborted) return;
+    fail("this document could not be loaded from this page — " + String(err && (err as Error).message || err));
+  }).finally(() => {
+    if (urlAbort === ctrl) urlAbort = null;              // this read is over; a later open's registration stands
+  });
 }
 
 // Kick the browser's downloader at `url` without touching the pane: a clicked <a download> starts a
@@ -1662,6 +2313,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   if (wrapLines) {
     pre.classList.add("fileview-wrap");
     code.innerHTML = wrapNumberedHtml(hl !== null ? hl : escapeHtml(text));
+    linkifyFileText(code, path);   // URLs and paths in the text, on the DOM the highlight built (file-view-links.ts)
     pre.appendChild(code);
     wrap.appendChild(pre);
     return wrap;
@@ -1670,34 +2322,125 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   gutter.textContent = lines.map((_, i) => String(i + 1)).join("\n");
   gutter.setAttribute("aria-hidden", "true");
   if (hl !== null) code.innerHTML = hl; else code.textContent = text;
+  linkifyFileText(code, path);
   pre.appendChild(code);
   wrap.appendChild(gutter); wrap.appendChild(pre);
   return wrap;
 }
 
+// Land an in-document fragment on its target. The fragment — as typed, percent-encoded or not — names an
+// element of the RENDERED document (the .fileview-md box under `box`, never the viewer's chrome around it, whose
+// notice bar wears an id of its own, and never the page's ids): an element with exactly that id, a GitHub-style
+// `<a name>`, or a heading, through the slug the heading ids were minted with, so `#Evidence%20Results`,
+// `#evidence-results` and `#Evidence Results` all find md-evidence-results (file-view-links.ts fragmentTarget is
+// the one lookup; mark time reads it too). Nothing found → nothing happens: inert, never a scroll to the top and
+// never a navigation. Both viewers land through here: the local one's section links and a sibling link's
+// fragment, the URL one's fv-anchor links and the URL's own hash.
+function scrollToFragment(box: HTMLElement, fragment: string): boolean {
+  let frag = fragment.replace(/^#/, "");
+  try { frag = decodeURIComponent(frag); } catch { /* a stray % — match the bytes as written */ }
+  if (!frag) return false;
+  const target = fragmentTarget(box.querySelector(".fileview-md") || box, frag);
+  if (!target) return false;
+  target.scrollIntoView({ block: "start" });
+  return true;
+}
+
+// Where the rendered document LIVES, so its relative references can be resolved against it (the user
+// 2026-09-06: a `![fig](fig.png)` in a viewed document pointed at the dashboard's root). Two homes:
+//   • url  — the document was fetched from `href` by the browser (openUrlView); a relative src/href
+//            resolves against that URL, exactly as it would have on the page itself.
+//   • file — the document is `path` on the session's disk (openFileView); a relative image is the
+//            sibling file over the kernel's /file route (fileUrl — federation-aware, never hand-built),
+//            and a relative link opens the sibling in this same viewer.
+// No location at all (a caller with nothing to say) leaves the markup as marked emitted it.
+type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; sid: string | null };
+
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so — exactly like the
 // chat's md() in render.ts — the output goes through DOMPurify before it ever reaches .innerHTML: an
 // <img onerror> or a javascript: href in a README must never run in the dashboard.
-function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {
+function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
+  let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   try {
-    const dirty = marked.parse(text) as string;
+    // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
+    // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
+    // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
+    // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
+    // the defaults runs as well: per-call options replace, not compose. The file kind's alone: a URL document has
+    // no directory for `notes.md:7` to sit in, and its links resolve against the URL below.
+    const base = marked.defaults.walkTokens;
+    const dirty = marked.parse(text, doc && doc.kind === "file"
+      ? { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }
+      : undefined) as string;
     // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
     // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
-    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
+    // ALLOW_DATA_ATTR: false — a document's raw HTML must not carry data-* into the page: the viewer's
+    // body delegate lets an act it does not own bubble to render.ts's document-level delegate, so a
+    // `<span data-act="stopRetrying">` in a published report would interrupt the active session on a
+    // click (review find on #958, 2026-09-07). The viewer's own marks (the file kind's path and section links,
+    // the URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected.
+    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false });
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
+    rendered = false;
   }
-  // Figures: a relative src is re-pointed at the kernel, on the SANITIZED DOM (rewriteFigureSrcs, below) — after
-  // DOMPurify, so it touches only the attributes the sanitizer let stand and never re-parses marked's HTML.
-  rewriteFigureSrcs(box, path.slice(0, path.lastIndexOf("/") + 1), sid);
-  // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
-  // navigate it away would silently eat the chat until a reload.
-  box.querySelectorAll("a[href]").forEach((a) => {
-    (a as HTMLAnchorElement).target = "_blank";
-    (a as HTMLAnchorElement).rel = "noopener";
-  });
+  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
+  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
+  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
+  // #tabs CSS and shadow getElementById("tabs") for the page's own controls. Both modes, before the
+  // anchors are sorted: a section link is live when its target is a heading, an element with that id
+  // or a named anchor (file-view-links.ts fragmentTarget reads all three).
+  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
+  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+  // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
+  // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
+  // document the browser knows nothing about). getAttribute, never the .src/.href property: the
+  // property is already resolved against the PAGE, which is the wrong base.
+  if (doc && doc.kind === "url") {
+    box.querySelectorAll("img[src]").forEach((node) => {
+      const img = node as HTMLImageElement;
+      const src = img.getAttribute("src") || "";
+      const abs = resolveDocRelative(src, doc.href);
+      if (abs !== src) img.setAttribute("src", abs);
+    });
+    box.querySelectorAll("a[href]").forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      const href = a.getAttribute("href") || "";
+      if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
+      // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
+      // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
+      a.setAttribute("href", resolveDocRelative(href, doc.href));
+    });
+  } else if (doc) {
+    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
+    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
+    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
+    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
+    rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+  }
+  if (doc && doc.kind === "file") {
+    // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the
+    // web opens a NEW tab: the viewer lives inside the chat pane's document, and letting a README link navigate it
+    // away would silently eat the chat until a reload. A link whose target is a file relative to this one becomes a
+    // path link that opens THAT file in the viewer (its `#fragment` or `:line` riding along); a section link
+    // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why.
+    if (rendered) linkMarkdownAnchors(box, doc.path);
+  } else {
+    // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
+    // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
+    // delegated fv-anchor handler — a forced _blank on those opened a REAL tab at the chat page's own URL plus
+    // the fragment (found live, 2026-09-06). A URL document's sibling links are absolute by now, and the chat's
+    // own anchor delegate routes them (a same-origin .md back into the viewer).
+    box.querySelectorAll("a[href]").forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
+      a.target = "_blank";
+      a.rel = "noopener";
+    });
+  }
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
   box.querySelectorAll("pre code").forEach((node) => {
@@ -1709,6 +2452,10 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
       codeEl.classList.add("hljs");
     } catch { /* leave plain */ }
   });
+  // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
+  // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
+  // The fallback's bare text is left bare: it is the content and nothing else, which is that branch's promise.
+  if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);
   return box;
 }
 
@@ -1723,8 +2470,13 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
  *  — so the picture shown is the file the poll watches and the host hashes (review round 2: the viewer alone left
  *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw).
- *  Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL (`//host/…`, which the
- *  browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
+ *  A `~/…` src is a relative one whose first segment is `~`: markdown has no home anchor, so every markdown reader
+ *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
+ *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
+ *  opposite on purpose (joinDocPath leaves it for the kernel to expand): a link has one reader, the kernel at click
+ *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/guide.md
+ *  states them). Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL
+ *  (`//host/…`, which the browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
  *  as written: the kernel resolves the path and gates it, and a client-side normalization would be a second, weaker
  *  opinion on what it serves. marked percent-encodes destinations (`six seven.png` renders as `six%20seven.png`), so
  *  the attribute is decoded back to a path first (decodeURI; a malformed escape is taken as written). The authored
@@ -1745,6 +2497,69 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     img.setAttribute("data-fv-src", src);
     img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
+}
+
+// ── a selection across a repaint (fireRenderedKeepingSelection): each end kept, and put back ──
+/** One end of a selection as kept across a paint: the point itself (node, offset), its character offset into the body's
+ *  text (at), and the side of a text-node boundary it sat on (side: "end" for the end of a text node, "start" for the
+ *  beginning of one, null for a point inside one). The side is what the offset loses. The Raw view's rows (.fv-cl) carry
+ *  no newline text and a markdown <br> is no text either, so the end of a row's text and the first column of the next
+ *  have ONE offset; the point kept (a start after a row's last glyph, a triple-click's end at the next row's first
+ *  column) says which. An element point (a triple-click's end, the browser's point before or after a <br> or a picture)
+ *  is read by what stands beside it: before a child whose first leaf is text it is that text's start; before anything
+ *  else (a <br>, a picture, an empty row) it is where the text before ends. With no child after it: after a child whose
+ *  last leaf is text it is that text's end, after anything else the start of the text that follows. */
+type KeptPoint = { node: Node; offset: number; at: number; side: "start" | "end" | null };
+function keepPoint(root: Node, node: Node, offset: number): KeptPoint | null {
+  if (offset > nodeLength(node)) return null;
+  const at = textOffset(root, node, offset);
+  return at === null ? null : { node, offset, at, side: boundarySide(node, offset) };
+}
+const nodeLength = (n: Node): number => (n.nodeType === 3 ? (n as Text).data.length : n.childNodes.length);
+function boundarySide(node: Node, offset: number): "start" | "end" | null {
+  if (node.nodeType === 3) return offset >= (node as Text).data.length ? "end" : offset === 0 ? "start" : null;
+  const after = node.childNodes[offset]; const before = offset > 0 ? node.childNodes[offset - 1] : undefined;
+  if (after) return leafIsText(after, true) ? "start" : "end";
+  if (before) return leafIsText(before, false) ? "end" : "start";
+  return null;
+}
+/** Whether the first (or last) leaf under n, through its elements, is a text node. */
+function leafIsText(n: Node, first: boolean): boolean {
+  let c: Node | null = n;
+  while (c && c.nodeType !== 3) c = first ? c.firstChild : c.lastChild;
+  return !!c;
+}
+/** A point (node, offset) as a character offset into root's text: the data of root's text nodes in document order up to
+ *  the point (a Range's toString), the count the panel's re-wrapping of its marks leaves unchanged. null when the point
+ *  lies outside root. */
+function textOffset(root: Node, node: Node, offset: number): number | null {
+  if (!root.contains(node)) return null;
+  const r = document.createRange();
+  r.setStart(root, 0); r.setEnd(node, offset);
+  return r.toString().length;
+}
+/** The kept end, in the body as the paint left it. Its own point when that still stands: the node inside root, the
+ *  offset within it, and the same text before it (a text node the paint moved into a mark, or left alone; an element
+ *  whose children the paint split means something else at that index, and fails the last test). Otherwise the offset
+ *  mapped back into the text nodes root holds NOW, the side of a boundary chosen by the side kept — an end that sat at
+ *  the end of a text node goes to the end of the earlier node, one at the start to the start of the later — and, for a
+ *  point that sat inside a text node the paint has since split there, by its role (`earlier`: the selection's start
+ *  takes the later node, its end the earlier), the two homes holding the same text. */
+function pointBack(root: Node, k: KeptPoint, earlier: boolean): [Node, number] {
+  if (k.node.isConnected && root.contains(k.node) && k.offset <= nodeLength(k.node) && textOffset(root, k.node, k.offset) === k.at) return [k.node, k.offset];
+  return textPoint(root, k.at, k.side === null ? earlier : k.side === "start");
+}
+/** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that holds n,
+ *  root's end when n lies past its text. A point BETWEEN two text nodes has two homes: `start` takes the beginning of the
+ *  later one, else the end of the earlier. */
+function textPoint(root: Node, n: number, start: boolean): [Node, number] {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0; let last: Text | null = null;
+  for (let t = w.nextNode() as Text | null; t; t = w.nextNode() as Text | null) {
+    if (start ? seen + t.data.length > n : seen + t.data.length >= n) return [t, n - seen];
+    seen += t.data.length; last = t;
+  }
+  return last ? [last, last.data.length] : [root, root.childNodes.length];
 }
 
 // The media body's "shown" moment, for the seam's onRendered (Slice 3: the region overlay sizes itself against
@@ -1808,8 +2623,10 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
  *  owes the shell no pane restore, since the pane stays up). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
-                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void): void {
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void,
+                             host?: { openFile?: (path: string, sid: string | null, line: number | null, frag: string | null) => void }): void {
   post = poster;
+  if (host && host.openFile) openLinkedFile = host.openFile;   // a link inside a shown file opens through the host (the Files pane's Recent list)
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
@@ -1854,4 +2671,9 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
     h.failed("the connection dropped mid-save — it may or may not have landed; "
       + "Save again once the connection returns (a save that DID land will refuse as changed-on-disk)");
   });
+  // A drop while the GitHub ask is out loses its reply (the frame went; nothing re-sends it), and the
+  // placeholder would pulse for the rest of the open. The socket's RETURN is the event that re-asks —
+  // same reqId, so a first reply that was merely late and the second are one answer (the browse
+  // overlay's re-ask on romp:wsup is the precedent). A read-only query: asking twice costs nothing.
+  window.addEventListener("romp:wsup", () => { if (gitHooks) gitHooks.ask(); });
 }

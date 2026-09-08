@@ -214,6 +214,17 @@ const STORM_COOLDOWN_MS = 30000;      // during a storm, hold to 1 restart per t
 // loudly. Immediate restarts (the dashboard ↻, `--now`) behave exactly as before and satisfy any
 // pending quiet request in passing.
 const QUIET_POLL_MS = Number(process.env.ROMP_QUIET_POLL_MS) || 3000;
+// T240b: a busy poll that gets NO answer is a MISS, not quiet. Under load — exactly when a review
+// workflow's agents are running — the kernel answers /busy late, and one timed-out poll applied a
+// parked deploy over live background work ten minutes before the backstop (07:57Z 2026-09-07).
+// The tunnel supervisor's STALE_MISSES precedent: unreachable applies only after this many
+// CONSECUTIVE unanswered probes; any answer resets the streak. Probes go out on the 3 s grid and
+// each carries its own 5 s timeout, so a DEAD kernel (connection refused, instant) applies at
+// ~6 s and one that accepts but never answers at ~11 s (timeouts at 5, 8, 11) — measured, not
+// "3 poll intervals". The stated trade-off: a live kernel whose /busy latency stays above 5 s for
+// three probes in a row (a stall of ~10 s) is indistinguishable from a wedged one and is cut; the
+// backstop stays the ultimate bound.
+const BUSY_MISS_LIMIT = Number(process.env.ROMP_BUSY_MISS_LIMIT) || 3;
 const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 60 * 1000;
 
 // The manager's own note of a SIGTERM it is about to send, in the SAME restart-audit.jsonl the
@@ -410,10 +421,21 @@ function restartAllOrSelf() {
 // Pure decision (time injected → unit-testable). `st` = {since}; `busy` = the kernel's in-flight
 // SDK turn count, or null when the kernel is unreachable — a kernel that isn't answering has no
 // turns a restart could cut, so unreachable counts as quiet.
-function quietGate(st, busy, now, opts) {
-  if (busy === null || busy === 0) return { action: 'apply', reason: busy === null ? 'kernel unreachable' : 'quiet' };
+function quietGate(st, busy, now, opts, bd, misses) {
+  if (busy === null) {
+    // no answer: a MISS (T240b) — injected like `now`, counted by quietTick on the park
+    const n = misses || 0, lim = opts.missLimit || BUSY_MISS_LIMIT;
+    if (n >= lim) return { action: 'apply', reason: `kernel unreachable — ${n} consecutive busy polls missed` };
+    if (now - st.since >= opts.maxDeferMs) return { action: 'apply', reason: 'backstop cap' };
+    return { action: 'wait', reason: `busy poll missed (${n}/${lim}) — a slow or unreachable kernel is not yet quiet` };
+  }
+  if (busy === 0) return { action: 'apply', reason: 'quiet' };
   if (now - st.since >= opts.maxDeferMs) return { action: 'apply', reason: 'backstop cap' };
-  return { action: 'wait', reason: `${busy} turn(s) in flight` };
+  // T240: `busy` counts sessions with a turn in flight OR live background work (a Workflow run, a
+  // background agent) — either kind defers the restart; the breakdown says which
+  const why = bd ? `${bd.inflight} turn(s) in flight, ${bd.background} session(s) with background work`
+                 : `${busy} turn(s) in flight`;
+  return { action: 'wait', reason: why };
 }
 
 let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount, drainRefusedAfterArm}
@@ -472,14 +494,19 @@ function fetchBusy(port, cb, path) {
   const tok = kernelToken();
   const headers = tok ? { 'X-Romp-Token': tok } : {};
   const wantDrain = /[?&]drain=1(?:&|$)/.test(path || '');
-  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000, headers }, (res) => {
+  // 5 s, not 2 (T240b): the kernel answers /busy on a thread that competes with its pushers under
+  // load, and a 2 s cap turned ordinary slowness into "unreachable"
+  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 5000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => {
-      let n = null, draining = null;
+      let n = null, draining = null, bd = null;
       try {
         const j = JSON.parse(b);
         n = Number.isFinite(j.busy) ? j.busy : null;
         draining = typeof j.draining === 'boolean' ? j.draining : null;
+        // the breakdown (T240); an older kernel reports only `busy`, which then all counts as in flight
+        if (n !== null) bd = { inflight: Number.isFinite(j.inflight) ? j.inflight : n,
+                               background: Number.isFinite(j.background) ? j.background : 0 };
       } catch { n = null; }
       if (wantDrain && n !== null && draining === false && !drainNoticed) {
         drainNoticed = true;
@@ -491,11 +518,11 @@ function fetchBusy(port, cb, path) {
         drainNoticed = false;
         log('kernel armed the drain hold after the refusal above — new turn starts are held from here');
       }
-      cb(n, draining);
+      cb(n, draining, bd);
     });
   });
-  req.on('timeout', () => { req.destroy(); cb(null, null); });
-  req.on('error', () => cb(null, null));
+  req.on('timeout', () => { req.destroy(); cb(null, null, null); });
+  req.on('error', () => cb(null, null, null));
 }
 
 function clearPendingQuiet() {
@@ -527,7 +554,7 @@ function quietTick(deps) {
   if (!park) return;                      // an immediate restart satisfied it meanwhile
   schedule();                             // schedule-first: the chain outlives any probe failure
   let acted = false;
-  fetchBusy((busy) => {
+  fetchBusy((busy, bd) => {
     if (acted) return;
     acted = true;
     const cur = pending();
@@ -537,7 +564,17 @@ function quietTick(deps) {
       return;
     }
     try {
-      const g = quietGate(park, busy, now(), opts);
+      // the miss streak lives on the park (one per generation, like its drain evidence): a null
+      // answer extends it and logs once per miss; ANY answer ends it, loudly if it ran (T240b)
+      const lim = opts.missLimit || BUSY_MISS_LIMIT;
+      if (busy === null) {
+        park.misses = (park.misses || 0) + 1;
+        log(`busy poll missed (${park.misses}/${lim}): timeout or no answer — ${park.misses >= lim ? 'treating the kernel as unreachable' : 'not yet quiet'}`);
+      } else if (park.misses) {
+        log(`busy poll answered again after ${park.misses} miss(es) — the kernel was slow, not gone`);
+        park.misses = 0;
+      }
+      const g = quietGate(park, busy, now(), opts, bd, park.misses || 0);
       if (g.action === 'apply') apply(g);
     } catch (e) {
       log(`quiet-window evaluation failed (${e && e.message}) — the pending refresh stays queued`);
@@ -566,9 +603,15 @@ function queueQuietRestart(mode) {
       // reads fresh per poll, so a refusal can be transient (a token restored mid-park arms every
       // later poll), and the apply line below renders what this park's counts actually show.
       const park = pendingQuiet;
-      const cb = (busy, draining) => {
+      const cb = (busy, draining, bd) => {
         if (park && busy !== null) {
-          if (draining === false) {
+          // T240: remember whether any TURN is in flight — the drain hold (new turn starts held
+          // box-wide) is asked for only while one is; background-only busyness defers the restart
+          // without freezing other sessions' queued prompts for up to the backstop
+          park.lastInflight = bd ? bd.inflight : busy;
+          // a plain /busy poll (no hold asked) answers draining:false by construction — that is not
+          // a REFUSAL, and counting it as one made the backstop line blame a lost hold (review find)
+          if (draining === false && park.lastAsked) {
             park.drainRefusedCount++;
             // ORDER matters for the apply line (T227): two bare counters cannot tell "refused, then
             // armed" from "armed, then LOST" — a refusal that lands AFTER any arm is the loss, and
@@ -577,9 +620,17 @@ function queueQuietRestart(mode) {
             if (park.drainArmedCount > 0) park.drainRefusedAfterArm++;
           } else if (draining === true) park.drainArmedCount++;
         }
-        done(busy);
+        done(busy, bd);
       };
-      fetchBusy(KERNEL_PORT, cb, '/busy?drain=1');   // parked → hold new turn starts (T121)
+      // parked → hold new turn starts (T121) — but only while a turn is actually in flight (T240);
+      // the first poll, knowing nothing yet, asks for the hold as before
+      const holdTurns = park.lastInflight === undefined || park.lastInflight > 0;
+      park.lastAsked = holdTurns;            // what THIS poll asked for — the answer's refusal test reads it
+      // the park's identity rides every parked poll (T240c): the kernel keys its drain EPISODE — one
+      // "parked" line, one 5-minute ring — on it instead of a time window, and can ring from a plain
+      // poll while only background work holds the park
+      const pk = 'park=' + Math.round(park.since);
+      fetchBusy(KERNEL_PORT, cb, holdTurns ? '/busy?drain=1&' + pk : '/busy?' + pk);
     },
     now: Date.now,
     opts: { maxDeferMs: QUIET_MAX_DEFER_MS },
@@ -651,6 +702,34 @@ function runManager() {
 // prompt "Visual Studio Code wants to access…" — even with VS Code closed (its helpers linger). Starting
 // the server here at login fixes it permanently. `exit-empty off` keeps the (initially empty) server alive
 // until real sessions join; it's a no-op if a server is already running (the user 2026-06-16).
+// op's own credential (a service-account token in service.env, for the kernel's `op read`) must not
+// become the tmux SERVER's environment: every pane the server ever creates inherits the server's
+// globals, not the launching client's, so a scrubbed `romp new` client still handed the token to
+// `exec claude` (review, 2026-09-05). Scrubbed only when romp is the op consumer (a reference is
+// configured); a box whose sessions run `op` through Claude Code's apiKeyHelper keeps its environment.
+// The manager's own ANTHROPIC_API_KEY goes with it (2026-09-06): once a reference governs, a pane billing
+// the key the manager started with bills a key nobody chose; without the variable the pane falls to
+// Claude Code's own auth (login or apiKeyHelper). Static-key boxes (no reference) keep it — their panes
+// rely on the inheritance. "Configured" is the manager's environment OR the env file's own line: the
+// file is what `romp keyswap` rewrites without a manager restart, and it must decide here too. The
+// name list mirrors kernel/keysource.py is_tmux_scrub_name.
+function serviceEnvHasRef(env) {
+  const file = env.ROMP_SERVICE_ENV_FILE || env.ROMP_SERVICE_ENV
+    || path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), '.config'), 'romp', 'service.env');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return false; }   // no file: no reference
+  // the same line-by-line read as bin/romp-node-launch: literal assignments, never sourced
+  return text.split('\n').some((line) => line.trimStart().startsWith('ROMP_API_KEY_REF='));
+}
+function withoutOpCredentials(env) {
+  const out = Object.assign({}, env);
+  if (!out.ROMP_API_KEY_REF && !serviceEnvHasRef(env)) return out;
+  for (const k of Object.keys(out)) {
+    if (k === 'OP_SERVICE_ACCOUNT_TOKEN' || k === 'OP_CONNECT_HOST' || k === 'OP_CONNECT_TOKEN' || k === 'OP_ACCOUNT' || k.startsWith('OP_SESSION_')
+        || k === 'ANTHROPIC_API_KEY') delete out[k];
+  }
+  return out;
+}
 //
 // Under the Linux service the server goes into a transient systemd scope of its own (2026-09-05). The
 // manager runs as a systemd user service that relies on systemd's default KillMode=control-group (the
@@ -660,8 +739,10 @@ function runManager() {
 // starts the daemon outside the service cgroup; a session's later `tmux new-session` joins that server
 // and survives a service restart. The tmux CLIENT still exits at once (it only starts the daemon), so
 // execFileSync's semantics are unchanged, and when a server already runs the call is the same no-op and
-// the scope collects itself. Any failure of the scoped path falls back to the bare call. The macOS path
-// is as it was: launchd owns the lineage there and the TCC rationale above still applies.
+// the scope collects itself. Any failure of the scoped path falls back to the bare call, and the line after
+// it READS where the server actually sits (its cgroup) rather than assuming the bare call placed it: a
+// timed-out scoped call kills only tmux's client, the daemon it forked stays inside the scope. The macOS
+// path is as it was: launchd owns the lineage there and the TCC rationale above still applies.
 const TMUX_START_ARGV = ['tmux', 'start-server', ';', 'set', '-g', 'exit-empty', 'off'];
 
 // Is `name` an executable on the env's PATH? (Node has no `which`.)
@@ -692,23 +773,140 @@ function tmuxStartArgv({ platform = process.platform, env = process.env, onPath 
                   '--', ...TMUX_START_ARGV], scoped: true };
 }
 
+const TMUX_START_TIMEOUT_MS = 5000;
+const FAILURE_LINE_MAX = 200;
+
+// What a failed scoped start says in the log, from execFileSync's error: the tool that failed, and its
+// first stderr line, bounded. systemd-run in --scope mode execs the command in place, so a non-zero exit
+// is either systemd-run's own — no user bus, a refused unit name; its logger prefixes every line
+// "Failed to …" — or tmux's, failing inside a scope that did start ("error connecting to …"). The line
+// names whichever wrote the message. With nothing on stderr it names systemd-run, the command that ran,
+// and says how it ended. Exported for the node suite.
+function scopedStartFailure(e) {
+  const first = String((e && e.stderr) || '').split('\n').map((s) => s.trim()).find(Boolean) || '';
+  const tool = first && !/^Failed to /.test(first) ? 'tmux' : 'systemd-run';
+  let detail = first;
+  if (!detail) {
+    if (e && e.code === 'ETIMEDOUT') detail = `timed out after ${TMUX_START_TIMEOUT_MS / 1000} s`;
+    else if (e && e.signal) detail = `killed by ${e.signal}`;
+    else if (e && typeof e.status === 'number') detail = `exit ${e.status}, nothing on stderr`;
+    else detail = String(e && e.message || e).split('\n')[0];   // a spawn error: "spawnSync systemd-run ENOENT"
+  }
+  if (detail.length > FAILURE_LINE_MAX) detail = detail.slice(0, FAILURE_LINE_MAX - 1) + '…';
+  return { tool, detail };
+}
+
+// After a failed scoped start the bare call runs, and where the server then sits is READ, not predicted
+// (the #953 review): the old fixed line said the server was unscoped and a service restart would take it
+// down, which is wrong in two cases. A scoped call that times out — execFileSync SIGTERMs the tmux CLIENT
+// (systemd-run exec'd it in place) while the server daemon that client forked stays alive inside the
+// romp-tmux scope, so the bare retry is a no-op onto a scoped server. And after a service restart the
+// previous manager's server is still up in its old scope, so if systemd-run fails on THIS start (bus not
+// up yet, a refused unit) the bare call no-ops onto a scoped server again. `#{pid}` is the server's pid;
+// display-message does not start a server (exit 1, "no server running on …", when there is none — tmux 3.4).
+const TMUX_SERVER_PID_ARGV = ['tmux', 'display-message', '-p', '#{pid}'];
+
+// PURE: the path of the hierarchy systemd manages, from a /proc/<pid>/cgroup text — the `0::<path>` line on
+// cgroup v2; on v1 (one `<id>:<controllers>:<path>` line per controller) the `name=systemd` controller's,
+// else the first path present. '' when the text carries none.
+function systemdCgroupPath(text) {
+  const rows = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const parts = l.split(':');
+    return parts.length >= 3 ? { id: parts[0], controllers: parts[1], path: parts.slice(2).join(':') } : null;
+  }).filter(Boolean);
+  const v2 = rows.find((r) => r.id === '0' && r.controllers === '');
+  const v1 = rows.find((r) => r.controllers.split(',').includes('name=systemd'));
+  return ((v2 || v1 || rows[0]) || { path: '' }).path;
+}
+
+// PURE: where a /proc/<pid>/cgroup text places the server, against the manager's own (/proc/self/cgroup).
+// Every line is tried for a romp-tmux-* scope (cgroup v1 has one per controller, each ending in the unit);
+// only the manager's own scopes count — a romp-session-* scope is a session CLI's, not this feature's claim.
+// Otherwise the server's cgroup is COMPARED with the manager's, not classified from the shape of its path
+// (the #967 review): the same cgroup, or one under it, is the service's own, which KillMode=control-group
+// takes down with the service — 'unscoped', the line as it always was. Any other cgroup is outside the
+// service's reach — a server the user started from a terminal sits in the login session's scope — and a
+// service restart leaves it alive, so 'outside' names the cgroup instead of predicting a loss.
+function placementFromCgroup(text, own) {
+  const lines = String(text || '').split('\n');
+  for (const line of lines) {
+    const m = /\/(romp-tmux-\d+\.scope)\s*$/.exec(line);
+    if (m) return { placement: 'scoped', unit: m[1] };
+  }
+  const server = systemdCgroupPath(text);
+  if (!server) return { placement: 'unknown', why: lines.some((l) => l.trim()) ? 'no cgroup path in the file' : 'empty cgroup file' };
+  const mine = systemdCgroupPath(own);
+  if (!mine) return { placement: 'unknown', why: "the manager's own cgroup file is empty" };
+  if (server === mine || server.startsWith(mine.replace(/\/$/, '') + '/')) return { placement: 'unscoped' };
+  return { placement: 'outside', cgroup: server };
+}
+
+function defaultServerPid() {
+  return execFileSync(TMUX_SERVER_PID_ARGV[0], TMUX_SERVER_PID_ARGV.slice(1),
+                      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_START_TIMEOUT_MS,
+                        env: withoutOpCredentials(process.env) });
+}
+function defaultReadCgroup(pid) { return fs.readFileSync('/proc/' + pid + '/cgroup', 'utf8'); }
+
+// Never throws — a throw here would abort startManager before the control port binds — so every failure
+// of the probe is an 'unknown' placement carrying the failure's first line, bounded like the failure
+// line's detail. `serverPid` and `readCgroup` are injectable for the node suite; the defaults ask tmux
+// (bounded by the same timeout as the start) and read /proc — the server's file, then the manager's own
+// (`self`), which the placement compares it with.
+function tmuxServerPlacement({ serverPid = defaultServerPid, readCgroup = defaultReadCgroup } = {}) {
+  const why = (e) => {
+    const first = String((e && e.stderr) || '').split('\n').map((s) => s.trim()).find(Boolean)
+      || String(e && e.message || e).split('\n')[0];
+    return first.length > FAILURE_LINE_MAX ? first.slice(0, FAILURE_LINE_MAX - 1) + '…' : first;
+  };
+  let pid;
+  try { pid = String(serverPid()).trim(); } catch (e) { return { placement: 'unknown', why: why(e) }; }
+  if (!/^\d+$/.test(pid)) return { placement: 'unknown', why: 'tmux reported no server pid' };
+  let text, own;
+  try { text = readCgroup(pid); own = readCgroup('self'); } catch (e) { return { placement: 'unknown', why: why(e) }; }
+  return placementFromCgroup(text, own);
+}
+
+// PURE: the line the bare call's success logs, worded from where the server sits. The unscoped wording is
+// the line as it always was (its pins stay); the other three predict no loss.
+function bareEnsuredLine({ placement, unit, cgroup, why }) {
+  if (placement === 'scoped') {
+    return `tmux server ensured — already running inside ${unit} (the scoped start had begun it, or an earlier one still holds it); a service restart leaves it and its sessions' jobs alive`;
+  }
+  if (placement === 'unscoped') {
+    return 'tmux server ensured without a scope — under the service, a service restart will take it down';
+  }
+  if (placement === 'outside') {
+    return `tmux server ensured — already running outside the service's cgroup, in ${cgroup} (a server begun from a terminal sits in the login session's scope); a service restart leaves it and its sessions' jobs alive`;
+  }
+  return `tmux server ensured — whether it sits in a scope could not be read (${why}); under the service, a restart takes it down only if it is not in one`;
+}
+
 function startTmuxServer() {
   const pick = tmuxStartArgv();
   if (!pick) return;   // no tmux on PATH: nothing to start, and nothing to log (as before the scopes)
+  // stderr is piped on the scoped call, for the failure line below: with stdio 'ignore' the error carried
+  // "Command failed: <argv>" and nothing about why. The pipe closes when tmux's client exits — its server
+  // daemonizes onto /dev/null — so it holds nothing open. The bare call keeps 'ignore': nothing reads it.
+  const stdio = pick.scoped ? ['ignore', 'ignore', 'pipe'] : 'ignore';
   try {
-    execFileSync(pick.argv[0], pick.argv.slice(1), { stdio: 'ignore', timeout: 5000 });
+    execFileSync(pick.argv[0], pick.argv.slice(1), { stdio, timeout: TMUX_START_TIMEOUT_MS, env: withoutOpCredentials(process.env) });
     log(pick.scoped
       ? 'tmux server ensured in its own transient scope (romp-tmux-*) — a service restart leaves it and its sessions\' jobs alive'
       : 'tmux server ensured (launchd-rooted) — new sessions won\'t inherit a terminal\'s TCC identity');
     return;
   } catch (e) {
     if (!pick.scoped) return;   // a server is already up, or tmux itself failed — nothing more to do
-    // Say where it landed: this may be a terminal run with no service cgroup at all.
-    log(`systemd-run could not start the tmux server in a scope (${String(e && e.message || e).split('\n')[0]}) — starting it the plain way instead`);
+    // Say what failed; where the server sits is read from its cgroup after the bare call (bareEnsuredLine),
+    // not predicted here.
+    const { tool, detail } = scopedStartFailure(e);
+    log(tool === 'tmux'
+      ? `tmux failed inside the scope systemd-run started for it (${detail}) — starting it the plain way instead`
+      : `systemd-run could not start the tmux server in a scope (${detail}) — starting it the plain way instead`);
   }
   try {
-    execFileSync(TMUX_START_ARGV[0], TMUX_START_ARGV.slice(1), { stdio: 'ignore', timeout: 5000 });
-    log('tmux server ensured without a scope — under the service, a service restart will take it down');
+    execFileSync(TMUX_START_ARGV[0], TMUX_START_ARGV.slice(1), { stdio: 'ignore', timeout: TMUX_START_TIMEOUT_MS, env: withoutOpCredentials(process.env) });
+    log(bareEnsuredLine(tmuxServerPlacement()));
   } catch (e) { /* a server is already up, or tmux itself failed — nothing to do */ }
 }
 
@@ -834,7 +1032,9 @@ function ensureUp() {
 // file is executed directly, so require()-ing it from a test has no side effects.
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
                    kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet,
-                   tmuxStartArgv, commandOnPath, TMUX_START_ARGV, exitLine, auditSigterm,
+                   tmuxStartArgv, scopedStartFailure, commandOnPath, TMUX_START_ARGV,
+                   placementFromCgroup, tmuxServerPlacement, bareEnsuredLine, TMUX_SERVER_PID_ARGV,
+                   withoutOpCredentials, serviceEnvHasRef, exitLine, auditSigterm,
                    ensureDecision, downMarkerHeld, clearDownMarker, DOWN_MARKER,
                    // the SIGTERM wiring, for tests that seed `kernels` with a stand-in child
                    restartKernel, restartAll, stopKernel, shutdownAll, stopTrigger, kernels };

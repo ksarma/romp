@@ -5,7 +5,10 @@ it to completion. P2 (the same day) put the four store-only tiers on the same ga
 parse pair and the store trio), the grouper and consolidator (the store trio and cleared.jsonl, no parse),
 the distiller (the store trio, the states file and this sid's stall records, no parse); the StoreTiers,
 StoreReArms, StoreOwnWrites, StoreCompleteness, UnblockerHazard and DrainStaysUngated classes and the four
-FsCompleteness checks below are its tests.
+FsCompleteness checks below are its tests. J6 of the round-4 perf plan (the same day) put the courier's
+per-session scan on the gate: the pinned parse pair, the store trio and the episode log, with the scan
+marked incomplete when it produced pending rows or its link repair reached another session's store; the
+CourierGate class and the courier's FsCompleteness check are its tests.
 
 Why: every pass ran every discovered session in full (a parse, a store load, the unit walk, the closed-turn
 walk, a rollup, an unconditional save), with about two of thirty-three sessions holding anything new per
@@ -38,6 +41,7 @@ import builtins
 import io
 import json
 import os
+import pathlib
 import re
 import shutil
 import tempfile
@@ -66,7 +70,12 @@ HOLD_ALL = '{"verdicts":[]}'
 LIFT_ONE = '{"verdicts":[{"n":1,"do":"lift","why":"the port was named two messages later"}]}'
 MIRROR_WHY = "declared in the agent's own to-do list"          # the mirror top's mint reason (_title_mirror_tops)
 STORE_TIERS = ("unblock", "group", "consolidate", "distill")
-ALL_TIERS = ("plan", "close") + STORE_TIERS                     # run_triage's order
+TRIAGE_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
+ALL_TIERS = TRIAGE_TIERS + ("index",)          # plus the index tier (run_index, on its own thread beside run_triage
+#                                                live; a test pass runs it after the triage tiers)
+DELEGATE_REPLY = '{"verdict": "delegating", "goal": 0, "text": "Wire up the export button"}'
+MID = "1781100000.11111_22222.TESTHOST"                         # a delivered peer message's id (synthetic)
+MID2 = "1781100000.33333_44444.TESTHOST"
 
 
 def iso(t):
@@ -111,6 +120,8 @@ class _Gate(unittest.TestCase):
         jd.end_pass_frame(True)                      # belt: never inherit a frame a crashed test left open
         for c in (jd._PARSE_CACHE, jd._CHAIN_MEMO, jd._BG_SCAN_CACHE, jd._RECON_MEMO, jd._gone_memo):
             c.clear()
+        jd._postal_from_memo[0] = (None, ({}, []))   # the ledger memo keys on (mtime, size), not the path: never
+        #                                              serve another root's rows under this one
         self.cdir = self.td / "launchdir"; self.cdir.mkdir()
         self.proj = self.td / "projects"
         self.pdir = self.proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(self.cdir)))
@@ -132,13 +143,26 @@ class _Gate(unittest.TestCase):
         # the store tiers' helpers (P2): hold every block, land every distill, title every mirror top; and a
         # belt under all of them, since no test here may reach the real model call
         self._saved_store = (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
-                             jd.parsed_session)
-        self.unblock_calls, self.distill_calls, self.title_calls = [], [], []
+                             jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
+                             jd.rollup_status)
+        self.unblock_calls, self.distill_calls, self.title_calls, self.courier_calls = [], [], [], []
+        # the courier (J6): a delegating verdict with no sender link, so a filed row plants the sender's
+        # tracker and files the recipient quiet (the chain walk finds no link to root the mint on)
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or DELEGATE_REPLY)
         jd.unblock_llm = lambda blocks, since, completed="": (self.unblock_calls.append(blocks) or HOLD_ALL)
         jd.distill_llm = lambda text, work, why, **kw: (self.distill_calls.append(text) or "Shipped the search endpoint.")
         jd.brief_llm = lambda text, work, owed, **kw: (self.distill_calls.append(text) or "Pick the port the api binds.")
         jd.stall_llm = lambda text, work, holding: (self.distill_calls.append(text) or "The build has not finished.")
         jd.mirror_title_llm = lambda subject, frame=None, user_ask=None: (self.title_calls.append(subject) or "Write the api tests")
+
+        # the index tier (J7): a caption for every unit, a gist for every prompt, a record for every archive
+        self._saved_index = (jd.caption_llm, jd.gist_llm, jd.archive_llm, jd._index_caption_tasks, jd._index_arch_task,
+                             jd.session_turn_captions, jd.ARCH_BUDGET)
+        self.caption_calls, self.archive_calls = [], []
+        jd.caption_llm = lambda text: (self.caption_calls.append(text) or "Wired the export button.")
+        jd.gist_llm = lambda text, judge="gister": (self.caption_calls.append(text) or "Wire the export button")
+        jd.archive_llm = lambda log: (self.archive_calls.append(log) or
+                                      {"headline": "The notes api", "abstract": "Built the export button."})
 
         def no_model(*a, **k):
             raise AssertionError("a stage reached the real model call; patch the helper above the belt")
@@ -147,11 +171,14 @@ class _Gate(unittest.TestCase):
 
     def tearDown(self):
         jd.end_pass_frame(True)
+        (jd.caption_llm, jd.gist_llm, jd.archive_llm, jd._index_caption_tasks, jd._index_arch_task,
+         jd.session_turn_captions, jd.ARCH_BUDGET) = self._saved_index
         (jd.PROJECTS, jd.plan_llm, jd.closer_llm, jd.group_llm, jd.opener_llm, jd._PENDING_CUT_FN,
          jd._judge_run_impl, jd._rewound_away, jd._judge_run, jd._fileset_key, jd._close_turn,
          jd._STAGE_STAMP_MAX) = self._saved
         (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
-         jd.parsed_session) = self._saved_store
+         jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
+         jd.rollup_status) = self._saved_store
         if self._env is None:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
         else:
@@ -181,11 +208,57 @@ class _Gate(unittest.TestCase):
         with open(jd.STATESDIR / (sid + ".jsonl"), "a") as f:
             f.write(json.dumps({"t": t, "state": state}) + "\n")
 
+    def _peer_line(self, t, uuid, mid, kind="delegate", body="DELEGATE: wire up the export button", parent=None):
+        """A delivered peer (postal) message as the transcript records it: the body, then the id and kind
+        markers the postal bus appends. The sender is resolved through the ledger row (_ledger_row)."""
+        text = "%s\n<!-- romp-msg-id: %s -->" % (body, mid)
+        if kind:
+            text += "\n<!-- romp-msg-kind: %s -->" % kind
+        return uline(t, text, uuid, parent, ps="sdk")
+
+    def _ledger_row(self, mid, from_id, to_id, kind="delegate", body="DELEGATE: wire up the export button", t=T0 + 190, **extra):
+        """The postal ledger's "sent" row for a delivered message: the authoritative sender record the parse's
+        postal index (author.peer) and the courier's _postal_row read."""
+        jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+        row = {"t": t, "ev": "sent", "id": mid, "from": "web", "from_id": from_id, "to_id": to_id,
+               "kind": kind, "body": body}
+        row.update(extra)
+        with open(jd.MESSAGES, "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def _peer_session(self, sid, sender, mid=MID, kind="delegate", t=T0 + 200, replied=True):
+        """A recipient session whose third turn is a delivered peer message from `sender` (ledger row
+        included), answered when `replied`; the sender session is a plain two-turn one. Returns the path."""
+        recs = list(TWO_TURNS) + [self._peer_line(t, "p1", mid, kind=kind, parent="a2")]
+        if replied:
+            recs.append(aline(t + 30, "On it.", "a3", "p1"))
+        self._ledger_row(mid, sender, sid, kind=kind or "delegate", t=t - 10)
+        path = self._session(sid, recs)
+        self._session(sender, name="api")
+        return path
+
+    def _peer_seg_id(self, sid, path):
+        """The segment id of the session's peer-triggered segment, as the courier files it."""
+        store = jd.load_goals(sid)
+        segs = [sg for turn in jd.parsed_session(sid, [str(path)], NOW)["turns"] for sg in jd._segs(turn, store)]
+        return next(sg["id"] for sg in segs if jd._seg_peer(sg))
+
+    def _scan_log(self):
+        """Wrap _courier_scan to record the sids it ran for; returns the list (cleared by the caller)."""
+        real, seen = self._saved_store[7], []
+
+        def scan(fsid, path, now):
+            seen.append(fsid)
+            return real(fsid, path, now)
+        jd._courier_scan = scan
+        return seen
+
     def _pass(self, now=NOW, tiers=("plan", "close")):
         """One gated pass over the fixture: the named tiers in run_triage's order under one frame."""
         jd._discover_cache.clear()                   # discover's list is cached behind a dir fingerprint, not `now`
-        runners = {"plan": jd.run_plan, "close": jd.run_close, "unblock": jd.run_unblock, "group": jd.run_group,
-                   "consolidate": jd.run_consolidate, "distill": jd.run_distill}
+        runners = {"plan": jd.run_plan, "close": jd.run_close, "unblock": jd.run_unblock, "courier": jd.run_courier,
+                   "group": jd.run_group, "consolidate": jd.run_consolidate, "distill": jd.run_distill,
+                   "index": jd.run_index}
         own = jd.begin_pass_frame()
         try:
             for t in ALL_TIERS:
@@ -230,6 +303,12 @@ class _Gate(unittest.TestCase):
 
     def _st(self, tier):
         return dict(jd._TIER_STATS[tier])
+
+    def _rows(self, err):
+        """The judge-errors rows with `err`, in file order; none when no row has been written yet."""
+        if not jd.ERRORS.exists():
+            return []
+        return [r for r in (json.loads(l) for l in open(jd.ERRORS) if l.strip()) if r.get("err") == err]
 
     def _reset(self):
         for d in jd._TIER_STATS.values():
@@ -972,6 +1051,24 @@ class FsCompleteness(_Gate):
         self._check("unblock", jd._unblock_session,
                     prep=lambda: self._block(SID, self._tops()[0]["id"], T0 + 150))
 
+    def test_the_couriers_idle_reads_are_all_in_its_signature(self):
+        # the courier's idle scan: the pinned parse (the key files, the states file and the ledger the postal
+        # index reads, allowed for every parse tier), the store trio and the episode log, nothing else
+        self._check("courier", jd._courier_scan)
+
+    def test_the_index_tiers_idle_reads_are_all_in_its_signature(self):
+        # the index tier's idle path over a WARM unit cache (the fixture converged, so every session's cache is
+        # current and the captioner's body takes the hit path): the pinned parse's key files, the captions file,
+        # the archive record and the unit cache. The signature carries NO goal store (decision 7 of the round-4
+        # plan), so the store is outside the allowed set and a store read on this path is exactly what this
+        # test must catch
+        self._check("index", lambda sid, path, now: (jd._index_caption_tasks(sid, path, sid, now),
+                                                     jd._index_arch_task(sid)))
+        for sid in (SID, SID2):
+            self.assertEqual(json.loads((jd.PCACHE / (sid + ".json")).read_text())["key"],
+                             json.loads(json.dumps(list(jd._frame_parse_key(sid, [str(self.pdir / (sid + ".jsonl"))])[0]))),
+                             "the cache is warm under the live pair: the check ran the hit path")
+
     def test_the_groupers_idle_reads_are_all_in_its_signature(self):
         self._check("group", jd._group_session)
 
@@ -1294,10 +1391,11 @@ class StoreCompleteness(_Gate):
         for _ in range(2):
             self._reset()
             self._pass(tiers=ALL_TIERS)
-            for t in ALL_TIERS:
-                s = self._st(t)
+            for t in TRIAGE_TIERS:                                       # the index tier's signature carries no store:
+                s = self._st(t)                                          #  it skips (IndexGate holds its miss path)
                 self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
                                  "%s: a fallback view marks the run incomplete, so the sid stays due" % t)
+            self.assertEqual(self._st("index")["skipped"], 1, "the index reads no store on its hit path: it skips")
         self.assertEqual(gp.read_text(), "{ not the store", "no tier wrote")
         self.assertEqual(len(self._rows("store-unreadable")), 1, "one row per failure episode")
         self.assertEqual(len(self._rows("unread-store-save")), 0, "every tier stood down before its save")
@@ -1305,7 +1403,7 @@ class StoreCompleteness(_Gate):
         gp.write_text(good)                                              # the file reads again: nothing else moved
         self._reset()
         self._pass(tiers=ALL_TIERS)
-        self.assertEqual(tuple(self._st(t)["stamped"] for t in ALL_TIERS), (1,) * len(ALL_TIERS),
+        self.assertEqual(tuple(self._st(t)["stamped"] for t in TRIAGE_TIERS), (1,) * len(TRIAGE_TIERS),
                          "readable again: every tier runs to completion and stamps")
         self.assertEqual(len(self._rows("store-unreadable")), 1)
 
@@ -1339,9 +1437,6 @@ class StoreCompleteness(_Gate):
         while f and store["nodes"][f].get("parentId") is not None:
             f = store["nodes"][f]["parentId"]
         return store["nodes"][f]
-
-    def _rows(self, err):
-        return [r for r in (json.loads(l) for l in open(jd.ERRORS) if l.strip()) if r.get("err") == err]
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_states_file_never_stamps(self):
@@ -1590,6 +1685,1309 @@ class DrainStaysUngated(_Gate):
                          "no transcript, no work: the sentinel, written by the ungated drain")
         self.assertIsNone(self._stamp("distill", SID2), "the drain leaves no stamp")
         self.assertEqual(self._st("distill")["ran"], 0, "the discovered sid skipped; the drain is not a gated run")
+
+
+class CourierGate(_Gate):
+    """The courier's per-session scan on the gate (J6, 2026-09-07). The invariant: the gate never withholds a
+    courier action the ungated pass would have taken from new evidence. A scan is skipped only when the
+    pinned parse pair, the store trio and the episode log are identical to the last scan that completed
+    with no pending row and no backref; a scan that produced rows, reached another session's store, stood
+    down on a fallback store or raised leaves no stamp, so the session is scanned again next pass."""
+
+    def _ran(self, tier="courier"):
+        s = self._st(tier)
+        return (s["ran"], s["skipped"], s["stamped"], s["incomplete"])
+
+    def test_two_idle_passes_scan_once_then_skip_with_no_store_io(self):
+        self._session(SID)
+        self._session(SID2, name="api")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]), "first pass: every discovered session is scanned")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "two complete scans, both stamped")
+        self.assertIsNotNone(self._stamp("courier", SID))
+        self.assertIsNotNone(self._stamp("courier", SID2))
+        wm = jd.pass_watermark("courier", SID)
+        self.assertIsNotNone(wm, "a completed scan stamps pass_done")
+        seen.clear()
+        segs = []
+        real_segs = self._saved_store[8]
+        jd._segs = lambda turn, store: (segs.append(1) or real_segs(turn, store))
+        self._reset()
+        io0 = jd.goal_io_stats()
+        time.sleep(0.002)
+        self._pass(tiers=("courier",))
+        io1 = jd.goal_io_stats()
+        self.assertEqual(seen, [], "second pass: no scan")
+        self.assertEqual(segs, [], "no segment walk")
+        self.assertEqual(self._ran(), (0, 2, 0, 0))
+        self.assertEqual((io1["loads"] - io0["loads"], io1["saves"] - io0["saves"]), (0, 0),
+                         "a skipped session costs no store load and no save")
+        self.assertGreater(jd.pass_watermark("courier", SID), wm, "a skip stamps pass_done too")
+        self.assertEqual(self.courier_calls, [], "no peer mail, no model call, in either pass")
+
+    def test_each_input_re_arms_the_courier_for_its_sid_only(self):
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge()                                                # every tier, so the planner's tops exist
+        seen = self._scan_log()
+
+        def rearms(expect, msg="the follow-on pass: nothing new, both skip"):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertEqual(seen, expect, msg)
+            self.assertEqual(self._st("courier")["skipped"], 2 - len(expect), msg)
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        rearms([SID], "a transcript append (the parse pair)")
+        rearms([], "nothing new: the re-armed scan wrote nothing and stamped")
+        self._states_row(SID, T0 + 300, "idle")
+        rearms([SID], "a states row (in the parse key)")
+        rearms([])
+        store = jd.load_goals(SID)
+        top = self._tops()[0]
+        store["nodes"][top["id"]]["text"] = "Renamed by a kernel-side writer"
+        jd.save_goals(SID, store)
+        rearms([SID], "a save_goals publish (a rename: new identity)")
+        rearms([])
+        jd.append_override(SID, top["id"], "resolve", NOW + 1)          # the user's gesture: the journal only
+        rearms([SID], "a journal append with no store write")
+        rearms([])
+        jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
+        rearms([SID], "an archive write")
+        rearms([])
+        jd.EPIDIR.mkdir(parents=True, exist_ok=True)
+        with open(jd.EPIDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n")
+        rearms([SID], "an episodes row (episode_floor is the courier's pre-episode guard)")
+        rearms([])
+        # not courier inputs: captions, cleared.jsonl, the sdk reg, a stall record, the ledger alone
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        with open(jd.CAPDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"id": "seg-x#p", "caption": "Ship the notes-api search"}) + "\n")
+        rearms([], "a captions append re-arms nothing")
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g1", "op": "clear", "t": NOW}) + "\n")
+        rearms([], "a cleared.jsonl row re-arms nothing")
+        reg = jd.STATE / "sdk" / (SID + ".json")
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_text(json.dumps({"spawnedAt": T0 + 600}))
+        rearms([], "an sdk reg appearing re-arms nothing (the scan reads only peer authors)")
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps(
+            {"enabled": False, "deferred": {top["id"]: {"at": NOW, "why": "waiting on the closer", "sid": SID}}}))
+        rearms([], "a stall record re-arms nothing (the courier rolls up only at its write sites)")
+        self._ledger_row(MID2, SID2, SID, t=NOW)
+        rearms([], "a ledger row alone re-arms nothing: the sent row precedes the transcript atom that carries it")
+
+    def test_a_session_with_a_pending_row_is_scanned_every_pass_and_never_stamped(self):
+        # Exercised for the contract, not because it occurs live: the state copy the round was measured on
+        # holds zero sessions with an unfiled peer row (they are filed on the pass that finds them). A row the
+        # write loop could not consume (an empty courier reply: the account is usage-limited) keeps the session
+        # due; once a reply files it, the store's own move re-arms the scan once more, and then it skips.
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or "")
+        seen = self._scan_log()
+        for i in range(3):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertIn(SID, seen, "pass %d: the session with a row is scanned" % i)
+            self.assertEqual(self._st("courier")["incomplete"], 1, "pass %d: the row marks the run incomplete" % i)
+            self.assertIsNone(self._stamp("courier", SID), "pass %d: never stamped" % i)
+        store = jd.load_goals(SID)
+        self.assertNotIn(seg_id, store["placements"], "an empty reply never places the segment")
+        self.assertIn(seg_id, store.get("courierDeferred") or {}, "the deferral is recorded (once, a write)")
+        self.assertEqual(len(self.courier_calls), 3, "one call per pass: the row is retried every pass")
+        self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with no row, stamped on its first scan")
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or DELEGATE_REPLY)
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        store = jd.load_goals(SID)
+        self.assertEqual(store["placements"].get(seg_id), "fyi", "filed quiet: no link to root a recipient top on")
+        self.assertNotIn(seg_id, store.get("courierDeferred") or {}, "a landed reply clears the deferral")
+        trackers = [nd for nd in jd.load_goals(SID2)["nodes"].values()
+                    if isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == MID]
+        self.assertEqual(len(trackers), 1, "the sender's tracking node planted")
+        self.assertIsNone(self._stamp("courier", SID), "the filing pass produced the row: no stamp yet")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]), "both stores moved: both re-armed once")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the placed segment scans clean: both stamp")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
+        self.assertEqual(len(self.courier_calls), 4)
+
+    def _placed_delegate(self, sender_discovered=True, from_host=""):
+        """A recipient whose peer delegate segment was PLACED by another writer under a node with no courier
+        link (the link-repair shape). Returns (seg_id, nid)."""
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, parent="a2"), aline(T0 + 230, "On it.", "a3", "p1")]
+        extra = {"from_host": from_host} if from_host else {}
+        self._ledger_row(MID, SID2, SID, t=T0 + 190, **extra)
+        path = self._session(SID, recs)
+        if sender_discovered:
+            self._session(SID2, name="api")
+        seg_id = self._peer_seg_id(SID, path)
+        store = jd.load_goals(SID)
+        nid = SID + ":g7"
+        store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
+                               "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        store["placements"][seg_id] = nid
+        jd.save_goals(SID, store)
+        return seg_id, nid
+
+    def _tracker(self, complete):
+        snd = jd.load_goals(SID2)
+        tid = SID2 + ":g1"
+        snd["nodes"][tid] = {"id": tid, "text": "delegated to web: wire up the export button", "parentId": None,
+                             "t": T0 + 190, "mt": T0 + 190, "log": [], "trail": [], "nodeComplete": complete,
+                             "cleared": False, "handoff": {"peer": SID, "msgId": MID}}
+        snd["status"][tid] = "completed" if complete else "working"
+        jd.save_goals(SID2, snd)
+        return tid
+
+    def test_a_placed_delegate_with_no_sender_tracker_stamps_after_one_scan(self):
+        # the review's nit (2026-09-07): the repair found no tracker in any discovered store, and nothing can
+        # plant one later for a placed local segment (the two planters plant for unplaced rows and for remote
+        # recipients), so marking the run kept the session hot forever at N+1 store loads per pass. It stamps.
+        seg_id, nid = self._placed_delegate()
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "no tracker anywhere: the scan is complete and stamps")
+        self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid])
+        self.assertEqual(self.courier_calls, [], "a placed segment is never re-judged")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
+    def test_a_completed_sender_tracker_keeps_the_scan_due_until_a_reopen_links_it(self):
+        # the one shape in which a later pass can attach the link with none of this session's inputs moving:
+        # the sender's tracker exists and is complete (never linked); a user reopening it moves the SENDER's
+        # store, so the recipient's run stays incomplete until the reopened tracker is linked
+        seg_id, nid = self._placed_delegate()
+        tid = self._tracker(complete=True)
+        seen = self._scan_log()
+        for i in range(2):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertIn(SID, seen, "pass %d: scanned" % i)
+            self.assertIsNone(self._stamp("courier", SID), "pass %d: a completed tracker keeps the run incomplete" % i)
+            self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid], "a completed tracker is never linked")
+        self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with nothing pending, stamped")
+        snd = jd.load_goals(SID2)                                        # the user reopens the tracker
+        self.assertTrue(jd.record_verdict(snd, snd["nodes"][tid], "user", "reopen", NOW + 1, why="reopened by the user"))
+        jd.rollup_status(snd, False)
+        jd.save_goals(SID2, snd)
+        self.assertFalse(jd.load_goals(SID2)["nodes"][tid].get("nodeComplete"), "premise: the tracker is open again")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertIn(SID, seen, "still due: the reopened tracker is found")
+        links = jd.load_goals(SID)["nodes"][nid].get("links") or []
+        self.assertEqual(links, [{"peer": SID2, "goalId": tid, "msgId": MID}], "the link attached")
+        self.assertIsNotNone(self._stamp("courier", SID), "the attaching run is complete (its save re-arms it once)")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID], "the link's save moved the recipient's store: one more scan (the sender's "
+                                      "reopen save preceded the linking pass, so its scan there already stamped it)")
+        self.assertEqual(self._ran(), (1, 1, 1, 0), "the link is in the store: the repair stops before the lookup")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
+
+    def test_a_local_sender_outside_the_discover_window_keeps_the_scan_due_and_a_remote_one_does_not(self):
+        # no tracker is visible because the sender's store was not READ (the sender is a local session outside
+        # the discover window): its return makes an open tracker visible with nothing of the recipient's moving,
+        # so the run stays incomplete; once the sender is discovered and holds no tracker, the scan stamps.
+        # A sender on another kernel (the ledger row's from_host) keeps its tracker there: stamp at once.
+        seg_id, nid = self._placed_delegate(sender_discovered=False)
+        seen = self._scan_log()
+        for i in range(2):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertEqual(seen, [SID], "pass %d: the recipient is scanned" % i)
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "pass %d: a local sender outside the window: incomplete" % i)
+        self._session(SID2, name="api")                                  # the sender returns, with no tracker
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "discovered and trackerless: nothing can appear later, both stamp")
+        # the remote sender, from a clean root
+        jd._rebind_state(self.td); jd._STAGE_STAMP.clear()
+        for c in (jd._PARSE_CACHE, jd._discover_cache):
+            c.clear()
+        shutil.rmtree(jd.GOALDIR, ignore_errors=True); shutil.rmtree(jd.NAMES, ignore_errors=True)
+        jd.NAMES.mkdir(parents=True)
+        jd.MESSAGES.unlink()
+        seg_id, nid = self._placed_delegate(sender_discovered=False, from_host="TESTHOST-B")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID])
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "a remote sender's tracker is never local: stamp")
+
+    def test_the_settle_is_read_once_per_written_session_and_never_on_the_idle_path(self):
+        # two peer rows in one session, both filed without a model call (a declared coordinate and a declared
+        # question file fyi): _session_settled runs once for that session, from the store being written, and
+        # every rollup at the write sites gets that value; the idle sender is never settled at all
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, kind="coordinate", body="COORDINATE: the api is on 8080", parent="a2"),
+                                  aline(T0 + 230, "Noted.", "a3", "p1"),
+                                  self._peer_line(T0 + 300, "p2", MID2, kind="question", body="QUESTION: which port do the tests use?", parent="a3"),
+                                  aline(T0 + 330, "The tests use 8081.", "a4", "p2")]
+        self._ledger_row(MID, SID2, SID, kind="coordinate", t=T0 + 190)
+        self._ledger_row(MID2, SID2, SID, kind="question", t=T0 + 290)
+        self._session(SID, recs)
+        self._session(SID2, name="api")
+        settled, rolled = [], []
+        real_settled, real_rollup = self._saved_store[9], self._saved_store[10]
+
+        def ss(fsid, path, session, store, now=None):
+            v = real_settled(fsid, path, session, store, now)
+            settled.append((fsid, v))
+            return v
+
+        def ru(store, session_closed, now=None):
+            rolled.append((store.get("rompUuid"), session_closed))
+            return real_rollup(store, session_closed, now=now)
+        jd._session_settled, jd.rollup_status = ss, ru
+        self._pass(tiers=("courier",))
+        store = jd.load_goals(SID)
+        peer_segs = [k for k, v in store["placements"].items() if v == "fyi"]
+        self.assertEqual(len(peer_segs), 2, "both declared non-delegations filed fyi with no model call")
+        self.assertEqual(self.courier_calls, [])
+        self.assertEqual([f for f, v in settled], [SID], "settled once, for the written session only")
+        value = settled[0][1]
+        self.assertTrue(value, "premise: the turn ended and nothing is awaited, so the session is settled")
+        writes = [v for sid, v in rolled if sid == SID]
+        self.assertEqual(writes, [value, value], "each write site's rollup got the one settled value")
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the sender stamped; the written session produced rows")
+
+    def test_the_settle_guard_logs_and_the_write_still_lands_when_the_parse_raises(self):
+        # outside a frame (romp-judge --courier, tests) the settle's parse can raise on a transcript that moved
+        # and no longer parses; the guard logs a pass-crash row and reads not-settled, and the write loop goes
+        # on. Under the pass frame the settle's parse is the pinned one, so the guard never fires there.
+        path = self._peer_session(SID, SID2, kind="coordinate")
+        seg_id = self._peer_seg_id(SID, path)
+        real = self._saved_store[5]
+        calls = []
+
+        def second_call_raises(fsid, files, now):
+            calls.append(fsid)
+            if fsid == SID and calls.count(SID) == 2:
+                raise RuntimeError("the transcript moved under the write loop")
+            return real(fsid, files, now)
+        jd.parsed_session = second_call_raises
+        jd._discover_cache.clear()
+        jd.run_courier(now=NOW)                                         # no frame: the settle parses on its own
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi", "the write landed with settled=False")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r.get("note") or "" for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1, rows)
+        self.assertTrue(notes[0].startswith("settle: "), notes[0])
+
+    def test_a_peer_message_landing_after_the_first_touch_is_filed_next_pass(self):
+        # the frame hazard, on the courier: a tick job touches the session while nothing is pending; the
+        # peer message and the agent's reply land mid-pass; the gated courier judges the pinned (pre-append)
+        # world and stamps THAT pair, so the next pass runs the scan over the new turn and files the row.
+        # A stamp stat'd at the courier's own moment would record the post-append pair and skip the message
+        # until an unrelated write. Without P1a's key pin this test fails.
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("courier",))
+        jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})   # re-arm: the run below is a run
+        own = jd.begin_pass_frame()
+        try:
+            jd.parsed_session(SID, [str(path)], NOW)                    # the tick job's first touch
+            pre = jd._frame["keys"][("parse", SID)]
+            self._ledger_row(MID, SID2, SID, t=T0 + 190)
+            self._append(path, self._peer_line(T0 + 200, "p1", MID, parent="a2"), aline(T0 + 230, "On it.", "a3", "p1"))
+            jd.run_courier(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        self.assertEqual(self.courier_calls, [], "under the pinned parse there is no peer segment: nothing filed")
+        self.assertEqual((self._st("courier")["ran"], self._st("courier")["stamped"]), (1, 1), "a run, complete")
+        st = self._stamp("courier", SID)
+        self.assertIsNotNone(st, "the run completed and stamped")
+        self.assertEqual(st[0][0][1], jd._pair_key(pre), "the stamp holds the PRE-append pair")
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._st("courier")["ran"], 1, "the live pair differs from the stamped one: the scan runs")
+        self.assertEqual(len(self.courier_calls), 1, "and the message is judged")
+        self.assertIn("wire up the export button", self.courier_calls[0])
+        seg_id = self._peer_seg_id(SID, path)
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi", "filed (quiet: no rooted link)")
+
+    def test_a_cut_arming_between_the_pin_and_the_parse_withholds_the_couriers_stamp(self):
+        path = self._session(SID)
+        self._converge(tiers=("courier",))
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        before = self._stamp("courier")
+        own = jd.begin_pass_frame()
+        try:
+            jd._frame_parse_key(SID, [str(path)])                        # the pin, under no cut
+            jd._PENDING_CUT_FN = lambda fsid: "a2"                       # a bare rollback arms before the parse
+            jd.run_courier(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        s = self._st("courier")
+        self.assertEqual((s["ran"], s["bypassed"], s["stamped"]), (1, 1, 0), "served under another cut: no stamp")
+        self.assertEqual(self._stamp("courier"), before, "the old stamp stands")
+        jd._PENDING_CUT_FN = None
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._st("courier")["stamped"], 1, "pin and parse under one cut: a stamp")
+
+    def test_a_late_ledger_row_is_filed_once_the_transcript_moves(self):
+        # the ledger is not in the signature (the sent row precedes the transcript atom, so the atom's append
+        # re-arms the scan with the row already in place). The residual: a marker whose row the ledger lacks
+        # when the parse ran is sender-less (author.peer None), which the scan skips and the planner places as
+        # plain work in the same pass. Here only the courier runs, so the segment stays unplaced: the row
+        # appended alone changes nothing the pinned parse saw (the ungated courier served the same cached
+        # parse), and the agent's reply, the transcript's own next append, re-parses with the row in the
+        # index and files the message. No pass files anything the ungated pass would have filed.
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, parent="a2")]
+        path = self._session(SID, recs)                                 # no ledger row yet
+        self._session(SID2, name="api")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self.courier_calls, [], "sender-less: not the courier's to file")
+        self.assertIsNotNone(self._stamp("courier", SID), "a complete scan with no row stamps")
+        self._ledger_row(MID, SID2, SID, t=T0 + 190)                    # the row lands late, alone
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "nothing in the signature moved")
+        self._append(path, aline(T0 + 230, "On it.", "a3", "p1"))        # the agent replies: the pair moves
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID])
+        self.assertEqual(len(self.courier_calls), 1, "re-parsed with the row in the index: filed")
+        seg_id = self._peer_seg_id(SID, path)
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi")
+
+    def test_a_crashed_scan_logs_a_scan_row_stamps_nothing_and_the_pass_goes_on(self):
+        # a parse that raises, then a segment walk that raises: each is caught per session as a pass-crash row
+        # labelled "scan:", the run counts incomplete with no stamp, the other session is still scanned and
+        # stamped, and run_courier returns (before the gate a _segs crash aborted the triage pass at the courier)
+        self._session(SID)
+        self._session(SID2, name="api")
+        real = self._saved_store[5]
+
+        def poisoned(fsid, files, now):
+            if fsid == SID:
+                raise ValueError("not a transcript")
+            return real(fsid, files, now)
+        jd.parsed_session = poisoned
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crash counts incomplete; the other session stamped")
+        self.assertIsNone(self._stamp("courier", SID))
+        self.assertIsNotNone(self._stamp("courier", SID2))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("scan: ValueError"), notes[0])
+        jd.parsed_session = real
+        real_segs = self._saved_store[8]
+
+        def walk_crashes(turn, store):
+            if store.get("rompUuid") == SID:
+                raise RuntimeError("a seam without a segment")
+            return real_segs(turn, store)
+        jd._segs = walk_crashes
+        self._reset()
+        self._pass(tiers=("courier",))                                  # returns: the crash is per session
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "the walk crash: incomplete, no stamp; the other sid skipped")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(notes[1].startswith("scan: RuntimeError"), notes[1])
+        jd._segs = real_segs
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._ran(), (1, 1, 1, 0), "healed: the crashed sid runs and stamps")
+
+    def _ledger_reads(self, fn):
+        """Run fn counting the opens of the ledger file (Path.read_text and the event model's incremental
+        reader both open it); returns the count."""
+        n, target = [0], os.path.abspath(str(jd.MESSAGES))
+        reals = {(builtins, "open"): builtins.open, (io, "open"): io.open}
+        # Python 3.10: Path.open calls pathlib._NormalAccessor.open, a class attribute bound to io.open when
+        # pathlib was imported, so a patched io.open never sees Path.read_text (3.11 removed the accessor and
+        # Path.open calls io.open directly). Patch that slot too, as a staticmethod so the path stays the
+        # first argument, the way the unbound builtin behaved.
+        acc = getattr(pathlib, "_NormalAccessor", None)
+        if acc is not None:
+            reals[(acc, "open")] = acc.open
+
+        def wrap(real):
+            def w(p, *a, **k):
+                if isinstance(p, (str, bytes, os.PathLike)) and os.path.abspath(os.fsdecode(p)) == target:
+                    n[0] += 1
+                return real(p, *a, **k)
+            return w
+        for (mod, name), real in reals.items():
+            setattr(mod, name, staticmethod(wrap(real)) if isinstance(mod, type) else wrap(real))
+        try:
+            fn()
+        finally:
+            for (mod, name), real in reals.items():
+                setattr(mod, name, real)
+        return n[0]
+
+    def _trackers(self, sid):
+        return [nd for nd in jd.load_goals(sid)["nodes"].values() if isinstance(nd.get("handoff"), dict)]
+
+    def test_the_ledger_is_parsed_once_per_version_for_the_cross_host_plant(self):
+        # the xrows arm reads its candidate rows from the postal memo (_postal_ledger): across two passes with
+        # an unchanged ledger the file is opened once (by the first pass), the plant is idempotent, and the
+        # memo slot is the same object; an appended row refills it once and plants once
+        self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("courier",))
+        self._ledger_row("px-1.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 100, toName="TESTHOST-B:web",
+                         body="DELEGATE: run the exporter on the far box")
+        jd._postal_from_memo[0] = (None, {})                            # what five suites do: a stale, 2-slot reset
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertGreaterEqual(reads, 1, "the first pass parses the ledger once for the memo")
+        self.assertEqual(len(self._trackers(SID)), 1, "the cross-host delegate planted the sender's tracker")
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "one candidate row in the memo")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 0, "an unchanged ledger is not opened again")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo slot is the same object")
+        self.assertEqual(len(self._trackers(SID)), 1, "idempotent by msgId")
+        self._ledger_row("px-2.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 50, toName="TESTHOST-B:web",
+                         body="DELEGATE: and the importer")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 1, "an appended row: one refill")
+        self.assertEqual(len(self._trackers(SID)), 2, "and the new row planted")
+
+    def test_the_sender_and_horizon_filters_run_per_pass_on_the_memoized_rows(self):
+        # the memo holds the ledger's rows under the ledger's identity; who is discovered and what is inside
+        # the retry horizon are this pass's questions. A candidate whose sender is not discovered at pass 1
+        # and past the horizon at pass 2 plants at neither, and plants at pass 3 when both hold, with the
+        # memo never refilled between them (no clock predicate is frozen in it)
+        self._session(SID)
+        self._ledger_row("px-3.mail.TESTHOST-A", SID2, "peer:TESTHOST-B", t=NOW - jd.COURIER_RETRY_HORIZON + 50,
+                         toName="TESTHOST-B:web", body="DELEGATE: run the exporter on the far box")
+        self._pass(tiers=("courier",))                                  # SID2 not discovered: no plant
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "the row is a candidate in the memo")
+        self.assertEqual(self._trackers(SID2), [], "its sender is not among this pass's discovered sessions")
+        self._session(SID2, name="api")                                 # now discovered
+        self._pass(now=NOW + 100, tiers=("courier",))                   # but the row is past the horizon at this now
+        self.assertEqual(self._trackers(SID2), [], "past the horizon at the pass's now: never backfilled")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo did not refill: the filters ran on its rows")
+        self._pass(now=NOW, tiers=("courier",))                         # within the horizon again, sender discovered
+        self.assertEqual(len(self._trackers(SID2)), 1, "both filters hold: planted")
+        self.assertIs(jd._postal_from_memo[0], ent)
+
+    def test_a_link_repair_that_raises_marks_the_run_and_the_pass_goes_on(self):
+        # the placed branch's own guard: a repair that raises is logged as before ("link-attach: ...") and, so
+        # the repair is retried rather than skipped over, marks the run incomplete; the other session stamps
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        store = jd.load_goals(SID)
+        nid = SID + ":g7"
+        store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
+                               "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        store["placements"][seg_id] = nid
+        jd.save_goals(SID, store)
+        real = jd._seg_peer_kind
+
+        def kind_crashes(seg):
+            if jd._seg_peer(seg):
+                raise RuntimeError("a marker the kind reader cannot parse")
+            return real(seg)
+        jd._seg_peer_kind = kind_crashes
+        try:
+            self._pass(tiers=("courier",))
+        finally:
+            jd._seg_peer_kind = real
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crashed repair: incomplete; the sender stamped")
+        self.assertIsNone(self._stamp("courier", SID))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("link-attach: RuntimeError"), notes[0])
+
+    def test_a_placed_row_whose_t_drifted_is_placed_for_the_scan_too(self):
+        # the review's nit 3: the write loop dedups a placed row drift-safely (_placed_key), but the scan's
+        # placed check was exact-key, so a row whose parse t drifted after its placement was returned every
+        # pass, marked the run incomplete every pass, and was then deduped by the write loop: the gate was
+        # defeated for that session forever. The scan now asks the same helper: no row, a complete run, a stamp.
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        parts = seg_id.split(":")
+        drifted = ":".join(parts[:-2] + [str(int(parts[-2]) + 7), parts[-1]])   # the same segment, its t moved
+        self.assertNotEqual(drifted, seg_id)
+        store = jd.load_goals(SID)
+        store["placements"][drifted] = "fyi"                            # as the courier filed it, under the old t
+        jd.save_goals(SID, store)
+        self.assertTrue(jd._placed_key(store["placements"], seg_id), "premise: the write loop would dedup it")
+        self.assertNotIn(seg_id, store["placements"], "premise: the exact check misses it")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self.courier_calls, [], "no row returned, no call")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the scan is complete and stamps")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
+    def test_counters_add_up_over_the_courier(self):
+        path = self._peer_session(SID, SID2)
+        self._pass(tiers=("courier",))
+        self._append(path, uline(T0 + 400, "task D", "u4", "a3"), aline(T0 + 430, "did D", "a4", "u4"))
+        self._pass(tiers=("courier",))
+        self._pass(tiers=("courier",))
+        s = self._st("courier")
+        self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"])
+        self.assertGreater(s["skipped"], 0)
+        ts = jd.tier_stats()
+        self.assertIn("courier", ts)
+        self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
+
+
+class IndexReaders(_Gate):
+    """The index tier's readers are strict about files that EXIST (J7, 2026-09-07; the round-3 and round-4
+    reviews' recurring finding). Absent stays a real state (no caption rows, no archive record, a unit-cache
+    miss) and marks nothing; a failure on a file that exists reads as that same empty answer for the call,
+    marks the running stage incomplete and logs one judge-errors row per failure episode, so the gate never
+    stamps a decision made without an input its signature says the stage saw. Before, every one of these
+    readers swallowed the failure as the empty answer and nothing recorded it."""
+
+    def _tasks(self, path, now=NOW):
+        return jd.tasks_for(SID, str(path), [str(path)], now)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_the_caption_readers_read_absent_as_empty_and_an_unreadable_file_marks_and_logs_once(self):
+        self.assertEqual((jd.captioned_ids(SID), jd._live_natoms(SID), jd.session_turn_captions(SID)), (set(), {}, []))
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "absent is a state, not a failure")
+        self.assertEqual(self._rows("captions-unreadable"), [])
+        jd.append_caption(SID, "seg1", "segment", T0 + 30, "Did A")
+        jd.append_caption(SID, "t1", "turn", T0 + 30, "Did A")
+        jd.append_caption(SID, "seg2", "segment", T0 + 200, "Working on B", live=True, natoms=9)
+        with open(jd.CAPDIR / (SID + ".jsonl"), "a") as f:
+            f.write("{ not a row\n")                                    # content, not a read failure
+        self.assertEqual(jd.captioned_ids(SID), {"seg1", "t1"}, "live rows are not done; a bad line is skipped")
+        self.assertEqual(jd._live_natoms(SID), {"seg2": 9})
+        self.assertEqual(jd.session_turn_captions(SID), ["Did A"])
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        rows = jd._caption_rows(SID)
+        self.assertEqual((jd.captioned_ids(SID, rows), jd._live_natoms(SID, rows)), ({"seg1", "t1"}, {"seg2": 9}),
+                         "the captioner's one read per session derives both answers from the same rows")
+        cp = jd.CAPDIR / (SID + ".jsonl")
+        os.chmod(cp, 0)
+        try:
+            for fn, empty in ((jd.captioned_ids, set()), (jd._live_natoms, {}), (jd.session_turn_captions, [])):
+                jd._judge_ctx.stage_incomplete = False
+                self.assertEqual(fn(SID), empty, fn.__name__)
+                self.assertTrue(jd._judge_ctx.stage_incomplete,
+                                "%s: a read that fails on a file that exists marks the stage" % fn.__name__)
+            self.assertEqual(len(self._rows("captions-unreadable")), 1, "one row per failure episode, not per read")
+            self.assertEqual(self._rows("captions-unreadable")[0]["fsid"], SID)
+            self.assertIsNone(jd._caption_rows(SID), "the row reader answers None for a failed read (the bodies stand down on it)")
+        finally:
+            os.chmod(cp, 0o644)
+        self.assertEqual(jd._caption_rows(SID2), [], "and [] for an absent file")
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(jd.captioned_ids(SID), {"seg1", "t1"}, "readable again")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        os.chmod(cp, 0)
+        try:
+            jd.session_turn_captions(SID)
+            self.assertEqual(len(self._rows("captions-unreadable")), 2, "a good read ended the episode: the next failure logs again")
+        finally:
+            os.chmod(cp, 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_the_archive_reader_reads_absent_as_none_and_a_bad_file_marks_and_logs_once(self):
+        self.assertIsNone(jd.load_archive(SID))
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "absent is a state")
+        jd.write_archive(SID, {"headline": "Ship the search", "abstract": "Built it.", "turns": 2})
+        self.assertEqual(jd.load_archive(SID)["turns"], 2)
+        ap = jd.ARCHDIR / (SID + ".json")
+        self.assertEqual(jd._read_archive(SID2), (None, False), "absent: no record, no failure")
+        os.chmod(ap, 0)
+        try:
+            jd._judge_ctx.stage_incomplete = False
+            self.assertIsNone(jd.load_archive(SID))
+            self.assertTrue(jd._judge_ctx.stage_incomplete, "a read that fails on a file that exists marks the stage")
+            self.assertEqual(jd._read_archive(SID), (None, True), "the archiver's twin says the file failed")
+            jd.load_archive(SID)
+            self.assertEqual(len(self._rows("session-archive-unreadable")), 1, "one row per failure episode")
+        finally:
+            os.chmod(ap, 0o644)
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(jd.load_archive(SID)["turns"], 2, "readable again")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        # a file that READS but is not a record is content, not a read failure (review should-fix): the
+        # answer is an absent record's, so the archiver rebuilds it; the row is still written, once per
+        # episode, and the stage is not marked (it decided with the input)
+        ap.write_text("[1, 2]")                                          # decodes, but is not a record
+        self.assertEqual(jd._read_archive(SID), (None, False))
+        self.assertIsNone(jd.load_archive(SID))
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "content: the stage is not marked")
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 2, "but the corruption is logged once")
+        ap.write_text("{ not json")
+        self.assertEqual(jd._read_archive(SID), (None, False))
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 2, "the same episode: no second row")
+        self.assertEqual(self._rows("archive-unreadable"), [], "the goals archive's row name is not borrowed")
+
+    def test_the_unit_cache_read_is_strict_and_a_stale_or_absent_cache_is_a_plain_miss(self):
+        path = self._session(SID)
+        tasks = self._tasks(path)
+        self.assertTrue(tasks, "two ended turns: caption tasks")
+        cf = jd.PCACHE / (SID + ".json")
+        self.assertTrue(cf.exists(), "the miss path published the cache")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        cf.write_text("{ not the cache")                                 # exists, does not decode
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks, "the miss path regenerated the same tasks")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "a cache that exists and does not read marks the stage")
+        self.assertEqual(len(self._rows("units-cache-unreadable")), 1)
+        self.assertEqual(json.loads(cf.read_text())["tasks"], tasks, "and the publish repaired the file")
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks)                       # the hit
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "a good read marks nothing")
+        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 5, "tasks": []}))
+        self.assertEqual(self._tasks(path), tasks, "a stale key is a plain miss")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        cf.unlink()
+        self.assertEqual(self._tasks(path), tasks, "an absent cache is a plain miss")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        self.assertEqual(len(self._rows("units-cache-unreadable")), 1, "neither miss is a failure")
+
+    def test_a_failed_unit_cache_publish_keeps_the_tasks_marks_the_run_and_logs_once_per_episode(self):
+        path = self._session(SID)
+        jd.PCACHE.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(jd.PCACHE, ignore_errors=True)
+        jd.PCACHE.write_text("")                                         # a file where the cache dir goes: mkdir fails
+        jd._judge_ctx.stage_incomplete = False
+        tasks = self._tasks(path)
+        self.assertTrue(tasks, "the decision stands for this pass")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "but the next pass cannot read it back: the run is incomplete")
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 1)
+        self.assertEqual(self._rows("units-cache-unreadable"), [], "a cache under a path that is not a directory is absent")
+        self._tasks(path)
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 1, "one row per failure episode, not per pass")
+        jd.PCACHE.unlink()
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks)
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "the publish landed")
+        self.assertTrue((jd.PCACHE / (SID + ".json")).exists())
+        shutil.rmtree(jd.PCACHE)
+        jd.PCACHE.write_text("")
+        self._tasks(path)
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 2, "a good publish ended the episode: the next failure logs again")
+
+    def test_a_fallback_store_stands_the_captioner_down_and_memoizes_nothing(self):
+        # the seams _ready_tasks applies are the store's: a task list built over the empty fallback is not the
+        # session's (a seamed turn's first segment would be captioned as the whole turn), so tasks_for stands
+        # down as every stage does on this view, and publishes no cache, so the next pass reads the store again
+        # rather than serving a list made without it until the transcript moves
+        path = self._session(SID)
+        gp = jd.GOALDIR / (SID + ".json")
+        gp.parent.mkdir(parents=True, exist_ok=True)
+        gp.write_text("{ not the store")
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), [], "no task list over a view that is not the session's")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "load_goals marked the stage")
+        self.assertFalse((jd.PCACHE / (SID + ".json")).exists(), "nothing memoized")
+        self.assertEqual(len(self._rows("store-unreadable")), 1)
+        gp.unlink()                                                      # absent IS the empty store: not a fallback
+        jd._judge_ctx.stage_incomplete = False
+        self.assertTrue(self._tasks(path), "the store reads (as empty): the tasks are built and published")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        self.assertTrue((jd.PCACHE / (SID + ".json")).exists())
+
+
+class IndexGate(_Gate):
+    """The index tier (the captioner and archiver) on the gate (J7 of the round-4 plan, 2026-09-07). The
+    invariant: the gate never withholds a caption or an archive write the ungated pass would have made from
+    new evidence. A session is skipped only when its pinned parse pair, captions file, archive record and
+    unit cache are identical to the last run that found no work and voided no read; a session with a
+    caption owed or an archive refresh due, a reader that failed on a file that exists, a failed cache
+    publish, a fallback store on the miss path or a crash in a body leaves no stamp and runs again next
+    pass. The signature carries no goal store (decision 7): the hit path reads none."""
+
+    TURN_C = (uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+
+    def _ran(self):
+        s = self._st("index")
+        return (s["ran"], s["skipped"], s["stamped"], s["incomplete"])
+
+    def _body_log(self):
+        """Wrap the two per-session bodies to record the sids they ran for; returns (caption_sids, arch_sids)."""
+        real_c, real_a = self._saved_index[3], self._saved_index[4]
+        seen_c, seen_a = [], []
+
+        def c(fsid, path, anchor, now):
+            seen_c.append(fsid)
+            return real_c(fsid, path, anchor, now)
+
+        def a(fsid):
+            seen_a.append(fsid)
+            return real_a(fsid)
+        jd._index_caption_tasks, jd._index_arch_task = c, a
+        return seen_c, seen_a
+
+    def _rearm_hit(self, sid):
+        """Move the session's unit cache identity without changing its content: the next pass runs the
+        session on its hit path and finds no work."""
+        cf = jd.PCACHE / (sid + ".json")
+        time.sleep(0.002)
+        cf.write_text(cf.read_text())
+
+    def _captioned(self, text):
+        return any(text in c for c in self.caption_calls)
+
+    def test_two_idle_passes_run_once_then_skip_with_no_reads(self):
+        self._session(SID)
+        self._session(SID2, name="api")
+        seen_c, seen_a = self._body_log()
+        self._pass(tiers=("index",))
+        self.assertEqual((sorted(seen_c), sorted(seen_a)), (sorted([SID, SID2]),) * 2, "first pass: both bodies over every session")
+        self.assertEqual(self._ran(), (2, 0, 0, 2), "the working pass: captions and an archive to write, so no stamp")
+        n_caps = len(self.caption_calls)
+        self.assertGreater(n_caps, 0)
+        self.assertEqual(len(self.archive_calls), 2)
+        self.assertTrue(jd.captioned_ids(SID))
+        self.assertEqual(jd.load_archive(SID)["turns"], 2)
+        self._reset()
+        seen_c.clear(); seen_a.clear()
+        self._pass(tiers=("index",))                                    # the follow-on: the cache publish re-armed each once
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the follow-on run finds no work and stamps")
+        self.assertEqual((len(self.caption_calls), len(self.archive_calls)), (n_caps, 2), "no model call")
+        wm = jd.pass_watermark("index", SID)
+        self.assertIsNotNone(wm, "a completed run stamps pass_done")
+        self._reset()
+        seen_c.clear(); seen_a.clear()
+        io0 = jd.goal_io_stats()
+        time.sleep(0.002)
+        self._pass(tiers=("index",))                                    # the skip
+        io1 = jd.goal_io_stats()
+        self.assertEqual((seen_c, seen_a), ([], []), "third pass: neither body runs")
+        self.assertEqual(self._ran(), (0, 2, 0, 0))
+        self.assertEqual((io1["loads"] - io0["loads"], io1["saves"] - io0["saves"]), (0, 0),
+                         "a skipped session costs no store load and no save")
+        self.assertGreater(jd.pass_watermark("index", SID), wm, "a skip stamps pass_done too")
+        self.assertEqual((len(self.caption_calls), len(self.archive_calls)), (n_caps, 2))
+
+    def test_each_input_re_arms_the_index_for_its_sid_only_and_a_store_publish_does_not(self):
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("index",))
+        seen_c, _ = self._body_log()
+        # (a) a transcript append moves the pair: the new turn is captioned and the archive refreshed
+        self._append(path, *self.TURN_C)
+        n0, a0 = len(self.caption_calls), len(self.archive_calls)
+        self._pass(tiers=("index",))
+        self.assertEqual(seen_c, [SID], "the changed session ran; the other skipped")
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "work found: no stamp yet")
+        self.assertTrue(self._captioned("did C"), "the new turn's caption was not withheld")
+        self.assertEqual(len(self.archive_calls), a0 + 1)
+        self.assertEqual(jd.load_archive(SID)["turns"], 3)
+        self._converge(tiers=("index",))
+        seen_c.clear()
+        # (b) a caption row appended by another writer (a tombstone): one run, no work, a stamp
+        jd.append_caption(SID, "orphan", "segment", T0 + 999, "")
+        self._pass(tiers=("index",))
+        self.assertEqual((seen_c, self._ran()), ([SID], (1, 1, 1, 0)))
+        seen_c.clear()
+        # (c) the archive record rewritten with a stale turn count: the run refreshes it, as the ungated pass would
+        rec = jd.load_archive(SID)
+        rec["turns"] = 1
+        jd.write_archive(SID, rec)
+        a1 = len(self.archive_calls)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual((seen_c, self._ran()), ([SID], (1, 1, 0, 1)))
+        self.assertEqual((len(self.archive_calls), jd.load_archive(SID)["turns"]), (a1 + 1, 3))
+        self._converge(tiers=("index",))
+        seen_c.clear()
+        # (d) the unit cache rewritten (same content, a new identity): one run on the hit path, a stamp
+        self._rearm_hit(SID)
+        self._pass(tiers=("index",))
+        self.assertEqual((seen_c, self._ran()), ([SID], (1, 1, 1, 0)))
+        seen_c.clear()
+        # (e) a states row moves the pair (the states file is in the fileset key): a miss, no new work
+        self._states_row(SID, T0 + 300, "idle")
+        n1 = len(self.caption_calls)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(seen_c, [SID])
+        self.assertEqual((self._st("index")["ran"], len(self.caption_calls)), (1, n1))
+        self._converge(tiers=("index",))
+        seen_c.clear()
+        # (f) a store publish and a journal row re-arm NOTHING (decision 7): the hit path reads no store
+        self._mirror_top(SID, "Write the api tests")
+        jd.append_override(SID, SID + ":g90", "resolve", NOW + 1)
+        time.sleep(0.002)
+        self._pass(tiers=("index",))
+        self.assertEqual(seen_c, [], "a store publish and a journal row re-arm nothing: the index reads no store on its hit path")
+        self.assertEqual(self._ran(), (0, 2, 0, 0))
+
+    def test_a_session_with_a_caption_owed_runs_every_pass_and_never_stamps_until_it_lands(self):
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        self._append(path, *self.TURN_C)
+
+        def paused(text, judge="gister"):                                # a pause skip: not a verdict, no strike
+            jd._judge_ctx.paused = True
+            return ""
+        jd.caption_llm = jd.gist_llm = paused
+        before = self._stamp("index")
+        for _ in range(2):
+            self._reset()
+            self._pass(tiers=("index",))
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "a caption owed: the session runs and never stamps")
+            self.assertEqual(self._stamp("index"), before, "the converged stamp stands (it no longer matches); no new one")
+        self.assertFalse((jd.CAPDIR / (SID + ".fails.json")).exists(), "a pause skip is not a strike")
+        jd.caption_llm, jd.gist_llm = self._saved_index[0], self._saved_index[1]
+        jd.caption_llm = lambda text: (self.caption_calls.append(text) or "Wired the export button.")
+        jd.gist_llm = lambda text, judge="gister": (self.caption_calls.append(text) or "Wire the export button")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "the captions land: work this pass")
+        self.assertTrue(self._captioned("did C"))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "nothing owed: stamped")
+
+    def test_the_caption_and_archive_caps_leave_a_deferred_session_due(self):
+        # the caps take their share AFTER a session is counted as having work: a session whose task or
+        # refresh was not selected this pass is never stamped, so the next pass offers it again
+        self._session(SID)
+        self._session(SID2, name="api")
+        own = jd.begin_pass_frame()
+        try:
+            jd.run_index(now=NOW, budget=0)
+        finally:
+            jd.end_pass_frame(own)
+        self.assertEqual(self.caption_calls, [], "a zero budget: nothing selected")
+        self.assertEqual(self._ran(), (2, 0, 0, 2), "work found, none done: both stay due")
+        jd.ARCH_BUDGET = 0
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertGreater(len(self.caption_calls), 0, "the captions land")
+        self.assertEqual(self.archive_calls, [], "the archive cap dropped both refreshes")
+        self.assertEqual(self._ran(), (2, 0, 0, 2), "archives due but capped: no stamp")
+        jd.ARCH_BUDGET = None
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(len(self.archive_calls), 2, "the deferred archives are written, not withheld")
+        self.assertEqual(self._ran(), (2, 0, 0, 2))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (2, 0, 2, 0))
+
+    def test_a_crashed_caption_call_keeps_the_sid_due_without_a_strike(self):
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        self._append(path, *self.TURN_C)
+
+        def boom(text, judge="gister"):
+            raise RuntimeError("the worker died")
+        jd.caption_llm = jd.gist_llm = boom
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "a crashed worker is not the model's verdict: the caption stays owed")
+        self.assertGreaterEqual(len([r for r in self._rows("pass-crash") if r["judge"] == "captioner"]), 1)
+        self.assertFalse((jd.CAPDIR / (SID + ".fails.json")).exists(), "no strike for a crash")
+        jd.caption_llm = lambda text: (self.caption_calls.append(text) or "Wired the export button.")
+        jd.gist_llm = lambda text, judge="gister": (self.caption_calls.append(text) or "Wire the export button")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertTrue(self._captioned("did C"))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0))
+
+    def test_the_archivers_failure_ladder_re_arms_through_its_own_publish_and_the_give_up_stamps(self):
+        # each failed archive call bumps the fail counter ON the record (a publish), which moves the archive
+        # identity and re-arms the session once more, until the give-up gate holds the turn set: then the
+        # session has no refresh due, stamps, and skips until a new turn caption changes the count
+        self._session(SID)
+        jd.archive_llm = lambda log: None                                # a call failure
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "captions landed; the archive attempt failed and wrote its counter")
+        self.assertEqual(jd.load_archive(SID)["fails"], 1)
+        for _ in range(jd.ARCH_FAIL_CAP - 1):
+            self._reset()
+            self._pass(tiers=("index",))
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "the counter publish re-armed the session: it retries")
+        self.assertEqual(jd.load_archive(SID)["fails"], jd.ARCH_FAIL_CAP)
+        self.assertEqual(len([r for r in self._rows("give-up") if r["judge"] == "archiver"]), 1)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the give-up gate holds this turn set: no refresh due, the run stamps")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (0, 1, 0, 0), "and skips")
+        jd.append_caption(SID, "t9", "turn", T0 + 900, "Did more")       # a new turn caption re-arms the ladder
+        jd.archive_llm = lambda log: (self.archive_calls.append(log) or {"headline": "H", "abstract": "A."})
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1))
+        self.assertEqual(jd.load_archive(SID)["turns"], 3, "the refresh landed")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_captions_file_leaves_no_stamp_and_the_due_archive_refreshes_once_it_reads(self):
+        # plan test (a): a captions read that fails after the gate's stat. The body stands down (no caption is
+        # minted against a done set it could not see, no archive is rebuilt from captions it could not read),
+        # the run is incomplete, one row is written for the episode, and the refresh that was due lands on the
+        # first pass after the file reads again
+        self._session(SID)
+        self._converge(tiers=("index",))
+        jd.append_caption(SID, "t3", "turn", T0 + 300, "Did C")          # a third turn caption: the archive is due (3 != 2)
+        cp = jd.CAPDIR / (SID + ".jsonl")
+        n0, a0 = len(self.caption_calls), len(self.archive_calls)
+        os.chmod(cp, 0)
+        try:
+            for i in range(2):
+                self._reset()
+                self._pass(tiers=("index",))
+                s = self._st("index")
+                self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "pass %d: due, no stamp" % i)
+                self.assertEqual(len(self._rows("captions-unreadable")), 1, "one row per failure episode, not per pass")
+            self.assertEqual((len(self.caption_calls), len(self.archive_calls)), (n0, a0), "stood down: no call either way")
+        finally:
+            os.chmod(cp, 0o644)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "readable again: the refresh that was due is written")
+        self.assertEqual((len(self.archive_calls), jd.load_archive(SID)["turns"]), (a0 + 1, 3))
+        self.assertEqual(len(self.caption_calls), n0, "every unit was already captioned: no re-caption")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_an_unreadable_archive_record_leaves_no_stamp_and_refreshes_once_it_reads(self):
+        # plan test (b): the archiver stands down on a record it cannot read rather than rebuild over it
+        self._session(SID)
+        self._converge(tiers=("index",))
+        jd.append_caption(SID, "t3", "turn", T0 + 300, "Did C")          # the archive is due
+        ap = jd.ARCHDIR / (SID + ".json")
+        a0 = len(self.archive_calls)
+        os.chmod(ap, 0)
+        try:
+            self._reset()
+            self._pass(tiers=("index",))
+            s = self._st("index")
+            self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0))
+            self.assertEqual(len(self._rows("session-archive-unreadable")), 1)
+            self.assertEqual(len(self.archive_calls), a0, "stood down: no rebuild over a record the pass could not read")
+            self._reset()
+            self._pass(tiers=("index",))
+            self.assertEqual((self._st("index")["ran"], self._st("index")["incomplete"]), (1, 1), "still due")
+            self.assertEqual(len(self._rows("session-archive-unreadable")), 1)
+        finally:
+            os.chmod(ap, 0o644)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "readable again: the refresh lands")
+        self.assertEqual((len(self.archive_calls), jd.load_archive(SID)["turns"]), (a0 + 1, 3))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0))
+
+    def test_a_corrupt_archive_record_is_rebuilt_once_and_an_unreadable_one_still_stands_down(self):
+        # the review's should-fix: a record that reads but is not one (a truncated write, a non-record document)
+        # is content, so the archiver rebuilds it on the next pass and the publish replaces the file; before, the
+        # strict reader stood down on it too, and the session ran every pass forever with the record never rebuilt
+        self._session(SID)
+        self._converge(tiers=("index",))
+        ap = jd.ARCHDIR / (SID + ".json")
+        a0 = len(self.archive_calls)
+        ap.write_text("{ not the record")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "a refresh due (no readable record): work, no stamp")
+        self.assertEqual(len(self.archive_calls), a0 + 1, "one archive call rebuilds it")
+        self.assertEqual(jd.load_archive(SID)["turns"], 2, "a readable record after it")
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 1, "the corruption was logged once")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the publish re-armed once; the hit path stamps")
+        ap.write_text("[1, 2]")                                          # decodes, is not a record: the base crashed on this shape
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual((self._ran(), len(self.archive_calls)), ((1, 0, 0, 1), a0 + 2), "rebuilt, not crashed")
+        self.assertEqual(jd.load_archive(SID)["turns"], 2)
+        if os.geteuid() != 0:
+            self._converge(tiers=("index",))
+            os.chmod(ap, 0)
+            try:
+                os.utime(ap, ns=(os.stat(ap).st_atime_ns, os.stat(ap).st_mtime_ns + 1_000_000_000))   # re-arm: chmod moves ctime only
+                self._reset()
+                self._pass(tiers=("index",))
+                self.assertEqual((self._ran(), len(self.archive_calls)), ((1, 0, 0, 1), a0 + 2),
+                                 "a record that cannot be READ still stands the archiver down: no rebuild over it")
+            finally:
+                os.chmod(ap, 0o644)
+
+    def test_an_unreadable_unit_cache_leaves_no_stamp_and_the_miss_path_repairs_it(self):
+        # plan test (b), the unit cache: a cache that exists and does not decode is a voided read (a row, no
+        # stamp); the miss path regenerates and publishes it, which moves its identity, and the next pass hits
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        cf = jd.PCACHE / (SID + ".json")
+        cf.write_text("{ not the cache")
+        n0 = len(self.caption_calls)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1))
+        self.assertEqual(len(self._rows("units-cache-unreadable")), 1)
+        self.assertEqual(len(self.caption_calls), n0, "the regenerated tasks were all captioned already: no call")
+        self.assertEqual(json.loads(cf.read_text())["v"], 5, "repaired by the publish")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the repaired cache's identity re-armed once; the hit path stamps")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (0, 1, 0, 0))
+
+    def test_a_failed_unit_cache_publish_leaves_no_stamp_until_it_lands(self):
+        # plan test (c): the parse ran and the tasks stand, but the next pass cannot read them back; a stamp
+        # here would hold the cache's identity (absent) over a decision the next pass would have to remake
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        shutil.rmtree(jd.PCACHE)
+        jd.PCACHE.write_text("")                                         # a file where the cache dir goes: mkdir fails
+        for i in range(2):
+            self._reset()
+            self._pass(tiers=("index",))
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "pass %d: the publish failed, the run is incomplete" % i)
+            self.assertEqual(len(self._rows("units-cache-write-failed")), 1, "one row per failure episode")
+        jd.PCACHE.unlink()
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the publish lands: a complete run, stamped under the pre-run identity")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the new cache identity re-arms once")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (0, 1, 0, 0))
+
+    def test_a_fallback_store_on_the_miss_path_voids_only_that_sessions_stamp(self):
+        # plan test (d): the miss path loads the store for the seams; a goals file that exists and does not
+        # read stands the session down (no caption over a view that is not the session's, no cache published)
+        # and marks THAT run; the other session, re-armed on its hit path in the same pass, stamps
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("index",))
+        gp = jd.GOALDIR / (SID + ".json")
+        gp.parent.mkdir(parents=True, exist_ok=True)
+        gp.write_text("{ not the store")
+        self._append(path, *self.TURN_C)                                 # SID misses its cache: the store is read
+        self._rearm_hit(SID2)
+        before, before2 = self._stamp("index", SID), self._stamp("index", SID2)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (2, 0, 1, 1))
+        self.assertEqual(self._stamp("index", SID), before, "the fallback voided this session's stamp: the stale one stands")
+        self.assertNotEqual(self._stamp("index", SID2), before2, "and only this one: the other re-stamped")
+        self.assertEqual(len(self._rows("store-unreadable")), 1)
+        self.assertFalse(self._captioned("did C"), "stood down: no caption over a view that is not the session's")
+        self.assertNotEqual(json.loads((jd.PCACHE / (SID + ".json")).read_text())["key"],
+                            json.loads(json.dumps(list(jd._frame_parse_key(SID, [str(path)])[0]))),
+                            "nothing memoized over the fallback: the cache still holds the pre-append key")
+        gp.unlink()                                                      # absent IS the empty store: not a fallback
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "the store reads: the new turn is captioned")
+        self.assertTrue(self._captioned("did C"))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 1, 1, 0))
+
+    def test_a_crash_in_either_body_logs_a_row_counts_incomplete_and_the_pass_goes_on(self):
+        # before the gate, a crash anywhere in the captioner loop ended the index pass for every session after
+        # it; now each body's crash is this session's pass-crash row, the run is incomplete with no stamp, and
+        # the other session runs and stamps
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("index",))
+        real = self._saved_store[5]
+
+        def poisoned(fsid, files, now):
+            if fsid == SID:
+                raise ValueError("not a transcript")
+            return real(fsid, files, now)
+        jd.parsed_session = poisoned
+        self._append(path, *self.TURN_C)                                 # SID misses its cache: the parse raises
+        self._rearm_hit(SID2)
+        before, before2 = self._stamp("index", SID), self._stamp("index", SID2)
+        self._reset()
+        self._pass(tiers=("index",))                                    # returns: the crash is per session
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crash counts incomplete; the other session stamped")
+        self.assertEqual(self._stamp("index", SID), before, "no new stamp for the crashed session")
+        self.assertNotEqual(self._stamp("index", SID2), before2)
+        notes = [r["note"] for r in self._rows("pass-crash") if r["fsid"] == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("tasks: ValueError"), notes[0])
+        jd.parsed_session = real
+        real_stc = self._saved_index[5]
+
+        def stc_crashes(fsid, rows=None):
+            if fsid == SID:
+                raise RuntimeError("a row without a grain")
+            return real_stc(fsid, rows)
+        jd.session_turn_captions = stc_crashes
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "the archiver body's crash: incomplete, no stamp; the other sid skipped")
+        self.assertTrue(self._captioned("did C"), "the captioner's body ran first and its captions landed")
+        notes = [r["note"] for r in self._rows("pass-crash") if r["fsid"] == SID]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(notes[1].startswith("archive: RuntimeError"), notes[1])
+        jd.session_turn_captions = real_stc
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "healed: the archive refresh the crash deferred is written")
+        self.assertEqual(jd.load_archive(SID)["turns"], 3)
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 1, 1, 0))
+
+    def test_a_cut_arming_between_the_pin_and_the_parse_withholds_the_stamp_and_memoizes_nothing(self):
+        # the served-pair rule for the index: the parse the miss path ran was made under a cut the pinned pair
+        # does not name, so the stamp is withheld; and the unit cache is NOT published under the pinned key
+        # (before, the cut world's tasks were memoized under the uncut key, and a later pass pinning that key
+        # hit them and never captioned the turn the cut hid)
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        self._append(path, *self.TURN_C)
+        before = self._stamp("index")
+        cf = jd.PCACHE / (SID + ".json")
+        cached = cf.read_text()
+        own = jd.begin_pass_frame()
+        try:
+            jd._frame_parse_key(SID, [str(path)])                        # the pin, under no cut
+            jd._PENDING_CUT_FN = lambda fsid: "a2"                       # a bare rollback arms before the parse
+            jd.run_index(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        s = self._st("index")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                         "served under another cut: the skipped publish marks the run, no stamp")
+        self.assertEqual(self._stamp("index"), before, "the old stamp stands")
+        self.assertFalse(self._captioned("did C"), "the cut hid turn C from the parse")
+        self.assertEqual(cf.read_text(), cached, "nothing memoized under the pinned key for a world parsed under the cut")
+        jd._PENDING_CUT_FN = None
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "the cut cleared: the next pass re-parses and captions turn C")
+        self.assertTrue(self._captioned("did C"))
+
+    def test_a_cut_that_clears_between_the_parse_and_the_publish_still_memoizes_nothing(self):
+        # the review's should-fix: the moved-cut check re-read the live cut a third time, so a cut that cleared
+        # between the parse and that read compared equal to the pinned pair and the cut world's tasks were
+        # memoized under the uncut key; the next pass hit them, stamped, and the hidden turn was never captioned
+        # until the transcript moved. The check now compares the pair the parse was SERVED under (recorded when
+        # it was pinned) against the pinned pair, and reads the cut no third time.
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        self._append(path, *self.TURN_C)
+        before = self._stamp("index")
+        cf = jd.PCACHE / (SID + ".json")
+        cached = cf.read_text()
+        answers = []
+
+        def cut_once(fsid):
+            answers.append(fsid)
+            return "a2" if len(answers) == 1 else ""                     # armed for the parse, cleared for anything after
+        own = jd.begin_pass_frame()
+        try:
+            jd._frame_parse_key(SID, [str(path)])                        # the pin, under no cut
+            jd._PENDING_CUT_FN = cut_once
+            jd.run_index(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        self.assertEqual(len(answers), 1, "the cut is read once, by the parse; the publish check reads the served pair")
+        s = self._st("index")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "no stamp")
+        self.assertEqual(self._stamp("index"), before)
+        self.assertEqual(cf.read_text(), cached, "no memo of the cut world under the uncut key")
+        self.assertFalse(self._captioned("did C"))
+        jd._PENDING_CUT_FN = None
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "the next pass re-parses and captions the turn the cut hid")
+        self.assertTrue(self._captioned("did C"))
+
+    def test_a_turn_ending_after_the_first_touch_is_captioned_next_pass_whole(self):
+        # the frame hazard for the index: a tick job touches the session while its last turn is OPEN, the
+        # turn's final record and the idle row land, then run_index runs. Its stamp holds the PRE-append pair
+        # (the pinned key it read the unit cache under), so the next pass runs the session over the ended turn
+        path = self._session(SID, [uline(T0, "task A", "u1"), aline(T0 + 30, "did A", "a1", "u1"),
+                                   uline(T0 + 100, "task B", "u2", "a1"),
+                                   aline(T0 + 110, "starting on B", "a2", "u2", stop="tool_use")])
+        self._converge(tiers=("index",))
+        own = jd.begin_pass_frame()
+        try:
+            jd.parsed_session(SID, [str(path)], NOW)                    # the tick job's first touch, turn open
+            pre = jd._frame["keys"][("parse", SID)]
+            self._append(path, aline(T0 + 140, "did B", "a3", "a2"))
+            self._states_row(SID, T0 + 141, "idle")
+            jd.run_index(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        st = self._stamp("index")
+        self.assertIsNotNone(st, "the pass completed over the pinned world and stamped")
+        self.assertEqual(st[0][0][1], jd._pair_key(pre), "the stamp holds the PRE-append pair")
+        self.assertFalse(self._captioned("did B"))
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._st("index")["ran"], 1, "the next pass runs: the live pair differs from the stamped one")
+        self.assertTrue(self._captioned("did B"), "the ended turn's work is captioned, whole")
+
+    def test_eviction_follows_discover_and_a_restart_is_a_full_walk(self):
+        self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("index",))
+        self.assertEqual({k for k in jd._STAGE_STAMP if k[0] == "index"}, {("index", SID), ("index", SID2)})
+        (jd.NAMES / SID2).unlink()                                      # the session leaves discover
+        jd._namefp_memo.clear()
+        self._pass(tiers=("index",))
+        self.assertEqual({k for k in jd._STAGE_STAMP if k[0] == "index"}, {("index", SID)}, "the gone sid's stamp evicted")
+        jd._STAGE_STAMP.clear()                                         # what a restart does
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the first pass after boot runs the session, as before the gate")
+
+    def test_counters_add_up_over_the_index(self):
+        path = self._session(SID)
+        self._pass(tiers=("index",))
+        self._append(path, *self.TURN_C)
+        self._pass(tiers=("index",))
+        self._pass(tiers=("index",))
+        self._pass(tiers=("index",))
+        s = self._st("index")
+        self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"])
+        self.assertGreater(s["skipped"], 0)
+        ts = jd.tier_stats()
+        self.assertIn("index", ts)
+        self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
 
 
 if __name__ == "__main__":

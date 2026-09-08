@@ -686,6 +686,7 @@ EOF
     _romp_cmd "romp up [--foreground]"     romp-manager "Start the kernel manager: through the login service when installed, else in the foreground"
     _romp_cmd "romp version"               romp-version "Versions across the parts (tree, kernel, served vs built bundles)"
     _romp_cmd "romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]" romp-keyswap "Which API key the sessions bill (fingerprints only). With ROMP_CREDENTIAL_COMMAND set, <name> selects a declared credential and --refresh re-runs the command; --cycle/--cycle-all reconnect quiet sessions after a rotation. <name> is refused where the key lives in a file: this fork does not write API keys to files"
+    _romp_cmd "romp spend-rebuild"         romp-spend-rebuild "Recount the spend ledger's token columns from the transcripts (dry run; --apply writes, dollars untouched)"
     _romp_cmd "romp uninstall"             romp-uninstall "Remove romp's installed footprint (--purge also deletes recorded state)"
     _romp_cmd "romp help"                  -            "Show this help"
     cat <<'EOF'
@@ -768,13 +769,43 @@ fi
 # the manager (the user 2026-09-04): each quiet session resumes its conversation in a new CLI process,
 # history intact. With ROMP_CREDENTIAL_COMMAND set (the key-free mode, kernel/envsource.py) `<name>`
 # writes the one-token selector file the command reads as $1 and --refresh makes the kernel re-run it.
-# Without it, upstream's `romp keyswap <name>` rewrote the ANTHROPIC_API_KEY= line of
-# ~/.config/romp/service.env from a sibling file; this fork refuses that form (the user 2026-09-05:
-# the fork does not write API keys to files) — romp-keyswap (python) says so and exits 2. Prints
-# fingerprints, never keys.
+# Without it, upstream's `romp keyswap <name>` rewrites the credential line of
+# ~/.config/romp/service.env from a sibling profile (`ANTHROPIC_API_KEY=`, or since 2026-09-05 a
+# `ROMP_API_KEY_REF=op://…` reference the kernel's keysource resolves through `op` at launch;
+# _romp_op_consumer below asks whether one is configured); this fork refuses that form (the user
+# 2026-09-05: the fork does not write API keys to files) — romp-keyswap (python) says so and exits 2.
+# Prints fingerprints, never keys.
 if [[ "${1:-}" == "keyswap" ]]; then
     shift
     exec romp-keyswap "$@"
+fi
+
+# Is romp itself the one running `op`? Yes when a 1Password reference is configured — in this
+# environment, or as a ROMP_API_KEY_REF= line of the service env file (the same file and the same
+# line-by-line read as bin/romp-node-launch and bin/romp-service, never sourced). The kernel's
+# keysource.op_consumer answers the same question from Python; a kernel-spawned `romp new` may lack
+# the variable when the reference was swapped in with no manager restart, so the file decides too.
+_romp_op_consumer() {
+    [[ -n "${ROMP_API_KEY_REF:-}" ]] && return 0
+    local _f="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}}"
+    [[ -f "$_f" ]] || return 1
+    local _line
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        _line="${_line#"${_line%%[![:space:]]*}"}"
+        case "$_line" in
+            ROMP_API_KEY_REF=*) return 0 ;;
+        esac
+    done < "$_f"
+    return 1
+}
+# `romp spend-rebuild [--apply] [--by-session]` — recount the TOKEN columns of spend.json from the
+# transcripts' own per-call usage (the user 2026-09-06: the ledger under-counted every turn but a
+# process's first, because the result's flat `usage` is per-turn on current Claude Code and was
+# diffed like a running total — see kernel/sdk_backend.py _turn_usage). Dollars and turn counts
+# stay the recorder's. Dry run by default; --apply keeps the old file as spend.json.bak-<stamp>.
+if [[ "${1:-}" == "spend-rebuild" ]]; then
+    shift
+    exec romp-spend-rebuild "$@"
 fi
 
 # The kernel serve token — required on EVERY kernel/bus request, loopback included (Jupyter's
@@ -823,15 +854,23 @@ _romp_down_release() {   # <state-dir> <kernel-port> <skip-cancel> <why>
 # kernel?" is one command (tail) instead of forensics. The kernel's SIGTERM path joins the newest
 # row (its `action`, and `reason` if set) onto the restart-cut ledger, so a deliberate `romp down`
 # reads as one there too. Best-effort: never blocks the restart or the stop itself.
-_romp_restart_audit() {   # <action> [reason]
+_romp_restart_audit() {   # <action> [reason] [flag]   (flag --quiet: a PARKED restart; the row names it and the checkout sha)
     {
-        local _ra_dir _ra_sid _ra_name=""
+        local _ra_dir _ra_sid _ra_name="" _ra_sha=""
         _ra_dir="$(_romp_state_dir)"
         mkdir -p "$_ra_dir"
         _ra_sid="${CLAUDE_CODE_SESSION_ID:-}"
         [[ -n "$_ra_sid" && -f "$_ra_dir/names/$_ra_sid" ]] \
             && _ra_name="$(cut -f1 "$_ra_dir/names/$_ra_sid" 2>/dev/null | head -1)"
-        RA_ACTION="$1" RA_REASON="${2:-}" \
+        # a quiet restart is parked at the manager: the kernel's drift check reads when + sha off this row
+        # to stand down for it (T240d), where before an immediate converge pre-empted the quiet window the
+        # flag asked for. The sha is the checkout this romp runs from, best-effort: no sha, no stand-down.
+        # From the script's REAL path (readlink -f, as the uninstall arm spells it): invoked through a symlink,
+        # the link's directory is not the repo, and the row carried when=quiet with no sha, so the stand-down
+        # matched nothing and the converge pre-empted the window just the same (fold review, 2026-09-07)
+        [[ "${3:-}" == "--quiet" ]] \
+            && _ra_sha="$(git -C "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
+        RA_ACTION="$1" RA_REASON="${2:-}" RA_WHEN="${3:-}" RA_SHA="$_ra_sha" \
         RA_PPID="$PPID" \
         RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" \
         RA_TTY="$(tty 2>/dev/null || true)" \
@@ -845,6 +884,11 @@ row = {"t": int(time.time()), "action": os.environ.get("RA_ACTION") or "",
        "tmux": os.environ.get("TMUX_PANE") or ""}
 if os.environ.get("RA_REASON"):
     row["reason"] = os.environ["RA_REASON"]
+if os.environ.get("RA_WHEN") == "--quiet":
+    # a PARKED restart: the kernel's drift check reads when + sha to stand down for it (T240d)
+    row["when"] = "quiet"
+    if os.environ.get("RA_SHA"):
+        row["sha"] = os.environ["RA_SHA"]
 print(json.dumps(row))
 PYEOF
     } 2>/dev/null || true
@@ -1327,6 +1371,50 @@ print("romp perf: %.1f s window, kernel up %s, pid %d, romp-perf log %s"
 print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%, other %.1f%%)"
       % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge,
          cpu_proc - cpu_pusher - cpu_judge))
+pb, pa = (b.get("process") or {}), (a.get("process") or {})
+if "allocated_blocks" in pb:
+    # the exact memory gauges (M1-lite): levels from the newer snapshot, the window's delta beside the ones
+    # whose movement answers the RSS question (blocks flat while rss climbs: the allocator; blocks climbing:
+    # an object graph; a cache gauge climbing: that cache). A kernel without them prints neither line.
+    def mbk(kb):
+        return "%d MB" % (int(kb) // 1024)
+
+    def mbb(nbytes):
+        return "%.0f MB" % (nbytes / 1048576.0)
+
+    parts = ["rss %s (%+d MB)" % (mbk(pb.get("rss_kb") or 0), (int(pb.get("rss_kb") or 0) - int(pa.get("rss_kb") or 0)) // 1024)]
+    if pb.get("rss_anon_kb") is not None:
+        parts.append("anon %s" % mbk(pb["rss_anon_kb"]))
+    if pb.get("hwm_kb") is not None:
+        parts.append("hwm %s" % mbk(pb["hwm_kb"]))
+    if pb.get("allocated_blocks") is not None:
+        parts.append("blocks %d (%+d)" % (pb["allocated_blocks"], pb["allocated_blocks"] - (pa.get("allocated_blocks") or pb["allocated_blocks"])))
+    if pb.get("gc_gen2") is not None:
+        parts.append("gc2 %d (%+d)" % (pb["gc_gen2"], pb["gc_gen2"] - (pa.get("gc_gen2") if pa.get("gc_gen2") is not None else pb["gc_gen2"])))
+    m, ma = pb.get("malloc"), (pa.get("malloc") or {})
+    if isinstance(m, dict):
+        parts.append("malloc arena %s, in use %s, free %s (%+.0f MB), mmap %s"
+                     % (mbb(m.get("arena", 0)), mbb(m.get("uordblks", 0)), mbb(m.get("fordblks", 0)),
+                        (m.get("fordblks", 0) - ma.get("fordblks", m.get("fordblks", 0))) / 1048576.0, mbb(m.get("hblkhd", 0))))
+    else:
+        parts.append("malloc gauges unavailable")
+    print("memory    " + "   ".join(parts))
+cb = b.get("caches")
+if isinstance(cb, dict):
+    def cg(name, k):
+        v = (cb.get(name) or {}).get(k)
+        return v if isinstance(v, (int, float)) else 0
+
+    def mb(nbytes):
+        return "%.1f MB" % (nbytes / 1048576.0)
+
+    print("caches    jsonl %d files / %s / %d records   asm %d   judge parse %d, recon %d, chain %d   parse %d   "
+          "chat %d (%s)   usage %d rows   img %d (%s)   links %d + %d   stamps %d   task segs %d   tok %d"
+          % (cg("jsonl", "entries"), mb(cg("jsonl", "file_bytes")), cg("jsonl", "records"), cg("asm", "entries"),
+             cg("judge_parse", "entries"), cg("judge_recon", "entries"), cg("judge_chain", "entries"), cg("parse", "entries"),
+             cg("built_chat", "entries"), mb(cg("built_chat", "ms_bytes")), cg("judge_usage", "rows"),
+             cg("img", "entries"), mb(cg("img", "bytes")), cg("path_links", "entries"), cg("space_paths", "entries"),
+             cg("session_stamp", "entries"), cg("task_seg", "entries"), cg("session_tok", "entries")))
 print("pusher    %.2f cycles/s   %.2f wakes/s (event %d, backstop %d)   busy %.0f%% of wall"
       % (cyc / dt, wakes / dt, ev, bs, 100.0 * cyc_ms / (dt * 1000.0)))
 print("cycle ms  p50 %.0f   p90 %.0f   max %.0f (over the last %d cycles)   last %.0f"
@@ -1338,7 +1426,19 @@ print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)"
 parts = []
 for k in ("chat", "feed", "timeline"):
     built, cached, ms = dl("builds", k, "built"), dl("builds", k, "cached"), dl("builds", k, "ms")
-    parts.append("%s %d built / %d cached%s" % (k, built, cached, (" (%.0f ms avg)" % (ms / built)) if built else ""))
+    split = ""
+    if k == "chat":
+        # the chat builder's attribution (round-4 plan P3): rebuilds of the watched tab against background
+        # tabs whose signature moved, then per signature component the background rebuilds it caused; a
+        # kernel from before the split reports neither field and prints the line as before
+        active, bg = dl("builds", k, "active_built"), dl("builds", k, "bg_built")
+        if active or bg:
+            labels = sorted(((b.get("builds") or {}).get("chat") or {}).get("bg_miss") or {})
+            causes = ", ".join("%s %d" % (lab, dl("builds", k, "bg_miss", lab)) for lab in labels
+                               if dl("builds", k, "bg_miss", lab))
+            split = "; %d active, %d bg%s" % (active, bg, (": " + causes) if causes else "")
+    parts.append("%s %d built / %d cached%s"
+                 % (k, built, cached, (" (%.0f ms avg%s)" % (ms / built, split)) if built else ""))
 print("builds    " + "   ".join(parts))
 parts = []
 for kind in ("full", "delta", "deduped"):
@@ -1355,7 +1455,8 @@ absent = dl("goals", "absent_hits") + dl("goals", "absent_misses")
 unread = g(b, "goals", "unreadable_stores")   # a gauge (the newer snapshot's level, not a delta): goals files that
 #                                              exist and did not read on their last read; nothing when zero
 print("goals     %.1f loads/s   %.1f shared loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)   "
-      "save memo %s hits (%d hits, %d misses, %d seeds)   absent memo %s hits (%d hits, %d misses)   no-op hash %.1f ms/s%s"
+      "save memo %s hits (%d hits, %d misses, %d seeds)   absent memo %s hits (%d hits, %d misses)   no-op hash %.1f ms/s   "
+      "%.1f lineage reads/s%s"
       % (dl("goals", "loads") / dt, dl("goals", "loads_shared") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
          dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no",
          ("%.0f%%" % (100.0 * dl("goals", "disk_hits") / checks)) if checks else "no",
@@ -1363,6 +1464,7 @@ print("goals     %.1f loads/s   %.1f shared loads/s   %.1f saves/s   %.1f writes
          ("%.0f%%" % (100.0 * dl("goals", "absent_hits") / absent)) if absent else "no",
          dl("goals", "absent_hits"), dl("goals", "absent_misses"),
          dl("goals", "noop_hash_ms") / dt,       # the tails' serialization for the no-op check (P3's measurement)
+         dl("goals", "lineage_reads") / dt,      # whole states-file reads by the episode-boundary check (near zero at steady state)
          ("   %d unreadable store%s" % (unread, "" if unread == 1 else "s")) if unread else ""))
 jp = dl("judge", "passes")
 jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wakes_backstop")
@@ -2627,7 +2729,7 @@ PYEOF
     refresh)   # restart EVERYTHING (the user 2026-06-29): the postal bus too, not just the kernels — the bus
                # is a separate long-lived singleton the manager doesn't own, so a kernel-only refresh left it
                # serving stale code. Bounce the bus first (best-effort), then exec the kernel restart.
-               _romp_restart_audit refresh          # who asked (see the helper) — before acting
+               _romp_restart_audit refresh "" "${2:-}"   # who asked (see the helper), before acting; --quiet rides along
                "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
                # Deploys bounce IMMEDIATELY, cutting in-flight turns (T160 — the parked
                # quiet window cost minutes per push; boot reconcile resumes cut turns with
@@ -2775,8 +2877,9 @@ case "${1:-}" in
                            # VALUE is meaningful (explicitly setting empty), but a missing '=' or a
                            # NAME outside [A-Za-z_][A-Za-z0-9_]* is a usage error, never a silent
                            # skip. Toggles only (FEATURE_FLAG=1, CLAUDE_CODE_*) — real secrets stay
-                           # in the manager's environment / the apiKeyHelper, never in a file, since
-                           # this payload is copied into per-sid files and the session registry.
+                           # in the manager's environment, behind a credential command or a
+                           # ROMP_API_KEY_REF reference, or in the apiKeyHelper, never in a file,
+                           # since this payload is copied into per-sid files and the session registry.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
                                echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
@@ -3314,6 +3417,23 @@ if tmux has-session -t "=$name" 2>/dev/null; then
         tmux attach-session -t "$name"
     fi
 else
+    # op's credential never rides a session: when romp itself runs `op` (a reference is configured), the
+    # tmux SERVER's globals — what every new pane inherits — are scrubbed of it before the pane exists
+    # (review, 2026-09-05: the server the manager started carried service.env's token to `exec claude`).
+    # The manager's startup ANTHROPIC_API_KEY goes with it: once a reference governs, a pane billing the
+    # key the manager started with bills a key nobody chose (a keyswap retired it); without the variable
+    # the pane falls to Claude Code's own auth. A box with no reference keeps both — static-key panes rely
+    # on the inheritance. "Configured" is the client's environment OR the env file's own line
+    # (2026-09-06): a kernel-spawned `romp new` on a box that swapped to a reference without a manager
+    # restart carries no ROMP_API_KEY_REF, and the guard on the variable alone left the token in place.
+    # The name list mirrors kernel/keysource.py is_tmux_scrub_name.
+    if _romp_op_consumer; then
+        tmux show-environment -g 2>/dev/null \
+            | sed -n -E 's/^(OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_HOST|OP_CONNECT_TOKEN|OP_ACCOUNT|OP_SESSION_[A-Za-z0-9_]*|ANTHROPIC_API_KEY)=.*/\1/p' \
+            | while IFS= read -r op_var; do
+                [[ -n "$op_var" ]] && tmux set-environment -gu "$op_var" 2>/dev/null || true
+            done
+    fi
     # Create new detached session in working directory
     tmux new-session -d -s "$name" -c "$work_dir"
 

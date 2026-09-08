@@ -5,8 +5,8 @@ The manager's `ANTHROPIC_API_KEY` used to be claimed out of `os.environ` once at
 changing which org key the sessions billed meant restarting `romp-manager` — cutting every open turn
 and killing every subagent. Now:
 
-  * `kernel/keysource.py` reads the `ANTHROPIC_API_KEY=` line of the manager's env file LIVE, and
-    `sdk_backend.work_api_key` prefers it, falling back to the startup claim;
+  * `kernel/keysource.py` reads the configured API key source LIVE; a startup environment key
+    remains supported only until a file or runtime source takes over;
   * `_options` therefore injects the CURRENT key into every session it launches or revives;
   * `romp keyswap <name>` — upstream's rewrite of that one line from a sibling file — is REFUSED on
     this fork (the user 2026-09-05: this fork does not write API keys to files; see tests/test_keyswap_refusal.py).
@@ -55,6 +55,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # path that does not exist — so a bare non-pytest run of this file cannot read the real one either.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
+os.environ.pop("ROMP_SUPERVISED", None)  # a romp-managed shell inherits it; these tests stage the unsupervised startup-key case
 os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 
@@ -86,10 +87,11 @@ class _EnvFile(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.path = os.path.join(self.d, "service.env")
         self._before = {v: os.environ.get(v) for v in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV",
-                                                       "ANTHROPIC_API_KEY")}
+                                                       "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF")}
         os.environ["ROMP_SERVICE_ENV_FILE"] = self.path
         os.environ["ROMP_SERVICE_ENV"] = self.path
         os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("ROMP_API_KEY_REF", None)
         self.write_env(OLD_KEY)
         ks._CACHE = ((), "")          # the stat-identity cache is module-global
 
@@ -250,8 +252,10 @@ class _Backend(_EnvFile):
         self.state = tempfile.mkdtemp()
         self._stash = sb._WORK_KEY
         self._checked = sb._KEY_FILE_CHECKED
+        self._seen_fp = sb._FILE_KEY_SEEN_FP
         sb._WORK_KEY = self.BOOT              # the startup claim, already made
         sb._KEY_FILE_CHECKED = True           # the one-shot agreement line is asserted on its own
+        sb._FILE_KEY_SEEN_FP = ""             # the key-line-gone notice is armed per test, asserted on its own
         self._fetch = sb._fetch_key_fast_org
         sb._fetch_key_fast_org = lambda key: None      # never a real HTTPS GET from a test
         sb._FAST_ORG_VERDICTS.clear()
@@ -271,6 +275,7 @@ class _Backend(_EnvFile):
             sys.modules.pop("claude_agent_sdk", None)
         sb._WORK_KEY = self._stash
         sb._KEY_FILE_CHECKED = self._checked
+        sb._FILE_KEY_SEEN_FP = self._seen_fp
         sb._fetch_key_fast_org = self._fetch
         sb._FAST_ORG_VERDICTS.clear()
         super().tearDown()
@@ -311,32 +316,36 @@ class LiveSpawnEnv(_Backend):
         src = open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read()
         self.assertEqual(src.count("ANTHROPIC_API_KEY=work_key"), 1,
                          "one injection site only — a second would need its own live read")
-        self.assertTrue("work_key, key_src = self._work_key_and_source(cred)" in src,
-                        "the one call site reads the key through _work_key_and_source, on the connect's own snapshot")
+        # every call site reads the key through _work_key_and_source on the connect's OWN snapshot: the
+        # key source read once for this connect (`key_source`, upstream 2026-09-05) and, in command mode,
+        # the credential command's (record, values) pair beside it (`cred`, the fork); never a bare call,
+        # which would be a second live read a keyswap could land between
+        import re
+        calls = re.findall(r"work_key, key_src = self\._work_key_and_source\(([^)]*)\)", src)
+        self.assertEqual(sorted(calls), ["key_source", "key_source, cred"],
+                         "one call per mode (file, command), each on the connect's own read of the source")
 
     def test_the_key_is_read_once_per_connect_so_a_launch_cannot_straddle_a_swap(self):
         reads = []
-        orig = ks.read_key
+        orig = ks.read_source
 
         def counting(path=None):
             reads.append(path)
             return orig(path)
 
-        ks.read_key = counting
+        ks.read_source = counting
         try:
             self.be._options(self._sess(3, auth="key"), dict)
         finally:
-            ks.read_key = orig
+            ks.read_source = orig
         self.assertEqual(len(reads), 1, "two reads could return two different keys")
 
-    def test_an_empty_key_line_falls_to_login_rather_than_injecting_a_blank(self):
+    def test_an_empty_key_line_refuses_an_explicit_key_launch(self):
         self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
-        env = self._launch_env(4)
-        self.assertFalse("ANTHROPIC_API_KEY" in env, 
-                         "an empty var reads as key-mode-without-a-key to the CLI — removal, never blanking")
-        texts = [p["text"] for p in self.be.problems(10)]
-        self.assertTrue(any("carries none" in t for t in texts),
-                        "a key session with no key to inject is a logged problem, not a silent fall")
+        # upstream (2026-09-05): a launch that selected the key with no key to inject is refused, not
+        # launched on the login with a log line, since the login would bill the wrong account
+        with self.assertRaisesRegex(ks.KeySourceError, "no API key source"):
+            self._launch_env(4)
 
     def test_the_live_key_reaches_the_has_a_key_bool_and_the_auth_default(self):
         self.assertEqual(self.be.default_auth({}), "key")
@@ -356,21 +365,29 @@ class StartupFallback(_Backend):
 
     BOOT = BOOT_KEY
 
-    def test_a_file_with_no_key_line_falls_back_to_the_startup_claim(self):
+    def test_removing_a_previously_selected_file_key_does_not_restore_the_startup_key(self):
         with open(self.path, "w") as fh:                # genuinely no assignment, not an empty one
             fh.write("ROMP_PERF=1\n")
         ks._CACHE = ((), "")
-        self.assertEqual(self.be.work_key, BOOT_KEY)
-        self.assertEqual(self._launch_env(1).get("ANTHROPIC_API_KEY"), BOOT_KEY)
+        self.assertEqual(self.be.work_key, "")
+        with self.assertRaises(ks.KeySourceError):
+            self._launch_env(1)
 
-    def test_an_empty_key_line_falls_back_too(self):
+    def test_an_empty_key_line_does_not_restore_the_startup_key(self):
         self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
-        self.assertEqual(self.be.work_key, BOOT_KEY)
+        self.assertEqual(self.be.work_key, "")
 
-    def test_a_missing_file_falls_back_too(self):
+    def test_a_removed_file_does_not_restore_the_startup_key(self):
         os.unlink(self.path)
         ks._CACHE = ((), "")
+        self.assertEqual(self.be.work_key, "")
+
+    def test_a_never_configured_file_permits_a_shell_environment_key(self):
+        # A foreground installation that has never selected a file remains supported.
+        os.environ["ROMP_SERVICE_ENV_FILE"] = self.path + ".never-created"
+        sb._WORK_KEY = BOOT_KEY
         self.assertEqual(self.be.work_key, BOOT_KEY)
+        self.assertEqual(self._launch_env(1).get("ANTHROPIC_API_KEY"), BOOT_KEY)
 
     def test_the_file_wins_when_it_has_a_line(self):
         self.assertEqual(self.be.work_key, OLD_KEY,
@@ -390,6 +407,9 @@ class StartupFallback(_Backend):
         import io
         from contextlib import redirect_stderr
         sb._KEY_FILE_CHECKED = False
+        # This test starts before any file source has been selected.
+        ks._AUTHORITATIVE_PATHS.pop(self.path, None)
+        sb._WORK_KEY = self.BOOT
         with open(self.path, "w") as f:
             f.write("ROMP_PERF=1\n")                                  # no key line yet
         err = io.StringIO()
@@ -423,6 +443,55 @@ class StartupFallback(_Backend):
         self.assertNotIn(OLD_KEY, said)
         self.assertNotIn(BOOT_KEY, said)
         self.assertIn(ks.fingerprint(OLD_KEY), said)
+
+
+class KeyLineGone(_Backend):
+    """Review find (2026-09-06): the file stays authoritative when its static key line is removed
+    mid-run — correct — but nothing said so, and every session without an explicit Billing pick had
+    silently started billing the login."""
+
+    BOOT = ""
+
+    def test_removing_the_static_key_line_mid_run_is_said_once_with_fingerprints_only(self):
+        import io
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, OLD_KEY)
+            self.assertEqual(err.getvalue(), "", "a configured file has nothing to say")
+            with open(self.path, "w") as f:
+                f.write("ROMP_PERF=1\n")                                 # the line is deleted
+            ks._CACHE = ((), "")
+            self.assertEqual(self.be.work_key, "", "the file stays authoritative: no startup key comes back")
+            self.be.work_key; self.be.work_key                          # later reads say nothing more
+        said = err.getvalue()
+        self.assertEqual(said.count("is GONE"), 1, said)
+        self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
+        self.assertIn(self.path, said)
+        self.assertIn("launch on the login", said)
+        self.assertNotIn(OLD_KEY, said, "fingerprints only")
+        # the line coming back re-arms the notice: a second removal is a second event
+        self.write_env(NEW_KEY)
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, NEW_KEY)
+            with open(self.path, "w") as f:
+                f.write("ROMP_PERF=1\n")
+            ks._CACHE = ((), "")
+            self.assertEqual(self.be.work_key, "")
+        self.assertEqual(err.getvalue().count("is GONE"), 2)
+        self.assertIn("sha256:" + ks.fingerprint(NEW_KEY), err.getvalue())
+
+    def test_a_file_that_never_had_a_line_says_nothing(self):
+        import io
+        from contextlib import redirect_stderr
+        with open(self.path, "w") as f:
+            f.write("ROMP_PERF=1\n")
+        ks._CACHE = ((), "")
+        sb._FILE_KEY_SEEN_FP = ""            # setUp's backend construction saw the fixture's line; this process did not
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.be.work_key
+        self.assertEqual(err.getvalue(), "")
 
 
 class CycleReconnects(_Backend):
@@ -566,6 +635,12 @@ class KeyswapCli(_EnvFile):
 
     def setUp(self):
         super().setUp()
+        from unittest import mock
+        # Listing and selecting sources never resolve credentials, even when a provider profile
+        # is present. Only the stubbed kernel may do so; no test can invoke a real op session.
+        resolver = mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("CLI resolved a secret"))
+        resolver.start()
+        self.addCleanup(resolver.stop)
         self.out = []
         self.posted = []
         self._kernel_before, self._post_before = cli._kernel, cli._post
@@ -606,6 +681,18 @@ class KeyswapCli(_EnvFile):
         self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
         self.assertIn("lowprio", said, "the candidates it could swap to")
 
+    def test_the_durable_op_marker_is_not_listed_as_a_candidate(self):
+        ks.remember_file_source(self.path, "op")
+        self.assertTrue(os.path.exists(ks.marker_path(self.path)))
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertIn("lowprio", said)
+        # the candidates block's rows are the lines indented by exactly two spaces (the fork's rotate hint
+        # below it mentions "its source" and is indented twelve, so upstream's whole-text search misfires here)
+        rows = [ln.split()[0] for ln in said.split("\n") if ln.startswith("  ") and not ln.startswith("   ")]
+        self.assertEqual(rows, ["lowprio"], "the memory file is not a profile")
+        self.assertNotIn("(no key source)", said)
+
     def test_it_refuses_a_source_with_no_key_line_and_touches_nothing(self):
         self.sibling("empty", "ROMP_PERF=1\n")
         rc, _ = self.run_cli("empty")
@@ -633,7 +720,9 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 0)
         self.assertEqual(self.posted[0][1:], ("/keycycle", {"sessions": []}), "the read comes first")
         self.assertEqual(self.posted[-1][1], "/keycycle")
-        self.assertEqual(self.posted[-1][2], {"sessions": ["web", "api"]})
+        self.assertEqual(self.posted[-1][2], {"sessions": ["web", "api"],
+                                             "expectedSourceFp": ks.fingerprint(OLD_KEY)},
+                         "the cycle carries the fingerprint the read agreed on: the kernel's, which is the file's here")
         self.assertIn("history kept", said)
         self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said,
                       "the kernel's own fingerprint is how the operator confirms which key it holds")
@@ -643,7 +732,8 @@ class KeyswapCli(_EnvFile):
         cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
             "ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": []}
         rc, _ = self.run_cli("--cycle-all")
-        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"all": True}],
+        self.assertEqual([b for _u, _p, b in self.posted],
+                         [{"sessions": []}, {"all": True, "expectedSourceFp": ks.fingerprint(OLD_KEY)}],
                          "the read, then the cycle — and never a session named by the CLI itself")
 
     def test_a_login_row_in_file_mode_gets_one_hint_about_helper_billed_sessions(self):
@@ -750,7 +840,9 @@ class KeyswapCli(_EnvFile):
             "rows": [{"session": "web", "status": "working"}, {"session": "api", "status": "current"}]}
         rc, said = self.run_cli("--cycle", "web,api")
         self.assertEqual(rc, 0)
-        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"sessions": ["web", "api"]}])
+        self.assertEqual([b for _u, _p, b in self.posted],
+                         [{"sessions": []}, {"sessions": ["web", "api"], "expectedSourceFp": ks.fingerprint(OLD_KEY)}],
+                         "the cycle carries the fingerprint the read agreed on: the kernel's, which is the file's here")
         self.assertIn("skipped: a turn, subagents or background tasks are in flight", said)
         self.assertIn("already on this key", said)
         self.assertIn("re-run --cycle web once quiet", said, "the hint names the skipped row only")
@@ -823,6 +915,223 @@ class KeyswapCli(_EnvFile):
         src = open(os.path.join(ROOT, "cli", "keyswap.py")).read()
         self.assertIn('"kernel" / "keysource.py"', src.replace("'", '"'),
                       "writer and reader must not carry two copies of the path or the parse rules")
+
+
+    def run_cli_with_stderr(self, *argv):
+        """(rc, stdout, stderr): the refusal speaks on stderr, the report on stdout."""
+        buf, was = io.StringIO(), sys.stderr
+        sys.stderr = buf
+        try:
+            rc, said = self.run_cli(*argv)
+        finally:
+            sys.stderr = was
+        return rc, said, buf.getvalue()
+
+    def assertRefusedUntouched(self, before, rc, said, err, *secrets):
+        self.assertEqual(rc, 2)
+        self.assertEqual(open(self.path).read(), before, "the live file is untouched, byte for byte")
+        self.assertIn("does not write API keys to files", err)
+        self.assertEqual(said, "", "the refusal is the whole answer; nothing is reported on stdout")
+        self.assertEqual(self.posted, [], "nothing reaches the kernel")
+        for s in secrets:
+            self.assertNotIn(s, err, "a refused name is never echoed with what its profile holds")
+
+    # -- upstream's 1Password reference profiles (2026-09-05). The fork carries the key-source module as
+    # upstream ships it, so a ROMP_API_KEY_REF line in the live file is read, fingerprinted and compared
+    # the same way; the NAMED swap onto a profile stays refused (the user 2026-09-05), so upstream's
+    # swap cases below assert the refusal where upstream's asserted the rewrite. --
+    def test_reference_profiles_are_listed_without_resolving_or_revealing_them(self):
+        ref = "op://test-vault/test-item/api-key"
+        self.sibling("vault", "ROMP_API_KEY_REF=%s\n" % ref)
+        before = open(self.path).read()
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertIn("vault", said)
+        self.assertIn("1Password reference", said)
+        self.assertIn(ks.KeySource("op", ref).fingerprint(), said)
+        self.assertNotIn(ref, said)
+        self.assertEqual(open(self.path).read(), before)
+
+    def test_selecting_a_reference_by_name_is_refused_and_copies_nothing(self):
+        # upstream: test_selecting_a_reference_copies_only_the_reference_and_preserves_other_settings.
+        # Its swap copied the profile's reference line (no key reaches disk); the fork's refusal covers the
+        # named form as such, before the profile is read, so neither the reference nor the stale key in it
+        # moves and no `.source` marker appears.
+        ref = "op://test-vault/test-item/api-key"
+        self.sibling("vault", "ANTHROPIC_API_KEY=%s\nROMP_API_KEY_REF=%s\n" % (NEW_KEY, ref))
+        before = open(self.path).read()
+        mtime = os.stat(self.path).st_mtime_ns
+        rc, said, err = self.run_cli_with_stderr("vault")
+        self.assertRefusedUntouched(before, rc, said, err, ref, NEW_KEY)
+        self.assertEqual(os.stat(self.path).st_mtime_ns, mtime)
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("file", OLD_KEY))
+        self.assertEqual(sorted(os.listdir(self.d)), ["service.env", "service.env.lowprio", "service.env.vault"],
+                         "no temp file and no `.source` marker: nothing was written")
+
+    def test_selecting_a_legacy_key_by_name_leaves_a_live_reference_in_place(self):
+        # upstream: test_selecting_a_legacy_key_removes_the_reference
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        before = open(self.path).read()
+        rc, said, err = self.run_cli_with_stderr("lowprio")
+        self.assertRefusedUntouched(before, rc, said, err, NEW_KEY)
+        self.assertEqual(ks.read_source(self.path), source)
+        self.assertEqual(ks.read_key(self.path), "", "no key line was written")
+
+    def test_selecting_the_current_reference_by_name_is_refused_and_cleans_nothing_up(self):
+        # upstream: test_selecting_the_current_reference_removes_a_leftover_plaintext_key. The fork rewrites
+        # nothing, so the leftover key line stays where the operator put it; the report still reads the
+        # reference (a reference wins over a key line in keysource.parse_source).
+        ref = "op://test-vault/test-item/api-key"
+        self.sibling("vault", "ROMP_API_KEY_REF=%s\n" % ref)
+        with open(self.path, "a") as fh:
+            fh.write("ROMP_API_KEY_REF=%s\n" % ref)
+        ks._CACHE = ((), "")
+        before = open(self.path).read()
+        rc, said, err = self.run_cli_with_stderr("vault")
+        self.assertRefusedUntouched(before, rc, said, err, ref)
+        self.assertIn("ANTHROPIC_API_KEY=", open(self.path).read())
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("op", ref))
+
+    def test_changing_references_by_name_is_refused_and_the_first_stays_live(self):
+        # upstream: test_changing_references_takes_effect_in_the_same_file
+        first = "op://test-vault/first/api-key"
+        second = "op://test-vault/second/api-key"
+        ks.write_source(ks.KeySource("op", first), self.path)
+        self.sibling("second", "ROMP_API_KEY_REF=%s\n" % second)
+        before = open(self.path).read()
+        rc, said, err = self.run_cli_with_stderr("second")
+        self.assertRefusedUntouched(before, rc, said, err, first, second)
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("op", first))
+        self.assertNotIn(second, open(self.path).read())
+
+    def test_invalid_reference_profiles_never_fall_back_to_a_legacy_key(self):
+        # upstream: test_invalid_reference_profiles_refuse_to_fall_back_to_a_legacy_key. Upstream reads the
+        # profile and refuses it as invalid; the fork refuses the name before reading, so the outcome is
+        # the same (rc 2, the live file untouched, the profile's key never copied) and the reason given is
+        # the fork's, not "invalid key source".
+        before = open(self.path).read()
+        for ref in ("", "not-an-op-reference", "op://"):
+            self.sibling("invalid", "ANTHROPIC_API_KEY=%s\nROMP_API_KEY_REF=%s\n" % (NEW_KEY, ref))
+            rc, said, err = self.run_cli_with_stderr("invalid")
+            self.assertRefusedUntouched(before, rc, said, err, NEW_KEY)
+            self.assertEqual(ks.read_key(self.path), OLD_KEY)
+
+    def test_invalid_live_reference_is_an_error_even_when_the_kernel_is_down(self):
+        with open(self.path, "w") as fh:
+            fh.write("ROMP_API_KEY_REF=\n")
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("configuration invalid", said)
+        self.assertEqual(self.posted, [])
+
+    def test_reference_cycle_compares_configuration_and_allows_rotation_behind_the_same_reference(self):
+        # upstream ran this as `vault --cycle web` (swap, then cycle); here the reference is already the
+        # live file's line and the bare cycle compares it by sourceFp. keyFp says nothing about a
+        # reference the kernel resolves at runtime, so a rotated secret behind the same reference matches.
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        mtime = os.stat(self.path).st_mtime_ns
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "sourceFp": source.fingerprint(), "keyFp": ks.fingerprint(NEW_KEY),
+            "rows": [{"session": "web", "status": "cycling"}]}
+        rc, said = self.run_cli("--cycle", "web")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(os.stat(self.path).st_mtime_ns, mtime)
+        self.assertEqual([b for _, _, b in self.posted],
+                         [{"sessions": []}, {"sessions": ["web"], "expectedSourceFp": source.fingerprint()}])
+        self.assertIn("1Password reference matches", said)
+        self.assertIn("reconnecting now", said)
+        self.assertNotIn(source.value, json.dumps(self.posted) + said)
+        self.assertNotIn(NEW_KEY, json.dumps(self.posted) + said)
+
+    def test_reference_cycle_refuses_old_kernels_and_mismatched_sources(self):
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        for fields, expected in (({}, "romp refresh"), ({"sourceFp": "op:wrong-source"}, "MISMATCH")):
+            self.posted.clear()
+            cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+                "ok": True, "keyFp": ks.fingerprint(NEW_KEY), "rows": [], **fields}
+            rc, said = self.run_cli("--cycle-all")
+            self.assertEqual(rc, 1, said)
+            self.assertIn(expected, said)
+            self.assertIn("NOT DONE", said)
+            self.assertEqual([b for _, _, b in self.posted], [{"sessions": []}])
+
+    def test_a_reference_mismatch_names_the_kernel_s_other_configuration_not_a_missing_key_line(self):
+        # the hint's middle cause is the file's: a reference file cannot lack a key line and leave the
+        # kernel on its startup key (that is the key-line file's cause), so it gets upstream's cause
+        # instead, the kernel's credential configuration differing; the other-file cause and the
+        # restart block follow as for a key line
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": "", "sourceFp": "op:wrong-source", "keySource": "file", "rows": []}
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1, said)
+        self.assertIn("MISMATCH    the kernel is not reading this file's key source. Usual causes: the file is unreadable\n"
+                      "            to the kernel, its credential configuration differs from the running manager's,\n"
+                      "            or the kernel reads another service.env:\n", said)
+        self.assertNotIn("has no %s line" % ks.KEY_VAR, said, "a key-line cause on a reference file")
+        self.assertIn("ROMP_SERVICE_ENV_FILE", said, "the other-file cause renders as for a key line")
+        self.assertIn("systemctl --user restart romp-manager", said, "and the restart block after it")
+        self.assertTrue(all(len(line) <= cli.WIDTH for line in said.splitlines() if self.path not in line), said)
+        self.assertNotIn(source.value, said)
+        # the same hint on the cycle path, before any reconnect
+        self.posted.clear()
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1, said)
+        self.assertIn("its credential configuration differs from the running manager's", said)
+        self.assertIn("cycle       NOT DONE", said)
+        self.assertEqual([b for _, _, b in self.posted], [{"sessions": []}])
+
+    def test_provider_failure_is_reported_without_reverting_the_selected_reference(self):
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": False, "error": "1Password runtime key retrieval failed"}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("FAILED", said)
+        self.assertIn("retrieval failed", said)
+        self.assertEqual(ks.read_source(self.path), source)
+        self.assertNotIn(OLD_KEY, open(self.path).read())
+        self.assertEqual([b for _, _, b in self.posted], [{"sessions": []}])
+
+    def test_a_provider_error_during_reconnect_exits_nonzero(self):
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "sourceFp": source.fingerprint(),
+            "rows": ([{"session": "web", "status": "error: 1Password runtime key retrieval failed"}]
+                     if b.get("sessions") else [])}
+        rc, said = self.run_cli("--cycle", "web")
+        self.assertEqual(rc, 1)
+        self.assertIn("retrieval failed", said)
+
+    def test_a_changed_source_in_the_cycle_response_is_not_reported_as_success(self):
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        changed = ks.KeySource("op", "op://test-vault/other-item/api-key")
+        ks.write_source(source, self.path)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+
+        def respond(url, path, body):
+            self.posted.append((url, path, body))
+            if "expectedSourceFp" in body:
+                ks.write_source(changed, self.path)
+                return {"ok": True, "sourceFp": changed.fingerprint(), "rows": []}
+            return {"ok": True, "sourceFp": source.fingerprint(), "rows": []}
+
+        cli._post = respond
+        rc, said = self.run_cli("--cycle", "web")
+        self.assertEqual(rc, 1)
+        self.assertIn("source changed during the request", said)
+        self.assertEqual(self.posted[-1][2]["expectedSourceFp"], source.fingerprint())
 
 
 class KeyswapCliCommandMode(unittest.TestCase):
@@ -1053,7 +1362,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.kernel_view["rows"] = [{"session": "web", "status": "cycling", "from": ""}]
         rc, out, _err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(self.posted[-1], ("/keycycle", {"all": True}))
+        self.assertEqual(self.posted[-1], ("/keycycle", {"all": True, "expectedSourceFp": ""}),
+                         "a login-billed kernel has no fingerprint to hold the cycle to")
 
     def test_a_local_command_failure_is_loud_and_cycles_nothing(self):
         self.command("echo 'noise: %s' >&2\nexit 3" % self.keys["hp"])
@@ -1274,7 +1584,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
         rc, out, _err = self.run_cli("lp", "--cycle-all")
         self.assertEqual(rc, 0, out)
         self.assertEqual([b for _p, b in self.posted],
-                         [{"sessions": [], "refresh": True}, {"sessions": [], "refresh": True}, {"all": True}])
+                         [{"sessions": [], "refresh": True}, {"sessions": [], "refresh": True},
+                          {"all": True, "expectedSourceFp": self.fp("lp")}])
         self.assertIn("selector    hp -> lp", out)
         self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % self.fp("hp"), out)
 
@@ -1296,7 +1607,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
                                     {"session": "tests", "status": "working", "from": self.fp("lp")}]
         rc, out, err = self.run_cli("--cycle-all")
         self.assertEqual(rc, 0, out)
-        self.assertEqual([b for _p, b in self.posted], [{"sessions": [], "refresh": True}, {"all": True}],
+        self.assertEqual([b for _p, b in self.posted],
+                         [{"sessions": [], "refresh": True}, {"all": True, "expectedSourceFp": self.fp("hp")}],
                          "the refresh-and-read, then the cycle — never a session named by the CLI itself")
         self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % self.fp("lp"), out)
         self.assertIn("  api            already on this key — nothing to do", out)
@@ -1308,7 +1620,8 @@ class KeyswapCliCommandMode(unittest.TestCase):
     def test_cycle_names_exactly_the_given_sessions(self):
         rc, _out, _err = self.run_cli("--cycle", "web,api")
         self.assertEqual(rc, 0)
-        self.assertEqual(self.posted[-1], ("/keycycle", {"sessions": ["web", "api"]}))
+        self.assertEqual(self.posted[-1], ("/keycycle", {"sessions": ["web", "api"], "expectedSourceFp": self.fp("hp")}),
+                         "the cycle carries the fingerprint the read agreed on, so a kernel whose run moved refuses")
 
     def test_the_cycle_stops_on_a_mismatch_before_any_reconnect(self):
         self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {}})
@@ -1432,11 +1745,12 @@ class KeycycleRoute(unittest.TestCase):
 
     def test_a_session_that_raises_is_reported_not_fatal(self):
         fake = self._Fake({})
-        fake.cycle_key = lambda sid: (_ for _ in ()).throw(RuntimeError("boom"))
+        fake.cycle_key = lambda sid: (_ for _ in ()).throw(RuntimeError("boom " + NEW_KEY))
         code, resp = self._with(fake, {"sessions": ["web", "api"]})
         self.assertEqual(code, 200)
         self.assertEqual(len(resp["rows"]), 2, "one bad session must not abandon the rest")
-        self.assertIn("boom", resp["rows"][0]["status"])
+        self.assertEqual(resp["rows"][0]["status"], "error: API credential source failed")
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
 
     def test_an_empty_session_list_is_a_read_of_the_fingerprint_and_cycles_nothing(self):
         from unittest import mock
@@ -1535,6 +1849,131 @@ class KeycycleRoute(unittest.TestCase):
             self.assertEqual(e.code, 403)
 
 
+    def _provider_backend(self, source):
+        """Exercise real cycle_key with an inert session and a synthetic provider descriptor."""
+        import threading
+        from types import SimpleNamespace
+        scheduled = []
+        session = SimpleNamespace(
+            name="web", effective_auth=lambda key=None: "key", _sub_lock=threading.Lock(),
+            _subagents={}, _bg_tasks={}, inflight=0, _pending=[],
+            _launched_key_fp=ks.fingerprint(OLD_KEY),
+            request_reconnect=lambda defer=True: scheduled.append(defer),
+        )
+        backend = SimpleNamespace(sessions={"s-web": session}, _log=lambda message: None)
+        backend.owns = lambda sid: sid in backend.sessions
+        backend._work_key_source = lambda: source
+        backend._work_key_and_source = lambda selected=None: ((selected or source).resolve(), source.kind)
+        backend.cycle_key = lambda sid, **kwargs: sb.SdkBackend.cycle_key(backend, sid, **kwargs)
+        return backend, scheduled
+
+    def test_provider_status_returns_source_identity_without_retrieving_a_key(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("status retrieved a secret")) as resolve:
+            code, resp = self._with(backend, {"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["sourceFp"], source.fingerprint())
+        self.assertEqual(resp["keyFp"], "")
+        self.assertEqual(resp["rows"], [])
+        self.assertEqual(scheduled, [])
+        resolve.assert_not_called()
+        self.assertNotIn(source.value, json.dumps(resp))
+
+    def test_invalid_provider_configuration_stops_the_route_before_retrieval_or_reconnect(self):
+        from unittest import mock
+        backend, scheduled = self._provider_backend(ks.KeySource("op", ""))
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("invalid source resolved")) as resolve:
+            code, resp = self._with(backend, {"sessions": ["web"]})
+        self.assertEqual(code, 200)
+        self.assertFalse(resp["ok"])
+        self.assertIn("ROMP_API_KEY_REF", resp["error"])
+        self.assertEqual(scheduled, [])
+        resolve.assert_not_called()
+
+    def test_a_stale_expected_source_is_rejected_before_any_provider_or_reconnect(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("stale source resolved")) as resolve:
+            code, resp = self._with(backend, {"sessions": ["web"], "expectedSourceFp": "stale-source"})
+        self.assertEqual(code, 409)
+        self.assertFalse(resp["ok"])
+        self.assertIn("source changed", resp["error"])
+        self.assertEqual(scheduled, [])
+        resolve.assert_not_called()
+
+    def test_a_source_change_during_provider_retrieval_does_not_schedule_reconnect(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        changed = ks.KeySource("op", "op://test-vault/other-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        selected = [source]
+        backend._work_key_source = lambda: selected[0]
+
+        def resolve_and_change():
+            selected[0] = changed
+            return NEW_KEY
+
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=resolve_and_change) as resolve:
+            code, resp = self._with(backend, {"sessions": ["web"], "expectedSourceFp": source.fingerprint()})
+        self.assertEqual(code, 200)
+        self.assertIn("source changed during retrieval", resp["rows"][0]["status"])
+        self.assertEqual(scheduled, [])
+        resolve.assert_called_once_with()
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
+
+    def test_a_rotated_key_behind_the_same_reference_reconnects_the_session(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        with mock.patch.object(ks.KeySource, "resolve", return_value=NEW_KEY) as resolve:
+            code, resp = self._with(backend, {"sessions": ["web"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["sourceFp"], source.fingerprint())
+        # every row carries `from`, the fingerprint the session's CLI launched on (the fork's row shape)
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling", "from": ks.fingerprint(OLD_KEY)}])
+        self.assertEqual(scheduled, [False])
+        resolve.assert_called_once_with()
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
+
+    def test_provider_failure_does_not_reconnect_a_live_session(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=ks.KeySourceError("1Password credential retrieval failed")):
+            code, resp = self._with(backend, {"sessions": ["web"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "error: 1Password credential retrieval failed",
+                                         "from": ks.fingerprint(OLD_KEY)}])
+        self.assertEqual(scheduled, [])
+
+    def test_the_cli_reports_provider_failure_from_the_real_route_as_nonzero(self):
+        from unittest import mock
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        backend, scheduled = self._provider_backend(source)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "service.env")
+            ks.write_source(source, path)
+            said = []
+            with mock.patch.dict(os.environ, {"ROMP_SERVICE_ENV_FILE": path}), \
+                 mock.patch.object(cli, "_kernel", lambda: "http://127.0.0.1:%d" % self.port), \
+                 mock.patch.object(cli, "_token", lambda: self.km.TOKEN), \
+                 mock.patch.object(self.km, "_sdk", lambda: backend), \
+                 mock.patch.object(self.km, "_sid_of", lambda name: "s-" + name), \
+                 mock.patch.object(self.km, "_name_of", lambda sid: str(sid)[2:]), \
+                 mock.patch.object(self.km, "_push_soon", lambda: None), \
+                 mock.patch.object(ks.KeySource, "resolve", side_effect=ks.KeySourceError("1Password credential retrieval failed")) as resolve:
+                rc = cli.main(["--cycle", "web"], out=said.append)
+            self.assertEqual(rc, 1)
+            self.assertIn("1Password credential retrieval failed", "\n".join(said))
+            self.assertEqual(scheduled, [])
+            resolve.assert_called_once_with()
+            self.assertEqual(ks.read_source(path), source)
+
+
 class NothingLeaksTheKey(_Backend):
     """No key value in any log line, printed line, or wire payload. The fingerprint is the only
     rendered form — the same rule the browser side has always had for the key (2026-08-08)."""
@@ -1562,6 +2001,7 @@ class NothingLeaksTheKey(_Backend):
         self.assertIn(ks.fingerprint(NEW_KEY), said[1])
 
     def test_the_announcement_names_the_startup_environment_when_the_file_has_no_line(self):
+        ks._AUTHORITATIVE_PATHS.pop(self.path, None)
         sb._WORK_KEY = OLD_KEY                                        # the boot claim (restored by tearDown)
         with open(self.path, "w") as f:
             f.write("ROMP_PERF=1\n")                                  # no key line: the startup claim is injected
@@ -1599,7 +2039,8 @@ class NothingLeaksTheKey(_Backend):
 
     def test_the_problem_ring_the_dashboard_reads_never_carries_a_key(self):
         self.write_env("", lines=["ROMP_PERF=1"])       # a key pick with no key: the loudest path
-        self._launch_env(1)
+        with self.assertRaises(ks.KeySourceError):
+            self._launch_env(1)
         self.write_env(NEW_KEY)
         self._launch_env(2)
         for p in self.be.problems(50):
@@ -1835,6 +2276,60 @@ class CommandBeatsFileAndStartup(_CommandMode):
         os.environ["ANTHROPIC_API_KEY"] = BOOT_KEY
         self.assertEqual(sb.work_api_key(), "", "command mode: the ambient key is claimed and ignored")
         self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "the one-claimer property holds in every mode")
+
+
+class InheritedEnvironmentNamed(_CommandMode):
+    """The boot verdict's line about the OTHER credential-shaped names in the kernel's own environment
+    says what becomes of them (probe, 2026-09-07): the SDK transport spawns each session CLI with the
+    kernel's whole os.environ under the options overlay, judge CLIs copy os.environ, tmux panes take the
+    manager-started server's globals, and the kernel takes out only ANTHROPIC_API_KEY, the CLI's token
+    names and, as the op consumer, op's OP_* names. Every name listed is therefore inherited by every
+    session, and the line says so; until the 2026-09-07 upstream fold it called them frozen copies the sessions do not
+    receive. Not a scrub: whether to scrub is the owner's ruling, filed separately. A synthetic name,
+    never a real one, so a developer's own shell exports are neither read nor moved."""
+
+    NAME = "SYNTHETIC_FIXTURE_TOKEN"
+
+    def test_the_line_says_the_listed_names_are_inherited_and_the_launch_leaves_them_in_place(self):
+        had = os.environ.get(self.NAME)
+        self.addCleanup(lambda: os.environ.pop(self.NAME, None) if had is None else os.environ.__setitem__(self.NAME, had))
+        v = fixture_value("inherited")
+        os.environ[self.NAME] = v
+        self.logged.clear()
+        es._reset()
+        self.be = self.construct()
+        lines = [ln for ln in self.be.key_source["lines"] if "kernel's own environment" in ln["text"]]
+        self.assertEqual(len(lines), 1, self.be.key_source["lines"])
+        text = lines[0]["text"]
+        self.assertIn(self.NAME, text)
+        self.assertNotIn(v, text)
+        self.assertFalse(lines[0]["problem"], "listed, not flagged: scrubbing is a separate ruling")
+        self.assertIn("They are inherited: every session CLI and judge CLI this kernel launches gets the kernel's "
+                      "environment with only ANTHROPIC_API_KEY, the CLI's own token names and, while romp is the "
+                      "1Password consumer, op's OP_* names taken out, and every tmux pane gets the manager-started "
+                      "server's globals, so each name listed reaches them all unless it is removed from the "
+                      "manager's environment.", text)
+        self.assertIn("The command's set is merged over that inherited environment at each launch.", text)
+        for gone in ("frozen cop", "do not receive", "informational", "is what a launch carries"):
+            self.assertNotIn(gone, text, gone)
+        # membership, not the whole list: a developer's shell may export credential-shaped names of its own
+        self.assertIn(self.NAME, self.be.key_source["credentialNamesFound"]["environment"])
+        # the mechanism the line describes: a launch neither removes the name from the kernel's environment
+        # (the transport merges options.env OVER os.environ) nor blanks it in the overlay
+        overlay = self._env_for(1, "login")
+        self.assertEqual(os.environ.get(self.NAME), v, "the kernel removes nothing but its own claims")
+        self.assertNotIn(self.NAME, overlay, "the overlay does not touch it either way")
+        # the docstring and the reference say the same
+        self.assertNotIn("informational", sb.key_source_verdict.__doc__)
+        # whitespace-normalised: Python 3.13+ dedents docstrings at compile time, so the literal's
+        # indentation is not part of __doc__ there and a pin embedding it fails on those interpreters
+        self.assertIn("reaches every session, judge call and pane the kernel launches",
+                      " ".join(sb.key_source_verdict.__doc__.split()))
+        root = os.path.dirname(os.path.dirname(os.path.realpath(sb.__file__)))
+        with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+            doc = fh.read()
+        self.assertIn("every session CLI and judge CLI the kernel\nlaunches inherits that environment", doc)
+        self.assertIn("each listed name reaches them all unless you remove it from the manager's\nenvironment.", doc)
 
 
 class CommandModeSkipsTheFileWarning(_CommandMode):
@@ -2263,3 +2758,260 @@ class NothingLeaksInCommandMode(_CommandMode):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RouteServer:
+    """The REAL kernel handler on loopback beside a REAL backend lab (KeycycleRoute's server, as a mixin):
+    the route is driven end to end with the lab's SdkBackend behind `_sdk`, so the answer is what an
+    operator's `romp keyswap` reads, not what a double returns."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import ThreadingHTTPServer
+        cls.km = sys.modules.get("romp_kernel_keyswap") or load_source("romp_kernel_keyswap",
+                                                                        os.path.join(BIN, "romp-kernel"))
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def _read(self, body):
+        """POST /keycycle with the lab's backend behind the route: (status, decoded body)."""
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+        req = urllib.request.Request("http://127.0.0.1:%d/keycycle" % self.port, method="POST",
+                                     data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": self.km.TOKEN})
+        with mock.patch.object(self.km, "_sdk", lambda: self.be), \
+             mock.patch.object(self.km, "_sid_of", lambda w: "s-" + w), \
+             mock.patch.object(self.km, "_name_of", lambda sid: str(sid)[2:]), \
+             mock.patch.object(self.km, "_push_soon", lambda: None):
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status, json.loads(r.read().decode())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read().decode() or "{}")
+
+
+class KeycycleRouteCommandMode(_RouteServer, _CommandMode):
+    """POST /keycycle over the REAL handler with a REAL command-mode backend (the _CommandMode lab):
+    what keyFp is in each command-mode state, and that `romp keyswap`'s kernel half agrees with the
+    shell's own run. KeycycleRoute's doubles cannot show this. The fold's first cut applied upstream's
+    file-mode rule to the command descriptor and answered the fingerprint of the set's absent
+    ANTHROPIC_API_KEY line ("") beside keyKind "helper", so the CLI printed MISMATCH and a --cycle
+    stopped before any reconnect (review of the 2026-09-07 upstream fold)."""
+
+    def _cli_agrees(self, resp):
+        said = []
+        rc = cli._kernel_lines(resp, cli._local(), said.append)
+        return rc, "\n".join(said)
+
+    def test_a_helper_billed_set_answers_the_helpers_fingerprint_and_the_cli_agrees(self):
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        hfp = es.helper_fingerprint()[0]
+        self.assertTrue(hfp, "the lab's helper fingerprints")
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"]), ("command", "helper", hfp),
+                         "keyFp is the credential a launch bills now: the helper's output")
+        self.assertEqual(resp["sourceFp"], "", "the descriptor is the set's absent key line: nothing to fingerprint")
+        self.assertEqual(resp["keyErr"], "")
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("kernel      reads sha256:%s (its own run); 0 live session(s) on it" % hfp, text)
+        self.assertNotIn("MISMATCH", text)
+
+    def test_a_set_that_carries_a_key_answers_the_keys_fingerprint(self):
+        k = fixture_value("setkey")
+        self.print_set({**self.values, "ANTHROPIC_API_KEY": k})
+        es._reset()
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"]), ("command", "key", ks.fingerprint(k)))
+        self.assertEqual(resp["sourceFp"], ks.fingerprint(k), "the descriptor holds the set's key line")
+        self.assertNotIn(k, json.dumps(resp))
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertNotIn("MISMATCH", text)
+
+    def test_no_key_and_no_helper_reads_as_the_login_and_the_cli_agrees(self):
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"], resp["keyErr"]),
+                         ("command", "login", "", ""))
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("kernel      reads no key", text)
+
+    def test_a_status_read_runs_the_command_and_the_helper_once(self):
+        # the fold's first cut kept the fork's fingerprint read ahead of upstream's source read and then
+        # discarded it; both reads are served by envsource's cache, so the pin is the run counters
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        runs0, hruns0 = es._runs, es._helper["runs"]
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual(es._runs - runs0, 1, "one run of the command for the whole read")
+        self.assertEqual(es._helper["runs"] - hruns0, 1, "one run of the helper for the whole read")
+        self._read({"sessions": []})
+        self.assertEqual((es._runs - runs0, es._helper["runs"] - hruns0), (1, 1), "a second read is served from the cache")
+
+    def test_a_cycle_binds_to_the_source_fingerprint_the_read_answered(self):
+        # the CLI sends the read's sourceFp back as expectedSourceFp; both sides compute it from the same
+        # descriptor, so a command-mode cycle never 409s on a fingerprint the shell could not have known
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        code, resp = self._read({"sessions": []})
+        code2, resp2 = self._read({"sessions": [], "expectedSourceFp": resp["sourceFp"]})
+        self.assertEqual(code2, 200)
+        self.assertTrue(resp2["ok"], resp2)
+        code3, resp3 = self._read({"sessions": [], "expectedSourceFp": "stale-source"})
+        self.assertEqual(code3, 409, "a source that moved is refused, as upstream's route refuses it")
+
+
+class KeycycleRouteReferenceSource(_RouteServer, _Backend):
+    """A REAL file-mode backend whose env file selects a 1Password reference, behind the REAL route: a
+    bare status read runs `op read` nowhere on its path, key_source_status and refresh_key_source
+    included (the fork's route calls both beside upstream's source read). The fold's first cut resolved
+    the reference twice per status read, once for a fingerprint it then discarded and once inside
+    key_source_status; upstream's KeycycleRoute double has neither method, so its test could not see
+    it (review of the 2026-09-07 upstream fold)."""
+
+    def setUp(self):
+        super().setUp()
+        self.source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(self.source, self.path)
+        ks._CACHE = ((), "")
+        self.be = self.construct()
+
+    def test_a_status_read_never_resolves_the_reference(self):
+        from unittest import mock
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("a status read retrieved a secret")) as resolve:
+            code, resp = self._read({"sessions": []})
+            st = self.be.key_source_status()
+            refreshed = self.be.refresh_key_source()
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(resp["keySource"], "file")
+        self.assertEqual(resp["sourceFp"], self.source.fingerprint(), "the reference's identity, never its value")
+        self.assertEqual(resp["keyFp"], "")
+        self.assertEqual((st["fp"], st["fpKind"], st["err"]), ("", "", ""))
+        self.assertEqual(refreshed, {"from": "", "to": "", "err": ""})
+        resolve.assert_not_called()
+        self.assertNotIn(self.source.value, json.dumps(resp))
+        said = []
+        self.assertEqual(cli._compare(resp, self.path, said.append), 0, "\n".join(said))
+        self.assertIn("1Password reference matches", "\n".join(said))
+
+    def test_a_key_line_still_fingerprints_as_the_key_a_launch_stamps(self):
+        # the descriptor path answers the same fingerprint the resolving path did for a key line
+        self.write_env(NEW_KEY)
+        self.assertEqual(self.be.credential_fingerprint(), (ks.fingerprint(NEW_KEY), "key"))
+        self.assertEqual(self.be.work_key_fp(), ks.fingerprint(NEW_KEY))
+
+
+class CommandModeEnvDoor(_RouteServer, _CommandMode):
+    """The per-session env doors read the source the launch reads. In command mode a stale
+    ROMP_API_KEY_REF line in the env file (an earlier 1Password trial) governs nothing: a per-session
+    credential is not reserved for a retrieval that never runs, and checking a payload neither discards
+    the startup claim nor prints that the file's reference governs. The fold's first cut read the
+    module-level file/op selector at the backend's door, which did both (review of the 2026-09-07 upstream fold).
+    Both copies of the validator, the backend's and the kernel's /new mirror, agree in both modes."""
+
+    NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+
+    def _stale_reference_file(self):
+        with open(self.path, "w") as fh:
+            fh.write("ROMP_PERF=1\nROMP_API_KEY_REF=op://test-vault/test-item/api-key\n")
+        ks._CACHE = ((), "")
+
+    def test_a_stale_reference_line_reserves_nothing_and_says_nothing_in_command_mode(self):
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        sb._WORK_KEY = BOOT_KEY                    # the startup claim, still held in command mode
+        said_before = sb._STARTUP_KEY_DISCARD_SAID
+        sb._STARTUP_KEY_DISCARD_SAID = False
+        self.addCleanup(setattr, sb, "_STARTUP_KEY_DISCARD_SAID", said_before)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(self.km, "_sdk_backend", self.be):
+            self.assertIsNone(sb.reserved_names_source(), "command mode: no descriptor, nothing extra reserved")
+            for auth in ("", "key", "login"):
+                for name in self.NAMES:
+                    payload = {name: fixture_value("door")}
+                    self.assertEqual(sb.env_request_error(payload, auth), "", (name, auth))
+                    self.assertEqual(self.km._env_error(payload, auth), "", (name, auth))
+        self.assertEqual(err.getvalue(), "", "no 'startup key IGNORED' notice: the file's source was never selected")
+        self.assertEqual(sb._WORK_KEY, BOOT_KEY, "checking a payload discards no claim")
+
+    def test_the_kernel_mirror_answers_the_mode_before_the_backend_exists_and_writes_no_marker(self):
+        # the window between the kernel's eager backend thread starting and the construction finishing
+        # (_sdk_backend None), and a kernel whose SDK import failed for good (False): the mirror's fallback
+        # went straight to keysource.select_source, which on this file selects the op source, refuses every
+        # credential name as reserved for a retrieval that never runs, and durably writes the
+        # service.env.source marker `op` for a source nobody selected (fold review, 2026-09-07). The mode is
+        # read off the command source's module instead, without the backend; file mode keeps upstream's rule.
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        sb._WORK_KEY = BOOT_KEY
+        marker = ks.marker_path(self.path)
+        self.assertFalse(os.path.exists(marker))
+        for absent in (None, False):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), mock.patch.object(self.km, "_sdk_backend", absent):
+                self.assertIsNone(self.km._reserved_names_source(), absent)
+                for auth in ("", "key", "login"):
+                    for name in self.NAMES:
+                        self.assertEqual(self.km._env_error({name: fixture_value("door")}, auth), "", (absent, name, auth))
+            self.assertEqual(err.getvalue(), "", "nothing selected the file's source, so nothing was said")
+            self.assertFalse(os.path.exists(marker), "the door wrote the durable op memory for a source it never selected")
+            self.assertNotIn(self.path, ks._AUTHORITATIVE_PATHS, "the door made the file's reference authoritative for the process")
+        self.assertEqual(sb._WORK_KEY, BOOT_KEY, "checking a payload discards no claim")
+        # file mode, the same window: upstream's rule, read the same way the built backend reads it
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
+        es._reset()
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch.object(self.km, "_sdk_backend", None):
+            self.assertEqual(self.km._reserved_names_source().kind, "op")
+            self.assertIn("reserved while runtime API key retrieval", self.km._env_error({"ANTHROPIC_API_KEY": fixture_value("door")}))
+
+    def test_the_mode_read_loads_the_command_source_module_when_nothing_has(self):
+        # a kernel whose sdk_backend never imported (the SDK unavailable for good) has no romp_envsource
+        # loaded: the read loads it under that fixed name, live; once the backend's import has it, that
+        # object answers (one module, one mode pin, for every reader)
+        import sys
+        held = sys.modules.pop("romp_envsource", None)
+        self.assertIs(held, es, "the lab's backend loaded the module under its fixed name")
+        try:
+            mod = self.km._envsrc_mod()
+            self.assertIsNot(mod, held)
+            self.assertIs(sys.modules.get("romp_envsource"), mod, "registered under the fixed name for the next loader")
+            self.assertTrue(mod.configured(), "read live: the lab's command is configured")
+        finally:
+            sys.modules["romp_envsource"] = held
+        self.assertIs(self.km._envsrc_mod(), held)
+
+    def test_file_mode_keeps_upstreams_rule_on_the_same_file_in_both_copies(self):
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)   # the command unset: file mode, the reference governs
+        es._reset()
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch.object(self.km, "_sdk_backend", self.be):
+            self.assertEqual(sb.reserved_names_source().kind, "op")
+            for auth in ("", "key", "login"):
+                for name in self.NAMES:
+                    payload = {name: fixture_value("door")}
+                    a, b = sb.env_request_error(payload, auth), self.km._env_error(payload, auth)
+                    self.assertEqual(a, b, (name, auth))
+                    if name == "ANTHROPIC_API_KEY" or auth != "login":
+                        self.assertIn("reserved while runtime API key retrieval", a, (name, auth))
+                    else:
+                        self.assertEqual(a, "", "a login session's own token override stays")

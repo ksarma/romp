@@ -635,8 +635,13 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
 - **Raw view is exact, Rendered view is best effort.** Changes are offsets into the source. In
   Raw, insertions tint, deletions render struck at their point, substitutions show both, each with
   the author's session chip in the session's color. In Rendered, insertions and substitutions are
-  re-found by their text and highlighted; a deletion cannot be placed in rendered prose and
-  appears only as a card, whose **Reveal** switches to Raw and scrolls there. An unpainted change
+  re-found by their text and highlighted, and deletions are struck at their point in both views:
+  the Rendered point is placed through the same index map the comment highlights use, so a
+  deletion inside a block the map refuses (a table, a code fence) appears only as a card, whose
+  **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
+  it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
+  every change mark off in both views and back on, at once and without a status round trip, and
+  the choice is kept in the shared webview settings across opens and pages. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -644,8 +649,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   is reachable; with the panel open a floating **Comment** button also appears beside the
   selection's bounding box (the chip lives in another iframe, so "beside the chip" is not
   possible), and the selection hook runs before the composer gate so it works with no chat pane.
-  The button opens a one-line composer in the panel with the quote shown; Enter saves to the
-  sidecar and the highlight and card appear at once. **Comment on this file** in the panel
+  The button opens a multi-line composer in the panel with the quote shown; Enter adds a line;
+  Cmd+Enter (Ctrl+Enter off a Mac) or Save saves to the sidecar, and the highlight and card
+  appear at once. **Comment on this file** in the panel
   header writes a whole-file comment on any file. The mapping from a selection to a source anchor,
   in both views and every format, is specified in the next subsection.
 - **Send to session** sends everything unsent in the file: comments, replies, and the accept and
@@ -699,7 +705,7 @@ CLI. The browser builds the anchor from the displayed text with the engine's `ma
 quote plus 24 characters of prefix and suffix) and sends it with the note and the start offset;
 the host script re-reads the file and locates the anchor with the engine's `locateAnchor`, hinted
 by that offset, and refuses when the located text differs from the quote or two candidates tie.
-The typed note is never discarded by a refusal.
+The typed comment is never discarded by a refusal.
 
 In Raw view the mapping is exact. Each logical line is one row whose text equals the source line
 (the viewer always soft-wraps, and the row number is CSS content that never enters a selection),
@@ -728,9 +734,9 @@ aligned blocks is accepted, and its quote includes the blank line and block mark
 which the composer shows before saving. A selection whose edge falls inside a mark the renderer
 consumed paints narrower in Rendered than in Raw, never wider.
 
-When the mapping refuses, the composer keeps the typed note, states the reason in one line, and
+When the mapping refuses, the composer keeps the typed comment, states the reason in one line, and
 offers a switch to Raw that preselects the same passage when its text occurs in the source (code
-fences) and otherwise opens scrolled to the block's first line with the note intact (tables and
+fences) and otherwise opens scrolled to the block's first line with the comment intact (tables and
 HTML blocks).
 
 Painting distinguishes three states after the engine locates a comment's anchor in the current
@@ -762,7 +768,7 @@ Acceptance criteria:
   wraps exactly the text nodes of that slice. A CR-only line and a selection ending past the last
   row are included.
 - Raw: a quote that occurs twice anchors to the selected occurrence, including when two lines
-  are inserted above the passage between the selection and Enter.
+  are inserted above the passage between the selection and the save.
 - Rendered: for a fixture covering both heading styles, tight and loose lists, nested and task
   lists, blockquotes, emphasis, strong, strikethrough, inline code, every link form, images,
   escapes, hard breaks, and a reference definition, every selection inside aligned blocks yields
@@ -770,7 +776,7 @@ Acceptance criteria:
   painting the stored anchor in Rendered wraps exactly the originally selected text; the reply
   CLI reads the resulting comment unchanged.
 - Rendered: a selection touching code, a table, an HTML block, an entity-bearing paragraph, or
-  an escaped link label is refused, the note survives, and the Raw offer opens with the passage
+  an escaped link label is refused, the comment survives, and the Raw offer opens with the passage
   selected when its text occurs in the source, else scrolled to the block.
 - Every text format: a comment from the Raw view of an HTML, SVG, CSS, CSV, and code fixture
   stores the exact source slice.
@@ -910,8 +916,9 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
 a Reply bound to the change so the agent's `track-edit --thread` revisions fold into it; inline
-marks in Raw, highlights in Rendered, Reveal for deletions; Send to session states accepts and
-rejects and offers the accept-pending-changes checkbox.
+marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
+follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
+accepts and rejects and offers the accept-pending-changes checkbox.
 
 Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and marks bound
 comments resolved without dropping them; reject applies the engine's reverse edits to the file
@@ -945,7 +952,88 @@ over the cards until the paint shows that text: every reply re-baselines the pol
 sees a move a status already reported (the consolidation, 2026-09-06; before it, only a reject's reply
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
-beside their own and need no rule of their own to be usable; the sheets are the painter's.
+beside their own and need no rule of their own to be usable, all but `.fc-hosted`, which the reply-place
+follow-on below gave a flex-column rule at the turns' gap (the review of 2026-09-07); the sheets are the
+painter's.
+
+The inline-display follow-on (2026-09-07): after walking the loop, the user asked for two things the
+Slice 2 build left out: tracked changes must read inline in the Rendered view too, not only in Raw,
+and the person must be able to turn the inline marks off. In the Rendered view, `paintChangesRendered`
+now paints a deletion as the same zero-width `span.fc-del` point Raw paints (one element constructor
+for both views, `makePoint`), placed in the rendered text at its `curFrom` through the index map
+(`paintRenderedPoint`). The point goes before the first emitted character at or past the offset, or
+right after the last character before it when the offset follows that character directly, so a
+deletion at a word's end sits against the word. A refused block, a hole, or a blank line between
+blocks leaves the change unpainted, with its card's "not shown" tag and Reveal. A substitution's point
+sits immediately before its tint, wherever the tint was found: inside a code fence or a table cell
+too, where the tint came through the text-match fallback, so a substitution there is shown while a
+deletion at the same offset is card-only. A point at the edge of a painter's own mark (a change's
+`fc-ins`, a comment's `fc-hl`, the composer's `fc-presel`) sits outside the mark, in both views and
+whichever change was painted first: a deletion right after an insertion follows the insertion's mark
+as its sibling, one right before it precedes the mark, and a substitution whose tint begins a comment
+highlight has its point before the highlight, while one whose tint is inside the highlight keeps its
+point inside, immediately before the tint. Points at one offset keep their paint order
+(`insertBeforeNode` and `insertAfterText` in `anchor-map.ts`). The renderer's own inline elements are
+not boundaries: a point after the last word of a `<strong>` stays in it. Before the rule, placement
+followed the paint order: with the insertion painted first, Rendered made the point the mark's last
+child, and the struck old text wore the insertion's tint and author underline (the review,
+2026-09-07). The point adds no text node, so
+`mapRenderedSelection` and `unpaintChanges` are unaffected. The **Show changes inline** toggle sits
+beside Track changes in the panel header, a two-state `fc-toggle` button offered while the file has
+changes and the read view is up. It is ON by default and kept as `changesInline` in the shared webview
+settings (`settings.ts`, the store the gear writes; toggled from the panel as `subgoals` is from the
+feed footer). Off, no change mark is painted in either view, comment highlights are untouched, and
+every change card is plain (no "not shown" tag, since nothing is shown by choice) and offers Reveal. A
+flip repaints from the status already held, with no request; a flip in another pane or tab reaches an
+open panel through the settings signal. The sheets gained no rule: the point is the same inline span,
+and the label takes the block's font. Its white-space is the block's when the label has a visible
+character, which folds a multi-line label onto its line. A label of spaces or tabs alone (a removed
+space beside one that stayed, a substitution of whitespace) carries the Raw rows' `white-space:
+pre-wrap` as an inline style (`renderedPointStyles` in `anchor-map.ts`): under the block's normal
+white-space such a label collapsed to a 0px point with no struck mark and nothing to hover, while the
+painter reported the change shown (the review, 2026-09-07).
+
+The composer follow-on (2026-09-07): after walking the loop, the user found the one-line box too
+small for the comments the loop needs. Every composer the panel offers (a passage, the whole file, a
+region, a reply on a card, a comment bound to a change) is now one textarea: three rows to start,
+grown to its content up to twelve rows and scrolling past that, draggable taller or shorter
+(`resize: vertical`; a drag may pass the twelve rows, the cap being the panel's and not a sheet
+max-height, and a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter on
+macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule) or
+the Save button saves; Escape cancels as before, the re-place Escape included; an Escape pressed
+while an IME is composing is the IME's and stops at the box, never the viewer's close over the typed
+comment. The box's measurement puts every scrolled ancestor back where it was, so a keystroke at the
+cap does not scroll the panel. A hint under the box says what saves, and its wording follows the
+device. With a keyboard it names the platform's chord: "Cmd+Enter saves; Enter adds a line" on
+macOS, Ctrl+Enter elsewhere, the modifier detected once by the editor's modifier rule. On a device
+whose primary pointer is coarse (a phone; a tablet with no trackpad) it names the button instead:
+"Enter adds a line; tap Save when done". A soft keyboard has no modifier to hold, so a chord would
+name a key the device lacks, and a person who pressed Return to save in the old one-line box got a
+newline with no explanation of what saves now (the composer review, 2026-09-07). The chord still
+saves from any hardware keyboard, whatever the hint says: a tablet with a keyboard and no trackpad
+shows the button hint and accepts the chord. Whether the pointer is coarse is read at each render,
+as the editor's decide words read it, because the primary pointer changes when a tablet docks to a
+trackpad; the chat composer's placeholder, which drops its key chart on a coarse pointer, follows
+the same rule. The draft (text, caret, chosen height) survives the poll's re-render and a refusal,
+since the box is one persistent node and the typed comment is never discarded; saving trims the
+blank ends and keeps the line breaks inside; a blank comment saves nothing. A card renders a
+multi-line body with its breaks (`white-space: pre-wrap`, both sheets), and the send message carries
+the body verbatim: the kernel's builder and the webview's are pinned to the same two-line text on
+both sides (`tests/test_file_comments.py` TheMessage, `ui/webview/file-comments.test.ts`). Tests:
+`ui/webview/file-comments-composer.test.ts` (driven) and `file-comments-composer-browser.test.ts`
+(the real cap and the real keys, Chromium and Firefox);
+`tools/file-review-plan-save-gesture.test.mjs` holds this plan to the one gesture: the plain key
+adds a line wherever the plan names it, and the four sentences that once anchored a moment to that
+key say the save. The same walk asked for the reply's box to open where the comment is read (2026-09-07): a
+reply's box now stands inside the card it answers, below the comment's turns and above its buttons, and
+stays in that card across the poll's re-render with its words, caret and height; when the list stops
+showing the card (the comment resolved into the closed fold, its change card behind the "… N more
+changes" row, or gone from the sidecar) the box returns to the panel's slot with the words and a line
+saying why, and Escape or Cancel hands the keyboard back to the card's Reply
+(`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
+rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
+below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
+gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
 
 The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
 move with the window when possible, each trying to stay centered near the place in the text it was left as the reader
@@ -996,7 +1084,7 @@ load and on the window's resize, one pass per frame, and never on scroll. The pa
 placement's, so the Tab order runs down the margin; `cardsInOrder` gives the keyboard's place that order before a
 rebuild and after it, and the foot's place is the last change card's. The rows' move into the footer and the reorder
 both detach a focused control, and `moving` gives the keyboard back to it, since the browser's focus-fixup rule
-otherwise drops it to the body; the selectors the pass builds from a comment id are CSS-escaped (`cssStr`), so an id
+otherwise drops it to the body; the selectors the pass builds from a comment id are CSS-escaped (`cssId`), so an id
 holding a quote places its card instead of throwing. A mark's click, a card's opening and a card's reference link
 scroll the body so the mark sits at the vertical center with the card level beside it, the pass having run first so
 the expanded card's height is known; a fold moves nothing. Where centering the mark would leave the card's end past
@@ -1012,7 +1100,12 @@ whole-file comment's, at the top of the track, where the lock keeps it out of vi
 of the text) is brought into the track's box by the least scroll that shows it, written onto the body and the track at
 once (`showLoose`, `scrollBoth`), since a track-only `scrollIntoView` moved the track alone and the frame's
 `followBody` pass pulled it back to the body; before that the composer closed and no card appeared, and the save read
-as having done nothing. The narrow fold and edit mode are the list layout as before, and the two switch as the layout
+as having done nothing. The reply box the composer follow-on stands inside the card it answers (`placeComposer`) is placed
+with that card: a descendant of it, not a child of the list, so the sheet's absolute positioning and `moveRows` leave it
+where it stands, `swapCards` keeps the card around it across a render, and the card's observer covers the box's growth;
+Reply, and a render that moved the box while it held the keyboard, bring the box into the track's box the way a loose card
+is shown, through both scrollers and after the pass (`showComposer`: a card the fresh list built has no top until the
+pass places it, so a scroll before the pass went where the card would not stand). The narrow fold and edit mode are the list layout as before, and the two switch as the layout
 changes: the fold is read off the row's computed flex-direction, since the sheet's container query owns it — and that
 query, it turned out, had never fired: `.fileview-main` is the container it declares, a container query styles a
 container's descendants and never the container itself, and no ancestor declared one, so a narrow column got the
@@ -1118,13 +1211,13 @@ image or pdf, the region inside the unit square at four decimals, `page` on a pd
 exactly when the comment has an anchor, `figureHash` a sha256 hex and only with a target. Then the
 anchor is placed, and the anchored passage must embed the `src` the target names
 (`figure-mismatch`, a refusal rather than a caller bug: a reference definition can change on disk
-between the drag and Enter). Only then is the figure resolved and hashed: `unreadable` when the src
+between the drag and the save). Only then is the figure resolved and hashed: `unreadable` when the src
 is a URL, resolves outside the project root, or is not a regular file; a caller bug when its
 extension is not the kind the target claims, or one the viewer never shows as media; `too-large`
 past the 50 MB the viewer shows, refused before a byte is read (before this cap a multi-GB src
 pinned the host until the kernel's deadline); and last, when the request's fence carries
 `figureHash`, `figure-changed` unless the bytes hashed are the ones it names (the Slice 3 review,
-2026-09-06: before this fence a figure regenerated between the drag and Enter was stamped with the
+2026-09-06: before this fence a figure regenerated between the drag and the save was stamped with the
 new bytes' hash, which every reply then equalled, so the panel read a rectangle drawn on the old
 picture as current on the new one, the one write the hash exists to catch). The host checks that
 fence whenever a request carries it, and the kernel passes the fence object through whole. The
@@ -1134,7 +1227,7 @@ and none when the status holds none (the first comment on an embedded figure no 
 has nothing to fence on, since the host hashes only the srcs the sidecar names; a fence the panel
 cannot arm is left off, never guessed). A `figure-changed` refusal is never retried; the panel
 re-reads the comments and the view, as it does when the poll sees a figure move, and shows the
-refusal with Reload, the note kept (the review consolidation, 2026-09-06; the build first sent the
+refusal with Reload, the comment kept (the review consolidation, 2026-09-06; the build first sent the
 three mtime keys only, so the host's fence stood unarmed). `retarget` is the
 same path for the same figure: a stored `src` must be named again, unchanged, and the same fence
 applies. The reply's hash fields are described under the op above. A text file's figures are
@@ -1354,9 +1447,11 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
   lexer walk with per-token verification and refuses rather than mis-anchoring; the fallback
-  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; deletions
-  are panel-only there; every change and comment has a card; a comment whose selection cannot be
-  mapped offers Raw.
+  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; a deletion
+  there is a point placed through the same index map, card-only where the map refuses (the
+  inline-display follow-on, 2026-09-07; before it every Rendered deletion was panel-only); every
+  change and comment has a card, and an unpainted change's Reveal opens Raw; a comment whose
+  selection cannot be mapped offers Raw.
 - **Raw direct edits desync changes before Slice 5.** Mitigation: the Edit refusal from Slice 1
   on.
 - **Tracking off before a session writes.** Mitigation: folder tracking before the files exist,
@@ -1468,7 +1563,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   pinned with a sparse file, and a null hash with its reason on a reply; the decoded src; the
   src-less contract shape told from its passage, and its re-place; the figure fence:
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
-  Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
+  the save, nothing written and no landmark created, a malformed `figureHash` refused before any disk
   read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
@@ -1485,6 +1580,55 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `delegate()` root, string mtime comparison, no client-computed sidecar path, keyed expand
   state), pure tests for the card model, the Raw and Rendered mapping walks over the fixtures
   named in the acceptance criteria, and the message builder against the kernel's text.
+- The inline-display follow-on (2026-09-07), in webview tests beside the Slice 2 suites:
+  `anchor-map.test.ts` gains the Rendered change marks and the deletion points' placement (before
+  the word the offset is on, against a word the deletion followed, a paragraph's end, the file's
+  end, a list item, a blockquote, the capped label) and the blocks the map refuses (a code fence,
+  a table, an HTML block, a blank line between blocks, a nested code block's inside);
+  `anchor-map-rendered-points.test.ts` pins a table nested in a list item as a hole with the
+  table's own extent, the block that begins at an offset holding the point where one block ends
+  as the next begins, and the `white-space: pre-wrap` a label of spaces or tabs alone carries;
+  `anchor-map-block-edges.test.ts` pins the blank line a token's raw swallows (under an ATX or a
+  setext heading, an hr, a blockquote) as unpainted like the one under a paragraph, the end of a
+  file whose last block is a heading, a deletion at the first character of a nested code fence or
+  table sitting after the item text before the hole, and the change-marks section's statement
+  that Rendered leaves only an unplaceable change to its card;
+  `anchor-map-boundary-points.test.ts` pins the boundary rule over marked's output in Raw and
+  Rendered under both paint orders: a deletion right after or right before an insertion sits
+  outside the insertion's mark, at a row's end too, while a deletion inside the insertion still
+  splits the mark; a deletion at a comment highlight's edge sits outside the highlight, a
+  substitution whose tint begins the highlight has its point before it and one whose tint is inside
+  keeps its point inside, before the tint; a deletion at the edge of a change mark and a highlight
+  over the same word sits outside both; two points at one offset keep their paint order; and a
+  substitution inside a code fence or a table cell gets its point before its fallback-placed tint
+  and is reported painted while a deletion at the same offset is card-only;
+  `anchor-map-whitespace-point-browser.test.ts` and `file-comments-rendered-point-browser.test.ts`
+  measure the points under the real sheets in headless Chromium and Firefox (skipped where
+  playwright or an engine is missing): a removed space or tab has width and takes the pointer, a
+  short label adds no line, a long one wraps with the prose, the selection never carries the
+  struck text, and unpaint restores the markup; `file-comments-changes-review.test.ts`'s Rendered
+  half now expects the struck point and a plain card; `file-comments-inline-toggle.test.ts`
+  drives Show changes inline as a panel: the ON default with nothing written until a flip, the
+  deletion and substitution points and their cards, off with no status ask and the comment
+  highlights kept, the store's `changesInline` read on the next open and a corrupt store as the
+  default, the settings-signal and storage-event repaint, and the source pins (the delegate
+  action, the header's order, the key and default, the listener's install);
+  `file-comments-inline-review.test.ts`: a change mark inside the author's link opens its card
+  and opens no tab, by click and by keyboard and under the chat pane's capture-phase link handler,
+  the toggle withheld while the editor holds the body, and the generic "not shown" title on a
+  deletion inside a code fence; `file-comments-reveal-title.test.ts`: Reveal's title with the
+  marks off, in both views, with and without a line number; `file-comments-reveal-landing.test.ts`:
+  the cue a Reveal paints on the Raw row it centred when the view shows no mark of ours there (the
+  marks off; a batch the Raw painter refused), one row at a time and none beside a mark, its
+  lifetime by event (a paint pass, the next Reveal, the panel closing), and a file the viewer
+  shows only Raw.
+  `tests/test_file_review_plan_rendered_deletions.py` holds this plan's Rendered-deletion
+  passages (the surface paragraph, the Slice 2 line, the Risks bullet, the not-in-v1 list) to the
+  painter's source; `tests/test_file_review_plan_inline_display.py` holds the follow-on note's
+  white-space clause to `renderedPointStyles` and this bullet's file names to the tree; and
+  `tests/test_file_review_plan_boundary_points.py` holds the note's boundary clause to
+  `insertBeforeNode` and `insertAfterText` and this bullet's account of the boundary suite to the
+  suite's tests.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
 - `ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and
@@ -1617,9 +1761,10 @@ HTML files (the viewer serves them as source by design); text-quote anchors insi
 cannot read a PDF's text, so PDF comments are whole-file or region); region drawing by touch on
 the phone; changes authored by the person (their edits are direct edits, decision 23); the
 Obsidian host's embed trees, explorer badges, status bar, multi-pane sync, and vault rename
-re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; inline
-deletions in the Rendered view; undo of accept and reject before Slice 5; multi-file sends (one
-send per file, decision 28).
+re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; undo of
+accept and reject before Slice 5; multi-file sends (one send per file, decision 28). Inline
+deletions in the Rendered view were on this list until the inline-display follow-on (2026-09-07,
+under Slice 2's build note) built them.
 
 ## Dependencies
 

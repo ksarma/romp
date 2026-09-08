@@ -20,13 +20,14 @@ suite's floors (conftest's ROMP_CLAUDE_BIN=/bin/false) exist to prevent by defau
     settings as their apiKeyHelper; or, failing both, the `apiKeyHelper` from the user's OWN Claude
     Code settings ($CLAUDE_CONFIG_DIR/settings.json, default ~/.claude/settings.json), copied into
     the hermetic settings as-is (the hermetic dir sees none of the operator's own settings otherwise).
-    Either way the helper COMMAND travels, never a key, and no key is ever written to a file (the
+    Either way the helper COMMAND travels, never a key, and this test writes no key to a file (the
     2026-09-05 rule: keys live only in the vault and in process environment; the ~/.config key cache
     this test once read no longer exists).
 CI has none of these and skips cleanly. Synthetic content throughout (an invented sid, an invented
 codeword, temp folders)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ import unittest
 import uuid
 from romp_load import load_source
 from types import SimpleNamespace
+from unittest import mock
 
 SID = "aaaaaaaa-1111-4222-8333-444444444444"
 CODEWORD = "PLUM-FORTY-TWO"
@@ -136,7 +138,7 @@ def _sdk_python():
 def _user_api_key_helper(config_dir=None):
     """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
     hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
-    sessions do. Never a key — keys live in the vault and in process environment only, and this test
+    sessions do. Never a key: keys live in the vault and in process environment only, and this test
     writes none to disk. `config_dir` defaults to the user's real config dir: under pytest the suite's
     conftest floors $CLAUDE_CONFIG_DIR to an empty dir and saves the real location in
     $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR, else ~/.claude."""
@@ -172,7 +174,7 @@ def _skip_reason():
 class UserApiKeyHelper(unittest.TestCase):
     """The lookup the live test's hermetic settings borrow their apiKeyHelper from: the command string
     when the user's settings name one; "" for a missing dir, unreadable JSON, or settings without the
-    key — never a default that reads a key file (the 2026-09-05 rule: no key on disk anywhere)."""
+    key — and never a default that reads a key from a file (the 2026-09-05 rule: no key on disk anywhere)."""
 
     def test_returns_the_configured_command(self):
         td = tempfile.mkdtemp(prefix="romp-move-live-cfg-")
@@ -226,6 +228,71 @@ class ChildOutputScrub(unittest.TestCase):
         self.assertEqual(plain, "child failed:\nthe codeword is %s at /tmp/romp-move-live-x/a\nsha256:1a2b3c1a2b3c\n" % CODEWORD)
 
 
+class ApiKeyHelperPrecedence(unittest.TestCase):
+    """The helper the hermetic settings get (always-run; the live class stays opt-in): the explicit
+    $ROMP_MOVE_LIVE_API_KEY_HELPER wins; else the command borrowed from the real config dir the suite's
+    conftest saved in $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR; else from $CLAUDE_CONFIG_DIR/settings.json;
+    else from ~/.claude/settings.json; "" when none names one. HOME and CLAUDE_CONFIG_DIR point at temp
+    dirs throughout and the saved real location is cleared inside every patch (under pytest it names the
+    operator's own ~/.claude), so nothing here reads the operator's own settings."""
+
+    def setUp(self):
+        self.td = tempfile.mkdtemp(prefix="romp-move-live-prec-")
+        self.addCleanup(shutil.rmtree, self.td, ignore_errors=True)
+
+    def _settings(self, sub, helper):
+        d = os.path.join(self.td, sub)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "settings.json"), "w") as f:
+            json.dump({"apiKeyHelper": helper}, f)
+        return d
+
+    def test_explicit_env_var_wins_over_the_borrowed_command(self):
+        cfg = self._settings("cfg", "/opt/example/borrowed --print")
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "home"), "CLAUDE_CONFIG_DIR": cfg,
+                                          "ROMP_MOVE_LIVE_API_KEY_HELPER": "/opt/example/explicit"}):
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
+            self.assertEqual(_api_key_helper(), "/opt/example/explicit")
+
+    def test_without_the_env_var_the_borrowed_command_is_used(self):
+        cfg = self._settings("cfg", "/opt/example/borrowed --print")
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "home"), "CLAUDE_CONFIG_DIR": cfg}):
+            os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
+            self.assertEqual(_api_key_helper(), "/opt/example/borrowed --print")
+            self.assertEqual(_user_api_key_helper(), "/opt/example/borrowed --print", "no argument: $CLAUDE_CONFIG_DIR")
+
+    def test_the_default_dir_is_dot_claude_under_home(self):
+        home = os.path.join(self.td, "home")
+        self._settings("home/.claude", "/opt/example/home-helper")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
+            self.assertEqual(_user_api_key_helper(), "/opt/example/home-helper")
+            self.assertEqual(_api_key_helper(), "/opt/example/home-helper")
+
+    def test_empty_when_nothing_names_a_helper(self):
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "empty"),
+                                          "CLAUDE_CONFIG_DIR": os.path.join(self.td, "absent")}):
+            os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
+            self.assertEqual(_api_key_helper(), "")
+
+    def test_the_saved_real_config_dir_outranks_the_floored_one(self):
+        # the fork's conftest floors CLAUDE_CONFIG_DIR to an empty dir for every test and saves the
+        # pre-floor location in ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR; the live run borrows from the saved
+        # location, else it could never find the operator's helper under pytest
+        real = self._settings("real", "/opt/example/real-helper")
+        floor = self._settings("floor", "/opt/example/floored-helper")
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "home"), "CLAUDE_CONFIG_DIR": floor,
+                                          "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": real}):
+            os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            self.assertEqual(_user_api_key_helper(), "/opt/example/real-helper")
+            self.assertEqual(_api_key_helper(), "/opt/example/real-helper")
+            self.assertEqual(_user_api_key_helper(floor), "/opt/example/floored-helper", "an explicit dir still wins")
+
+
 @unittest.skipIf(_skip_reason(), _skip_reason())
 class LiveSetCwd(unittest.TestCase):
     def test_set_cwd_relocates_and_the_conversation_survives(self):
@@ -248,6 +315,10 @@ class LiveSetCwd(unittest.TestCase):
                 f.write(CHILD)
             r = subprocess.run([_sdk_python(), child, cfg, a, b, cli, SID, CODEWORD, spath],
                                capture_output=True, text=True, timeout=300, env=env, cwd=td)
+            # a failure embeds the child's streams, which can carry the apiKeyHelper's own diagnostics (never
+            # a key: the helper's output is not read here); _child_output scrubs credential-shaped tokens and
+            # caps each stream first, but read a failing run's message with that in mind before pasting it
+            # anywhere
             self.assertEqual(r.returncode, 0, _child_output(r))
             res = json.loads(r.stdout.strip().splitlines()[-1])
             self.assertTrue(res["has_sender"], "the SDK still exposes _send_control_request")
@@ -264,8 +335,11 @@ class LiveSetCwd(unittest.TestCase):
             self.assertIs(res["same_dir"].get("changed"), False)
             self.assertEqual((res["missing"].get("status"), res["missing"].get("reason")), ("rejected", "not_found"))
             self.assertIn(CODEWORD, res["reply"], "the conversation is remembered after the move")
-            slug_b = "-".join(part for part in os.path.realpath(b).split("/") if part)
-            self.assertEqual(res["files"], [os.path.join("-" + slug_b, SID + ".jsonl")],
+            # The CLI's project slug: every non-alphanumeric character of the realpath becomes '-' (what
+            # sdk_backend.transcript_path mirrors). Joining on '/' alone misses the '.' of a temp root like
+            # ~/.cache and the '_' mkdtemp's suffix alphabet can produce, and fails the run for its path.
+            slug_b = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(b))
+            self.assertEqual(res["files"], [os.path.join(slug_b, SID + ".jsonl")],
                              "the transcript lives under the NEW slug only — moved, never copied")
         finally:
             shutil.rmtree(td, ignore_errors=True)

@@ -201,7 +201,7 @@ function mount(page: any, patch: Record<string, unknown>): Promise<void> {
       body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null,
       renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
       onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: () => { /* inert */ }, onClose: () => { /* inert */ },
-      post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+      post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
       aside: (node: HTMLElement | null) => { const main = document.getElementById("main")!; main.querySelector(".fileview-aside")?.remove(); if (node) { node.classList.add("fileview-aside"); main.appendChild(node); } },
       setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ }, reload: () => { /* inert */ },
     };
@@ -252,7 +252,13 @@ const hit = (page: any, x: number, y: number, sel: string): Promise<boolean> => 
   const e = document.elementFromPoint(x, y);
   return !!(e && e.closest(sel));
 }, [x, y, sel]);
-const toEnd = (page: any, sec: string): Promise<void> => page.evaluate((sec: string) => { const s = document.querySelector(".fileview-aside " + sec) as HTMLElement; s.scrollTop = s.scrollHeight; }, sec);
+/** Scroll a section the least that brings the control into its box — the control's own scroll of its section, wherever it
+ *  stands: at the section's start (the Reject all confirm, in the foot at the top of the Send section) or at its end (Send). */
+const toView = (page: any, sec: string, sel: string): Promise<void> => page.evaluate(([sec, sel]: [string, string]) => {
+  const s = document.querySelector(".fileview-aside " + sec) as HTMLElement, e = document.querySelector(".fileview-aside " + sel) as HTMLElement;
+  const sr = s.getBoundingClientRect(), r = e.getBoundingClientRect();
+  if (r.top < sr.top) s.scrollTop += r.top - sr.top; else if (r.bottom > sr.bottom) s.scrollTop += r.bottom - sr.bottom;
+}, [sec, sel]);
 const boxOf = (page: any, sel: string): Promise<Box> => page.evaluate((sel: string) => { const r = (document.querySelector(".fileview-aside " + sel) as HTMLElement).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height, left: r.left, right: r.right }; }, sel);
 const active = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? (a.dataset.act || a.tagName) : "none"; });
 const inside = (b: Box, of: Box, what: string): void => assert.ok(b.top >= of.top - 0.5 && b.bottom <= of.bottom + 0.5, what + " is inside the aside's box: " + b.top + ".." + b.bottom + " vs " + of.top + ".." + of.bottom);
@@ -265,12 +271,15 @@ const fits = (f: Fit, when: string): void => {
   for (const [name, s] of Object.entries(f.sections)) inside(s.box, f.aside, when + ": the " + name + " section");
   assert.ok(f.sections.cards.box.height >= 0.3 * f.aside.height - 1, when + ": the track keeps its floor: " + f.sections.cards.box.height + " of " + f.aside.height);
 };
-/** The control at `sel` is under the pointer: as it stands, or once its own section is scrolled to its end. */
+/** The control at `sel` is under the pointer: as it stands, or once its own section is scrolled to bring it into view
+ *  (toView). The first cut scrolled the section to its END, which reaches a control at the section's end alone: since the
+ *  composer follow-on the grown sections hold more (the chord hint wraps the composer's button row at 340px; the Send
+ *  caption), so the Send section shrinks further and its end no longer shows the confirm row at its top. */
 async function reachable(page: any, sel: string, sec: string, f: Fit, what: string): Promise<void> {
   let b = await boxOf(page, sel);
   let cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
   if (!(await hit(page, cx, cy, sel))) {
-    await toEnd(page, sec);
+    await toView(page, sec, sel);
     await frames(page);
     b = await boxOf(page, sel); cx = (b.left + b.right) / 2; cy = (b.top + b.bottom) / 2;
   }

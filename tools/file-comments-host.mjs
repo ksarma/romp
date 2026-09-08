@@ -73,7 +73,7 @@
 //     the request says which bytes the person saw (`fence.figureHash`: the hash the last reply
 //     carried for that figure — `fileHash` on a media file, `embeddedHashes[src]` on a text file),
 //     the bytes hashed must be those, else `figure-changed` (figureFence, stampTarget): a figure
-//     regenerated between the drag and Enter would otherwise be stamped with a hash the person never
+//     regenerated between the drag and the save would otherwise be stamped with a hash the person never
 //     saw, which the panel reads as current — the one write the hash exists to catch, missed at the
 //     moment it is made. That fence says what the caller saw and is checked when it says anything;
 //     a request without one is taken as before, since a caller has no hash for a figure no reply
@@ -1157,7 +1157,7 @@ export function imageEmbeds(text) {
 // (a reference-style embed's destination sits in a definition elsewhere in the file) and the
 // passage's embeds are the ones overlapping the located range; the embed's exact range, which the
 // panel sends, and a whole line around it both qualify. A refusal, not a caller bug: a reference
-// definition can change on disk between the drag and Enter.
+// definition can change on disk between the drag and the save.
 function checkEmbedNamesSrc(ctx, text, from, to, src) {
   const dests = imageEmbeds(text).filter((e) => e.start < to && e.end > from).map((e) => e.dest);
   if (dests.includes(src)) return;
@@ -1729,7 +1729,7 @@ function doStatus(ctx) {
 // change comment binds to) and returns the
 // step that changes the store; it runs BEFORE the landmark, so a refused verb leaves the disk as
 // it found it. Ordered the other way, a passage comment whose passage was edited away between the
-// selection and Enter left an empty `.trackchanges/` beside a loose file — a root for every later
+// selection and the save left an empty `.trackchanges/` beside a loose file — a root for every later
 // verb and for the CLIs — under a refusal that named no such thing. `store` is null in `plan` when
 // no sidecar exists yet (a first comment); the seed is minted after the landmark, whose root
 // gives the seed its relative path. `root` is null in `plan` for the same loose file; a check that

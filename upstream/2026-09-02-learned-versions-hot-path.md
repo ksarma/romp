@@ -13,3 +13,5 @@ Cache or memoize the learned-version scan per boot/rev; he called it fine but wo
 Status detail (migrated from the table): **offered** — their PR #949 (2026-09-06), label `fix`
 
 MERGED 2026-09-06T19:50Z as their PR #949 (merge `1be23e57`), as offered.
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #949 is in the folded range).

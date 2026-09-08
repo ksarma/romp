@@ -40,17 +40,41 @@ session replies into it, and its edits to a tracked file come back as changes fo
 accept or reject. When several sessions work in the same
 repository, or in worktrees of it, the viewer's title bar says which one you opened the
 file from: a chip with the session's name, in the same color as its tab. The title bar's
-**GitHub ↗** button opens the file on GitHub. When there is nothing to open, the button stays
-in place, dimmed, and a caption beside it says why (the file is not committed, the repository
-has no origin remote, or its origin is not on GitHub); the button's tooltip repeats the reason
-in full. A file on a branch that is not on origin keeps its link, drawn with a dashed border,
-and the caption says the branch is not on origin yet. That check reads the local tracking
-ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
-has refreshed it.
+**GitHub ↗** button opens the file on GitHub. While the check runs, the button waits dimmed
+with pulsing dots beside it.
+When there is nothing to open, the button stays in place, dimmed, and a caption beside it
+says why (the file is not in a git repository or not committed — untracked, staged but in no
+commit, or on a branch with no commits yet — the repository has no origin remote, its origin
+is not on GitHub, or the path is relative and no session's directory resolves it); the
+button's tooltip repeats the reason. A file on a branch that is not on origin keeps its link,
+drawn with a dashed border, and the caption says the branch is not on origin yet. That check
+trusts your clone's own refs: a branch deleted on GitHub reads as present until `git fetch
+--prune`, and one pushed from another clone reads as absent until a fetch. A branch that has
+never been pushed is asked of origin once and the answer kept until a push or fetch from this
+clone writes its tracking ref; where nothing local could refresh the answer (a
+`--single-branch` clone, or a branch on origin this clone has not fetched) origin is asked on
+each open.
 A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
 `owner/repo#123`) links to that pull request on GitHub, in the repository the session's
 directory has as its `origin` remote; when that remote is not on GitHub, the number stays
 plain text.
+
+**Opening a markdown document.** A markdown link in the chat opens in the file viewer,
+rendered, with **Raw** one click away — a path on the session's machine, or a link to a
+file served from the dashboard's own address (a published report, an evidence doc). Figures
+and links inside the document resolve relative to the document, so a `![fig](fig.png)`
+beside it shows, and a link to a sibling document opens in the same viewer. Links to files
+on other sites open in a new tab, as before — and a ctrl- or ⌘-click still opens the file in
+a tab.
+
+**Opening a PDF.** A PDF the session mentions, or one you click in the file browser, opens
+inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a
+file-browser row opens it in the file viewer. Cmd-click it instead (Ctrl on Windows and
+Linux), or middle-click, and it opens in a new browser tab in the browser's own viewer, the
+way a paper opens from OpenReview: full size, and it stays open beside the dashboard while
+you keep working. If the browser blocks that new tab, the PDF opens inside the dashboard
+instead; a PDF too large to show offers a download in its place. Commenting on a PDF, and
+what the viewer does while the **Comments** panel is open, is described under Files.
 
 **Naming another session.** Type `@` and the first letters of a session's name in the
 message box, and the sessions whose names match are listed above it, twelve at most; when
@@ -214,19 +238,74 @@ viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;
 the bottom bar turns it on.
 
+**Links in a file.** Wherever the viewer shows a file's text, over the chat, over
+the feed, or in this pane, the links in that text work. A web address opens in a
+new browser tab. A file path opens that file in the viewer, in place of the one
+you were reading: a relative path such as `docs/guide.md` is taken from the
+folder of the file you are reading, an absolute or `~/` path as written, on the
+machine of the session the file belongs to, and a line written after the path
+(`src/app.py:12`, or `src/app.py#L12`) scrolls the Raw view to that line. A
+Markdown file opens in its Raw view for that one open, since the Rendered view
+has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
+file lands on the last line, with a notice saying so. In a Markdown file, a
+`[link](target)` follows the same two rules: a web target opens a tab, a file
+target opens the file (a host with a port, `127.0.0.1:3000` or
+`api.example.com:8443`, is neither, and says so). A link to a section of
+another file (`report.md#results`) opens that file at the section. A link to a
+section of the same document scrolls to it
+when the document has a heading or an anchor by that name (`<a name="install">`
+included), and otherwise says so when you hover it; it scrolls under every
+click, since a section of the shown file has no tab of its own. One click does
+one thing: a plain click acts in the dashboard, and a Cmd-click (Ctrl on Windows
+and Linux) or a middle-click opens the link in a browser tab of its own. Where a comment highlight or a change mark covers a
+link, a plain click opens the comment or the change and leaves the link alone.
+Inside a file the test for a path is stricter than the one a todo or a chat
+message gets: a path links only when it has a slash and a file extension, starts
+on its own, at the start of a line or after a space, a quote, a bracket or
+Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
+`C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
+(`www.example.org/docs/index.html`), and is not the package an `import`
+statement or a `require()` call names, whether the statement fits one line or
+its `from` starts the next (a relative import such as `./app.css` still links,
+and so does a path after the English word "from" in prose, unless that line
+holds nothing but `from` and the quoted path). After a `*` the path must be
+the whole emphasised text, closed by a `*` of its own: `*docs/a.md*` and
+`**./scripts/setup.sh**` link; a glob's `**/docs/a.md`, an operand's
+`w*h/img.size` and the first path in `**docs/a.md and docs/b.md**` stay text. Web
+addresses and paths found in the text wear a dotted underline that
+turns solid under the pointer; a Markdown link that names a file keeps the
+ordinary link look. Selecting text across a link, and commenting on a line that
+holds one, work as before, and a drag that starts or ends on a link selects
+rather than opens.
+
+**Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
+the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
+file's Rendered and Raw views, and the code view of every other text file. They appear
+on every surface that shows the viewer (over the chat, over the feed, in this pane), and
+not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mouse
+wheel over the text do the same. Once the size is off 100%, the percentage appears
+between the buttons; click it to go back. The choice is kept in this browser and applies
+to every file you open here. Prose keeps a readable line length that grows with the
+text size, and code blocks keep that width and wrap long lines. A table is as wide as
+its columns need, up to the width of the pane, and scrolls inside its own box beyond
+that; a table inside a quote or a list item stays within the prose width. Pictures
+shrink to fit, so resizing the pane never leaves the page wider than the pane.
+
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
 when the column is narrow the panel drops below the file and lists the cards instead. Select a
-passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the note
-and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
-every file takes. When a passage cannot be mapped from the
-Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the comment
+(Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
+**Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
+**Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
+Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
 folder that already holds one; a file with none gets the folder created beside it), in the
 format the session's own tools read. A comment made here and a reply the session writes are
 the same object, and the two other editors that read the format see them too. Each comment
-is a card in the panel: click it to expand, reply into it, or resolve it. The passage it
+is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
+the card, under the comment and its replies. The passage it
 refers to is highlighted in the file. When the session has rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
@@ -238,7 +317,10 @@ comment is shown as stale until you resolve it, or press **Re-place** and drag t
 again where it belongs now; the comment keeps its words and its replies, and only the
 rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
 from the file's own folder, so a relative path shows in the Rendered view; a web address or a
-`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+`data:` image is left as written. A figure path that starts with `~/` is not expanded to your
+home folder: it names a folder called `~` next to the file, as other markdown viewers read it,
+while a link that starts with `~/` does open under your home folder. A comment on an embedded
+figure is stored on its embed line,
 with the rectangle: the session's tools and the other editors place it on that line, and this
 viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
 on a phone, comment on the file as a whole instead.
@@ -262,14 +344,17 @@ reject, instead of letting them land silently. Turn it on for the file or for it
 and turn it on for the folder a session will write into *before* it writes: only edits made
 while tracking is on are recorded, and a folder can be tracked before its files exist.
 Each change is a card in the panel, grouped by the paragraph it falls in, and is marked in
-the file: an insertion is tinted, and a deletion is struck at its point in the Raw view.
-**Accept** keeps the text as it is and drops the record. **Reject** puts the old text back in
-the file. **Accept all** and **Reject all** decide every change at once; Reject all asks you to
-confirm. A deletion has nothing to mark in the Rendered view, so its card offers **Reveal**,
-which opens the Raw view at the deletion; any change the current view cannot show offers it
-too. Reply on a change's card leaves a comment on the change itself, and the session's answer
-comes back to that card. A session's tools refuse to rewrite an image or a PDF as text, so a
-tracked folder may hold figures.
+the file in both views: an insertion is tinted, a deletion is struck at its point, and a
+substitution shows both, the struck old text before the tinted new text. **Show changes
+inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
+the file reads as it is and the cards alone show the changes. The setting is kept for every
+file you open. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
+all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
+deletion, since a point is easy to miss; a change the current view does not mark, because it
+cannot or because the marks are hidden, offers it too. Reply on a change's card leaves a
+comment on the change itself, and the session's answer comes back to that card. A session's
+tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to
@@ -611,6 +696,9 @@ own a direct path; the dashboard is then a plain URL on your tailnet.
     when a panel closes, so it never leaks connections, but under Remote or
     Tunnels the extension still relays each whole view payload to the local
     window as it changes. It does not yet take the deltas the browser panes do.
+    A pane that falls 16 MB behind is dropped and reconnects on its own; the
+    drop is logged in the kernel log and shows in the dashboard's bell, so a
+    link that cannot keep up reads as what it is rather than as a flaky network.
 
 ### From your phone
 
@@ -689,6 +777,49 @@ internet and your agents, with no device check in front of it.
     yours. On a family or team tailnet, the access token becomes the only thing
     standing between other members and your agents. Either keep the tailnet to
     your own devices, or write an ACL restricting the kernel machine to them.
+
+#### Notifications on your phone
+
+Romp can buzz your phone when a session needs you or finishes a task, so you can
+put the phone down while the sessions work. On an iPhone, first add Romp to the
+Home Screen (share sheet, then **Add to Home Screen**) and open it from there:
+iOS only lets an installed app receive notifications, so in a plain Safari tab
+the option stays off and says so. On Android and on a desktop browser the page
+itself can receive them.
+
+Then tap the bell. On a phone it sits in the bar along the bottom; on a desktop
+it is in the bottom-right cluster. A small card opens with a main switch, two
+switches indented under it, and a button:
+
+- **Notifications** is the main switch. Off silences every device and the
+  desktop of every machine you have attached; the bells on individual sessions
+  and cards are mutes under it. While it is off, the two switches beneath it are
+  dimmed but still work, so you can set a phone up first and switch everything
+  on when you are ready.
+- **This device**, under it, turns them on for the phone or browser you are
+  holding. The first time, the browser asks for permission. If you refuse, the
+  row goes grey and tells you where to allow it again (on an iPhone, Settings,
+  then Notifications, then Romp; in a desktop browser, the site permission
+  beside the address). Turning this off silences only this device. With the
+  main switch off, the row says the device is set up but nothing arrives until
+  the main switch is on.
+- **Also when a turn finishes**, also under it, adds a notification every time
+  any session finishes a turn, with the session's name and the first line of
+  what it said. With many sessions running this is a lot of buzzing, so it is
+  off unless you want it. A turn that ends by asking you something buzzes once,
+  not twice.
+- **Send a test notification** sends one notification to the device you are
+  holding, whatever the switches say, and prints the push service's answer under
+  the button, so you can see at once whether the phone is set up or why it is
+  not. The test is addressed to the session you were looking at when you
+  pressed the button, so you can switch to another session or another browser
+  tab, tap the notification, and check that it brings you back. With the main
+  switch off, the answer adds that real notifications will not arrive until it
+  is on.
+
+The bell itself shows the state of the device you are looking at: lit when the
+main switch is on and this device is set up, and crossed out otherwise. Its
+tooltip says which of the two is off.
 
 ## Security and trust
 

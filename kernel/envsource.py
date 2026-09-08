@@ -87,6 +87,7 @@ import re
 import selectors
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -101,7 +102,11 @@ _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE /
 _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
-_keysrc = load_source("romp_keysource", _HERE / "keysource.py")
+# Reuse the module already registered under that name (the guard kernel/sdk_backend.py and cli/keyswap.py
+# carry): load_source re-executes a registered name INTO the existing module, which reset keysource's
+# process memory (the selected source, the op-removal guard) whenever a consumer loaded this module, and
+# raised when the pre-seeded module had been loaded under another name (tests/test_runtime_keysource.py).
+_keysrc = sys.modules.get("romp_keysource") or load_source("romp_keysource", _HERE / "keysource.py")
 
 COMMAND_VAR = "ROMP_CREDENTIAL_COMMAND"
 SELECTOR_FILE_VAR = "ROMP_CREDENTIAL_SELECTOR_FILE"

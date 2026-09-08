@@ -24,8 +24,8 @@ class Ev {
   currentTarget: El | null = null;
   defaultPrevented = false;
   stopped = false;
-  key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  key: string; ctrlKey: boolean; metaKey: boolean;   // the save is Ctrl+Enter or Cmd+Enter since the composer follow-on (composerKeyAction)
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -412,7 +412,7 @@ function ctxBase(w: World, over: Partial<FileViewActionCtx>): FileViewActionCtx 
     body: () => w.body as unknown as HTMLElement, mode: () => "raw", text: () => DOC, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: noop, onSaved: noop, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ }, guardClose: noop,   // the viewer's close ask (main, 2026-09-07): the stand-in asks nothing
     aside: (node) => { w.main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); w.main.appendChild(n); } },
     setMode: noop, scrollToOffset: noop, reload: noop,
     ...over,
@@ -608,7 +608,7 @@ async function saveFileComment(w: World, last: () => Posted): Promise<El> {
   assert.equal(composer.hidden, false, "the composer is up");
   const input = composer.querySelector(".fc-input")!;
   input.value = NOTE;
-  input.dispatchEvent(new Ev("keydown", { key: "Enter" }));
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));   // the save chord (Enter alone adds a line)
   await tick();
   assert.equal(last().verb, "comment", "the comment went out");
   assert.equal(last().args.anchor, undefined, "a whole-file comment: no anchor");
@@ -670,7 +670,7 @@ test("a reply saved on a card: the card is centered as an opened card is — the
   assert.equal(track.scrollTop, 0);
   const input = composer.querySelector(".fc-input")!;
   input.value = "Which cache do you mean?";
-  input.dispatchEvent(new Ev("keydown", { key: "Enter" }));
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));   // the save chord
   await tick();
   assert.equal(last().verb, "reply");
   assert.equal(last().args.commentId, passage.id);
