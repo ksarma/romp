@@ -185,6 +185,106 @@ class OptionsInjection(_OptionsHarness):
         self.assertIn(sb._keysrc.service_env_path(), rows[0])
 
 
+class NoSourceRowsUnderTheDeclaredHelperDesign(_OptionsHarness):
+    """The two #1014 no-source rows (an explicit key pick launching on Claude Code's own credential, above; a
+    remembered key default set aside at spawn) are PROBLEM rows on an undeclared box, and stay so. Under a
+    declared key (ROMP_EXPECTED_AUTH=key, or a remembered key pick: _declared_auth, the usage row's reading)
+    WITH an apiKeyHelper in Claude Code's user settings they are information (the 2026-09-08 fold, round 2):
+    that is this fork's own box shape, the key never rides service.env and the helper pays, and a problem row
+    on every kernel start about a box working as declared is a false alarm. Their remedy names the helper,
+    and never tells the operator to put ANTHROPIC_API_KEY into service.env as the plain instruction: this
+    fork's _warn_credential_lines_in_env_file would flag exactly that at the next boot. Synthetic settings.json
+    under a temp CLAUDE_CONFIG_DIR; the helper is a path, never run."""
+
+    KEY = ""
+
+    def setUp(self):
+        super().setUp()
+        self.lab = tempfile.mkdtemp()
+        self._cfg_before = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.lab, "claude")
+        os.makedirs(os.environ["CLAUDE_CONFIG_DIR"])
+        self.be.work_key = ""                                   # no key source anywhere
+        self.logged = []
+        self.be._log_cb = self.logged.append
+
+    def tearDown(self):
+        if self._cfg_before is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = self._cfg_before
+        super().tearDown()
+
+    def _helper(self):
+        with open(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": os.path.join(self.lab, "anthropic-key.sh")}, fh)
+
+    def _problems(self, needle):
+        return [p["text"] for p in self.be.problems(50) if needle in p["text"]]
+
+    def _said(self, needle):
+        return [str(m) for m in self.logged if needle in str(m)]
+
+    UNKEYED = "Claude Code's own credential"
+    SEED = "remembered Billing pick is the API key but romp holds no key source"
+
+    def test_declared_key_with_a_helper_makes_the_unkeyed_pick_row_information_naming_the_helper(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self._helper()
+        s = self._sess(1, auth="key")
+        kw = self._options_kw(s)
+        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"], "nothing injected, as before")
+        self.assertTrue(s._launched_unkeyed_pick)
+        said = self._said(self.UNKEYED)
+        self.assertEqual(len(said), 1, "still said, once")
+        self.assertEqual(self._problems(self.UNKEYED), [], "the box's declared design is not a problem")
+        self.assertIn("ROMP_EXPECTED_AUTH=key", said[0])
+        self.assertIn("apiKeyHelper", said[0])
+        self.assertIn("settings.json", said[0])
+        self.assertIn("the helper pays", said[0], "the remedy names the helper as what pays")
+        self.assertIn("manager's environment", said[0], "the fork's key-free wording for the ANTHROPIC_API_KEY route")
+        self.assertIn("where your installation allows a key in a file", said[0])
+        self.assertIn(sb._keysrc.service_env_path(), said[0], "the provider lines still name the file")
+        self._options_kw(self._sess(2, auth="key"))
+        self.assertEqual(len(self._said(self.UNKEYED)), 1, "once per process")
+
+    def test_declared_key_without_a_helper_keeps_the_problem_row(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self._options_kw(self._sess(1, auth="key"))
+        rows = self._problems(self.UNKEYED)
+        self.assertEqual(len(rows), 1, "declared key and no helper: the sessions land on the login")
+        self.assertNotIn("the helper pays", rows[0])
+        self.assertIn("manager's environment", rows[0], "the fork's key-free wording, in the problem row too")
+
+    def test_a_helper_without_the_declaration_keeps_the_problem_row(self):
+        self._helper()
+        self._options_kw(self._sess(1, auth="key"))
+        self.assertEqual(len(self._problems(self.UNKEYED)), 1, "undeclared is the surprising case")
+
+    def test_a_remembered_key_pick_with_a_helper_makes_the_seed_skip_row_information(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self._helper()
+        sb.write_sdk_default(self.be.state_dir, auth="key")
+        sid = self.be.spawn("n", self.d)
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "the remembered pick is still set aside")
+        said = self._said(self.SEED)
+        self.assertEqual(len(said), 1, "said, once")
+        self.assertEqual(self._problems(self.SEED), [], "information, not a problem")
+        self.assertIn("apiKeyHelper", said[0])
+        self.assertIn("the helper pays", said[0])
+        self.assertIn("the remembered API-key Billing pick", said[0], "the declaration named is the pick (Q3: it outranks the env)")
+        self.assertNotIn("ROMP_EXPECTED_AUTH=key", said[0])
+        self.be.spawn("m", self.d)
+        self.assertEqual(len(self._said(self.SEED)), 1, "once per process")
+
+    def test_a_remembered_key_pick_without_a_helper_is_a_problem_row(self):
+        sb.write_sdk_default(self.be.state_dir, auth="key")
+        self.be.spawn("n", self.d)
+        rows = self._problems(self.SEED)
+        self.assertEqual(len(rows), 1, "the pick's intent is not met: the sessions land on the login")
+        self.assertIn(sb._keysrc.service_env_path(), rows[0])
+
+
 class FastOrgPermissionFollowsBilling(_OptionsHarness):
     """Fast-mode permission follows BILLING (the user 2026-08-14): the CLI's availability probe asks
     the saved claude.ai login whenever one exists, even on a session whose inference bills the

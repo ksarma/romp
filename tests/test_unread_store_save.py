@@ -22,7 +22,8 @@ read at publish time with the holder's base left intact; one store-unreadable ro
 by both loaders; the kernel's undo-clear restore skipping a session whose store does not read (the batch stays
 owed) and landing into the fresh store after a quarantine; the kernel's once-per-episode warn frame and the
 /perf gauge reading the boundary's episodes; the un-mute fast-forward raising instead of sealing over a store
-it could not read; the archive twin. The stages' stand-down and the courier's are pinned beside their
+it could not read, and the kernel's un-mute standing (the flag written, one stderr line) while it does; the
+user's copy of a refusal naming the file relative to the state root; the archive twin. The stages' stand-down and the courier's are pinned beside their
 fixtures (tests/test_judge_stage_gate.py, tests/test_courier_kind_demote_only.py). Synthetic fixtures only: a
 sid private to this module, invented goal text."""
 import contextlib
@@ -390,6 +391,33 @@ class UndoClear(_Store):
             os.chmod(ap, 0o644)
         self._undo_lands()
 
+    def test_the_refusal_names_the_file_relative_to_the_state_root(self):
+        # the user's copy (the err dialog, the undoClearResult toast) says goals/<sid>.json, never the absolute
+        # path under $HOME (the ledger's rule for a frame's text, _oserror_text; a federated dashboard shows the
+        # pane on another machine's screen); the judge-errors row keeps the whole path, diagnostic there
+        # (upstream's text carried the path whole; the 2026-09-08 fold's review)
+        self._cleared_and_compacted()
+        with _fault_on(self.gp):
+            skipped = km._undo_clear()
+        self.assertIn("goals/%s.json" % SID, skipped[SID], "the file, relative to the state root")
+        self.assertIn("Input/output error", skipped[SID], "the errno text stays")
+        self.assertNotIn(str(jd.STATE), skipped[SID], "no absolute state path in the user's copy")
+        self.assertNotIn(self.td.name, skipped[SID])
+        rows = self._rows()
+        self.assertEqual([r["err"] for r in rows], ["store-unreadable"])
+        self.assertIn(str(self.gp), rows[0]["note"], "the judge-errors row keeps the path: diagnostic there")
+        sent = []
+        km._gesture_store_refusal({"send": sent.append}, "undo", skipped)      # the socket's err dialog
+        self.assertEqual(len(sent), 1)
+        msg = json.loads(sent[0])
+        self.assertEqual((msg["type"], msg["sid"]), ("err", SID))
+        self.assertIn("goals/%s.json" % SID, msg["text"])
+        self.assertNotIn(str(jd.STATE), msg["text"])
+        # the undoClearResult toast joins the same copy (the WS handler; pinned by text below)
+        src = inspect.getsource(km.Handler._dispatch_ws)
+        i = src.index('msg.get("type") == "undoClear"')
+        self.assertIn("for k, f in sorted(_skipped.items())", src[i:i + 1600], "the toast carries skipped's copy as is")
+
     def test_the_undo_handler_reports_a_refusal_to_the_pane(self):
         src = inspect.getsource(km.Handler._dispatch_ws)
         i = src.index('msg.get("type") == "undoClear"')
@@ -470,9 +498,31 @@ class UnmuteFastForward(_Store):
                 jd.fast_forward_placements(SID, path=str(Path(self.td.name) / "no-such-transcript.jsonl"))
         self.assertEqual(self.gp.read_text(), good, "nothing sealed, nothing saved")
         self.assertEqual(self._errs(), [], "the raise is the caller's to file")
-        src = inspect.getsource(km._set_session_flag)
-        i = src.index("jd.fast_forward_placements(sid)")
-        self.assertIn("except Exception", src[i:i + 200], "the un-mute wrapper catches the raise: a stderr line, no crash")
+
+    def test_the_un_mute_stands_while_its_fast_forward_faults(self):
+        # the kernel's un-mute (the feed's task-tracking checkbox, _set_session_flag hideFromFeed -> False) writes
+        # the flag and then fast-forwards the planner's cursor. Over a store that does not read the fast-forward
+        # raises (above) and the kernel's wrapper turns that into ONE stderr line: the flag change stands, no
+        # raise reaches the WS handler (which would drop the client), and the goals file is left as it is. The
+        # executed behaviour, not a source pin on the wrapper's except (the 2026-09-08 fold's review).
+        good = self._seed()
+        flags = jd.STATE / "session-flags.json"
+        flags.write_text(json.dumps({SID: {"hideFromFeed": True}}))
+        transcript = Path(self.td.name) / "web.jsonl"
+        transcript.write_text("")
+        real_discover = jd.discover
+        jd.discover = lambda now, window=None, forks=True: [(SID, transcript, SID, "web")]   # the session is listed
+        try:
+            with _fault_on(self.gp), contextlib.redirect_stderr(io.StringIO()) as err:
+                km._set_session_flag(SID, "hideFromFeed", False)                  # no raise
+        finally:
+            jd.discover = real_discover
+        self.assertNotIn("hideFromFeed", json.loads(flags.read_text()).get(SID, {}), "the un-mute landed")
+        self.assertIn("unmute fast-forward", err.getvalue(), "the fault is said on stderr")
+        self.assertIn("Input/output error", err.getvalue())
+        self.assertEqual(err.getvalue().count("unmute fast-forward"), 1, "once")
+        self.assertEqual(self.gp.read_text(), good, "nothing sealed, nothing saved")
+        self.assertEqual(self._errs(), [], "a bare load_goals raise files nothing; the wrapper says it on stderr")
 
 
 class Archive(_Store):

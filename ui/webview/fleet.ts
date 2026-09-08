@@ -6,6 +6,7 @@
 // so the colours are IDENTICAL to the ledger box.
 import { delegate, flash } from "./actions";
 import { paintHeld, paintReleased } from "./paint-gate";
+import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is upstream's text, pinned by its tests
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { SessionViews, viewTagUnion } from "./session-views";
@@ -432,11 +433,14 @@ function watchPaneVisibility(list: HTMLElement): void {
 // Synchronous on purpose: a paint inside the event handler is the earliest fresh frame after the
 // compositor's cached one; a requestAnimationFrame hop is later at best and never fires in a hidden frame.
 function releasePaint(): void {
+  publishPaneHidden(document.hidden, paneVisible);   // the shim's word first, on every release event (paint-gate.ts)
   if (!paintReleased(paneDirty, document.hidden, paneVisible)) return;
   paneDirty = false;
   render();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
+// the tab going hidden releases nothing, so the word is published on that arm here (the release publishes the other)
+document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, paneVisible); });
 let paneWatching = false;
 function render() {
   syncFleetTagBtn?.();

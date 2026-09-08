@@ -879,9 +879,10 @@ vault.
 A supervised manager (the systemd or launchd service) reads its key source
 from `service.env` **only**. A key that reaches the manager some other way, a
 systemd drop-in `Environment=` or a launchd plist entry, is ignored and said
-so once in the kernel log with its fingerprint; sessions without an explicit
-Billing pick then launch on the login. Move such a key into `service.env`, or
-replace it with a provider.
+so once in the kernel log with its fingerprint; sessions then launch with
+nothing of Romp's injected, whatever their Billing pick, so Claude Code's own
+credential (its `apiKeyHelper` or login) applies. Move such a key into
+`service.env`, or replace it with a provider.
 
 For a foreground manager, the same provider can be supplied in its
 environment:

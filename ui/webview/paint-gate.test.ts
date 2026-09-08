@@ -3,7 +3,7 @@
 // ordering run executably; feed-hidden-paint.test.ts and outline-visibility.test.ts pin the wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { paintHeld, paintReleased } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, type PaneHiddenHost } from "./paint-gate";
 
 test("the first content always paints through, whatever the visibility (the pane loader retires on it)", () => {
   assert.equal(paintHeld(true, true, false), false, "hidden tab, empty list");
@@ -45,4 +45,23 @@ test("release ordering: whichever measure clears LAST releases exactly once, in 
   assert.equal(paints, 0);
   release(false, true);
   assert.equal(paints, 1);
+});
+
+test("the shim's word: the union of both measures, published as a boolean on the host; unset until the first event (the probe's turn)", () => {
+  // The kernel's pane shim (kernel.py paneHidden) reads window.__rompPaneHidden when it is a boolean and falls back
+  // to its zero-viewport probe otherwise. The probe is right for a pane hidden since load and wrong for one hidden
+  // after a first show (the iframe keeps its size), so the gate, which sees both cases, publishes its word.
+  const w: PaneHiddenHost = {};
+  assert.equal(typeof w.__rompPaneHidden, "undefined", "before the first event nothing is published: the shim's probe decides");
+  assert.equal(publishPaneHidden(false, true, w), false, "visible tab, pane on screen");
+  assert.equal(w.__rompPaneHidden, false);
+  assert.equal(publishPaneHidden(false, false, w), true, "display:none pane in a visible tab: the re-hide the probe misses");
+  assert.equal(w.__rompPaneHidden, true);
+  assert.equal(publishPaneHidden(true, true, w), true, "hidden tab, pane on screen");
+  assert.equal(publishPaneHidden(true, false, w), true, "both");
+  assert.equal(publishPaneHidden(false, true, w), false, "shown again: the word follows the event, no timer");
+  for (const [d, i] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+    assert.equal(publishPaneHidden(d, i, w), paintHeld(d, i, true), "the word is the gate's own hold decision with content present");
+    assert.equal(typeof w.__rompPaneHidden, "boolean");
+  }
 });

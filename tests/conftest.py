@@ -111,6 +111,13 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # not reach a test either) before any test module loads, and re-asserted per test below so a
 # module-level pop or write in one test file cannot erase it for the run. A test that needs its own
 # Claude root sets the variable in setUp, after the fixture, exactly as the ones that do already do.
+# The operator's own location is saved FIRST, before the floor replaces it: the one opt-in live test that
+# borrows the user's apiKeyHelper command (tests/test_session_move_live.py) reads it through
+# ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR. Captured after the floor (the 2026-09-08 fold's first cut) it named the
+# run's empty temp dir and that test skipped as "no auth". setdefault, so an xdist worker keeps the
+# controller's value rather than re-reading an environment the controller has already floored.
+os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
+                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
 _CLAUDE_CONFIG = tempfile.mkdtemp(prefix="romp-tests-claude-")
 os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
 
@@ -393,16 +400,15 @@ def pytest_runtest_setup(item):
 # developer's own apiKeyHelper setting (and envsource.helper_fingerprint could RUN that helper). The
 # three are floored to empty temp dirs under the state root: no unit, no plist, no settings. The one
 # test that deliberately borrows the user's own apiKeyHelper command (the opt-in live move test)
-# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, set here once. Import-time
-# plus a per-test re-assert, on the same reasoning as the manager-port floor; a test that needs its
-# own dirs points the vars at temp paths in setUp, which runs after the fixture.
+# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, saved above beside the
+# CLAUDE_CONFIG_DIR floor, before any floor touched the variable. Import-time plus a per-test
+# re-assert, on the same reasoning as the manager-port floor; a test that needs its own dirs points
+# the vars at temp paths in setUp, which runs after the fixture.
 _EMPTY_DIRS = {
     "ROMP_SYSTEMD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-systemd-user"),
     "ROMP_LAUNCHD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-launch-agents"),
     "CLAUDE_CONFIG_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-claude-config"),
 }
-os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
-                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
 for _v, _d in _EMPTY_DIRS.items():
     os.makedirs(_d, exist_ok=True)
     os.environ[_v] = _d

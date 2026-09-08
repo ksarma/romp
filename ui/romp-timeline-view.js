@@ -1240,12 +1240,17 @@ class TimelinePanel {
     // Obsidian leaf, where the tab never changed state). One catch-up draw per return, never one per frame.
     // Both are events; no timer polls for visibility. The observer is optional (Obsidian / a bare host may
     // lack it) — see _hiddenForPaint for what the hold keys on without it.
-    this._onVis = () => this._releasePaintHold();
+    this._paneIntersecting = null;   // the observer's last word (null: it has not spoken yet); one input of the shim's word (_publishPaneHidden)
+    this._onVis = () => { this._publishPaneHidden(); this._releasePaintHold(); };
     if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', this._onVis);
     this._io = null;
     if (typeof IntersectionObserver !== 'undefined') {
       try {
-        this._io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) this._releasePaintHold(); });
+        this._io = new IntersectionObserver((entries) => {
+          this._paneIntersecting = entries.some((e) => e.isIntersecting);
+          this._publishPaneHidden();
+          if (this._paneIntersecting) this._releasePaintHold();
+        });
         this._io.observe(this.wrap);
       } catch (e) { this._io = null; }
     }
@@ -1809,6 +1814,17 @@ class TimelinePanel {
   // which _tickLive stopped while hidden. Still hidden by the OTHER criterion (tab visible, pane display:none,
   // or the reverse) → that criterion's own event releases later. A shown tip or a pressed pointer keeps its
   // own hold and its own release repaints; the tick re-arm is safe under both (it self-gates).
+  // The shim's word (the 2026-09-08 fold's round-2 ruling; ui/webview/paint-gate.ts publishPaneHidden is the panes'
+  // copy of this): the kernel's pane shim gates its stale banner on window.__rompPaneHidden when it is a boolean and
+  // on its zero-viewport probe otherwise, and the probe misses a pane hidden after a first show (the iframe keeps
+  // its size). Published on the hold's own events (visibilitychange, the observer's callback), never on a timer;
+  // unset until the first one, when the probe is right.
+  _publishPaneHidden() {
+    if (typeof window === 'undefined') return;
+    const docHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    window.__rompPaneHidden = docHidden || this._paneIntersecting === false;
+  }
+
   _releasePaintHold() {
     if (this._hiddenForPaint()) return;
     const tipUp = this.tip && this.tip.classList && this.tip.classList.contains('show');

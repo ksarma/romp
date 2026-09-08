@@ -23,7 +23,7 @@ const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null)
 const SHOW_AT = RENDER.indexOf(SHOW_SIG);
 assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
 const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
-const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 3200);
+const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 4200);   // wide enough for the snapshot branch (the snapKeep re-target grew it, 2026-09-08)
 
 const T0 = 1781100000;
 const iso = (t: number) => new Date(t * 1000).toISOString();
@@ -239,9 +239,13 @@ test("pinned: render.ts shows the snapshot on a header click — snapView set BE
     "setActive: the pick ends the snapshot, opens a folded-away tab's section, and puts the transcript back even when the pick is the tab already active");
   assert.match(RENDER, /if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
   // T251 (upstream, folded 2026-09-08; catch-up 2 ui DECISION 1): the header's name is the shared tag chip, coloured
-  // inline, so the fork's prose-tone rule for .snap-shown is gone (it could not win against the inline colour); the
-  // class stays on the header (above) and the holds-active mark is the accent underline on the chip
+  // inline, so the fork's prose-tone rule for .snap-shown (the name's lift to --fg) could not win and went. The cue
+  // has a successor on the HEADER, which the chip's inline style never reaches (the round-2 ruling): the accent wash
+  // the picker's active row wears, distinct from holds-active's underline on the chip (the tab being READ) and from
+  // the hover lift (a fold cue). Palette only: --accent-wash, defined by both themes.
+  assert.match(CSS, /\.tab-group-head\.snap-shown \{ background: var\(--accent-wash\); \}/, "the shown section's header wears the accent wash");
   assert.doesNotMatch(CSS, /\.snap-shown \.tab-group-name/, "no rule on the retired name span");
+  assert.match(CSS, /--accent-wash: rgba\([^)]*\);[\s\S]*--accent-wash: rgba\([^)]*\);/, "both themes define the wash the rule reads");
   assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline; text-decoration-color: var\(--accent\);/);
 });
 

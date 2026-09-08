@@ -1625,6 +1625,15 @@ def _work_key():
 
 
 def _work_key_configured():
+    """Whether a key source is configured, for _judge_auth's default (an unpicked session bills the key when
+    one is configured). The same order as _key_source_unconfigured below, so the two predicates agree in
+    command mode (the 2026-09-08 fold, round 2): the command source's set FIRST when it carries the key (the
+    kernel's cached read, nothing retrieved), because the kernel's configured wire reads the FILE source's
+    descriptor, which on a command-mode box with no key line says "no source" while the launch injects the
+    set's key; an unpicked session's judge then billed the login beside a session billing the key, the
+    wrong-account failure _judge_auth exists to prevent."""
+    if _ENV_SET_FN is not None and _env_set().get("ANTHROPIC_API_KEY"):
+        return True
     if _WORK_KEY_CONFIGURED_FN is not None:
         return bool(_WORK_KEY_CONFIGURED_FN())
     # Compatibility for standalone callers wiring only the original callback.

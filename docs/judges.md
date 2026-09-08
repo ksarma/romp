@@ -387,8 +387,9 @@ with a credential error; it cannot silently use the machine login or a stale
 key. An explicitly login-billed call does not run `op`.
 
 Legacy `ANTHROPIC_API_KEY` and Claude login remain supported when no runtime
-provider is selected. See [Service environment and credentials](reference.md#service-environment-and-credentials)
-for setup, service PATH and authentication requirements, and migration.
+provider is selected. See [API keys from a secret manager at
+runtime](reference.md#api-keys-from-a-secret-manager-at-runtime) for setup,
+service PATH and authentication requirements, and migration.
 
 With `ROMP_CREDENTIAL_COMMAND` set (see [Installing without keys on
 disk](reference.md#installing-without-keys-on-disk)), a judge child env also
@@ -396,8 +397,8 @@ carries the set that command printed, minus `ANTHROPIC_API_KEY`, which the same
 explicit decision re-adds only for a key-mode call. A set that carries that
 key is a configured key source: a key-mode call injects it, and the no-source
 rule (with no key source selected, Romp injects nothing and Claude Code's own
-credential applies; see [Service environment and
-credentials](reference.md#service-environment-and-credentials)) does not
+credential applies; see [API keys from a secret manager at
+runtime](reference.md#api-keys-from-a-secret-manager-at-runtime)) does not
 apply while the set holds one. A credential-class refusal
 on a judge call marks the cached set stale, so the next call re-runs the
 command; the model catalog fetch reads the set's `ANTHROPIC_LP_API_KEY` the

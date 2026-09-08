@@ -25,3 +25,21 @@ export function paintHeld(docHidden: boolean, intersecting: boolean, hasContent:
 export function paintReleased(dirty: boolean, docHidden: boolean, intersecting: boolean): boolean {
   return dirty && !paintHeld(docHidden, intersecting, true);
 }
+
+// THE SHIM'S WORD (the 2026-09-08 fold's round-2 ruling; the fork's 2026-09-06 hidden-pane read, given a
+// publisher again). The kernel's pane shim gates its stale banner on paneHidden(): a hidden pane never raises
+// it (the 2026-08-15 phone fix, where every hidden pane's throttled watchdog raised over a working dashboard).
+// The shim's own measure is the zero-viewport probe, which is right only for a pane hidden SINCE LOAD: a
+// display:none iframe keeps the size of its last show (Chromium: innerWidth 0 hidden since load, 600 once
+// shown and hidden again), so the probe misses every pane the shell hides after the user has looked at it,
+// the phone shell's every tab switch. The gate already holds the two measures that do not miss it, so each
+// pane that gates publishes their union as window.__rompPaneHidden on the gate's own events (the observer's
+// callback, visibilitychange, the release) and never on a timer. The shim reads the flag when it is a boolean
+// and keeps the probe as the boot fallback: until the first event the flag is unset, and the probe is right
+// then. `w` is the page's window (globalThis in a page); the tests hand in a stand-in.
+export interface PaneHiddenHost { __rompPaneHidden?: boolean; }
+export function publishPaneHidden(docHidden: boolean, intersecting: boolean, w: PaneHiddenHost = globalThis as PaneHiddenHost): boolean {
+  const hidden = docHidden || !intersecting;
+  w.__rompPaneHidden = hidden;
+  return hidden;
+}

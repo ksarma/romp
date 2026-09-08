@@ -490,9 +490,15 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    (a "you are here" cue, the accent's job), so the strip still says where the reading is when the tab
    itself is folded away. The chip's colour is the tag's own, set inline by the shared builder (T251), so
    the mark is the underline alone: the prose-tone lift the plain name used to get is moot on a chip that
-   is never dim, and .snap-shown (the pane is showing this section's snapshot; render.ts sets the class)
-   keeps no rule of its own for the same reason. */
+   is never dim. */
 .tab-group-head.holds-active .tab-group-chip { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+/* the section whose snapshot the pane is SHOWING (render.ts sets .snap-shown on its header; the 2026-09-08
+   round-2 review): the accent wash on the header, the "this is what is on screen" cue the picker's active
+   row wears (.picker-dir-row.active), distinct from holds-active's underline (the section of the tab being
+   READ, which the strip keeps marking while the pane shows another section) and from the hover lift (a fold
+   cue). The fork's old cue, the name's lift to --fg, went with T251's inline-coloured chip; a wash is a
+   property of the header, which the chip's inline style never reaches. */
+.tab-group-head.snap-shown { background: var(--accent-wash); }
 .tab-group-head.dragging { opacity: 0.45; }
 .tab-group-head.drop-target { box-shadow: inset 2px 0 0 var(--accent); }
 /* the disclosure chevron: ▸ folded, turned down while open — the fold-caret idiom (a CSS transition on

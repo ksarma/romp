@@ -11137,6 +11137,15 @@ function showActive(keep?: { uuid: string; y: number } | null) {
     // view's fields still hold what the reader's last scroll recorded
     const av = activeId ? views.get(activeId) : null;
     if (av && !snapKeep) snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
+    // THE ACTIVE CHANGED UNDER THE SNAPSHOT (the round-2 review, 2026-09-08): the session being read closed while
+    // the snapshot showed (dismissSession hands activeId to the MRU survivor and comes back here with snapView set),
+    // so the held spot names a view followReader no longer writes to. The old view gets its spot back and the new
+    // active's is held from now, read before the snapshot's next scroll event: leaving lands the survivor where its
+    // reader left it, not on the snapshot's offset or at the bottom. The active change is the event.
+    if (av && snapKeep && snapKeep.v !== av) {
+      snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick;
+      snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
+    }
     document.getElementById("tab-loading")?.remove();
     if (empty) empty.style.display = "none";
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;

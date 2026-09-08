@@ -231,6 +231,31 @@ class CommandSetInJudgeEnv(_JudgeAuthBase):
                         "ANTHROPIC_API_KEY is not the set's key")
         self.assertEqual(jd._judge_auth(SID), "key", "…and the billing resolution sees the key through it")
 
+    def test_an_unpicked_sessions_default_is_the_sets_key_when_the_file_wire_says_no_source(self):
+        # the 2026-09-08 fold, round 2: the kernel's configured wire reads the FILE source's descriptor
+        # (kernel.py: sbmod.work_api_key_source().configured), which on a command-mode box with no key line
+        # answers "no source" while the launch injects the set's key. The two predicates behind a judge call
+        # consult the set FIRST and agree: _work_key_configured (behind _judge_auth's default for an unpicked
+        # session) and _key_source_unconfigured (the keyed path's gate), so the judge bills the account the
+        # session it judges bills, not the login beside a keyed session
+        jd._ENV_SET_FN = lambda: dict(self.SET)
+        jd._WORK_KEY_CONFIGURED_FN = lambda: False          # the file descriptor: no key line, no provider
+        jd._WORK_KEY_FN = lambda: self.SET["ANTHROPIC_API_KEY"]
+        self.assertTrue(jd._work_key_configured(), "a set carrying the key is a configured source")
+        self.assertFalse(jd._key_source_unconfigured(), "...and both predicates say so")
+        self.assertEqual(jd._judge_auth(SID), "key", "unpicked: the default is the key the set carries")
+        self.assertTrue(jd._judge_env("triage", jd._judge_auth(SID)).get("ANTHROPIC_API_KEY") == self.SET["ANTHROPIC_API_KEY"],
+                        "ANTHROPIC_API_KEY is not the set's key")
+        # a set WITHOUT the key is not a source: both predicates fall through to the wire, which says login
+        jd._ENV_SET_FN = lambda: {"A_TOKEN": self.SET["A_TOKEN"]}
+        self.assertFalse(jd._work_key_configured())
+        self.assertTrue(jd._key_source_unconfigured())
+        self.assertEqual(jd._judge_auth(SID), "login")
+        # an explicit login pick still outranks the set (the picker's contract)
+        jd._ENV_SET_FN = lambda: dict(self.SET)
+        self._reg("login")
+        self.assertEqual(jd._judge_auth(SID), "login")
+
     def test_the_overlay_never_outranks_the_explicit_strip(self):
         # a set that (wrongly) carried the key under another spelling is still merged as-is; the exact
         # name ANTHROPIC_API_KEY is popped from the overlay AND from the inherited env

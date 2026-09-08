@@ -12,6 +12,7 @@
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { paintHeld, paintReleased } from "./paint-gate";
+import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is upstream's text, pinned by its tests
 import { spinFor, awaitWord, groupRows, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
@@ -4735,12 +4736,15 @@ function watchFeedVisibility(list: HTMLElement): void {
 // requestAnimationFrame hop): on a tab switch the compositor shows the cached frame until the page paints,
 // so a paint inside the event handler is the earliest fresh frame.
 function releasePaint(): void {
+  publishPaneHidden(document.hidden, feedIntersecting);   // the shim's word first, on every release event (paint-gate.ts)
   if (!paintReleased(paintDirty, document.hidden, feedIntersecting)) return;
   paintDirty = false;
   skipFlipOnce = true;
   render();
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
+// the tab going hidden releases nothing, so the word is published on that arm here (the release publishes the other)
+document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, feedIntersecting); });
 
 function render() {
   const list = document.getElementById("feed-list")!;

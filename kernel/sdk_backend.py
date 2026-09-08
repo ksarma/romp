@@ -8190,8 +8190,10 @@ class SdkBackend:
         return self._work_key_source().fingerprint()
 
     def _work_key_and_source(self, source=None, cred=None) -> tuple:
-        """(key, source kind) in ONE read: "command" (the configured command's ANTHROPIC_API_KEY line),
-        "file" (the env file's line), "op" (retrieved at runtime from 1Password), "startup" (the claim
+        """(key, source kind) in ONE read: "command" (in command mode the configured credential command's
+        ANTHROPIC_API_KEY line; in file mode upstream's key command, keysource's kind of the same name for a
+        ROMP_API_KEY_CMD line, run per resolve), "file" (the env file's line), "op" (retrieved at runtime
+        from 1Password), "startup" (the claim
         made at boot, because the file has no usable line), "pin" (a test's explicit value), "" (no key
         anywhere). _options wants both, and must not read the source twice per connect: a keyswap can
         land between two reads, and the source named in the log must be the source injected. In command
@@ -8220,8 +8222,10 @@ class SdkBackend:
         run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
         helper is configured at all (the machine login bills, and there is nothing to fingerprint —
         not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
-        the file's or the startup key ("key"), or ("", "") for a 1Password reference, which is retrieved
-        per launch and never held. The value cycle_key converges sessions on, and what
+        the file's or the startup key ("key"), or ("", "") for a provider (a 1Password reference or a key
+        command, ROMP_API_KEY_CMD), which is retrieved per launch and never held: its descriptor's own
+        fingerprint is the hash of a reference or a command line, a configuration identity that must not
+        read as a credential's. The value cycle_key converges sessions on, and what
         the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
         already took and `values` the set beside it (_cred_take's pair), so one operation reads the
         set once and the helper runs in that set's environment rather than reading it again — which
@@ -8240,10 +8244,12 @@ class SdkBackend:
         # reference is retrieved per launch and never held, so a status read has nothing to fingerprint
         # and answers ("", "") rather than running `op read` for a value it would only hash. Upstream's
         # rule for /keycycle, kept here because the route reads this too: the fold's first cut resolved
-        # the reference twice per bare status read (review find, 2026-09-07).
+        # the reference twice per bare status read (review find, 2026-09-07). Every provider kind, not op
+        # alone: a ROMP_API_KEY_CMD line answered the hash of its command line as a key fingerprint (the
+        # 2026-09-08 fold's review, an R9 miss).
         source = self._work_key_source()
-        if source.kind == "op":
-            return "", ""
+        if _keysrc.is_provider_kind(source.kind):
+            return "", ""             # a 1Password reference or a key command (R9): retrieved per launch, never held
         fp = source.fingerprint()
         return fp, ("key" if fp else "")
 
@@ -8296,42 +8302,80 @@ class SdkBackend:
                 src = ("the environment this manager started with; %s has no %s line the kernel can use"
                        % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
             elif source == "command":
-                src = "the ANTHROPIC_API_KEY line the credential command printed"
+                # two kinds share the tag (the 2026-09-08 fold, round 2): the fork's credential command
+                # (kernel/envsource.py, a set with an ANTHROPIC_API_KEY line) when the command mode governs,
+                # else upstream's key command (kernel/keysource.py, #1029). The line says which ran.
+                src = ("the ANTHROPIC_API_KEY line the credential command printed (%s)" % _envsrc.COMMAND_VAR
+                       if _envsrc.configured() else
+                       "retrieved at runtime by the key command (%s)" % _keysrc.CMD_VAR)
             elif source == "op":
                 src = "retrieved at runtime from 1Password"
-            elif source == "command":
-                src = "retrieved at runtime by the key command (%s)" % _keysrc.CMD_VAR
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
 
+    def _no_source_is_the_declared_design(self) -> str:
+        """Whether the two no-source rows below are information rather than a problem: the box declares key
+        billing (ROMP_EXPECTED_AUTH=key, or a remembered key pick, _declared_auth: the same reading the usage
+        row takes) AND Claude Code's user settings name an apiKeyHelper, so a launch with nothing of romp's
+        injected bills the key through that helper: the box working as declared, this fork's own shape (the
+        key never rides service.env; the 2026-09-08 fold, round 2). Answers the declaration's name for the
+        row's text ("" when the row is a problem). Either half missing, the row is the problem upstream's
+        #1014 made it: undeclared is the surprising case, and declared with no helper lands on the login
+        (the per-init mismatch line rings for that too). Read live and cheaply (a dict lookup and one
+        settings.json read), once per process per row."""
+        try:
+            exp, src = _declared_auth(self.state_dir)
+            if exp != "key" or not _envsrc.helper_command():
+                return ""
+            return "ROMP_EXPECTED_AUTH=key" if src == "env" else "the remembered API-key Billing pick"
+        except Exception:
+            return ""
+
+    def _no_source_remedy(self, declared: str) -> str:
+        """The tail of the two no-source rows. A key in service.env is the fork's problem line
+        (_warn_credential_lines_in_env_file, the key-free policy), so the ANTHROPIC_API_KEY route is worded
+        as the init mismatch's remedy is: the manager's environment, or the file where an installation
+        allows a key in one. Under a declaration (`declared` names it: the quiet, informational row) the
+        tail names the helper as what pays."""
+        put = ("add ROMP_API_KEY_CMD=<command> or ROMP_API_KEY_REF=op://vault/item/field to %s, or "
+               "ANTHROPIC_API_KEY to the manager's environment (or service.env, where your installation allows "
+               "a key in a file)" % _keysrc.service_env_path())
+        if declared:
+            return ("%s and the apiKeyHelper in Claude Code's settings.json make that the box's design (the "
+                    "helper pays; the per-init check rings if a session lands elsewhere); if romp should manage "
+                    "the key instead, %s" % (declared, put))
+        return put
+
     def _note_unkeyed_pick(self) -> None:
-        """Said ONCE per process, as a problem row: a session picked for API-key billing is launching with
-        nothing of romp's injected, because romp holds no key source — Claude Code's own credential (its
-        apiKeyHelper or its login) is what pays. That is how these boxes ran before #932 and it works; but
-        it is a key romp cannot see, swap or fingerprint, so the row names what puts romp in charge of it."""
+        """Said ONCE per process: a session picked for API-key billing is launching with nothing of romp's
+        injected, because romp holds no key source: Claude Code's own credential (its apiKeyHelper or its
+        login) is what pays. That is how these boxes ran before #932 and it works; but it is a key romp
+        cannot see, swap or fingerprint, so the row names what puts romp in charge of it. A problem row,
+        except on a box that DECLARES this shape (_no_source_is_the_declared_design): an information line."""
         if self._unkeyed_pick_said:
             return
         self._unkeyed_pick_said = True
+        declared = self._no_source_is_the_declared_design()
         self._log("sessions picked for API-key billing launch on Claude Code's own credential (its apiKeyHelper "
-                  "or login) because romp holds no key source — add ROMP_API_KEY_CMD=<command>, "
-                  "ROMP_API_KEY_REF=op://vault/item/field or ANTHROPIC_API_KEY to %s if romp should manage the key"
-                  % _keysrc.service_env_path(),
-                  problem=True)
+                  "or login) because romp holds no key source; %s%s"
+                  % ("" if declared else "if romp should manage the key, ", self._no_source_remedy(declared)),
+                  problem=not declared)
 
     def _note_seed_skipped(self) -> None:
-        """Said ONCE per process, as a problem row: the remembered Billing default is the API key, but romp holds
-        no key source, so new sessions are left unpicked (spawn) — they launch the same way either pick would
-        here (nothing of romp's injected; Claude Code's own credential pays), but their badge, judge billing and
-        cycling read an unpicked session, and a pick the user made is being set aside without a word otherwise."""
+        """Said ONCE per process: the remembered Billing default is the API key, but romp holds no key source,
+        so new sessions are left unpicked (spawn); they launch the same way either pick would here (nothing
+        of romp's injected; Claude Code's own credential pays), but their badge, judge billing and cycling
+        read an unpicked session, and a pick the user made is being set aside without a word otherwise. A
+        problem row, except on a box that DECLARES this shape (_no_source_is_the_declared_design)."""
         if self._seed_skip_said:
             return
         self._seed_skip_said = True
+        declared = self._no_source_is_the_declared_design()
         self._log("the remembered Billing pick is the API key but romp holds no key source, so new sessions start "
-                  "unpicked and launch on Claude Code's own credential (its apiKeyHelper or login) — add "
-                  "ROMP_API_KEY_CMD=<command>, ROMP_API_KEY_REF=op://vault/item/field or ANTHROPIC_API_KEY to %s "
-                  "to apply the pick"
-                  % _keysrc.service_env_path(), problem=True)
+                  "unpicked and launch on Claude Code's own credential (its apiKeyHelper or login); %s%s"
+                  % ("" if declared else "to apply the pick, ", self._no_source_remedy(declared)),
+                  problem=not declared)
 
     def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
         """Log what the command source is handing launches, change-only, from its value-free record:

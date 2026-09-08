@@ -33355,7 +33355,7 @@ def _mark_nodes_cleared(item_ids, value, src="user", why=None):
     for sid, ids in by_sid.items():
         store, fault = jd.load_goals_or_fault(sid)
         if fault is not None:
-            skipped[sid] = str(fault)                  # its row is filed; the flag cannot be written on a store we
+            skipped[sid] = _store_fault_copy(fault)    # its row is filed; the flag cannot be written on a store we
             continue                                   # cannot read (the view-level clear still holds), the other
         nodes = store.get("nodes", {})                 # sessions' clears proceed, and the CALLER answers the user
         touched = False                                # (a WS gesture reports the refusal to its own socket)
@@ -33397,7 +33397,7 @@ def _mark_nodes_cleared(item_ids, value, src="user", why=None):
         jd.rollup_status(store, closed)
         fault = jd.save_goals_or_fault(sid, store)
         if fault is not None:
-            skipped[sid] = str(fault)                  # the store read a moment ago and faults at its SAVE (the
+            skipped[sid] = _store_fault_copy(fault)    # the store read a moment ago and faults at its SAVE (the
             continue                                   # save path's own strict reads, or the publish itself): the
         #                                                flag did not land, and the caller answers the user exactly
         #                                                as for a load fault. Left to raise, an OSError out of a WS
@@ -33566,6 +33566,21 @@ def _delegation_linked_ids(item_ids):
             if isinstance(o, dict) and o.get("peer") and o.get("goalId") in _nodes(o.get("peer")):
                 out.add(o["goalId"])                                          # recipient → sender (the tracking node)
     return out
+
+
+def _store_fault_copy(fault):
+    """The USER'S copy of a goal-store fault: str(fault) with the state root taken out of every path it
+    names, so the err dialog and the undoClearResult toast say goals/<sid>.json rather than the absolute
+    path under $HOME (the ledger's rule for a frame's text, _oserror_text: an absolute state path has no
+    business in a pane, and a federated dashboard shows the pane on another machine's screen). The
+    judge-errors row the boundary files keeps the whole str(e): the path is diagnostic there. The errno
+    text and the file name stay, so the user still learns what refused and which file (review find,
+    2026-09-08; upstream's text at the four `skipped[sid]` sites carried the path whole)."""
+    text = str(fault) or type(fault).__name__
+    root = str(jd.STATE).rstrip(os.sep)
+    if root:
+        text = text.replace(root + os.sep, "")
+    return text
 
 
 def _gesture_store_refusal(client, gesture, skipped):
@@ -33811,7 +33826,7 @@ def _restore_goal_archive(item_ids):
                 continue
             store, fault = jd.load_goals_or_fault(sid)
             if fault is not None:
-                skipped[sid] = str(fault)              # its row is filed; the archive keeps these nodes (nothing is
+                skipped[sid] = _store_fault_copy(fault) # its row is filed; the archive keeps these nodes (nothing is
                 continue                               # restored INTO a store we cannot read), the other sessions'
             #                                            restores proceed, and the caller answers the user
             if store.get("_unread"):
@@ -33852,7 +33867,7 @@ def _restore_goal_archive(item_ids):
             # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
             fault = jd.save_goals_or_fault(sid, store)
             if fault is not None:
-                skipped[sid] = str(fault)              # the publish did not land (a save-path read fault, or the
+                skipped[sid] = _store_fault_copy(fault) # the publish did not land (a save-path read fault, or the
                 continue                               # write itself), so the archive is NOT saved: it keeps these
             #                                            nodes for the next Undo, whose restore journal row replays
             #                                            idempotently; the caller answers the user (review find,
@@ -46023,7 +46038,15 @@ try{window.dispatchEvent(new Event("romp:wsfresh"));}catch(e){}}   // the pane's
 // checked at RAISE time (there is no event for a CSS display flip). The hidden pane still reconnects in
 // the background; if it is shown again while genuinely stale, its watchdog re-raises within one tick,
 // now visible, and the resync retires it exactly as before.
-function paneHidden(){try{return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}
+// The probe is right for a pane hidden SINCE LOAD only: a display:none iframe keeps the size of its last
+// show (Chromium: innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane
+// the shell hides after the user has looked at it, which is the phone shell's every tab switch. The pane's
+// paint gate holds the two measures that do not miss it (document.hidden, its IntersectionObserver) and
+// publishes their union as window.__rompPaneHidden on its own events (ui/webview/paint-gate.ts
+// publishPaneHidden: the observer callback, visibilitychange, the release; never a timer). The shim reads
+// that word when it is a boolean and falls back to the probe until the first event publishes one (the
+// 2026-09-08 fold, round 2: the fork's 2026-09-06 read given a publisher again).
+function paneHidden(){try{if(typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden;return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}
 // every raise (and every hidden-pane suppression) leaves a clientDiag breadcrumb naming the pane, the
 // PATH that raised (reconnect/foreground), the socket state and the quiet gap — so the next "the banner
 // keeps flapping" report is diagnosable from client-diag.jsonl instead of re-hypothesized (the user
@@ -46794,9 +46817,6 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 // timeline-boot.test.ts pins the pair.
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
 else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
-else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
-else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
-else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="settingRefused"&&panel.settingRefused)panel.settingRefused(m);
 else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
 else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);

@@ -84,14 +84,24 @@ class DisconnectBanner(unittest.TestCase):
         # force-closing its own healthy socket and re-raising the banner every ~45s over a dashboard
         # that was visibly working. A display:none iframe has a ZERO viewport — raiseStale checks that
         # at raise time (no event exists for a CSS display flip) and stays silent while hidden; a pane
-        # shown while genuinely stale re-raises within one watchdog tick, now visible. The shim's read of
-        # federation's published word (window.__rompPaneHidden, this fork's 2026-09-06 hidden-pane hold) went
-        # with the hold: the 2026-09-08 fold's steer 2 took upstream #1016's paint gate, which publishes no
-        # such word, so the zero-viewport probe is the one signal again (upstream's shim text).
+        # shown while genuinely stale re-raises within one watchdog tick, now visible. The probe is right for
+        # a pane hidden SINCE LOAD only: a display:none iframe keeps the size of its last show (Chromium:
+        # innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane the shell
+        # hides after the user has looked at it, the phone shell's every tab switch. The pane's paint gate
+        # (ui/webview/paint-gate.ts, upstream #1016's hold, steer 2 of the 2026-09-08 fold) holds the two
+        # measures that do not miss it and publishes their union as window.__rompPaneHidden on its own events
+        # (publishPaneHidden: the observer callback, visibilitychange, the release; never a timer). The shim
+        # reads that word when it is a boolean and keeps the probe as the boot fallback (the fold's round 2:
+        # the fork's 2026-09-06 read, given a publisher again; the fold's first cut had dropped the read and
+        # pinned the probe alone, which re-opened the flap for every re-hidden pane).
         js = km._shim("feed")
-        self.assertIn("function paneHidden(){try{return window.parent!==window"
-                      "&&(window.innerWidth===0||window.innerHeight===0);}", js)
-        self.assertNotIn("__rompPaneHidden", js, "no publisher since steer 2 (#1016): the dead read is not left behind")
+        self.assertIn('function paneHidden(){try{if(typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden;'
+                      "return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}", js,
+                      "the published word first, the zero-viewport probe as the boot fallback")
+        gate = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "paint-gate.ts"), encoding="utf-8").read()
+        self.assertIn("export function publishPaneHidden(", gate, "the publisher, by name, in the pane's paint gate")
+        self.assertRegex(gate, r"\.__rompPaneHidden = ", "publishing the flag the shim reads, under that exact name")
+        self.assertNotIn("setInterval", gate, "published on the gate's own events, never a timer")
         self.assertIn('function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}', js,
                       "the visibility gate is at RAISE time, so hidden panes reconnect silently")
 
