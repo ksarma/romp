@@ -22,6 +22,7 @@ export function chatBody(attachTitle: string): string {
   <div id="tabbar"><span id="tabs"></span></div>
   <div id="tabbar-resize" title="Drag to resize the tab strip"></div>
   <div id="ledger" style="display:none"></div>
+  <div id="pinned-notes" style="display:none"></div>
   <div id="content"><div id="live-ask" style="display:none"></div></div>
   <div id="footer">
     <div id="composer-resize" title="Drag to resize the message box"></div>

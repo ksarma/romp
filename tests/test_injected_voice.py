@@ -864,6 +864,84 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
                                      "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
 
 
+class PinnedNoteToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two pinned-note postal tools (the user 2026-09-08) speak to the PERSON THE AGENT WORKS FOR
+    the way the user-todo pair does, so their descriptions and result texts ride the same veil: no romp
+    machinery named. Every branch of _mcp_call is rendered from stubs and scanned."""
+
+    NOTES = [{"id": "pn-9f2c1a34", "text": "Waiting on CI for the login fix", "createdT": T0},
+             {"id": "pn-0badcafe", "text": "Read docs/plan.md before replying", "createdT": T0 + 60}]
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = load_source("romp_postal_voice_pn", os.path.join(BIN, "romp-postal-service"))
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("pin_note", "unpin_note"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
+            for prop in tools[name]["inputSchema"]["properties"].values():
+                for word, why in ROMP_WORDS:
+                    with self.subTest(tool=name, word=word, prop=prop["description"][:30]):
+                        self.assertNotIn(word, prop["description"].lower())
+
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        pm = load_source("romp_postal_voice_pn_results", os.path.join(BIN, "romp-postal-service"))
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
+        pm._self_identity = lambda: (SID, "api")
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES}
+            results["pin: pinned"] = pm._mcp_call("pin_note", {"text": "Read docs/plan.md before replying"})[0]
+            results["pin: no text"] = pm._mcp_call("pin_note", {"text": "  "})[0]
+            results["pin: too long"] = pm._mcp_call("pin_note", {"text": "x" * 301})[0]
+            results["pin: detail too long"] = pm._mcp_call("pin_note", {"text": "x", "detail": "y" * 4001})[0]
+            canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES,
+                             "dropped": [{"id": "pn-00000000", "text": "the first note"}]}
+            results["pin: made room"] = pm._mcp_call("pin_note", {"text": "the ninth"})[0]
+            canned["res"] = None                    # unreachable kernel / non-2xx
+            results["pin: couldn't pin"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
+            results["pin: not a string"] = pm._mcp_call("pin_note", {"text": ["a"]})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["pin: unreadable"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
+            results["unpin: unreachable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            results["unpin: no id"] = pm._mcp_call("unpin_note", {})[0]
+            canned["res"] = {"ok": True, "state": "unpinned", "notes": []}
+            results["unpin: unpinned"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "error": "no pinned note of yours with that id", "notes": self.NOTES[:1]}
+            results["unpin: nothing changed"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": False, "error": "already unpinned", "notes": []}
+            results["unpin: already"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": True, "error": "already unpinned", "notes": []}
+            results["unpin: already, dropped"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["unpin: unreadable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "error": "no pinned note of yours with that id", "notes": []}
+            results["unpin: older kernel"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
+        finally:
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
+        self.assertIn("Pinned (id pn-0badcafe)", results["pin: pinned"])
+        self.assertIn("Unpinned", results["unpin: unpinned"])
+        self.assertIn("Nothing changed", results["unpin: nothing changed"])
+        self.assertIn("Already unpinned", results["unpin: already"])
+        self.assertIn("came down", results["pin: made room"])
+        self.assertIn("not readable", results["unpin: unreadable"])
+        self.assertIn("NOT see it", results["pin: couldn't pin"])
+        self.assertIn("not readable", results["pin: unreadable"])
+        self.assertIn("Nothing was pinned", results["pin: not a string"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
+
+
 class TheRuleIsWrittenDown(unittest.TestCase):
     def test_claude_md_carries_the_rule_and_its_exceptions(self):
         md = (Path(HERE).parent / "CLAUDE.md").read_text()
