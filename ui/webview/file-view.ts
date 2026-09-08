@@ -25,6 +25,7 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { readPlace, seatPlace, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -1091,6 +1092,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
   // triggers below: a paint hook is for a body whose text has positions to re-measure.
   const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
+  // ── the reader's place (plans/markdown-viewer.md Slice 2; reader-place.ts) ── kept in the file's own terms, the
+  // source span of the top-visible block and its height in the body, across every paint of a text view: the swap
+  // (renderBody: a view switch, a reload), the width reflow (the observer below) and a text-size step. `shownText` is
+  // the text the body's view was PAINTED from, the source readPlace reads it against: a reload has put the new bytes in
+  // `text` before renderBody swaps the old view out. `place` is the reader's place under the layout last painted, read
+  // again after every seat and, off the body's scroll event, once per frame as the reader moves; the width reflow
+  // seats from it, since by the time the observer reports, the layout has changed and the old top block cannot be read.
+  // A scroll under a body width the last read did not see is the reflow's own (the browser clamping as the content got
+  // shorter), not the reader's, and is not read: the repaint seats the place read before it and then reads anew.
+  let shownText: string | null = null;
+  let place: Place | null = null;
+  let placeWidth = -1;
+  const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
+  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; } };
+  const seat = (kept: Place | null) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); notePlace(); };
+  let placeFrame = 0;
+  body.addEventListener("scroll", () => {
+    if (placeFrame) return;
+    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth) notePlace(); };
+    if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
+  }, { passive: true });
+  ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
   // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
   // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
   // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
@@ -1100,8 +1123,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (pct === sizePct) return;
     sizePct = pct;
     saveTextSize(pct);
+    const kept = textShowing() ? keptPlace() : null;   // the top block before the text grows or shrinks around it
     applyTextSize();
-    if (textShowing()) fireRenderedKeepingSelection();
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); }
   };
   sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
   sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
@@ -1140,7 +1164,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       frame = 0;
       if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
       paintedWidth = seenWidth;
-      if (textShowing()) fireRenderedKeepingSelection();
+      if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
@@ -1188,15 +1212,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.appendChild(box);
   document.body.appendChild(wrap);
 
-  // A one-line notice above the body in the viewer's error dress (the edit-blocked reason, a save
-  // failure, a save whose comments-log entry did not land): one at a time, replacing the last, and
-  // the body content underneath survives.
+  // A one-line notice in the viewer's error dress (the edit-blocked reason, a save failure, a save whose
+  // comments-log entry did not land, a line past the end): one at a time, replacing the last. Mounted ABOVE
+  // the body row, between the title bar and .fileview-main, never inside the body (plans/markdown-viewer.md
+  // Slice 2): inside it the notice scrolled away with the text (at scrollTop 400 it was 400px above the
+  // body's top; the past-the-end notice was scrolled out of view by the very landing it explains) and went
+  // with the next swap of the body's children. Here it shows at any scroll position and outlives a view
+  // switch and a reload; the editor's entry and exit remove it themselves (enterEdit, exitEdit).
   const noteBar = (msg: string): HTMLElement => {
     document.getElementById("fileview-save-err")?.remove();
     const bar2 = el("div", "fileview-err");
     bar2.id = "fileview-save-err";
     bar2.textContent = msg;
-    body.prepend(bar2);
+    box.insertBefore(bar2, main);
     return bar2;
   };
 
@@ -1277,8 +1305,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
+    shownText = text;
+    seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
@@ -1699,6 +1730,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
     fireRendered();
+    // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
+    // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar)
+    document.getElementById("fileview-save-err")?.remove();
     // per the loading-state rule the chunk wait shows the romp loader, not a blank body
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
@@ -1735,12 +1769,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         noteBar(why + " — " + pending.refusal);
         return;
       }
-      document.getElementById("fileview-save-err")?.remove();
-      const bar2 = el("div", "fileview-err");   // loud: say the editor is degraded, never pretend
-      bar2.id = "fileview-save-err";
-      bar2.textContent = why + " — editing in the plain fallback editor.";
       enterFallback();
-      body.prepend(bar2);
+      noteBar(why + " — editing in the plain fallback editor.");   // loud: say the editor is degraded, never pretend
     });
   };
   const exitEdit = () => {
@@ -1749,6 +1779,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     applied = { accepted: [], rejected: [] };   // the decisions went with the editor; the next mount starts its own afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
+    // the edit's notices (a refused save's, a declined close's, a fallback editor's) go with the editor: the repaint took
+    // them while the bar sat inside the body, and a notice that must outlive the exit is raised again after it (noteLog)
+    document.getElementById("fileview-save-err")?.remove();
     renderBody();
     // a fetch that landed while the editor was up painted nothing (fetchFile): now that the edit is over, read the file
     // as it is — the exit is the event the dropped bytes were waiting for
@@ -2177,6 +2210,7 @@ export function openUrlView(href: string): void {
     landed = true;
     requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, hash); });
   };
+  let shownText: string | null = null;                // the text the body's view was painted from (the reader's place, below)
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;
@@ -2184,9 +2218,12 @@ export function openUrlView(href: string): void {
       b.setAttribute("aria-pressed", String(on));
     }
     if (text === null) return;                         // the loader holds the body until the bytes land
+    const kept = shownText === null ? null : readPlace(body, shownText);   // the reader's place under the view about to go
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    shownText = text;
+    if (kept) seatPlace(body, text, kept);             // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
   };
   renderBody();

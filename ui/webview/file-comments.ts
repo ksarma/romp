@@ -1071,6 +1071,12 @@ class Panel {
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
   catchUp = () => { if (this.tickSkipped) void this.tick(); };
   hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) { this.float.hidden = true; this.imageTarget = null; } };
+  /** The body scrolled: the passage (or picture) the float sat beside has moved from under it, so the float goes, as it
+   *  goes on a press elsewhere (plans/markdown-viewer.md Slice 2: it used to stay fixed in place while the selection
+   *  scrolled off the body). The margin lock's own write of the body's scrollTop (a wheel over the cards, mirrored onto
+   *  the body) fires the same event and hides it too: the passage has moved then as well. The selection itself stands,
+   *  and the next mouseup over it offers the button again. */
+  hideFloatOnScroll = () => { if (!this.float.hidden) { this.float.hidden = true; this.imageTarget = null; } };
   // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
   // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
   // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
@@ -1122,6 +1128,8 @@ class Panel {
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
+    // with the float's other listeners, for every layout (installLayout runs for the margin layout alone): this open's body
+    ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
@@ -1518,6 +1526,7 @@ class Panel {
     window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
+    this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's

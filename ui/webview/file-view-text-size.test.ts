@@ -594,7 +594,7 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
-  assert.equal((VIEW.match(/if \(textShowing\(\)\) fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the step and the width's frame");
+  assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
@@ -699,7 +699,7 @@ test("both sheets: the measure sits on the prose blocks at zero specificity and 
     assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {")), ["max-width: min(100%, calc(860px * var(--fv-scale, 1)))"], name + ": a picture that is a block of the page, wrapped by the figure layer or not, takes the measure AND the column, like an image paragraph; so does a standalone svg, canvas or video block (an uncapped one is clipped under the md box's contain: layout)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
-    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks; a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
+    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
       name + ": a table is a block as wide as its content up to the column, scrolling inside beyond it, whole words kept");
@@ -708,7 +708,7 @@ test("both sheets: the measure sits on the prose blocks at zero specificity and 
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
+  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
     assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly (the viewer mounts in both documents)");
   }
   const block = (css: string) => css.slice(css.indexOf("/* ── text size and measure"), css.indexOf("/* Rendered markdown ("));

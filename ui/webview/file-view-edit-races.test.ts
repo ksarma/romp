@@ -367,7 +367,13 @@ const saveRefused = async (reqId: number, code: string, error: string) => {
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId, verb: "save", code, error } }));
   await settle();
 };
-const errBar = (body: El) => body.querySelector(".fileview-err");
+// the viewer's notice bar (file-view.ts noteBar, #fileview-save-err) is a child of the card before .fileview-main since
+// Slice 2 of plans/markdown-viewer.md, so it is read from the card: the card's first .fileview-err is the bar when one is
+// up, else a pane inside the body (a fetch failure's), the set the body-scoped read used to answer
+const cardOf = (body: El) => body.parentNode!.parentNode as El;
+const errBar = (body: El) => cardOf(body).querySelector(".fileview-err");
+/** The bar stands right above the body row (the read view, or the editor, stands untouched under it). */
+const aboveRow = (body: El) => { const main = body.parentNode!, box = cardOf(body), bar = errBar(body); return !!bar && box.childNodes.indexOf(bar) === box.childNodes.indexOf(main) - 1; };
 const fileGets = () => fetches.filter((f) => f.startsWith("GET /file")).length;
 
 // ── 1. the decisions across saves ──────────────────────────────────────────────────────────────────────

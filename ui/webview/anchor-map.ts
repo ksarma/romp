@@ -292,6 +292,17 @@ export function rawRowForOffset(codeRoot: Element, source: string, offset: numbe
   return idx.rows[lo].el as unknown as Element;
 }
 
+/** The source span of a Raw row (`.fv-cl`): where its text starts in the file and where it ends, before the line
+ *  ending (the verified row map, so a CRLF file's offsets are the file's). null when the rows do not match the source
+ *  or `row` is not one of them. For the reader's place across a paint (reader-place.ts): the top row's span is
+ *  what a view switch or a reload keeps. */
+export function rawRowSpan(codeRoot: Element, source: string, row: Element): SourceRange | null {
+  const idx = rawIndex(codeRoot as unknown as DElement, source);
+  if ("error" in idx) return null;
+  const r = idx.rows.find((x) => x.el === (row as unknown as DElement));
+  return r ? { start: r.srcStart, end: r.srcStart + r.text.length } : null;
+}
+
 // ── mark elements ──────────────────────────────────────────────────────────────────────────────────
 
 function makeMark(doc: DElement["ownerDocument"], className: string, data?: Record<string, string>): DElement {
@@ -787,6 +798,43 @@ function renderedIndex(root: DElement, source: string): RenderedIndex {
   const idx = analyzeRendered(root, source);
   renderedCache.set(root, idx);
   return idx;
+}
+
+// ── the block table, for the reader's place (reader-place.ts) ─────────────────────────────────────────
+// Two thin reads over the private table: which source span a top-level rendered node stands for, and which
+// rendered node stands at a source offset. A REFUSED block answers both (its node is paired by tag, and the
+// reader's place needs an element to measure, not text to quote), where renderedSpot, built for a point inside
+// the prose, answers null for one. A node with text the pairing could not place (whitespace between blocks, a
+// node an html block's resync left over) answers null, and the caller reads the next node.
+
+/** The source span of the top-level block that renders `node` (a child of `renderedRoot`): its first character
+ *  and the end of its raw text (the blank lines a token swallows after it excluded). null when `node` is not a
+ *  block's element. */
+export function renderedBlockSpan(renderedRoot: Element, source: string, node: Node): SourceRange | null {
+  const idx = renderedIndex(renderedRoot as unknown as DElement, source);
+  const b = idx.nodeBlock.get(node as unknown as DNode);
+  if (b === undefined) return null;
+  const blk = idx.blocks[b];
+  return { start: nOf(idx, blk.startN), end: nOf(idx, blk.textEndN) };
+}
+
+/** The first element of the block whose start is the largest at or below `offset`: the block holding the offset,
+ *  or, when the text there was edited away, the one now standing at or before its place. A block with no element
+ *  of its own (a comment, a dropped `<style>`) is passed over for the one before it. null when no block starts at
+ *  or before the offset, or none of those has an element. */
+export function renderedBlockAt(renderedRoot: Element, source: string, offset: number): Element | null {
+  const idx = renderedIndex(renderedRoot as unknown as DElement, source);
+  let lo = 0, hi = idx.blocks.length - 1;
+  if (hi < 0 || nOf(idx, idx.blocks[0].startN) > offset) return null;
+  while (lo < hi) {   // the last block starting at or before the offset (blocks are in source order)
+    const mid = (lo + hi + 1) >> 1;
+    if (nOf(idx, idx.blocks[mid].startN) <= offset) lo = mid; else hi = mid - 1;
+  }
+  for (let b = lo; b >= 0; b--) {
+    const node = idx.blocks[b].dom.find((n) => isElement(n));
+    if (node) return node as unknown as Element;
+  }
+  return null;
 }
 
 /** The top-level node holding global index g, and the index within it. */

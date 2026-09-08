@@ -876,8 +876,9 @@ test("the sheets: the panel block is byte-equal in styles.css and feed.css, toke
   // The byte-equal check above holds the feed page to this too.
   assert.match(body, /\n\.fc-log-row \{ display: flex; gap: 8px; align-items: baseline; \}\n\.fc-log-row > :not\(\.fc-time\) \{ font-size: 0\.86em; \}\n/);
   assert.match(body, /\.fc-time \{[^}]*font-size: 0\.72em;/, "the one time size, card heads and Log rows alike");
-  assert.match(body, /\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/);
-  assert.match(body, /@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/, "the narrow fold: the aside drops below the body");
+  // the narrow fold (the aside below a pane-wide body at 380 and 640px, resolved against the card's container) is laid out
+  // in headless Chromium over the real viewer with the real panel open: file-view-fold-browser.test.ts (Slice 2 of
+  // plans/markdown-viewer.md replaced the CSS-text match that stood here)
   assert.match(body, /\.fc-hl \{ background: color-mix\(in srgb, var\(--warn\) 14%, transparent\); box-shadow: inset 0 0 0 1\.5px/, "a ring, not a fill a diff colour would occlude");
   assert.match(body, /\.fc-toggle\[data-on="1"\] \{ background: var\(--accent\); color: var\(--accent-fg\); border-color: var\(--accent\); \}/);
   // the body stays the plain overflow block the editor's height: 100% relies on
