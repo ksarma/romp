@@ -70,6 +70,18 @@ UID can read.
 - **Output sanitization:** model output and message content rendered in the
   dashboard/webview pass through DOMPurify; the VS Code webview runs under a
   strict nonce CSP with `localResourceRoots` limited to the extension's assets.
+  One renderer writes into that sanitized DOM after DOMPurify has run: KaTeX.
+  The sanitizer keeps only colour in an inline `style`, and KaTeX's layout is
+  inline style, so a formula's TeX passes through DOMPurify as the text of an
+  inert placeholder and KaTeX renders it there afterwards. It renders under
+  `trust: false` (KaTeX's own safety model: no TeX command writes a link, an
+  image, or an HTML attribute of the author's choosing), with a cap on the
+  sizes a formula asks for, a per-formula cap on macro expansion, and length
+  caps on one formula and on one message or note; a formula over a length or
+  expansion cap is shown as its source, and a size over its cap is clamped. Those bounds are stated under "Slice 1" in
+  `plans/markdown-viewer.md` and checked against the code by
+  `ui/webview/render-math.test.ts` and
+  `ui/webview/md-sanitize-postpass-browser.test.ts`.
   While the **Comments** panel is open, pdf.js parses a PDF in a Worker on the
   dashboard's origin and paints each page onto a canvas, with pixels as its
   only sink: no text layer, annotation layer, form field, link, or script from

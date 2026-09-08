@@ -1933,6 +1933,14 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .user-bubble blockquote, .user-bubble.md blockquote { color: rgba(255, 255, 255, 0.88); border-left-color: rgba(255, 255, 255, 0.40);
   font-family: var(--font-prose); }
 .user-bubble :not(pre) > code, .user-bubble.md :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+/* the math fill's source fallback (code.md-math-src; its rule sits with the viewer's code rules, after .fileview-md pre code)
+   in YOUR bubble: the code rule above outranks it (:not(pre) counts as its argument, (0,2,2) over (0,2,1)), so the fallback
+   computed white, the same as a code span you typed, under a var(--dim) dotted underline that sat near 1.7:1 on the fill
+   (review round 4). The bubble's dim tier is the blockquote's white tint, for the text and the underline both. The code
+   SPAN only: the block shape stands in the page-coloured well below, where var(--dim) reads as it does in .md and the
+   tint would not (a cream well in light). The .md form alone: the fallback exists only in sanitized markdown, so no bare
+   bubble holds one. (0,3,2) outranks the code rule wherever the sheet orders them. */
+.user-bubble.md :not(pre) > code.md-math-src { color: rgba(255, 255, 255, 0.88); text-decoration-color: rgba(255, 255, 255, 0.88); }
 /* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
    ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
    whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
@@ -3957,7 +3965,13 @@ body.filebrowse-open { overflow: hidden; }
    sheets — the .romp-acted precedent); font sizes reuse what this surface already wears (the page base,
    12px mono, the err-hint's 0.92em). Vars the feed sheet does not define carry the chat's literals as
    fallbacks (feed-css-vars.test.ts holds that line). */
-.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); }
+/* contain: layout makes the md box the containing block for any fixed or absolutely positioned descendant: an author's
+   element wearing one of the page's fixed classes stays inside the note instead of covering the viewer's chrome
+   (plans/markdown-viewer.md, Slice 1). Layout only, not paint: the body's vertical scroll and a table's own
+   horizontal scroll are untouched. Content wider than the md box becomes ink overflow the body cannot scroll to,
+   so the media rules below cap an <img>, <svg>, <canvas> or <video> at the column. Pinned byte-equal in both
+   sheets (fileview-parity.test.ts). */
+.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); contain: layout; }
 .fileview-md > :where(:not(table)) { max-width: calc(860px * var(--fv-scale, 1)); }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }
@@ -3991,11 +4005,42 @@ body.filebrowse-open { overflow: hidden; }
   font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--code-fg, #e1c08d); white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* The math fill's source fallback (math.ts showSource, MATH_SOURCE_CLASS): a formula shown as its TeX because it passed a
+   bound (one formula's length, one message's total, a macro that repeats an argument) or KaTeX could not lay it out. Dressed
+   as unrendered source, not as a code span the author wrote: the dim tier in place of the code tone and a dotted underline,
+   so the reader sees at a glance that this is a formula that did not render (the title says why; a phone has no hover to
+   read it with). One rule for the code span and the code block, in the chat's .md and the viewer's .fileview-md, above
+   both sheets' .md and .fileview-md code rules; the user bubble's code rule (styles.css, with the .user-bubble rules)
+   outranks it and the bubble carries a rule of its own for the span. The highlighter (render.ts) leaves the element alone.
+   Byte-equal in feed.css (fileview-parity.test.ts). */
+.md code.md-math-src, .fileview-md code.md-math-src {
+  color: var(--dim); text-decoration: underline dotted; text-decoration-color: var(--dim); text-underline-offset: 0.15em;
+}
 .fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
-.fileview-md > img, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
+/* Media a note draws itself (an inline <svg> diagram, a <canvas>, a <video>) fits the column the way an <img> does. Under
+   contain: layout anything wider than the md box is ink overflow the body cannot scroll to, so a 1500px drawing nested
+   in a paragraph was painted, clipped at the body's edge and unreachable (review of Slice 1, plans/markdown-viewer.md).
+   height: auto keeps the element's own ratio (its viewBox, or its width and height) as the cap shrinks it, and applies
+   ONLY to an element sized in pixels: on a percentage-width element the cap never shrinks anything, and height: auto
+   there threw the author's explicit height away (a full-width `<svg width="100%" height="30" viewBox="0 0 100 30">`
+   grew to 258px, a `<video width="100%" height="120">` to Chromium's default 150px; review round 1). A video's ratio
+   is not its attributes' by construction, as an svg's and a canvas's are: the browser maps `width="640" height="360"`
+   to `aspect-ratio: auto 640 / 360`, and `auto` defers to the media's natural ratio once a poster or the frames are
+   there, so height: auto alone laid a 640 by 360 clip with a square poster out 640 by 640 in a pane that shrank
+   nothing, and the box jumped to the frames' shape at play (review round 2). mdBlock (file-view.ts, keepVideoShape)
+   writes the attributes' ratio as a pixel-sized video's inline aspect-ratio, so its box is the author's shape capped or
+   not, and this rule stays the one that lets it shrink. Both rules sit
+   inside :where(), at zero class specificity, so KaTeX's `.katex svg { height: inherit; width: 100% }` (katex.min.css,
+   which styles.css inlines and the feed sheet gains with Slice 4) still wins over its stretchy glyphs (`width="400em"`,
+   pixel-like to the attribute test) once math renders in a note. The direct-child rule carries the prose measure for
+   these as it does for <img>: the bare 860px cap would itself overflow a narrow pane. Byte-equal in both sheets
+   (fileview-parity.test.ts); laid out in md-sanitize-wide-media-browser.test.ts. */
+:where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video { max-width: 100%; }
+:where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) { height: auto; }
+.fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
 /* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
    heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
    0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
