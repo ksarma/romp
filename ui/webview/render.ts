@@ -14643,8 +14643,8 @@ function chatTail(msg: any) {
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
   // session frames kept it stale — the tab glyph (next slice) reads this field, not the event
-  if ("userTodos" in msg) s.userTodos = msg.userTodos;
   if ("pinnedNotes" in msg) s.pinnedNotes = msg.pinnedNotes;   // the same seam for the pinned-notes strip (2026-09-08)
+  if ("userTodos" in msg) s.userTodos = msg.userTodos;
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   scheduleRenderTabs();   // once per animation frame however many tails a cycle lands (2026-09-04)
   if (msg.id === activeId) {

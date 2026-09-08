@@ -835,32 +835,6 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
   padding: 7px 24px 9px; border-bottom: 1px solid var(--box-border); font-size: 0.92em;
   background: rgba(255, 255, 255, 0.05); border-radius: 0 0 7px 7px; /* subtle dark panel → max contrast for the bright, constant-lightness recency bullets (ageColorReadable) */
 }
-/* ---------- pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript ----------
-   A session pins short notes for the person it works for (pinned-notes.ts builds the rows; render.ts
-   paints them into #pinned-notes). Hidden (display:none, no space) while the active session has none.
-   The rows reuse the user-todo row's sizes: 0.86em detail, 0.72em chrome (button, hint); no new size. */
-#pinned-notes { flex: 0 0 auto; box-sizing: border-box; width: 100%; max-width: var(--chat-col); margin: 0 auto;
-  padding: 4px 24px 5px; border-bottom: 1px solid var(--box-border); background: var(--box-bg); }
-.pn-item { padding: 1px 0; }
-.pn-line { display: flex; gap: 8px; align-items: baseline; line-height: 1.45; }
-/* the pin mark leads every row: a glyph, not a status color */
-.pn-line::before { content: "\2691"; flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
-.pn-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.pn-has-detail { cursor: pointer; }
-.pn-has-detail:hover { text-decoration: underline dotted; }
-.pn-has-detail:hover .ut-more { color: var(--fg); }
-.pn-detail { display: none; color: var(--dim); font-size: 0.86em; line-height: 1.4; margin: 2px 0 4px 1.6em; white-space: pre-wrap; }
-.pn-detail.open { display: block; }
-/* the older rows' fold (the todo card's completed-fold idiom): one quiet row where they live */
-.pn-fold { display: block; background: none; border: none; color: var(--dim); font: inherit; font-size: 0.86em;
-  padding: 1px 0; cursor: pointer; text-align: left; }
-.pn-fold:hover { color: var(--fg); }
-.pn-rest { display: none; }
-.pn-rest.open { display: block; }
-.pn-unpin { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
-  background: none; border: 1px solid var(--box-border); color: var(--dim); }
-.pn-unpin:hover { border-color: var(--accent); color: var(--accent); }
-.pn-unpin.armed { border-color: var(--err); color: var(--err); }
 /* (the in-chat ledger box's head/caret/summary/label rules were removed with their DOM — 2026-07-07
    CSS audit; the live .ledger-* subset below serves the Fleet tree, which builds its own rows.) */
 /* ---- goal-graph overview tree: open paths expanded, done nodes pruned to timed leaves ---- */
@@ -2331,6 +2305,32 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   background: none; border: 1px solid var(--box-border); color: var(--dim); }
 .ut-btn:hover { border-color: var(--accent); color: var(--accent); }
 .ut-dismiss.armed { border-color: var(--err); color: var(--err); }
+/* ---------- pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript ----------
+   A session pins short notes for the person it works for (pinned-notes.ts builds the rows; render.ts
+   paints them into #pinned-notes). Hidden (display:none, no space) while the active session has none.
+   The rows reuse the user-todo row's sizes: 0.86em detail, 0.72em chrome (button, hint); no new size. */
+#pinned-notes { flex: 0 0 auto; box-sizing: border-box; width: 100%; max-width: var(--chat-col); margin: 0 auto;
+  padding: 4px 24px 5px; border-bottom: 1px solid var(--box-border); background: var(--box-bg); }
+.pn-item { padding: 1px 0; }
+.pn-line { display: flex; gap: 8px; align-items: baseline; line-height: 1.45; }
+/* the pin mark leads every row: a glyph, not a status color */
+.pn-line::before { content: "\2691"; flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
+.pn-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.pn-has-detail { cursor: pointer; }
+.pn-has-detail:hover { text-decoration: underline dotted; }
+.pn-has-detail:hover .ut-more { color: var(--fg); }
+.pn-detail { display: none; color: var(--dim); font-size: 0.86em; line-height: 1.4; margin: 2px 0 4px 1.6em; white-space: pre-wrap; }
+.pn-detail.open { display: block; }
+/* the older rows' fold (the todo card's completed-fold idiom): one quiet row where they live */
+.pn-fold { display: block; background: none; border: none; color: var(--dim); font: inherit; font-size: 0.86em;
+  padding: 1px 0; cursor: pointer; text-align: left; }
+.pn-fold:hover { color: var(--fg); }
+.pn-rest { display: none; }
+.pn-rest.open { display: block; }
+.pn-unpin { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
+  background: none; border: 1px solid var(--box-border); color: var(--dim); }
+.pn-unpin:hover { border-color: var(--accent); color: var(--accent); }
+.pn-unpin.armed { border-color: var(--err); color: var(--err); }
 /* the Reply modal: the need being answered, quoted above the box */
 .ut-reply-quote { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ut-reply-input { display: block; width: 100%; box-sizing: border-box; margin: 10px 0 2px; padding: 7px 9px;
