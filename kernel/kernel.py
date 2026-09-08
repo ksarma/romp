@@ -26424,9 +26424,9 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     # never asks.
     _echoes = bool(be.live_atoms(sid)) if not hasattr(be, "unqueue") else False
     if queued or ops or _echoes:
-        if "usage" not in shared:                        # usage.json (and spend.json) parsed once per push
-            try:
-                shared["usage"] = _usage() or {}
+        if "usage" not in shared:                        # usage.json parsed once per push: the limits half only
+            try:                                         # (_usage_limits, P18 — the hold reads no ledger figure)
+                shared["usage"] = _usage_limits() or {}
             except Exception:
                 shared["usage"] = None
         sig.append(_limit_hold(sid, usage=shared["usage"]))
