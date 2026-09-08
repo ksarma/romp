@@ -65,8 +65,19 @@ class WaitingOnYouNamesTheChip(unittest.TestCase):
 
     def test_the_section_describes_the_chip_and_where_it_shows(self):
         self.assertIn("A todo that names its file also shows the file's name as a chip on the row and in the Reply "
-                      "box, with the full path on hover. Click the chip and the file opens the same way; a "
-                      "**Send to session** from that file can then answer the todo (see Files).", self.section)
+                      "box, with the full path on hover; the session's own todo card in the chat shows the same chip. "
+                      "Click the chip and the file opens the same way; a **Send to session** from that file can then "
+                      "answer the todo (see Files).", self.section)
+
+    def test_the_chat_card_builds_the_same_chip_and_the_sheet_dresses_it(self):
+        # the sentence's second surface: render.ts's todoFileChip on the card's row and in its Reply modal, and the
+        # `.ut-file` pill in styles.css — the chat page loads that sheet alone (render-todo-file-chip-sheet.test.ts
+        # measures the pill; here the guide's claim is held to the two sources that make it true)
+        render = _read("ui", "webview", "render.ts")
+        self.assertIn('chip.classList.add("ut-file");', render)
+        self.assertIn('if (t.file) txt.append(" ", todoFileChip(t.file, renderingSid || null));', render)
+        self.assertIn('if (todoFile) d.append(" ", todoFileChip(todoFile, sid));', render)
+        self.assertIn(".ut-file {", _read("ui", "webview", "styles.css"))
 
     def test_the_pane_builds_that_chip(self):
         # the basename as the label, the full path as the title, on the row and in the Reply modal

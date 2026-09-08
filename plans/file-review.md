@@ -1013,14 +1013,16 @@ which the kernel adds to the `status` reply; `todoChoices` (`file-comments-model
 candidates: the todo the file was opened from first, with its text when the status lists it, then the
 status's todos in the kernel's order, each once, minus the todos a send from this page has stamped.
 The confirm renders one candidate as the checkbox (checked, the todo's text cut to one line, the
-whole text on hover) and several as one radio group, Answer: the first selected, the others, none, so
+whole text on hover and in the row's fold) and several as one radio group, Answer: the first selected, the others, none, so
 one send still answers one todo (decision 28); `chosenTodoId` is what `doSend` puts in `todoId`. After
 a send the list follows the next status, which no longer carries the settled todo; the page's memory of
 what it stamped covers the moment before that status, and a send the kernel could not stamp leaves the
 todo offered, as before. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
 (`fileChip`: openPathLink's span restyled, so the list delegate's and the modal's `openpath` open it
 with the same `viewFile` message: path, sid, identity, todoId); the detail's linkified paths stay. The
-guide's Waiting on you and Files sections say both.
+chat's todo card and its Reply modal show the same chip (render.ts `todoFileChip`; the `.ut-file` pill in styles.css,
+which the review found missing: the class named no rule, so the card's chip was a plain link). The guide's Waiting on
+you and Files sections say both.
 
 ### Slice 3: region comments on images
 

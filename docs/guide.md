@@ -213,9 +213,10 @@ paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
 (`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
 file's name as a chip on the row and in the Reply box, with the full path on
-hover. Click the chip and the file opens the same way; a **Send to session**
-from that file can then answer the todo (see Files). The pane is off by default,
-like the outline; turn it on from the bottom bar. Sessions flag todos only where
+hover; the session's own todo card in the chat shows the same chip. Click the
+chip and the file opens the same way; a **Send to session** from that file can
+then answer the todo (see Files). The pane is off by default, like the outline;
+turn it on from the bottom bar. Sessions flag todos only where
 the gear's **User todos** switch is on, and the switch is per machine: while it
 is off on this one, the pane says so and still lists the
 other machines' todos. A todo you expected can be missing for two reasons. A
