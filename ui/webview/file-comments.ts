@@ -2562,9 +2562,9 @@ class Panel {
   }
   /** In the margin layout the track holds cards alone. Every ROW the list held — the foot (Accept all · Reject all), a
    *  wait's loader, a refusal's row, the "… N more changes" and Resolved folds, the empty note — stands in the footer
-   *  above Send: the foot first (the sheet's border-top stands on it, so the footer begins with the changes' buttons
-   *  under a rule), then the other rows in the list's order. The track's scroll is the body's, so a row placed loose at
-   *  the top of the track was out of view for a reader anywhere but the top of the text: the reload's loader and its
+   *  above Send: the foot first (so the footer begins with the changes' buttons; the sheet's rule stands on the section's
+   *  top edge, so the footer begins under a rule whichever row comes first), then the other rows in the list's order. The
+   *  track's scroll is the body's, so a row placed loose at the top of the track was out of view for a reader anywhere but the top of the text: the reload's loader and its
    *  deadline row with Reload among them, and the fold that says why a painted change has no card beside it (the
    *  2026-09-07 review; ui/CLAUDE.md: the loader first, an error where it can be acted on, no dead end). `kids`: the
    *  list's element children. */

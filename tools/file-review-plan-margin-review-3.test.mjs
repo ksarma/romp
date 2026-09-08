@@ -149,7 +149,24 @@ const MODULES = [
     'test("the panel source carries the old clause nowhere else"',
   ] },
   { file: 'tools/file-review-plan-margin-review-3.test.mjs', holds: ['the third review'] },
+  // the review's consolidation: the footer's rule moved from the foot to the Send section's edge
+  { file: 'ui/webview/feed-css-margin-footer-rule.test.ts', holds: [
+    'test("both sheets: the footer\'s rule stands on the Send section\'s top edge, after the shared rule it overrides; the Send box drops its own when first; the foot\'s rule is gone"',
+    'the footer begins under one hairline whichever row comes first — the Send box alone, the Resolved fold, the foot — and the Send box wears its own only behind a row',
+  ] },
 ];
+
+test('the footer\'s rule is stated and is the sheets\': on the Send section\'s edge, the Send box\'s own dropped when first, the foot\'s gone', () => {
+  assert.ok(built.includes('The footer begins under a rule whichever row comes first: the rule stands on the Send section\'s top edge in both sheets, and the Send box drops its own when nothing stands before it'));
+  assert.ok(built.includes('the first review\'s rule stood on the foot alone, so a footer of rows with no pending change — a comments-only file with a resolved comment — began flush under the track\'s clipped cards and drew its one rule under the fold, above Send'), 'what stood before, so the rule is not read as taste');
+  for (const [name, css] of sheets) {
+    const block = fcBlock(css, name);
+    assert.ok(block.includes('\n.fc-margin > .fc-sec-send { padding-top: 8px; border-top: 1px solid var(--card-border); }'), name + ': the rule on the section\'s edge');
+    assert.ok(block.includes('\n.fc-margin .fc-sec-send > .fc-send:first-child { padding-top: 0; border-top: 0; }'), name + ': the Send box\'s own dropped when first');
+    assert.ok(!/\.fc-sec-send > \.fc-foot \{/.test(block), name + ': the first review\'s rule on the foot is gone');
+  }
+  assert.ok(!panel.includes('the sheet\'s border-top stands on it'), 'the panel\'s moveRows comment no longer says the rule stands on the foot');
+});
 
 test('every module the third review added is named in the note\'s Tests sentence and in the Tests section\'s margin bullet', () => {
   const inNote = new Set(testFiles(noteTests));

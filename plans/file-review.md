@@ -976,7 +976,11 @@ height, whose own box outgrows the padded content box: the body scrolls then, to
 third review. The track
 holds cards alone: every row the list held stands in the footer above Send (`moveRows`), the foot with Accept all ·
 Reject all first, then a wait's loader, a refusal row, the "… N more changes" and Resolved folds and the empty note,
-in the list's order. A row at the top of a track locked to the body's scroll was out of view for a reader anywhere but
+in the list's order. The footer begins under a rule whichever row comes first: the rule stands on the Send section's
+top edge in both sheets, and the Send box drops its own when nothing stands before it (the first review's rule stood on
+the foot alone, so a footer of rows with no pending change — a comments-only file with a resolved comment — began flush
+under the track's clipped cards and drew its one rule under the fold, above Send; the review's consolidation,
+2026-09-07). A row at the top of a track locked to the body's scroll was out of view for a reader anywhere but
 the top of the text, and the reload's loader and the fold that says why a painted change has no card were among them.
 Every card is absolutely positioned at its mark's top in the body's content, less the header's height the track begins
 under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
@@ -1078,7 +1082,10 @@ Firefox over the viewer's image body: the picture where the box centered it befo
 level with the rectangle, and the near-full picture's padding kept), `file-comments-margin-attribution.test.ts` (the
 panel's section comment held to the record the plan's and the sheets' pins hold) and
 `tools/file-review-plan-margin-review-3.test.mjs` (the third review's statements here held to the panel, the sheets and
-the modules they name).
+the modules they name); from the review's consolidation, `feed-css-margin-footer-rule.test.ts` (the footer's rule on the
+Send section's edge in both sheets, after the shared rule it overrides, and in Chromium and Firefox one hairline between
+the track and the first row — the Send box alone, the Resolved fold, the foot — with the Send box's own only behind a
+row).
 
 ### Slice 3: region comments on images
 
@@ -1547,7 +1554,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   the sheets, not the panel source); and `tools/file-review-plan-margin-review-3.test.mjs` holds the
   account's third-review statements to the panel, the sheets and these modules (the third round's
   commit, like the two before it, added modules this section did not name; found in the review's
-  consolidation, 2026-09-07).
+  consolidation, 2026-09-07). From the review's consolidation (2026-09-07):
+  `feed-css-margin-footer-rule.test.ts` holds both sheets to the footer's rule on the Send section's top
+  edge (after the shared section rule it overrides, the Send box's own dropped when it is first, the
+  first review's rule on the foot gone), and in Chromium and Firefox mounts the panel under feed.css
+  alone in three worlds — comments alone, a resolved comment with its fold first, a pending change with
+  its foot first — and reads one hairline at the section's top level with the track's bottom, none on
+  the first row, the Send box's own only behind a row, and nothing past the aside's edge.
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the

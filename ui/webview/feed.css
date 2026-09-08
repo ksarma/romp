@@ -1675,7 +1675,13 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }
 .fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
 .fc-margin .fc-log > .fc-sec { position: sticky; top: 0; background: var(--bg); }
-.fc-margin .fc-sec-send > .fc-foot { padding-top: 8px; border-top: 1px solid var(--card-border); }
+/* The footer begins under a rule whichever row comes first — the foot (Accept all · Reject all), a fold, the empty note, a
+   loader — so the rule stands on the Send section's own top edge, and the Send box drops its own when nothing stands
+   before it. The first review's rule stood on the foot alone: a footer of rows with no pending change (a comments-only
+   file with a resolved comment) began flush under the track's clipped cards and drew its one rule under the fold, above
+   Send (the review's consolidation, 2026-09-07). */
+.fc-margin > .fc-sec-send { padding-top: 8px; border-top: 1px solid var(--card-border); }
+.fc-margin .fc-sec-send > .fc-send:first-child { padding-top: 0; border-top: 0; }
 .fc-margin .fc-cards { display: block; position: relative; }
 .fc-margin .fc-cards > * { position: absolute; left: 12px; right: 12px; box-sizing: border-box; }
 .fc-margin .fc-cards > .fc-group { display: none; }
