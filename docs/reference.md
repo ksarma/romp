@@ -1960,8 +1960,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   was built and compared, then not sent.
 - `goals`: `loads`, `saves`, `writes` on the goal stores through the writer's
   loader (`load_goals`) and `save_goals`; the pusher's read-only loads go
-  through the shared store cache and show under `memos.shared`, not here. A
-  save that would rewrite identical bytes is a save without a write. `scans`, `scan_hits`,
+  through the shared store cache and show under `memos.shared`, not here.
+  `loads_shared` is the one number this block keeps for those reads: the calls
+  the cache answered (a hit, or a version parsed there), so
+  `loads + loads_shared` is every store read; the cache's own hit/miss split is
+  `memos.shared`. A save that would rewrite identical bytes is a save without
+  a write. `scans`, `scan_hits`,
   `scan_parses` count the give-up scan behind the judge-failure notice: calls,
   stores served from its per-store memo, and stores read and parsed (or
   attempted) because they were new, changed, or failed to parse on the
@@ -1992,64 +1996,37 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `romp perf` prints the rate on the `goals` line.
 - `memos`: the three identity memos on the goal-store path. `pass` is the
   judge pass's stat-keyed store memo (`hit`, `miss`, `fail`, `evict`, `punch`,
-  and its occupancy `entries`, `bytes`); `shared` is the pusher's shared
-  read-only store cache (`hit`, `miss`, `compare_miss`, `refuse`, `dup`,
-  `absent`, `corrupt`, `unreadable_journal`, `evict`, `fallback`, `poisoned`,
-  with `entries`, `bytes` and `off`); `chain` is the write-moment chain memo
-  (`hit`, `miss`, `populate`, `bypass`). The compaction sweep after each judge
-  pass evicts from `pass` and `shared` the entries of stores no session in the
-  discover window owns, so both stay bounded by the live board.
-- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
-  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
-  producer thread's own per-pass work is not included and shows under the
-  process line's "other"), `wakes` (every wake of the producer: the backends'
-  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
-  several, so this is an upper bound on the poke rate), `wakes_event` and
-  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
-  is the number of wakes a pass absorbed), `chain_memo` with `hit`, `miss`,
-  `populate`, `bypass`: the memo behind the write-moment chain check, which
-  asks before every planner mint whether the prompt sits on a rewound-away
-  branch. A hit served a memoized check, a miss built one, a populate stored
-  one (a build that failed is a miss with no populate), and a bypass built
-  without memoizing because an input file could not be stat'd. `tiers` holds
-  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver): `ran` (per-session stage
-  runs), `skipped` (runs the gate declined because nothing the tier reads had
-  changed), `stamped` (runs that ended complete and recorded what they
-  judged), `bypassed` (runs with no signature to record, or whose parse ran
-  under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished; for the courier, scans that
-  produced pending rows, or whose link repair found the sender's tracker
-  completed or the sender outside the discover window, so the next pass scans
-  the session again; for the index tier, sessions that had a caption or an
-  archive to write this pass, or whose captions file, archive record or unit
-  cache exists and did not read, or whose unit-cache publish failed; the
-  read and publish failures each write one `judge-errors.jsonl` row per
-  failure episode, `captions-unreadable`, `session-archive-unreadable`,
-  `units-cache-unreadable` or `units-cache-write-failed`, beside the
-  `store-unreadable` row a goals file that does not read writes, and the
-  session runs again every pass until the file reads; an archive record that
-  reads but is not one is content, so the archiver rebuilds it, with the row
-  still written once), `due_clock` (runs a
-  background task's deadline made due), plus `stamps`, the number of
-  per-session records held. The index tier's signature is the session's
-  parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
-  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
-  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
-  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
-  pass from a faster cadence.
-- `memos`: one block per memo the kernel keeps, each a flat map of counters.
-  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
-  only when its file changed: `hit` and `miss` (stores served from memory
-  against decoded, summed over passes), `fail` (file versions that did not
-  decode), `evict` (entries dropped for files gone from the directory), `punch`
-  (entries copied so a user gesture could be applied to them), `live` and
-  `snap` (the feed's store reads served live through the shared cache against
-  those served from the pass snapshot), and the gauges `entries` and `bytes`
-  (memoized files and their summed size). `lift_gate` is
+  `live`, `snap`, and its occupancy `entries`, `bytes`); `shared` is the
+  pusher's shared read-only store cache (`hit`, `miss`, `compare_miss`,
+  `refuse`, `dup`, `absent`, `corrupt`, `unreadable_journal`, `evict`,
+  `fallback`, `poisoned`, with `entries`, `bytes` and `off`); `chain` is the
+  write-moment chain memo (`hit`, `miss`, `populate`, `bypass`). The compaction
+  sweep after each judge pass evicts from `pass` and `shared` the entries of
+  stores no session in the discover window owns, so both stay bounded by the
+  live board.
+  In `pass`, `hit` and `miss` are stores served from memory against decoded,
+  summed over passes; `fail` is a file version that did not decode (remembered
+  until the file changes) or a read that failed (read again next pass), either
+  way out of the snapshot and served live; `evict` counts entries dropped for
+  files gone from the directory or for stores no discovered session owns;
+  `punch` entries copied so a user gesture could be applied to them; `live` and
+  `snap` the feed's store reads served live through the shared cache against
+  those served from the pass snapshot; `entries` and `bytes` are the memoized
+  files and their summed size. In `shared`, `compare_miss` is an identity that
+  matched with bytes that did not; `refuse` a fill under a moving archive,
+  served but not published; `dup` a concurrent fill of the same version
+  published first; `absent`, `corrupt` and `unreadable_journal` stores handed
+  to the writer's loader or served as a fresh store; `evict` entries dropped
+  for files gone from the directory or for stores no discovered session owns;
+  `fallback` calls served by the writer's loader while the cache is off;
+  `poisoned` write attempts on a shared view; `bytes` the raw store bytes held
+  for the compare and `off` 1 once a write attempt switched the cache off,
+  until the kernel restarts. In `chain`, the memo behind the write-moment
+  chain check, which asks before every planner mint whether the prompt sits on
+  a rewound-away branch, a hit served a memoized check, a miss built one, a
+  populate stored one (a build that failed is a miss with no populate), and a
+  bypass built without memoizing because an input file could not be stat'd.
+  The rest are the kernel's own memos, each a flat map of counters. `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
   probe on the shared read-only view), `shared` (probes the shared cache
@@ -2075,18 +2052,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
   wake-only dead-man filed), `evict` (entries dropped for sessions that left
   the alive set), `stale` (entries released because the parse cache no longer
-  holds the pinned turns) and the gauge `entries`. `goals_shared`
-  is the shared read-only goal-store cache the pusher's read-only sites load
-  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
-  did not), `refuse` (a fill under a moving archive, served but not
-  published), `dup` (a concurrent fill of the same version published first),
-  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
-  loader or served as a fresh store), `evict` (entries dropped for files gone
-  from the directory), `fallback` (calls served by the writer's loader while
-  the cache is off), `poisoned` (write attempts on a shared view), and the
-  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
-  `off` (1 once a write attempt switched the cache off, until the kernel
-  restarts).
+  holds the pinned turns) and the gauge `entries`.
   `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
   `feed_cards_miss` (the per-card encode served from its memo against run),
   `feed_body` and `bars_body` (whole frames serialized, at most once per build
@@ -2182,6 +2148,44 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build after a transcript write scans every turn again, since a parse mints
   new atom lists. `hit` and `miss` count turns served from the memo against
   turns scanned, plus the gauge `entries` (sessions held).
+- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
+  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
+  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  producer thread's own per-pass work is not included and shows under the
+  process line's "other"), `wakes` (every wake of the producer: the backends'
+  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
+  several, so this is an upper bound on the poke rate), `wakes_event` and
+  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
+  is the number of wakes a pass absorbed; the write-moment chain memo's
+  counters are under `memos.chain`, not here). `tiers` holds
+  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
+  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
+  and archiver): `ran` (per-session stage
+  runs), `skipped` (runs the gate declined because nothing the tier reads had
+  changed), `stamped` (runs that ended complete and recorded what they
+  judged), `bypassed` (runs with no signature to record, or whose parse ran
+  under a cut that moved after the gate looked), `incomplete` (runs a
+  deferral or a failed call left unfinished; for the courier, scans that
+  produced pending rows, or whose link repair found the sender's tracker
+  completed or the sender outside the discover window, so the next pass scans
+  the session again; for the index tier, sessions that had a caption or an
+  archive to write this pass, or whose captions file, archive record or unit
+  cache exists and did not read, or whose unit-cache publish failed; the
+  read and publish failures each write one `judge-errors.jsonl` row per
+  failure episode, `captions-unreadable`, `session-archive-unreadable`,
+  `units-cache-unreadable` or `units-cache-write-failed`, beside the
+  `store-unreadable` row a goals file that does not read writes, and the
+  session runs again every pass until the file reads; an archive record that
+  reads but is not one is content, so the archiver rebuilds it, with the row
+  still written once), `due_clock` (runs a
+  background task's deadline made due), plus `stamps`, the number of
+  per-session records held. The index tier's signature is the session's
+  parse pair, captions file, archive record and unit cache, and no goal
+  store: its idle path reads none.
+  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
+  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
+  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
+  pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys

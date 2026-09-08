@@ -42,8 +42,8 @@ name: Tier policy
 # PR carries `batch` and no tier, so on the fork this workflow (pull_request_target fires on every PR,
 # the schedule hourly) would post a failing "Tier policy" verdict on every batch PR, and batch.py's
 # ci_of folds any red check into "ci: failure". The fork's label check is .github/workflows/pr-tier.yml.
-# The `if:` is the only change; the rest of the file is upstream's byte for byte, so the next sync
-# merges cleanly.
+# The `if:` is the only functional change; apart from it and this paragraph the file is upstream's
+# byte for byte, so the next sync merges cleanly.
 
 on:
   pull_request_target:

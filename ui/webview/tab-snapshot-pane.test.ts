@@ -50,14 +50,17 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "showActive's transcript path hides the host…");
   assert.match(SHOW, /composer\.disabled = closed \|\| viewer;\s*\n\s*composer\.placeholder = closed \? "Session closed — read-only" : composerRestingPlaceholder\(\);/, "…and re-enables the composer for a live session (upstream's subagent viewer, read-only by nature, stays disabled; 2026-09-07 fold)");
-  // executed: the event on the real planner. The shown section's last visible member gone → no header of that name
+  // executed: the event on the real planner. The shown section's last visible member gone → no header of that name.
+  // api sits under qa AND infra: since T264b (upstream, folded 2026-09-08) a session appears under every tag it holds,
+  // so api's infra copy keeps infra a header while api shows; the header leaves with web, infra's only other member
   const unions = viewTagUnion(V);
   const st = parseTabGroups(null);
   const heads = (visible: string[], groups = st) => planStrip(visible, unions, groups, "web", false).items.filter((i) => "head" in i).map((i) => ("head" in i ? i.head.name : ""));
   assert.deepEqual(heads(["web", "api", "tests"]), ["qa", "infra"]);
-  assert.deepEqual(heads(["api", "tests"]), ["qa"], "infra's last visible member hidden: no infra header, so renderSnapshot finds none and clears the view");
+  assert.deepEqual(heads(["web", "tests"]), ["qa", "infra"], "api hidden: qa keeps tests and infra keeps web (every-tag sectioning, T264b)");
+  assert.deepEqual(heads(["tests"]), ["qa"], "infra's last visible member hidden: no infra header, so renderSnapshot finds none and clears the view");
   assert.deepEqual(heads(["web", "api", "tests"], { ...st, on: false }), [], "sectioning off: the flat strip, no headers at all");
-  assert.equal(homeSectionOf(planStrip(["api", "tests"], unions, st, "web", false).items, "web"), null, "the active id has no home on that strip either");
+  assert.equal(homeSectionOf(planStrip(["tests"], unions, st, "web", false).items, "web"), null, "the active id has no home on that strip either");
 });
 
 test("the way back (review findings 6 and 12): Escape leaves the snapshot when no layer owns it; the open, shown header of the section holding the active tab offers the transcript on its second click", () => {
