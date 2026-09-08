@@ -77,8 +77,8 @@ UID can read.
   `trust: false` (KaTeX's own safety model: no TeX command writes a link, an
   image, or an HTML attribute of the author's choosing), with a cap on the
   sizes a formula asks for, a per-formula cap on macro expansion, and length
-  caps on one formula and on one message or note; a formula over a cap is
-  shown as its source. Those bounds are stated under "Slice 1" in
+  caps on one formula and on one message or note; a formula over a length or
+  expansion cap is shown as its source, and a size over its cap is clamped. Those bounds are stated under "Slice 1" in
   `plans/markdown-viewer.md` and checked against the code by
   `ui/webview/render-math.test.ts` and
   `ui/webview/md-sanitize-postpass-browser.test.ts`.

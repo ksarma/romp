@@ -106,7 +106,7 @@ leaves `location.href` unchanged; a task checkbox still renders. Tests: source p
 
 **The Slice 1 build** (2026-09-07). Branch `mdviewer-s1`, stacked on this plan's branch (fork PR #369) until that
 merged on 2026-09-07; fork main, which carries the plan and fork PR #347, was merged in on 2026-09-08 as
-`mdviewer-s1-mainmerge`. Where the code as built departs from the text above, why, and which test holds each rule:
+`mdviewer-s1`. Where the code as built departs from the text above, why, and which test holds each rule:
 
 1. *One shared module.* The chat's `md()` and `userMd()` (render.ts) and the viewer's `mdBlock` (file-view.ts) spelled
    the same DOMPurify profile twice. Both now call `sanitizeMd` in `ui/webview/md-sanitize.ts`, the dashboard's only
