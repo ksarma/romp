@@ -131,10 +131,11 @@ class TheParagraphSaysWhatTheKernelDoes(_Sandbox):
         # copy of the old "only Reply or Dismiss" wording went red, so the clause is not repeated here.
         self.assertIn("The kernel does not check that the file exists. A mistyped absolute path is stored as typed, "
                       "with no warning; its chip opens nothing and no Send offers the todo.", self.para)
-        self.assertIn("A value the kernel cannot make absolute is kept as given: the todo is still filed, and the "
-                      "tool's reply says why and asks for the absolute path. That happens for a relative path from "
-                      "a session whose working directory the kernel does not know, a `file://` URI that does not "
-                      "carry an absolute path, and a URL of another scheme.", self.para)
+        self.assertIn("A value the kernel cannot make into a path on the session's machine is kept as given: the todo "
+                      "is still filed, and the tool's reply says why and asks for the absolute path. That happens for a "
+                      "relative path from a session whose working directory the kernel does not know, a `file://` URI "
+                      "that does not carry an absolute path, a URL of another scheme, and a spelling no path can have "
+                      "(a NUL byte in it, or a length past the machine's limit).", self.para)
         self.assertIn("The list a resuming session is handed back shows the path after the text of each todo that "
                       "names one.", self.para)
 
@@ -181,6 +182,21 @@ class TheParagraphSaysWhatTheKernelDoes(_Sandbox):
             self.assertIsInstance(warning, str)
             self.assertIn("did not resolve", warning)
             self.assertIn("absolute path", warning, "the reply says why and asks for the absolute path")
+
+    def test_a_spelling_no_path_can_have_is_kept_as_given_with_the_reason(self):
+        # the paragraph's last two cases (the review, 2026-09-07: the list read as exhaustive and omitted them):
+        # a NUL byte, in the value or percent-encoded in a URI, and a spelling past the machine's path limit
+        # (test_kernel_todo_file_edges.py holds the mechanics; here the doc's claim is held to the helper)
+        nul = os.path.join(self.root, "docs", "rep\x00ort.md")
+        for value in (nul, "file://" + os.path.join(self.root, "docs", "rep%00ort.md"),
+                      os.path.join(self.root, "docs", "x" * km._PATH_MAX + ".md")):
+            stored, warning = km._user_todo_file(value, RSID)
+            self.assertEqual(stored, value, "kept as given")
+            self.assertIsInstance(warning, str)
+            self.assertIn("did not resolve", warning)
+            self.assertIn("absolute path", warning, "the reply says why and asks for the absolute path")
+        # the absolute spelling the kernel DOES take is untouched by the new clause: still stored, no warning
+        self.assertEqual(km._user_todo_file(self.fp, RSID), (self.fp, None))
 
     def test_the_tools_reply_relays_the_warning(self):
         # "the tool's reply tells the session so": add_user_todo appends the kernel's warning to its Noted line

@@ -71,10 +71,11 @@ file as a chip that opens it, on the session's card and in the pane alike, and a
 file's Comments panel offers to answer the todo however you opened the file. The kernel does not check that
 the file exists. A mistyped absolute path is stored as typed, with no warning; its chip opens nothing and no
 Send offers the todo. It is cleared like any other todo, by your Reply or Dismiss or by the session's
-withdraw. A value the kernel cannot make absolute is kept as given: the todo is still filed, and the tool's
-reply says why and asks for the absolute path. That happens for a relative path from a session whose working
-directory the kernel does not know, a `file://` URI that does not carry an absolute path, and a URL of
-another scheme. The list a resuming session is handed back shows the path after the text of each todo that
+withdraw. A value the kernel cannot make into a path on the session's machine is kept as given: the todo is
+still filed, and the tool's reply says why and asks for the absolute path. That happens for a relative path from
+a session whose working directory the kernel does not know, a `file://` URI that does not carry an absolute
+path, a URL of another scheme, and a spelling no path can have (a NUL byte in it, or a length past the
+machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
 names one.
 
 These are for scripting and for agents rather than daily use:
