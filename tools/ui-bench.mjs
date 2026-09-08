@@ -17,15 +17,18 @@
 //   2. --replay <app> --frames FILE [--cpu-throttle K] [--iters N] [--fast] [--json OUT] [--cpu-profile OUT]
 //      Serve the pane page and its bundles from the built dist and replay the recorded frames into a
 //      headless Chromium at their recorded pacing (or back-to-back with --fast), measuring per frame
-//      the bytes, the synchronous handler time, and the time until the main thread is free again
-//      (message receipt to the second requestAnimationFrame after it); plus long-animation-frame
+//      the bytes, the synchronous socket-handler time, the dispatch time (the shim's handoff of the frame
+//      to the bundle, window.__rompFed.inbound, which the shim calls inside its socket handler or from a
+//      queued flush task depending on its version; the report says which ran), and the time until the
+//      main thread is free again (message receipt to the second requestAnimationFrame after it); plus long-animation-frame
 //      entries with script attribution (the task's entry point: the message handler, a rAF, a timer,
 //      a script's evaluation; not the bundle function), JS heap after a forced GC, DOM size, and page
 //      console errors. --cpu-profile OUT.cpuprofile samples the page's JavaScript with the V8 profiler
 //      across the replay, writes a file Chrome DevTools loads, and prints the functions with the most
 //      self and total time (with their source positions through the dist's .map files, and for the
 //      hottest functions the lines that hold the time), overall and inside the first content frame and
-//      the largest frame of each type: the attribution the long-animation-frame entries cannot give.
+//      the largest frame of each type (a frame's window is its handler span joined with its dispatch
+//      span): the attribution the long-animation-frame entries cannot give.
 //
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
@@ -695,10 +698,21 @@ export async function startFront({ pagePort }) {
 // In-page instrumentation, installed before any page script runs. It wraps WebSocket.prototype's
 // onmessage setter so the shim's handler is timed: t0 at handler entry, `handler` when it returns,
 // `settle` at the second requestAnimationFrame after it (the main thread has rendered and is free).
-// Long animation frames are observed with script attribution; longtask is the fallback.
+// It also times the shim's handoff of each frame to the bundle. federation.js publishes window.__rompFed
+// once, in start(), and the shim calls window.__rompFed.inbound("", msg) for every frame it hands over;
+// an accessor on window catches that assignment and wraps inbound so each call is recorded with its start
+// time, its duration, the message type and whether a socket handler was on the stack (R.dispatches). The
+// kernel's shim of 2026-09-07 and later makes that call from a MessageChannel flush task instead of inside
+// onmessage, so on that shim the handler window holds the shim's parse only; the dispatch records hold the
+// bundle's work on both shims. MessagePort.prototype's onmessage setter is wrapped the same way as
+// WebSocket's so each flush task is counted and timed (R.flushes); the wrapper times the call and passes
+// everything through. The settle stamp stays two animation frames after the HANDLER: the flush task is a
+// posted message, which runs before the next rendering opportunity, so the stamp still lands after the
+// render on the deferred shim. Long animation frames are observed with script attribution; longtask is
+// the fallback.
 const INIT_SCRIPT = `
 (() => {
-  const R = window.__rompBench = { recs: [], loaf: [], loafKind: null, n: 0, addListenerMessages: 0 };
+  const R = window.__rompBench = { recs: [], loaf: [], loafKind: null, n: 0, depth: 0, addListenerMessages: 0, dispatches: [], flushes: [], dispatchHook: false, dispatchHookError: null };
   const proto = WebSocket.prototype;
   const desc = Object.getOwnPropertyDescriptor(proto, "onmessage");
   function wrap(fn) {
@@ -707,8 +721,10 @@ const INIT_SCRIPT = `
       const t0 = performance.now();
       const rec = { i, t0, len: typeof ev.data === "string" ? ev.data.length : -1, handler: -1, settle: -1 };
       R.recs.push(rec);
+      R.depth++;
       try { return fn.call(this, ev); }
       finally {
+        R.depth--;
         rec.handler = performance.now() - t0;
         requestAnimationFrame(() => requestAnimationFrame(() => { rec.settle = performance.now() - t0; }));
       }
@@ -721,6 +737,41 @@ const INIT_SCRIPT = `
   });
   const origAdd = proto.addEventListener;
   proto.addEventListener = function (type, fn, opts) { if (type === "message") R.addListenerMessages++; return origAdd.call(this, type, fn, opts); };
+  // The dispatch hook. federation.js assigns window.__rompFed = {...} once; the setter stores the object and
+  // replaces its inbound with a timed wrapper (the rest of the object is untouched). A later assignment
+  // wraps the new object; an object whose inbound is already the wrapper is left as it is. The cost inside
+  // a dispatch is two performance.now() reads and a read of R.depth.
+  let fed;
+  function wrapFed(obj) {
+    if (!obj || typeof obj.inbound !== "function" || obj.inbound.rompBenchDispatch) return obj;
+    const inner = obj.inbound;
+    const wrapped = function rompBenchDispatch(h, m) {
+      const t0 = performance.now();
+      const inHandler = R.depth > 0;
+      try { return inner.call(this, h, m); }
+      finally { R.dispatches.push({ t0, dur: performance.now() - t0, type: m && typeof m.type === "string" ? m.type : null, inHandler }); }
+    };
+    wrapped.rompBenchDispatch = true;
+    try { obj.inbound = wrapped; R.dispatchHook = true; }
+    catch (e) { R.dispatchHookError = String(e && e.message || e); }
+    return obj;
+  }
+  Object.defineProperty(window, "__rompFed", { configurable: true, enumerable: true, get() { return fed; }, set(v) { fed = wrapFed(v); } });
+  // The flush hook: the shim's ch.port1.onmessage = flush goes through MessagePort.prototype's setter.
+  const pproto = window.MessagePort && MessagePort.prototype;
+  const pdesc = pproto && Object.getOwnPropertyDescriptor(pproto, "onmessage");
+  if (pdesc && pdesc.set) {
+    const wrapPort = (fn) => function rompBenchOnPort(ev) {
+      const t0 = performance.now();
+      try { return fn.call(this, ev); }
+      finally { R.flushes.push({ t0, dur: performance.now() - t0 }); }
+    };
+    Object.defineProperty(pproto, "onmessage", {
+      configurable: true, enumerable: pdesc.enumerable,
+      get() { return pdesc.get.call(this); },
+      set(fn) { pdesc.set.call(this, typeof fn === "function" ? wrapPort(fn) : fn); },
+    });
+  }
   const types = (window.PerformanceObserver && PerformanceObserver.supportedEntryTypes) || [];
   if (types.includes("long-animation-frame")) {
     R.loafKind = "long-animation-frame";
@@ -740,7 +791,7 @@ const INIT_SCRIPT = `
     const mem = performance.memory ? { used: performance.memory.usedJSHeapSize, total: performance.memory.totalJSHeapSize, limit: performance.memory.jsHeapSizeLimit } : null;
     const bar = document.getElementById("romp-stale-self");   // the shim's banner: "build" when a keepalive's dv outran the served dist, "conn" for a dead socket
     return { recs: R.recs, loaf: R.loaf, loafKind: R.loafKind, domElements: document.getElementsByTagName("*").length, heap: mem, addListenerMessages: R.addListenerMessages,
-      banner: bar ? (bar.dataset.kind || "?") : null };
+      banner: bar ? (bar.dataset.kind || "?") : null, dispatches: R.dispatches, flushes: R.flushes, dispatchHook: R.dispatchHook, dispatchHookError: R.dispatchHookError };
   };
 })();
 //# sourceURL=ui-bench-instrument.js
@@ -863,7 +914,21 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   const replayMs = Date.now() - t0;
   // Every sent frame dispatched in the page, then every settle stamped, then one more rendered frame.
   const budget = 30_000 + sent.reduce((a, s) => a + s.bytes, 0) / 1024;   // a second per MB on top of the floor
-  await waitFor(async () => (await page.evaluate(() => window.__rompBench.n)) >= sent.length, budget, `the page to dispatch all ${sent.length} frames`);
+  await waitFor(async () => (await page.evaluate(() => window.__rompBench.n)) >= sent.length, budget, `the page to handle all ${sent.length} frames`);
+  // On the deferred shim the handoff of the last frames is still queued when their handlers have returned:
+  // wait until every frame that reaches the bundle has been handed over. The condition is exact, not a
+  // pause (dispatchExpectation): a chained type is handed over once per frame, so its dispatch count reaches
+  // its frame count; a whole-state type's LAST frame cannot be replaced by a newer one, so a dispatch of its
+  // type at or after that frame's receipt is its handoff. Bounded and logged rather than fatal: a view delta
+  // the shim could not apply (it answers needSlot) is never handed over, and the report shows the shortfall.
+  if (await page.evaluate(() => window.__rompBench.dispatchHook)) {
+    await waitFor(() => page.evaluate((e) => {
+      const R = window.__rompBench;
+      for (const [type, n] of Object.entries(e.chained)) if (R.dispatches.filter((d) => d.type === type).length < n) return false;
+      for (const [type, idx] of Object.entries(e.wholeLast)) { const r = R.recs[idx]; if (!r || !R.dispatches.some((d) => d.type === type && d.t0 >= r.t0)) return false; }
+      return true;
+    }, dispatchExpectation(sent)), 10_000, "the shim to hand every frame to the bundle").catch((e) => log(`ui-bench: ${e.message}`));
+  }
   await waitFor(async () => page.evaluate(() => window.__rompBench.recs.every((r) => r.settle >= 0)), 10_000, "every frame's settle stamp").catch((e) => log(`ui-bench: ${e.message}`));
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
   if (profiling) {
@@ -878,20 +943,111 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   const met = Object.fromEntries(metrics.map((m) => [m.name, m.value]));
   await context.close();
 
+  const match = matchDispatches(sent, data.recs, data.dispatches || []);
   const perFrame = sent.map((s, i) => {
     const r = data.recs[i];
-    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? r.settle : null, t0: r ? r.t0 : null, lenMatch: r ? r.len === frames[i].data.length : false };
+    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? r.settle : null, t0: r ? r.t0 : null, lenMatch: r ? r.len === frames[i].data.length : false,
+      ...match.perFrame[i] };
   });
   const misaligned = perFrame.filter((f) => f.handlerMs != null && !f.lenMatch).length;
+  const flushes = data.flushes || [];
   return {
     readyMs, replayMs, sent, perFrame, misaligned, reconnects: session.reconnects, clientMessages: session.clientMessages, clientDiag: session.clientDiag,
     loaf: data.loaf, loafKind: data.loafKind, domElements: data.domElements, heap: data.heap, addListenerMessages: data.addListenerMessages, banner: data.banner,
+    dispatch: { hook: !!data.dispatchHook, hookError: data.dispatchHookError || null, ...match.counts, flushTasks: flushes.length, flushMs: flushes.reduce((a, f) => a + (f.dur || 0), 0) },
     profiling,
     cdp: { nodes: met.Nodes, documents: met.Documents, jsEventListeners: met.JSEventListeners, layoutCount: met.LayoutCount, recalcStyleCount: met.RecalcStyleCount,
       layoutMs: (met.LayoutDuration || 0) * 1000, recalcStyleMs: (met.RecalcStyleDuration || 0) * 1000, scriptMs: (met.ScriptDuration || 0) * 1000,
       taskMs: (met.TaskDuration || 0) * 1000, heapUsed: met.JSHeapUsedSize, heapTotal: met.JSHeapTotalSize },
     consoleErrors, pageErrors, warnings, failedResources,
   };
+}
+
+// ── frame-to-dispatch matching ────────────────────────────────────────────────────────────────────
+
+/** The message types the shim's dispatch queue holds at most one of (kernel.py _shim, its WHOLE set): a
+ *  newer frame of one of these types replaces an older frame of the same type that is still queued, so the
+ *  older one never reaches the bundle. Every other type is chained: handed over once each, in wire order.
+ *  The inline shim has no queue, so nothing is ever replaced there. */
+export const WHOLE_STATE_TYPES = new Set(["feed", "bars", "data", "tabOrder", "working", "globalRetryPaused"]);
+
+/** The type a wire frame reaches the bundle as: null for the frames the shim consumes itself (keepalives
+ *  and the restart notice), the slot for a view delta (the shim reassembles it into a full message of that
+ *  type), the frame's own type otherwise. */
+export function dispatchType(type) {
+  if (type === "ka" || type === "restarting") return null;
+  if (typeof type === "string" && type.startsWith("delta:")) return type.slice("delta:".length);
+  return type;
+}
+
+/** Match the frames a replay sent to the inbound calls the page recorded. `sent[i].type` is the node side's
+ *  classifyFrame, `recs[i].t0` the page time the frame's socket handler started, `dispatches` the page's
+ *  {t0, dur, type, inHandler} records in call order. Returns per frame {dispatchT0, dispatchMs, coalesced,
+ *  dispatchInline} (the times null when the frame was not handed over; dispatchInline null when the page
+ *  did not record whether a socket handler was on the stack) and the counts {dispatched, coalesced,
+ *  unmatched}.
+ *
+ *  Walking the dispatches in order, a dispatch of type T at time d0 can match an unmatched frame whose
+ *  dispatch type is T and whose handler started at or before d0 (the handler's START: on the inline shim the
+ *  dispatch runs inside the handler, before its end). For a whole-state type the LATEST such frame is the
+ *  one handed over and every earlier one was replaced in the queue (coalesced); for a chained type the
+ *  earliest is (the queue is a FIFO). A dispatch with no candidate is unmatched.
+ *
+ *  Why this is exact: a flush task runs to completion, and no socket handler runs while it does, so at any
+ *  dispatch every frame with t0 <= d0 was queued before that flush began, and the queue holds at most one
+ *  whole-state frame per type, the newest. On the inline shim every dispatch runs inside its own frame's
+ *  handler, so the only candidate with t0 <= d0 is the frame itself. Handlers run in wire order, so a type's
+ *  candidates are a prefix of its frames in wire order.
+ *
+ *  Limitation: a view delta the shim could not apply (it asks for a full slot instead, needSlot) is never
+ *  handed over, and would take the match of the next same-type dispatch, which a later delta earned; the
+ *  replay test asserts no needSlot was sent, so the streams it runs never reach this. */
+export function matchDispatches(sent, recs, dispatches) {
+  const perFrame = sent.map(() => ({ dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null }));
+  const pending = new Map();   // dispatch type -> indices of that type's frames not yet matched, in wire order
+  sent.forEach((s, i) => {
+    const T = dispatchType(s.type);
+    const r = recs[i];
+    if (T == null || !r || r.t0 == null) return;
+    if (!pending.has(T)) pending.set(T, []);
+    pending.get(T).push(i);
+  });
+  let dispatched = 0, coalesced = 0, unmatched = 0;
+  for (const d of dispatches || []) {
+    const list = d && d.type != null ? pending.get(d.type) : undefined;
+    let k = 0;
+    if (list) while (k < list.length && recs[list[k]].t0 <= d.t0) k++;
+    if (!k) { unmatched++; continue; }
+    const whole = WHOLE_STATE_TYPES.has(d.type);
+    const taken = list.splice(0, whole ? k : 1);
+    const pick = whole ? taken[taken.length - 1] : taken[0];
+    for (const i of taken) if (i !== pick) { perFrame[i].coalesced = true; coalesced++; }
+    perFrame[pick] = { dispatchT0: d.t0, dispatchMs: d.dur, coalesced: false, dispatchInline: typeof d.inHandler === "boolean" ? d.inHandler : null };
+    dispatched++;
+  }
+  return { perFrame, counts: { dispatched, coalesced, unmatched } };
+}
+
+/** What a drained dispatch queue looks like for a sent stream, for the replay's wait: per chained type the
+ *  number of its frames (each handed over once), and per whole-state type the index of its last frame (that
+ *  frame cannot be replaced by a newer one, so a dispatch of its type at or after its receipt is its
+ *  handoff). */
+export function dispatchExpectation(sent) {
+  const chained = {}, wholeLast = {};
+  sent.forEach((s, i) => {
+    const T = dispatchType(s.type);
+    if (T == null) return;
+    if (WHOLE_STATE_TYPES.has(T)) wholeLast[T] = i; else chained[T] = (chained[T] || 0) + 1;
+  });
+  return { chained, wholeLast };
+}
+
+/** Whether a frame's handoff ran inside its socket handler (the inline shim) or from a flush task after it
+ *  (the deferred shim). The page's own record of the handler depth decides when it is there; otherwise the
+ *  dispatch span must lie inside the handler span. */
+function dispatchRanInline(f) {
+  if (f.dispatchInline != null) return !!f.dispatchInline;
+  return f.t0 != null && f.handlerMs != null && f.dispatchT0 >= f.t0 && f.dispatchT0 + f.dispatchMs <= f.t0 + f.handlerMs;
 }
 
 function attributeLoaf(loaf) {
@@ -902,9 +1058,12 @@ function attributeLoaf(loaf) {
       const inv = s.invoker || s.invokerType || "?";
       const invoker = /^https?:\/\//.test(inv) ? "script " + (path.basename(inv.split("?")[0]) || "/") : inv;   // a script's own evaluation is invoked by its URL; keep the basename, never the query
       // A long-animation-frame script entry names the task's ENTRY POINT. For every pushed frame that is
-      // the bench's own onmessage wrapper, inside which the shim's dispatch and the bundle's render run
-      // synchronously, so the row is labelled for what it holds rather than for the instrument's file.
-      const key = url === "ui-bench-instrument.js" ? `message handler (shim + bundle) <${invoker}>` : `${url}:${s.fn || "(anonymous)"} <${invoker}>`;
+      // the bench's own onmessage wrapper (on the inline shim the bundle's render runs inside it), and on the
+      // deferred shim the flush task enters through the bench's port wrapper (the invoker names the port),
+      // so the rows are labelled for what they hold rather than for the instrument's file.
+      const key = url === "ui-bench-instrument.js"
+        ? (s.fn === "rompBenchOnPort" || /^MessagePort\./.test(inv) ? `flush task (shim queue + bundle) <${invoker}>` : `message handler (shim + bundle) <${invoker}>`)
+        : `${url}:${s.fn || "(anonymous)"} <${invoker}>`;
       const row = by.get(key) || { key, count: 0, durationMs: 0 };
       row.count++; row.durationMs += s.duration || 0;
       by.set(key, row);
@@ -921,23 +1080,29 @@ const roundStats = (s) => ({ n: s.n, p50: round1(s.p50), p90: round1(s.p90), max
 export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser, runs, cpuProfileFiles = [], sourceMapDir = null }) {
   const frames = runs.flatMap((r) => r.perFrame);
   const byType = {};
+  let inline = 0, deferred = 0;
   for (const f of frames) {
-    const s = (byType[f.type] ||= { count: 0, measured: 0, settleMissing: 0, bytes: 0, bytesMax: 0, handler: [], settle: [] });
+    const s = (byType[f.type] ||= { count: 0, measured: 0, settleMissing: 0, bytes: 0, bytesMax: 0, handler: [], settle: [], dispatch: [], dispatched: 0, coalesced: 0 });
     s.count++; s.bytes += f.bytes; if (f.bytes > s.bytesMax) s.bytesMax = f.bytes;
     if (f.handlerMs != null && f.handlerMs >= 0) { s.measured++; s.handler.push(f.handlerMs); }
     if (f.settleMs != null && f.settleMs >= 0) s.settle.push(f.settleMs);
-    else if (f.settleMs != null) s.settleMissing++;   // dispatched and timed, but the two-rAF settle stamp never landed
+    else if (f.settleMs != null) s.settleMissing++;   // handled and timed, but the two-rAF settle stamp never landed
+    if (f.dispatchMs != null && f.dispatchMs >= 0) { s.dispatched++; s.dispatch.push(f.dispatchMs); if (dispatchRanInline(f)) inline++; else deferred++; }
+    if (f.coalesced) s.coalesced++;
   }
   const types = {};
   for (const [type, s] of Object.entries(byType).sort((a, b) => b[1].bytes - a[1].bytes)) {
-    types[type] = { count: s.count / runs.length, measured: s.measured / runs.length, settleMissing: s.settleMissing, bytes: s.bytes / runs.length, bytesMax: s.bytesMax,
-      handlerMs: roundStats(summarize(s.handler)), settleMs: roundStats(summarize(s.settle)) };
+    types[type] = { count: s.count / runs.length, measured: s.measured / runs.length, dispatched: s.dispatched / runs.length, coalesced: s.coalesced / runs.length,
+      settleMissing: s.settleMissing, bytes: s.bytes / runs.length, bytesMax: s.bytesMax,
+      handlerMs: roundStats(summarize(s.handler)), dispatchMs: roundStats(summarize(s.dispatch)), settleMs: roundStats(summarize(s.settle)) };
   }
   const settleMissing = Object.values(byType).reduce((a, s) => a + s.settleMissing, 0);
   const firstIdx = runs[0].perFrame.findIndex((f) => f.type !== "ka");
   const first = firstIdx >= 0 ? runs.map((r) => r.perFrame[firstIdx]).filter(Boolean) : [];
   const loafAll = runs.flatMap((r) => r.loaf);
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  const sum = (xs) => xs.reduce((a, b) => a + (b || 0), 0);
+  const disp = runs.map((r) => r.dispatch || {});
   return {
     tool: "ui-bench", version: 1, app, framesFile, cpuThrottle: cpuThrottle || 1, fast: !!fast, iters: runs.length, browser,
     generatedAt: new Date().toISOString(),
@@ -945,8 +1110,17 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
       readyMs: round1(mean(runs.map((r) => r.readyMs))), reconnects: runs.reduce((a, r) => a + r.reconnects, 0), misaligned: runs.reduce((a, r) => a + r.misaligned, 0),
       settleMissing, addListenerMessages: runs.reduce((a, r) => a + (r.addListenerMessages || 0), 0),
       buildBannerRaised: runs.filter((r) => r.banner === "build").length, connBannerRaised: runs.filter((r) => r.banner === "conn").length },
-    first: first.length ? { index: firstIdx, type: first[0].type, bytes: first[0].bytes, handlerMs: round1(mean(first.map((f) => f.handlerMs))), settleMs: round1(mean(first.map((f) => f.settleMs))) } : null,
+    first: first.length ? { index: firstIdx, type: first[0].type, bytes: first[0].bytes, handlerMs: round1(mean(first.map((f) => f.handlerMs))),
+      dispatchMs: round1(mean(first.map((f) => f.dispatchMs).filter((x) => x != null && x >= 0))), settleMs: round1(mean(first.map((f) => f.settleMs))) } : null,
     types,
+    // The shim's handoff of each frame to the bundle (window.__rompFed.inbound): how many ran inside the
+    // socket handler (the inline shim) and how many from a queued flush task (the deferred shim), the frames
+    // a newer whole-state frame replaced before the handoff, the inbound calls no sent frame explains, and
+    // the flush tasks themselves. hook says whether the page ever assigned window.__rompFed; without it the
+    // dispatch columns are empty and the replay test fails.
+    dispatch: { hook: runs.every((r) => !!(r.dispatch && r.dispatch.hook)), inline, deferred, unmatched: sum(disp.map((d) => d.unmatched)),
+      coalesced: sum(Object.values(byType).map((s) => s.coalesced)), flushTasks: sum(disp.map((d) => d.flushTasks)), flushMs: round1(sum(disp.map((d) => d.flushMs))),
+      hookError: disp.map((d) => d.hookError).find((e) => e) || null },
     loaf: { kind: runs[0].loafKind, count: loafAll.length / runs.length, durationMs: round1(mean(runs.map((r) => r.loaf.reduce((a, e) => a + e.duration, 0)))),
       blockingMs: round1(mean(runs.map((r) => r.loaf.reduce((a, e) => a + (e.blocking || 0), 0)))), maxMs: round1(Math.max(0, ...loafAll.map((e) => e.duration))),
       topScripts: attributeLoaf(loafAll) },
@@ -959,7 +1133,8 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, iters, browser
       failedResources: runs.flatMap((r) => r.failedResources) },
     clientMessages: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientMessages)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
     clientDiag: runs.reduce((acc, r) => { for (const [k, v] of Object.entries(r.clientDiag)) acc[k] = (acc[k] || 0) + v; return acc; }, {}),
-    perFrame: runs.length === 1 ? runs[0].perFrame.map((f) => ({ i: f.i, type: f.type, bytes: f.bytes, at: f.at, handlerMs: round1(f.handlerMs), settleMs: round1(f.settleMs) })) : undefined,
+    perFrame: runs.length === 1 ? runs[0].perFrame.map((f) => ({ i: f.i, type: f.type, bytes: f.bytes, at: f.at, t0: round1(f.t0), handlerMs: round1(f.handlerMs),
+      dispatchT0: round1(f.dispatchT0), dispatchMs: round1(f.dispatchMs), coalesced: !!f.coalesced, settleMs: round1(f.settleMs) })) : undefined,
     cpuProfile: runs.some((r) => r.profiling && r.profiling.profile) ? profileReport(runs, firstIdx, cpuProfileFiles, sourceMapDir) : undefined,
   };
 }
@@ -1068,14 +1243,30 @@ export function sourceLocator(distDir) {
   return locate;
 }
 
+/** Sort windows ([start, end] in page ms) by start and join the ones that overlap or touch; empty and
+ *  inverted windows are dropped. On the inline shim a frame's dispatch window lies inside its handler
+ *  window, and a search over the unmerged list (the last window whose start is at or before x, then x
+ *  before its end) would call a sample after the inner window's end "outside". */
+export function mergeWindows(windows) {
+  const sorted = windows.filter((w) => w[1] > w[0]).sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const w of sorted) {
+    const last = out[out.length - 1];
+    if (last && w[0] <= last[1]) { if (w[1] > last[1]) last[1] = w[1]; } else out.push([w[0], w[1]]);
+  }
+  return out;
+}
+
 /** Pin the page-to-profile clock offset with the profile's own evidence. Every sample whose stack holds
- *  the bench's onmessage wrapper was taken inside some frame's handler window, so the offsets that put
- *  the most of them inside the windows hold the right one; the bracketing reads of performance.now()
- *  only bound it. A grid search over ±bound ms at a quarter of the sampling interval; the offsets that
- *  tie for the maximum form a plateau, and the answer is its midpoint with half its width (at least one
- *  grid step) as the uncertainty. When even the best offset places under half the wrapper's samples
- *  inside, the evidence does not fit the windows and the bracketing estimate is returned unchanged.
- *  `windows` are [t0, t1] in page ms. Returns {p0, alignMs, inside, refined}. */
+ *  one of the bench's wrappers (the onmessage wrapper, the dispatch wrapper, the flush-task wrapper: any
+ *  frame from ui-bench-instrument.js) was taken inside some frame's handler or dispatch window, so the
+ *  offsets that put the most of them inside the windows hold the right one; the bracketing reads of
+ *  performance.now() only bound it. A grid search over ±bound ms at a quarter of the sampling interval;
+ *  the offsets that tie for the maximum form a plateau, and the answer is its midpoint with half its width
+ *  (at least one grid step) as the uncertainty. When even the best offset places under half the wrapper's
+ *  samples inside, the evidence does not fit the windows and the bracketing estimate is returned
+ *  unchanged. `windows` are [t0, t1] in page ms, merged first (mergeWindows). Returns {p0, alignMs,
+ *  inside, refined}. */
 export function refineAlignment(profile, p0, bound, windows) {
   const nodes = new Map(), parent = new Map(), wrapped = new Map();
   for (const n of profile.nodes || []) { nodes.set(n.id, n); for (const c of n.children || []) parent.set(c, n.id); }
@@ -1093,7 +1284,7 @@ export function refineAlignment(profile, p0, bound, windows) {
   const samples = profile.samples || [], deltas = profile.timeDeltas || [];
   let t = profile.startTime || 0;
   for (let i = 0; i < samples.length; i++) { t += deltas[i] || 0; if (underWrapper(samples[i])) xs.push((t - (profile.startTime || 0)) / 1000 + p0); }
-  const sorted = windows.filter((w) => w[1] > w[0]).sort((a, b) => a[0] - b[0]);
+  const sorted = mergeWindows(windows);
   if (!xs.length || !sorted.length) return { p0, alignMs: bound, inside: null, refined: false };
   const inside = (x) => {
     let lo = 0, hi = sorted.length - 1;
@@ -1217,8 +1408,10 @@ export function rankProfile(agg, top, locate = null) {
 const HOT_FUNCTIONS = 5;   // the top self-time functions whose lines are shown
 
 /** The frames worth their own window: the first content frame and the largest frame of every type
- *  except keepalives. Windows cover the synchronous handler (t0 to t0 + handler), the part of a frame's
- *  cost the JavaScript sampler can see; style, layout and paint after it are not JavaScript. */
+ *  except keepalives. A frame's window is its handler span (t0 to t0 + handler) joined with its dispatch
+ *  span (the bundle's inbound call: inside the handler span on the inline shim, after it on the deferred
+ *  shim), the part of a frame's cost the JavaScript sampler can see; style, layout and paint after it are
+ *  not JavaScript. */
 function profileWindows(perFrame, firstIdx) {
   const picks = [];
   if (firstIdx >= 0 && perFrame[firstIdx]) picks.push({ label: "first content frame", f: perFrame[firstIdx] });
@@ -1231,21 +1424,34 @@ function profileWindows(perFrame, firstIdx) {
 function profileReport(runs, firstIdx, files, sourceMapDir) {
   const locate = sourceMapDir ? sourceLocator(sourceMapDir) : null;
   const profiled = runs.filter((r) => r.profiling && r.profiling.profile);
-  const handlerWindows = (r) => r.perFrame.filter((f) => f.t0 != null && f.handlerMs != null && f.handlerMs >= 0).map((f) => [f.t0, f.t0 + f.handlerMs]);
-  const aligned = profiled.map((r) => ({ r, al: refineAlignment(r.profiling.profile, r.profiling.p0, r.profiling.alignMs, handlerWindows(r)) }));
+  // A frame's spans: its handler window and, when the frame was handed to the bundle, its dispatch window.
+  const frameSpans = (f) => {
+    const w = [];
+    if (f.t0 != null && f.handlerMs != null && f.handlerMs >= 0) w.push([f.t0, f.t0 + f.handlerMs]);
+    if (f.dispatchT0 != null && f.dispatchMs != null && f.dispatchMs >= 0) w.push([f.dispatchT0, f.dispatchT0 + f.dispatchMs]);
+    return w;
+  };
+  const benchWindows = (r) => r.perFrame.flatMap(frameSpans);
+  const aligned = profiled.map((r) => ({ r, al: refineAlignment(r.profiling.profile, r.profiling.p0, r.profiling.alignMs, benchWindows(r)) }));
   const overall = rankProfile(mergeAggregates(profiled.map((r) => aggregateProfile(r.profiling.profile))), TOP_OVERALL, locate);
   const windows = [];
   for (const { label, f } of profileWindows(runs[0].perFrame, firstIdx)) {
     const aggs = [];
     for (const { r, al } of aligned) {
       const pf = r.perFrame[f.i];
-      if (!pf || pf.t0 == null || pf.handlerMs == null || pf.handlerMs < 0) continue;
+      const raw = pf ? frameSpans(pf) : [];
+      if (!raw.length) continue;
+      // The union of the spans, so a dispatch span nested in its handler span (the inline shim) is folded
+      // once: the row's durationMs is the union's width and no sample is counted twice. Spans of zero width
+      // (a handler the clock could not resolve) merge to nothing; the first raw span then stands in, with
+      // no samples, so the row still appears.
+      const spans = mergeWindows(raw);
       const { profile } = r.profiling;
       const toUs = (ms) => profile.startTime + (ms - al.p0) * 1000;
-      aggs.push(aggregateProfile(profile, [toUs(pf.t0), toUs(pf.t0 + pf.handlerMs)]));
+      aggs.push(mergeAggregates((spans.length ? spans : [raw[0]]).map(([a, b]) => aggregateProfile(profile, [toUs(a), toUs(b)]))));
     }
     if (!aggs.length) continue;
-    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
+    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), dispatchMs: round1(f.dispatchMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
   }
   const insides = aligned.map(({ al }) => al.inside).filter((x) => x != null);
   // The bundles the profile names (served from /dist/): the source-position claim rests on their maps
@@ -1296,7 +1502,7 @@ const fmtMeta = (meta) => Object.entries(meta).map(([k, v]) => `${k} ${fmtMs(v)}
 export function renderProfile(cp) {
   const out = [];
   out.push(`cpu profile: ${cp.samples} samples over ${fmtMs(cp.durationMs)} ms at ${cp.samplingIntervalUs} us, ${cp.functions} functions; bookkeeping: ${fmtMeta(cp.meta)}`);
-  const pct = cp.wrapperSamplesInHandlers != null ? `${Math.round(cp.wrapperSamplesInHandlers * 100)}% of the message handler's samples inside the frames' handler windows` : "no handler windows to check against";
+  const pct = cp.wrapperSamplesInHandlers != null ? `${Math.round(cp.wrapperSamplesInHandlers * 100)}% of the instrument's samples (socket handler and bundle handoff) inside the frames' handler and dispatch windows` : "no handler or dispatch windows to check against";
   out.push(`  page-to-profile clock alignment ±${fmtMs(cp.alignMs)} ms ${cp.alignRefined ? `(refined from the ±${fmtMs(cp.alignBoundMs)} ms bracketing estimate; ${pct})` : `(the bracketing estimate; the refinement did not apply: ${pct})`}${cp.sourceMaps ? `; source positions from ${(cp.sourceMapsLoaded || []).map((b) => b + ".map").join(", ")}` : ""}`);
   if (cp.sourceMapsMissing && cp.sourceMapsMissing.length) out.push(`  warning: no ${cp.sourceMapsMissing.map((b) => b + ".map").join(", ")} beside the served bundle${cp.sourceMapsMissing.length === 1 ? "" : "s"}; names and lines are the bundle's own, and a --production build is minified (rebuild with node esbuild.js, no --production)`);
   for (const f of cp.files || []) out.push(`  written: ${f} (load it in Chrome DevTools, Performance panel)`);
@@ -1309,7 +1515,7 @@ export function renderProfile(cp) {
   out.push(`  top ${cp.topTotal.length} by total time`, `  ${head}`);
   for (const f of cp.topTotal) out.push(`  ${fmtFn(f)}`);
   for (const w of cp.windows || []) {
-    out.push("", `  window: ${w.label} (${w.type}, ${fmtBytes(w.bytes)}, frame ${w.index}): handler ${fmtMs(w.handlerMs)} ms, ${w.samples} samples, ${fmtMs(w.sampledMs)} ms sampled; bookkeeping: ${fmtMeta(w.meta)}`);
+    out.push("", `  window: ${w.label} (${w.type}, ${fmtBytes(w.bytes)}, frame ${w.index}): handler ${fmtMs(w.handlerMs)} ms, dispatch ${w.dispatchMs == null ? "-" : fmtMs(w.dispatchMs) + " ms"}, ${fmtMs(w.durationMs)} ms of window, ${w.samples} samples, ${fmtMs(w.sampledMs)} ms sampled; bookkeeping: ${fmtMeta(w.meta)}`);
     out.push(`    top ${w.topSelf.length} by self time`, `    ${head}`);
     for (const f of w.topSelf) out.push(`    ${fmtFn(f)}`);
     out.push(`    top ${w.topTotal.length} by total time`, `    ${head}`);
@@ -1333,12 +1539,16 @@ export function renderReport(r) {
   const out = [];
   out.push(`ui-bench ${r.app}: ${r.frames.total} frames, ${fmtBytes(r.frames.bytes)}, replay ${fmtMs(r.frames.replayMs)} ms (${r.fast ? "back-to-back" : "recorded pacing"}), cpu x${r.cpuThrottle}, ${r.iters} iteration${r.iters === 1 ? "" : "s"}, ${r.browser}`);
   out.push(`page ready (navigation to the bundle's handshake): ${fmtMs(r.frames.readyMs)} ms${r.frames.reconnects ? `; shim reconnects during replay: ${r.frames.reconnects}` : ""}${r.frames.misaligned ? `; frames whose page record did not match in length: ${r.frames.misaligned}` : ""}`);
-  if (r.first) out.push(`first content frame: ${r.first.type}, ${fmtBytes(r.first.bytes)}, handler ${fmtMs(r.first.handlerMs)} ms, settled ${fmtMs(r.first.settleMs)} ms`);
+  if (r.first) out.push(`first content frame: ${r.first.type}, ${fmtBytes(r.first.bytes)}, handler ${fmtMs(r.first.handlerMs)} ms, dispatch ${r.first.dispatchMs == null ? "-" : fmtMs(r.first.dispatchMs) + " ms"}, settled ${fmtMs(r.first.settleMs)} ms`);
   out.push("");
-  out.push(`${"type".padEnd(14)} ${"count".padStart(7)} ${"bytes".padStart(10)} ${"max".padStart(10)}   ${"handler p50/p90/max ms".padEnd(26)} ${"settle p50/p90/max ms".padEnd(26)}`);
+  out.push(`${"type".padEnd(14)} ${"count".padStart(7)} ${"bytes".padStart(10)} ${"max".padStart(10)}   ${"handler p50/p90/max ms".padEnd(26)} ${"dispatch p50/p90/max ms".padEnd(26)} ${"settle p50/p90/max ms".padEnd(26)}`);
   for (const [type, s] of Object.entries(r.types)) {
-    out.push(`${type.padEnd(14)} ${String(s.count).padStart(7)} ${fmtBytes(s.bytes).padStart(10)} ${fmtBytes(s.bytesMax).padStart(10)}   ${stats3(s.handlerMs).padEnd(26)} ${stats3(s.settleMs).padEnd(26)}${s.measured < s.count ? `  (${s.count - s.measured} unmeasured)` : ""}${s.settleMissing ? `  (${s.settleMissing} settle missing)` : ""}`);
+    const undispatched = dispatchType(type) == null ? 0 : s.count - (s.dispatched || 0) - (s.coalesced || 0);
+    out.push(`${type.padEnd(14)} ${String(s.count).padStart(7)} ${fmtBytes(s.bytes).padStart(10)} ${fmtBytes(s.bytesMax).padStart(10)}   ${stats3(s.handlerMs).padEnd(26)} ${stats3(s.dispatchMs || {}).padEnd(26)} ${stats3(s.settleMs).padEnd(26)}${s.measured < s.count ? `  (${s.count - s.measured} unmeasured)` : ""}${s.coalesced ? `  (${s.coalesced} coalesced)` : ""}${undispatched > 0 ? `  (${undispatched} not dispatched)` : ""}${s.settleMissing ? `  (${s.settleMissing} settle missing)` : ""}`);
   }
+  const d = r.dispatch;
+  if (d && d.hook) out.push(`dispatch (the shim's handoff of each frame to the bundle, window.__rompFed.inbound): ${d.inline} inside the socket handler, ${d.deferred} from a queued flush task; ${d.coalesced} coalesced (replaced by a newer frame of the same whole-state type before the handoff), ${d.unmatched} unmatched; ${d.flushTasks} flush task${d.flushTasks === 1 ? "" : "s"}${d.flushTasks ? `, ${fmtMs(d.flushMs)} ms` : ""}`);
+  else if (d) out.push(`warning: the dispatch hook never engaged (the page did not assign window.__rompFed${d.hookError ? `: ${d.hookError}` : ""}); the dispatch columns are empty`);
   if (r.frames.settleMissing) out.push(`warning: ${r.frames.settleMissing} frame${r.frames.settleMissing === 1 ? "" : "s"} never received a settle stamp; the settle columns are computed over the frames that did`);
   if (r.frames.addListenerMessages) out.push(`warning: ${r.frames.addListenerMessages} message listener${r.frames.addListenerMessages === 1 ? " was" : "s were"} added with addEventListener; the handler column does not time work done there`);
   if (r.frames.buildBannerRaised) out.push(`warning: the page raised its "newer build" banner in ${r.frames.buildBannerRaised} run${r.frames.buildBannerRaised === 1 ? "" : "s"} (a keepalive's dv is newer than the dist under test): a few extra elements and a layout the frames did not cause`);
@@ -1354,7 +1564,7 @@ export function renderReport(r) {
   for (const e of r.console.pageErrors.slice(0, 10)) out.push(`  uncaught: ${e.slice(0, 300)}`);
   for (const e of r.console.failedResources.slice(0, 10)) out.push(`  failed resource: ${e}`);
   out.push(`messages the pane sent: ${Object.entries(r.clientMessages).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}${Object.keys(r.clientDiag || {}).length ? ` (clientDiag: ${Object.entries(r.clientDiag).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}`);
-  if (r.fast) out.push("note: back-to-back replay; a frame's settle time includes the frames dispatched after it before the next rendered frame, so settle percentiles overlap while handler times do not.");
+  if (r.fast) out.push("note: back-to-back replay; a frame's settle time includes the frames received after it before the next rendered frame, so settle percentiles overlap while handler and dispatch times do not.");
   if (r.cpuProfile) out.push("", renderProfile(r.cpuProfile));
   return out.join("\n");
 }
@@ -1373,10 +1583,12 @@ export function compareReports(a, b) {
   const types = {};
   for (const type of new Set([...Object.keys(a.types || {}), ...Object.keys(b.types || {})])) {
     const x = a.types[type] || {}, y = b.types[type] || {};
-    const sx = x.settleMs || {}, sy = y.settleMs || {}, hx = x.handlerMs || {}, hy = y.handlerMs || {};
+    const sx = x.settleMs || {}, sy = y.settleMs || {}, hx = x.handlerMs || {}, hy = y.handlerMs || {}, dx = x.dispatchMs || {}, dy = y.dispatchMs || {};
     types[type] = { count: delta(x.count ?? null, y.count ?? null), bytes: delta(x.bytes ?? null, y.bytes ?? null),
       settleP50: delta(sx.p50, sy.p50), settleP90: delta(sx.p90, sy.p90), settleMax: delta(sx.max, sy.max),
-      handlerP50: delta(hx.p50, hy.p50), handlerP90: delta(hx.p90, hy.p90), handlerMax: delta(hx.max, hy.max) };
+      handlerP50: delta(hx.p50, hy.p50), handlerP90: delta(hx.p90, hy.p90), handlerMax: delta(hx.max, hy.max),
+      // a report written before the dispatch columns existed has none: both sides null, rendered n/a
+      dispatchP50: delta(dx.p50 ?? null, dy.p50 ?? null), dispatchP90: delta(dx.p90 ?? null, dy.p90 ?? null), dispatchMax: delta(dx.max ?? null, dy.max ?? null) };
   }
   // LayoutCount, ScriptDuration and TaskDuration are cumulative since navigation, so they scale with how
   // long the page sat there: a percentage between runs of different pacing or length says nothing.
@@ -1385,7 +1597,8 @@ export function compareReports(a, b) {
   const endComparable = !!a.fast === !!b.fast && sameLength;
   return {
     apps: [a.app, b.app], cpuThrottle: [a.cpuThrottle, b.cpuThrottle], fast: [a.fast, b.fast], replayMs, endComparable,
-    first: { bytes: delta(a.first?.bytes, b.first?.bytes), handlerMs: delta(a.first?.handlerMs, b.first?.handlerMs), settleMs: delta(a.first?.settleMs, b.first?.settleMs) },
+    first: { bytes: delta(a.first?.bytes, b.first?.bytes), handlerMs: delta(a.first?.handlerMs, b.first?.handlerMs), dispatchMs: delta(a.first?.dispatchMs ?? null, b.first?.dispatchMs ?? null),
+      settleMs: delta(a.first?.settleMs, b.first?.settleMs) },
     types,
     loaf: { count: delta(a.loaf?.count, b.loaf?.count), durationMs: delta(a.loaf?.durationMs, b.loaf?.durationMs), blockingMs: delta(a.loaf?.blockingMs, b.loaf?.blockingMs), maxMs: delta(a.loaf?.maxMs, b.loaf?.maxMs) },
     end: { heapUsed: delta(a.end?.heapUsed, b.end?.heapUsed), domElements: delta(a.end?.domElements, b.end?.domElements), layoutCount: delta(a.end?.layoutCount, b.end?.layoutCount),
@@ -1402,12 +1615,15 @@ const fmtDelta = (d, unit = "", { pct = true } = {}) => {
   return `${fmtNum(d.a)} → ${fmtNum(d.b)}${unit} (${sign(d.diff)}${fmtNum(Math.abs(d.diff))}${pct && d.pct != null ? `, ${sign(d.pct)}${fmtNum(Math.abs(d.pct))}%` : ""})`;
 };
 
+// A field neither report carries (the dispatch columns of reports written before they existed) prints n/a.
+const fmtOpt = (d, unit = "") => (!d || (d.a == null && d.b == null) ? "n/a" : fmtDelta(d, unit));
+
 export function renderCompare(c) {
   const out = [];
   out.push(`compare: ${c.apps[0]} (cpu x${c.cpuThrottle[0]}, ${c.fast[0] ? "fast" : "paced"}) → ${c.apps[1]} (cpu x${c.cpuThrottle[1]}, ${c.fast[1] ? "fast" : "paced"})`);
-  out.push(`first content frame: bytes ${fmtDelta(c.first.bytes)}; handler ${fmtDelta(c.first.handlerMs, " ms")}; settled ${fmtDelta(c.first.settleMs, " ms")}`);
+  out.push(`first content frame: bytes ${fmtDelta(c.first.bytes)}; handler ${fmtDelta(c.first.handlerMs, " ms")}; dispatch ${fmtOpt(c.first.dispatchMs, " ms")}; settled ${fmtDelta(c.first.settleMs, " ms")}`);
   for (const [type, t] of Object.entries(c.types)) {
-    out.push(`${type.padEnd(14)} count ${fmtDelta(t.count)}; settle p50 ${fmtDelta(t.settleP50, " ms")}, p90 ${fmtDelta(t.settleP90, " ms")}, max ${fmtDelta(t.settleMax, " ms")}; handler p50 ${fmtDelta(t.handlerP50, " ms")}`);
+    out.push(`${type.padEnd(14)} count ${fmtDelta(t.count)}; settle p50 ${fmtDelta(t.settleP50, " ms")}, p90 ${fmtDelta(t.settleP90, " ms")}, max ${fmtDelta(t.settleMax, " ms")}; handler p50 ${fmtDelta(t.handlerP50, " ms")}; dispatch p50 ${fmtOpt(t.dispatchP50, " ms")}`);
   }
   out.push(`long animation frames: count ${fmtDelta(c.loaf.count)}; total ${fmtDelta(c.loaf.durationMs, " ms")}; blocking ${fmtDelta(c.loaf.blockingMs, " ms")}; longest ${fmtDelta(c.loaf.maxMs, " ms")}`);
   const pct = { pct: c.endComparable !== false };
