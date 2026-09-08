@@ -2547,8 +2547,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
  *  shape whether the cap shrinks it or not, and the media sits letterboxed inside it as a video always has (its default
  *  object-fit is contain). A percentage in either attribute is left alone, as the sheet's rule leaves a percentage
  *  width: the cap never shrinks it and the height attribute stands. Runs on the sanitized DOM: the declaration is the
- *  viewer's own, not an author's inline style, which the sanitizer reduces to its colours (md-sanitize.ts). */
-export function keepVideoShape(root: ParentNode): void {
+ *  viewer's own, not an author's inline style, which the sanitizer reduces to its colours (md-sanitize.ts). Laid out
+ *  over the real bundle in md-sanitize-wide-media-browser.test.ts, each spelling of a length included. */
+function keepVideoShape(root: ParentNode): void {
   root.querySelectorAll("video[width][height]").forEach((node) => {
     const v = node as HTMLElement;
     const w = pxDimension(v.getAttribute("width")), h = pxDimension(v.getAttribute("height"));
@@ -2558,8 +2559,11 @@ export function keepVideoShape(root: ParentNode): void {
 
 /** An HTML dimension attribute as a length, by HTML's rules for parsing dimension values: leading whitespace, digits, an
  *  optional fraction; a `%` right after the number makes it a percentage (0 here, as is anything that does not start
- *  with a number). `640`, `640.5` and `640px` are lengths; `50%` is not. Mirrors the sheet's `[width]:not([width$="%"])`. */
-export function pxDimension(attr: string | null): number {
+ *  with a number). `640`, `640.5` and `640px` are lengths, as they are to the browser, whose own mapping of the
+ *  attributes reads them the same way; `50%` is not. Mirrors the sheet's `[width]:not([width$="%"])`. The whitespace
+ *  skip is HTML's rule kept for fidelity: the value read here has been through the sanitizer, which trims every
+ *  attribute value (DOMPurify, all but `value`), so the `%` test here and the sheet's `$="%"` never meet a padded one. */
+function pxDimension(attr: string | null): number {
   const m = /^[ \t\n\f\r]*(\d+(?:\.\d*)?)(%?)/.exec(attr || "");
   return m && !m[2] ? Number(m[1]) : 0;
 }

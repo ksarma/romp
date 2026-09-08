@@ -11,19 +11,26 @@
 // This leg states the property behind those measurements once, exactly: the rendered .katex root is byte-identical to
 // what katex.render produces on its own for the same TeX, so nothing of KaTeX's output passed through DOMPurify; and
 // it covers what that leg does not run: the user bubble's path (userMd, newlines kept), an author's display
-// placeholder and an empty one, and a second pass being a no-op. Skips LOUDLY without a playwright browser (CI
-// installs none), as the other browser legs do. Synthetic values only.
+// placeholder and an empty one, and a second pass being a no-op. The second test lays the source fallback out under the
+// WHOLE of styles.css, in the user's bubble beside the assistant's .md: the postpass leg computes the fallback's dress
+// from four lifted rules under a bare .md, and the bubble's own code rule, which outranks the dress rule, was outside
+// that lift (review round 4). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs
+// do. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { MATH_SOURCE_CLASS } from "./math";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
 const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const KATEX_CSS = fs.readFileSync(path.join(EXT, "node_modules", "katex", "dist", "katex.min.css"), "utf8");
+// the chat's whole sheet for the dress test below, its one @import dropped: KaTeX's sheet is inlined in the head already,
+// and a bare specifier fetched from about:blank resolves to nothing
+const STYLES_CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace(/^@import [^\n]*\n/m, "");
 
 // the chat's two renderers, rebuilt from the real modules exactly as render.ts composes them (md() and userMd()
 // are not exported; render-math.test.ts pins render.ts to this order): marked with the chat grammar, then sanitizeMd,
@@ -164,6 +171,60 @@ test("the math the chat renders after the sanitizer is KaTeX's own output, byte 
     assert.notEqual(bounds.capped, bounds.uncapped, "the bound changes the output, so byte-identity above proves it reached the call");
     assert.ok(rule.html.includes("border-right-width: 50em") && !rule.html.includes("5000em"), "capped at 50 em: " + rule.html);
 
+    assert.deepEqual(errors, [], "no page errors");
+  });
+});
+
+type Dress = { color: string; line: string; style: string; deco: string } | null;
+type DressFacts = { count: number; fallbackInline: Dress; authorInline: Dress; fallbackBlock: Dress; quote: Dress };
+
+test("the source fallback in the user's own bubble wears the bubble's dim tier, not the white of a code span they typed, in both themes", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (page, errors) => {
+    // an argument-repeating macro is shown as source before KaTeX sees it (math.ts macroBounds): the cheapest way past a
+    // bound, and one a short typed formula can take. The same text in both roots, in both shapes, beside a code span the
+    // author wrote and a quoted passage (the bubble's own dim tier, styles.css's .user-bubble blockquote rule).
+    const dup = "\\def\\a#1{#1#1}\\a{x}";
+    const src = "Formula $" + dup + "$ and `a code span` here.\n\n> quoted\n\n$$\n" + dup + "\n$$";
+    const facts = await page.evaluate(([css, src, srcClass]: [string, string, string]) => {
+      const M = (window as any).__math;
+      const style = document.createElement("style"); style.textContent = css; document.head.appendChild(style);
+      // the bubble as render.ts builds it (a div wearing user-bubble and md, in a user turn), and the assistant's .md
+      document.body.innerHTML = '<div class="turn turn-user"><div id="ub" class="user-bubble md"></div></div><div class="turn turn-assistant"><div id="as" class="md"></div></div>';
+      const ub = document.getElementById("ub") as HTMLElement, as = document.getElementById("as") as HTMLElement;
+      ub.innerHTML = M.userMd(src); as.innerHTML = M.md(src);
+      const cs = (root: Element, sel: string) => {
+        const el = root.querySelector(sel); if (!el) return null;
+        const s = getComputedStyle(el); return { color: s.color, line: s.textDecorationLine, style: s.textDecorationStyle, deco: s.textDecorationColor };
+      };
+      const read = (root: Element) => ({
+        count: root.querySelectorAll("code." + srcClass).length,
+        fallbackInline: cs(root, "p > code." + srcClass), authorInline: cs(root, "p > code:not(." + srcClass + ")"),
+        fallbackBlock: cs(root, "pre > code." + srcClass), quote: cs(root, "blockquote"),
+      });
+      const out: Record<string, { bubble: any; assistant: any }> = {};
+      for (const theme of ["dark", "theme-light"]) { document.body.className = theme === "dark" ? "" : theme; out[theme] = { bubble: read(ub), assistant: read(as) }; }
+      return out;
+    }, [STYLES_CSS, src, MATH_SOURCE_CLASS]) as Record<string, { bubble: DressFacts; assistant: DressFacts }>;
+    for (const theme of ["dark", "theme-light"]) {
+      const { bubble, assistant } = facts[theme];
+      for (const [name, f] of [["bubble", bubble], ["assistant", assistant]] as const) {
+        assert.equal(f.count, 2, theme + " " + name + ": the formula is shown as source in both shapes");
+        assert.ok(f.fallbackInline && f.authorInline && f.fallbackBlock && f.quote, theme + " " + name + ": every element found: " + JSON.stringify(f));
+        assert.deepEqual([f.fallbackInline!.line, f.fallbackInline!.style], ["underline", "dotted"], theme + " " + name + ": the fallback is dotted-underlined");
+        assert.equal(f.authorInline!.line, "none", theme + " " + name + ": the author's code span is not");
+      }
+      // the assistant's .md: the code tone for the author's span, another colour for the fallback (the postpass leg names it)
+      assert.notEqual(assistant.fallbackInline!.color, assistant.authorInline!.color, theme + ": in the assistant's .md the fallback is not the code tone");
+      // the bubble: white-on-blue for a code span the user typed; the fallback wears the bubble's dim tier instead, the
+      // blockquote's white tint, and so does its underline (var(--dim) grey sat near 1.7:1 on the fill, invisible)
+      assert.equal(bubble.authorInline!.color, "rgb(255, 255, 255)", theme + ": a code span the user typed is white on the fill");
+      assert.notEqual(bubble.fallbackInline!.color, bubble.authorInline!.color, theme + ": the fallback in the bubble is not dressed as a code span the user typed: " + JSON.stringify(bubble.fallbackInline));
+      assert.equal(bubble.fallbackInline!.color, bubble.quote!.color, theme + ": it wears the bubble's dim tier, the quoted passage's tint: " + JSON.stringify({ fallback: bubble.fallbackInline, quote: bubble.quote }));
+      assert.equal(bubble.fallbackInline!.deco, bubble.fallbackInline!.color, theme + ": the dotted underline wears the same tint, visible on the fill: " + JSON.stringify(bubble.fallbackInline));
+      // the block shape stands in the bubble's page-coloured well (.user-bubble pre), where var(--dim) reads as it does in the .md
+      assert.equal(bubble.fallbackBlock!.color, assistant.fallbackBlock!.color, theme + ": the block shape in the page-coloured well keeps the dim tier, as the assistant's does");
+      assert.equal(bubble.fallbackBlock!.deco, bubble.fallbackBlock!.color, theme + ": and its underline with it");
+    }
     assert.deepEqual(errors, [], "no page errors");
   });
 });

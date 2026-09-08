@@ -15,7 +15,12 @@
 // frames are there, so height: auto alone laid a 640 by 360 clip with a square poster out 640 by 640 in a pane that
 // shrank nothing, and the box jumped to the frames' shape at play (review round 2). mdBlock (file-view.ts) writes the
 // attributes' ratio as the video's inline aspect-ratio, so the box is the author's shape capped or not; the poster
-// fixtures below hold that, with a witness video (a poster and no height attribute) that tells the leg when the
+// fixtures below hold that, in each spelling HTML's dimension rules and the browser's own mapping read as a length
+// (`640`, `640.5`, `640px`; mdBlock parses the attributes itself, so a spelling it misread would leave that clip at
+// the poster's ratio, and no other test carries a <video>), and a percentage width, which is not a length and gets
+// no ratio written. Whitespace around a value never reaches either test: the sanitizer trims every attribute value
+// (DOMPurify, all but `value`), and the leg pins that on a padded length and a padded percentage, since the sheet's
+// `[width$="%"]` test and mdBlock's `%` test both rely on it. A witness video (a poster and no height attribute) tells the leg when the
 // poster has been decoded, since a video fires no event for it. A 12-column table is the control: its own overflow-x
 // scroll is untouched. Skips LOUDLY without a playwright browser (CI
 // installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST paths, a
@@ -72,8 +77,22 @@ const NOTE = [
   // shrinks to the column in that ratio
   'Clip: <video class="fx-poster" src="/nope.mp4" poster="' + POSTER_URL + '" width="640" height="360"></video>',
   "",
+  // the same clip in the other spellings of a length: a fraction, a unit after the digits. The browser lays each out
+  // 640 (or 640.5) wide and maps it to `aspect-ratio: auto W / H` exactly as it does "640", so each must get the same
+  // inline ratio; one left at the browser's `auto` would sit square under its poster. The padded one reaches the viewer
+  // trimmed (the sanitizer trims every attribute value), which the leg pins: no whitespace rule of the viewer's is ever met
+  'Clip, padded: <video class="fx-poster-ws" src="/nope.mp4" poster="' + POSTER_URL + '" width=" 640 " height=" 360 "></video>',
+  "",
+  'Clip, fraction: <video class="fx-poster-frac" src="/nope.mp4" poster="' + POSTER_URL + '" width="640.5" height="360"></video>',
+  "",
+  'Clip, unit: <video class="fx-poster-px" src="/nope.mp4" poster="' + POSTER_URL + '" width="640px" height="360"></video>',
+  "",
   // a percentage width with a poster: no cap, no ratio to keep, the height attribute stands as it does without one
   'Full-width clip: <video class="fx-pct-poster" src="/nope.mp4" poster="' + POSTER_URL + '" width="100%" height="120"></video>',
+  "",
+  // the same with the percentage padded: the sheet's `[width$="%"]` would miss "100% " and hand the poster's 1:1 to a
+  // full-width box; the sanitizer's trim is what keeps the height attribute standing, so the leg holds it here
+  'Full-width clip, padded: <video class="fx-pct-ws" src="/nope.mp4" poster="' + POSTER_URL + '" width="100% " height="120"></video>',
   "",
   // the witness: a poster and no height attribute, so its box follows the poster's ratio (200 by 100 before the poster
   // is decoded, 200 by 200 after); the leg waits on it before measuring the poster fixtures
@@ -142,7 +161,7 @@ async function inBrowser(t: any, body: (page: any, errors: string[]) => Promise<
   }
 }
 
-type Box = { width: number; height: number; right: number; parent: string; present: boolean; parentWidth: number; aspect: string };
+type Box = { width: number; height: number; right: number; parent: string; present: boolean; parentWidth: number; aspect: string; widthAttr: string | null };
 type Facts = {
   contain: string;
   body: { scrollWidth: number; clientWidth: number; maxScrollLeft: number; right: number };
@@ -151,9 +170,21 @@ type Facts = {
 };
 const MEDIA = ["fx-block", "fx-nested", "fx-canvas", "fx-video"];
 // the author-sized shapes and the height each keeps: a percentage width the cap never shrinks, an explicit height
-const SIZED: Record<string, number> = { "fx-pct": 30, "fx-pct-sq": 40, "fx-vidh": 120, "fx-vidonly": 120, "fx-pct-poster": 120 };
-// the author-shaped video: its attributes' width, or the column when that is narrower, and always the attributes' 640:360
-const POSTER = { cls: "fx-poster", width: 640, ratio: 360 / 640 };
+const SIZED: Record<string, number> = { "fx-pct": 30, "fx-pct-sq": 40, "fx-vidh": 120, "fx-vidonly": 120, "fx-pct-poster": 120, "fx-pct-ws": 120 };
+// the author-shaped videos: each one's attributes' width, or the column when that is narrower, and always the attributes'
+// ratio; the width attribute is spelled four ways a length can be (a spelling misread as no length gets no ratio written)
+const POSTERS: Record<string, { width: number; height: number }> = {
+  "fx-poster": { width: 640, height: 360 },                       // width="640"
+  "fx-poster-ws": { width: 640, height: 360 },                    // width=" 640 ": padded, and trimmed by the sanitizer before the viewer reads it
+  "fx-poster-frac": { width: 640.5, height: 360 },                // width="640.5": a fraction
+  "fx-poster-px": { width: 640, height: 360 },                    // width="640px": a unit after the digits, which the rules ignore
+};
+// percentage-width videos: not a length, so no ratio is written and the browser's own value stays `auto` (its mapping
+// stops at a percentage too); the height attribute stands (SIZED, above)
+const PCT_VIDEOS = ["fx-vidh", "fx-pct-poster", "fx-pct-ws"];
+// what the viewer reads after the sanitizer: every attribute value trimmed (DOMPurify trims all but `value`), so neither
+// the sheet's `[width$="%"]` nor mdBlock's dimension parse meets whitespace, and a padded percentage still ends in `%`
+const TRIMMED: Record<string, string> = { "fx-poster-ws": "640", "fx-pct-ws": "100%" };
 
 // measured in the page: the body's sideways scroll range, each fixture's box against the body's edge, the table's own scroll
 function measure(): Facts {
@@ -162,13 +193,13 @@ function measure(): Facts {
   body.scrollLeft = 100000; const maxScrollLeft = body.scrollLeft; body.scrollLeft = 0;
   const br = body.getBoundingClientRect();
   const els: Record<string, Box> = {};
-  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly", "fx-poster", "fx-pct-poster", "fx-witness"]) {
+  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly", "fx-poster", "fx-poster-ws", "fx-poster-frac", "fx-poster-px", "fx-pct-poster", "fx-pct-ws", "fx-witness"]) {
     const el = md.querySelector("." + cls) as HTMLElement | null;
-    if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false, parentWidth: 0, aspect: "" }; continue; }
+    if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false, parentWidth: 0, aspect: "", widthAttr: null }; continue; }
     const r = el.getBoundingClientRect();
     const parent = el.parentElement as HTMLElement;
     els[cls] = { width: r.width, height: r.height, right: r.right, parent: parent.className || parent.tagName.toLowerCase(), present: true,
-      parentWidth: parent.getBoundingClientRect().width, aspect: getComputedStyle(el).aspectRatio };
+      parentWidth: parent.getBoundingClientRect().width, aspect: getComputedStyle(el).aspectRatio, widthAttr: el.getAttribute("width") };
   }
   const table = md.querySelector("table") as HTMLElement;
   table.scrollLeft = 100000; const tMax = table.scrollLeft;
@@ -204,16 +235,32 @@ function check(f: Facts, at: string): void {
   // a pixel-sized video keeps the AUTHOR's shape whether the cap shrinks it or not: 640 wide where the column allows,
   // the column's width where it does not, and the attributes' 640:360 either way, though its poster is square. The
   // ratio is the viewer's inline declaration, not the browser's `auto 640 / 360`, which yields to the poster's ratio.
+  // Every spelling of a length gets it: a clip whose width the viewer misread as no length would be left at `auto`.
+  for (const [cls, dim] of Object.entries(POSTERS)) {
+    const b = f.els[cls];
+    assert.ok(b.present && b.parent === "p", at + ": ." + cls + " survives the sanitizer in its paragraph");
+    const want = Math.min(dim.width, b.parentWidth);
+    assert.ok(Math.abs(b.width - want) <= 0.5, at + ": ." + cls + " is " + want + " wide (its width attribute, or the column when narrower): " + b.width);
+    assert.ok(Math.abs(b.height - b.width * dim.height / dim.width) <= 1, at + ": ." + cls + " keeps the author's " + dim.width + ":" + dim.height + ", not the square poster's ratio: " + b.width + " by " + b.height);
+    assert.equal(b.aspect, dim.width + " / " + dim.height, at + ": ." + cls + "'s aspect-ratio is the attributes' ratio itself, without `auto` (which defers to the poster)");
+    assert.ok(b.right <= f.body.right + 0.5, at + ": ." + cls + " ends inside the body");
+  }
   {
-    const b = f.els[POSTER.cls];
-    assert.ok(b.present && b.parent === "p", at + ": ." + POSTER.cls + " survives the sanitizer in its paragraph");
-    const want = Math.min(POSTER.width, b.parentWidth);
-    assert.ok(Math.abs(b.width - want) <= 0.5, at + ": ." + POSTER.cls + " is " + want + " wide (its width attribute, or the column when narrower): " + b.width);
-    assert.ok(Math.abs(b.height - b.width * POSTER.ratio) <= 1, at + ": ." + POSTER.cls + " keeps the author's 640:360, not the square poster's ratio: " + b.width + " by " + b.height);
-    assert.equal(b.aspect, "640 / 360", at + ": the box's aspect-ratio is the attributes' ratio itself, without `auto` (which defers to the poster)");
-    assert.ok(b.right <= f.body.right + 0.5, at + ": ." + POSTER.cls + " ends inside the body");
     const w = f.els["fx-witness"];
     assert.ok(w.present && Math.abs(w.height - w.width) <= 1 && Math.abs(w.width - 200) <= 0.5, at + ": the witness (no height attribute) follows the decoded poster's 1:1, so the poster was applied before this measure: " + w.width + " by " + w.height);
+  }
+  // a percentage width is no length: the viewer writes nothing, so the box's aspect-ratio is the browser's `auto`
+  // (a `100 / 120` here would mean the `%` was read as a number; the height attribute would still hold the box, so
+  // only the declaration itself tells)
+  for (const cls of PCT_VIDEOS) {
+    const b = f.els[cls];
+    assert.ok(b.present, at + ": ." + cls + " survives the sanitizer");
+    assert.equal(b.aspect, "auto", at + ": ." + cls + " (a percentage width) gets no aspect-ratio written");
+  }
+  // the padded spellings arrive trimmed: the sanitizer's doing, and the reason a whitespace rule of the viewer's (the
+  // sheet's `$="%"`, the parse's leading-whitespace skip) is never exercised through it
+  for (const [cls, want] of Object.entries(TRIMMED)) {
+    assert.equal(f.els[cls].widthAttr, want, at + ": ." + cls + "'s width attribute reaches the viewer trimmed by the sanitizer");
   }
   // an author's explicit height on a percentage-width element (or on an unloaded video with no width) stands: the cap
   // shrinks nothing there, so height: auto has no ratio to keep and would only discard the attribute

@@ -275,3 +275,75 @@ test("a footnote's back link and a link over the reply's own <a name> land again
     assert.deepEqual(errors, [], "no page errors");
   });
 });
+
+// ── a comment thread's agent reply ───────────────────────────────────────────────────────────────────
+// The comment popover (renderCommentPopover, render.ts) renders an agent's reply in its msgs projection through md() into
+// `div.cmt-msg.agent` (commentMsgEl), the one md() body that wears no `.md`: the render a thread shows until its events
+// arrive, and the whole render under a kernel that sends none. The popover stands on document.body, so no `.md` ancestor
+// exists either. The delegate's body scope read `.md` alone, so a reply's own `#` link there was left to the browser's bare
+// lookup, which the prefixed id defeats (nothing moved, where the base scrolled the list), and a scheme-less link there was
+// left to the default action, which navigated the chat document in the same frame (the round-4 review of Slice 1). The scope
+// is `.md, .cmt-msg.agent` now (chat-link-open.test.ts pins it against commentMsgEl). The reply is mounted here
+// the way the popover mounts it: `div#cmt-pop.cmt-pop` on document.body, sized inline as at open (70% by 60% of the window),
+// a `.cmt-msgs` list inside, the reply filled from the chat's own pipeline (marked + sanitizeMd, as md() runs them).
+const REPLY = [
+  '<a href="#tgt" class="fx-cmt-hash">to the target</a> and <a href="/x" class="fx-cmt-rel">a root-relative link</a>',
+  FILLER,
+  '<p id="tgt" class="fx-cmt-tgt">the target</p>',
+  FILLER,   // text below the target too, so the list can bring the target to its top (a last element stops at the bottom edge)
+].join("\n\n");
+
+test("a comment thread's agent reply (div.cmt-msg.agent, no .md): its own # link scrolls the thread's list, a scheme-less link opens as a link, and the chat document never leaves", { timeout: 90000 }, async (t) => {
+  await inBrowser(t, async (page, errors, navs) => {
+    const shape = await page.evaluate((src: string) => {
+      document.getElementById("cmt-pop")?.remove();
+      const pop = document.createElement("div"); pop.className = "cmt-pop"; pop.id = "cmt-pop";
+      const head = document.createElement("div"); head.className = "cmt-head"; head.textContent = "a thread"; pop.appendChild(head);
+      const list = document.createElement("div"); list.className = "cmt-msgs"; pop.appendChild(list);
+      const reply = document.createElement("div"); reply.className = "cmt-msg agent";   // commentMsgEl's class list, as written
+      reply.innerHTML = (window as any).__mdProbe(src);
+      list.appendChild(reply);
+      document.body.appendChild(pop);
+      pop.style.width = Math.round(window.innerWidth * 0.7) + "px"; pop.style.height = Math.round(window.innerHeight * 0.6) + "px";
+      pop.style.left = "8px"; pop.style.top = "40px";
+      list.scrollTop = 0;
+      const a = reply.querySelector(".fx-cmt-hash") as HTMLElement;
+      const cs = getComputedStyle(list);
+      return { ids: Array.from(reply.querySelectorAll("[id]")).map((e) => e.id), hrefs: Array.from(reply.querySelectorAll("a[href]")).map((x) => x.getAttribute("href")),
+        inMd: !!a.closest(".md"), scrollable: list.scrollHeight > list.clientHeight, overflowY: cs.overflowY };
+    }, REPLY);
+    assert.deepEqual(shape.ids, ["user-content-tgt"], "precondition: the reply's id reached the DOM prefixed (SANITIZE_NAMED_PROPS)");
+    assert.deepEqual(shape.hrefs, ["#tgt", "/x"], "precondition: the hrefs are as written");
+    assert.equal(shape.inMd, false, "precondition: the reply wears no .md and has no .md ancestor (the popover stands on document.body)");
+    assert.ok(shape.scrollable && /auto|scroll/.test(shape.overflowY), "precondition: the thread's list scrolls (" + shape.overflowY + ")");
+
+    const state = () => page.evaluate(() => {
+      const list = document.querySelector("#cmt-pop .cmt-msgs") as HTMLElement;
+      const tgt = document.querySelector(".fx-cmt-tgt") as HTMLElement;
+      return { scrollTop: list.scrollTop, hash: location.hash, tgt: Math.round(tgt.getBoundingClientRect().top - list.getBoundingClientRect().top), listH: list.clientHeight };
+    });
+    const before = await state();
+    assert.ok(before.scrollTop === 0 && before.tgt > before.listH, "precondition: the target is below the list's bottom edge: " + JSON.stringify(before));
+
+    // 1. the reply's own # link: resolved under the prefix, the list scrolls the target to its top, the hash stays
+    let r = await clickCentre(page, ".fx-cmt-hash");
+    assert.equal(r.hit, "A", "the click lands on the link");
+    assert.equal(r.prevented, true, "the delegate found the target in the reply and cancelled the click's default action" + why(r));
+    const after = await state();
+    assert.ok(after.scrollTop > 0 && after.tgt >= -1 && after.tgt < 40, "the thread's list scrolled the target to its top: " + JSON.stringify(after));
+    assert.equal(after.hash, "", "the default was cancelled: no #tgt on the page's location");
+    assert.deepEqual(r.opens, [], "nothing opened");
+
+    // 2. a scheme-less link in the reply: opened at the resolved address in the user's browser, the document kept
+    await page.evaluate(() => { (document.querySelector("#cmt-pop .cmt-msgs") as HTMLElement).scrollTop = 0; });
+    r = await clickCentre(page, ".fx-cmt-rel");
+    assert.equal(r.hit, "A", "the click lands on the link");
+    assert.equal(r.prevented, true, "the delegate cancelled the click's default action, so the chat document does not follow the link" + why(r));
+    assert.deepEqual(r.opens, [["http://romp.test/x", "_blank", "noopener,noreferrer"]], "the delegate opened the link at the address the browser would have resolved");
+    assert.equal(page.url(), "http://romp.test/chat", "the chat page is where it was");
+
+    // the belt: the main frame saw the load and nothing after it (no #tgt, no /x)
+    assert.deepEqual(navs, ["http://romp.test/chat"], "the main frame never navigated after the load");
+    assert.deepEqual(errors, [], "no page errors");
+  });
+});

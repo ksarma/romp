@@ -309,13 +309,17 @@ function fallbackCss(): string {
     + [".md :not(pre) > code {", ".md pre {", ".md pre code {", ".md code.md-math-src, .fileview-md code.md-math-src {"].map(rule).join("\n");
 }
 
-test("a macro bomb stops at once with KaTeX's own error, a macro that repeats an argument is shown as source, and a rule or a kern is capped at the column", { timeout: 120000 }, async (t) => {
+test("a macro bomb stops at once with KaTeX's own error, a macro that repeats an argument or is defined with \\edef is shown as source, and a rule or a kern is capped at the column", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (page, errors) => {
     const long = "x+".repeat(500);                                                          // a 1,000-character body
     const bomb = "$$\\def\\a{" + long + "}" + "\\a".repeat(200) + "x$$";                    // 1,409 characters; 200,000 expanded; 20 s before
     const chain = "$$\\def\\a{" + long + "}\\def\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(20) + "x$$";   // 220 expansions; 22 s before
     const dup = "$\\def\\a#1{#1#1}\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{\\a{" + "x+".repeat(2500) + "}}}}}}}}}$";   // 512 copies of 5,000 characters before
-    const facts = await page.evaluate(([bomb, chain, dup, srcClass]: [string, string, string, string]) => {
+    // \edef stores its body EXPANDED (review round 4): ten uses of a 20-character \a is a 200-character \b, charged once at the
+    // definition and one expansion per use whatever its length, so 788 uses passed the count computed from the bodies as
+    // written (20 characters: KaTeX's default) and laid 157,600 characters of formula, 31 s of freeze over this pipeline
+    const edef = "$$\\def\\a{" + "a".repeat(20) + "}\\edef\\b{" + "\\a".repeat(10) + "}" + "\\b".repeat(788) + " x$$";   // 1,639 characters as written; the space keeps `\bx` from reading as one command
+    const facts = await page.evaluate(([bomb, chain, dup, edef, srcClass]: [string, string, string, string, string]) => {
       const w = window as any;
       const out = document.getElementById("out") as HTMLElement;
       const run = (src: string): number => { const t0 = performance.now(); out.innerHTML = w.__mdPipe(src); return Math.round(performance.now() - t0); };
@@ -325,14 +329,17 @@ test("a macro bomb stops at once with KaTeX's own error, a macro that repeats an
       const dupMs = run(dup);
       const dupCode = out.querySelector("p > code." + srcClass);
       const dupFacts = { code: !!dupCode, title: dupCode?.getAttribute("title") ?? null, katex: out.querySelectorAll(".katex").length, textLen: dupCode?.textContent?.length ?? 0 };
+      const edefMs = run(edef);
+      const edefPre = out.querySelector("pre"), edefCode = out.querySelector("pre > code." + srcClass);   // a display paragraph of its own: the title sits on the pre
+      const edefFacts = { code: !!edefCode, title: edefPre?.getAttribute("title") ?? null, katex: out.querySelectorAll(".katex").length, textLen: edefCode?.textContent?.length ?? 0 };
       // sizes: an inline rule and an inline kern, measured; the em is KaTeX's (its root is 1.21em of the 16px body here)
       run("before $\\rule{5000em}{5000em}$ after");
       const rule = (out.querySelector(".katex-rule") as HTMLElement | null)?.getBoundingClientRect();
       const em = parseFloat(getComputedStyle(out.querySelector(".katex") as HTMLElement).fontSize);
       run("$a\\kern{50000em}b$");
       const kern = (out.querySelector(".katex") as HTMLElement | null)?.getBoundingClientRect();
-      return { bombMs, bombErr, bombKatex, chainMs, chainErr, dupMs, dupFacts, rule: rule ? { w: rule.width, h: rule.height } : null, em, kernW: kern ? kern.width : null };
-    }, [bomb, chain, dup, MATH_SOURCE_CLASS]);
+      return { bombMs, bombErr, bombKatex, chainMs, chainErr, dupMs, dupFacts, edefMs, edefFacts, rule: rule ? { w: rule.width, h: rule.height } : null, em, kernW: kern ? kern.width : null };
+    }, [bomb, chain, dup, edef, MATH_SOURCE_CLASS]);
     assert.ok(facts.bombMs < 2000, "the 200-use bomb is stopped in well under the 20 s it took, on a loaded box too: " + facts.bombMs + " ms");
     assert.match(facts.bombErr || "", /Too many expansions/, "KaTeX's own visible error, the source shown in place: " + facts.bombErr);
     assert.equal(facts.bombKatex, 0, "nothing of the bomb rendered");
@@ -341,6 +348,9 @@ test("a macro bomb stops at once with KaTeX's own error, a macro that repeats an
     assert.ok(facts.dupMs < 2000, "the argument-repeating macro never reaches KaTeX: " + facts.dupMs + " ms");
     assert.deepEqual({ ...facts.dupFacts, title: null }, { code: true, title: null, katex: 0, textLen: dup.length - 2 }, "a code span in the paragraph, the TeX intact: " + JSON.stringify(facts.dupFacts));
     assert.match(facts.dupFacts.title || "", /^Not rendered: a macro in this formula repeats one of its arguments/, "its title says why");
+    assert.ok(facts.edefMs < 2000, "the \\edef bomb never reaches KaTeX (31 s of freeze before, under a count the bodies as written could not bound): " + facts.edefMs + " ms");
+    assert.deepEqual({ ...facts.edefFacts, title: null }, { code: true, title: null, katex: 0, textLen: edef.length - 4 }, "a code block where the display paragraph stood, the TeX intact: " + JSON.stringify(facts.edefFacts));
+    assert.match(facts.edefFacts.title || "", /^Not rendered: a macro in this formula is defined with \\edef or \\xdef, whose stored body is its expansion/, "its title says why");
     assert.ok(facts.rule && facts.rule.w > 100 && facts.rule.w <= MATH_MAX_SIZE_EM * facts.em + 1 && facts.rule.h <= MATH_MAX_SIZE_EM * facts.em + 1,
       "the rule renders, capped at MATH_MAX_SIZE_EM ems each way (78,650 px before): " + JSON.stringify(facts.rule) + " at " + facts.em + " px/em");
     assert.ok(facts.kernW !== null && facts.kernW < MATH_MAX_SIZE_EM * facts.em + 3 * facts.em, "the kern is capped at the column (786,520 px before): " + facts.kernW + " px");
@@ -379,7 +389,11 @@ test("the cap is per message too: twenty formulas just under the length cap rend
     assert.deepEqual(facts.titles, ["Not rendered: the formulas above already total " + fits * near.length + " characters of TeX; the limit for one message or note is " + MATH_TEX_BUDGET_CHARS + "."], "every one titled with the total and the limit");
     assert.equal(facts.inline, 1, "a short formula after them still fits the budget and renders");
     assert.ok(facts.prose.startsWith("last ") && facts.prose.includes("a code span"), "the prose after the formulas is intact: " + facts.prose);
-    assert.ok(facts.ms < 20000, "the whole message renders within a bound where twenty rendered formulas took 8 to 15 s of render and layout: " + facts.ms + " ms");
+    // the time bound is a ceiling with a loaded-box margin, not what catches the budget's loss: the counts above do that (with
+    // the check disabled, display 20 and shown 0). Measured in this window, render and innerHTML with no forced layout: 2.0 to
+    // 3.1 s here, 5.9 to 9.9 s with the budget off, so a bound that split the two would sit under three times the fixed time
+    // where this file allows four to six for the full suite's load; the 8 to 15 s the page froze for before adds the layout.
+    assert.ok(facts.ms < 20000, "the whole message renders inside a ceiling generous for a loaded box (2 to 3 s alone here): " + facts.ms + " ms");
     // the dress: dim and dotted-underlined where an author's code span keeps the code tone and no underline, in both shapes
     for (const [name, fb, au] of [["inline", facts.fallbackInline, facts.authorInline], ["block", facts.fallbackBlock, facts.authorBlock]] as const) {
       assert.ok(fb && au, name + ": both elements found");

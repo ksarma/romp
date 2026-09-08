@@ -1894,6 +1894,14 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .user-bubble blockquote, .user-bubble.md blockquote { color: rgba(255, 255, 255, 0.88); border-left-color: rgba(255, 255, 255, 0.40);
   font-family: var(--font-prose); }
 .user-bubble :not(pre) > code, .user-bubble.md :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+/* the math fill's source fallback (code.md-math-src; its rule sits with the viewer's code rules, after .fileview-md pre code)
+   in YOUR bubble: the code rule above outranks it (:not(pre) counts as its argument, (0,2,2) over (0,2,1)), so the fallback
+   computed white, the same as a code span you typed, under a var(--dim) dotted underline that sat near 1.7:1 on the fill
+   (review round 4). The bubble's dim tier is the blockquote's white tint, for the text and the underline both. The code
+   SPAN only: the block shape stands in the page-coloured well below, where var(--dim) reads as it does in .md and the
+   tint would not (a cream well in light). The .md form alone: the fallback exists only in sanitized markdown, so no bare
+   bubble holds one. (0,3,2) outranks the code rule wherever the sheet orders them. */
+.user-bubble.md :not(pre) > code.md-math-src { color: rgba(255, 255, 255, 0.88); text-decoration-color: rgba(255, 255, 255, 0.88); }
 /* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
    ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
    whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
@@ -3962,9 +3970,10 @@ body.filebrowse-open { overflow: hidden; }
    bound (one formula's length, one message's total, a macro that repeats an argument) or KaTeX could not lay it out. Dressed
    as unrendered source, not as a code span the author wrote: the dim tier in place of the code tone and a dotted underline,
    so the reader sees at a glance that this is a formula that did not render (the title says why; a phone has no hover to
-   read it with). One rule for the code span and the code block, in the chat's .md and the viewer's .fileview-md, at a
-   specificity above both sheets' code rules; the highlighter (render.ts) leaves the element alone. Byte-equal in feed.css
-   (fileview-parity.test.ts). */
+   read it with). One rule for the code span and the code block, in the chat's .md and the viewer's .fileview-md, above
+   both sheets' .md and .fileview-md code rules; the user bubble's code rule (styles.css, with the .user-bubble rules)
+   outranks it and the bubble carries a rule of its own for the span. The highlighter (render.ts) leaves the element alone.
+   Byte-equal in feed.css (fileview-parity.test.ts). */
 .md code.md-math-src, .fileview-md code.md-math-src {
   color: var(--dim); text-decoration: underline dotted; text-decoration-color: var(--dim); text-underline-offset: 0.15em;
 }

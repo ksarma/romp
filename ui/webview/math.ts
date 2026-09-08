@@ -76,7 +76,11 @@ export const MATH_TEX_BUDGET_CHARS = 100000;
  *  wide that the page's overflow-x: hidden put beyond reach. 50 em is about the chat column (some 55 em at the chat's
  *  font size), so a rule or a space as wide as the column still renders and nothing reshapes the transcript; ordinary
  *  layout (a fraction, a radical, a matrix with a `\\[1em]` row gap) never nears it and renders byte for byte as it does
- *  without the option (md-sanitize-katex-browser.test.ts holds that identity against katex.render's own output). */
+ *  without the option (md-sanitize-katex-browser.test.ts holds that identity against katex.render's own output).
+ *  The cap is on each size a formula asks for, not on their sum: a row of a thousand capped rules is as wide as a row
+ *  of that many characters, which the column clips as it clips any long inline formula (the transcript keeps its
+ *  shape), and a column of a thousand capped rules is as tall as it says, some 776,000 px for 18,000 characters of
+ *  TeX where a thousand plain rows are 19,000 px (review round 4, measured); the two length caps bound both. */
 export const MATH_MAX_SIZE_EM = 50;
 
 /** The most characters of macro bodies one formula may expand to (review round 3). The cap above measures the TeX as
@@ -87,12 +91,24 @@ export const MATH_MAX_SIZE_EM = 50;
  *  bounds the work: 1,000, the default, allows 1,000 uses of a body under the cap, and a value low enough to matter
  *  breaks ordinary formulas, whose `\,`, `\dots` and `\boxed` are macros that count against it (100 `\boxed` fail at
  *  50). So the bound is computed per formula (maxExpandFor below): each expansion pushes at most the longest macro
- *  body the formula defines, so maxExpand = this budget divided by that length keeps the expanded formula within the
- *  budget plus the TeX as written, and a formula that defines no macro keeps KaTeX's default, which its built-in
- *  macros, whose bodies are a few tokens, never turn into a cost (measured: 100 `\boxed{x}` in 9 ms). Over the bound
- *  KaTeX stops with its own visible error ("Too many expansions"), the source shown in place: the 200-use bomb and
- *  the chain both stop in about 10 ms. The value is the single-formula cap, so the most one formula lays out is two
- *  caps' worth, measured at 0.9 s for 40,000 flat characters here (node, KaTeX 0.18.1). */
+ *  body the formula defines, so maxExpand = this budget divided by that length, never above KaTeX's default (a short
+ *  body is no reason to allow MORE expansions than plain KaTeX does), keeps the expanded formula within the budget plus
+ *  the TeX as written, and a formula that defines no macro keeps KaTeX's default, which its built-in macros, whose
+ *  bodies are a few tokens, never turn into a cost (measured: 100 `\boxed{x}` in 9 ms). The bound is an
+ *  over-approximation once a formula defines a body longer than 20 characters: every expansion is then priced at that
+ *  body, the built-in macros' included (`\,` costs 3, `\dots` 2, `\boxed` 1), so a formula that defines a 200-character
+ *  body has 100 expansions for everything, and one that spends them on thin spaces is refused although its real
+ *  expansion is small (review round 4, measured: a 200-character body used once beside 34 `\,` is refused). Over the
+ *  bound KaTeX stops with its own visible error ("Too many expansions"), the source shown in place: the 200-use bomb
+ *  and the chain both stop in about 10 ms. The value is the single-formula cap, so the most one formula lays out is
+ *  two caps' worth, measured at 0.9 s for 40,000 flat characters here (node, KaTeX 0.18.1). The premise, that an
+ *  expansion pushes a body as WRITTEN, holds for `\def` and `\newcommand`, whose bodies KaTeX stores unexpanded, and
+ *  fails for `\edef` and `\xdef`, which store the EXPANDED body (review round 4): KaTeX charges that body's length
+ *  once, at the definition, and one expansion per later use, whatever the stored length, so `\def\a{<20 characters>}
+ *  \edef\b{<10 uses of \a>}` and 788 uses of `\b`, 1,635 characters of TeX under every bound here, was 998
+ *  expansions and 157,600 characters of formula, 31 s of freeze over the real pipeline. A formula that defines a macro
+ *  with either is shown as its source before KaTeX sees it (macroBounds's expandedBody), as the argument repeat is:
+ *  no ordinary notation needs an expanded-at-definition macro. */
 export const MATH_EXPANSION_BUDGET_CHARS = MATH_TEX_MAX_CHARS;
 
 /** The class the source fallback wears (a `code` element carrying the TeX), so the sheets can dress it as unrendered
@@ -107,8 +123,11 @@ const KATEX_DEFAULT_MAX_EXPAND = 1000;
 
 // The commands that give a macro a body KaTeX expands: TeX's `\def` family (with `\global` or `\long` in front, the
 // `\def` still matches) and LaTeX's `\newcommand` family. `\let` and `\futurelet` alias an existing command and add no
-// body of their own, so the body they alias is counted where it is defined.
+// body of their own, so the body they alias is counted where it is defined. `\edef` and `\xdef` are the two whose body
+// KaTeX stores EXPANDED (katex.mjs, the def handler: expandTokens before macros.set), so the group as written is no
+// measure of what a use pushes; macroBounds flags them and the fill shows the formula as source.
 const MACRO_DEFINER = /\\(?:g?def|[ex]def|newcommand|renewcommand|providecommand|DeclareMathOperator)\b/g;
+const EXPANDED_AT_DEFINITION = /^\\[ex]def$/;
 
 /** The brace group starting at `open` (the index of a `{`): the index one past its matching `}`, or the text's length
  *  when the group never closes (KaTeX would reject the formula; the rest of the text is counted as the body, which can
@@ -131,11 +150,16 @@ function braceGroupEnd(tex: string, open: number): number {
  *  builds is no way round the count. `argRepeat` is true when a body uses one of its parameters more than once (`#1`
  *  twice): each use copies the argument, so `\def\a#1{#1#1}` nested nine deep over 5,000 characters is 512 copies of
  *  them, an amplification no expansion count bounds when the body is four characters long, and one no ordinary
- *  notation needs (`\newcommand{\abs}[1]{\left|#1\right|}` uses its argument once). Exported for render-math.test.ts. */
-export function macroBounds(tex: string): { maxBody: number; argRepeat: boolean } {
-  let maxBody = 0, argRepeat = false;
+ *  notation needs (`\newcommand{\abs}[1]{\left|#1\right|}` uses its argument once). `expandedBody` is true when a
+ *  definer is `\edef` or `\xdef`: KaTeX stores their body expanded, charging its length once at the definition and one
+ *  expansion per use however long it is, so `maxBody`, read as written, undercounts what a use pushes by the factor the
+ *  body's own macros expand it (a 20-character `\a` ten times over is a 200-character body: 788 uses of it under the
+ *  default count were 157,600 characters of formula). Exported for render-math.test.ts. */
+export function macroBounds(tex: string): { maxBody: number; argRepeat: boolean; expandedBody: boolean } {
+  let maxBody = 0, argRepeat = false, expandedBody = false;
   MACRO_DEFINER.lastIndex = 0;
   for (let m = MACRO_DEFINER.exec(tex); m; m = MACRO_DEFINER.exec(tex)) {
+    if (EXPANDED_AT_DEFINITION.test(m[0])) expandedBody = true;
     let at = m.index + m[0].length;
     for (let group = 0; group < 2; group++) {
       // the first group: the next brace wherever it is, whatever spells the name before it; the second: only across
@@ -152,11 +176,14 @@ export function macroBounds(tex: string): { maxBody: number; argRepeat: boolean 
       at = end;
     }
   }
-  return { maxBody, argRepeat };
+  return { maxBody, argRepeat, expandedBody };
 }
 
 /** The maxExpand for a formula: KaTeX's default when it defines no macro, else the expansion budget divided by its
- *  longest body (at least 1), so whatever the count of uses, the bodies it expands stay within the budget. */
+ *  longest body, clamped to at least 1 and at most KaTeX's default (a body under 20 characters leaves the default in
+ *  place rather than loosening it), so whatever the count of uses, the bodies it expands stay within the budget. The
+ *  bodies are read as written, which is what KaTeX stores for `\def` and `\newcommand`; a formula with an `\edef` or
+ *  `\xdef` body never reaches KaTeX (renderMathPlaceholders shows it as source), so the count is not asked to bound it. */
 export function maxExpandFor(tex: string): number {
   const { maxBody } = macroBounds(tex);
   return maxBody > 0 ? Math.max(1, Math.min(KATEX_DEFAULT_MAX_EXPAND, Math.floor(MATH_EXPANSION_BUDGET_CHARS / maxBody))) : KATEX_DEFAULT_MAX_EXPAND;
@@ -258,13 +285,15 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  item 7), so in a bundle that carries the grammar such a paragraph's rendered text no longer equals
  *  its source and the anchor map refuses it with the Raw view offered, as it refuses a paragraph with
  *  `$x^2$` there today (Slice 5's math holes are where math meets the map); a bundle without the grammar
- *  has no fill and maps it as main did. Three bounds stand ahead of the one katex.render
+ *  has no fill and maps it as main did. Four bounds stand ahead of the one katex.render
  *  call, each shown as the source with its reason (showSource): a formula longer than MATH_TEX_MAX_CHARS;
  *  a formula that would take the call's rendered total past MATH_TEX_BUDGET_CHARS (the running total is
  *  this call's, so it is one message's or one note's; a shorter formula after it still renders while it
- *  fits); a formula whose macro definitions repeat an argument (macroBounds). The call itself runs under
- *  maxSize and a maxExpand computed from the formula's macro bodies (maxExpandFor), so KaTeX's own bounds
- *  hold too. throwOnError: false renders bad TeX as visibly-flagged source instead of throwing; the catch
+ *  fits); a formula whose macro definitions repeat an argument; a formula that defines a body with `\edef`
+ *  or `\xdef`, which KaTeX stores expanded (macroBounds; the two cases no expansion count over the bodies
+ *  as written can bound). The call itself runs under maxSize and a maxExpand computed from the formula's
+ *  macro bodies (maxExpandFor), so KaTeX's own bounds hold too. throwOnError: false renders bad TeX as
+ *  visibly-flagged source instead of throwing; the catch
  *  is a belt for the residual throws (an internal error), showing the source the same way and saying so
  *  on the console once per call, so a formula can never blank a message. A second run over the same
  *  root is a no-op: no placeholder survives the first. Plain and exported: chat-md.ts registers it as
@@ -287,6 +316,10 @@ export function renderMathPlaceholders(root: ParentNode): void {
     }
     if (macroBounds(tex).argRepeat) {
       showSource(el, tex, "Not rendered: a macro in this formula repeats one of its arguments, which can multiply the formula without bound.");
+      return;
+    }
+    if (macroBounds(tex).expandedBody) {
+      showSource(el, tex, "Not rendered: a macro in this formula is defined with \\edef or \\xdef, whose stored body is its expansion; its uses can multiply the formula without bound.");
       return;
     }
     rendered += tex.length;

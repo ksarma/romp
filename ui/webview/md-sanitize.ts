@@ -18,9 +18,13 @@
 //     (userContentTarget below: the viewer's fragmentTarget in file-view-links.ts, and the chat's delegate in
 //     render.ts, which resolves a message's `#` click the way GitHub's page script does, since the browser's
 //     default lookup reads the bare name and finds nothing). Rewriting hrefs here would break the viewer's
-//     `<a name="results">` before `## Results` pattern, whose `#results` link lands on the heading id
-//     `md-results`. The viewer's own heading ids (`md-<slug>`, mdBlock) are minted AFTER the sanitize and never
-//     gain the prefix.
+//     section link to a plain heading: `[results](#results)` over `## Results` with no `<a name>` above it lands
+//     on the heading id `md-results` (fragmentTarget's slug arm), and the viewer's heading ids (`md-<slug>`,
+//     mdBlock) are minted AFTER the sanitize and never gain the prefix, so a rewritten `#user-content-results`
+//     would name nothing; the viewer's `Go to <fragment>` title would show the prefix too. With an
+//     `<a name="results">` above the heading the link lands on that anchor under its prefixed name, through
+//     userContentTarget, whichever spelling the href carries (the bare arm reads an ask that already holds the
+//     prefix).
 //   • an inline `style` keeps only `color` and `background-color` declarations whose value is a literal
 //     colour (the user 2026-09-07, decision 6: coloured spans in existing notes survive; positioning and
 //     layout never reach the page). Everything else in the attribute is dropped, and the attribute goes
