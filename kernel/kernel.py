@@ -15772,7 +15772,13 @@ def _drive(msg, client):
         if _route_meta_command(be, sid, str(msg["text"]), client):
             _push_soon()
         else:
-            _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
+            # idle → instant echo; SDK busy → queued bubble, forwarded into the CLI one text at a time (each
+            # lands as its own message — the backend's feed hold, 2026-09-08; a SLASH COMMAND parks to fire
+            # alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at
+            # turn end. `sendId` is the client's identity for this send (its "sending…" bubble): it rides
+            # the queue entry, the echo and the landed record, so the bubble clears on ITS copy, by id.
+            _send_or_park(be, sid, str(msg["text"]), echo="human", send_id=str(msg.get("sendId") or ""))
+            _push_soon()
     elif t == "rewindSend" and msg.get("uuid") and msg.get("text"):
         # Edit a past message (SDK sessions): rewind the conversation to just before it and send the
         # edited text as the branch's next turn. NO optimistic kernel echo — the edit lands mid-chat
@@ -15917,7 +15923,8 @@ def _drive(msg, client):
         # AUTHORITATIVE (the user 2026-07-20): ok:false means the op already ran/was delivered — the
         # client toasts the 'too late' text and reverts its optimistic composer restore, instead of
         # the old silent miss that read as a successful cancel.
-        err = _cancel_parked(sid, int(msg["park"]), str(msg.get("md") or ""))
+        err = _cancel_parked(sid, int(msg["park"]), str(msg.get("md") or ""),
+                             send_id=str(msg.get("sendId") or "") or None)
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
                                    "md": str(msg.get("md") or ""), "text": err or ""}))
         _push_soon()
@@ -15926,7 +15933,8 @@ def _drive(msg, client):
         # webview already refilled the composer with its text. ok:false = the message had already
         # forwarded into the CLI, where NO recall exists — say so loudly (the user 2026-07-20: the
         # silent miss showed the message as deleted while the CLI answered it anyway).
-        err = _cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""))
+        err = _cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""),
+                                     send_id=str(msg.get("sendId") or "") or None)
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
                                    "md": str(msg.get("md") or ""), "text": err or ""}))
         _push_soon()
@@ -15938,9 +15946,10 @@ def _drive(msg, client):
         # one is found by body, and neither means it already forwarded into the CLI — the one honest
         # refusal, loud (the same cancelResult contract as the park/idx arms).
         md = str(msg["md"])
-        err = _cancel_parked(sid, -1, md)
+        _sid_id = str(msg.get("sendId") or "") or None
+        err = _cancel_parked(sid, -1, md, send_id=_sid_id)
         if err and hasattr(be, "unqueue"):
-            err2 = _cancel_backend_queued(be, sid, -1, md)
+            err2 = _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id)
             if err2 is None:
                 err = None
         if err:
@@ -28422,7 +28431,7 @@ def _cancel_miss_text(md):
             "and will be answered in the current turn")
 
 
-def _cancel_parked(sid, park, md):
+def _cancel_parked(sid, park, md, send_id=None):
     """Remove ONE parked op — the queued bubble's ✕ (the user 2026-07-08). Verified by body text: if the
     park list shifted between the push and the click (ops applied / another cancel), the index alone
     would remove the WRONG op — re-locate by md. Returns None on success; when the op is GONE (it
@@ -28450,6 +28459,13 @@ def _cancel_parked(sid, park, md):
     with _pending_ops_lock:
         ops = _pending_ops.get(sid) or []
         inflight_head = bool(ops) and ops[0] is _inflight_ops.get(sid)   # the head is with the backend this instant
+        if send_id:
+            # the client's send id rides a parked send as its 5th slot (_send_or_park): an exact name for
+            # the op, ahead of the index and the body (two parked sends can wear the same words) — 2026-09-08
+            hit = next((j for j, op in enumerate(ops)
+                        if op[0] == "send" and len(op) > 4 and op[4] == send_id and not (j == 0 and inflight_head)), -1)
+            if hit >= 0:
+                park, md = hit, _parked_md(ops[hit])
         if not (0 <= park < len(ops)) or (md and _parked_md(ops[park]) != md):
             park = next((j for j, op in enumerate(ops)
                          if _parked_md(op) == md and not (j == 0 and inflight_head)), -1) if md else -1
@@ -28467,24 +28483,35 @@ def _cancel_parked(sid, park, md):
     return None
 
 
-def _cancel_backend_queued(be, sid, idx, md):
+def _cancel_backend_queued(be, sid, idx, md, send_id=None):
     """unqueue with the same DRIFT GUARD as _cancel_parked: the click carries the bubble's body; if the
     backend queue moved between the push and the click (the input generator consumed the head), the raw
     index would cancel the WRONG message — re-locate by body. A client that sends no md (older bundle)
     keeps the raw-index behavior. Returns None on success; on a MISS — the message already forwarded to
     the CLI, where no recall exists — returns the 'too late' text for the caller to toast (the user
     2026-07-20). The exact text is re-verified INSIDE the backend's lock (unqueue's `expect`), so the
-    input generator racing this click can only turn it into a loud miss, never a wrong-message cancel."""
+    input generator racing this click can only turn it into a loud miss, never a wrong-message cancel.
+    `send_id` (the client's id for the send, riding the queue entry — 2026-09-08) names the entry
+    exactly: when the queue holds it, it wins over the index and the body, so of two queued entries
+    wearing the same words the ✕ removes the one it was pressed on; the backend re-locates by it under
+    its own lock too (unqueue's `send_id`)."""
     try:
         pending = be.pending_queued(sid)
     except Exception:
         pending = []
-    if md:
+    if send_id:
+        hit = next((i for i, q in enumerate(pending) if getattr(q, "send_id", "") == send_id), -1)
+        if hit >= 0:
+            idx = hit
+    if md and not (send_id and 0 <= idx < len(pending) and getattr(pending[idx], "send_id", "") == send_id):
         if not (0 <= idx < len(pending)) or _split_followup(pending[idx])[1] != md:
             idx = next((i for i, q in enumerate(pending) if _split_followup(q)[1] == md), -1)
     if not (0 <= idx < len(pending)):
         return _cancel_miss_text(md)
-    got = be.unqueue(sid, idx, pending[idx])
+    try:
+        got = be.unqueue(sid, idx, pending[idx], send_id=send_id) if send_id else be.unqueue(sid, idx, pending[idx])
+    except TypeError:
+        got = be.unqueue(sid, idx, pending[idx])       # a backend without the id parameter (a fake)
     if got is None:
         return _cancel_miss_text(md)
     # a recalled USER-TODO ANSWER re-opens its todo (the delivery-keyed stamp, docs/adr/0001): the
@@ -28541,10 +28568,13 @@ def _model_switches_live(be):
         return False
 
 
-def _backend_send(be, sid, text, user_todo=None):
+def _backend_send(be, sid, text, user_todo=None, send_id=None):
     """be.send, carrying a user-todo ANSWER's id WITH the message whenever the backend can act on
-    a later un-delivery. Two capability flags, both getattr-guarded like _forwards_sends (a
-    backend or test fake with neither takes the plain two-argument send):
+    a later un-delivery — and the CLIENT's send id (`send_id`, the "sending…" bubble's identity)
+    whenever the backend keeps it on the queue entry (queue_carries_send_ids, SDK; 2026-09-08),
+    so the chat's copies of the send carry the id the client matches on. Two capability flags
+    for the todo, both getattr-guarded like _forwards_sends (a backend or test fake with neither
+    takes the plain two-argument send):
       * queue_carries_todos (SDK): the id rides the backend queue entry, its persisted reg
         mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
         (_user_todo_answer_lost) machinery read it off the object they act on, with no
@@ -28556,10 +28586,13 @@ def _backend_send(be, sid, text, user_todo=None):
         stamp at the truthy send stays optimistic and the refusal event corrects it. (Before
         the clear-guard the paste was unconditional, so the truthy tmux send really WAS the
         delivery; that contract died with PR-741.)"""
+    kw = {}
     if user_todo and (getattr(be, "queue_carries_todos", False)
                       or getattr(be, "send_reports_refusal", False)):
-        return be.send(sid, text, user_todo=user_todo)
-    return be.send(sid, text)
+        kw["user_todo"] = user_todo
+    if send_id and getattr(be, "queue_carries_send_ids", False):
+        kw["send_id"] = send_id
+    return be.send(sid, text, **kw)
 
 
 # A leading slash-COMMAND token ("/autocompact auto", "/compact"), not a path ("/tmp/x is broken",
@@ -28574,7 +28607,7 @@ def _is_slash_command(text):
     return bool(_SLASH_CMD_RE.match((text or "").strip()))
 
 
-def _send_or_park(be, sid, text, echo=None, user_todo=None):
+def _send_or_park(be, sid, text, echo=None, user_todo=None, send_id=None):
     """Deliver `text` now — or PARK it in the sid's FIFO. Park when: (a) the session is COMPACTING (the user
     2026-07-02: a mid-compaction send's live-tail echo opened a turn that KILLED the 'compacting' cue — a
     parked send lands no echo atom, so the cue stays and the send shows as a queued bubble in park order);
@@ -28618,8 +28651,16 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
     them would only have substituted lock-acquisition order — and a park behind an existing queue is atomic
     with the check that found the queue."""
     cmd = _is_slash_command(text)
-    op = ("command", text, echo) if cmd else (
-        ("send", text, echo, user_todo) if user_todo else ("send", text, echo))
+    # a send op's 4th slot is its user-todo id, its 5th the client's send id (2026-09-08) — each present
+    # only when set, so an op without them keeps the shape every reader and the persisted mirror know
+    if cmd:
+        op = ("command", text, echo)
+    elif send_id:
+        op = ("send", text, echo, user_todo or "", str(send_id))
+    elif user_todo:
+        op = ("send", text, echo, user_todo)
+    else:
+        op = ("send", text, echo)
     if _compacting_now(sid) or _pending_ops.get(sid) or _limit_hold(sid):
         _park_op(sid, op)
         return "parked"
@@ -28628,7 +28669,7 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
         return "parked"
     if _park_behind_queue(sid, op):
         return "parked"
-    got = _backend_send(be, sid, text, user_todo)    # an answer's id rides the queue entry itself
+    got = _backend_send(be, sid, text, user_todo, send_id)    # an answer's id and the send id ride the queue entry itself
     if echo:
         _optimistic_echo(sid, text, author=echo)
     return got
@@ -28864,7 +28905,8 @@ def _deliver_send_batch(be, sid, run):
         return
     if _forwards_sends(be):
         for op in run:
-            got = _backend_send(be, sid, op[1], op[3] if len(op) > 3 else None)
+            got = _backend_send(be, sid, op[1], op[3] if len(op) > 3 else None,
+                                op[4] if len(op) > 4 else None)
             if op[2]:
                 _optimistic_echo(sid, op[1], author=op[2])
             if got and len(op) > 3 and op[3]:
@@ -29940,6 +29982,58 @@ def _merge_tx_sets(session, sid):
     return sets
 
 
+# Landed records that carry a client SEND ID (2026-09-08): sid → {record uuid: [send ids]}, filled by
+# _note_send_landings as a chat build retires an id-carrying input echo, read by build_session to stamp
+# the record's user event (`sendIds`). In memory only and bounded: the ids matter for as long as a client
+# still holds the send's "sending…" bubble, which no page reload survives.
+_landed_send_ids = {}
+_LANDED_SEND_IDS_CAP = 64
+
+
+def _note_send_landings(sid, live, turns, tx_text_t):
+    """Map each id-carrying input echo this build's prune retires (its text LANDED — the rule prune_live
+    applies: a user record keyed to the text, stamped at or after the send) to the RECORD that landed it,
+    so build_session can stamp that record's event with the send id and the client clears exactly that
+    send's bubble — by id, never by the words: two sends can wear the same words, and one record can wear
+    two sends' words (the CLI's queue fold, the incident this ships with). Echoes are read in send order
+    and each claims the OLDEST unclaimed matching record at or after its send time, so two identical
+    sends map to their two records in order; a record's claim is per (record, text), so one record that
+    carries two texts is claimed once per text. An echo whose record is not among the atoms (a landing
+    the boot scan recorded, `_landed`) maps nothing and leaves the client to its text match."""
+    ids = _landed_send_ids.setdefault(str(sid), {})
+    claimed = {(u, k) for u, v in ids.items() for k in v.get("keys", ())}
+    for a in live:
+        et, send_id = a.get("_echo_text"), a.get("_send_id")
+        if not (et and send_id) or a.get("command"):
+            continue
+        key = sb.echo_text_key(et)
+        t0 = float(a.get("t") or 0)
+        if not key or float(tx_text_t.get(key) or 0) < t0:
+            continue                                   # not landed by this transcript: the prune keeps the echo
+        for turn in turns:
+            atoms = turn["atoms"]
+            if atoms and float(atoms[-1].get("t") or 0) < t0:
+                continue                               # a whole turn before the send
+            hit = None
+            for atom in atoms:
+                u = atom.get("uuid")
+                if not u or float(atom.get("t") or 0) < t0 or (u, key) in claimed:
+                    continue
+                if key in _atom_user_texts(atom):
+                    hit = u
+                    break
+            if hit is None:
+                continue
+            claimed.add((hit, key))
+            ent = ids.setdefault(hit, {"ids": [], "keys": []})
+            if send_id not in ent["ids"]:
+                ent["ids"].append(send_id)
+            ent["keys"].append(key)
+            break
+    while len(ids) > _LANDED_SEND_IDS_CAP:
+        del ids[next(iter(ids))]                       # insertion order: the oldest landing goes first
+
+
 def _merge_live_atoms(session, sid, shown_texts=()):
     """Merge in-memory LIVE-TAIL atoms into the parsed session, AHEAD of the transcript on disk, so messages
     appear instantly (the stream / a composer send leads the disk write). NON-MUTATING — `session` is the
@@ -29977,6 +30071,10 @@ def _merge_live_atoms(session, sid, shown_texts=()):
     withheld = live_text_uuids - tx_text_uuids
     if withheld:
         tx_uuids = tx_uuids - withheld           # a NEW set: the memoized one is shared with every later build
+    if any(a.get("_send_id") for a in live):
+        # BEFORE the prune retires them: which record lands each id-carrying echo (the client's bubble
+        # identity rides to the landed event — _note_send_landings)
+        _note_send_landings(sid, live, session["turns"], tx_text_t)
     be.prune_live(sid, tx_uuids, tx_text_t, human_floor)
     hide = tx_texts | {sb.echo_text_key(t) for t in shown_texts if t}    # transcript dups + already-shown queued msgs
     # `live` was snapshotted before the prune, so each of prune_live's three exits has its paint-side twin
@@ -30751,6 +30849,15 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                             if a.get("dropped") and a.get("_echo_text"):
                                 ev["undelivered"] = True
                                 ev["echoT"] = a.get("t")
+                            # the client's send id(s) this event stands for (2026-09-08): an echo carries
+                            # its send's; a landed record the ids of every send it landed
+                            # (_note_send_landings). The client clears its "sending…" bubble on these.
+                            if a.get("_send_id"):
+                                ev["sendIds"] = [str(a["_send_id"])]
+                            else:
+                                _lsi = _landed_send_ids.get(sid, {}).get(a.get("uuid"))
+                                if _lsi and _lsi.get("ids"):
+                                    ev["sendIds"] = list(_lsi["ids"])
                             if fu_goal is not None or (author == "human" and "romp-goal-id" in text):
                                 ev["followUp"] = True
                                 if fu_goal:
@@ -31147,6 +31254,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                 continue
             goal, body, fu, ctx = _split_followup(t)
             m = {"md": body, "idx": i, "cancelable": cancelable, **_queued_romp_flags(t)}   # idx ↔ the backend's _pending position (cancelQueued)
+            if getattr(t, "send_id", ""):
+                m["sendId"] = str(t.send_id)          # the client's identity for this entry: its bubble, its ✕
             if fu:
                 m["followUp"] = True
                 if goal:
@@ -31165,6 +31274,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         for j, op in enumerate(pending_ops):
             m = {"md": _parked_md(op), "park": j, "cancelable": True, **(_queued_romp_flags(op[1]) if op[0] == "send" else {})}
             if op[0] == "send":
+                if len(op) > 4 and op[4]:
+                    m["sendId"] = str(op[4])          # a parked send's client id (_send_or_park's 5th slot)
                 goal, _, fu, ctx = _split_followup(op[1])
                 if fu:
                     m["followUp"] = True

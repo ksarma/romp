@@ -4386,36 +4386,45 @@ def key_fast_org_env(key: str, log) -> dict[str, str]:
 # The live session (one quarantined asyncio thread).
 # ---------------------------------------------------------------------------
 
-class _TodoText(str):
-    """A queued user-todo ANSWER's text: a plain str to every consumer (equality, sets, joins,
-    json — all unchanged), with the id of the todo it answers riding as an attribute. The id
-    travels WITH the message — through _pending, the reg mirror, the fed-turn twin and the
-    stranded re-head — so the recall and loss machinery read it off the entry they act on, and no
-    side table (whose lifetime was the kernel process while the queue it tracked was persisted —
-    the round-2 2026-08-22 restart-recall hole) has to remember which message answers what.
-    getattr(entry, "todo", "") reads it off any queue text."""
+class _QueueText(str):
+    """A queued text that carries an identity: a plain str to every consumer (equality, sets,
+    joins, json — all unchanged), with up to two ids riding as attributes. `todo` is the id of
+    the user todo this text ANSWERS (the 2026-08-22 shape, then named _TodoText); `send_id` is
+    the id the CLIENT minted for the send at the press (2026-09-08), so its "sending…" bubble
+    can be matched to this exact entry — in the queued chip, in the echo, and in the record that
+    lands it — instead of to the first entry wearing the same words. Both travel WITH the
+    message — through _pending, the reg mirror, the fed-turn twin and the stranded re-head — so
+    the recall and loss machinery read them off the entry they act on, and no side table (whose
+    lifetime was the kernel process while the queue it tracked was persisted — the round-2
+    2026-08-22 restart-recall hole) has to remember which message is which.
+    getattr(entry, "todo", "") / getattr(entry, "send_id", "") read them off any queue text."""
 
-    __slots__ = ("todo",)
+    __slots__ = ("todo", "send_id")
 
-    def __new__(cls, text, todo):
+    def __new__(cls, text, todo="", send_id=""):
         o = str.__new__(cls, text)
         o.todo = str(todo or "")
+        o.send_id = str(send_id or "")
         return o
+
+
+_TodoText = _QueueText   # the answer-only name the 2026-08-22 change introduced; readers and tests keep it
 
 
 def _queue_text(e):
     """One persisted queue entry → the text the in-memory queue holds: a bare string stays a bare
-    string; a {"text","todo"} dict (a user-todo ANSWER — see _TodoText) comes back carrying its
-    id. None for malformed junk, exactly as the old strings-only filter treated it. Bare entries
-    are byte-identical to the pre-todo mirror in BOTH directions, so every non-answer send
-    round-trips untouched by any kernel version; an OLDER kernel reading a dict entry drops it
+    string; a {"text","todo","sendId"} dict (an id-carrying entry — see _QueueText) comes back
+    carrying its ids. None for malformed junk, exactly as the old strings-only filter treated it.
+    Bare entries are byte-identical to the pre-todo mirror in BOTH directions, so a send with no
+    id round-trips untouched by any kernel version; an OLDER kernel reading a dict entry drops it
     from its seed (its filter is isinstance(str)) — accepted for the downgrade path: the message
-    class did not exist before the id rode the entry."""
+    class did not exist before the ids rode the entry."""
     if isinstance(e, str):
         return e or None
     if isinstance(e, dict) and isinstance(e.get("text"), str) and e["text"]:
         todo = str(e.get("todo") or "")
-        return _TodoText(e["text"], todo) if todo else e["text"]
+        send_id = str(e.get("sendId") or "")
+        return _QueueText(e["text"], todo, send_id) if (todo or send_id) else e["text"]
     return None
 
 
@@ -4426,9 +4435,17 @@ def _queue_texts(q):
 
 def _queue_wire(t):
     """One in-memory queue text → its persisted shape: bare strings stay bare (byte-compat with
-    every reader of reg['queue']); an id-carrying answer serializes as {"text","todo"}."""
-    todo = getattr(t, "todo", "")
-    return {"text": str(t), "todo": todo} if todo else str(t)
+    every reader of reg['queue']); an id-carrying entry serializes as {"text","todo","sendId"},
+    each id only when set."""
+    todo, send_id = getattr(t, "todo", ""), getattr(t, "send_id", "")
+    if not (todo or send_id):
+        return str(t)
+    d = {"text": str(t)}
+    if todo:
+        d["todo"] = todo
+    if send_id:
+        d["sendId"] = send_id
+    return d
 
 
 class _AskCancelled(Exception):
@@ -4746,6 +4763,18 @@ class SdkSession:
         #                              queue so no message can share its pre-turn window (the CLI batches
         #                              everything pre-start into ONE record — the 2026-08-25 fold); cleared
         #                              by the turn's first streamed message, an exact event, or a reconnect
+        # THE FED TEXT THE CLI HAS NOT YET TAKEN (2026-09-08), the same fold generalized to every send: the
+        # CLI drains EVERY queued prompt it holds into ONE user message when it next reads its queue — at
+        # a turn's start (the pre-turn window above) or when a running turn ends — so two texts fed into
+        # it before that drain reach the agent fused: one message, the first text then the second, which
+        # the chat showed as one bubble wearing both (the incident: a composer send and a todo reply
+        # during one open turn). inputs() therefore feeds ONE text and holds the rest until the CLI
+        # demonstrably TOOK it — see _untaken_taken for the exact events — so every queued text lands as
+        # its own record, in queue order. RUNTIME-ONLY: a reconnect restarts the feed (the loop top clears
+        # it); a restart re-delivers the persisted queue. None, or {"text", "fresh" (fed from idle),
+        # "settled" (the turn it was fed into has since ended), "t", "off", "fsid" (the transcript mark
+        # the landing scan starts at — _transcript_mark)}.
+        self._untaken = None
         # A RESTORED /compact must light the compacting bracket too (the user 2026-07-22). send() sets
         # _compacting when it enqueues a compact command, but a persisted queue lands here INSTEAD of
         # going through send() — any /compact still queued when the kernel died arrives this way. Without
@@ -4788,15 +4817,16 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("boot-settled callback (%s) failed: %s" % (self.name, e))
 
-    def enqueue(self, text: str, todo: str = ""):
+    def enqueue(self, text: str, todo: str = "", send_id: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
         before the loop is ready too (the generator drains _pending on its first pass).
-        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo): it rides the
-        entry itself (_TodoText), through the reg mirror and back, so a recall reads the id off
-        the entry it removes — never a kernel-side table a restart empties."""
-        if todo:
-            text = _TodoText(text, todo)
+        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo) and `send_id`
+        the client's id for the send (SdkBackend.send's send_id): both ride the entry itself
+        (_QueueText), through the reg mirror and back, so a recall reads them off the entry it
+        removes — never a kernel-side table a restart empties."""
+        if todo or send_id:
+            text = _QueueText(text, todo, send_id)
         with self._lock:
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
@@ -4836,18 +4866,25 @@ class SdkSession:
         with self._lock:
             return list(self._inflight_texts)
 
-    def unqueue(self, idx: int, expect: str | None = None) -> str | None:
+    def unqueue(self, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
-        and return its raw text, or None if it's gone — a user-todo ANSWER comes back as its
-        _TodoText, so the caller reads the ask it was clearing off the entry itself (the recall's
+        and return its raw text, or None if it's gone — an id-carrying entry comes back as its
+        _QueueText, so the caller reads the ask it was clearing off the entry itself (the recall's
         reopen). Lets the user CANCEL a message they queued
         behind a busy turn — click it in the chat to pull it back out and re-edit (the user 2026-06-27).
         Only pending (not-yet-started) turns are cancelable; once the input generator has fed a turn to
         the CLI there is no recall (the control protocol has no queue-remove), so a miss here is the
         caller's cue to say so loudly. `expect` is the exact text the click meant: verified (and, on a
         shifted index, re-located) UNDER the lock, so the input generator consuming entries between the
-        caller's snapshot and this pop can never cancel the wrong message."""
+        caller's snapshot and this pop can never cancel the wrong message. `send_id` names the entry
+        exactly (the id the client minted at the press, riding the entry — _QueueText): when given
+        and found, it wins over both the index and the text, so of two queued entries wearing the same
+        words the ✕ removes the one it was pressed on (2026-09-08)."""
         with self._lock:
+            if send_id:
+                hit = next((i for i, q in enumerate(self._pending) if getattr(q, "send_id", "") == send_id), -1)
+                if hit >= 0:
+                    idx, expect = hit, None
             if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
                 idx = next((i for i, q in enumerate(self._pending) if q == expect), -1)
             item = self._pending.pop(idx) if 0 <= idx < len(self._pending) else None
@@ -5530,6 +5567,12 @@ class SdkSession:
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
                     blocked = blocked or self._ping_feeding   # the ping's record must not share its window
+                    # ONE FED TEXT AT A TIME (2026-09-08): the last fed text is still in the CLI's queue —
+                    # the CLI drains every queued prompt into one message when it next reads that queue,
+                    # so a second feed now would reach the agent fused with the first (the incident). Hold
+                    # until the CLI demonstrably took it (_untaken_taken); mid-turn forwards still flow, one
+                    # per take, so a message sent mid-turn still reaches the running turn at its next step.
+                    blocked = blocked or self._untaken is not None
                     # a reconnect is ARMED (_reconnect: the waker is about to tear this client down) →
                     # hold the head for the NEXT client. The settle wakes this feeder and arms a deferred
                     # reconnect in the same finally, both wakeups queued FIFO on the loop, so without
@@ -5553,9 +5596,18 @@ class SdkSession:
                         # and this increment read as idle and could feed the op behind into this very turn
                         self.inflight += 1
                         self._inflight_texts.append(item)   # the fed-turn twin — see its init comment
+                        # the hold above, armed under the same lock as the pop: nothing else feeds until the
+                        # CLI has taken this text (_untaken_taken clears it). The transcript mark is taken
+                        # below, before the yield — the CLI has not seen the text yet, so its record can only
+                        # begin at or after the file's size now (_transcript_mark's argument).
+                        self._untaken = {"text": str(item), "fresh": fresh, "settled": False,
+                                         "t": int(time.time()), "off": None, "fsid": None}
                 if item is None:
                     await self._input_wake.wait()   # idle, or holding behind a wedged turn → wait for a change
                     continue
+                off, fsid = self.backend._transcript_mark(self.sid)
+                if self._untaken is not None:
+                    self._untaken["off"], self._untaken["fsid"] = off, fsid
                 self._persist_queue()               # the fed turn leaves the persisted queue (it lands in the transcript)
                 if fresh:
                     self.since = int(time.time())    # a new turn starts now (mid-turn forwards keep the turn's clock)
@@ -5582,6 +5634,7 @@ class SdkSession:
             self._wake.clear()
             self._reconnect = False
             self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
+            self._untaken = None         # same: the fed text is the reconcile's (stranded or landed), not a hold's
             # the abandoned client's live subagents and background tasks died with it — retire them on
             # the teardown event itself (and tell the session what it lost, as a CLI death does)
             self._drop_live_work("reconnect")
@@ -6122,6 +6175,34 @@ class SdkSession:
                           % (self.name, type(e).__name__, kind, again, _failure_consequence(msg, settled=settled),
                              type(e).__name__, _mask_ids(e), _compact_tb(e)), problem=True, key=key)
 
+    def _untaken_taken(self, msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
+        """Has the CLI TAKEN the last fed text (self._untaken), so the next queued text may be fed
+        without the two fusing into one message? `msg` is the frame just streamed. Three exact events,
+        each proving the text left the CLI's queue:
+          * fed from IDLE (`fresh`): any turn frame after the feed. The only prompt the CLI held was
+            this one, so the turn now streaming is its turn — the rename ping's rule (_ping_feeding).
+          * fed MID-turn, and the turn it went into has since ENDED (`settled`, set at that turn's
+            ResultMessage): any turn frame after that. The CLI drains its queue when a turn ends, so the
+            next turn's first frame — its init, or its first assistant message — says the drain happened
+            and the text went with it; a feed between the result and this frame is the 2026-08-25 fold.
+          * fed MID-turn, the turn still running: the text's record LANDED — the queued_command
+            attachment a mid-turn splice leaves at a tool boundary (the same record _text_landed reads
+            for the re-delivery guard), scanned from the feed-time mark forward. This is the accelerator:
+            the next text can follow it into the same turn instead of waiting for the turn to end.
+        Only turn frames count (the init and other system frames, assistant messages, the CLI's own user
+        records, results): a rate-limit or progress frame proves nothing about the queue. The scan is
+        bounded: it resumes at the last complete line it read and skips a file that has not grown."""
+        u = self._untaken
+        if u is None:
+            return False
+        if not (isinstance(msg, (AssistantMessage, ResultMessage, SystemMessage))
+                or type(msg).__name__.lstrip("_") == "UserMessage"):
+            return False
+        if u.get("fresh") or u.get("settled"):
+            return True
+        return self.backend._text_landed(self.sid, u["text"], u.get("t"), u.get("off"), u.get("fsid"),
+                                         cursor=u) is True
+
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
             # the ping's turn is streaming — the CLI demonstrably started it, so a message fed from
@@ -6130,6 +6211,14 @@ class SdkSession:
             self._ping_feeding = False
             if self._input_wake is not None:
                 self._input_wake.set()   # same-loop thread — the settle path sets it the same way
+        if getattr(self, "_untaken", None) is not None \
+                and self._untaken_taken(msg, AssistantMessage, ResultMessage, SystemMessage):
+            # the CLI took the last fed text (an exact event — see _untaken_taken): the next queued text
+            # can go in as its own message now. Checked BEFORE the result settle below marks the turn
+            # ended, so a result frame is read against the state the text was fed into.
+            self._untaken = None
+            if self._input_wake is not None:
+                self._input_wake.set()
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             self._fire_boot_settled()   # the CLI is up and streaming — its transcript catch-up burst
             #                             is over, so the boot-stagger slot (if any) frees NOW
@@ -6497,6 +6586,11 @@ class SdkSession:
                 # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
                 self.inflight = 0
                 self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
+                if getattr(self, "_untaken", None) is not None:
+                    # a text fed MID-turn is still in the CLI's queue at this result: the CLI drains it
+                    # into the NEXT turn, whose first frame is the take (_untaken_taken). Not cleared
+                    # here — a feed right after this result would land in the same drain (the fold).
+                    self._untaken["settled"] = True
                 # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
                 # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
                 self._compacting = False
@@ -10435,12 +10529,18 @@ class SdkBackend:
                 return True
             return bool(s._interrupted
                         or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
+                        or getattr(s, "_untaken", None) is not None   # held behind a fed text the CLI has not taken
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str, user_todo: str | None = None) -> bool:
+    def send(self, sid: str, text: str, user_todo: str | None = None, send_id: str | None = None) -> bool:
         """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
-        it rides the queue entry (_TodoText) and the echo below, so the recall and the loss
-        machinery can reopen exactly that ask — the id travels with the message end to end."""
+        it rides the queue entry (_QueueText) and the echo below, so the recall and the loss
+        machinery can reopen exactly that ask — the id travels with the message end to end.
+        `send_id` is the id the CLIENT minted for this send at the press (2026-09-08): it rides the
+        same entry and the echo (and, once the record lands, the chat stamps it on that record —
+        kernel._note_send_landings), so the client's "sending…" bubble is matched to THIS send by
+        id — its queued copy, its echo, its landing, its ✕ — never to the first copy of the same
+        words. Empty for sends with no client identity (an agent's `romp send`, a nudge)."""
         s = self._ensure(sid)
         if not s:
             return False
@@ -10459,7 +10559,10 @@ class SdkBackend:
         # 2026-09-06, is where _text_landed starts the scan for this echo — see _transcript_mark).
         sent_t = int(time.time())
         sent_off, sent_fsid = self._transcript_mark(sid)
-        s.enqueue(text, todo=user_todo or "")
+        if send_id:
+            s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
+        else:
+            s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -10480,6 +10583,8 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
+        if send_id:
+            echo["_send_id"] = str(send_id)                  # the client's id: the bubble's exact match
         if sent_off is not None:
             echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._stash_live(sid, key, echo)
@@ -10531,6 +10636,8 @@ class SdkBackend:
                      "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
                 if a.get("_todo"):
                     e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+                if a.get("_send_id"):
+                    e["sendId"] = str(a["_send_id"])   # …and the client's send id, for the bubble still open there
                 if a.get("_echo_off") is not None:
                     e["off"] = int(a["_echo_off"])                 # the send-time transcript mark (_transcript_mark)
                     e["fsid"] = str(a.get("_echo_fsid") or "")
@@ -10567,6 +10674,8 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
+                if e.get("sendId"):
+                    atom["_send_id"] = str(e["sendId"])
                 if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
                     atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
                 if e.get("landed"):
@@ -10686,7 +10795,8 @@ class SdkBackend:
                             if a["_echo_text"] in have_texts:
                                 continue
                             todo = str(a.get("_todo") or "")   # a redelivered ANSWER keeps its ask's id
-                            add.append(_TodoText(a["_echo_text"], todo) if todo else a["_echo_text"])
+                            send_id = str(a.get("_send_id") or "")   # …and a send its client id (its bubble is still open there)
+                            add.append(_QueueText(a["_echo_text"], todo, send_id) if (todo or send_id) else a["_echo_text"])
                         if add:
                             # behind the surviving queue: original send order
                             reg["queue"] = [_queue_wire(t) for t in have + add]
@@ -10715,7 +10825,7 @@ class SdkBackend:
         self._persist_echoes(sid)
         self._wake_push()
 
-    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
+    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None, cursor=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
         echo may still be un-pruned at boot), so a queue re-add without this scan would duplicate a
         delivered message. Three answers, because the caller acts on each differently:
@@ -10744,32 +10854,49 @@ class SdkBackend:
         pre-filtered on the two record types' literals only, never on the text: JSON escapes newlines
         and quotes, so a raw-line prefix test skipped every multi-line send (a quote chip's reply, for
         one) as never landed. A mark taken while the CLI was mid-write leaves a line fragment first; it
-        fails to parse and is skipped like any other non-record line."""
+        fails to parse and is skipped like any other non-record line. `cursor`, a dict the caller
+        keeps across calls, makes a REPEATED scan for the same text resumable (the feed hold's take
+        check, _untaken_taken, runs once per streamed frame): a miss records where the scan stopped —
+        after the last COMPLETE line, so a record the CLI was mid-write on is re-read whole next time —
+        and the next call starts there, or returns at once when the file has not grown; a cursor from
+        another file (the fsid changed) is ignored and the mark rule above applies."""
         try:
             reg = read_reg(self.state_dir, sid) or {}
             cur = str(reg.get("lastSid") or sid)
             path = transcript_path(reg.get("cwd") or "", cur)
             want = echo_text_key(text)
             floor = int(t or 0)
+            size = os.path.getsize(path)
             start = 0
-            if (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
-                    and str(fsid) == cur and 0 <= off <= os.path.getsize(path)):
+            so = cursor.get("scan_off") if isinstance(cursor, dict) else None
+            if (isinstance(so, int) and not isinstance(so, bool) and cursor.get("scan_fsid") == cur
+                    and 0 <= so <= size):
+                start = so
+            elif (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
+                    and str(fsid) == cur and 0 <= off <= size):
                 start = off
-            with open(path, "rb") as f:
-                f.seek(start)
-                for raw in f:
-                    if b'"user"' not in raw and b'"queued_command"' not in raw:
-                        continue
-                    try:
-                        rec = json.loads(raw.decode(errors="replace"))
-                    except ValueError:
-                        continue
-                    if not isinstance(rec, dict) or want not in _landed_texts(rec):
-                        continue
-                    ts = _record_epoch(rec.get("timestamp"))
-                    if floor and ts is not None and ts < floor:
-                        continue                       # an earlier record wearing the same words
-                    return True
+            pos = start
+            if start < size:
+                with open(path, "rb") as f:
+                    f.seek(start)
+                    for raw in f:
+                        if not raw.endswith(b"\n"):
+                            break                          # a line still being written: read it whole next time
+                        pos += len(raw)
+                        if b'"user"' not in raw and b'"queued_command"' not in raw:
+                            continue
+                        try:
+                            rec = json.loads(raw.decode(errors="replace"))
+                        except ValueError:
+                            continue
+                        if not isinstance(rec, dict) or want not in _landed_texts(rec):
+                            continue
+                        ts = _record_epoch(rec.get("timestamp"))
+                        if floor and ts is not None and ts < floor:
+                            continue                       # an earlier record wearing the same words
+                        return True
+            if isinstance(cursor, dict):
+                cursor["scan_off"], cursor["scan_fsid"] = pos, cur
             return False
         except Exception:
             return None
@@ -11058,6 +11185,9 @@ class SdkBackend:
     # _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
     # capability, and hands the plain two-argument send to any backend without it (tmux, fakes).
     queue_carries_todos = True
+    # send() can carry the CLIENT's id for a send the same way (send's send_id → _QueueText.send_id, the
+    # echo's _send_id): the kernel's _backend_send probes this before passing it (2026-09-08).
+    queue_carries_send_ids = True
 
     def _todo_lost(self, sid: str, tid: str, text: str) -> None:
         """Hand a possibly-undelivered user-todo ANSWER to the kernel's todo_lost seam — fired at

@@ -37,6 +37,12 @@ export type SendBase = {
 
 export type PendingSend = {
   text: string;        // the sent body, byte for byte — what the kernel echoes and the transcript lands
+  sendId: string;      // the send's IDENTITY, minted here at the press and posted with the send (2026-09-08): the
+                       //   kernel carries it on the queue entry, the echo and the record that lands it, so every
+                       //   kernel copy of THIS send names it and the decisions below match on the id where the
+                       //   copy carries one — never on the words, which two sends can share and one fused record
+                       //   can wear two of (the incident: a composer send and a todo reply the CLI folded into one
+                       //   record; its text matched neither bubble and the first stayed "sending…" until a ✕)
   body: string;        // `text` minus its image paths, whitespace-collapsed: an image send lands with the
                        //   paths rewritten to "[Image #N]" and stripped, so `text` itself can never match
   ts: number;          // press time (ms) — the bubble's identity (the ✕ names it), never a lifetime
@@ -62,7 +68,8 @@ export type TailEvent = {
   absorbed?: boolean;
   undelivered?: boolean;
   images?: unknown[];
-  texts?: { md?: string }[];
+  sendIds?: string[];   // a user event: the send id(s) it stands for — an echo's own, a landed record's every send
+  texts?: { md?: string; sendId?: string }[];   // a queued bubble: each entry's id, when the kernel holds one
 };
 
 export const OPT_PREFIX = "optimistic:";
@@ -77,9 +84,25 @@ export function pendingBody(text: string, imgPaths?: string[]): string {
   return collapse(t);
 }
 
-export function newPending(text: string, imgPaths?: string[], now: number = Date.now()): PendingSend {
-  return { text, body: pendingBody(text, imgPaths), ts: now, imgPaths };
+/** A send id: unique per press within a client (the press time + random), opaque to the kernel. */
+export function mintSendId(now: number): string {
+  return "s" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
+
+export function newPending(text: string, imgPaths?: string[], now: number = Date.now()): PendingSend {
+  return { text, sendId: mintSendId(now), body: pendingBody(text, imgPaths), ts: now, imgPaths };
+}
+
+/** Does this event NAME the send — carry its id among the ids it stands for? */
+const names = (e: TailEvent, p: PendingSend): boolean => !!(e.sendIds && e.sendIds.length && e.sendIds.includes(p.sendId));
+
+/** Does this kernel copy NAME a send? `ids` are the ids the copy carries (a user event's sendIds, a
+ *  queued entry's sendId). A copy that carries ids is matched on them alone: it is THIS send's exactly when
+ *  its ids include the send's, and it is some other send's — never this one's, whatever its words — when
+ *  they do not. A copy with no id (an older kernel, a follow-up path that mints none) leaves the decision
+ *  to the text match. */
+const idVerdict = (ids: string[] | undefined, p: PendingSend): boolean | undefined =>
+  ids && ids.length ? ids.includes(p.sendId) : undefined;
 
 /** EXACT text match, trimmed: the composer trims what it sends and the kernel strips what it lands
  *  (`" ".join(blocks).strip()`; a follow-up's body after `_split_followup`), so the two agree byte for
@@ -94,6 +117,8 @@ const sameText = (md: string, text: string): boolean => md.trim() === text.trim(
  *  aside on both sides). */
 export function landedIn(e: TailEvent, p: PendingSend): boolean {
   if (e.kind !== "user" || typeof e.md !== "string" || isKernelEchoUuid(e.uuid)) return false;
+  const byId = idVerdict(e.sendIds, p);
+  if (byId !== undefined) return byId;
   if (sameText(e.md, p.text)) return true;
   if (p.imgPaths && p.imgPaths.length && Array.isArray(e.images) && e.images.length > 0) {
     const noq = (s: string) => collapse(s.replace(/"/g, ""));
@@ -106,21 +131,30 @@ export function landedIn(e: TailEvent, p: PendingSend): boolean {
 function queuedCopies(e: TailEvent, p: PendingSend): number {
   if (e.kind !== "queued" || !Array.isArray(e.texts)) return 0;
   let n = 0;
-  for (const x of e.texts) if (typeof x.md === "string" && sameText(x.md, p.text)) n++;
+  for (const x of e.texts) {
+    const byId = x.sendId ? x.sendId === p.sendId : undefined;   // an entry with an id is this send's only by id
+    if (byId !== undefined ? byId : typeof x.md === "string" && sameText(x.md, p.text)) n++;
+  }
   return n;
 }
+
+/** The echo/verdict test shared by provisionalIn and lostIn: the copy's ids when it carries any, else the text. */
+const echoNames = (e: TailEvent, p: PendingSend): boolean => {
+  const byId = idVerdict(e.sendIds, p);
+  return byId !== undefined ? byId : typeof e.md === "string" && sameText(e.md, p.text);
+};
 
 /** The kernel's own PROVISIONAL copy of the send: its queued bubble or its unlanded echo atom. A
  *  never-delivered echo is a VERDICT, not a provisional (lostIn), and never suppresses a bubble. */
 export function provisionalIn(e: TailEvent, p: PendingSend): boolean {
   if (e.kind === "queued") return queuedCopies(e, p) > 0;
-  return e.kind === "user" && isKernelEchoUuid(e.uuid) && !e.undelivered && typeof e.md === "string" && sameText(e.md, p.text);
+  return e.kind === "user" && isKernelEchoUuid(e.uuid) && !e.undelivered && echoNames(e, p);
 }
 
 /** The kernel's verdict that the send was LOST: its echo, flagged never-delivered (the CLI died holding
  *  it, or the session moved past it). That bubble carries the text and the resend/dismiss actions. */
 export function lostIn(e: TailEvent, p: PendingSend): boolean {
-  return e.kind === "user" && !!e.undelivered && typeof e.md === "string" && sameText(e.md, p.text);
+  return e.kind === "user" && !!e.undelivered && echoNames(e, p);
 }
 
 /** A kernel event a pending send can be anchored to: it has a uuid the kernel will keep. The client's own
@@ -246,7 +280,9 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
       const e = events[i];
       if (e.uuid && at.seen.includes(e.uuid)) continue;
       if (e.kind === "queued") { copies += queuedCopies(e, p); continue; }
-      if (landedIdx < 0 && !claimed.has(i) && landedIn(e, p)) { landedIdx = i; continue; }
+      // a landing an earlier entry claimed this push is background — unless the record NAMES this send too:
+      // one record stamped with two ids landed two sends (the kernel's fold, stamped per send it landed)
+      if (landedIdx < 0 && (!claimed.has(i) || names(e, p)) && landedIn(e, p)) { landedIdx = i; continue; }
       if (lostIdx < 0 && lostIn(e, p)) { lostIdx = i; continue; }
       if (echoIdx < 0 && provisionalIn(e, p)) echoIdx = i;   // the first echo no earlier entry claimed (`seen`)
     }
@@ -268,10 +304,12 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
     if (p.received) p.lost = undefined;         // the drop is older news than the kernel's own copy
     if (landedIdx >= 0) {
       claimed.add(landedIdx);
-      const u = events[landedIdx].uuid;
+      const le = events[landedIdx];
+      const u = le.uuid;
       // this landing is spoken for: background for every later pending send with the same text, on this
-      // push and every push after (the retired entry's claim would otherwise leave with it)
-      if (u) for (const q of list) if (q !== p && q.at && q.text === p.text && !q.at.seen.includes(u)) q.at.seen.push(u);
+      // push and every push after (the retired entry's claim would otherwise leave with it). A record that
+      // carries ids is never background by the words: its ids say exactly which sends it landed.
+      if (u && !(le.sendIds && le.sendIds.length)) for (const q of list) if (q !== p && q.at && q.text === p.text && !q.at.seen.includes(u)) q.at.seen.push(u);
       r.landed.push({ p, idx: landedIdx });
       continue;
     }
@@ -290,8 +328,11 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
  *  bubble back and the other was gone without a gesture (2026-09-06 review, round 3). Returns the removed
  *  entry; undefined when none matched — a bubble whose entry a push already retired removes nothing,
  *  never a neighbour with the same text. */
-export function dropPending(list: PendingSend[], text: string, ts?: number): PendingSend | undefined {
-  const i = ts !== undefined ? list.findIndex((p) => p.ts === ts && p.text === text) : list.findIndex((p) => p.text === text);
+export function dropPending(list: PendingSend[], text: string, ts?: number, sendId?: string): PendingSend | undefined {
+  // the send id first (2026-09-08): a ✕ on OUR bubble or on the kernel's copy of this send names the entry
+  // exactly, so of two entries wearing the same words the one pressed is the one removed
+  const i = sendId ? list.findIndex((p) => p.sendId === sendId)
+    : ts !== undefined ? list.findIndex((p) => p.ts === ts && p.text === text) : list.findIndex((p) => p.text === text);
   return i >= 0 ? list.splice(i, 1)[0] : undefined;
 }
 

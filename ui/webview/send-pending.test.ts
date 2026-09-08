@@ -395,9 +395,9 @@ test("✕ on one of two identical bubbles removes that bubble's entry, never the
   assert.equal(dropPending(list2, "continue"), D);
   assert.deepEqual(list2, []);
   // render.ts: the identity rides the bubble's ✕, and the handler removes by it
-  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts \}\);/);
+  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts, sendId: p\.sendId \}\);/);
   assert.match(RENDER, /if \(t\.qts !== undefined\) x\.dataset\.qts = String\(t\.qts\);/);
-  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts\)\) \{ if \(list\.length\) pendingSent\.set\(sidQ, list\); else pendingSent\.delete\(sidQ\); \}/);
+  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts, el\.dataset\.qsid\)\) \{ if \(list\.length\) pendingSent\.set\(sidQ, list\); else pendingSent\.delete\(sidQ\); \}/);
   assert.doesNotMatch(RENDER, /list\.findIndex\(\(p\) => p\.text === qmd\)/);
 });
 
@@ -441,7 +441,7 @@ test("a send pressed against no frame (a placeholder tab): the first frame's cop
   assert.equal(prompt[0].at?.after, "u-same-second");
   // render.ts marks the entry when the press finds no resident session, and stamps it nowhere else
   assert.match(RENDER, /const p = newPending\(text, imgPaths\);\s*\n\s*arr\.push\(p\);/);
-  assert.match(RENDER, /if \(!s\) \{ p\.late = true; return; \}/);
+  assert.match(RENDER, /if \(!s\) \{ p\.late = true; return p; \}/);
   // the clock the bound compares against: the kernel stamps the echo atom at its receipt of the send, in
   // whole seconds, and the chat builder ships every event's stamp as iso(t)
   const SDK = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
@@ -555,4 +555,77 @@ test("every composer send posts a clientDiag breadcrumb — sid, time, length, r
   // one owner: the breadcrumb sits in routeUserMessage, which every send path (plain, quote, follow-up, staged flush) goes through
   const fn = RENDER.slice(RENDER.indexOf("function routeUserMessage("), RENDER.indexOf("\n}\n", RENDER.indexOf("function routeUserMessage(")));
   assert.ok(fn.includes('what: "send"'));
+});
+
+// ── (15) identity: the send id (2026-09-08) ──────────────────────────────────────────────────────
+// The incident: a composer send and a todo reply queued during one open turn were fused by the CLI into
+// ONE record whose text matched neither bubble, so the first stayed "sending…" until a ✕. The kernel now
+// feeds one text at a time (tests/test_queued_sends_not_fused.py); on this side every send carries an id
+// the kernel echoes back on its copies, and the decisions match on it wherever a copy carries one.
+
+test("a landing names the send by id: the id decides, the words do not", () => {
+  const list = press([{ kind: "assistant", md: "…", uuid: "a1" }], "first words", "Re: the ask — the reply");
+  const [A, B] = list;
+  assert.notEqual(A.sendId, B.sendId, "each press mints its own id");
+  // a record that carries B's id but wears A's words is B's landing, not A's
+  let r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                            { kind: "user", md: "first words", uuid: "u1", sendIds: [B.sendId] }], list);
+  assert.deepEqual(r.landed.map((l) => l.p), [B], "the id retires B");
+  assert.deepEqual(r.keep, [A], "…and A, whose words the record wears, stays pending");
+  // a record that carries no id (an older kernel, a path that mints none) is matched by its words
+  r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                        { kind: "user", md: "first words", uuid: "u2" }], [A]);
+  assert.deepEqual(r.landed.map((l) => l.p), [A], "no id on the record → the text match still lands it");
+});
+
+test("one fused record stamped with both ids clears both bubbles", () => {
+  const list = press([{ kind: "assistant", md: "…", uuid: "a1" }], "first words", "Re: the ask — the reply");
+  const [A, B] = list;
+  const fused: TailEvent = { kind: "user", md: "first words Re: the ask — the reply", uuid: "u9", sendIds: [A.sendId, B.sendId] };
+  const r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" }, fused], list);
+  assert.deepEqual(r.landed.map((l) => l.p), [A, B], "the record the kernel stamped with both ids retires both");
+  assert.equal(r.keep.length, 0, "nothing left saying sending…");
+});
+
+test("a kernel copy that names ANOTHER send never covers this one, however similar the words", () => {
+  const list = press([{ kind: "assistant", md: "…", uuid: "a1" }], TEXT);
+  const [p] = list;
+  // the kernel's queued copy of a different send with the same words: not ours
+  let r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                            { kind: "queued", texts: [{ md: TEXT, sendId: "s-someone-else" }] }], list);
+  assert.equal(r.inject.length, 1, "our bubble stays: the copy is another send's");
+  assert.equal(p.received, undefined, "…and proves nothing about our receipt");
+  // the copy carrying OUR id covers us
+  r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                        { kind: "queued", texts: [{ md: TEXT, sendId: p.sendId }] }], list);
+  assert.equal(r.inject.length, 0, "the kernel's copy of THIS send covers our bubble");
+  assert.equal(p.received, true, "…and proves the kernel has it");
+  // an id-less copy (an older kernel) covers by text, as before
+  const q = press([{ kind: "assistant", md: "…", uuid: "a1" }], TEXT);
+  r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" }, { kind: "queued", texts: [{ md: TEXT }] }], q);
+  assert.equal(r.inject.length, 0, "no id on the copy → the text match still covers");
+  // the kernel's echo atom, likewise: its ids decide when it carries any
+  const e = press([{ kind: "assistant", md: "…", uuid: "a1" }], TEXT);
+  r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                        { kind: "user", md: TEXT, uuid: "echo:9", sendIds: ["s-someone-else"] }], e);
+  assert.equal(r.inject.length, 1, "another send's echo does not hide ours");
+  assert.ok(provisionalIn({ kind: "user", md: TEXT, uuid: "echo:9", sendIds: [e[0].sendId] }, e[0]), "ours does");
+});
+
+test("the ✕ removes exactly its own entry of two wearing the same words — by id", () => {
+  const list = press([{ kind: "assistant", md: "…", uuid: "a1" }], "go ahead", "go ahead");
+  const [A, B] = list;
+  assert.equal(dropPending(list, "go ahead", undefined, B.sendId), B, "the id names B");
+  assert.deepEqual(list, [A], "A stays, whatever the click's index or words");
+  assert.equal(dropPending(list, "go ahead", undefined, "s-not-here"), undefined, "an unknown id removes nothing");
+  assert.deepEqual(list, [A]);
+});
+
+test("the DOM half posts the id with the send and carries it on the ✕ (render.ts)", () => {
+  assert.match(RENDER, /type: "sendMessage", id: sid, text, sendId: p\.sendId/, "a plain send posts its bubble's id");
+  assert.match(RENDER, /type: "sendMessage", id: sid, text: body, sendId: p\.sendId/, "…and so does a quote send");
+  assert.match(RENDER, /if \(t\.sendId\) x\.dataset\.qsid = t\.sendId/, "the bubble's ✕ names the send");
+  assert.match(RENDER, /dropPending\(list, qmd, qts, el\.dataset\.qsid\)/, "…and the ✕ drops that entry");
+  assert.match(RENDER, /if \(el\.dataset\.qsid\) msg\.sendId = el\.dataset\.qsid/, "…and tells the kernel which entry to remove");
+  assert.match(RENDER, /sendId: p\.sendId \}\);\n/, "the injected bubble carries its id, so its own kernel copy is matched by it");
 });

@@ -102,7 +102,11 @@ session is shown as a chip in that session's color.
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already
 running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
-note says when the session took it (to the minute), with a link that jumps to it.
+note says when the session took it (to the minute), with a link that jumps to it. Send
+several messages during one turn (a composer message, then a todo reply) and each reaches
+the session as its own message, in the order you sent them: the next one waits, shown as
+queued, until the session has taken the one before it, so two messages are never joined
+into one.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble

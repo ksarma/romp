@@ -59,7 +59,7 @@ test("sending with a GOAL citation routes as an askFollowUp (reopen) and consume
   assert.match(RENDER, /const cites = composerCitations\.get\(activeId\);/);
   assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);   // + the echo's thumbnail paths (2026-08-25)
   assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
-  assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /else \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /if \(cites\) \{ composerCitations\.delete\(activeId\); renderComposerChips\(activeId\); \}/);
 });
 
@@ -208,7 +208,7 @@ test("quote chips send a plain message wrapped by quoteReplyBody — never askFo
   // the quote branch echoes the COMPOSED body — byte-identical to what lands, so the reconcile's
   // includes() match is exact (the user 2026-08-23, whose quoted sends painted nothing until the
   // kernel round-tripped while plain sends painted instantly)
-  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body \}\); registerOptimistic\(sid, body, imgPaths\); \}/);
+  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); const p = registerOptimistic\(sid, body, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body, sendId: p\.sendId \}\); \}/);
   // the wrap: one section per stacked chip (lead-in + the highlighted text as a markdown quote block), in
   // strip order, then the typed message — a single chip composes byte-identically to the pre-stack form
   // a context-only body (staged with an empty box) carries no dangling blank tail
