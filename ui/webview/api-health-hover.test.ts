@@ -28,7 +28,7 @@ test("the history is read from the designed route when the hover or the detail o
   assert.ok(KERNEL.includes("fetch('/usage/fleet',{cache:'no-store'})"));
   assert.match(KERNEL, /if not origin:\n\s+return True/, "_origin_ok accepts an absent Origin");
   // the show, the open and a frame on an open card each read; nothing else does
-  assert.ok(JS.includes("tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}"),
+  assert.ok(JS.includes("tip.style.display='block';el.setAttribute('aria-describedby','ah-desc');load(true);render();}"),
     "show drops the last answer and reads: a hover never paints an earlier hover's numbers while its own read is in flight");
   assert.ok(HIST.includes("function load(fresh){var n=++histSeq;if(fresh)HIST=null;"));
   // a pin reads only when the tip was hidden: the hover's read, landed or in flight, is the same document (review
@@ -42,8 +42,9 @@ test("the history is read from the designed route when the hover or the detail o
 
 test("no timers: the show is the event, the newest read wins, and the answer is painted through the held gate", () => {
   assert.ok(!JS.includes("setTimeout") && !JS.includes("setInterval"), "no timer anywhere in the cell's script");
-  // the window-focus mark is set by the window's own focus event and cleared on the next animation frame, an event
-  assert.ok(JS.includes("window.addEventListener('focus',function(){winFocus=true;requestAnimationFrame(function(){winFocus=false;});});"));
+  // the window-focus mark records what held focus when the window's own focus event fired and is cleared on the
+  // next animation frame, an event
+  assert.ok(JS.includes("window.addEventListener('focus',function(){winFocusEl=document.activeElement;requestAnimationFrame(function(){winFocusEl=null;});});"));
   assert.equal(HIST.split("if(n!==histSeq)return;").length - 1, 2, "both arms of the read drop an answer a newer read superseded");
   assert.equal(HIST.split("if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();").length - 1, 2,
     "the answer repaints an open card only, and never under a held pointer (the frame's own gate)");
@@ -69,9 +70,13 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
   assert.ok(HIST.includes("'<span class=ru-tip-reset>as of '+hms(HIST.asOf)+'</span>'"), "the payload's asOf, so a pinned card's numbers carry their read time");
   // the head: the signal's state word with the dot in its color, since when, and the bucket's reason under it
   assert.ok(HIST.includes("'<div class=\"ru-tip-row ah-head\"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'"));
-  // since: the bucket's stateSince, or bootAt for a bucket the boot seeded (its why is the boot's reason), the stamp
-  // the tail's divider and its pre-boot holds use, so head and tail name one time for that state
-  assert.ok(HIST.includes("var since=b?((b.why===RESTART_WHY&&typeof d.bootAt==='number')?d.bootAt:b.stateSince):0;"));
+  // since: the bucket's stateSince alone. A bucket the boot seeded carries the kernel's own start there, because the
+  // kernel seeds the backend's aggregator with the clock its route stamps as bootAt (review round 2: a branch keyed
+  // on the bucket's why being the restart reason was dead, the read replaces that reason with its own)
+  assert.ok(HIST.includes("var since=b?b.stateSince:0;"));
+  assert.ok(!HIST.includes("b.why===RESTART_WHY"), "no why-keyed clock in the head");
+  assert.ok(BACKEND.includes("self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)"), "the backend hands its boot_at to the aggregator");
+  assert.ok(KERNEL.includes("boot_at=int(_STARTED))") && KERNEL.includes('out["bootAt"] = int(_STARTED)'), "the kernel passes the clock the route stamps");
   assert.ok(HIST.includes("(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')"));
   assert.ok(HIST.includes("if(b&&b.why)h+='<div class=\"ah-line ru-tip-reset\">'+esc(b.why)+'</div>';"), "the reason in the small annotation grammar, no new font size");
   // the windows come from the config in force, labelled in minutes, the incomplete one saying how long the kernel is up
@@ -80,9 +85,12 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
   // the figures are the window's totals, in the window's tense: 'retried', never 'retrying' (the live set is the
   // Sessions waiting list above); a connection-level failure has no status and sits outside `requests`, so the row
   // is quiet only when every count is zero, and names its no-status attempts when there are any
-  assert.ok(HIST.includes("if(!c||!(c.requests||c.noStatus||c.gaveUp||c.sessionsRetrying))v='no attempts';"), "a window with nothing in it says so");
-  assert.ok(HIST.includes("v=c.requests?(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(c.noStatus?' · '+c.noStatus+' without a status':'')):(pl(c.noStatus,'attempt')+' without a status');"),
-    "attempts, the 429 and 5xx shares over them, the no-status count beside them or alone; the rest stays in romp api-health");
+  assert.ok(HIST.includes("var v,rq=(c&&c.requests)||0,ns=(c&&c.noStatus)||0;if(!c||!(rq||ns||c.gaveUp||c.sessionsRetrying))v='no attempts';"), "a window with nothing in it says so");
+  // a mixed window counts every attempt once (requests plus noStatus: the two are disjoint), says how many had no
+  // status, and names the shares' base (review round 2: '8 attempts · ... · 7 without a status' read as seven of eight)
+  assert.ok(HIST.includes("v=rq?(pl(rq+ns,'attempt')+(ns?', '+ns+' of them without a status':'')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(ns?' of the other '+(rq===1?'one':rq):'')):(pl(ns,'attempt')+' without a status');"),
+    "every attempt once, the no-status ones as 'of them', the shares over the other ones; the rest stays in romp api-health");
+  assert.match(BACKEND, /_AH_COUNTED = \("ok", "429", "529", "5xx", "other"\)/, "requests excludes 'none': the sum is the attempt count");
   assert.ok(HIST.includes("v+=' · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retried';}"));
   assert.ok(!HIST.includes("' retrying'"), "no present-tense label on a windowed count");
   assert.ok(HIST.includes("'<div class=\"ru-tip-row ah-hrow\"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>'"), "the spend row's classes");
@@ -122,8 +130,18 @@ test("the tail: six rows newest first, each state's hold, and a restart never hi
 });
 
 test("accessibility: focus shows the hover, blur hides it, the cell is described by the tip, and the close does not re-pop it", () => {
-  // a focus the browser re-dispatches because the window regained focus is skipped (winFocus, the window's own event)
-  assert.ok(JS.includes("el.addEventListener('focus',function(){if(skipFocus||winFocus||pinned||tip.style.display==='block')return;show(null);});"));
+  // a focus the browser re-dispatches because the window regained focus is skipped only when the cell already held
+  // focus at the window's event (winFocusEl): a Tab out of a pane iframe fires the same window event with the iframe
+  // host active, and must show (review round 2)
+  assert.ok(JS.includes("el.addEventListener('focus',function(){if(skipFocus||winFocusEl===el||pinned||tip.style.display==='block')return;show(null);});"));
+  assert.ok(!JS.includes("winFocus=true"), "the mark is an element, not a flag");
+  // the cell is described by a SHORT visually-hidden summary (#ah-desc), refreshed on every render, never by the tip
+  assert.ok(JS.includes("var desc=document.createElement('span');desc.id='ah-desc';desc.className='ah-vh';document.body.appendChild(desc);"));
+  assert.ok(JS.includes("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();desc.textContent=descText();"));
+  assert.ok(HIST.includes("function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'Reading the history.'+tail;"));
+  assert.ok(HIST.includes("return 'History: '+(ov.state||'unknown')+((b&&b.stateSince)?' since '+hmd(b.stateSince):'')+'.'+tail;}"), "the state word and its since");
+  assert.ok(!JS.includes("'aria-describedby','ah-tip'"), "the tip's whole text is never the description");
+  assert.ok(KERNEL.includes(".ah-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}"));
   assert.ok(JS.includes("el.addEventListener('blur',function(){if(!pinned)hide();});"));
   // Escape on the focused cell dismisses the hover in place; the pinned dialog's Escape is _LANDING_ESC_JS's
   assert.ok(JS.includes("if(ev.key==='Escape'){if(!pinned&&tip.style.display==='block'){ev.preventDefault();hide();}return;}"));

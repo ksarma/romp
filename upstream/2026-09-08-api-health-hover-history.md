@@ -1,7 +1,7 @@
 ---
 title: API health indicator: history on hover. The rail cell's hover and click detail gain a History section read from GET /api-health at show time (the shell's cookie auth, no poll, the frame unchanged): overall.state with its since and why, one row per window (attempts, 429 and 5xx shares, no-status attempts, give-ups, sessions that retried; an incomplete window says how long the kernel has been up), the newest six transitions with the state entered and how long it held, a kernel-restart row or divider (taking no slot) where the tail crosses bootAt, and a loud line when the read fails; focus shows the hover as a tooltip, blur or Escape hides it, a click pins it as the dialog
 status: candidate
-where: kernel/kernel.py (_LANDING_APIH_JS: load, histHTML, winRow, transRows, anchor, show, open, the cell's listeners; the tip stylesheet), docs/reference.md "The bottom bar's indicator", docs/guide.md; tests tests/test_api_health_hover.py, tests/test_api_health_hover_browser.py, ui/webview/api-health-hover.test.ts, tests/test_api_health_rail.py (three pins rewritten)
+where: kernel/kernel.py (_LANDING_APIH_JS: load, histHTML, descText, winRow, transRows, anchor, show, open, the cell's listeners; the tip stylesheet; _sdk_locked passes boot_at), kernel/sdk_backend.py (SdkBackend boot_at, handed to ApiHealth), docs/reference.md "The bottom bar's indicator", docs/guide.md; tests tests/test_api_health_hover.py, tests/test_api_health_hover_browser.py, ui/webview/api-health-hover.test.ts, tests/test_api_health_rail.py (three pins rewritten)
 added: 2026-09-08
 pr:
 tier: feature

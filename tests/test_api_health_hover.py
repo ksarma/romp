@@ -11,7 +11,9 @@ Rules pinned here: every field the section reads is in the payload; the transiti
 restart files the row whose reason the section matches, and a bucket already unknown files nothing (the
 section's bootAt divider covers that case, so the boundary is never hidden); the shell's cookie alone reads
 the route with no Origin header, which is what a same-origin GET fetch sends; the apiHealth frame carries no
-history and _api_health_push still sends nothing on an unchanged world, a route read in between included.
+history and _api_health_push still sends nothing on an unchanged world, a route read in between included; the
+backend's aggregator is seeded with the kernel's own boot clock, the one the route stamps as bootAt, so a bucket
+the boot seeded has one since-time in the head, the divider and the boot's row (review round 2).
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
 import inspect
@@ -183,6 +185,66 @@ class Payload(unittest.TestCase):
         self.assertIn("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\">", HIST)
         self.assertIn("<span class=ah-hword>kernel restarted</span>", HIST)
         self.assertIn('out["bootAt"] = int(_STARTED)', inspect.getsource(km.Handler.do_GET))
+
+
+class OneClock(unittest.TestCase):
+    """The head's since, the boot's restart row and the route's bootAt read ONE clock, the kernel's own start
+    (_STARTED), passed to the backend at construction. Before (review round 2): the aggregator seeded itself from
+    its own clock, seconds after _STARTED (the backend is built after the boot's imports and warm-up), and the
+    hover's head named one minute for a bucket the boot seeded while its divider named the other whenever that gap
+    straddled a minute; the JS branch that keyed the head on the bucket's why being the restart reason was dead,
+    because the read that serves the payload replaces that reason with its own."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        ah = sb.ApiHealth(self.d)
+        self.label = _label(ah)
+        self.key = self.label + "|fable"
+        for e in _storm(T0 - 600, T0, self.label):
+            ah._push(e)
+        ah.snapshot(T0)                              # thrashing, persisted: the next boot files thrashing -> unknown
+
+    def _check(self, snap, boot):
+        b = snap["buckets"][self.key]
+        row = snap["transitions"][-1]
+        self.assertEqual(b["stateSince"], boot, "the seeded since IS the boot clock")
+        self.assertEqual((row["t"], row["from"], row["to"], row["why"]), (boot, "thrashing", "unknown", sb.API_HEALTH_RESTART_WHY),
+                         "and so is the restart row's stamp")
+        self.assertEqual(b["state"], "unknown")
+        self.assertNotEqual(b["why"], sb.API_HEALTH_RESTART_WHY,
+                            "the read that served this payload wrote its own reason over the seed's, so the section can key nothing on it")
+
+    def test_the_aggregator_seeds_state_since_and_the_restart_row_from_boot_at(self):
+        snap = sb.ApiHealth(self.d, boot_at=T0 + 30).snapshot(T0 + 31)
+        self._check(snap, T0 + 30)
+
+    def test_the_backend_hands_its_boot_at_to_the_aggregator_and_the_kernel_passes_its_start(self):
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, boot_at=T0 + 30)
+        self._check(be.api_health.snapshot(T0 + 31), T0 + 30)
+        # the kernel's construction site passes _STARTED, the clock the route stamps as bootAt
+        self.assertIn("boot_at=int(_STARTED))", inspect.getsource(km._sdk_locked))
+        self.assertIn('out["bootAt"] = int(_STARTED)', inspect.getsource(km.Handler.do_GET))
+        # and the section reads stateSince alone: no why-keyed branch, nothing for it to be dead on
+        self.assertIn("var since=b?b.stateSince:0;", HIST)
+        self.assertNotIn("b.why===RESTART_WHY", HIST)
+
+    def test_the_route_serves_boot_at_state_since_and_the_restart_row_as_one_number(self):
+        class _Seeded(_Backend):
+            def __init__(inner, d, boot):
+                inner.ah = sb.ApiHealth(d, boot_at=boot)
+        saved = km._sdk
+        try:
+            km._sdk = lambda: _Seeded(self.d, int(km._STARTED))     # seeded the way _sdk_locked seeds the live one
+            status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+        finally:
+            km._sdk = saved
+        self.assertEqual(status, 200, body[:200])
+        out = json.loads(body)
+        b = out["buckets"][self.key]
+        row = [r for r in out["transitions"] if r["why"] == sb.API_HEALTH_RESTART_WHY][-1]
+        self.assertEqual(out["bootAt"], int(km._STARTED))
+        self.assertEqual(b["stateSince"], out["bootAt"], "head since and bootAt: one number")
+        self.assertEqual(row["t"], out["bootAt"], "the restart row's stamp too")
 
 
 class Route(unittest.TestCase):

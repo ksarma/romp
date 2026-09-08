@@ -1948,11 +1948,12 @@ opens, and again when a frame lands on an open one, authenticating with the
 dashboard's own cookie the way its other reads do. Nothing polls; the frame
 carries no history and is unchanged. The section shows `overall.state` with
 the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
-count when there is more than one; a bucket whose `why` is the restart
-reason is unknown since the boot, and its since-time is `bootAt`, the stamp
-the tail uses for that boot), one row per window from `config.windows`
-(`requests`, `rate429` and `rate5xx` as percentages over them, `noStatus`
-named as attempts without a status when there are any, `gaveUp`, and
+count when there is more than one; a bucket the boot seeded is `unknown`
+since `bootAt`, the kernel's own start, because the backend seeds its
+`stateSince` from that clock, the stamp the tail uses for the boot), one row
+per window from `config.windows` (`requests` plus `noStatus` as the attempts,
+saying how many of them had no status when there are any, `rate429` and
+`rate5xx` as percentages over the attempts with a status, `gaveUp`, and
 `sessionsRetrying` as the sessions that retried in the window; a window
 reads `no attempts` only when every one of those is zero; a window whose
 `complete` is false says how long the kernel has been up), up to six rows

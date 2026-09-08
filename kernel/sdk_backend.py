@@ -7824,7 +7824,7 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, todo_lost=None):
+                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
@@ -7945,7 +7945,10 @@ class SdkBackend:
         _register_credential_noter(self._note_credential_set)
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
-        self.api_health = ApiHealth(self.state_dir, log=self._log)
+        # Seeded as of `boot_at`, the kernel's own start when the kernel passes it (the clock its route
+        # stamps as bootAt), else this construction's clock: the two ran seconds apart, and the hover's
+        # head said one minute for a bucket the boot seeded while its divider said another.
+        self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
         self._sdk_missing = not sdk_importable()

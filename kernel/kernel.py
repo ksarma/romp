@@ -14869,7 +14869,12 @@ def _sdk_locked():
                 # a drop-marked user-todo ANSWER reopens its ask (docs/adr/0001's silent-loss
                 # class). CONSTRUCTOR-wired on purpose: the boot echo reseed fires drop marks
                 # from __init__, before any post-construction assignment could arm the seam.
-                todo_lost=_user_todo_answer_lost)
+                todo_lost=_user_todo_answer_lost,
+                # the API-health aggregator's boot clock: the same _STARTED the /api-health route stamps as
+                # bootAt, so a bucket the boot seeded is unknown since the kernel's own start and the hover's
+                # head, divider and restart row name one time (the aggregator's own clock ran seconds later:
+                # this backend is built after the boot's imports, migrations and warm-up)
+                boot_at=int(_STARTED))
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask
@@ -45538,6 +45543,10 @@ _LANDING_APIH_JS = """
 var txt=el.querySelector('.ah-text');
 var tip=document.createElement('div');tip.id='ah-tip';tip.style.display='none';
 tip.setAttribute('role','tooltip');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;document.body.appendChild(tip);
+// what the cell is described by while the hover shows (aria-describedby): a SHORT visually-hidden summary, updated
+// when the read lands, never the tip's whole text (review round 2: the tip ran to some 600 characters of rows, and
+// at focus time, when assistive tech reads the description, it was the loader's markup); Enter reaches the rest
+var desc=document.createElement('span');desc.id='ah-desc';desc.className='ah-vh';document.body.appendChild(desc);
 var back=document.getElementById('ru-back');
 if(!back){back=document.createElement('div');back.id='ru-back';document.body.appendChild(back);}
 // LAST: the newest frame. pinned: the detail is the modal. held / dirty: a PRIMARY pointer is down over the detail
@@ -45549,12 +45558,16 @@ if(!back){back=document.createElement('div');back.id='ru-back';document.body.app
 var LAST=null,pinned=false,held=false,dirty=false,pending=null,pendSeq=null,hint='',lastX=null,focusBack=null;
 // HIST: the last /api-health answer, {error} for a failed read, null before the first; histSeq keys the paint to the
 // newest read so an older answer landing last is dropped. skipFocus: the dialog's close refocuses the cell, and that
-// focus event must not pop the hover. winFocus: the window just regained focus, and the browser re-dispatches focus
-// on the active element in that same task (the cell keeps focus after Escape by design), which is not the user
-// reaching for the cell; the window's own focus event sets the mark and the next animation frame clears it (an
-// event, not a timer), so a focus that arrives later still shows. No timer anywhere: the show is the event.
-var HIST=null,histSeq=0,skipFocus=false,winFocus=false;
-window.addEventListener('focus',function(){winFocus=true;requestAnimationFrame(function(){winFocus=false;});});
+// focus event must not pop the hover. winFocusEl: the element that held focus when the window's own focus event
+// fired, cleared on the next animation frame (an event, not a timer). When the window regains system focus the
+// browser re-dispatches focus on the active element in that same task (the cell keeps focus after Escape by
+// design), which is not the user reaching for the cell: the cell's focus is skipped only when the cell WAS that
+// element. Chromium fires the same window event whenever the focused FRAME changes, and the shell's panes are
+// iframes, so a Tab out of a pane onto the cell (its keyboard path here) arrives under the mark too; the recorded
+// element is then the document's body (the pane's host is cleared before the event fires; Chromium 151), never the
+// cell, and the hover shows (review round 2). No timer anywhere: the show is the event.
+var HIST=null,histSeq=0,skipFocus=false,winFocusEl=null;
+window.addEventListener('focus',function(){winFocusEl=document.activeElement;requestAnimationFrame(function(){winFocusEl=null;});});
 var RESTART_WHY='kernel restarted: the event ring is empty';   // sdk_backend.API_HEALTH_RESTART_WHY: the row the boot files
 var HIST_ROWS=6;
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
@@ -45608,10 +45621,13 @@ return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}
 // said in the window's tense ('retried', never 'retrying': the live set is the Sessions waiting list above).
 // `requests` counts attempts WITH a status and the shares are over it; a connection-level failure has none
 // (`noStatus`, outside that sum), so a window is quiet only when every count is zero, and its no-status attempts
-// are named when there are any (an offline window used to read 'no attempts' and hide its give-ups).
+// are named when there are any (an offline window used to read 'no attempts' and hide its give-ups). A mixed window
+// counts every attempt once and says how many of them had no status, with the shares' base named beside them:
+// '15 attempts, 7 of them without a status · 25% 429 · 0% 5xx of the other 8' (review round 2: '8 attempts · ... ·
+// 7 without a status' read as seven of the eight, and they were seven more).
 function winRow(w,c,up){var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);
-var v;if(!c||!(c.requests||c.noStatus||c.gaveUp||c.sessionsRetrying))v='no attempts';
-else{v=c.requests?(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(c.noStatus?' · '+c.noStatus+' without a status':'')):(pl(c.noStatus,'attempt')+' without a status');
+var v,rq=(c&&c.requests)||0,ns=(c&&c.noStatus)||0;if(!c||!(rq||ns||c.gaveUp||c.sessionsRetrying))v='no attempts';
+else{v=rq?(pl(rq+ns,'attempt')+(ns?', '+ns+' of them without a status':'')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(ns?' of the other '+(rq===1?'one':rq):'')):(pl(ns,'attempt')+' without a status');
 v+=' · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retried';}
 return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>';}
 // the newest HIST_ROWS transitions, newest first: the time, the state entered (with its bucket when there are
@@ -45620,8 +45636,8 @@ return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span>
 // state it closed must not read 'so far' beside it). A row the boot filed says so; where the tail crosses this
 // kernel's bootAt and the newer row is not such a row (the bucket was already unknown at shutdown, so the boot
 // filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Every bucket comes
-// back unknown at a restart, so a hold from before the boot ends at the boot and is never 'so far'; the head's
-// since for a bucket the boot seeded is that same bootAt (histHTML), so head and tail name one time. Never hidden.
+// back unknown at a restart, so a hold from before the boot ends at the boot and is never 'so far'; a bucket the
+// boot seeded carries that same boot clock as its stateSince, so the head and the tail name one time. Never hidden.
 function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
 var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,hasBoot=typeof boot==='number',out='',crossed=false,prevRestart=false,shown=0;
 for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY,pre=hasBoot&&r.t<boot;
@@ -45638,9 +45654,10 @@ function histHTML(){var h='<div class="ru-tip-win ah-hist"><div class=ru-tip-nam
 if(!HIST)return h+'<div class="rl-dots ah-wait"><i></i><i></i><i></i></div></div>';
 if(HIST.error)return h+'<div class="ah-line ah-err">Could not read the API history: '+esc(HIST.error)+'</div></div>';
 var d=HIST,ov=d.overall||{},key=ov.worstBucket,b=key?(d.buckets||{})[key]:null,nb=Object.keys(d.buckets||{}).length,st=ov.state||'unknown';
-// a bucket the boot seeded (its why is the boot's reason) is unknown since the boot: said with bootAt, the stamp
-// the tail's divider and its pre-boot holds use, so the head and the tail name one time for that state
-var since=b?((b.why===RESTART_WHY&&typeof d.bootAt==='number')?d.bootAt:b.stateSince):0;
+// since is the bucket's stateSince as the backend files it: a bucket the boot seeded is unknown since the kernel's
+// own start (SdkBackend seeds the aggregator with the boot clock the route stamps as bootAt), so the head, the
+// tail's divider and the boot's row name one time with no branch here (review round 2)
+var since=b?b.stateSince:0;
 h+='<div class="ru-tip-row ah-head"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'
 +((nb>1&&b)?'<span class=ah-hsub>'+esc(bname(d,key))+' · worst of '+nb+' buckets</span>':'')
 +(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')+'</div>';
@@ -45649,6 +45666,12 @@ if(!b)h+='<div class=ah-line>No API traffic seen'+(typeof d.bootAt==='number'?' 
 else ((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});
 var tr=transRows(d);if(tr)h+='<div class="ru-tip-name ah-hname"><span>State changes</span></div>'+tr;
 return h+'</div>';}
+// the cell's description while the hover shows: the state word and its since, then how to reach the rest; before the
+// answer lands it says the read is in flight, and a failed read says so in the same words as the section's line
+function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'Reading the history.'+tail;
+if(HIST.error)return 'Could not read the API history: '+HIST.error+'.'+tail;
+var ov=HIST.overall||{},key=ov.worstBucket,b=key?(HIST.buckets||{})[key]:null;
+return 'History: '+(ov.state||'unknown')+((b&&b.stateSince)?' since '+hmd(b.stateSince):'')+'.'+tail;}
 // full=false is the HOVER: the same reading with no controls. The hover sits under pointer-events:none and hides
 // on mouseleave, so a button there could not be honored; the click is where the actions live.
 function html(m,full){var h='<div class=ru-tip-win><div class=ru-tip-name><span>API · this machine</span></div>'
@@ -45682,14 +45705,14 @@ tip.style.top=Math.max(6,r.top-h-8)+'px';}
 // leave the dialog: the same control (by act and sid) takes focus again in the new markup, else the card does.
 function focusKey(n){return (n&&n.getAttribute)?(n.getAttribute('data-act')||'')+'|'+(n.getAttribute('data-sid')||''):'';}
 function render(){if(!LAST)return;var a=document.activeElement,key=(pinned&&a&&a!==tip&&tip.contains(a))?focusKey(a):null;
-tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();
+tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();desc.textContent=descText();
 if(key!==null){var n=null,all=tip.querySelectorAll('[data-act]');for(var i=0;i<all.length;i++)if(focusKey(all[i])===key){n=all[i];break;}
 try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}}}
-// The shown, unpinned tip is a TOOLTIP (the role, the cell described by it, no aria-modal): a keyboard user who Tabs
-// onto the cell must not meet a modal dialog their focus sits outside of. open() makes it the dialog.
+// The shown, unpinned tip is a TOOLTIP (the role, the cell described by the short summary, no aria-modal): a keyboard
+// user who Tabs onto the cell must not meet a modal dialog their focus sits outside of. open() makes it the dialog.
 function show(ev){if(!LAST)return;lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;
 tip.classList.remove('ru-modal');tip.setAttribute('role','tooltip');tip.removeAttribute('aria-modal');
-tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}
+tip.style.display='block';el.setAttribute('aria-describedby','ah-desc');load(true);render();}
 function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}
 function close(){hide();tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
 window.__rompApiClose=null;if(back.onclick===close)back.onclick=null;
@@ -45716,8 +45739,8 @@ if(tip.style.display==='block'){if(typeof ev.clientX==='number')lastX=ev.clientX
 el.addEventListener('mouseleave',function(){if(!pinned)hide();});
 // keyboard focus shows the hover as the pointer does (the tooltip pattern) and blur hides it; a pinned detail is
 // unmoved, a hover the pointer already opened is left where it anchored, and a focus the browser re-dispatches
-// because the window regained focus (winFocus) is not the user reaching for the cell
-el.addEventListener('focus',function(){if(skipFocus||winFocus||pinned||tip.style.display==='block')return;show(null);});
+// because the window regained focus while the cell already held it (winFocusEl) is not the user reaching for the cell
+el.addEventListener('focus',function(){if(skipFocus||winFocusEl===el||pinned||tip.style.display==='block')return;show(null);});
 el.addEventListener('blur',function(){if(!pinned)hide();});
 el.addEventListener('click',function(){if(pinned)close();else open();});
 // Escape on the focused cell dismisses the hover that focus showed, without moving focus (content shown on focus
@@ -47737,6 +47760,8 @@ def _landing():
             ".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}"
             ".ah-row.ah-ro{cursor:default}.ah-row.ah-ro:hover{background:transparent}"
             "#ah-tip:focus{outline:none}#ah-tip{overflow:hidden;box-sizing:border-box}"
+            # the cell's short description for assistive tech (#ah-desc): present in the tree, off the screen
+            ".ah-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
             # over an "elapsed" bar (slate) with the % + reset countdown, and nothing else (no prose).

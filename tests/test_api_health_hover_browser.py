@@ -20,6 +20,12 @@ mode, a window-refocus does not pop the hover, and the geometry at 830 px wide a
 window-refocus trigger itself cannot be produced headless (bringToFront fires no window focus in Playwright's
 chromium), so that case drives the mechanism with synthetic window and cell focus events in one task.
 
+Review round 2: a real Tab out of an iframe onto the cell (the cell's keyboard path on the dashboard, where every pane
+is an iframe; Chromium fires focus on the top window for the frame change, in the cell's own task) shows the hover;
+the cell is described by a short summary, not the tip; a transition filed at asOf (the hover's own read) closes the
+state before it; a bucket the boot seeded reads one time in the head, the divider and the boot's row; a mixed window
+counts every attempt once and says how many had no status.
+
 Synthetic only: invented bucket labels, a fixed shape, times relative to the run so the same-day clock words
 apply; no real data."""
 import functools
@@ -48,6 +54,7 @@ sb = load_source("romp_sdk_backend_apih_hover_browser", os.path.join(BIN, "romp_
 
 NOW = int(time.time())
 BOOT = NOW - 600
+BOOT_M = BOOT - (BOOT % 60) - 2     # a boot at :58 of a minute: the second-straddling case the two clocks used to split on
 RESTART = sb.API_HEALTH_RESTART_WHY
 # invented labels in the digest form (12 hex characters), never real material: low-entropy digits, so nothing
 # credential-shaped sits in this file, and every expected string below is built from these, never written out
@@ -131,13 +138,26 @@ PAYLOADS = {
                                                                           "300": _win(8, 0.25, 0.0, 1, 2, no_status=7),
                                                                           "900": _win(0, None, None, 0, 0, complete=False)})},
                      transitions=[_tr(NOW - 500, KEY, "unknown", "healthy"), _tr(NOW - 200, KEY, "healthy", "unknown", FEW)]),
-    # a bucket unknown since before the boot with nothing since: the boot found it unknown, filed no row and
-    # re-seeded its stateSince from its own clock (seconds after the route's bootAt); every hold in the tail is from
-    # a previous kernel life, more than a day old, so the stamps carry their date and the durations reach hours
-    # and days
+    # a bucket unknown since before the boot with nothing since: the boot found it unknown, filed no row and seeded
+    # its stateSince from the kernel's boot clock (bootAt itself; the backend is seeded with it); the read that
+    # served this payload replaced the seed's reason with its own, as the live route does (an unchanged unknown
+    # bucket carries why_unknown, never the restart reason); every hold in the tail is from a previous kernel life,
+    # more than a day old, so the stamps carry their date and the durations reach hours and days
     "stale": _base(overall={"state": "unknown", "worstBucket": KEY},
-                   buckets={KEY: _bucket(KEY, "unknown", BOOT + 3, RESTART, QUIET_WINS)},
+                   buckets={KEY: _bucket(KEY, "unknown", BOOT, FEW, QUIET_WINS)},
                    transitions=_chain(KEY, [(NOW - 190000, "healthy"), (NOW - 183000, "degraded"), (NOW - 100000, "unknown")])),
+    # the bucket had traffic when the previous kernel stopped, so the boot filed its restart row; a boot at :58 of a
+    # minute, and nothing since: head since, the restart row's stamp and the pre-boot hold's end are one clock
+    # (review round 2: seeded from the aggregator's own clock, seconds later, the head named the next minute)
+    "minute": _base(bootAt=BOOT_M, uptimeS=float(NOW - BOOT_M), overall={"state": "unknown", "worstBucket": KEY},
+                    buckets={KEY: _bucket(KEY, "unknown", BOOT_M, FEW, QUIET_WINS)},
+                    transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
+                                 _tr(BOOT_M, KEY, "thrashing", "unknown", RESTART)]),
+    # the hover's own read filed a transition, so its t is asOf: the state it closed reads its duration, closed, and
+    # the new state is the one 'so far' (a flag, never a stamp comparison; review round 2 asked for it executed)
+    "ownread": _base(overall={"state": "thrashing", "worstBucket": KEY},
+                     buckets={KEY: _bucket(KEY, "thrashing", NOW, WHY, STORM_WINS)},
+                     transitions=[_tr(NOW - 500, KEY, "unknown", "healthy"), _tr(NOW, KEY, "healthy", "thrashing", WHY)]),
     # eight transitions, six from before the boot (the bucket unknown at the stop: no restart row) and two after:
     # the cap shows six transitions, and the divider is extra
     "cap": _base(overall={"state": "degraded", "worstBucket": KEY},
@@ -154,6 +174,11 @@ PAYLOADS = {
 
 def _hm(t):
     return time.strftime("%H:%M", time.localtime(t))
+
+
+def _min(s):
+    """dur()'s minute form for 60 s <= s < 3600 s: Math.round, which rounds a half up (Python's round would not)."""
+    return "%d min" % int(s / 60 + 0.5)
 
 
 def _hmd(t):
@@ -200,15 +225,19 @@ const head = () => ev(() => { const h = document.querySelector("#ah-tip .ah-hist
 const shown = () => ev(() => document.getElementById("ah-tip").style.display === "block");
 const described = () => ev(() => document.getElementById("rail-api").getAttribute("aria-describedby"));
 // the tip's role and modal flag, whether focus sits inside it, and whether it is the centered card
-const mode = () => ev(() => { const t = document.getElementById("ah-tip"); return { role: t.getAttribute("role"), modal: t.getAttribute("aria-modal"),
+// #ah-desc is read null-safe so a page without it fails the description assertions alone, not every step
+const mode = () => ev(() => { const t = document.getElementById("ah-tip"), d = document.getElementById("ah-desc"), b = d ? d.getBoundingClientRect() : null;
+  return { role: t.getAttribute("role"), modal: t.getAttribute("aria-modal"),
   focusInside: t.contains(document.activeElement), modalClass: t.classList.contains("ru-modal"), shown: t.style.display === "block",
-  described: document.getElementById("rail-api").getAttribute("aria-describedby"), activeIsCell: document.activeElement === document.getElementById("rail-api") }; });
+  described: document.getElementById("rail-api").getAttribute("aria-describedby"), activeIsCell: document.activeElement === document.getElementById("rail-api"),
+  descText: d ? d.textContent : null, descBox: b ? [b.width, b.height] : null, descInTree: !!d && document.body.contains(d) }; });
+const descOf = () => ev(() => { const d = document.getElementById("ah-desc"); return d ? d.textContent : null; });
 // the mouseenter and the look at what it painted are ONE task: the read fires on the show, so its answer cannot land
 // before this returns, and the loader state read here is what the user sees before the answer (a separate round trip
 // let the local server answer in between, and the dots were already rows)
 const enter = () => ev(() => { const el = document.getElementById("rail-api"); el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
   return { wait: !!document.querySelector("#ah-tip .ah-hist .ah-wait"), described: el.getAttribute("aria-describedby"), fetchN: window.__fetchN,
-           rows: document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length }; });
+           rows: document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length, desc: (document.getElementById("ah-desc") || {}).textContent }; });
 const leave = () => ev(() => { document.getElementById("rail-api").dispatchEvent(new MouseEvent("mouseleave")); });
 const waitRows = () => page.waitForFunction(() => document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length > 0, null, { timeout: 8000 });
 const waitSel = (s) => page.waitForFunction((s) => !!document.querySelector(s), s, { timeout: 8000 });
@@ -230,7 +259,7 @@ await ev((f) => { window.__rompApiHealth(f); }, frame());
 await step("storm", async () => {
   // 1. the hover: the loader's dots first, the rows when the read lands; the cell is described by the tip
   const first = await enter();
-  R.stormWaitFirst = first.wait; R.stormDescribed = first.described; R.stormFetchN0 = first.fetchN;
+  R.stormWaitFirst = first.wait; R.stormDescribed = first.described; R.stormFetchN0 = first.fetchN; R.stormDesc0 = first.desc;
   await waitRows();
   R.storm = { head: await head(), rows: await rows(), fetchN: await fetchN(), shown: await shown(), mode: await mode(), geo: await geo() };
   await leave();
@@ -275,6 +304,16 @@ await step("stale", async () => {
   await show("stale"); await waitRows();
   R.stale = { head: await head(), rows: await rows() };
   await leave();
+  // 7b. the boot filed a restart row (traffic at the stop) at :58 of a minute: head since and the row's stamp agree
+  await show("minute"); await waitRows();
+  R.minute = { head: await head(), rows: await rows() };
+  await leave();
+});
+await step("ownread", async () => {
+  // 7c. a transition at t === asOf, the hover's own read: the closed state reads its duration, the new one 'so far'
+  await show("ownread"); await waitRows();
+  R.ownread = { head: await head(), rows: await rows() };
+  await leave();
 });
 await step("cap", async () => {
   // 8. the cap counts transitions: six of them with the divider extra, six alone when nothing crosses the boot
@@ -289,7 +328,7 @@ await step("fail", async () => {
   // 9. a failed read is one loud line in place of the rows: a non-2xx, a rejected fetch, a malformed answer
   await ev(() => { window.fetch = () => Promise.resolve({ ok: false, status: 503 }); });
   await enter(); await waitSel("#ah-tip .ah-err");
-  R.fail503 = { head: await head(), rows: await rows() };
+  R.fail503 = { head: await head(), rows: await rows(), desc: await descOf() };
   await leave();
   await ev(() => { window.fetch = () => Promise.reject(new Error("Failed to fetch")); });
   await enter(); await page.waitForFunction(() => /Failed to fetch/.test((document.querySelector("#ah-tip .ah-err") || {}).textContent || ""), null, { timeout: 8000 });
@@ -365,6 +404,27 @@ await step("focus", async () => {
     return { shown: document.getElementById("ah-tip").style.display === "block", fetchN: window.__fetchN }; });
   R.refocusLater.read = R.refocusLater.fetchN - n1;
   await ev(() => { document.getElementById("rail-api").blur(); });
+});
+await step("frameTab", async () => {
+  // 15b. the cell's keyboard path on the dashboard, where every pane is an iframe: focus in a pane, Tab onto the cell.
+  //      Chromium fires focus on the TOP window for the frame change, in the same task as the cell's focus, so the
+  //      mark is set; the element it recorded is the body (the host is cleared before the event; Chromium 151), not
+  //      the cell, and the hover shows and reads once (review round 2: the mark alone swallowed this path). A scratch
+  //      iframe with an input stands in for the pane, inserted right before the cell so the Tab lands on it; removed after.
+  await ev(() => new Promise((res) => { const el = document.getElementById("rail-api"), f = document.createElement("iframe");
+    f.id = "lab-pane"; f.style.cssText = "width:1px;height:1px;border:0"; f.srcdoc = "<input id=lab-in>"; f.onload = () => res();
+    el.parentNode.insertBefore(f, el); }));
+  await ev(() => { window.__winLog = []; window.addEventListener("focus", () => { const a = document.activeElement; window.__winLog.push(a ? (a.id || a.tagName) : null); }); });
+  await page.frameLocator("#lab-pane").locator("#lab-in").focus();
+  R.frameTabFrom = await ev(() => document.activeElement ? document.activeElement.id : null);
+  const n = await fetchN();
+  await page.keyboard.press("Tab");
+  R.frameTab = await ev(() => ({ active: document.activeElement ? document.activeElement.id : null, shown: document.getElementById("ah-tip").style.display === "block",
+    described: document.getElementById("rail-api").getAttribute("aria-describedby"), winLog: window.__winLog.slice(), fetchN: window.__fetchN }));
+  R.frameTab.read = R.frameTab.fetchN - n;
+  await waitRows();
+  R.frameTabRows = (await rows()).length;
+  await ev(() => { document.getElementById("rail-api").blur(); document.getElementById("lab-pane").remove(); });
 });
 await step("keyboard", async () => {
   // 16. Enter pins the detail with the section in it, as the dialog with focus inside, and reads nothing new (the
@@ -524,7 +584,7 @@ class ServedHistory(unittest.TestCase):
         R = self.R
         self.assertTrue(R["stormWaitFirst"], "the loader's dots stand in until the answer lands")
         self.assertEqual(R["stormFetchN0"], 1, "one read per show, fired on the show")
-        self.assertEqual(R["stormDescribed"], "ah-tip")
+        self.assertEqual(R["stormDescribed"], "ah-desc", "described by the short summary, not the tip")
         self.assertEqual(R["storm"]["fetchN"], 1)
         self.assertTrue(R["storm"]["shown"])
         self.assertFalse(R["storm"]["head"]["wait"], "the dots go when the rows arrive")
@@ -533,7 +593,7 @@ class ServedHistory(unittest.TestCase):
 
     def test_a_fresh_show_drops_the_last_answer_and_the_newest_read_wins_a_race(self):
         R = self.R
-        for name in ("quiet", "empty", "two", "twoFam", "offline", "stale", "cap", "capPost"):
+        for name in ("quiet", "empty", "two", "twoFam", "offline", "stale", "minute", "ownread", "cap", "capPost"):
             self.assertTrue(R[name + "Wait"], "%s: the dots stand in again, not the last hover's rows" % name)
             self.assertEqual(R[name + "Rows0"], 0, name)
         self.assertEqual(R["racePending"], 2, "enter, leave, enter: two reads in flight")
@@ -582,8 +642,8 @@ class ServedHistory(unittest.TestCase):
     def test_a_bucket_the_boot_seeded_reads_since_the_boot_in_the_head_and_the_tail_alike(self):
         h, rows = self.R["stale"]["head"], self.R["stale"]["rows"]
         self.assertEqual(h["word"], "unknown")
-        self.assertEqual(h["since"], "since " + _hmd(BOOT), "bootAt, not the seed's own clock (stateSince is BOOT + 3)")
-        self.assertEqual(h["why"], RESTART)
+        self.assertEqual(h["since"], "since " + _hmd(BOOT), "stateSince is the boot clock itself: the backend is seeded with it")
+        self.assertEqual(h["why"], FEW, "the read's own reason, as the live route serves it; the head keys on nothing in it")
         self.assertEqual([r["v"] for r in rows[:3]], ["no attempts"] * 3)
         tail = rows[3:]
         self.assertEqual([(r["k"], r["w"], r["v"], r["boot"]) for r in tail],
@@ -592,8 +652,32 @@ class ServedHistory(unittest.TestCase):
                           (_hmd(NOW - 183000), "degraded", "23 h 3 min", False),
                           (_hmd(NOW - 190000), "healthy", "1 h 57 min", False)],
                          "the divider and the head name one time; the pre-boot unknown is closed at the boot, never 'so far'")
+        self.assertEqual(h["since"], "since " + tail[0]["k"], "head since == divider stamp")
         self.assertTrue(all(" so far" not in (r["v"] or "") for r in tail), "no open-ended state for a bucket the boot seeded")
         self.assertTrue(all(re.match(r"\d\d-\d\d \d\d:\d\d$", r["k"]) for r in tail[1:]), "stamps from another day carry their date")
+
+    def test_a_boot_at_58_seconds_reads_one_time_in_the_head_and_on_its_restart_row(self):
+        h, rows = self.R["minute"]["head"], self.R["minute"]["rows"]
+        self.assertEqual(h["word"], "unknown")
+        self.assertEqual(h["since"], "since " + _hmd(BOOT_M))
+        tail = rows[3:]
+        self.assertEqual([(r["k"], r["w"], r["v"], r["boot"]) for r in tail],
+                         [(_hmd(BOOT_M), "unknown · kernel restarted", _min(NOW - BOOT_M) + " so far", False),
+                          (_hmd(NOW - 1500), "thrashing", _min(BOOT_M - (NOW - 1500)), False),
+                          (_hmd(NOW - 3000), "healthy", "25 min", False)],
+                         "the boot's own row names the restart (no divider); the pre-boot hold ends at the boot")
+        self.assertEqual(h["since"], "since " + tail[0]["k"], "head since == the restart row's stamp: one clock")
+        self.assertFalse(any(r["boot"] for r in tail))
+        self.assertEqual(BOOT_M % 60, 58, "the payload's boot sits two seconds before a minute boundary")
+
+    def test_a_transition_the_hover_s_own_read_filed_closes_the_state_before_it(self):
+        h, rows = self.R["ownread"]["head"], self.R["ownread"]["rows"]
+        self.assertEqual(h["since"], "since " + _hmd(NOW), "the state entered at this read's asOf")
+        tail = rows[3:]
+        self.assertEqual([(r["k"], r["w"], r["v"]) for r in tail],
+                         [(_hmd(NOW), "thrashing", "0 s so far"), (_hmd(NOW - 500), "healthy", "8 min")],
+                         "the closed state reads its duration with no 'so far' although its end is asOf; the new one is 'so far'")
+        self.assertEqual(sum(1 for r in tail if " so far" in r["v"]), 1)
 
     def test_no_bucket_says_so_in_place_of_the_rows(self):
         h, rows = self.R["empty"]["head"], self.R["empty"]["rows"]
@@ -620,9 +704,10 @@ class ServedHistory(unittest.TestCase):
         self.assertEqual(h["word"], "unknown")
         self.assertEqual([r["v"] for r in rows[:3]],
                          ["5 attempts without a status · 1 gave up · 2 sessions retried",
-                          "8 attempts · 25% 429 · 0% 5xx · 7 without a status · 1 gave up · 2 sessions retried",
+                          "15 attempts, 7 of them without a status · 25% 429 · 0% 5xx of the other 8 · 1 gave up · 2 sessions retried",
                           "no attempts"],
-                         "never 'no attempts' while give-ups or sessions are non-zero; the shares stay over the statused attempts")
+                         "never 'no attempts' while give-ups or sessions are non-zero; a mixed window counts every attempt once "
+                         "(requests 8 with a status plus 7 without: noStatus sits outside requests) and names the shares' base")
 
     def test_the_cap_shows_six_transitions_with_the_divider_extra_and_six_without_one(self):
         rows = self.R["cap"]["rows"][3:]
@@ -661,7 +746,7 @@ class ServedHistory(unittest.TestCase):
     def test_focus_shows_the_hover_and_blur_hides_it(self):
         R = self.R
         self.assertTrue(R["focusShown"])
-        self.assertEqual(R["focusDescribed"], "ah-tip")
+        self.assertEqual(R["focusDescribed"], "ah-desc")
         self.assertTrue(R["blurHidden"])
         self.assertIsNone(R["blurDescribed"])
 
@@ -681,21 +766,47 @@ class ServedHistory(unittest.TestCase):
 
     def test_a_focus_the_window_regaining_focus_re_dispatches_does_not_pop_the_hover(self):
         R = self.R
-        self.assertFalse(R["refocus"]["shown"], "the cell's focus in the window focus's own task is not a show")
+        self.assertFalse(R["refocus"]["shown"], "the cell's focus in the window focus's own task, the cell already active, is not a show")
         self.assertEqual(R["refocus"]["read"], 0, "and not a read")
         self.assertTrue(R["refocusLater"]["shown"], "a focus after the next frame is the user's and shows")
         self.assertEqual(R["refocusLater"]["read"], 1)
+
+    def test_a_tab_out_of_an_iframe_onto_the_cell_shows_the_hover(self):
+        R = self.R
+        self.assertEqual(R["frameTabFrom"], "lab-pane", "focus sat in the iframe (the top document's active element is its host)")
+        t = R["frameTab"]
+        self.assertEqual(t["active"], "rail-api", "one Tab lands on the cell")
+        self.assertGreaterEqual(len(t["winLog"]), 1, "Chromium fired focus on the top window for the frame change: the mark "
+                                "was set on this path, and it must not swallow the show")
+        self.assertNotIn("rail-api", t["winLog"], "the cell was not the active element at the window's event (the body is)")
+        self.assertTrue(t["shown"], "the hover shows: the recorded element was not the cell")
+        self.assertEqual(t["described"], "ah-desc")
+        self.assertEqual(t["read"], 1, "and reads once")
+        self.assertGreater(R["frameTabRows"], 3)
 
     def test_the_shown_tip_is_a_tooltip_and_the_pinned_card_the_dialog(self):
         R = self.R
         for m in (R["storm"]["mode"], R["focusMode"]):
             self.assertEqual((m["role"], m["modal"], m["modalClass"]), ("tooltip", None, False))
-            self.assertEqual(m["described"], "ah-tip")
+            self.assertEqual(m["described"], "ah-desc")
             self.assertFalse(m["focusInside"])
         m = R["kbMode"]
         self.assertEqual((m["role"], m["modal"], m["modalClass"]), ("dialog", "true", True))
         self.assertTrue(m["focusInside"], "focus moves into the dialog")
         self.assertIsNone(m["described"], "the dialog is not the cell's description")
+
+    def test_the_cell_is_described_by_a_short_summary_and_never_by_the_rows(self):
+        R = self.R
+        self.assertEqual(R["stormDesc0"], "Reading the history. Press Enter to open it.", "before the answer: the read in flight, not the loader's markup")
+        m = R["storm"]["mode"]
+        d = m["descText"]
+        self.assertEqual(d, "History: thrashing since %s. Press Enter to open it." % _hmd(NOW - 300), "the state word, its since, how to reach the rest")
+        self.assertLess(len(d), 90, "bounded: a sentence, not the tip")
+        for w in ("attempts", "429", "5xx", "gave up", "retried", "kernel restarted", "as of", "State changes"):
+            self.assertNotIn(w, d, "no window row, no transition, no stamp in the description")
+        self.assertTrue(m["descInTree"])
+        self.assertLessEqual(max(m["descBox"]), 1.0, "visually hidden: one pixel or less each way")
+        self.assertEqual(R["fail503"]["desc"], "Could not read the API history: HTTP 503. Press Enter to open it.")
 
     def test_enter_pins_the_section_a_frame_re_reads_it_and_escape_does_not_re_pop_the_hover(self):
         R = self.R
