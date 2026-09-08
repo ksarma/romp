@@ -797,6 +797,11 @@ test("the floating Comment button rides the seam's selection hook — before the
   assert.match(SRC, /ctx\.onSelection\(\(sel\) => this\.onSelection\(sel\)\);/);
   assert.match(SRC, /if \(!this\.open \|\| this\.ctx\.mode\(\) === "media" \|\| !sel\.rangeCount\) return;/, "with the panel open, on a text view");
   assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) this\.float\.addEventListener\(ev, \(e\) => e\.preventDefault\(\)\);/, "the click must not collapse the selection it is about");
+  // the float goes when the passage moves from under it, on the body's scroll and on a figure's load (a picture landing
+  // inside the viewport above the passage moves it with no scroll event; the Slice 2 review, round 3): one listener, one
+  // comparison. file-view-place.test.ts pins the comparison; file-view-float-anchoring-browser.test.ts measures both scenes
+  assert.match(SRC, /ctx\.body\(\)\.addEventListener\("load", this\.hideFloatOnScroll, true\);\n\s*ctx\.body\(\)\.addEventListener\("scroll", this\.hideFloatOnScroll, \{ passive: true \}\);/, "the load listener beside the scroll listener (capture: load does not bubble)");
+  assert.match(SRC, /this\.ctx\.body\(\)\.removeEventListener\("load", this\.hideFloatOnScroll, true\);\n\s*this\.ctx\.body\(\)\.removeEventListener\("scroll", this\.hideFloatOnScroll\);/, "both removed at dispose");
   assert.match(SRC, /const res = this\.ctx\.mode\(\) === "rendered" \? mapRenderedSelection\(sel, root, src\) : mapRawSelection\(sel, root, src\);/);
   assert.match(SRC, /else this\.composer = \{ kind: "comment", range: null, quote: null, refusal: \{ \.\.\.res, selText \} \};/, "a refusal opens the composer anyway, note intact");
   const raw = SRC.split("switchToRaw(): void {")[1].split("\n  }\n")[0];

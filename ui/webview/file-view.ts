@@ -25,7 +25,7 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlace, keptBlockTop, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
+import { readPlace, seatPlace, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -1067,6 +1067,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     aside: (node) => {
       main.querySelector(".fileview-aside")?.remove();
       if (node) { node.classList.add("fileview-aside"); main.appendChild(node); }
+      // the one width change the viewer sees made: this read lays the new width out, the browser's own scroll adjustment
+      // in it, and the reader's place (below) skips the scroll event that reports this number
+      asideScrollTop = body.scrollTop;
       // a PDF's body follows the panel (Slice 4): pages while it is open, the frame when it closes. The bytes not yet
       // landed: renderBody's fetch continuation reads the flag and chooses then.
       const was = asideOpen;
@@ -1099,50 +1102,49 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // `text` before renderBody swaps the old view out. `place` is the reader's place under the layout last painted, read
   // again after every seat and, off the body's scroll event, once per frame as the reader moves; the width reflow
   // seats from it, since by the time the observer reports, the layout has changed and the old top block cannot be read.
-  // A scroll under a body width the last read did not see, before that repaint, is one of three things: the browser's
-  // anchoring keeping its anchor node through the reflow; the browser clamping the body as the content got shorter (it
-  // reads as a LATER block, the wrong place); or a scroll made on purpose in the same task as the width change, which is
-  // new information the repaint must not undo: the panel's reveal (file-comments.ts fcopen: a click on a highlight with
-  // the panel closed mounts the aside and centers the mark in one task) used to be scrolled back to the pre-click place
-  // one frame later, the text jumping twice and a mark low in the viewport pushed off the screen with its card (the
-  // Slice 2 review). The first two are skipped, each by its signature, and every other scroll is read, so the repaint's
-  // seat holds what it finds. The clamp lands the body at its end coming from above it, and nothing scrolls UP to the
-  // end on purpose, since the position it came from is one only a shrink of the content leaves behind. The anchoring
-  // adjustment reads as the block the last read named with its top edge within a pixel of where it stood: the block did
-  // not move, its text reflowed around the edge. It was read as the reader's place at first (the same block, so
-  // harmless, the reasoning went), but a place read under the NEW width is already in that layout, so the repaint's seat
-  // moved nothing and the reader's depth into the block was kept in pixels where reader-place.ts keeps it as a fraction
-  // of the block's height; the aside's close, whose padding write suppresses the anchoring, applied the fraction, so
-  // each open of the Comments panel halved the reader's depth into the top block and each close kept it, the words at
-  // the body's top edge creeping toward the block's start with every toggle (the Slice 2 review, round 2). Skipped, the
-  // pre-reflow place stands for the repaint to seat, and the depth is the same fraction in both directions and across a
-  // pane drag. A scroll that leaves the same block at another height (the reveal centering a mark inside a tall block)
-  // is not the anchoring and is read. file-view-place-reveal-browser.test.ts drives the reveal, the generic form (any
-  // scroll plus a width change in one task) and the clamp; file-view-place-browser.test.ts the toggle and the drag with
-  // the reader partway into the top block.
+  // A scroll under a body width the last read did not see, before that repaint, is the browser's own: its anchoring
+  // keeping an anchor node's top edge through the reflow, or its clamp as the content got shorter (which reads as a
+  // LATER block, the wrong place). Read as the reader's place, either stands in the NEW layout already, so the repaint's
+  // seat moves nothing and the reader's depth into the top block is held in pixels where reader-place.ts keeps it as a
+  // fraction of the block's height; the aside's close, whose padding write suppresses the anchoring, applied the
+  // fraction, so each open of the Comments panel halved the depth and each close kept it (the Slice 2 review, round 2).
+  // Skipped, the pre-reflow place stands for the repaint to seat, and the depth is the same fraction in both directions
+  // and across a pane drag. One scroll in that window is made on purpose and must not be undone: the panel's reveal
+  // (file-comments.ts fcopen: a click on a highlight with the panel closed mounts the aside and centers the mark in one
+  // task), which the repaint used to scroll back to the pre-click place one frame later, the text jumping twice and a
+  // mark low in the viewport pushed off the screen with its card (round 1). The viewer sees that width change made: the
+  // panel mounts the aside through the seam's aside hook, the one place a toggle's width change happens, and the hook
+  // reads the body's scrollTop after the mount, which lays the new width out with the browser's adjustment in it, and
+  // keeps the number (asideScrollTop). A scroll under the new width that reports that number is the adjustment the hook
+  // already saw, and skipped; one that reports another number is a script's after the mount (the reveal) or the
+  // reader's, and read, unless it is the clamp, whose landing is the body's end reached from above it, which nothing
+  // does on purpose. Under a new width no hook saw (the pane dragged, the window resized) nothing scrolls on purpose in
+  // the same task, and every scroll before the repaint is skipped. Round 2 recognised the anchoring by a signature
+  // instead, the kept block's top edge within a pixel of where it stood, which holds for a paragraph, a picture or a
+  // code block, whose anchor node shares the block's top edge, and not for a table, a list or a blockquote, where the
+  // browser anchors on a row, an item or an inner paragraph and the content above it inside the block reflows (round
+  // 3: a 40-row table walked two rows up per toggle, 0.4 to 0.35 to 0.298 to 0.243 of its height; a 40-item list 0.4
+  // to 0.422; a 12-paragraph blockquote 0.4 to 0.412), and on a drag the table held pixels where the paragraph held
+  // the fraction. The hook's number is exact whatever the browser anchored on, and costs one layout per toggle, which
+  // the panel's own measurements force in the same task anyway. file-view-place-reveal-browser.test.ts drives the
+  // reveal, a width change no hook saw and the clamp; file-view-place-browser.test.ts the toggle and the drag with the
+  // reader partway into a paragraph, a picture, a table, a list and a blockquote.
   let shownText: string | null = null;
   let place: Place | null = null;
   let placeWidth = -1;
   let placeScrollTop = -1;
+  let asideScrollTop = -1;   // the body's scrollTop as the aside hook (ctx.aside, above) left it, -1 once a read has followed
   const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
-  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; } };
+  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; asideScrollTop = -1; } };
   const seat = (kept: Place | null) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); notePlace(); };
   const clamped = (): boolean => body.scrollTop < placeScrollTop && body.scrollTop >= body.scrollHeight - body.clientHeight - 1;
-  /** The browser's anchoring adjustment, at a scroll under a new width: the block the last read named stands with its top
-   *  edge within a pixel of where it stood (the browser keeps its anchor node's top edge through the reflow, and the anchor
-   *  is that block or a node inside it, chosen at the layout after the last scroll that was not its own; reader-place.ts
-   *  keptBlockTop reads the block's own top edge, not the top-visible block's, since a block shorter under the new width
-   *  than the reader's depth into it ends above the edge with its top edge kept). A scroll that left the block at another
-   *  height is the reader's, or a script's, and is read. */
-  const anchored = (): boolean => {
-    if (!place || place.source !== shownText || !textShowing()) return false;
-    const top = keptBlockTop(body, place);
-    return top !== null && Math.abs(top - place.top) <= 1;
-  };
+  /** A scroll under a new width the aside hook saw made, reporting a scrollTop other than the one the hook read after the
+   *  mount: a script's (the reveal) or the reader's, past the browser's own adjustment. */
+  const pastAside = (): boolean => asideScrollTop >= 0 && body.scrollTop !== asideScrollTop;
   let placeFrame = 0;
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
-    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth || !(clamped() || anchored())) notePlace(); };
+    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth || (pastAside() && !clamped())) notePlace(); };
     if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
   }, { passive: true });
   ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
@@ -1322,10 +1324,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       if (svgSource && svgText !== null) {
+        // the Source view is a text view (textShowing), so it keeps the reader's place as the Raw view does: read, swap,
+        // hooks, record the XML as the text painted, seat (the Slice 2 review, round 3: a reload under the Source view
+        // and the Comments panel's close left the numeric scrollTop over the re-laid rows, 27 rows off)
+        const kept = keptPlace();
         body.replaceChildren(codeBlock(svgText, path, true));   // long lines always soft-wrap (the user 2026-08-24)
         fireRendered();                         // a text body: the panel's highlight pass runs on it too
+        shownText = svgText;
+        seat(kept);
         return;
       }
+      shownText = null;                         // a picture or a PDF frame: no text the body was painted from
       if (isPdf && asideOpen) { showPdfPages(); return; }   // the Comments panel is open: the chunk's pages, not the frame (Slice 4)
       if (keepShownFrame()) return;           // the panel closing over a frame at these bytes: the frame stays; the notice, or the attempt under way, goes
       notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them

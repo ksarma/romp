@@ -8,9 +8,12 @@
 //     scrollTop stands), so the Raw view opens after the wrapper and the return lands after it too. Once the map pairs
 //     the wrapper right (anchor-map.ts), the round trip is exact, and these assertions still hold;
 //   - the Raw row at the edge, `return x + 50` of a 120-line code block: five lines inserted above it inside the block,
-//     forty inserted, five deleted below it, and the row itself rewritten with its neighbours (the first round kept
-//     the block's top edge or its loss in pixels, so line 45 stood at the edge after the insertion, and the inserted
-//     line after forty);
+//     forty inserted, five deleted below it (the first round kept the block's top edge or its loss in pixels, so line
+//     45 stood at the edge after the insertion, and the inserted line after forty); and the row itself rewritten with
+//     its neighbours, where no line stands to follow and the block's depth rule applies: the block lost three rows and
+//     moves down by them, so `return x + 47` is at the edge and the replacement's first line one row below it (the
+//     second round walked to the line after the nearest standing predecessor and seated the replacement's first line,
+//     a rule the third round found seating the edit's first line 44 rows up when the block's lines recur, and dropped);
 //   - the same edits with line 50 at the edge of the Rendered code block, read through the browser's hit test; and the
 //     Rendered, Raw, Rendered round trip on line 50, exact now (the first round: within three lines);
 //   - the paragraph under the reader's eye deleted (30px in): the paragraph after it at the edge, whole (the first
@@ -120,13 +123,13 @@ test("in a browser, the real module: from paragraph 80 below an html wrapper the
   });
 });
 
-test("in a browser, the real module, Raw: the row at the edge stays the row at the edge through a reload that inserts five or forty lines above it inside the block, deletes five below it, or rewrites the lines around it (the first round: the block's top edge held, and line 45 stood at the edge)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module, Raw: the row at the edge stays the row at the edge through a reload that inserts five or forty lines above it inside the block or deletes five below it (the first round: the block's top edge held, and line 45 stood at the edge); the lines around it rewritten fall to the block's depth rule, the block moved down by the rows it lost", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const edits: [string, string[], RegExp][] = [
       ["five lines inserted at line 10, above the row", insertAt(10, 5), /^return x \+ 50$/],
       ["forty lines inserted at line 10, above the row", insertAt(10, 40), /^return x \+ 50$/],
       ["five lines deleted at line 60, below the row", deleteAt(60, 5), /^return x \+ 50$/],
-      ["lines 48 to 52 rewritten as two", [...LINES.slice(0, 47), "    z = 1  # rewritten", "    z = 2  # rewritten", ...LINES.slice(52)], /^z = 1 {2}# rewritten$/],
+      ["lines 48 to 52 rewritten as two", [...LINES.slice(0, 47), "    z = 1  # rewritten", "    z = 2  # rewritten", ...LINES.slice(52)], /^return x \+ 47$/],
     ];
     for (const [edit, lines, want] of edits) {
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: withCode(LINES) }, raw: true });
@@ -136,7 +139,7 @@ test("in a browser, the real module, Raw: the row at the edge stays the row at t
       near(before.top, 0, edit + ": at the edge", 1);
       await reload(page, withCode(lines));
       const after = (await rowAtTop(page))!;
-      assert.match(after.text, want, edit + `: the row at the edge (got ${JSON.stringify(after.text)}; the first round: ${edit.startsWith("five lines inserted") ? "return x + 45" : edit.startsWith("forty") ? "the inserted line y39" : edit.startsWith("five lines deleted") ? "return x + 45" : "return x + 46"})`);
+      assert.match(after.text, want, edit + `: the row at the edge (got ${JSON.stringify(after.text)}; the first round: ${edit.startsWith("five lines inserted") ? "return x + 45" : edit.startsWith("forty") ? "the inserted line y39" : edit.startsWith("five lines deleted") ? "return x + 45" : "return x + 46; the second: z = 1, the replacement's first line, by a walk the third round dropped: the depth rule moves the block down by the three rows it lost"})`);
       near(after.top, before.top, edit + ": at the same height", 1);
       assert.deepEqual(errors, [], edit + ": no script error");
       await page.close();
@@ -144,12 +147,12 @@ test("in a browser, the real module, Raw: the row at the edge stays the row at t
   });
 });
 
-test("in a browser, the real module, Rendered: line 50 at the edge of the code block stays line 50 through a reload that inserts five lines above it or deletes five below it; the Rendered, Raw, Rendered round trip on line 50 is exact; the lines around it rewritten seat the first replacement line", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module, Rendered: line 50 at the edge of the code block stays line 50 through a reload that inserts five lines above it or deletes five below it; the Rendered, Raw, Rendered round trip on line 50 is exact; the lines around it rewritten fall to the block's depth rule, as in Raw", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const edits: [string, string[], string][] = [
       ["five lines inserted at line 10, above the line", insertAt(10, 5), "return x + 50"],
       ["five lines deleted at line 60, below the line", deleteAt(60, 5), "return x + 50"],
-      ["lines 48 to 52 rewritten as two", [...LINES.slice(0, 47), "z = 1  # rewritten", "z = 2  # rewritten", ...LINES.slice(52)], "z = 1  # rewritten"],
+      ["lines 48 to 52 rewritten as two", [...LINES.slice(0, 47), "z = 1  # rewritten", "z = 2  # rewritten", ...LINES.slice(52)], "return x + 47"],
     ];
     for (const [edit, lines, want] of edits) {
       const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: withCode(LINES) } });
@@ -158,7 +161,7 @@ test("in a browser, the real module, Rendered: line 50 at the edge of the code b
       assert.equal(before.text, "return x + 50", edit + ": the scene starts with line 50 at the edge");
       await reload(page, withCode(lines));
       const after = await lineAtEdge(page);
-      assert.equal(after.text, want, edit + `: the line at the edge (the first round: the block's top held at ${before.preTop}, and line 45 stood at the edge)`);
+      assert.equal(after.text, want, edit + `: the line at the edge (the first round: the block's top held at ${before.preTop}, and line 45 stood at the edge${edit.startsWith("lines 48") ? "; the second seated z = 1, the replacement's first line, by a walk the third round dropped" : ""})`);
       assert.deepEqual(errors, [], edit + ": no script error");
       await page.close();
     }

@@ -9,10 +9,11 @@
 // status) is written with `<` as `\u003c` (scriptLiteral): an HTML tokenizer ends script data at the first `</script`
 // whatever the JavaScript around it, so a fixture holding one used to cut the harness script off before the fetch stub,
 // leaving the viewer to fetch the harness page itself as the note (file-view-leg-page-browser.test.ts pins the escape).
-// Nine legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
+// Twelve legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
 // file-view-fold-browser, and the Slice 2 review's file-view-place-blocks-browser, file-view-place-reveal-browser,
-// file-view-place-edits-browser, file-view-float-anchoring-browser and file-view-leg-page-browser); this module exists so
-// they do not carry nine copies of the same page. Test-only:
+// file-view-place-edits-browser, file-view-float-anchoring-browser, file-view-leg-page-browser,
+// file-view-place-float-browser, file-view-place-html-browser and file-view-place-svg-source-browser); this module
+// exists so they do not carry twelve copies of the same page. Test-only:
 // no webview bundle imports it. playwright and esbuild are resolved from the extension's own package.json, so a
 // single-file run (infra: the bundle written under TMPDIR) finds them too. The tree under test is the
 // cwd's, ../ui/webview from the vscode-extension npm test runs in, as for every browser leg; to run a leg over another
@@ -93,6 +94,7 @@ window.fetch = async function (url) {
   var m = /[?&]path=([^&]*)/.exec(url); var p = m ? decodeURIComponent(m[1]) : "";
   var text = window.__docs[p];
   if (text === undefined) return new Response("no such file: " + p, { status: 404 });
+  if (/\.svg$/i.test(p)) return new Response(text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
   return new Response(text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
 };
 window.__paints = 0; window.__seam = null; window.__autoReply = true;

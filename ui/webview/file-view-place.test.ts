@@ -149,13 +149,25 @@ test("topVisibleIndex: the first box whose bottom lies below the edge; count whe
   assert.equal(topVisibleIndex(5, at, 130), 3);
   assert.equal(topVisibleIndex(5, at, 200), 5, "none below: count");
   assert.equal(topVisibleIndex(0, at, 0), 0, "no boxes");
-  // a floated figure (index 1) reaching below the paragraphs wrapping beside it: whichever box the search lands on, the
-  // top block is the first paragraph beside the figure that ends below the edge, the one the reader is reading (the
-  // figure, kept instead, is one row in Raw and moves as the paragraphs beside it grow taller; the Slice 2 review)
-  const floated = [40, 250, 120, 160, 200];
-  assert.equal(topVisibleIndex(5, (i) => floated[i], 130), 3);
-  assert.equal(topVisibleIndex(5, (i) => floated[i], 50), 1, "the edge above every paragraph beside it: the figure");
-  assert.equal(topVisibleIndex(5, (i) => floated[i], 210), 1, "past the last paragraph beside it, the figure still showing: the figure, read back from the end");
+  // a floated figure (index 4) reaching below the three paragraphs wrapping beside it (5, 6, 7): the top block is the
+  // first paragraph beside the figure that ends below the edge, the one the reader is reading (the figure, kept
+  // instead, is one row in Raw and moves as the paragraphs beside it grow taller; the Slice 2 review). The search's
+  // first probe, (0 + 8) >> 1, is the figure itself, whose bottom lies below every edge here, so the search settles on
+  // it and the pass-over alone answers the paragraph: a search that stopped where it landed answers 4 for 6 and 7 (the
+  // review's third round: the earlier fixture put the figure at index 1, where the search never landed on it while a
+  // paragraph beside it ended above the edge, and the pass-over went untested)
+  const floated = [40, 80, 120, 160, 400, 200, 240, 280];
+  assert.equal(topVisibleIndex(8, (i) => floated[i], 250), 7, "beside the figure at its third paragraph: that paragraph, the two above the edge passed over");
+  assert.equal(topVisibleIndex(8, (i) => floated[i], 210), 6, "at its second paragraph: that paragraph");
+  assert.equal(topVisibleIndex(8, (i) => floated[i], 170), 4, "the first paragraph beside it still ends below the edge: the figure, first in the order, as in a plain column");
+  assert.equal(topVisibleIndex(8, (i) => floated[i], 100), 2, "the edge above the figure: the paragraph there");
+  assert.equal(topVisibleIndex(8, (i) => floated[i], 300), 4, "past the last paragraph beside it, the figure still showing: the figure, nothing else ends below the edge");
+  // the figure at the search's second probe from the left ((6 + 11) >> 1 = 8, after 5 read as above the edge): the same
+  const later = [54, 67, 114, 153, 175, 238, 252, 310, 423, 339, 391];
+  assert.equal(topVisibleIndex(11, (i) => later[i], 343), 10, "the paragraph beside the figure that ends below the edge, not the figure the search landed on");
+  // a hidden element among the paragraphs beside the figure is passed over with them
+  const floatedHidden = [40, 80, 120, 160, 400, 200, NaN, 240, 280];
+  assert.equal(topVisibleIndex(9, (i) => floatedHidden[i], 250), 8);
   // a hidden box (NaN: no layout) on the search's path below the reader is read around, in the search and in the answer
   const withNaN = [40, 80, 120, NaN, 160, 200];
   assert.equal(topVisibleIndex(6, (i) => withNaN[i], 100), 2);
@@ -334,16 +346,19 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
     "read, swap, hooks, then seat over the new text");
   assert.match(local, /const seat = \(kept: Place \| null\) => \{ if \(kept && shownText !== null\) seatPlace\(body, shownText, kept\); notePlace\(\); \};/, "a seat reads the place anew after it");
-  assert.match(local, /const notePlace = \(\) => \{ if \(shownText !== null && textShowing\(\)\) \{ place = readPlace\(body, shownText\); placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; \} \};/);
-  // under a width the last read did not see, the browser's own adjustments are skipped, each by its signature: the clamp
-  // (the body landed at its end coming from above it) and the anchoring adjustment (the kept block's top edge within a
-  // pixel of where it stood); a scroll made on purpose in the same task as the width change (the panel's reveal) is read,
-  // so the repaint holds it
+  assert.match(local, /const notePlace = \(\) => \{ if \(shownText !== null && textShowing\(\)\) \{ place = readPlace\(body, shownText\); placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; asideScrollTop = -1; \} \};/);
+  // under a width the last read did not see, a scroll is the browser's own (its anchoring adjustment, its clamp) unless
+  // the seam's aside hook saw the width change made: the hook reads the body's scrollTop after the mount (the browser's
+  // adjustment in it) and keeps the number, and a scroll reporting another number is a script's after the mount (the
+  // panel's reveal) or the reader's, and is read, the clamp excepted (the body landed at its end coming from above it);
+  // with no hook (a pane drag, the window resized) every scroll before the repaint is skipped. The earlier signature, the
+  // kept block's top edge within a pixel of where it stood, missed a table, a list and a blockquote (the review, round 3)
   assert.match(local, /const clamped = \(\): boolean => body\.scrollTop < placeScrollTop && body\.scrollTop >= body\.scrollHeight - body\.clientHeight - 1;/, "the clamp's signature");
-  assert.match(local, /const anchored = \(\): boolean => \{\n\s*if \(!place \|\| place\.source !== shownText \|\| !textShowing\(\)\) return false;\n\s*const top = keptBlockTop\(body, place\);\n\s*return top !== null && Math\.abs\(top - place\.top\) <= 1;/,
-    "the anchoring's signature: the kept block's own top edge (reader-place.ts keptBlockTop) within a pixel of where it stood");
-  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{ placeFrame = 0; if \(body\.clientWidth === placeWidth \|\| !\(clamped\(\) \|\| anchored\(\)\)\) notePlace\(\); \};/,
-    "the scroll-time read, once per frame: every scroll under the width last read, and under a new width every scroll but the browser's own, the clamp and the anchoring adjustment");
+  assert.match(local, /const pastAside = \(\): boolean => asideScrollTop >= 0 && body\.scrollTop !== asideScrollTop;/, "a scroll past the aside hook's number");
+  assert.match(local, /main\.appendChild\(node\); \}\n(?:\s*\/\/[^\n]*\n)*\s*asideScrollTop = body\.scrollTop;/, "the aside hook reads the body after the mount, the new width laid out");
+  assert.doesNotMatch(local, /anchored\(\)|keptBlockTop/, "no anchoring signature: the hook's number is exact whatever the browser anchored on");
+  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{ placeFrame = 0; if \(body\.clientWidth === placeWidth \|\| \(pastAside\(\) && !clamped\(\)\)\) notePlace\(\); \};/,
+    "the scroll-time read, once per frame: every scroll under the width last read; under a new width only a scroll past the aside hook's number, the clamp excepted; with no hook, none");
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];

@@ -1077,17 +1077,23 @@ class Panel {
   hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) this.hideFloat(); };
   /** The float goes, and with it what it was about: the picture (imageTarget) and the place it was offered at (floatAt). */
   hideFloat(): void { this.float.hidden = true; this.imageTarget = null; this.floatAt = null; }
-  /** The body scrolled: when the passage (or picture) the float sat beside has moved from under it, the float goes, as it
-   *  goes on a press elsewhere (plans/markdown-viewer.md Slice 2: it used to stay fixed in place while the selection
-   *  scrolled off the body). The margin lock's own write of the body's scrollTop (a wheel over the cards, mirrored onto
-   *  the body) fires the same event and hides it too: the passage has moved then as well. One body scroll moves nothing
-   *  on screen: when content above the viewport grows (an unsized figure landing its bytes), Chromium's scroll anchoring
-   *  grows scrollTop by the same amount so the reader's text stays put, and fires a scroll event for that write (the
-   *  Slice 2 review, round 2: the float vanished from beside a selection that had moved under a pixel, and the reader had
-   *  to select the passage again). So the event is the trigger and the subject's rect the test: the float stays while the
-   *  passage sits within a pixel of where the button was offered beside it (scrollTop is whole pixels and the growth above
-   *  fractional, so anchoring leaves a sub-pixel drift), and goes once it has moved a pixel or more, or is gone. The
-   *  selection itself stands either way, and the next mouseup over it offers the button again. */
+  /** The body scrolled, or a figure in it landed its bytes: when the passage (or picture) the float sat beside has moved
+   *  from under it, the float goes, as it goes on a press elsewhere (plans/markdown-viewer.md Slice 2: it used to stay
+   *  fixed in place while the selection scrolled off the body). The margin lock's own write of the body's scrollTop (a
+   *  wheel over the cards, mirrored onto the body) fires the same event and hides it too: the passage has moved then as
+   *  well. One body scroll moves nothing on screen: when content above the viewport grows (an unsized figure landing its
+   *  bytes), Chromium's scroll anchoring grows scrollTop by the same amount so the reader's text stays put, and fires a
+   *  scroll event for that write (the Slice 2 review, round 2: the float vanished from beside a selection that had moved
+   *  under a pixel, and the reader had to select the passage again). So the event is the trigger and the subject's rect
+   *  the test: the float stays while the passage sits within a pixel of where the button was offered beside it (scrollTop
+   *  is whole pixels and the growth above fractional, so anchoring leaves a sub-pixel drift), and goes once it has moved
+   *  a pixel or more, or is gone. The same figure landing INSIDE the viewport, above the passage, moves the passage down
+   *  by its height with no scroll at all (anchoring adjusts for growth above its anchor node alone), so the listener runs
+   *  on a figure's `load` as well, heard on the body in the capture phase since load does not bubble (the Slice 2 review,
+   *  round 3: the button stood some 300px above the passage it was offered beside, and a click on it commented on text
+   *  the reader could not see under it). The rect is read after the browser's layout for the event, the anchoring
+   *  adjustment included, so the one comparison tells the two figures apart. The selection itself stands either way,
+   *  and the next mouseup over it offers the button again. */
   hideFloatOnScroll = () => {
     if (this.float.hidden) return;
     const was = this.floatAt, now = this.floatSubjectRect();
@@ -1146,7 +1152,10 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
     // with the float's other listeners, for every layout (installLayout runs for every layout too, but its scroll listeners
-    // feed mirrorScroll, which acts in the margin layout alone): this open's body
+    // feed mirrorScroll, which acts in the margin layout alone): this open's body. The same listener hears a figure's load,
+    // in the capture phase (load does not bubble): a picture landing inside the viewport above the passage moves it with
+    // no scroll event (hideFloatOnScroll's comment)
+    ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });
@@ -1544,6 +1553,7 @@ class Panel {
     window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
+    this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
