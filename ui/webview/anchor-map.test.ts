@@ -260,8 +260,11 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   assert.match(VIEW, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
   assert.match(VIEW, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
   // the viewer's parse carries its link-target hook (file-view-links.ts viewerWalkTokens) as a PER-CALL option: the tokens are
-  // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render
-  assert.match(VIEW, /const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/);   // the file kind's alone since the 2026-09-07 fold: a URL document takes marked's defaults
+  // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render, and only
+  // for the file kind (the 2026-09-07 fold: a URL document takes marked's defaults). The walkTokens itself runs for every kind
+  // since the Slice 3 review, collecting the code tokens for the fence pass's Copy (fence-source.ts); it reads them, never
+  // rewrites them, so the lexer's shapes stand
+  assert.match(VIEW, /const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/);
   const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map never reconfigures marked");

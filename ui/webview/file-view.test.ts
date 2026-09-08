@@ -511,7 +511,10 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor; then EVERY fence, named or
   // not, gets the chat's rows and Copy button (code-block.ts; Slice 3 of plans/markdown-viewer.md), the raw text captured first
   assert.match(VIEW, /if \(lang && hljs\.getLanguage\(lang\)\) \{/);
-  assert.match(VIEW, /const raw = codeEl\.textContent \|\| "";[\s\S]{0,400}codeEl\.innerHTML = hljs\.highlight\(raw, \{ language: lang \}\)\.value;[\s\S]{0,200}wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, raw\);/);
+  // Copy hands the clipboard the fence's text as the note holds it (fence-source.ts; the raw text has marked's four spaces for
+  // each leading tab), the raw text when the fence was not found in the note
+  assert.match(VIEW, /const raw = codeEl\.textContent \|\| "";[\s\S]{0,600}codeEl\.innerHTML = hljs\.highlight\(raw, \{ language: lang \}\)\.value;[\s\S]{0,200}wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, toCopy\);/);
+  assert.match(VIEW, /const toCopy = \(queued && queued\.length \? queued\.shift\(\) : null\) \?\? raw;/);
   // the prose typography exists on BOTH sheets (the chat's .md block is the reference aesthetic)
   assert.match(FEED_CSS, /\.fileview-md \{/);
   assert.match(FEED_CSS, /\.fileview-md pre code \{/);

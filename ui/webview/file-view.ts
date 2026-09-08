@@ -16,7 +16,7 @@
 // BROWSER (file-browse.ts, feed bundle) opens files through this same viewer in the FEED document, so
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import { sanitizeMd } from "./md-sanitize";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
@@ -25,16 +25,17 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlace, keptBlockTop, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
+import { readPlace, seatPlace, seatPlaceOutcome, keptBlockTop, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
-import { delegate } from "./actions";
+import { delegate, pressHold } from "./actions";   // pressHold: a fetch landing waits while a pointer is pressed over the body (the reload under a press)
 import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own (code-block.ts; Slice 3 of plans/markdown-viewer.md)
+import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the note holds it, tabs and all (the Slice 3 review)
 import "./viewer-grammars";   // decision 5's six grammars, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -982,6 +983,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  // A fetch landing rebuilds the body with no gesture of the reader's behind it (a reload the Comments panel's poll asked
+  // for after a session's write). A press under way on a fence's Copy, or anywhere in the body, must outlive that swap: a
+  // pressed node removed before the mouseup dispatches no click at all (actions.ts, the header), so the landing waits while
+  // a pointer is pressed over the body and runs on the release (ui/CLAUDE.md, click-safe option 2;
+  // file-view-copy-held-browser.test.ts). The reader's own paints (a view swap, the editor) follow clicks already released.
+  const hold = pressHold(body);
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
   // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
   // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
@@ -1128,9 +1135,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let place: Place | null = null;
   let placeWidth = -1;
   let placeScrollTop = -1;
-  const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
-  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; } };
-  const seat = (kept: Place | null) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); notePlace(); };
+  let placeHeld = false;   // `place` is the one a clamped seat was given, standing while the body stands where the clamp left it (seat, below)
+  const keptPlace = (): Place | null => (shownText === null ? null : placeHeld && place && body.scrollTop === placeScrollTop ? place : readPlace(body, shownText));
+  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; } };
+  // A seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the write asked for more scroll than the view has, and the
+  // body stands at its end) keeps the place it was given instead of reading the body: the read would name the block the
+  // clamp shows, a paragraph before the reader's, and the next swap would seat THAT, so the Rendered/Raw round trip from
+  // the end of the taller view came back one paragraph early (the Slice 3 review: the top block changed and its edge moved
+  // 65 to 107px; before the slice the Raw view was the taller and the same clamp drifted the other direction by up to
+  // 264px). The held place stands while the body stands where the clamp left it (placeScrollTop): the seat's own scroll
+  // event moves nothing and is skipped below, the first scroll that does move it is the reader's and is read, and a swap
+  // or a reflow that finds the hold seats the reader's own passage, which the other view can show.
+  const seat = (kept: Place | null) => {
+    const clamped = kept && shownText !== null ? seatPlaceOutcome(body, shownText, kept).clamped : false;
+    if (clamped && kept) { place = kept; placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = true; }
+    else notePlace();
+  };
   const clamped = (): boolean => body.scrollTop < placeScrollTop && body.scrollTop >= body.scrollHeight - body.clientHeight - 1;
   /** The browser's anchoring adjustment, at a scroll under a new width: the block the last read named stands with its top
    *  edge within a pixel of where it stood (the browser keeps its anchor node's top edge through the reflow, and the anchor
@@ -1146,7 +1166,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let placeFrame = 0;
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
-    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth || !(clamped() || anchored())) notePlace(); };
+    const read = () => {
+      placeFrame = 0;
+      if (placeHeld && body.scrollTop === placeScrollTop) return;   // the clamped seat's own scroll event: the body has not moved since
+      if (body.clientWidth === placeWidth || !(clamped() || anchored())) notePlace();
+    };
     if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
   }, { passive: true });
   ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
@@ -2061,7 +2085,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
-    }).then((t) => {
+    }).then((t) => hold.defer(() => {   // parked while a pointer is pressed over the body; the guards below re-run at the release
       if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
       if (my !== fetchSeq) return;                              // a newer fetch is the one that lands
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
@@ -2093,7 +2117,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
-    }).catch((err) => {
+    })).catch((err) => hold.defer(() => {
       if (!document.getElementById("romp-fileview")) return;
       if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
@@ -2118,7 +2142,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       body.replaceChildren(why);
-    });
+    }));
   };
   fetchFile();
   return true;
@@ -2442,17 +2466,22 @@ type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; si
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
   let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
+  const fences: Fence[] = [];                          // marked's code tokens in document order, for the fence pass's Copy (fence-source.ts)
   try {
     // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
     // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
     // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
     // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
-    // the defaults runs as well: per-call options replace, not compose. The file kind's alone: a URL document has
-    // no directory for `notes.md:7` to sit in, and its links resolve against the URL below.
+    // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
+    // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
+    // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
+    // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
     const base = marked.defaults.walkTokens;
-    const dirty = marked.parse(text, doc && doc.kind === "file"
-      ? { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }
-      : undefined) as string;
+    const dirty = marked.parse(text, { walkTokens: (t) => {
+      if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
+      if (doc && doc.kind === "file") viewerWalkTokens(t);
+      if (base) void base.call(marked, t);
+    } }) as string;
     // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
     // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
     // and interrupt the active session; review find on #958, 2026-09-07), and GitHub's rules for a note's own
@@ -2563,16 +2592,22 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random. Then, for EVERY
   // fence, named or not, the chat's own dress (code-block.ts; Slice 3 of plans/markdown-viewer.md): the per-line rows
-  // that number the lines and make a soft-wrap read distinctly from a real newline, and the Copy button, which copies
-  // the raw text captured here, BEFORE the rewrite, since the rows drop the newlines. The math fill's source fallback
-  // (a code element wearing md-math-src, math.ts; spelled, not imported, since this module carries no KaTeX) is not
-  // code: it keeps the Copy button and nothing else, as in the chat's highlight().
+  // that number the lines and make a soft-wrap read distinctly from a real newline, and the Copy button. Copy copies
+  // the fence's text AS THE NOTE HOLDS IT (fence-source.ts, off the code tokens the parse collected): the raw text
+  // captured here is read before the rows drop the newlines, but after marked's lexer turned the note's leading tabs
+  // into four spaces each, so a Makefile recipe copied from the rendered text pasted back with spaces (the Slice 3
+  // review); a fence the module does not find in the note copies the raw text as before. The math fill's source
+  // fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module carries no KaTeX)
+  // is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
+  const copySources = fenceCopyQueue(text, fences);
   box.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;
     const raw = codeEl.textContent || "";
     const pre = codeEl.parentElement;
     const host = pre && pre.tagName === "PRE" ? pre : null;
     if (codeEl.classList.contains("md-math-src")) { if (host) addCopyBtn(host, raw); return; }
+    const queued = copySources.get(raw);
+    const toCopy = (queued && queued.length ? queued.shift() : null) ?? raw;
     const lang = (codeEl.className.match(/language-([\w-]+)/) || [])[1];
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -2581,7 +2616,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       } catch { /* leave plain */ }
     }
     wrapCodeLines(codeEl);
-    if (host) addCopyBtn(host, raw);
+    if (host) addCopyBtn(host, toCopy);
   });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.

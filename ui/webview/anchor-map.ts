@@ -101,6 +101,7 @@ function textNodes(root: DNode): DText[] {
   const out: DText[] = [];
   const visit = (n: DNode) => {
     if (isText(n)) { out.push(n); return; }
+    if (isControl(n)) return;
     for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
   };
   visit(root);
@@ -108,6 +109,11 @@ function textNodes(root: DNode): DText[] {
 }
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
+/** A control the viewer parks inside the rendered markup, not the note's text: the Copy button code-block.ts puts in every
+ *  fence's <pre>. Its label "Copy" joined a block's rendered text, so every block holding a fence, and every list or quote
+ *  with one anywhere in it, failed to pair with its source and was refused as not matching the file, and paintRendered's
+ *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it. */
+const isControl = (n: DNode): boolean => hasClass(n, "code-copy");
 
 // ── code lines under a wrap ────────────────────────────────────────────────────────────────────────
 //
@@ -134,6 +140,7 @@ export function codeRuns(code: DNode): CodeRun[] {
     let prevRow = false;
     for (let i = 0; i < n.childNodes.length; i++) {
       const c = n.childNodes[i];
+      if (isControl(c)) continue;
       const row = isElement(c) && isCodeRow(c);
       if (row && prevRow) out.push({ node: null, text: "\n", row: c as DElement });
       visit(c);
@@ -164,6 +171,7 @@ export function codeLineAt(code: DNode, node: DNode, offset: number): number {
     let prevRow = false;
     for (let i = 0; i < n.childNodes.length; i++) {
       const c = n.childNodes[i];
+      if (isControl(c)) continue;
       const row = isElement(c) && isCodeRow(c);
       if (row && prevRow) lines++;   // the boundary before this row, whether the position is in it or past it
       if (visit(c)) return true;
@@ -204,6 +212,7 @@ export function codeLineStart(code: DNode, k: number): { node: DNode; offset: nu
 /** Sum of the lengths of the text nodes under `n` that a `counts` predicate admits (null = all). */
 function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => boolean) | null): number {
   if (isText(n)) return inCounted || !counts ? n.data.length : 0;
+  if (isControl(n)) return 0;
   const here = inCounted || !counts || (isElement(n) && counts(n));
   let sum = 0;
   for (let i = 0; i < n.childNodes.length; i++) sum += textLenUnder(n.childNodes[i], here, counts);
@@ -228,6 +237,7 @@ function boundaryIndex(root: DNode, node: DNode, offset: number,
       return true;
     }
     if (isText(n)) { if (inCounted || !counts) total += n.data.length; return false; }
+    if (isControl(n)) return false;
     const here = inCounted || !counts || (isElement(n) && counts(n));
     for (let i = 0; i < n.childNodes.length; i++) if (visit(n.childNodes[i], here)) return true;
     return false;

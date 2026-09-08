@@ -333,8 +333,17 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
   assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
     "read, swap, hooks, then seat over the new text");
-  assert.match(local, /const seat = \(kept: Place \| null\) => \{ if \(kept && shownText !== null\) seatPlace\(body, shownText, kept\); notePlace\(\); \};/, "a seat reads the place anew after it");
-  assert.match(local, /const notePlace = \(\) => \{ if \(shownText !== null && textShowing\(\)\) \{ place = readPlace\(body, shownText\); placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; \} \};/);
+  // a seat reads the place anew after it, unless the browser clamped the write (reader-place.ts seatPlaceOutcome): then the
+  // place it was given stands, held while the body stands where the clamp left it, so the swap back seats the reader's own
+  // passage and not the block the clamp showed (the Slice 3 review: the round trip from the end of the taller view came back
+  // a paragraph early); keptPlace hands the held place back while the body has not moved, and the first scroll that moves it
+  // ends the hold (notePlace clears it; the clamped seat's own scroll event, at the same scrollTop, is skipped)
+  assert.match(local, /const seat = \(kept: Place \| null\) => \{\n\s*const clamped = kept && shownText !== null \? seatPlaceOutcome\(body, shownText, kept\)\.clamped : false;\n\s*if \(clamped && kept\) \{ place = kept; placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; placeHeld = true; \}\n\s*else notePlace\(\);\n\s*\};/,
+    "a seat reads the place anew after it, or holds the one it was given when the write was clamped");
+  assert.match(local, /const keptPlace = \(\): Place \| null => \(shownText === null \? null : placeHeld && place && body\.scrollTop === placeScrollTop \? place : readPlace\(body, shownText\)\);/, "the held place is what the next swap keeps, while the body stands");
+  assert.match(local, /const notePlace = \(\) => \{ if \(shownText !== null && textShowing\(\)\) \{ place = readPlace\(body, shownText\); placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; placeHeld = false; \} \};/);
+  assert.match(read("reader-place.ts"), /export function seatPlaceOutcome\(body: HTMLElement, source: string, place: Place\): \{ seated: boolean; clamped: boolean \} \{\n\s*let clamped = false;\n\s*const scrollBy = \(delta: number\) => \{ const want = body\.scrollTop \+ delta; body\.scrollTop = want; clamped = Math\.abs\(body\.scrollTop - want\) >= 1; \};/,
+    "the clamp is read off the write itself: the scrollTop the body took against the one asked for");
   // under a width the last read did not see, the browser's own adjustments are skipped, each by its signature: the clamp
   // (the body landed at its end coming from above it) and the anchoring adjustment (the kept block's top edge within a
   // pixel of where it stood); a scroll made on purpose in the same task as the width change (the panel's reveal) is read,
@@ -342,8 +351,8 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /const clamped = \(\): boolean => body\.scrollTop < placeScrollTop && body\.scrollTop >= body\.scrollHeight - body\.clientHeight - 1;/, "the clamp's signature");
   assert.match(local, /const anchored = \(\): boolean => \{\n\s*if \(!place \|\| place\.source !== shownText \|\| !textShowing\(\)\) return false;\n\s*const top = keptBlockTop\(body, place\);\n\s*return top !== null && Math\.abs\(top - place\.top\) <= 1;/,
     "the anchoring's signature: the kept block's own top edge (reader-place.ts keptBlockTop) within a pixel of where it stood");
-  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{ placeFrame = 0; if \(body\.clientWidth === placeWidth \|\| !\(clamped\(\) \|\| anchored\(\)\)\) notePlace\(\); \};/,
-    "the scroll-time read, once per frame: every scroll under the width last read, and under a new width every scroll but the browser's own, the clamp and the anchoring adjustment");
+  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{\n\s*placeFrame = 0;\n\s*if \(placeHeld && body\.scrollTop === placeScrollTop\) return;[^\n]*\n\s*if \(body\.clientWidth === placeWidth \|\| !\(clamped\(\) \|\| anchored\(\)\)\) notePlace\(\);\n\s*\};/,
+    "the scroll-time read, once per frame: every scroll under the width last read, and under a new width every scroll but the browser's own, the clamp and the anchoring adjustment; a held place stands through the scroll event of the seat that was clamped");
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];

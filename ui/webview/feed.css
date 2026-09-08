@@ -1493,7 +1493,14 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 .fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
-.fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; container-type: inline-size; }   /* the size container a table's pane-wide cap reads (100cqi in .fileview-md table, below): the body, aside open or closed, not the card */
+/* The body is the size container a table's pane-wide cap reads (100cqi in .fileview-md > table, below): the body, aside open or
+   closed, not the card. Its scrollbar gutter is reserved before layout: a container unit resolves against the box BEFORE an
+   auto scrollbar takes its space, while the root's 100% padding (the column) resolves against the content box after it, so
+   on every note that scrolls the two disagreed by the scrollbar's width (the pane's classic 10px one) and a pane-wide table
+   sat 18px from the inset and 8px from the scrollbar, past the column's edge (review 2026-09-08). With the gutter stable,
+   100cqi is the content box the column is measured in; file-view-scrollbar-browser.test.ts launches Chromium with the
+   scrollbar visible (the other legs run under playwright's --hide-scrollbars, where the two always agreed) and measures it. */
+.fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; container-type: inline-size; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
    and because they are a sibling element a selection of the code copies without dragging them along */
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }
@@ -1643,10 +1650,21 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md li { margin: 0.2em 0; }
 /* A task item (`- [ ] …`): no bullet beside the box (mdBlock stamps GitHub's task-list-item on the li after the sanitize,
    for a checkbox that is the item's first child, in a paragraph or not), the box pulled into the gutter where the bullet
-   was, in the accent, drawn for the theme the page wears (--color-scheme; without it a dark page draws a white box). */
+   was, drawn for the theme the page wears (--color-scheme; without it a dark page draws a white box). The pull is measured
+   against Chromium's disc, whose centre sits about 7px plus 0.45em before the item's text at every size (a fixed part and
+   one in the prose's em; measured at 70 to 200 percent and at the 11 and 16px chat sizes, review 2026-09-08), and the box is
+   the control's own 13px, declared so the margin can centre it on that point. font-size: inherit makes the em the prose's:
+   a control's own em is the UA's 13.33px, which the text-size control never moves, so GitHub's -1.4em (prose-em there, its
+   sheet gives inputs `font: inherit`) sat the box 5px off the sibling bullets at 150 percent. The size is a rule of its own,
+   for every box under a task item (a nested list's too; the sanitizer keeps no input but a checkbox), since the geometry
+   rule's attribute and :first-child selectors are outside the grammar the sheet's font-size rules keep (tag, class, id,
+   pseudo-element and :not(); styles-fc-inline-chip.test.ts states it, the two cascade resolvers in the tests read it).
+   0.2em after the box plus the source's own space puts the text on the plain items' text edge. No accent-color: the sanitizer keeps every box disabled
+   (md-sanitize.ts), and Chromium paints a disabled box grey whatever accent is declared, so the declaration was inert. */
 .fileview-md li.task-list-item { list-style: none; }
+.fileview-md li.task-list-item input { font-size: inherit; }
 .fileview-md li.task-list-item > input[type="checkbox"], .fileview-md li.task-list-item > p:first-child > input[type="checkbox"] {
-  margin: 0 0.2em 0.25em -1.4em; vertical-align: middle; accent-color: var(--accent); color-scheme: var(--color-scheme); }
+  width: 13px; height: 13px; margin: 0 0.2em 0.25em calc(-13px - 0.46em); vertical-align: middle; color-scheme: var(--color-scheme); }
 .fileview-md strong { color: var(--fg); font-weight: 600; }
 .fileview-md em { font-style: italic; }
 .fileview-md a { color: var(--link); text-decoration: none; }
@@ -1688,12 +1706,14 @@ a.fileview-gh-note { border-style: dashed; }
    language's fence carries no hljs class, so it would have gone on counting from the block before. The Copy button is
    parked top-right, faint until the block is hovered, green on success. Scoped copies of the chat's unscoped rules
    (styles.css), byte-equal in both sheets since the feed page loads only feed.css (fileview-parity.test.ts); the code
-   tint carries the chat's literal as its fallback, since feed.css defines no --code-bg in :root (feed-css-vars.test.ts). */
+   tint carries the chat's literal as its fallback, since feed.css defines no --code-bg in :root (feed-css-vars.test.ts).
+   The gutter's own line-height is 1 and it never wraps (the chat's rule says why); a 2.5em basis holds four digits, and a
+   longer number widens the gutter instead of breaking. file-view-fence-rows-browser.test.ts measures the rows. */
 .fileview-md pre code .cl { display: flex; align-items: baseline; }
 .fileview-md pre code .cl::before {
   counter-increment: ln; content: counter(ln);
-  flex: 0 0 2.3em; margin-right: 0.85em; text-align: right;
-  color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.92em;
+  flex: 0 0 2.5em; margin-right: 0.85em; text-align: right;
+  color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.92em; line-height: 1; overflow-wrap: normal;
 }
 .fileview-md pre code .ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fileview-md pre.has-copy { position: relative; }
@@ -1726,7 +1746,8 @@ a.fileview-gh-note { border-style: dashed; }
    4's centred column. A table no wider than the column sits at the column's left edge with the prose, as on GitHub; one wider than the
    column grows out of it EVENLY, into both gutters, until it meets the body's inset: the translate moves it left by half of
    what it exceeds the column by (a percentage in translate is of the table's own width; 50cqi less the root's inline padding
-   is half the column, the padding rounded down here as the root rounds it, so the two agree to the pixel; min() holds a
+   is half the column, the padding rounded down here as the root rounds it, and the body's stable scrollbar gutter keeps 100cqi
+   the content box the root's 100% is, so the two agree to the pixel; min() holds a
    narrower table still; the shift is rounded to whole pixels, as the measure is). Nothing
    else in CSS places a block by its own width, and the table's box stays where the layout put it, so the body never scrolls
    sideways (contain: layout on the root). `max-width: 100%` before the container-unit cap is the fallback for a browser
@@ -2348,7 +2369,12 @@ body.filebrowse-open { overflow: hidden; }
    title bar, the Comments aside, the Comment float, the notice bar, the Copy buttons) is left out, and so is everything
    else on the page while a note is open (the chat, the feed: the note is what the reader asked to print). Black on white:
    the theme's tokens are for a screen, and the dark palette's light inks would print near white. Code keeps wrapping
-   (pre-wrap stands) and prints black too, its faint line numbers included. Byte-equal in styles.css and feed.css
+   (pre-wrap stands) and prints black too, its faint line numbers included. A link that names a file is named on its own
+   (its class outranks the bare anchor rule, so it kept the screen's link ink and lost its underline); a task box prints in
+   the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on the white page, an open task
+   reading as done); a table is a table again, its cells wrapping to the column, since paper cannot scroll the columns the
+   screen's block hides past the page edge; and the comment marks print bare, the comments they point to being left out
+   (review 2026-09-08; file-view-print-marks-browser.test.ts measures the four). Byte-equal in styles.css and feed.css
    (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in files-pane.css. */
 @media print {
   html, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
@@ -2360,10 +2386,14 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-main { display: block; }
   .fileview-body { overflow: visible; }
   .fileview-md, .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6, .fileview-md strong,
-  .fileview-md blockquote, .fileview-md a, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
+  .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
-  .fileview-md a { text-decoration: underline; }
+  .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
+  .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }
   .fileview-md pre, .fileview-md th, .fileview-md td, .fileview-md hr, .fileview-md blockquote, .fileview-md h1, .fileview-md h2, .fileview-md kbd { border-color: black; }
   .fileview-md kbd { box-shadow: none; }
+  .fileview-md table { display: table; width: auto; max-width: 100%; overflow: visible; overflow-wrap: anywhere; }
+  .fileview-md > table { max-width: 100%; translate: none; }
+  .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }
 }

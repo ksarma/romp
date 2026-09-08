@@ -13,7 +13,9 @@
 //     out of it evenly, centred in the body, up to the body's 18px inset; one wider than that is the body less 36px and
 //     scrolls in its own box; the Comments aside open or closed, since the cap reads the BODY (a size container), not
 //     the card (decision 4 kept beside fork PR #348's pane-wide table);
-//   - a task item computes list-style none with its checkbox in the accent and the theme's colour scheme; th weight 600
+//   - a task item computes list-style none with its checkbox drawn for the theme's colour scheme at the prose's font size
+//     (no accent-color: the sanitizer keeps every box disabled, and Chromium paints a disabled box grey whatever accent is
+//     declared, so the declaration was inert and is gone; review 2026-09-08); th weight 600
 //     on the --overlay-05 fill, even rows striped, `:---:` and `---:` columns centred and right-aligned; kbd dressed;
 //   - every fence, registered or not, carries the per-line rows and a Copy button, its counter reset on the code element
 //     and tab-size 4, the Raw view's; decision 5's rust fence is highlighted; the code comment measures 4.5:1 or more
@@ -61,7 +63,6 @@ function measure(): Cell {
   for (const t of ["h1", "h2", "h3", "h4", "h5", "h6"]) { const e = q(t, root); heads[t] = { size: px(e), weight: cs(e).fontWeight, color: cs(e).color, rule: cs(e).borderBottomStyle + " " + cs(e).borderBottomWidth, marginTop: parseFloat(cs(e).marginTop), marginBottom: parseFloat(cs(e).marginBottom) }; }
   // the column: the root's content box; ch from forty zero glyphs in the root's own font
   const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); root.appendChild(sp); const ch = sp.getBoundingClientRect().width / 40;
-  sp.style.color = "var(--accent)"; const accentRgb = cs(sp).color;   // the theme's accent as the browser resolves it (the light theme's is not the blue)
   sp.style.backgroundColor = "var(--overlay-05)"; const overlayRgb = cs(sp).backgroundColor; sp.remove();   // the wash as resolved (Chromium quantizes the alpha: 0.045 reads back 0.043)
   const br = body.getBoundingClientRect(), pr = p.getBoundingClientRect();
   const scrollbar = body.offsetWidth - body.clientWidth;
@@ -73,15 +74,17 @@ function measure(): Cell {
   const task = lis.find((l) => l.querySelector('input[type="checkbox"]'))!, plain = lis.find((l) => !l.querySelector('input[type="checkbox"]') && l.closest("ul"))!;
   const loose = (Array.from(root.querySelectorAll("ol > li")) as HTMLElement[]).find((l) => l.querySelector("p > input"))!;
   const input = task.querySelector("input")!;
-  const tasks = { cls: task.className, listStyle: cs(task).listStyleType, plainListStyle: cs(plain).listStyleType, accent: cs(input).accentColor, scheme: cs(input).colorScheme, disabled: (input as HTMLInputElement).disabled, marginLeft: parseFloat(cs(input).marginLeft), ulPad: parseFloat(cs(task.parentElement!).paddingLeft) / px(task.parentElement!), loose: { cls: loose ? loose.className : null, listStyle: loose ? cs(loose).listStyleType : null } };
+  const tasks = { cls: task.className, listStyle: cs(task).listStyleType, plainListStyle: cs(plain).listStyleType, accent: cs(input).accentColor, scheme: cs(input).colorScheme, fontSize: cs(input).fontSize, proseFontSize: cs(p).fontSize, disabled: (input as HTMLInputElement).disabled, marginLeft: parseFloat(cs(input).marginLeft), ulPad: parseFloat(cs(task.parentElement!).paddingLeft) / px(task.parentElement!), loose: { cls: loose ? loose.className : null, listStyle: loose ? cs(loose).listStyleType : null } };
   const kbd = q("kbd", root);
   const kbdBox = { bg: cs(kbd).backgroundColor, border: cs(kbd).borderTopWidth + " " + cs(kbd).borderTopStyle, radius: cs(kbd).borderRadius, size: px(kbd) / px(p), shadow: cs(kbd).boxShadow, mono: cs(kbd).fontFamily !== cs(p).fontFamily };
-  const code = (Array.from(root.querySelectorAll("pre")) as HTMLElement[]).map((pre) => { const c = pre.querySelector("code")!; const cmt = c.querySelector(".hljs-comment"); return { cls: c.className, rows: c.querySelectorAll(":scope > .cl").length, copy: !!pre.querySelector(":scope > .code-copy"), hasCopy: pre.classList.contains("has-copy"), tabSize: cs(c).tabSize, counterReset: cs(c).counterReset, size: px(c), width: pre.getBoundingClientRect().width, wraps: pre.scrollWidth <= pre.clientWidth + 1, cmt: cmt ? cs(cmt).color : null, preBg: cs(pre).backgroundColor, gutterSelect: cs(c.querySelector(".cl")!, "::before").userSelect, gutterContent: cs(c.querySelector(".cl")!, "::before").content }; });
+  // a fence without rows reads null for its gutter rather than throwing inside this evaluate (getComputedStyle(null) is a
+  // TypeError that would hide the named "fence N has its rows" assertion below behind a harness crash)
+  const code = (Array.from(root.querySelectorAll("pre")) as HTMLElement[]).map((pre) => { const c = pre.querySelector("code")!; const cmt = c.querySelector(".hljs-comment"); const cl = c.querySelector(":scope > .cl"); return { cls: c.className, rows: c.querySelectorAll(":scope > .cl").length, copy: !!pre.querySelector(":scope > .code-copy"), hasCopy: pre.classList.contains("has-copy"), tabSize: cs(c).tabSize, counterReset: cs(c).counterReset, size: px(c), width: pre.getBoundingClientRect().width, wraps: pre.scrollWidth <= pre.clientWidth + 1, cmt: cmt ? cs(cmt).color : null, preBg: cs(pre).backgroundColor, gutterSelect: cl ? cs(cl, "::before").userSelect : null, gutterContent: cl ? cs(cl, "::before").content : null }; });
   // the bare picture line: a direct child of the root, or, once the real Comments panel's figure layer has mounted (a race
   // with this measure), the picture inside its .fc-imgwrap; both take the column
   const img = q("img", root);
   return { prose: { size: px(p), family: cs(p).fontFamily, color: cs(p).color, fontDoc: cs(root).getPropertyValue("--font-doc").trim(), fontProse: cs(root).getPropertyValue("--font-prose").trim(), sans: cs(root).getPropertyValue("--sans").trim(), mono: cs(root).getPropertyValue("--mono").trim(), scale: cs(root).getPropertyValue("--fv-scale").trim() || "1", base: px(document.body) },
-    heads, strong: { size: px(q("strong", root)), weight: cs(q("strong", root)).fontWeight }, measure: measureBox, tables, table, tasks, kbd: kbdBox, code, img: { width: img.getBoundingClientRect().width, parent: img.parentElement!.className }, accentRgb, overlayRgb,
+    heads, strong: { size: px(q("strong", root)), weight: cs(q("strong", root)).fontWeight }, measure: measureBox, tables, table, tasks, kbd: kbdBox, code, img: { width: img.getBoundingClientRect().width, parent: img.parentElement!.className }, overlayRgb,
     bg: { card: cs(q(".fileview")).backgroundColor, page: cs(document.body).backgroundColor }, quoteColor: cs(q("blockquote", root)).color, dim: cs(root).getPropertyValue("--dim").trim() };
 }
 
@@ -124,8 +127,8 @@ function checkDress(m: Cell, at: string, light: boolean) {
   assert.equal(m.tasks.cls, "task-list-item", at + ": mdBlock stamped GitHub's class"); assert.equal(m.tasks.listStyle, "none", at + ": no bullet beside the box");
   assert.equal(m.tasks.plainListStyle, "disc", at + ": a plain item keeps its bullet");
   assert.equal(m.tasks.loose.cls, "task-list-item", at + ": a loose list's task (the box inside its paragraph) is stamped too"); assert.equal(m.tasks.loose.listStyle, "none");
-  assert.equal(m.tasks.accent, m.accentRgb, at + ": the box in the theme's accent (" + m.accentRgb + ")"); assert.equal(m.tasks.scheme, light ? "light" : "dark", at + ": the box drawn for the theme");
-  if (!light) assert.equal(m.tasks.accent, "rgb(156, 210, 255)", at + ": the dark accent is the romp blue");
+  assert.equal(m.tasks.accent, "auto", at + ": no accent-color: the sanitizer keeps the box disabled and Chromium paints a disabled box grey whatever accent is declared"); assert.equal(m.tasks.scheme, light ? "light" : "dark", at + ": the box drawn for the theme");
+  assert.equal(m.tasks.fontSize, m.tasks.proseFontSize, at + ": the box's em is the prose's (font-size: inherit), so its pull into the gutter scales with the text");
   assert.ok(m.tasks.marginLeft < 0, at + ": the box is pulled into the gutter (" + m.tasks.marginLeft + ")"); assert.equal(m.tasks.disabled, true);
   // the table dress
   assert.equal(m.table.thWeight, "600", at + ": th weight 600"); assert.equal(m.table.thBg, m.overlayRgb, at + ": th on --overlay-05 (" + m.overlayRgb + ")");

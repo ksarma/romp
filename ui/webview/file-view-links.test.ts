@@ -783,8 +783,8 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.match(codeFn, /if \(hl !== null\) code\.innerHTML = hl; else code\.textContent = text;\n\s*linkifyFileText\(code, path\);/, "the gutter branch too");
   assert.doesNotMatch(codeFn, /linkifyFileText\(text|escapeHtml\(linkify/, "never over the HTML string");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/,
-    "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7`");
+  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n[^\n]*\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
+    "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7` (the walkTokens itself runs for every kind since the Slice 3 review, collecting the code tokens for Copy)");
   const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, doc.path);");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
   const textAt = mdFn.indexOf('if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);');
@@ -875,7 +875,7 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
   assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = opts && typeof opts\.line === "number" && opts\.line > 0 \? Math\.floor\(opts\.line\) : null;/);
   assert.match(VIEW, /text = t;\n\s*\/\/[^\n]*\n\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}/);
-  const landing = VIEW.split("text = t;\n")[1].split("}).catch(")[0];
+  const landing = VIEW.split("text = t;\n")[1].split(").catch(")[0];   // the landing closes as `})).catch(`: hold.defer wraps it (actions.ts pressHold)
   assert.doesNotMatch(landing, /saveFmt/, "the Raw view for this open only: the preference is not written");
 });
 

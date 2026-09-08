@@ -19,7 +19,7 @@
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames, paintsReach, topBlock, putAtTop, PARA, LONG, REPORT, MT2 } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, paintsReach, topBlock, putAtTop, PARA, LONG, REPORT, MT2, type Mode } from "./real-viewer-leg";
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
@@ -156,21 +156,27 @@ test("in a browser, the real module: a blank Raw row at the top seats the paragr
       assert.deepEqual(errors, [], mode + ": no script error");
       await page.close();
     }
-    // the bottom of the document in the chat modal, where the last paragraph is cut by the clamp. The round trip starts in
-    // the SHORTER view: the taller one can seat the block wherever the shorter one showed it, where the shorter one, at its
-    // end, cannot follow the taller one down. The Raw view was the taller until Slice 3 of plans/markdown-viewer.md (15px prose
-    // in an 80ch column is taller than 12px rows at the pane's width), so the scene opens in Raw now and round-trips through
-    // Rendered.
-    const { page, errors } = await openViewer(browser, "chat", 900, 600, { raw: true });
-    await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; b.scrollTop = b.scrollHeight; }); await frames(page, 3);
-    const before = (await topBlock(page))!;
-    await click(page, "Rendered"); await click(page, "Raw");
-    const after = (await topBlock(page))!;
-    assert.equal(after.text, before.text, "bottom: the same top block");
-    near(after.top, before.top, "bottom: at the same height (the first cut moved it 54px)");
-    assert.equal(after.scrollTop, before.scrollTop, "bottom: the same scrollTop");
-    assert.deepEqual(errors, [], "bottom: no script error");
-    await page.close();
+    // the bottom of the document, where the last paragraph is cut by the clamp: the round trip comes back from EITHER view, on
+    // the chat modal and the pane. From the SHORTER view the taller one seats the block wherever the shorter one showed it.
+    // From the TALLER view (Rendered since Slice 3 of plans/markdown-viewer.md: 15px prose in an 80ch column against 12px rows
+    // at the pane's width; Raw before it) the seat into the shorter one is clamped at its end, and the way back seats the
+    // place the reader had, held across the clamp (file-view.ts seat), not the block the clamp showed: the Slice 3 tree read
+    // the clamped body back and came back one paragraph early, the top block changed and its edge 65 to 107px lower (the
+    // Slice 3 review); before the slice the same clamp drifted the other direction by up to 264px.
+    for (const [mode, raw] of [["chat", false], ["chat", true], ["pane", false], ["pane", true]] as [Mode, boolean][]) {
+      const cell = `bottom, ${mode}, from ${raw ? "Raw" : "Rendered"}`;
+      const { page, errors } = await openViewer(browser, mode, 900, 600, { raw });
+      await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; b.scrollTop = b.scrollHeight; }); await frames(page, 3);
+      const before = (await topBlock(page))!;
+      assert.equal(before.view, raw ? "raw" : "rendered", cell + ": the scene opens in the view named");
+      await click(page, raw ? "Rendered" : "Raw"); await click(page, raw ? "Raw" : "Rendered");
+      const after = (await topBlock(page))!;
+      assert.equal(after.text, before.text, cell + ": the same top block (the Slice 3 tree: Paragraph 93 for 94 from Rendered)");
+      near(after.top, before.top, cell + ": at the same height (the first cut moved it 54px; the Slice 3 tree 65 to 107px from Rendered)");
+      near(after.scrollTop, before.scrollTop, cell + ": the same scrollTop", 1);
+      assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
   });
 });
 

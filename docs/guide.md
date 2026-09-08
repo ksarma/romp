@@ -324,32 +324,33 @@ not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mo
 wheel over the text do the same. Once the size is off 100%, the percentage appears
 between the buttons; click it to go back. The choice is kept in this browser and applies
 to every file you open here. The prose of a rendered markdown file is a column of about
-eighty characters, centred in the pane, and the column grows with the text size so it
-keeps its eighty characters at every step; code blocks keep the column and wrap long
-lines. A table no wider than the column sits with the prose. A wider one grows out of the
-column evenly, up to the width of the pane, and scrolls inside its own box beyond that; a
-table inside a quote or a list item stays within the prose width. Pictures
-shrink to fit, so resizing the pane never leaves the page wider than the pane, and a
-picture sized in pixels by its `width` and `height` attributes keeps its shape as it
-shrinks; one whose width is a percentage keeps the height it names.
+eighty characters, centred in the pane. A step up in text size widens the column to keep
+its eighty characters while the pane has room for them; in a pane too narrow for that, the
+column fills the pane, leaving a small gutter on each side, and each step up fits fewer
+characters on a line. Code blocks keep the column and wrap long lines. A table no wider
+than the column sits with the prose. A wider one grows out of the column evenly, up to the
+width of the pane, and scrolls inside its own box beyond that; a table inside a quote or a
+list item stays within the prose width. Pictures shrink to fit, so resizing the pane never
+leaves the page wider than the pane, and a picture sized in pixels by its `width` and
+`height` attributes keeps its shape as it shrinks; one whose width is a percentage keeps
+the height it names.
 
-**How a note reads.** The Rendered view shows a markdown file the way GitHub shows a
-README. The text is a little larger than the dashboard's own (15 pixels where the chat is
-13, and it follows the chat font size you set in VS Code), in the same sans face in both
-themes. Headings step down from twice the text size for a top-level heading to the text
-size for the fourth level and below, with a rule under the first two levels; the fifth and
-sixth levels are dimmed. A task list shows its boxes without bullets, ticked where the
-file says so. A table's header row is bold on a faint fill, every second row is tinted,
-and a column the file aligns with `:---:` or `---:` is centred or right-aligned. A
+**How a markdown file reads.** The Rendered view shows a markdown file the way GitHub
+shows a README. The text is a little larger than the dashboard's own (15 pixels where the
+chat is 13, and it follows the chat font size you set in VS Code), in the same sans face
+in both themes. Headings step down from twice the text size for a top-level heading to the
+text size for the fourth level and below, with a rule under the first two levels; the
+fifth and sixth levels are dimmed. A task list shows its boxes without bullets, ticked
+where the file says so. A table's header row is bold on a faint fill, every second row is
+tinted, and a column the file aligns with `:---:` or `---:` is centred or right-aligned. A
 `<kbd>` key reads as a key. Every fenced code block is numbered by line, wraps long lines
 and carries a **Copy** button that copies the block's text; a block that names its
-language is coloured when the language is one the viewer knows: bash, python,
-javascript, typescript, json, xml and html, css, markdown, diff, yaml, and, since this
-change, rust, go, c, java, sql and toml (an ini file's grammar). A block that names any
-other language stays plain rather than being guessed at. Comments in coloured code are
-readable against the block. Printing the page while a note is open prints the note alone,
-black on white, across as many pages as it needs, without the title bar, the Comments
-panel or the Copy buttons.
+language is coloured when the language is one the viewer knows: bash, python, javascript,
+typescript, json, xml and html, css, markdown, diff, yaml, rust, go, c, java, sql and toml
+(an ini file's grammar). A block that names any other language stays plain rather than
+being guessed at. Comments in coloured code are readable against the block. Printing the
+page while a markdown file is open prints the file alone, black on white, across as many
+pages as it needs, without the title bar, the Comments panel or the Copy buttons.
 
 **Your place in the file.** The passage at the top of the view stays where it is when
 the file is read again after a session writes it, when you switch between Rendered and

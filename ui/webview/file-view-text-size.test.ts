@@ -768,7 +768,7 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 const PANE_CSS = web("files-pane.css");
-const LONG = "unbreakable".repeat(6);
+const LONG = "unbreakable".repeat(5);
 const SVG = (w: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="200"><rect width="${w}" height="200" fill="#369"/></svg>`)}`;
 const ROWS = Array.from({ length: 3 }, (_, i) => `<tr><td>row ${i} alpha beta gamma delta</td><td>a fairly long cell of prose that keeps going on for a while</td><td>${LONG}</td><td>another long cell with many words in it to widen the table</td><td>five</td><td>six more text here</td></tr>`).join("");
 const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
@@ -783,12 +783,12 @@ const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
 const PAGE = (mode: "pane" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("feed.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : "fileview-open"}"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn">A−</button><button class="fileview-btn">A+</button><button class="fileview-btn">✕</button></div></div>
 <div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div></body></html>`;
-type Lay = { bodyClient: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
+type Lay = { bodyClient: number; gutter: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
 const layout = (page: any): Promise<Lay> => page.evaluate(() => {
   const q = (s: string) => document.querySelector(s) as HTMLElement;
   const w = (s: string) => q(s).getBoundingClientRect().width;
   const body = q("#body");
-  return { bodyClient: body.clientWidth, bodyScroll: body.scrollWidth, docScroll: document.documentElement.scrollWidth, win: innerWidth,
+  return { bodyClient: body.clientWidth, gutter: body.offsetWidth - body.clientWidth, bodyScroll: body.scrollWidth, docScroll: document.documentElement.scrollWidth, win: innerWidth,
     md: w("#md"), p: w("#p"), t: w("#t"), tClient: q("#t").clientWidth, tScroll: q("#t").scrollWidth, pre: w("#pre"), preScroll: q("#pre").scrollWidth, preClient: q("#pre").clientWidth, pre2: w("#pre2"), lw: w("#lw"), img: w("#im"), img2: w("#im2"),
     mdFont: getComputedStyle(q("#md")).fontSize, h1Font: getComputedStyle(q("#h1")).fontSize, preFont: getComputedStyle(q("#pre code")).fontSize };
 });
@@ -832,7 +832,11 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       const step = (n: number) => page.evaluate((n: number) => { document.getElementById("root")!.dataset.fvText = String(n); }, n);
       // 1000px wide, the default size
       let l = await layout(page);
-      near(l.bodyClient, 1000 - inset, mode + " @1000: the body is the pane, less the modal's inset");
+      // the body reserves its scrollbar's gutter whether or not the note scrolls (scrollbar-gutter: stable, so a table's 100cqi is
+      // the content box the column is measured in; file-view-scrollbar-browser.test.ts): the pane's classic 10px one (styles.css
+      // ::-webkit-scrollbar), the platform's on the feed page (feed.css styles none), reserved even under playwright's --hide-scrollbars
+      if (mode === "pane") assert.equal(l.gutter, 10, mode + " @1000: the pane's 10px scrollbar gutter is reserved");
+      near(l.bodyClient, 1000 - inset - l.gutter, mode + " @1000: the body is the pane, less the modal's inset and the scrollbar gutter (" + l.gutter + ")");
       fits(l, mode + " @1000/100");
       // the document size: 1.15 times the page's 13px, GitHub's 2em h1 of it, fenced code at 12px (Slice 3 of plans/markdown-viewer.md)
       assert.equal(l.mdFont, "14.95px", mode + ": the document size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "29.9px");
@@ -844,7 +848,10 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       near(l.pre, l.p, mode + " @1000: a code block keeps the measure"); near(l.pre2, l.p, mode + " @1000: ...a two-line snippet too, no pane-wide box");
       assert.ok(l.t > l.p + 20 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table leaves the column (" + l.t + " vs " + l.p + "), inside the body's 18px inset");
       // a max-content table is as wide as its content to the layout unit; scrollWidth and clientWidth snap a fractional width
-      // two ways (913 vs 912 at the document size), so the pixel of slack the code block's check has applies here too
+      // two ways (913 vs 912 at the document size, when the unbreakable cell was 66 characters), so the pixel of slack the code
+      // block's check has applies here too. The unbreakable cell is 55 characters: the table's min-content (the unbreakable cell
+      // plus each column's longest word) has to fit the body less its 36px inset, and the body reserves its scrollbar gutter now
+      // (15px on the feed page under headless Linux)
       assert.ok(l.tScroll <= l.tClient + 1, mode + " @1000: room enough, so the table does not scroll (" + l.tScroll + " in " + l.tClient + ")");
       near(l.md, l.bodyClient, mode + " @1000: the root is the body's width");
       assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
@@ -863,7 +870,7 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
         await step(n);
         l = await layout(page);
         fits(l, mode + " @420/" + n);
-        near(l.bodyClient, 420 - (mode === "pane" ? 0 : 420 * 0.05 + 2), mode + " @420/" + n + ": the body is the pane, less the modal's inset");
+        near(l.bodyClient, 420 - (mode === "pane" ? 0 : 420 * 0.05 + 2) - l.gutter, mode + " @420/" + n + ": the body is the pane, less the modal's inset and the scrollbar gutter");
         near(l.t, l.bodyClient - 36, mode + " @420/" + n + ": the table is the column");
         assert.ok(l.tScroll > l.tClient + 100, mode + " @420/" + n + ": the unbreakable cell scrolls inside the table's own box (" + l.tScroll + " in " + l.tClient + ")");
         near(l.p, l.bodyClient - 36, mode + " @420/" + n + ": the prose follows the pane below its measure");

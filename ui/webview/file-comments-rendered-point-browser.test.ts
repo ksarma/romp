@@ -49,9 +49,11 @@ function bundle(): string {
   });
   return r.outputFiles[0].text;
 }
-// the viewer's body at a narrow width, so a long label has to wrap (the sheet's @import and font urls 404 here, harmlessly)
+// the viewer's body at a narrow width, so a long label has to wrap (the sheet's @import and font urls 404 here, harmlessly).
+// 435px: the body reserves its scrollbar gutter (`scrollbar-gutter: stable`, 15px here with no scrollbar drawn; review
+// 2026-09-08), so the column inside is the 384px the scenes were written against (420 less the 36px inset, before the gutter)
 const PAGE = (html: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/sheet.css>
-<style>body{margin:0} #host{width:420px;margin:16px}</style></head>
+<style>body{margin:0} #host{width:435px;margin:16px}</style></head>
 <body><div id=host class=fileview-body><div id=box class=fileview-md>${html}</div></div><script src=/dist/probe.js></script></body></html>`;
 
 type Probe = {

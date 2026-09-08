@@ -16,6 +16,14 @@
 //     raw text it was given: the on-screen textContent lost its newlines to the wrap and is not copy-safe.
 //   - copyText: the async Clipboard API with a hidden-textarea execCommand fallback.
 //
+// Click-safety (ui/CLAUDE.md): the Copy button's action stays on the button. Delegating it to a stable ancestor would
+// change nothing for the one way a press on it is lost, a surface that REPLACES the fence while the pointer is down:
+// a pressed node removed before the mouseup dispatches no click at all, to the button or to any ancestor (Chromium,
+// probed 2026-09-08; actions.ts, the header). The surface that rebuilds is what waits: the viewer's body is swapped
+// by a reload's fetch landing with no gesture behind it (the Comments panel's poll saw a session's write), and that
+// landing is held while a pointer is pressed over the body and runs on the release (actions.ts pressHold;
+// file-view-copy-held-browser.test.ts pins it). The chat rebuilds a card on its own paths; that is the chat's matter.
+//
 // The sheets: the chat's unscoped `pre code .cl` / `.ct` / `.code-copy` rules (styles.css) and the viewer's scoped
 // `.fileview-md` copies in styles.css and feed.css (the feed page loads only feed.css), byte-equal
 // (code-block.test.ts, fileview-parity.test.ts).

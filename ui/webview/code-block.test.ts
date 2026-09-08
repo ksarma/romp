@@ -68,7 +68,14 @@ test("mdBlock: the raw text is captured before the highlight rewrite, a named re
   assert.match(pass, /if \(codeEl\.classList\.contains\("md-math-src"\)\) \{ if \(host\) addCopyBtn\(host, raw\); return; \}/, "the math fallback: Copy, no highlight, no rows (the chat's highlight() does the same; render-math.test.ts)");
   assert.match(pass, /if \(lang && hljs\.getLanguage\(lang\)\) \{/, "highlight only a named, registered language");
   assert.doesNotMatch(VIEW, /hljs\.highlightAuto\(/, "no guessing in the viewer");
-  assert.match(pass, /\}\s*\n\s*wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, raw\);/, "the wrap and the Copy button sit OUTSIDE the language branch: an unregistered or unnamed fence gets them too");
+  assert.match(pass, /\}\s*\n\s*wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, toCopy\);/, "the wrap and the Copy button sit OUTSIDE the language branch: an unregistered or unnamed fence gets them too");
+  // what Copy copies is the fence's text as the NOTE holds it (fence-source.ts): the raw text is marked's, its leading tabs
+  // already four spaces each (the Slice 3 review: a Makefile recipe pasted back with spaces); the queue is keyed by the raw
+  // text and consumed in document order, and a fence the module did not find in the note falls back to the raw text
+  assert.match(pass, /const queued = copySources\.get\(raw\);\n\s*const toCopy = \(queued && queued\.length \? queued\.shift\(\) : null\) \?\? raw;/, "Copy's text comes off the source queue, the raw text when the fence was not found");
+  assert.match(fn, /const copySources = fenceCopyQueue\(text, fences\);/, "the queue is built from the note and the code tokens the parse collected");
+  assert.match(fn, /if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}/, "the parse's walkTokens collects every code token, for every document kind");
+  assert.match(VIEW, /^import \{ fenceCopyQueue, type Fence \} from "\.\/fence-source";/m);
   assert.ok(pass.indexOf("wrapCodeLines(codeEl)") > pass.indexOf("codeEl.classList.add(\"hljs\")"), "the rows are cut after the highlight, as in the chat");
   // the counter reset is the sheets' `.fileview-md pre code`, not `code.hljs`: a plain fence carries no hljs class
   assert.ok(!/wrapCodeLines\(codeEl\);[\s\S]{0,80}classList\.add\("hljs"\)/.test(pass), "no hljs class is added to a plain fence for the counter's sake (the sheet resets on pre code)");

@@ -487,17 +487,30 @@ export function seatedTop(place: Place, view: View, height: number, same: boolea
  *  replacement of no height. A body that stood at its very top goes to its very top. false when the body shows no
  *  text view, when no block stands at or before the offset, or when the block has no box (the Raw rows disagree with
  *  the source; the box to borrow is a wrapper's swallowed run). A write the browser clamps (the new view is shorter)
- *  leaves the body at its end. */
+ *  leaves the body at its end; seatPlaceOutcome says when that happened. */
 export function seatPlace(body: HTMLElement, source: string, place: Place): boolean {
-  if (!hasBox(body)) return false;
+  return seatPlaceOutcome(body, source, place).seated;
+}
+/** seatPlace, and whether the browser CLAMPED its write: `seated` is seatPlace's answer; `clamped` is true when the scroll the
+ *  seat asked for was not the one the body took (the view is shorter than the one the place was read in and the body stands
+ *  at its end, or the seat asked for a position above the body's top), within the pixel the browser snaps a fractional
+ *  scrollTop to. A clamped seat leaves the body showing an earlier passage than the reader's, and a read of the body would
+ *  name THAT block as the reader's place: file-view.ts keeps the place it seated across a clamp instead, so the swap back
+ *  seats the passage the reader had (the Slice 3 review: the Rendered/Raw round trip from the end of the taller view came
+ *  back one paragraph early). */
+export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place): { seated: boolean; clamped: boolean } {
+  let clamped = false;
+  const scrollBy = (delta: number) => { const want = body.scrollTop + delta; body.scrollTop = want; clamped = Math.abs(body.scrollTop - want) >= 1; };
+  const outcome = (seated: boolean) => ({ seated, clamped });
+  if (!hasBox(body)) return outcome(false);
   const md = body.querySelector(".fileview-md");
   const code = md ? null : body.querySelector("code.hljs");
-  if (!md && !code) return false;
-  if (place.atTop) { if (body.scrollTop !== 0) body.scrollTop = 0; return true; }
+  if (!md && !code) return outcome(false);
+  if (place.atTop) { if (body.scrollTop !== 0) body.scrollTop = 0; return outcome(true); }
   const { at, step, deleted } = followBlock(place, source);
   const spans = sourceBlockSpans(source);
   const found = blockIndexAt(spans, at);
-  if (found < 0) return false;
+  if (found < 0) return outcome(false);
   const b = Math.max(0, Math.min(spans.length - 1, found + step));
   const edge = body.getBoundingClientRect().top;
   const els = md ? renderedBlockElements(md, source, b) : [];
@@ -508,19 +521,19 @@ export function seatPlace(body: HTMLElement, source: string, place: Place): bool
     const top = ls === null ? null : md ? renderedLineTop(source, spans[b], els, ls) : rawLineTop(code as Element, source, spans[b], ls);
     if (top !== null) {
       const delta = top - (edge + place.line.top);
-      if (Math.abs(delta) >= 0.5) body.scrollTop += delta;
-      return true;
+      if (Math.abs(delta) >= 0.5) scrollBy(delta);
+      return outcome(true);
     }
   }
   const view: View = md ? "rendered" : "raw";
   const box = md ? renderedBoxNear(md, source, spans, b) : rawBlockBox(code as Element, source, spans[b]);
-  if (!box) return false;
+  if (!box) return outcome(false);
   // the same block with the same text (a view switch, a reflow, an edit elsewhere), or one the write changed: a
   // paragraph the session added a sentence to is its own span followed intact, and still a longer block now
   const same = step === 0 && source.slice(spans[b].start, spans[b].end) === place.source.slice(place.start, place.end);
   const delta = (box.top - edge) - (deleted ? seatedTop(place, view, 0, false) : seatedTop(place, view, box.bottom - box.top, same));
-  if (Math.abs(delta) >= 0.5) body.scrollTop += delta;
-  return true;
+  if (Math.abs(delta) >= 0.5) scrollBy(delta);
+  return outcome(true);
 }
 /** Block `b`'s box in the Rendered view, or, when it has no element with a layout (a comment, a hidden element, a block
  *  the sanitizer dropped, a block nested inside an html wrapper), the nearest block's before it, else after it. null
