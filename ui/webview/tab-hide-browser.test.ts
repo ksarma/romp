@@ -7,6 +7,10 @@
 // no source pin can:
 //   - a header click on an open group folds it and shows the pane (as before); Hide in that pane writes the store
 //     and leaves the fold as it is; the header opens the group again with the hidden member's tab left off;
+//   - the count is a door on EVERY open header, nothing hidden included (round 2): a click on it shows the pane and
+//     leaves the fold, the strip and the store's bytes as they were, so the first hide never goes through a fold;
+//     its words lead with its visible text, and the header's spoken label never ends in the flag's click clause;
+//   - a repeat click (the platform's count) acts on nothing and shows no acknowledgement pulse (round 2);
 //   - the open header over a hidden member wears "1 hidden" as a button, and a click on it, on the pip or on the
 //     flag shows the pane and leaves the fold and the strip as they were; Show from that pane puts the tab back on
 //     the strip at once, the group still open; the flag on a FOLDED header still opens the group;
@@ -23,7 +27,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { sectionDoorTitle, sectionTodoPhrase, SHOW_GROUP_CLICK } from "./tab-state";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -63,7 +67,7 @@ function probeSource(): string {
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, setHidden, prunePinned, headWords, homeSectionOf, neighborOfFolded, reachableFrom, sectionRef, TABGROUPS_KEY, TABGROUPS_EVENT } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
-import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
 import { viewTagUnion } from "./session-views";
 import { hostNameNodes } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
@@ -251,10 +255,24 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.evaluate(([v, sess]: [unknown, unknown]) => (window as any).__probe.setup(v, ["web", "api", "tests", "old1"], sess, "web"), [V, SESS] as [unknown, unknown]);
     assert.deepEqual(errors, [], "the slices ran against the stand-in (a ReferenceError here means render.ts grew a dependency the probe lacks)");
 
-    // S1: the strip as it starts: infra open with its three tabs, the count a plain span; archived folded away
+    // S1: the strip as it starts: infra open with its three tabs, the count a button (the door, round 2) with nothing hidden;
+    // archived folded away, its count a plain span
     let s = await state();
     let h = await head("infra");
-    assert.deepEqual([s.tabs, h.folded, h.count, h.countTag, h.countAct, h.pip, h.flagAct, s.paneShown], [["web", "api", "tests"], "0", "3", "SPAN", null, null, null, false]);
+    assert.deepEqual([s.tabs, h.folded, h.count, h.countTag, h.countAct, h.pip, h.flagAct, s.paneShown], [["web", "api", "tests"], "0", "3", "BUTTON", "show-group", null, null, false]);
+    assert.equal(h.countTitle, sectionDoorTitle(0, 3));
+    assert.ok(h.countTitle!.startsWith(h.count!), "label in name: the door's words lead with its visible text");
+    assert.deepEqual([(await head("archived")).countTag, (await head("archived")).countAct], ["SPAN", null], "folded: a span, as before");
+    // S1b: THE DOOR WITH NOTHING HIDDEN (round 2: it existed only once something was hidden, so the first hide of a group
+    // went through the header's click, which folds the group over its reader): the pane comes; the fold, the strip and the
+    // store (none written yet) stay as they were
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), null, "no store yet");
+    await page.click(inHead("infra", ".tab-group-door"));
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.paneShown, s.snapView, h.folded, h.snapShown, s.tabs, s.shownRows, s.hiddenRows, s.foldShown], [true, "infra", "0", true, ["web", "api", "tests"], ["web", "api", "tests"], [], false]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), null, "the door writes nothing");
+    await page.keyboard.press("Escape");
+    s = await state(); assert.deepEqual([s.paneShown, s.snapView], [false, null]);
 
     // S2: the header's click on the open group folds it and shows the pane (as before)
     await page.click(nameOf("infra"));
@@ -273,7 +291,8 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.click(nameOf("infra"));
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, s.snapView, s.paneShown, h.snapShown], [["web", "tests"], "0", "infra", true, true]);
-    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-group", sectionDoorTitle(1)]);
+    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-group", sectionDoorTitle(1, 3)]);
+    assert.ok(h.countTitle!.startsWith(h.count!), "label in name (round 2): the door's words lead with its visible text");
     assert.ok(h.label!.startsWith("infra, 3 sessions, 1 hidden"), h.label!);
 
     // S5: Escape leaves the pane; the group stays open
@@ -292,7 +311,18 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); assert.equal(s.foldOpen, true, "the fold opens on its head's click");
     await page.click(act("api"));
     s = await state(); h = await head("infra");
-    assert.deepEqual([s.tabs, h.folded, s.paneShown, s.stored.hidden, s.shownRows, s.foldShown, h.countTag], [["web", "api", "tests"], "0", true, [], ["web", "api", "tests"], false, "SPAN"]);
+    assert.deepEqual([s.tabs, h.folded, s.paneShown, s.stored.hidden, s.shownRows, s.foldShown, h.countTag, h.count], [["web", "api", "tests"], "0", true, [], ["web", "api", "tests"], false, "BUTTON", "3"]);
+    // S7b: THE DOOR WITH NOTHING HIDDEN over a real store (round 2): Escape, then the count: the pane comes back; the fold,
+    // the strip and the store's bytes stay as they were
+    await page.keyboard.press("Escape");
+    s = await state(); assert.deepEqual([s.paneShown, s.snapView], [false, null]);
+    const rawBefore = await page.evaluate(() => localStorage.getItem("romp:tabgroups"));
+    assert.ok(rawBefore && rawBefore.length > 2, "a store exists now");
+    await page.click(inHead("infra", ".tab-group-door"));
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.paneShown, s.snapView, h.folded, h.snapShown, s.tabs, s.shownRows], [true, "infra", "0", true, ["web", "api", "tests"], ["web", "api", "tests"]]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawBefore, "the store's bytes, untouched");
+    assert.ok(h.countTitle!.startsWith(h.count!) && h.countTitle === sectionDoorTitle(0, 3), h.countTitle!);
 
     // S8: the flag on an OPEN header is a door too (round 1: it opened a group that was already open, and nothing moved)
     await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
@@ -300,6 +330,10 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, h.flagAct], [["web", "tests"], "0", "show-group"]);
     assert.ok(h.flagTitle!.endsWith(SHOW_GROUP_CLICK), h.flagTitle!);
+    // the header's own spoken label (round 2): the flag's phrase rides it, the click clause does not (the header's click
+    // folds the group or puts the transcript back, so the door's instruction there contradicted it)
+    assert.ok(h.label!.endsWith("; " + sectionTodoPhrase({ count: 1, names: ["api"] })), h.label!);
+    assert.ok(!h.label!.endsWith(SHOW_GROUP_CLICK) && !h.label!.includes("click to"), h.label!);
     await page.keyboard.press("Escape");
     await page.click(inHead("infra", ".tab-group-flag"));
     s = await state(); h = await head("infra");
@@ -333,6 +367,23 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.dblclick(act("api"));
     s = await state();
     assert.deepEqual([s.shownRows, s.hiddenRows, s.stored.hidden.map((p: { sid: string }) => p.sid)], [["web", "tests"], ["api"], ["api"]]);
+    // S10b: a repeat click SHOWS nothing either (round 2): the delegate pulses every matched click before its handler, and
+    // the swallowed click had pulsed the button it landed on while nothing happened. A click with the platform's count at 2,
+    // dispatched at web's Hide: no pulse class on it, the rows and the store as they were. A fresh click on the fold's head
+    // (count 1) is acknowledged and acts, so the probe does see the pulse when there is one.
+    const pulse = (sel: string, detail: number) => page.$eval(sel, (b: Element, d: number) => {
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: d }));
+      return b.classList.contains("romp-acted");
+    }, detail);
+    assert.equal(await pulse(act("web"), 2), false, "no acknowledgement on a click that acted on nothing");
+    s = await state();
+    assert.deepEqual([s.shownRows, s.hiddenRows, s.stored.hidden.map((p: { sid: string }) => p.sid), s.foldOpen], [["web", "tests"], ["api"], ["api"], true], "and nothing changed");
+    assert.equal(await pulse("#tab-snapshot .snap-hidden-head", 1), true, "a fresh click is acknowledged");
+    s = await state(); assert.equal(s.foldOpen, false, "and acts");
+    assert.equal(await pulse("#tab-snapshot .snap-hidden-head", 3), false, "a repeat on a node that keeps standing: no pulse (the fresh click's, if still running, is cut short)");
+    s = await state(); assert.equal(s.foldOpen, false, "the repeat acted on nothing");
+    await page.click("#tab-snapshot .snap-hidden-head");
+    s = await state(); assert.equal(s.foldOpen, true, "back open for what follows");
 
     // S11: the feed's verdict on a hidden idle session reaches the header's pip and the fold's head
     h = await head("infra");

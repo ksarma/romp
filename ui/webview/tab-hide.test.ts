@@ -15,7 +15,7 @@ import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, tog
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
          homeSectionOf, neighborOfFolded, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
-import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -26,6 +26,7 @@ const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference
 const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), RENDER.indexOf("function showActive() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function stripAftermath("));
+const GROUPS = ui("webview", "tab-groups.ts");
 
 // the notes-api demo world: web, api and tests in "infra"; old1 and old2 in "archived" (folded by default); a loose one
 const V = {
@@ -354,7 +355,7 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
   assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
-  assert.match(flat, /While the group is open, the count, the dot and the flag each open this view without folding the group, so a hidden session is one click away from the strip; on a folded header the flag opens the group, as before\./, "the non-folding door");
+  assert.match(flat, /While the group is open, its count opens this view without folding the group, so hiding a session never needs a fold; the dot and the flag, which appear once something is hidden, do the same\. On a folded header the flag opens the group, as before\./, "the non-folding door, on every open header (round 2: the sentence had claimed the count for a door before the first hide, when it was a plain span)");
   assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
@@ -379,7 +380,8 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   // so Tab reaches it and a reader hears it; always where hover is not a thing
   assert.match(block, /\n\.snap-act \{[^}]*cursor: pointer; opacity: 0;/, "the act rests unseen");
   assert.match(block, /\n\.snap-item:hover \.snap-act, \.snap-item:focus-within \.snap-act \{ opacity: 1; \}/, "shown on the item's hover and while anything in it has focus");
-  assert.match(block, /\n@media \(hover: none\) \{ \.snap-act \{ opacity: 1; \} \}/, "always, on a coarse pointer");
+  assert.match(block, /\n@media \(hover: none\), \(pointer: coarse\) \{ \.snap-act \{ opacity: 1; \} \}/, "always where hover is not a thing, and always under a finger (round 2: a touchscreen laptop reports hover, and a resting act at opacity 0 still takes the tap)");
+  assert.equal(ui("webview", "feed.css").includes(".snap-act"), false, "the act has no twin in feed.css: the feed page has no section snapshot, so the mirror tests have nothing to hold equal here");
   assert.doesNotMatch(block, /\.snap-act[^{]*\{[^}]*display: none/, "never display: the keyboard path stands");
   assert.match(block, /\.snap-act:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: 1px; \}/);
   assert.match(block, /\.snap-hidden-head \{[^}]*font-size: 0\.82em; font-weight: 600; letter-spacing: 0\.04em;/, "the heading's dress");
@@ -397,13 +399,29 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   // reads "K hidden" and is a button (the door a keyboard reaches), the pip and the flag act the same (show-group), and
   // the handler sets snapView and renders: no store write, so the fold stands. tab-hide-browser.test drives it in Chromium.
   assert.equal(SHOW_GROUP_CLICK, "click to show this group's sessions");
-  assert.equal(sectionDoorTitle(1), "1 session hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
-  assert.equal(sectionDoorTitle(2), "2 sessions hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  // ROUND 2: the door's words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count), so the name a voice control hears
+  // contains the label it sees ("1 hidden", or the total); with nothing hidden the click clause says what the pane is
+  // for, since every session is on the strip already
+  assert.equal(sectionDoorTitle(1, 3), "1 hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(2, 3), "2 hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(0, 3), "3 sessions; click to see them at a glance and hide any from the strip");
+  assert.equal(sectionDoorTitle(0, 1), "1 session; click to see it at a glance and hide it from the strip");
+  for (const [hid, total] of [[0, 1], [0, 3], [1, 3], [2, 3], [3, 3]] as const)
+    assert.ok(sectionDoorTitle(hid, total).startsWith(headWords("infra", total, hid, false, false).count), `label in name: ${hid} of ${total}`);
   assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true), "waiting on you — api flagged something it needs from you; " + SHOW_GROUP_CLICK, "the flag on an open header says what its click does there");
   assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }), "waiting on you — api flagged something it needs from you; click to open this group", "and on a folded one, as before");
-  // the header: the door exists exactly on an open header standing in for hidden members
-  assert.match(HEAD, /const door = !collapsed && hidden\.length > 0;\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button then, a span otherwise");
-  assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = "show-group";\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act, words and spoken label");
+  // ROUND 2: the flag's PHRASE, apart from its click clause, is what the header's spoken label appends: the header's own
+  // click folds the group or puts the transcript back, so a label ending in the door's instruction contradicted it
+  assert.equal(sectionTodoPhrase({ count: 1, names: ["api"] }), "waiting on you — api flagged something it needs from you");
+  assert.equal(sectionTodoPhrase({ count: 2, names: ["api", "tests"] }), "waiting on you — 2 sessions flagged something they need from you: api, tests");
+  for (const door of [true, false]) assert.ok(sectionTodoTitle({ count: 1, names: ["api"] }, door).startsWith(sectionTodoPhrase({ count: 1, names: ["api"] }) + "; "), "the title is the phrase, then the click");
+  assert.match(HEAD, /b\.title = sectionTodoTitle\(flag, door\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*spoken \+= "; " \+ sectionTodoPhrase\(flag\);/, "the button keeps its click clause; the header's label takes the phrase alone");
+  assert.doesNotMatch(HEAD, /spoken \+= "; " \+ b\.title;/);
+  assert.equal(HEAD.split("SHOW_GROUP_CLICK").length - 1, 1, "the click phrase reaches the header through the pip's title alone; the label never carries it");
+  // the header: the door is EVERY open header's count (round 2: it existed only over hidden members, so the first hide of a
+  // group still went through the header's click, which folds the group over its reader); folded, a plain span
+  assert.match(HEAD, /const door = !collapsed;\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one");
+  assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = "show-group";\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length, total\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act, words (the visible count first) and spoken label");
   assert.match(HEAD, /n\.draggable = true;\s*\n\s*n\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/, "a press on it never starts the header's drag (the flag's rule)");
   assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = "show-group"; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
   assert.match(HEAD, /b\.dataset\.act = door \? "show-group" : "open-group";/, "the flag: the door open, open-group folded");
@@ -441,7 +459,12 @@ test("executed + pinned: ONCE PER GESTURE (round 1). A double-click on Hide acts
   assert.equal(repeatedClick({ detail: 3 }), true);
   assert.equal(repeatedClick(null), false);
   assert.equal(repeatedClick({}), false);
-  assert.match(SNAP, /const once = \(h: \(node: HTMLElement\) => void\) => \(node: HTMLElement, ev: Event\) => \{ if \(!repeatedClick\(ev as UIEvent\)\) h\(node\); \};\s*\n\s*delegate\(host, \{ open: once\(\(node\) => \{/);
+  // ROUND 2: the delegate pulses every matched click before its handler (actions.ts flash), so the swallowed repeat showed
+  // the acknowledgement on the button it landed on while nothing happened; the wrapper takes the class back off in the
+  // same task. actions.ts stays generic (no detail check there); the browser leg dispatches a detail-2 click and reads it.
+  assert.match(SNAP, /const once = \(h: \(node: HTMLElement\) => void\) => \(node: HTMLElement, ev: Event\) => \{ if \(repeatedClick\(ev as UIEvent\)\) \{ node\.classList\.remove\("romp-acted"\); return; \} h\(node\); \};\s*\n\s*delegate\(host, \{ open: once\(\(node\) => \{/);
+  assert.match(ui("webview", "actions.ts"), /flash\(el\);\s*\n\s*h\(el, ev\);/, "the pulse precedes the handler, so the handler is where a swallowed click's pulse comes off");
+  assert.doesNotMatch(ui("webview", "actions.ts"), /detail/, "the shared delegate knows nothing of click counts");
   assert.equal(SNAP.split("once(").length - 1, 4, "its four uses: open, hide, show, toggle-hidden");
   assert.equal(SNAP.split("const once = ").length - 1, 1, "one wrapper");
   assert.doesNotMatch(SNAP, /lastHideAt|lastClickT|Date\.now\(\) - /, "no timer of ours");
@@ -500,6 +523,9 @@ test("executed: the store CARRIES A KEY THIS BUILD DOES NOT KNOW through its wri
   } finally {
     g.localStorage = savedLS;
   }
+  // ROUND 2: an unknown key is written back for the life of the store, so a KNOWN key that a later build retires needs a
+  // dropped-keys set beside KNOWN_KEYS, or every pane on that build carries the stale value forever; the note stands at the set
+  assert.match(GROUPS, /RETIRING A KEY: taking it out of this set is not enough\.[\s\S]{0,400}const KNOWN_KEYS: ReadonlySet<string> = new Set\(\["on", "collapsed", "expanded", "pinned", "hidden", "followed", "followedSeq"\]\);/);
   // the carry survives every write path's spread: the hide, the pin, the fold, the prune, the rename follow
   assert.deepEqual(setHidden(st, INFRA, "web", true).rest, st.rest);
   assert.deepEqual(setPinned(st, INFRA, "web", true).rest, st.rest);

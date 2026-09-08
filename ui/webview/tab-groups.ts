@@ -116,7 +116,10 @@ export function anySectioned(visibleIds: readonly string[], unions: readonly Tag
 }
 
 const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
-/** the blob's keys this build reads and writes; any other is carried through (TabGroupsState.rest) */
+/** the blob's keys this build reads and writes; any other is carried through (TabGroupsState.rest).
+ *  RETIRING A KEY: taking it out of this set is not enough. An unknown key rides `rest` and is written back by
+ *  every pane for the life of the store, so a retired key needs a dropped-keys set beside this one that
+ *  parseTabGroups leaves out of `rest` (none retired yet; round 2 of the tabhide review, 2026-09-08). */
 const KNOWN_KEYS: ReadonlySet<string> = new Set(["on", "collapsed", "expanded", "pinned", "hidden", "followed", "followedSeq"]);
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:

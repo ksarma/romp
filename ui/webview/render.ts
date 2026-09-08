@@ -41,7 +41,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionR
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
-import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -5338,22 +5338,24 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
-  // THE COUNT, and THE NON-FOLDING DOOR (round 1 of the tabhide review, 2026-09-08). An OPEN header standing in
-  // for members hidden inside its section wears its marks as the way to the section's snapshot that leaves the
-  // fold as it is (show-group on the #tabs delegate): the count, reading "K hidden" (headWords), is a real
-  // button with its own words (sectionDoorTitle), the door a keyboard reaches; the pip and the ⚑ flag below act
-  // the same. Before it, the pane was reachable from an open group only through the header's click, which
-  // folds the group over its reader, and the flag on an open header opened a group that was already open. The
-  // header's own click keeps its meaning (fold, and show the section). Folded, the count is a plain span: the
-  // header's click opens the group and shows the section, and the flag opens the group (open-group), as before.
-  const door = !collapsed && hidden.length > 0;
+  // THE COUNT, and THE NON-FOLDING DOOR (rounds 1 and 2 of the tabhide review, 2026-09-08). On EVERY OPEN header
+  // the count is a real button with its own words (sectionDoorTitle: they lead with the count's visible text),
+  // the way to the section's snapshot that leaves the fold as it is (show-group on the #tabs delegate), the door
+  // a keyboard reaches; over members hidden inside the section it reads "K hidden" (headWords), and the pip and
+  // the ⚑ flag below act the same. Before round 1, the pane was reachable from an open group only through the
+  // header's click, which folds the group over its reader, and the flag on an open header opened a group that
+  // was already open; after it the door existed only once something was hidden, so the FIRST hide of a group
+  // still went through that fold (round 2). The header's own click keeps its meaning (fold, and show the
+  // section). Folded, the count is a plain span: the header's click opens the group and shows the section, and
+  // the flag opens the group (open-group), as before.
+  const door = !collapsed;
   const n = door ? document.createElement("button") : el("span", "tab-group-count");
   if (n instanceof HTMLButtonElement) {
     n.type = "button";
     n.className = "tab-group-count tab-group-door";
     n.dataset.act = "show-group";
     n.dataset.group = name;
-    n.title = sectionDoorTitle(hidden.length);
+    n.title = sectionDoorTitle(hidden.length, total);
     n.setAttribute("aria-label", n.title);
     // the innermost draggable under a press, so ITS dragstart fires first and is cancelled: a press that wanders
     // never starts the header's group drag (the flag's rule below)
@@ -5407,7 +5409,11 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
       b.dataset.group = name;
       b.title = sectionTodoTitle(flag, door);
       b.setAttribute("aria-label", b.title);
-      spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
+      // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and
+      // names: the PHRASE alone, as the pip's rides above. The click clause is the button's own (round 2 of the tabhide
+      // review: the header's label ended with "click to show this group's sessions" while its own click folds the group
+      // or puts the transcript back).
+      spoken += "; " + sectionTodoPhrase(flag);
       const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
       glyph.textContent = "⚑";
       b.appendChild(glyph);
@@ -10920,8 +10926,11 @@ function snapshotHost(): HTMLElement | null {
   // so the second click of a double-click landed on the NEXT row's button and put a second session away, or
   // opened its session, with no gesture aimed at it. The platform counts the clicks of one gesture
   // (UIEvent.detail; tab-snapshot-view.ts repeatedClick) and a repeat acts on nothing, on every act of the
-  // pane: no timer, and a click after a pause or on another row is a fresh gesture.
-  const once = (h: (node: HTMLElement) => void) => (node: HTMLElement, ev: Event) => { if (!repeatedClick(ev as UIEvent)) h(node); };
+  // pane: no timer, and a click after a pause or on another row is a fresh gesture. A repeat acts on nothing and SHOWS
+  // nothing (round 2 of the review): the delegate pulses every matched click before its handler runs (actions.ts flash,
+  // the acknowledgement rule), so the swallowed click pulsed the button it landed on as if it had taken; the wrapper
+  // takes the pulse's class back off in the same task, before a frame paints it.
+  const once = (h: (node: HTMLElement) => void) => (node: HTMLElement, ev: Event) => { if (repeatedClick(ev as UIEvent)) { node.classList.remove("romp-acted"); return; } h(node); };
   delegate(host, { open: once((node) => {
     const id = node.dataset.id;
     if (!id) return;

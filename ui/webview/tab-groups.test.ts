@@ -13,7 +13,7 @@ import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writ
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
          DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, reachableFrom, tagRenames, followTagRenames, followAdoption,
          sameTagNames, headWords, type TabSection, type SectionRef, type TabGroupsState, neighborOfFolded, homeSectionOf } from "./tab-groups";
-import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
+import { sectionTodoFlag, sectionTodoPhrase, sectionPipTitle } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -1589,10 +1589,13 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   // the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
   // does; Chromium exposes a focusable descendant anyway): its phrase rides the header's label as the
   // pip's does, so the count and the names are announced either way
-  assert.match(MAKE_HEAD, /b\.setAttribute\("aria-label", b\.title\);\s*\n\s*spoken \+= "; " \+ b\.title;/, "the flag's phrase, appended right after its own label");
-  assert.equal(headWords("archived", 2, 2, true, false).label + "; " + sectionPipTitle("blocked", ["api", "tests"]) + "; " + sectionTodoTitle({ count: 2, names: ["api", "tests"] }),
-    "archived, 2 sessions folded; 2 sessions in this group are blocked or waiting on you: api, tests; waiting on you — 2 sessions flagged something they need from you: api, tests; click to open this group",
-    "the spoken label of a folded header wearing both marks");
+  // the PHRASE, not the button's title: the click clause is the button's own (round 2 of the tabhide review, 2026-09-08:
+  // the open header's label ended with "click to show this group's sessions" while the header's own click folds the
+  // group or puts the transcript back). tab-hide.test.ts pins the split and the browser leg reads the built label.
+  assert.match(MAKE_HEAD, /b\.setAttribute\("aria-label", b\.title\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*spoken \+= "; " \+ sectionTodoPhrase\(flag\);/, "the flag's phrase, appended right after its own label");
+  assert.equal(headWords("archived", 2, 2, true, false).label + "; " + sectionPipTitle("blocked", ["api", "tests"]) + "; " + sectionTodoPhrase({ count: 2, names: ["api", "tests"] }),
+    "archived, 2 sessions folded; 2 sessions in this group are blocked or waiting on you: api, tests; waiting on you — 2 sessions flagged something they need from you: api, tests",
+    "the spoken label of a folded header wearing both marks: no click clause from either mark");
   assert.ok(!MAKE_HEAD.includes('b.setAttribute("aria-hidden"') && !MAKE_HEAD.includes('label.setAttribute("aria-hidden"'), "the flag is a control and the name is the name: neither hidden");
   assert.ok(!MAKE_HEAD.includes('"role", "group"'), "no header is a no-op group any more: every one folds");
   assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded once, on the one fold button every named header is");
