@@ -76,22 +76,37 @@ import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
-import { loadSettings, saveSettings, onExternalSettingsChange } from "./settings";   // Show changes inline: the shared, persisted webview settings (the inline-display follow-on, 2026-09-07)
+import { loadSettings, saveSettings, onExternalSettingsChange, type CommentsFilter } from "./settings";   // Show changes inline and the filter: the shared, persisted webview settings (the inline-display and filter follow-ons, 2026-09-07)
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
-  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered, detachedChanges,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
+  todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
+import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+/** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
+const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+/** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
+ *  the status before the write did not hold — the write's fence (storeMtimeNs) admits no other write between the two.
+ *  After a moved fence's re-read and retry the baseline `had` predates the retry's, so another client's comments may be
+ *  new too; then the one whose body is the note, and null when that does not name exactly one — nothing to scroll to,
+ *  and nothing in doubt about the save itself. */
+function savedCommentId(had: Set<string>, r: Status, note: string): string | null {
+  const fresh = r.store ? r.store.comments.filter((c) => !had.has(c.id)) : [];
+  if (fresh.length === 1) return fresh[0].id;
+  const mine = fresh.filter((c) => c.body === note);
+  return mine.length === 1 ? mine[0].id : null;
+}
 // The verbs that rewrite the FILE, not only the sidecar (reject applies the engine's reverse edits): they
 // fence on the file's mtime as the panel last saw it, so a `track-edit` landing mid-round refuses `file-moved`
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
@@ -215,10 +230,23 @@ const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
-// (which re-opens with the same todoId), or the Reply modal's other link all find it. Another device or
-// document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
-// stamped) stays the backstop there.
+// (which re-opens with the same todoId), or the Reply modal's other link all find it. The todo-file follow-on
+// made the kernel list the open todos naming the file on every status, and stop once the todo is settled — so
+// for a LISTED todo this set covers the moment between the send and the next status only: a status ISSUED after
+// the send's reply landed that still lists the todo is the kernel's word that the todo is open (CLAUDE.md, the
+// authoritative source) — a parked send stamps only when it drains, not when it is accepted, and a recalled or
+// lost answer reopens the todo (kernel _reopen_user_todo) — and applyStatus releases the memory for it, so the
+// confirm offers it again as Waiting on you shows it. Before that release a todo the kernel had reopened stayed
+// hidden from every confirm on the page until a reload (the review, 2026-09-07). The release is keyed on the
+// request counter, not the clock: `answeredAt` holds reqSeq as it stood at the latch, and a status whose reqId
+// is past it was issued after the reply (markOverlapped has already flagged every status still out at that
+// moment, so an earlier ask that lands later is dropped or, when its clocks prove it newer, applied WITHOUT
+// releasing: it may have read the store before the stamp). What the set keeps for good is the todo the file
+// was opened from whose `file` is another file: no status of this viewer lists it, and decision 28 wants later
+// sends to show no box for it. Another device or document has no view of this set; the kernel's own settled
+// check (plan: the reply warns, nothing is stamped) stays the backstop there.
 const answeredTodos = new Set<string>();
+const answeredAt = new Map<string, number>();
 
 // ── image embeds: the source text behind a rendered <img> ─────────────────────────────────────────
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
@@ -402,8 +430,9 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
 /** A comment id inside a selector's quoted attribute value. The ids are sidecar data — a session's tools mint them, a hand
  *  can write them — and nothing on the read path constrains their grammar, so a `"` or `\` in one made querySelector throw,
  *  and on the render path (placeComposer) that stopped every section after the cards from refreshing while the reply was
- *  open. CSS.escape where the platform has it (every browser the panel runs in); for a stand-in without it, the two
- *  characters a quoted value cannot hold raw. */
+ *  open; inside the margin pass (placeCards ownMarks), which every render runs, it left every card without a top and the
+ *  failure surfaced nowhere (both found in the 2026-09-07 reviews). CSS.escape where the platform has it (every browser
+ *  the panel runs in); for a stand-in without it, the two characters a quoted value cannot hold raw. */
 function cssId(s: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
 }
@@ -479,10 +508,17 @@ function shrinkable(b: HTMLElement): void {
   b.style.flex = "0 1 auto"; b.style.minWidth = "0"; b.style.textAlign = "left";
 }
 // A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
-// passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
+// passage was followed into (retargetComposer) — so the anchor is always built over the text the offsets
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
+// `tied` is set when the pair is stale because the current text holds the passage intact in more than one
+// place its anchor cannot tell apart (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save sends the anchor with NO offset, since the range's start indexes other text and would settle
+// the tie by coincidence; the host refuses a tie it cannot settle (anchor-ambiguous) and the note stays.
+// `elsewhere` is set when the pair is stale because the edit reached the passage and its text is now intact
+// only at a copy the edit never touched (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save is refused here — the host, given one hit, would place the note on that other copy.
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: (MapRefusal & { selText: string }) | null }
   // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
   // since the reply began from one whose Resolved fold the person closed (replyAway)
   | { kind: "reply"; commentId: string; ref: string; resolved: boolean }
@@ -491,7 +527,7 @@ type Composer =
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
   // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
   // `page` the 1-based page when the picture is a PDF page's canvas (Slice 4), null otherwise
-  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
+  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: string | null }
   // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words. `page`
   // is the comment's current page for a PDF region (the new place may be on any page)
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
@@ -500,6 +536,70 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
 /** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
+/** The composer's tag titles once the file changed under a pending passage and it now recurs where the anchor cannot tell
+ *  the copies apart (`tied`): the person picks the copy again; Save meanwhile carries no offset and the host refuses a tie. */
+const PASSAGE_TIED = "The file changed and this passage now occurs in it more than once with the same surroundings, so the copy you selected cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Select the passage again to pick the copy.";
+const EMBED_TIED = "The file changed and the line embedding this figure now occurs in it more than once with the same surroundings, so the one you drew on cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Draw the region again to pick the figure.";
+/** The composer's tag titles once the file changed where the pending passage was, and its text is now intact only at a copy
+ *  the edit never touched (`elsewhere`): the person picks the passage again; Save meanwhile is refused here (saveComposer). */
+const PASSAGE_ELSEWHERE = "The file changed where you selected this passage, and its text now occurs only elsewhere in the file, at a copy you did not select; Save is refused rather than put the note there. Select the passage again.";
+const EMBED_ELSEWHERE = "The file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file, at a copy you did not draw on; Save is refused rather than put the note there. Draw the region again.";
+/** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
+const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
+const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
+ *  open card, since a tag's title never reaches touch. */
+function copyUnsureWords(c: Card): string {
+  return "This passage occurs in the file more than once with the same surroundings, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
+      : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
+    + " — not a confirmed one.";
+}
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
+ *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
+ *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
+function unsureMarkTitle(c: Card): string {
+  return "Open the comment; this passage recurs, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      : "this copy is the nearest to the comment's stored position")
+    + ", not a confirmed one";
+}
+/** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
+ *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
+ *  offsets and one wholly after it moves by the span's growth, both exact — the same characters, however many copies of
+ *  the passage the text holds, so a paragraph the session inserts above a recurring passage moves the note with ITS
+ *  copy. Only a passage the span reaches is re-found through its anchor (the engine's 24 characters of context, built
+ *  over the text the offsets index): `moved` when the quote sits intact at one best hit that lies where the edit put
+ *  its text; `elsewhere` when that one hit lies wholly outside the span the edit's text occupies now — text the edit
+ *  never touched, at the offsets it had before, so another copy of the passage and never the one the edit reached (the
+ *  review, 2026-09-07: a session rewrote the selected copy of a sentence that recurs, the anchor re-found the other
+ *  copy, and the note followed it there with no tag); `tied` when it sits intact at several the anchor cannot tell
+ *  apart — the engine's earliest and latest tied hits (hint 0, hint length) differ — a choice the old offset must not
+ *  make, since nearest-to-an-offset-into-other-text picks by coincidence (the re-find did exactly that until
+ *  2026-09-07: an insertion above longer than half the gap between two copies moved the note to the other copy, and
+ *  the host, now settling a hinted tie, saved it there); `gone` when the quote is intact nowhere. */
+export type Followed = { state: "moved"; range: SourceRange } | { state: "tied" } | { state: "gone" } | { state: "elsewhere" };
+export function followPassage(oldText: string, range: SourceRange, newText: string): Followed {
+  const oldLen = oldText.length, newLen = newText.length, min = Math.min(oldLen, newLen);
+  let p = 0;
+  while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+  let s = 0;
+  while (s < min - p && oldText.charCodeAt(oldLen - 1 - s) === newText.charCodeAt(newLen - 1 - s)) s++;
+  if (range.end <= p) return { state: "moved", range: { start: range.start, end: range.end } };
+  if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }
+  const anchor = makeAnchor(oldText, range);
+  const first = locateComment(newText, anchor, 0);
+  if (first.state !== "located" || !first.range) return { state: "gone" };
+  const last = locateComment(newText, anchor, newLen);
+  if (last.state === "located" && last.range && last.range.start === first.range.start) {
+    // one best hit: the passage only where the edit's text now sits, [p, newLen - s); wholly outside it is untouched text
+    if (first.range.end <= p || first.range.start >= newLen - s) return { state: "elsewhere" };
+    return { state: "moved", range: first.range };
+  }
+  return { state: "tied" };
+}
 /** Why the head of the card holding a reply does not fold it: the head's title, and on a coarse pointer the line under the head
  *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
 const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
@@ -717,6 +817,9 @@ function ensureListener(): void {
   // agree. Installed once here, with the message listener, and routed to the live panel: a listener per panel
   // would outlive the panels (onExternalSettingsChange has no remove).
   onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.paintAll(); } });
+  // the filter (All · Comments · Changes) is kept the same way and reaches the live panel the same way: its own call, since the
+  // toggle's line above is pinned word for word (file-comments-inline-toggle.test.ts) and a pick that changes nothing repaints nothing
+  onExternalSettingsChange((s) => { if (live && live.filter !== s.commentsFilter) { live.filter = s.commentsFilter; live.paintAll(); } });
 }
 /** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
  *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
@@ -752,6 +855,10 @@ if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveC
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
 // dead end for the keyboard (ui/CLAUDE.md, never dead-end a compact view).
 const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"]);
+/** The filter's options in the header's order (the filter follow-on, 2026-09-07), and the keys that move along them: the
+ *  arrows step to the next or previous option and choose it, wrapping at the ends; Home and End go to the first and last. */
+const FILTERS: CommentsFilter[] = ["all", "comments", "changes"];
+const FILTER_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
 
 /** Where a Rendered-view refusal's passage sits in the source, for the switch to Raw. The selection
  *  came from the REFUSED block, so the search starts at that block: a copy of the same words earlier in
@@ -829,6 +936,14 @@ class Panel {
   // is its card alone (no "not shown" tag: nothing is shown by choice). The shared settings store keeps it across
   // opens and pages (settings.ts changesInline, ON by default); comment highlights are not governed by it.
   inline = loadSettings().changesInline;
+  // Which cards the list shows and which marks the text wears (the filter follow-on, 2026-09-07): "all", "comments" or
+  // "changes", from the shared settings (settings.ts commentsFilter, "all" by default), chosen in the header (All · Comments ·
+  // Changes). The inline toggle applies on top: "changes" with the marks off shows the change cards and no mark. The control
+  // is offered only while the file has a card to filter (filterOffered), and the choice governs nothing until then (activeFilter).
+  filter: CommentsFilter = loadSettings().commentsFilter;
+  // The comment saved while the filter showed the changes alone (noteHiddenSave): its card and mark are hidden by that
+  // choice, so the list says so where the card would be (hiddenSavedRow) until the card shows or the person dismisses it.
+  hiddenSaved: string | null = null;
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
@@ -858,11 +973,22 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
-  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
+  // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
+  // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
+  // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
+  // The two agree on "none": the change handler writes a declined answer to both (the box unchecked is the "" pick, a
+  // "none" pick unchecks the box), because the next status can swap one control for the other — a todo filed or settled
+  // elsewhere changes the count — and a decline held in one slot alone came back as the other's default (the 2026-09-07
+  // review). An answer written to either puts the other back to its default (checked; null, the first offered).
+  todoPick: string | null = null;
+  openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
   located = new Map<string, Located & { painted: boolean }>();
+  /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
+   *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
+  unsureCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
   // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
@@ -909,6 +1035,26 @@ class Panel {
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
+  // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
+  // comments might move with the window when possible, each trying to stay centered near its place in the text; the
+  // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
+  // with the user's word still to come). Beside the body the aside is laid out as a document editor's margin:
+  // the head and the composer stay put at the top, Accept all · Reject all, Send and the Log at the bottom, and between
+  // them the cards section is a TRACK whose scroll is locked to the body's — the body's scrollTop is mirrored onto the
+  // track on its scroll event and the reverse on the track's (syncFrom guards the echo) — with every card absolutely
+  // positioned at its mark's height (placeCards, card-layout.ts). `margin` is whether that layout is on: off in the
+  // narrow fold (the sheet's container query stacks the aside under the body: the list layout as before, read off the
+  // row's computed flex-direction) and in edit mode (the editor's own marks; no read view to sit beside).
+  margin = false;
+  placed = new Map<string, PlacedItem>();    // the last pass's placement by card key, in placement order (centerOn and cardsInOrder read it)
+  cardsEnd = 0;                               // the last pass's bottom edge of the last card plus the gap: the track content the last card's end needs (followBody)
+  bodyPad = 0;                                // the end padding the pass gave the body, in px (padBody): the footer's height plus the last card's overhang
+  contentWatched = new Set<Element>();        // the body's element children the size observer holds (watchContent: the content's box, which grows when the body's does not)
+  layoutFrame: number | null = null;          // the pass scheduled for the next frame (scheduleLayout: one per frame, however many events ask)
+  syncFrom: "body" | "track" | null = null;   // the scroller whose write onto the other is still to echo (mirrorScroll)
+  sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
+  cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
+  expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -949,7 +1095,6 @@ class Panel {
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
-    this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
     this.input.rows = COMPOSER_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
@@ -1003,6 +1148,7 @@ class Panel {
         fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
         fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
         fcinline: () => this.toggleInline(),
+        fcfilter: (x) => this.setFilter(x.dataset.key as CommentsFilter),   // All · Comments · Changes (the filter follow-on)
         fcfile: () => this.startFileComment(),
         fcsave: () => { void this.saveComposer(); },
         fccancel: () => this.closeComposer(),
@@ -1039,11 +1185,13 @@ class Panel {
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
         fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
+        fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
+        fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
         // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
@@ -1056,8 +1204,18 @@ class Panel {
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
       const k = t ? t.dataset.opt : undefined;
-      if (!t || k !== "todo" && k !== "track" && k !== "accept" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
-      this.sendOpts[k] = t.checked;
+      if (!t || !this.owns(t)) return;                 // a control the file's markup carries flips nothing
+      if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
+      else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
+      else return;
+      // the answer-a-todo verdict has two controls — the box when one todo is offered, the radio group when several — and
+      // the next status can swap one for the other (a todo filed or settled elsewhere changes the count; applyStatus keeps
+      // the confirm open), so a verdict recorded in either is written to both: the box unchecked is the "" pick and a
+      // "none" pick unchecks the box; a todo picked or the box checked is an answer in both, the other slot back to its
+      // default. Before, a declined answer held in one slot came back as the other's default and the send stamped a todo
+      // the person had declined (the 2026-09-07 review; todoPick's comment).
+      if (k === "todopick") this.sendOpts.todo = t.value !== "";
+      else if (k === "todo") this.todoPick = t.checked ? null : "";
       this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -1077,7 +1235,22 @@ class Panel {
       ev.preventDefault();
       x.click();
     });
+    // the filter's buttons are one group (a small radiogroup): an arrow on one of them moves to the next or previous option and
+    // chooses it, wrapping at the ends (Home and End: the first and the last) — for the panel's own buttons only, as above
+    row.addEventListener("keydown", (ev) => {
+      if (!FILTER_KEYS.has(ev.key)) return;
+      const t = ev.target as HTMLElement | null;
+      if (!t || !t.dataset || t.dataset.act !== "fcfilter" || !this.owns(t)) return;
+      const i = FILTERS.indexOf(t.dataset.key as CommentsFilter);
+      if (i < 0) return;
+      ev.preventDefault();
+      const next = ev.key === "Home" ? FILTERS[0] : ev.key === "End" ? FILTERS[FILTERS.length - 1]
+        : FILTERS[(i + (ev.key === "ArrowRight" || ev.key === "ArrowDown" ? 1 : FILTERS.length - 1)) % FILTERS.length];
+      this.setFilter(next);
+      (this.root?.querySelector('[data-act="fcfilter"][data-key="' + next + '"]') as HTMLElement | null)?.focus({ preventScroll: true });
+    });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
+    this.installLayout(row);                           // the margin layout's scroll lock and its re-layout events
   }
 
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
@@ -1189,6 +1362,7 @@ class Panel {
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
+    this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
@@ -1203,6 +1377,20 @@ class Panel {
     this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
+   *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
+   *  it replies, so a todo it still lists is open (a parked send, stamped at its drain; a recalled answer, reopened).
+   *  A status issued before the reply (its reqId at or under the latch's) releases nothing: it may have read the
+   *  store before the stamp. Only an APPLIED status releases — a dropped one is not what the confirm is built from. */
+  private releaseAnswered(s: Reply): void {
+    if (!Array.isArray(s.todos)) return;
+    for (const t of s.todos) {
+      const id = t && typeof t === "object" ? t.id : undefined;
+      if (typeof id !== "string" || !id) continue;
+      const at = answeredAt.get(id);
+      if (at !== undefined && at < s.reqId) { answeredTodos.delete(id); answeredAt.delete(id); }
+    }
   }
   /** Bring the view's bytes to the text a status describes: its hunks and anchors are offsets into the file the
    *  host read, so when the file mtime the status carries is not the view's, the view is asked to re-fetch and the
@@ -1298,7 +1486,9 @@ class Panel {
     // are the person's, and its pending rectangle is a mark like any other.
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
+    if (this.margin) this.layoutOff();                 // the body's end padding and the placement go with the aside (a reopen's first pass brings them back)
     this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
+    this.hiddenSaved = null;                           // the line about a save this panel showed nothing for was read with the panel open (hiddenSavedRow)
     this.stopPoll();
   }
   /** The viewer's close ask (ctx.guardClose): a composer holding typed words is a note the person has not saved, and a
@@ -1316,11 +1506,16 @@ class Panel {
   dispose(): void {
     this.clearLanding();
     this.stopPoll();
+    if (this.margin) this.layoutOff();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
     this.crops.clear();
     if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; }
+    this.sizer?.disconnect(); this.cardSizer?.disconnect(); this.contentWatched.clear();   // the margin layout's observers and its pending frame go with the viewer
+    if (this.layoutFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = null;
+    window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
@@ -1855,7 +2050,7 @@ class Panel {
     this.errors.delete("composer");
     this.repaintPresel();
     this.render();
-    this.composerBox.scrollIntoView({ block: "nearest" });   // the card's foot, where the box now stands, into view when it is not
+    this.showComposer();                               // the card's foot, where the box now stands, into view when it is not
     this.input.focus();
   }
   /** The key of the card the reply being written stands in, latched into the keyed expand state. startReply latches the key
@@ -1987,6 +2182,19 @@ class Panel {
       this.renderComposer();
       return;
     }
+    if ((c.kind === "comment" || c.kind === "region") && c.elsewhere) {
+      // the edit reached the passage and its text is now intact only at a copy the edit never touched (followPassage):
+      // the host, handed the anchor, would find that one hit and place the note there — its exact-hint check runs on a
+      // tie alone — so the refusal is made here, the note stays, and the person selects or draws again
+      this.errors.set("composer", { text: c.kind === "region" ? EMBED_ELSEWHERE_SAVE : PASSAGE_ELSEWHERE_SAVE, reload: false });
+      this.renderComposer();
+      return;
+    }
+    // the comment ids before the write, for the two readers of the reply: the store's for savedCommentId (the scroll to the
+    // saved card), the model's cards' for noteHiddenSave (the line for a card the filter hides) — the same ids, cardModel
+    // building one card per store comment
+    const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
+    const before = new Set(this.cards().map((x) => x.id));   // the comments before the save, so the saved one can be told apart (noteHiddenSave)
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -1995,6 +2203,7 @@ class Panel {
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
       const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src, c.page) };
       if (c.range && c.text !== undefined) { args.anchor = makeAnchor(c.text, c.range); args.hintOffset = c.range.start; }
+      if (c.tied) delete args.hintOffset;                // a tied pair (retargetComposer): the start indexes other text; the passage path below says why
       r = await this.mutate("comment", args, "composer");
     } else {
       const args: Record<string, unknown> = { note };
@@ -2003,9 +2212,45 @@ class Panel {
       // relocates by this anchor and hint, or refuses — a note aimed at one passage never lands on another
       const src = c.text === undefined ? null : c.text;
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
+      // a tied pair (retargetComposer): the start indexes other text, and the host would settle the tie by it — nearest
+      // wins, by coincidence — and save the note on a copy the person never selected. With no offset it refuses a tie
+      // still standing (anchor-ambiguous), the note stays, and the passage is selected again.
+      if (c.tied) delete args.hintOffset;
       r = await this.mutate("comment", args, "composer");
     }
+    const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
+    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is)
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
+    if (hid) this.render();                            // the cards were rendered with the reply before the saved comment was known: once more, with its line
+  }
+  /** After a comment is saved (not a reply): while the filter shows the changes alone, the fresh card and its mark are
+   *  hidden (renderCards, paintAll), and a save that shows nothing reads as a save that failed — the person may write the
+   *  comment again. The saved comment's id is kept (hiddenSaved) and the list says so where the card would be
+   *  (hiddenSavedRow); the kept choice is not changed for it, as it is not for a reply's box (replyAway). The fresh
+   *  comment is the one the list did not hold before the save — with several landed at once (another client's, a
+   *  session's), the one with the person's words. A comment on a change (the change card's Reply) rides that card under
+   *  Changes, so it is never hidden. Returns whether the line is due. */
+  private noteHiddenSave(before: Set<string>, note: string): boolean {
+    const fresh = this.cards().filter((x) => !before.has(x.id));
+    const mine = fresh.find((x) => x.author === "you" && x.body === note) || fresh[fresh.length - 1] || null;
+    if (!mine || mine.hunk !== null || this.activeFilter() !== "changes") return false;
+    this.hiddenSaved = mine.id;
+    return true;
+  }
+  /** The card a save landed in, brought into view, as the re-place gesture brings its card after the write. In the margin
+   *  layout a whole-file comment's card is loose at the top of the track, whose scroll is the body's: with the text
+   *  scrolled anywhere but its top, the composer closed and no card appeared, and the save read as having done nothing
+   *  (the 2026-09-07 review; ui/CLAUDE.md: always acknowledge). A passage comment's or a reply's card is level with its
+   *  mark, and the mark is centered the way a card's opening centers it. BEFORE the composer closes: the reply's render
+   *  placed the cards with the composer's box above the track, and centerOn measures the header live, so the two must
+   *  agree — the composer's closing shortens the header, and the pass that follows it (the track's observer) re-places
+   *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
+   *  (savedCommentId names the new one off the reply). A comment saved while the filter shows the changes alone has no
+   *  card in the list and no mark in the text (renderCards, paintAll), so scrollCard finds nothing and nothing moves;
+   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is. */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+    const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
+    if (saved !== null) this.scrollCard(this.cardKey(saved));
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
@@ -2017,10 +2262,26 @@ class Panel {
     const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.indexedText());
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
-  /** The card a comment id opens: the change card hosting it while its change is pending, else its own. */
+  /** The card a comment id opens: the change card hosting it while its change is pending, else its own — and its own
+   *  while the filter shows the comments alone (activeFilter), when the list shows no change card to host it. */
   cardKey(commentId: string): string {
     const c = this.cards().find((x) => x.id === commentId);
-    return c && c.hunk ? "chg:" + c.hunk.id : commentId;
+    return c && c.hunk && this.activeFilter() !== "comments" ? "chg:" + c.hunk.id : commentId;
+  }
+  /** The filter the list and the marks obey: the kept choice while the file has a card to filter, else "all" — with
+   *  nothing in the list the control is not offered (renderHead), and a kept "changes" must not turn the empty state
+   *  into a line about changes. */
+  activeFilter(): CommentsFilter {
+    return filterOffered(this.status) ? this.filter : "all";
+  }
+  /** One of All · Comments · Changes chosen: the preference goes to the shared store (saveSettings) and the body is repainted
+   *  at once from the status already here — the marks the filter hides come off, the cards follow — with no request. The
+   *  option already chosen changes nothing (the delegate's flash has acknowledged the click). */
+  private setFilter(f: CommentsFilter): void {
+    if (f === this.filter || !FILTERS.includes(f)) return;
+    this.filter = f;
+    saveSettings({ commentsFilter: f });
+    this.paintAll();
   }
   /** Expand and scroll to a card by key — a change card inside the fold unfolds it first. */
   showCard(key: string): void {
@@ -2077,6 +2338,7 @@ class Panel {
     if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
     if (this.changesUnreadUnderEdit) { this.changesUnreadUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_UNREAD_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
+    this.unsureCopies = new Set();
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
@@ -2088,9 +2350,19 @@ class Panel {
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
-    for (const card of this.cards()) {
+    // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
+    // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
+    for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
       if (card.resolved || !card.anchor) continue;
-      const loc = locateComment(src, card.anchor);
+      // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
+      // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
+      const at = this.viewAt(card);
+      const loc = locateComment(src, card.anchor, at);
+      // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
+      // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
+      const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
+      if (unsure) this.unsureCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
@@ -2098,11 +2370,13 @@ class Panel {
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
-        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.mark(m); }
+        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
+        // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
+        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
+        for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
+          if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
@@ -2118,6 +2392,32 @@ class Panel {
   // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS —
   // the action, the id of its subject, and its place among the subject's marks — never by its node. paintAll and
   // paintRegions each mend the marks they rebuild (heldMark before the pass, refocusMark after it).
+  /** A card's stored position (`anchorAt`, the host's offset into the text IT read) in the view's coordinates. The host
+   *  reads the file with its BOM kept and the fetch hands the viewer the text with it stripped, so on a BOM-prefixed
+   *  file every stored position is the view's plus one; the status says which (`bom`, the host's own word on its text:
+   *  the panel has no other authoritative source for it, since the viewer never sees the byte). Compared unmapped, a
+   *  position naming the chosen copy missed it by one on every such file, and the copy was painted as a guess (the
+   *  review, 2026-09-08). undefined without a position; 0 is a position. */
+  private viewAt(card: Card): number | undefined {
+    if (card.anchorAt === null) return undefined;
+    return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;
+  }
+  /** Whether the copy the engine found a comment at (`at`, the pick with the stored position as the hint) is a guess:
+   *  the anchor has more than one best hit in the text — its earliest and latest (hint 0, hint length) differ, the
+   *  host's own test for a tie — and the stored position (`stored`, in the view's coordinates: viewAt) names none of
+   *  them. The pick is then nearest-wins from a position nothing vouches for, or the earliest with no position at all:
+   *  the host keeps a position that names no copy when the recorded changes carry it to none or to several, and every
+   *  position when the file changed unrecorded (refreshAnchorAts), and an edit inside the chosen copy's context leaves
+   *  the other copies whole to outscore it (the review, 2026-09-07: the highlight sat on a copy the person never
+   *  commented, painted as located). A position that names a tied copy is the choice recorded; one best hit is the
+   *  anchor's own answer and needs none. */
+  private copyUnsure(src: string, card: Card, stored: number | undefined, at: number): boolean {
+    if (!card.anchor || stored === at) return false;
+    const first = locateComment(src, card.anchor, 0);
+    if (first.state !== "located" || !first.range) return false;
+    const last = locateComment(src, card.anchor, src.length);
+    return last.state === "located" && !!last.range && last.range.start !== first.range.start;
+  }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
    *  substitution paints a deletion point and then its new text, all with the same action and id. */
   private ownMarks(act: string, id: string): HTMLElement[] {
@@ -2144,6 +2444,7 @@ class Panel {
   private paintChanges(root: Element, src: string, rendered: boolean): void {
     const s = this.status;
     if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
+    if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
     // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
@@ -2202,16 +2503,27 @@ class Panel {
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
-   *  a refresh): a pending passage is re-found through the anchor of its own text, so the presel, the
-   *  chip and the hint follow the passage rather than its old offsets — a note typed while the session
-   *  inserts a paragraph above still lands where it was aimed. Not re-found (the passage changed or went):
-   *  the selection-time pair is kept, the chip says so, nothing is painted, and Save hands the host that
-   *  anchor to rule on — it relocates, or refuses and the note stays. */
+   *  a refresh; a save through the editor): a pending passage follows its passage into that text
+   *  (followPassage), so the presel, the chip and the hint move with it — a note typed while the session
+   *  inserts a paragraph above still lands where it was aimed, on the copy that was selected even where
+   *  the passage recurs, since an edit that does not reach the passage moves its offsets exactly. Not
+   *  followed, the selection-time pair is kept, nothing is painted, and the chip says which: the passage
+   *  changed or went (Save hands the host that anchor and offset to rule on — it relocates, or refuses
+   *  and the note stays), or it now recurs where the anchor cannot tell the copies apart (`tied`: Save
+   *  sends the anchor with no offset, so the host refuses a tie rather than settle it by an offset into
+   *  other text; selecting the passage again pins the copy), or the edit reached it and its text is now
+   *  intact only at a copy the edit never touched (`elsewhere`: Save is refused here, since the host
+   *  would place that one hit; selecting the passage again pins the copy). Text that is the pair's own
+   *  again — a repaint, a reverted edit — is exact, so a tie or an elsewhere noted meanwhile is dropped. */
   private retargetComposer(): void {
     const c = this.composer; const src = this.indexedText();
-    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null || src === c.text) return;
-    const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
-    if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
+    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null) return;
+    c.elsewhere = false;
+    if (src === c.text) { c.tied = false; return; }
+    const f = followPassage(c.text, c.range, src);
+    if (f.state === "moved") { c.range = f.range; c.text = src; c.tied = false; }
+    else c.tied = f.state === "tied";
+    c.elsewhere = f.state === "elsewhere";
   }
   // ── region comments (Slice 3): the overlays ─────────────────────────────────────────────────────
   /** The pictures that take an overlay in the current view: the media body's <img>, or each page's canvas while the
@@ -2327,6 +2639,7 @@ class Panel {
       if (again) c.img = again;
     }
     const per = new Map<Pictured, RegionMark[]>();
+    const hideRegions = this.activeFilter() === "changes";
     for (const card of this.cards()) {
       // a malformed region (isRegion) paints nothing: the card says so (UNREADABLE_REGION), and Re-place redraws it
       if (!card.target || (card.target.kind !== "image" && card.target.kind !== "pdf") || !isRegion(card.target.region)) continue;
@@ -2339,6 +2652,7 @@ class Panel {
       // Only under a key: with no file hash nothing would be kept, and the cut would be wasted
       if (isCanvas(img) && this.cropKey(card)) this.cutCrop(img, card);
       if (card.resolved) continue;
+      if (hideRegions) continue;                       // a rectangle is a comment's mark: none while the filter shows the changes alone (the crop above is kept for when they return)
       const chip = this.chipFor(card.author, card.authorId);
       (per.get(img) || per.set(img, []).get(img)!).push({ id: card.id, region: card.target.region, label: chip.label, state: regionState(card.target, s), style: chip.style });
       const loc = this.located.get(card.id);
@@ -2438,8 +2752,12 @@ class Panel {
    *  where Save hands the drag-time anchor to the host). By src alone, two embeds of ONE destination — a figure shown
    *  twice — put the pending rectangle and the composer's thumbnail on the FIRST twin while `range` still named the second
    *  and Save anchored the region there: the preview stood on one picture and the saved rectangle landed on another (the
-   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. */
+   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. A pair
+   *  marked `tied` or `elsewhere` (retargetComposer) names NO picture: the chip says the figure drawn on cannot be told
+   *  apart, or that its embed line is now only elsewhere, and a rectangle on the first twin of the src would claim the
+   *  opposite (the review, 2026-09-07); the composer keeps the picture it was drawn on for its thumbnail. */
   private composerImage(c: Extract<Composer, { kind: "region" }>, imgs: Pictured[]): Pictured | undefined {
+    if (c.tied || c.elsewhere) return undefined;
     const root = this.contentRoot(); const src = this.ctx.text();
     if (root && src !== null && c.range && c.text === src) {
       const img = imgForRange(root, src, c.range, this.ctx.path) as Pictured | null;
@@ -2588,6 +2906,7 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
+    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
@@ -2647,7 +2966,332 @@ class Panel {
     row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
+    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
+  }
+
+  // ── the margin layout (the 2026-09-07 follow-on; card-layout.ts is the pure half) ─────────────────
+  /** Wire what the layout listens to, once per panel: the two scrollers' events (the lock); a picture loading in the
+   *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
+   *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
+   *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
+   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
+   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
+   *  scroll changes. */
+  private installLayout(row: HTMLElement): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    body.addEventListener("scroll", () => this.mirrorScroll("body"));
+    track.addEventListener("scroll", () => this.mirrorScroll("track"));
+    body.addEventListener("load", () => this.scheduleLayout(), true);
+    track.addEventListener("click", (ev) => {
+      const t = ev.target as HTMLElement | null;
+      const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
+      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+    });
+    window.addEventListener("resize", this.onWindowResize);
+    if (typeof ResizeObserver !== "undefined") {
+      this.sizer = new ResizeObserver(() => this.scheduleLayout());
+      this.sizer.observe(body); this.sizer.observe(row); this.sizer.observe(track);
+      this.cardSizer = new ResizeObserver(() => this.scheduleLayout());
+    }
+  }
+  onWindowResize = (): void => this.scheduleLayout();
+  /** Whether the aside is laid out as a margin now: beside the body — the row's computed flex-direction is the
+   *  sheet's own verdict on the fold, `column` being the narrow column, where the aside stands under the body and
+   *  the cards are the list — and in read mode. A document with no computed style (a stand-in) is the list. */
+  private marginMode(): boolean {
+    if (this.ctx.editing() || typeof getComputedStyle !== "function") return false;
+    const row = this.ctx.body().parentElement;
+    return !!row && getComputedStyle(row).flexDirection !== "column";
+  }
+  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth). */
+  private scheduleLayout(): void {
+    if (this.layoutFrame !== null || !this.open) return;
+    if (typeof requestAnimationFrame !== "function") { this.placeCards(false); return; }
+    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.placeCards(false); });
+  }
+  /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
+   *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
+   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. */
+  private afterRender(): void {
+    this.placeCards(true);
+    const intent = this.expandIntent; this.expandIntent = null;
+    if (intent && this.margin && !intent.wasOpen && this.openCards.has(intent.key)) this.centerOn(intent.key);
+  }
+  /** The margin pass: card-layout.ts decides, this measures and applies. The mode first — a change toggles the
+   *  sheet's `fc-margin`, and the margin layout ending OUTSIDE a render re-renders, since the rows stand in the
+   *  footer and must return to the list (layoutOff). In the margin layout: the list's ROWS — the foot (Accept all ·
+   *  Reject all), a loader, a refusal, a fold, the empty note — leave the track for the footer, above Send
+   *  (moveRows); each card's desired top is its mark's top in the body's content less the header's height (the track
+   *  begins that far below the body's top, so a card level with its mark sits that much higher in the track's
+   *  content: a mark under the header itself is clamped, and level once the text has scrolled by the header's
+   *  height); the cards are placed (layoutCards) and their tops written, a pushed card carrying the leader's length;
+   *  the cards' DOM order is made the placement's (so the Tab order runs down the margin, top to bottom: a head is a
+   *  Tab stop, focusing one scrolls the track and the body with it, and an order by time scrolled the text up and
+   *  down with every Tab); the body's content is padded at its end by the footer's height plus the last card's overhang
+   *  (padBody), so the body itself can scroll every mark's card into the track's box; the list is made as tall as
+   *  puts the track's farthest position at the body's (one range: the body's content less the body's box plus the
+   *  track's), or as the last card, whichever is more; and the track is brought to the body's position. `fromRender`:
+   *  the sections were just rebuilt, so the rows are in the list again and the cards are new (the card observer takes
+   *  them, as it does the cards the list layout held when the margin layout comes on outside a render). */
+  placeCards(fromRender: boolean): void {
+    const root = this.root;
+    if (!root || !this.open) return;
+    const margin = this.marginMode();
+    const flipped = margin !== this.margin;
+    if (flipped) root.classList.toggle("fc-margin", margin);
+    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
+    const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
+    const body = this.ctx.body(), track = this.sections.cards;
+    const list = Array.from(track.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    this.watchContent(body);
+    const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
+    this.moveRows(kids());
+    const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
+    const offset = trackRect.top - bodyRect.top;
+    const scroll = body.scrollTop;
+    const items: LayoutItem[] = [];
+    const nodes = new Map<string, HTMLElement>();
+    const laid: HTMLElement[] = [];                    // the items' nodes in the DOM's order, as the pass found them
+    if (watch) this.cardSizer?.disconnect();
+    let n = 0;
+    for (const child of kids()) {
+      if (child.hidden || child.classList.contains("fc-group")) continue;   // the paragraph titles: the sheet hides them here, the card's place says the paragraph
+      const isCard = child.classList.contains("fc-card") && !!child.dataset.id;
+      const key = isCard ? child.dataset.id! : "#" + n++;
+      const mark = isCard ? this.markTop(key) : null;
+      items.push({ key, desired: mark === null ? null : mark - bodyRect.top + scroll - offset, height: child.getBoundingClientRect().height });
+      nodes.set(key, child); laid.push(child);
+      if (isCard && watch) this.cardSizer?.observe(child);
+    }
+    const out = layoutCards(items, CARD_GAP);
+    for (const p of out.placed) {
+      const node = nodes.get(p.key)!;
+      node.style.top = p.top + "px";
+      if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
+      else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+    }
+    const order = out.placed.map((p) => nodes.get(p.key)!);
+    if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
+    // the body's end padding: the footer's height (the part of the body's box the track's box does not reach), plus how
+    // far the last card hangs past the content's end. The content's height is the body's scroll height less the padding
+    // it holds — known only while the body scrolls at all (scrollHeight floors at the box); a body that does not scroll
+    // is padded by the footer alone, and its track goes on past it for the rest (followBody). That padding is KEPT only
+    // where it lengthens the body. A box's padding comes out of its content box, and content sized to the box by a
+    // `min-height: 100%` — the standalone picture's box (.fileview-imgbox, which centers the picture in itself), the Raw
+    // view's — shrinks by the padding instead of scrolling: the body gained no range, and the picture rose by half the
+    // footer at every open of the panel and fell back at the close, on no new information about it (the 2026-09-07
+    // review, round 3). So the padding is written, then measured: where it bought the body no range it is taken back the
+    // same pass (the content box is whole again before the frame paints, so no observer sees a change). A picture nearly
+    // the box's height is the band where it does buy range — its own box outgrows the padded content box — and there it
+    // stays, as the padding that lets the body reach a card at the picture's foot.
+    const footer = Math.max(0, bodyRect.bottom - trackRect.bottom);
+    const scrolls = body.scrollHeight > body.clientHeight;
+    const content = scrolls ? body.scrollHeight - this.bodyPad : null;
+    const hang = content === null ? 0 : Math.max(0, out.bottom + CARD_GAP + offset - content);
+    this.padBody(body, Math.ceil(footer + hang));
+    if (!scrolls && body.scrollHeight <= body.clientHeight) this.padBody(body, 0);   // bought no range: taken back
+    list.style.height = Math.max(body.scrollHeight - body.clientHeight + track.clientHeight, out.bottom + CARD_GAP) + "px";
+    this.placed = new Map(out.placed.map((p) => [p.key, p]));
+    this.cardsEnd = out.bottom + CARD_GAP;
+    this.syncTrack();
+  }
+  /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
+   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+  private layoutOff(): void {
+    this.margin = false;
+    this.root?.classList.remove("fc-margin");
+    this.padBody(this.ctx.body(), 0);
+    this.placed = new Map(); this.cardsEnd = 0;
+    this.cardSizer?.disconnect();
+  }
+  /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
+   *  next pass read a different content height and write again). The track's box ends a footer's height above the
+   *  body's — Accept all · Reject all, Send and the Log stand under it — so a mark in the text's last lines had its card
+   *  under the footer with the body at its end, where no scroll reached it, and a card hanging below the content's end
+   *  could be scrolled to only on the track, which the next pass pulled back (the 2026-09-07 review). The padding lets
+   *  the body scroll that much further, so the two scrollers keep one range and the body reaches every card's end. */
+  private padBody(body: HTMLElement, px: number): void {
+    if (px === this.bodyPad) return;
+    this.bodyPad = px;
+    body.style.paddingBottom = px ? px + "px" : "";
+  }
+  /** In the margin layout the track holds cards alone. Every ROW the list held — the foot (Accept all · Reject all), a
+   *  wait's loader, a refusal's row, the "… N more changes" and Resolved folds, the empty note — stands in the footer
+   *  above Send: the foot first (so the footer begins with the changes' buttons; the sheet's rule stands on the section's
+   *  top edge, so the footer begins under a rule whichever row comes first), then the other rows in the list's order. The
+   *  track's scroll is the body's, so a row placed loose at the top of the track was out of view for a reader anywhere but the top of the text: the reload's loader and its
+   *  deadline row with Reload among them, and the fold that says why a painted change has no card beside it (the
+   *  2026-09-07 review; ui/CLAUDE.md: the loader first, an error where it can be acted on, no dead end). `kids`: the
+   *  list's element children. */
+  private moveRows(kids: HTMLElement[]): void {
+    const rows = kids.filter((k) => !k.classList.contains("fc-card") && !k.classList.contains("fc-group"));
+    if (!rows.length) return;
+    const send = this.sections.send;
+    const foot = rows.find((k) => k.classList.contains("fc-foot")) || null;
+    const box = (Array.from(send.childNodes).filter((k) => k.nodeType === 1) as HTMLElement[]).find((k) => k.classList.contains("fc-send")) || null;
+    this.moving(rows, () => {
+      if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
+      for (const r of rows) if (r !== foot) send.insertBefore(r, box);
+    });
+  }
+  /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
+   *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
+   *  focus to the body (the browser's focus-fixup rule), and render's refocus ran BEFORE this pass, on the fresh Accept
+   *  all or Reject all in the list; moved to the footer, it had lost the keyboard again (the 2026-09-07 review). */
+  private moving(nodes: HTMLElement[], move: () => void): void {
+    const held = document.activeElement as HTMLElement | null;
+    const kept = held && nodes.some((k) => k.contains(held)) ? held : null;
+    move();
+    if (kept) kept.focus({ preventScroll: true });
+  }
+  /** The body's content — the rendered markdown's box, the Raw view's, a picture, the pages' host — joins the size
+   *  observer each pass, as the body's children stand then (a mode switch or a re-fetch replaces them). The body is a
+   *  flex-sized scroller: its own box does not change when its CONTENT grows, so a reflow inside it — a <details>
+   *  opened, an embed sized late — moved every mark below the change while the cards kept their tops until some
+   *  unrelated event re-ran the pass (the 2026-09-07 review). The content's box does change. */
+  private watchContent(body: HTMLElement): void {
+    if (!this.sizer) return;
+    const now = Array.from(body.childNodes).filter((k) => k.nodeType === 1) as Element[];
+    for (const k of this.contentWatched) if (!now.includes(k)) { this.sizer.unobserve(k); this.contentWatched.delete(k); }
+    for (const k of now) if (!this.contentWatched.has(k)) { this.sizer.observe(k); this.contentWatched.add(k); }
+  }
+  /** The track's cards in the order they are read: the DOM's, which the pass sorts into placement order — or, in the
+   *  margin layout between a render and its pass, the last pass's order, since the fresh list stands in the model's
+   *  order until placeCards re-sorts it, and a place kept by index (focusKey, focusNear) must name the same card before
+   *  the rebuild and after. Cards the last pass did not place (new ones) follow, in the DOM's order. */
+  private cardsInOrder(): HTMLElement[] {
+    const all = Array.from(this.sections.cards.querySelectorAll(".fc-card")) as HTMLElement[];
+    if (!this.margin || !this.placed.size) return all;
+    const rank = new Map<string, number>();
+    for (const k of this.placed.keys()) rank.set(k, rank.size);
+    const at = (c: HTMLElement): number => { const r = rank.get(c.dataset.id || ""); return r === undefined ? rank.size + all.indexOf(c) : r; };
+    return all.slice().sort((a, b) => at(a) - at(b));
+  }
+  /** The top of a card's mark in the viewport: the highest of its highlight rows, its framed figure, its region
+   *  rectangle or its change marks — whichever the view paints; null when it paints none, or the mark has no box
+   *  yet (a figure not loaded, a page not drawn): the loose group, until the load or the draw re-runs the pass. */
+  private markTop(key: string): number | null {
+    const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let top: number | null = null;
+    for (const m of this.ownMarks(act, id)) {
+      const r = m.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (top === null || r.top < top) top = r.top;
+    }
+    return top;
+  }
+  /** The lock: the scroller that moved writes its scrollTop onto the other, and the other's echo — the scroll
+   *  event a write raises, on the next frame — is let through without a write back. `syncFrom` names the echo's
+   *  source; a write that changed nothing raises no echo, so it is cleared at once then (writeScroll). An event
+   *  attributed to the wrong scroller costs one write and no more: a genuine event taken for the echo is let through
+   *  unmirrored, an echo taken for genuine writes the older position back once — and every write copies an absolute
+   *  scrollTop, so the next genuine event puts both scrollers at the same position again. */
+  private mirrorScroll(from: "body" | "track"): void {
+    if (!this.margin || !this.open) return;
+    if (this.syncFrom !== null && this.syncFrom !== from) { this.syncFrom = null; return; }
+    this.syncFrom = null;
+    if (from === "body") this.followBody();
+    else this.writeScroll(this.ctx.body(), this.sections.cards.scrollTop, "track");
+  }
+  private writeScroll(dst: HTMLElement, want: number, from: "body" | "track"): void {
+    const before = dst.scrollTop;
+    if (before === want) return;
+    this.syncFrom = from;
+    dst.scrollTop = want;
+    if (dst.scrollTop === before) this.syncFrom = null;   // clamped to where it was: no echo will come
+  }
+  /** The track to the body's position at once (the pass, centerOn), not on the body's event a frame later. */
+  private syncTrack(): void {
+    if (this.margin) this.followBody();
+  }
+  /** The body's position onto the track — except past the body's end. The body's end padding (padBody) gives the two
+   *  scrollers one range wherever the body scrolls at all; where it does not (a short file, a picture sized to the
+   *  box) the track's content still reaches the last card's end, and a card under the footer's band or hanging past
+   *  the content shows only when the track scrolls on alone (a wheel over the cards; centerOn). With the body at its
+   *  end the track is left where it stands, as far as the last card's end — beyond that it shows nothing, and is
+   *  brought back to it; before this, a pass or a status reply pulled the track back to the body and hid the card's
+   *  end the person had just scrolled to (the 2026-09-07 review). Below the end the track follows the body as
+   *  always, so the next scroll up puts every card level again. */
+  private followBody(): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    const at = body.scrollTop;
+    let want = at;
+    if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
+    this.writeScroll(track, want, "body");
+  }
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
+   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
+   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
+   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
+   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
+   *  loose card moves nothing, afterRender).
+   *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
+   *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
+   *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
+   *  added on top scrolled the header's height too far, and an opened card that fit the track landed with its head
+   *  — the fold control, the reference link — under the panel's header (the 2026-09-07 review). */
+  private centerOn(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired === null) return false;
+    const body = this.ctx.body(), track = this.sections.cards;
+    const offset = track.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    const markY = p.desired + offset;                  // the mark's top in the body's content
+    const view = body.clientHeight;
+    let want = markY - view / 2;
+    const showCard = p.top + p.height + CARD_GAP - track.clientHeight;   // the least scroll that shows the card's bottom (track content: no header term)
+    if (showCard > want) want = Math.min(showCard, markY - CARD_GAP);
+    this.scrollBoth(want);
+    return true;
+  }
+  /** A loose card (no mark: the group at the top of the track) into the track's box, by the least scroll that shows it
+   *  whole — what scrollIntoView's `nearest` scrolls the track by — written onto the body AND the track at once, as
+   *  centerOn writes them. scrollIntoView moved the track alone, and the lock carries a track scroll onto the body only
+   *  on the track's scroll EVENT: the browser delivers one per element per frame, so the render's own write onto the
+   *  track (the echo the lock lets through unmirrored) and the scroll to the card arrived as one event, the body never
+   *  followed, and the frame's pass brought the track back to the body — the card the save had scrolled to was out of
+   *  view again (the 2026-09-07 review, in a real engine). False for a card with a mark (centerOn's) or one the pass did
+   *  not place (the list layout; a card not yet rendered): the caller scrolls it into view as a list item. */
+  private showLoose(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired !== null) return false;
+    const track = this.sections.cards;
+    const at = track.scrollTop, box = track.clientHeight;
+    let want = at;
+    if (p.top - CARD_GAP < at) want = p.top - CARD_GAP;
+    else if (p.top + p.height + CARD_GAP > at + box) want = p.top + p.height + CARD_GAP - box;
+    this.scrollBoth(want);
+    return true;
+  }
+  /** The composer's box into view where it stands (startReply; render, after a move while the person was typing). In the
+   *  margin layout a reply's box stands in its card in the track (placeComposer), whose scroll is the body's: a
+   *  scrollIntoView moved the track alone, the lock let the event through as the pass's echo, and the frame's pass brought
+   *  the track back to the body (showLoose says the same of a card), so the least scroll that shows the box whole is
+   *  written onto both scrollers (scrollBoth), as a loose card is shown. The box is read where the pass has just placed
+   *  its card — render runs this after afterRender — and the pass never moves the box itself: it is a descendant of its
+   *  card, not a child of the list, so the sheet's absolute positioning and moveRows leave it, and the card's observer
+   *  covers its growth. In the slot above the track, or in the list layout, scrollIntoView's nearest as before. */
+  private showComposer(): void {
+    const box = this.composerBox, track = this.sections.cards;
+    if (!this.margin || !track.contains(box)) { box.scrollIntoView({ block: "nearest" }); return; }
+    const r = box.getBoundingClientRect(), top = r.top - track.getBoundingClientRect().top + track.scrollTop;
+    const at = track.scrollTop, view = track.clientHeight;
+    let want = at;
+    if (top - CARD_GAP < at) want = top - CARD_GAP;
+    else if (top + r.height + CARD_GAP > at + view) want = top + r.height + CARD_GAP - view;
+    this.scrollBoth(want);
+  }
+  /** Both scrollers to `want`, a position in the one range the two share: the body as far as it can go, and the track to
+   *  the body's position — or on alone, as far past the body's end as `want` and no further than the last card's end,
+   *  where the body's padding could not lengthen it (padBody; followBody keeps it there). */
+  private scrollBoth(want: number): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    want = Math.max(0, want);
+    body.scrollTop = Math.min(want, body.scrollHeight - body.clientHeight);
+    const at = body.scrollTop;                         // where the body could go
+    this.writeScroll(track, want > at ? Math.min(want, Math.max(at, this.cardsEnd - track.clientHeight)) : at, "body");
   }
   /** The absolute path the kernel acts on, as far as the panel can know it. The kernel resolves the viewer's
    *  path (`~`, a relative chat or todo token against the session's cwd, then realpath) and builds the sent
@@ -2703,18 +3347,21 @@ class Panel {
         pending = decided.length;
       }
       const counts = sendCounts(parts, acceptAll, pending);
-      const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
+      // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
+      // status lists it as naming this file — as the checkbox or the radio group left it; one id, or none
+      const todoId = this.chosenTodoId(s);
       const msg: Record<string, unknown> = {
         sid: this.ctx.sid, path: this.ctx.path, tracked, comments: parts.comments,
         accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
-      if (answerTodo) msg.todoId = this.ctx.todoId;
+      if (todoId) msg.todoId = todoId;
       const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
-      if (answerTodo && reply.todoStamped) { this.todoAnswered = true; answeredTodos.add(this.ctx.todoId!); }
+      if (todoId && reply.todoStamped) answeredTodos.add(todoId);
+      if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
@@ -2772,9 +3419,13 @@ class Panel {
     // (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the comment's own card, among the comment
     // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
     // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
-    // keyboard elsewhere leaves the view where the person put it
-    if (typing && this.composerBox.parentElement !== home) this.composerBox.scrollIntoView({ block: "nearest" });
+    // keyboard elsewhere leaves the view where the person put it. After the margin pass (afterRender): in the margin layout
+    // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
+    // card would not stand, and the track's scroll is the body's (showComposer)
+    const moved = typing && this.composerBox.parentElement !== home;
     if (keep) this.refocus(keep, want);
+    this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
    *  that card too, the nodes between the section and the box — the list, the card, and for a hosted comment its box on
@@ -2842,16 +3493,20 @@ class Panel {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
     const k: FocusKey | null = a.dataset.act ? { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot }
-      : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
+      // a confirm checkbox, re-found by its option; a radio of the todo group by its option AND its value (the todo id, "" for none)
+      : a.dataset.opt ? { act: "opt", key: a.dataset.opt, id: a.dataset.opt === "todopick" ? (a as HTMLInputElement).value : undefined } : null;
     if (!k) return null;
     const cards = this.sections.cards;
-    if (cards.contains(a) && typeof a.closest === "function") {
+    if (typeof a.closest === "function") {
       // where in the list it sat: its card and that card's place; for the foot (Accept all, Reject all, the confirm),
-      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes
-      const all = Array.from(cards.querySelectorAll(".fc-card"));
+      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes.
+      // The foot follows the change cards in the list, and stands in the footer in the margin layout (placeCards): the
+      // last change card is the place before it either way — its index in the order the cards are read (cardsInOrder),
+      // which in the margin layout is the placement's, not the list's
+      const all = this.cardsInOrder();
       const card = a.closest(".fc-card"), foot = a.closest(".fc-foot");
-      if (card) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card); }
-      else if (foot) k.at = Math.max(0, Array.from(cards.querySelectorAll(".fc-card, .fc-foot")).indexOf(foot) - 1);
+      if (card && cards.contains(card)) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card as HTMLElement); }
+      else if (foot) { const changes = all.filter((c) => c.classList.contains("fc-change")); k.at = changes.length ? all.indexOf(changes[changes.length - 1]) : 0; }
     }
     return k;
   }
@@ -2859,7 +3514,11 @@ class Panel {
    *  too, but no tabindex. */
   private findControl(k: FocusKey): HTMLElement | null {
     if (!this.root) return null;
-    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;
+    // the panel's own option names, never a sidecar's text; a todo radio is told by its value, compared, never in a selector
+    if (k.act === "opt") {
+      const all = Array.from(this.root.querySelectorAll('[data-opt="' + k.key + '"]')) as HTMLElement[];
+      return (k.id === undefined ? all[0] : all.find((n) => (n as HTMLInputElement).value === k.id)) || null;
+    }
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
@@ -2889,8 +3548,8 @@ class Panel {
     const head = (c: Element | null | undefined): HTMLElement | null => (c ? (c.querySelector(".fc-card-head") as HTMLElement | null) : null);
     const picks: Array<HTMLElement | null> = [];
     if (k.card) picks.push(head(cards.querySelector('.fc-card[data-id="' + cssId(k.card) + '"]')));   // a comment id may hold a quote (cssId)
-    if (typeof k.at === "number") { const all = Array.from(cards.querySelectorAll(".fc-card")); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
-    picks.push(...(Array.from(cards.querySelectorAll(".fc-foot button")) as HTMLElement[]));
+    if (typeof k.at === "number") { const all = this.cardsInOrder(); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
+    picks.push(...(Array.from(this.root.querySelectorAll(".fc-foot button")) as HTMLElement[]));   // in the list, or in the margin layout's footer
     picks.push(this.root.querySelector('[data-act="fcsend"]') as HTMLElement | null, this.root.querySelector('[data-act="fcfile"]') as HTMLElement | null);
     for (const n of picks) {
       if (n && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return n; }
@@ -2954,12 +3613,62 @@ class Panel {
       const i = btn("Show changes inline", "fcinline", "fileview-btn fc-toggle");
       i.dataset.on = this.inline ? "1" : "0";
       i.setAttribute("aria-pressed", this.inline ? "true" : "false");
-      i.title = this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
+      // under Comments the read view paints no change mark whatever the setting (paintChanges), so the title says the filter
+      // hides them and that the setting governs All and Changes — an ON toggle over a body with no marks must not claim marks
+      // in the text (the review, 2026-09-07). The button stays: its setting is shared with the other views and other panels
+      const withheld = this.activeFilter() === "comments";
+      i.title = withheld
+        ? (this.inline ? "Comments above hides the change marks with the change cards; under All or Changes the session's changes are marked in the text. Click to read the file without the marks there too"
+          : "The marks are off, and Comments above hides them with the change cards; click to mark the session's changes in the text under All or Changes")
+        : this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
         : "The marks are off and the file reads as it is; click to mark the session's changes in the text";
       row.appendChild(i);
     }
     row.appendChild(btn("Comment on this file", "fcfile"));
     head.appendChild(row);
+    // the filter (the filter follow-on, 2026-09-07): All · Comments N · Changes M, one group of the toggles' buttons on its own
+    // row under them, the chosen one filled — offered once the file has a card to filter (filterOffered), and never before:
+    // a control over an empty list is noise. Its counts are the action-row label's (cardCounts), so the glance and the
+    // control agree. The buttons take the arrow keys as one group (the constructor's keydown).
+    let filterRow: HTMLElement | null = null;          // the row the toggles' answers stand above (underToggles): the filter's, when offered; else the first of the head's other rows, set below
+    if (filterOffered(s)) {
+      const seg = el("div", "fc-row fc-filter");
+      seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Show");
+      const n = cardCounts(s);
+      // a detached change is neither pending nor counted (cardCounts), and the Changes list shows its card in the detached
+      // group: the option carries the action-row label's own detached clause ("Changes 0 · 1 detached"), so the count and
+      // the list it opens agree and a file holding detached changes alone does not read as one with nothing to show
+      const d = s && s.store ? detachedChanges(s.store).length : 0;
+      // the marks half of each title is the read view's (paintAll): the editor (Slice 5) draws every change itself, from the
+      // records it took at Edit, and no comment highlight, so while it is up the titles say what the list does and that the
+      // editor's marks stay — the row is offered there all the same, since finding a comment among the change cards is
+      // what the filter is for (Show changes inline, which governs marks alone, is not)
+      const editing = this.ctx.editing();
+      const commentsTitle = "Show only the comments, including comments on changes; " + (editing ? "the editor keeps every change marked in its text" : "the change marks in the text are hidden with the change cards");
+      const changesTitle = "Show only the changes, each with the comments made on it" + (editing ? "" : "; the comment highlights in the text are hidden with the comment cards")
+        + (d ? "; the " + (d === 1 ? "detached change is" : d + " detached changes are") + " listed too, in a group of " + (d === 1 ? "its" : "their") + " own" : "");
+      const options: Array<[CommentsFilter, string, string]> = [
+        ["all", "All", "Show every comment and change"],
+        ["comments", "Comments " + n.comments, commentsTitle],
+        ["changes", "Changes " + n.changes, changesTitle],
+      ];
+      for (const [key, label, title] of options) {
+        const b = btn(key === "changes" && d ? label + " · " + d + " detached" : label, "fcfilter", "fileview-btn fc-toggle");
+        b.dataset.key = key;
+        b.dataset.on = this.filter === key ? "1" : "0";
+        b.setAttribute("aria-pressed", this.filter === key ? "true" : "false");
+        b.title = title;
+        seg.appendChild(b);
+      }
+      head.appendChild(seg);
+      filterRow = seg;
+    }
+    // a row answering a click on the toggles' row — the Track scope choice, the Stop confirm, the track slot's loader and
+    // refusal — stands directly under that row, above the filter's, the way the foot's Reject-all confirm and Send's stand
+    // under their buttons (the plan: an error row under the control that asked); the filter's row is under the toggles
+    // again once the question is answered. The other head rows (the status refusal, the poll's, the editor's, the save's)
+    // are about the file and the panel as a whole and keep their place below the filter's row.
+    const underToggles = (n: HTMLElement): void => { head.insertBefore(n, filterRow); };
     if (this.trackChoice && s) {
       const pick = el("div", "fc-row fc-choice");
       pick.appendChild(el("span", "fc-note", "Track:"));
@@ -2972,7 +3681,7 @@ class Panel {
       f.title = "Everything under the folder, files not written yet included";
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(pick);
+      underToggles(pick);
     }
     if (this.trackStop && s?.trackedBy) {
       const stop = el("div", "fc-row fc-choice");
@@ -2981,9 +3690,16 @@ class Panel {
       stop.appendChild(ask);
       stop.appendChild(btn("Stop", "fctrackstop"));
       stop.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(stop);
+      underToggles(stop);
     }
     for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
+    // the track slot's loader and refusal, built with the head's rows above: moved under the toggle that asked, like its confirms
+    // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row). With no filter row
+    // (a file with nothing to filter, or no status) the move's anchor is the first of the head's other rows instead: an
+    // insertBefore with no anchor appends, and appended after the status refusal's row the answer to the Track click stood
+    // below a row about the file (the review, 2026-09-07)
+    if (!filterRow) filterRow = (Array.from(head.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && ["head", "poll", "edit"].includes(n.dataset.slot || "")) || null;
+    for (const n of Array.from(head.childNodes)) if (n.nodeType === 1 && (n as HTMLElement).dataset.slot === "track") underToggles(n as HTMLElement);
     const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
@@ -3047,9 +3763,9 @@ class Panel {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
-        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not re-found (retargetComposer)
-          const t = el("span", "fc-tag", "passage changed");
-          t.title = "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not followed into it (retargetComposer)
+          const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+          t.title = c.tied ? EMBED_TIED : c.elsewhere ? EMBED_ELSEWHERE : "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
           ref.appendChild(t);
         }
       }
@@ -3064,9 +3780,9 @@ class Panel {
       q.title = c.quote;
       ref.appendChild(el("span", "fc-note", "On "));
       ref.appendChild(q);
-      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not re-found in it (retargetComposer)
-        const t = el("span", "fc-tag", "passage changed");
-        t.title = "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not followed into it (retargetComposer)
+        const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+        t.title = c.tied ? PASSAGE_TIED : c.elsewhere ? PASSAGE_ELSEWHERE : "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
         ref.appendChild(t);
       }
     } else ref.appendChild(el("span", "fc-note", "On this file"));
@@ -3119,24 +3835,63 @@ class Panel {
    *  `back`, for the keyboard when the box closes (focusAway). The comment gone from the sidecar (`gone`: the row wears
    *  the refusal's colour); a comment on its own card resolved since the reply began, or resolved before it and its
    *  Resolved fold closed since; its change card folded behind the "… N more changes" row, when a change the session made
-   *  in an earlier paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. A
-   *  comment bound to a change is shown on the change's card resolved or not (changeCards), never under the Resolved
-   *  fold, so its resolved state says nothing about where its card is: only the change fold can hide it. */
-  private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean; back: "fcresolved" | "fcmore" | null } {
-    const card = this.cards().find((x) => x.id === c.commentId);
-    if (!card) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
+   *  in an earlier paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. Where
+   *  a comment bound to a change stands follows the filter (renderCards): under All and Changes it is shown on the
+   *  change's card resolved or not (changeCards), never under the Resolved fold, so only the change fold can hide it;
+   *  under Comments it stands on its own card like any other, and resolved it is under the Resolved fold, while no
+   *  change card, group or fold row is rendered to name. */
+  private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean; back: "fcresolved" | "fcmore" | "fcfilter" | null } {
+    const found = this.cards().find((x) => x.id === c.commentId);
+    if (!found) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
+    // under Comments a comment bound to a change stands on its own card, as one on no change does, and no change card or
+    // fold row is rendered (renderCards): it is read here as a comment on none, so the Resolved fold is the row that can hide it
+    const card = this.activeFilter() === "comments" ? { ...found, hunk: null } : found;
+    // the filter shows the changes alone, and the comment is on none: its card is behind All or Comments above (the row that
+    // brings it back is the group's first button, All)
+    if (this.activeFilter() === "changes" && card.hunk === null) return { gone: false, back: "fcfilter", text: "The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it." };
     if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved", text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it." };
+    if (card.hunk === null) return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };   // its own card, open, and not shown: a status not yet in — never the change fold
     const view = this.changeView();
     if (view.hidden.some((g) => g.changes.some((ch) => ch.comments.some((cm) => cm.id === c.commentId)))) {
       return { gone: false, back: "fcmore", text: "The comment's card is under “" + moreChangesLabel(view.hiddenChanges) + "” below; the reply still goes to it." };
     }
     return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };
   }
+  /** The line under Changes for the comment just saved there (noteHiddenSave): its card and its mark are hidden by the
+   *  choice above, and the line names the options that show them, as the Changes empty state does — the card itself is
+   *  not shown, since the filter's own words exclude it. Rendered while the list still hides the card; once it shows
+   *  (another pick) or the comment is gone from the file's comments, the line is over and the id with it: a later return
+   *  to Changes must not bring it back, the card having been seen. The ✕ ends it early (fchiddenx). In the margin layout
+   *  the row is one the list held and stands in the footer above Send with the foot, the folds and the empty note
+   *  (moveRows): a row at the top of a track locked to the body's scroll is out of view for a reader anywhere but the
+   *  top of the text, and this line exists to be seen after a save made wherever the reader was. */
+  private hiddenSavedRow(filter: CommentsFilter): HTMLElement | null {
+    const id = this.hiddenSaved;
+    if (id === null) return null;
+    const card = this.cards().find((c) => c.id === id);
+    if (!card || filter !== "changes" || card.hunk !== null) { this.hiddenSaved = null; return null; }
+    const mark = card.target ? "rectangle" : card.anchor ? "highlight" : null;   // a whole-file comment has no mark in the file
+    // .fc-note (0.86em) goes on the words alone, never on the row: a .fileview-btn (0.82em) under it would compound to
+    // 0.705em, smaller than every other panel button and than the ✕ of an err row the same list can show a line below
+    // (ui/CLAUDE.md, font sizes: nested em compounds; prefer flat contexts) — the Track scope and Reject all confirms put
+    // the class on their span the same way
+    const row = el("div", "fc-row fc-saved-hidden");
+    row.dataset.id = card.id;
+    row.appendChild(el("span", "fc-note", "Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")
+      + " hidden while Changes is chosen above (All or Comments shows " + (mark ? "them" : "it") + ")."));
+    const x = btn("✕", "fchiddenx", "fileview-btn fc-x"); x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
+    return row;
+  }
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
-    // a comment bound to a pending change is shown on that change's card; the rest stand on their own
-    const cards = this.cards().filter((c) => c.hunk === null);
-    const view = this.changeView();
+    // the filter (activeFilter): "all" is the list as before — a comment bound to a pending change is shown on that change's
+    // card, the rest stand on their own; "comments" shows every comment card on its own, the bound ones with the change's
+    // words as their reference, and no change card; "changes" shows the change cards alone, each with the comments made on
+    // it (renderHosted). The keyed expand state is untouched by the choice: a card opened under one filter is open under
+    // the next that shows it.
+    const filter = this.activeFilter();
+    const cards = filter === "changes" ? [] : this.cards().filter((c) => filter === "comments" || c.hunk === null);
+    const view = filter === "comments" ? { cards: [], groups: [], shown: [], hidden: [], hiddenChanges: 0 } : this.changeView();
     if (!s) {
       // a wait wears the romp loader while a status ask is out (refresh); once the kernel refused, say what
       // follows — the reason and Reload are the head's row. Never a line claiming a read nothing is making.
@@ -3147,6 +3902,14 @@ class Panel {
     }
     // a reject's reload is out: the body shows the bytes it changed, unmarked, until the fetch lands (awaitBytes)
     for (const n of [this.loader("bytes"), this.errRow("bytes")]) if (n) list.appendChild(n);
+    const saved = this.hiddenSavedRow(filter);          // a comment saved under Changes: the line for its hidden card, where the card would be
+    if (saved) list.appendChild(saved);
+    if (!cards.length && !view.cards.length && filter === "changes") {
+      // the changes alone, and none: the line says where the comments are (ui/CLAUDE.md, never dead-end a compact view)
+      list.appendChild(el("div", "fc-empty", "No changes are pending. All or Comments above shows the comments."));
+      for (const n of this.strayRows(list, ["change:", "changes", "card:"])) list.appendChild(n);
+      return list;
+    }
     if (!cards.length && !view.cards.length) {
       // the gesture is named wherever an overlay in view takes it (drawsRegions): the media body's picture, or a figure in
       // rendered markdown — the panel's guidance is the one place the drag is discoverable from; the overlay's own label
@@ -3213,6 +3976,7 @@ class Panel {
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
     card.dataset.id = c.id;
+    card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
     // is text to select and copy (the sheet gives it cursor: text), and a click there must not fold the card
     // away from under the selection. The head is a Tab stop and takes Enter/Space (KEY_ACTS).
@@ -3221,6 +3985,12 @@ class Panel {
     head.dataset.id = c.id; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
     if (this.replyTo() === c.id) this.holdHead(head);
+    // the kind cue (the filter follow-on, 2026-09-07): what the card is, in a word before the author's chip, so a comment
+    // and a change read apart at a glance in a long list; the title says what kind of comment
+    const kind = el("span", "fc-kind", c.kind === "region" ? "Region" : "Comment");
+    kind.title = c.kind === "region" ? "A comment on a region of the picture" : c.kind === "change" ? "A comment on a change"
+      : c.kind === "file" ? "A comment on the file as a whole" : "A comment on a passage";
+    head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
@@ -3282,7 +4052,21 @@ class Panel {
       head.appendChild(t);
     }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
+    // a highlight on a copy the panel cannot vouch for (copyUnsure): the composer's chip for a pending passage in the same
+    // state wears the same words, and the title says which copy is painted and why it is a guess
+    if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
+    // a comment on a change the sidecar holds stands on its own card only while the filter shows the comments alone
+    // (renderCards): the tag says the change is there, behind All or Changes — and which it is, since `hunk` is set for a
+    // PENDING change and for a DETACHED one alike (cardModel), and only the pending one has a card that Accept or Reject
+    // decides; the detached one's card sits in the detached group (changeCards)
+    if (c.hunk) {
+      const pending = !!this.status && (this.status.hunks || []).some((h) => h.id === c.hunk!.id);
+      const t = el("span", "fc-tag", "on a change");
+      t.title = pending ? "This comment is on a pending change; All or Changes above shows the change's card"
+        : "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change's card, under Detached changes";
+      head.appendChild(t);
+    }
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));
     if (c.replies.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.replies.length)));
@@ -3299,6 +4083,7 @@ class Panel {
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
+    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
@@ -3377,11 +4162,15 @@ class Panel {
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
+    card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
     if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
     head.dataset.id = c.key; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
     if (c.comments.some((cm) => cm.id === this.replyTo())) this.holdHead(head);
+    const kind = el("span", "fc-kind", "Change");      // the kind cue, as a comment card wears it (renderCard); no decision is offered on a detached change
+    kind.title = c.detached ? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";
+    head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.ref);
     ref.title = c.kind === "ins" ? "Added: " + c.newText : c.kind === "del" ? "Removed: " + c.oldText : c.oldText + " → " + c.newText;
@@ -3533,7 +4322,7 @@ class Panel {
       if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
-      if (this.ctx.todoId && !this.todoAnswered) opts.appendChild(this.opt("todo", "answer the todo this file was opened from"));
+      this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
       if (opts.childNodes.length) cf.appendChild(opts);
@@ -3564,6 +4353,85 @@ class Panel {
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
     l.appendChild(cb); l.appendChild(el("span", undefined, label));
     return l;
+  }
+  /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
+   *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those
+   *  a send from this page has answered. ONE candidate: the checkbox, checked by default (decision 8), labelled with the
+   *  todo's own text when the kernel listed it (decision 36's generic wording otherwise, since the viewer never receives the
+   *  opened-from todo's words). SEVERAL: one radio group — Answer: the first selected, the others, then none — so one send
+   *  answers one todo (decision 28). NONE: no control. The label is one line: cut to a line's worth, the whole text on hover
+   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom) — and one click away, in full: a row
+   *  whose todo has words carries a fold (fctodotext, keyed by todo id in openTodoText so a re-render keeps it open) that
+   *  shows the whole text under the row, wrapped. The hover never reaches touch, and at the aside's width two todos that
+   *  begin alike clip to the same words, so the label alone could not say which todo the send would stamp (the 2026-09-07
+   *  review; ui/CLAUDE.md: never dead-end a compact view). */
+  private todoOpts(opts: HTMLElement, s: Status): void {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return;
+    // opt()'s row with the label clipped to ONE line (the text is already cut to a line's worth by todoChoiceLabel; the
+    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover. With
+    // words to show (title), the label shares its line with the fold's glyph (the Log rows' and the preview's ▸/▾, in
+    // the preview's dress) and the whole text stands under the line while the fold is open: the input's value is the
+    // todo's id (a radio's by construction; the checkbox's is set for this), which keys the fold. A label without words
+    // (none; the opened-from todo the status never listed) has nothing underneath, so it is the row.
+    const optRow = (input: HTMLInputElement, text: string, title: string | null): HTMLElement => {
+      const l = el("label", "fc-opt");
+      const t = el("span", undefined, text);
+      t.style.minWidth = "0"; t.style.overflow = "hidden"; t.style.textOverflow = "ellipsis"; t.style.whiteSpace = "nowrap";
+      if (title) l.title = title;
+      l.appendChild(input); l.appendChild(t);
+      if (!title) return l;
+      const id = input.value;
+      const open = this.openTodoText.has(id);
+      const row = el("div", "fc-todo-opt");
+      row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "3px"; row.style.minWidth = "0";
+      const line = el("div");
+      line.style.display = "flex"; line.style.alignItems = "center"; line.style.gap = "6px"; line.style.minWidth = "0";
+      l.style.flex = "0 1 auto"; l.style.minWidth = "0";   // the label shrinks (its span clips) so the glyph stays on the line
+      const fold = btn(open ? "▾" : "▸", "fctodotext", "fc-sec");
+      fold.dataset.id = id;
+      fold.style.flex = "0 0 auto"; fold.style.padding = "2px 6px";   // a wider target than the glyph alone (a finger)
+      fold.title = open ? "Hide the whole todo" : "Show the whole todo";
+      fold.setAttribute("aria-label", fold.title); fold.setAttribute("aria-expanded", open ? "true" : "false");
+      line.appendChild(l); line.appendChild(fold);
+      row.appendChild(line);
+      if (open) {
+        row.appendChild(el("div", "fc-body fc-todo-text", title));   // the card body's dress: the todo's own lines, wrapped
+      }
+      return row;
+    };
+    if (cands.length === 1) {
+      const c = cands[0];
+      const cb = el("input") as HTMLInputElement;
+      cb.value = c.id;   // the todo the box answers: keys its fold (optRow)
+      cb.type = "checkbox"; cb.checked = this.sendOpts.todo; cb.dataset.opt = "todo";
+      opts.appendChild(optRow(cb, c.text === null ? "answer " + TODO_OPENED_FROM : "answer the todo: " + todoChoiceLabel(c), c.text));
+      return;
+    }
+    const pick = this.chosenTodoId(s) || "";
+    const g = el("div", "fc-opts fc-todo-pick");
+    g.setAttribute("role", "radiogroup"); g.setAttribute("aria-label", "Answer a todo with this send");
+    g.appendChild(el("span", "fc-note", "Answer:"));
+    for (const c of [...cands.map((x) => ({ id: x.id, label: todoChoiceLabel(x), title: x.text })), { id: "", label: "none", title: null }]) {
+      const r = el("input") as HTMLInputElement;
+      r.type = "radio"; r.name = "fc-todo"; r.value = c.id; r.checked = c.id === pick; r.dataset.opt = "todopick";
+      g.appendChild(optRow(r, c.label, c.title));
+    }
+    opts.appendChild(g);
+  }
+  private todoCandidates(s: Status): TodoChoice[] { return todoChoices(this.ctx.todoId, s, (id) => answeredTodos.has(id)); }
+  /** The todo the next send answers, or null: for one candidate the checkbox's verdict; for several the radio's — the pick
+   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list).
+   *  The two verdicts agree on none (the change handler writes a decline to both), so a count that changed between the
+   *  choice and the send — the box unchecked, then a second todo listed; none picked, then one todo left — still answers
+   *  nothing; a pick that left the list falls to the first offered, as a fresh confirm would. */
+  chosenTodoId(s: Status): string | null {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return null;
+    if (cands.length === 1) return this.sendOpts.todo ? cands[0].id : null;
+    if (this.todoPick === "") return null;
+    if (this.todoPick && cands.some((c) => c.id === this.todoPick)) return this.todoPick;
+    return cands[0].id;
   }
   private renderLog(s: Status | null): HTMLElement {
     const box = el("div", "fc-log");

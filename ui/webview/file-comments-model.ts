@@ -24,9 +24,13 @@ export type Anchor = { quote: string; prefix: string; suffix: string };
  *  DECODED (describeComment, decodeSrc): the embed may percent-encode it, and the file on disk has the space. */
 export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
+/** `anchorAt` is the second romp-only field (the anchors follow-on, 2026-09-07): the offset the passage's anchor
+ *  located at, set by the host when the comment is made and refreshed on every sidecar write it makes. The painter
+ *  passes it to the engine as the tie-break, so a comment on text that recurs with the same surroundings past the
+ *  anchor's context stays on the copy that was chosen. Only an anchored comment carries it. */
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
-  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; suggestionId?: string; target?: Target;
+  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; suggestionId?: string; target?: Target;
 };
 export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
@@ -50,6 +54,10 @@ export type Status = {
   verb: string; root: string | null; storePath: string | null; trackedBy: TrackedBy;
   agentTooling: "present" | "absent"; fileMtimeNs: string; storeMtimeNs: string | null; configMtimeNs: string | null;
   store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean; decided?: Decided;
+  /** whether the host's text keeps a leading UTF-8 BOM (U+FEFF), which the fetch strips from the viewer's text: a stored
+   *  `anchorAt` is an offset into the host's text, so on such a file it is the view's offset plus one (the panel's viewAt
+   *  maps it); absent from an older host, read as false */
+  bom?: boolean;
   /** a non-text file's sha256 (E2); null when the host could not compute it (over its cap); absent from an older host */
   fileHash?: string | null;
   /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */
@@ -57,6 +65,10 @@ export type Status = {
   /** a text file: the mtime (nanoseconds, a string) of each of those figures from the read the hash came from, by `src`
    *  — the poll's baseline for it (figureBaseline); absent where the figure could not be read, and from an older host */
   embeddedMtimes?: Record<string, string> | null;
+  /** the OPEN user todos of the request's session whose `file` is this file (the todo-file follow-on, 2026-09-07): the
+   *  kernel adds them after the host answers, settled todos and other sessions' never among them; absent from an older
+   *  kernel. A send may answer one of them (todoChoices), however the file was opened. */
+  todos?: Array<{ id: string; text: string }> | null;
 };
 
 const EMPTY_UNSENT: Unsent = { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null };
@@ -75,11 +87,27 @@ export function unsentCount(u: Unsent | null | undefined): number {
 export function actionLabel(s: Status | null): string {
   if (!s) return "Comments";
   if (!s.store) return s.trackedBy ? "Comments · tracked" : "Comments";
-  const open = s.store.comments.filter((c) => !c.resolved).length;
-  const n = s.hunks.length;
+  const { comments: open, changes: n } = cardCounts(s);
   const d = detachedChanges(s.store).length;
   return "Comments · " + open + (n ? " · " + plural(n, "change", "changes") : "")
     + (d ? " · " + plural(d, "detached change", "detached changes") : "");
+}
+
+/** The two counts the action-row label and the panel header's filter (All · Comments N · Changes M) share, so the glance
+ *  and the control never disagree (the filter follow-on, 2026-09-07): the open comments — unresolved, whether on a
+ *  passage, the file, a region or a change — and the pending changes (the hunks; a detached change is neither pending
+ *  nor counted here, the label names those apart). */
+export function cardCounts(s: Status | null): { comments: number; changes: number } {
+  if (!s || !s.store) return { comments: 0, changes: 0 };
+  return { comments: s.store.comments.filter((c) => !c.resolved).length, changes: (s.hunks || []).length };
+}
+
+/** Whether the panel offers its filter: the file has a card to filter — a comment (resolved or not), a pending change,
+ *  or a detached one. With nothing in the list a control over it is noise (ui/CLAUDE.md, progressive disclosure), and
+ *  the kept choice governs nothing until there is. */
+export function filterOffered(s: Status | null): boolean {
+  if (!s || !s.store) return false;
+  return s.store.comments.length > 0 || (s.hunks || []).length > 0 || detachedChanges(s.store).length > 0;
 }
 
 // ── the send parts (C2) ────────────────────────────────────────────────────────────────────────────
@@ -184,7 +212,60 @@ export function changeDesc(h: { kind: HunkKind; oldText: string; newText: string
  *  (`Status.logTruncated`), in which case a decision the tail lacks may sit in the part not sent. */
 export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean; decided?: Decided | null };
 
-/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
+/** The engine's default anchor context, and what `track-comment` and the other editors write: 24 characters either
+ *  side of the quote (engine.js makeAnchor; the host's ANCHOR_CTX, which file-comments-model-recurring.test.ts pins
+ *  this to). A stored anchor with MORE on either side was widened by the host (uniqueAnchor) because the passage
+ *  recurs with the same 24 characters around another copy, and the extra context is what tells the copies apart. */
+export const ANCHOR_CTX = 24;
+
+/** Whether the host widened `a`'s context past the engine's default: the fact, read off the anchor the host stored,
+ *  that the passage recurs and that its surroundings name this copy. A side at the file's bound stays short while the
+ *  other widens, so either side past the default counts. The sidecar is JSON anyone can edit, so read defensively. */
+export function anchorWidened(a: Anchor): boolean {
+  return (typeof a.prefix === "string" && a.prefix.length > ANCHOR_CTX)
+    || (typeof a.suffix === "string" && a.suffix.length > ANCHOR_CTX);
+}
+
+/** The widest context passageDesc prints whole, per side: five of the host's 24-character widening steps (120
+ *  characters, a sentence or two — about what a person quotes to say which copy they mean). A side wider than this
+ *  is not printed: the message's `Comment <id> (…):` line is one line the session reads before the body, and at the
+ *  host's cap (ANCHOR_CTX_CAP, 480 a side) the two sides ran to a kilobyte of escaped text on it (the anchors
+ *  follow-on review, round 2, 2026-09-07). A multiple of the host's step, so no stored width falls between. */
+export const DESC_CTX_MAX = ANCHOR_CTX * 5;
+
+/** What the desc says of a recurring passage whose copies the message cannot tell apart within DESC_CTX_MAX: the
+ *  fact a person would state instead of quoting a page — the text recurs, and what surrounds each copy is the same.
+ *  It tells the session that an --old with the nearby text will be refused as not unique, so it can ask, or revise
+ *  every copy, rather than try. Names no position: `anchorAt` is an offset the session has no tool for. */
+export const RECURS_CLAUSE = ", which appears more than once with the same text around each copy";
+
+/** The parenthetical for a passage comment. The plan's form is `on "<the first 40 characters of the quote>"`, and for
+ *  a passage unique at the engine's default context that is all of it. When the host widened the anchor
+ *  (anchorWidened) the passage recurs, and the quote alone does not say which copy the person meant: the session
+ *  reading the message would run `track-edit --old "<quote>"`, which refuses text that is not unique, and the id's
+ *  offset suffix and the sidecar's `anchorAt` are nothing the message tells it to read (the anchors follow-on review,
+ *  2026-09-07). So the desc names the copy by its surroundings — the widened prefix and suffix, whole, the text the
+ *  host verified unique around this copy and so an --old the session can build: `on "Ship it.", the one after "…"
+ *  and before "…"`. Both are JSON-quoted, since a context can hold line breaks and quotation marks and the message's
+ *  `Comment <id> (…):` line must stay one line; the quote keeps its plain form. A side the file's bound left empty is
+ *  not named. The sides are printed whole or not at all: a span cut short is not the unique text the clause promises.
+ *  Past DESC_CTX_MAX on either side the desc says RECURS_CLAUSE instead — at the host's cap the anchor may still tie
+ *  (the host stores no `unique` flag, and a 480-character side is the cap whether it settled there or not), so the
+ *  "the one after … and before …" form would name a span that sits on every copy, and a kilobyte of it. A
+ *  24-character anchor on text that came to recur AFTER the comment was made is not widened (the host never
+ *  rewrites an anchor's fields) and keeps the plan's form: this module has no text to tell. */
+export function passageDesc(a: Anchor): string {
+  const head = 'on "' + a.quote.slice(0, 40) + '"';
+  if (!anchorWidened(a)) return head;
+  const prefix = typeof a.prefix === "string" ? a.prefix : "";
+  const suffix = typeof a.suffix === "string" ? a.suffix : "";
+  if (prefix.length > DESC_CTX_MAX || suffix.length > DESC_CTX_MAX) return head + RECURS_CLAUSE;
+  const sides: string[] = [];
+  if (prefix) sides.push("after " + JSON.stringify(prefix));
+  if (suffix) sides.push("before " + JSON.stringify(suffix));
+  return head + ", the one " + sides.join(" and ");
+}
+
 /** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
  *  change describes the change while it is pending or detached, and from the accept or reject entry after a
  *  decision (a manual Accept before the send would otherwise describe it as "on this file") — the log's own when
@@ -200,7 +281,9 @@ export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean
  *  the sidecar to learn which one, and the message is what it reads. A person would name the picture, and by the
  *  name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that does not exist, and a
  *  session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the review of 2026-09-06).
- *  The standalone forms are the plan's own; the figure's name is this module's addition to them. */
+ *  The standalone forms are the plan's own; the figure's name is this module's addition to them, and so is the
+ *  surroundings clause a passage comment gains when its anchor was widened for text that recurs — the sides whole
+ *  up to DESC_CTX_MAX, else the short RECURS_CLAUSE (passageDesc). */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
   if (c.suggestionId) {
     const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
@@ -210,7 +293,7 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
     const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
     return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
   }
-  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
+  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return passageDesc(c.anchor);
   if (c.suggestionId && opts.logTruncated) return "on your change " + c.suggestionId;
   return "on this file";
 }
@@ -425,6 +508,8 @@ export type CardTurn =
 export type Card = {
   id: string; author: string; authorId: string | null; ts: number; body: string; resolved: boolean;
   kind: CardKind; ref: string; anchor: Anchor | null; hunk: Hunk | null; target: Target | null;
+  /** the stored position beside the anchor (StoreComment.anchorAt), the painter's tie-break; null without one */
+  anchorAt: number | null;
   /** for a comment bound to a change the log has decided: which way, so the card can say so */
   decision: "accepted" | "rejected" | null;
   replies: CardTurn[];
@@ -434,6 +519,39 @@ const oneLine = (s: string, max: number): string => {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 };
+
+// ── the todo a send answers (the todo-file follow-on, 2026-09-07) ─────────────────────────────────
+/** A user todo a send from this file may answer: the one the file was opened from (`ctx.todoId` — its text when the
+ *  status lists it, else null, since the viewer never receives that todo's words) and every open todo of the session
+ *  whose `file` is this file (`Status.todos`, in the kernel's order), each once, minus those `answered` names. One
+ *  candidate is the confirm's checkbox; several are one radio group with the first selected, so one send answers one
+ *  todo (decision 28); none, no control. The kernel stops listing a todo once it is settled, so the one a send answered
+ *  leaves at the next status without the panel forgetting anything of its own.
+ *
+ *  `answered` is the page's memory of the todos its sends stamped, and it is for the moment before that next status
+ *  ONLY: this function drops whatever the predicate names, so the caller must stop naming a todo once a status issued
+ *  after the send lists it. That list is the kernel's word (CLAUDE.md, the authoritative source), and a todo on it is
+ *  open — the send was parked (a queued send stamps when it drains, not when it is accepted), or the answer was
+ *  recalled and the kernel reopened the todo — so a memory that outlives the status hides an open todo from the
+ *  confirm while Waiting on you shows it. What the memory keeps for good is the todo the file was opened from when its
+ *  `file` is another file: no status of this viewer lists it, and decision 28 wants later sends to show no box for it. */
+export type TodoChoice = { id: string; text: string | null };
+export function todoChoices(todoId: string | null | undefined, s: Pick<Status, "todos"> | null | undefined, answered: (id: string) => boolean): TodoChoice[] {
+  const listed = (Array.isArray(s?.todos) ? s!.todos! : []).filter((t) => t && typeof t === "object" && typeof t.id === "string" && t.id);
+  const out: TodoChoice[] = [];
+  const seen = new Set<string>();
+  const push = (id: string, text: string | null) => { if (seen.has(id) || answered(id)) return; seen.add(id); out.push({ id, text }); };
+  if (todoId) { const own = listed.find((t) => t.id === todoId); push(todoId, own && typeof own.text === "string" ? own.text : null); }
+  for (const t of listed) push(t.id, typeof t.text === "string" ? t.text : null);
+  return out;
+}
+/** What the confirm calls the todo the file was opened from when the kernel did not list it (its text is not known here). */
+export const TODO_OPENED_FROM = "the todo this file was opened from";
+/** The label a candidate wears in the confirm: its text on one line (the rest is the hover), or TODO_OPENED_FROM. */
+export function todoChoiceLabel(c: TodoChoice): string {
+  const t = c.text === null ? "" : oneLine(c.text, 80);
+  return t || TODO_OPENED_FROM;
+}
 
 /** One card per comment, oldest first, from the sidecar and the engine's hunks — no card model
  *  crosses the wire. `ref` is the collapsed card's one-line reference (the quote, the change, the
@@ -451,6 +569,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     const verdict = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
+    const anchorAt = anchor && typeof c.anchorAt === "number" && Number.isFinite(c.anchorAt) ? c.anchorAt : null;
     let kind: CardKind; let ref: string;
     if (b) { kind = "change"; ref = changeRef(b); }
     else if (target) { kind = "region"; ref = describeComment(c, hunks).replace(/^on /, ""); }
@@ -458,7 +577,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target, decision: verdict,
+      kind, ref, anchor, hunk, target, anchorAt, decision: verdict,
       replies: (c.replies || []).map((r): CardTurn | null => {
         if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
         if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };

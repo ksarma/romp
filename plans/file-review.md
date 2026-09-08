@@ -210,7 +210,7 @@ Four properties of the contract shape the design:
   this shape for a message with no selection. Only `track-comment` cannot create it, since it
   requires `--anchor`; the host script builds the comment itself. Every file gets this comment in
   Slice 1 (the user 2026-09-06); for images and PDFs it is the only comment until regions land.
-- **One optional field, `target`, carries a region.** `target: {kind: "image"|"pdf", region: {x,
+- **One optional field, `target`, carries a region; a second, `anchorAt`, a position.** `target: {kind: "image"|"pdf", region: {x,
   y, w, h}, page?, hash, src?}` with the rectangle in fractions of the rendered page or image,
   `page` 1-based for PDFs, `hash` the sha256 of the figure's bytes so a regenerated figure marks
   its region comments stale the way a moved text anchor does, and `src` only on a figure embedded
@@ -233,7 +233,25 @@ Four properties of the contract shape the design:
   rule says to bump `v` only for a breaking change; an optional field older readers ignore is not
   one. The field is built romp-only for now (the user 2026-09-05); documenting it in the
   track-changents README, in the five-key shape above, is a later offer to its author, not a
-  dependency.
+  dependency. The second optional field, `anchorAt: <number>`, sits beside `anchor` on a passage
+  comment and holds the offset the anchor located at (the anchors follow-on, 2026-09-07). It is
+  romp-only and additive under the same version rule: older readers ignore it, the other hosts and
+  the CLIs write the whole object back so it survives them, and the host script refreshes it on
+  every sidecar write it makes, against the text the sidecar is saved for, by where the whole
+  anchor sits in that text: at one place, the position becomes that place when the comment had
+  none or the quote occurs nowhere else, and otherwise, since the one whole copy may be the other
+  copy of a passage whose own surroundings were edited, moves only where the sidecar's recorded
+  changes can have carried it, to that copy or to the one other occurrence of the quote, and
+  stands otherwise; at several (the copies tie), the position stands where it still names a copy
+  and otherwise moves only to the one copy, or the one occurrence of the quote, the recorded
+  changes can have carried it to, never to the nearest, and only while the file is as the
+  sidecar's last writer left it; nowhere, the engine's scoring places it, under a scan budget per
+  write past which the remaining such comments keep the position they have (the anchors follow-on
+  review, 2026-09-07, and its third round, 2026-09-08). A comment without an anchor never carries it. The panel passes it to the
+  engine as the tie-break when it paints, so a passage that recurs with identical surroundings
+  wider than the anchor's context stays on the copy that was chosen while the position names one of
+  the copies; a copy the position does not name is painted as a guess, never as the chosen one (the
+  painting paragraph under Commenting from either view).
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -274,12 +292,15 @@ request  {type:"fileComments", reqId, sid, path, verb, args?,
                    figureHash?: str}}
 reply    {type:"fileCommentsResult", reqId, verb, root, storePath, trackedBy, agentTooling,
           fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent,
-          log, logTruncated, decided, fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?,
+          log, logTruncated, decided, bom, fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?,
           derivedSrcs?, derivedSrcReasons?, baseline?}
 refusal  {type:"fileCommentsFailed", reqId, verb, code, error}
 ```
 
-`store` is the sidecar as loaded and normalized (with `detached[]`), or null when absent.
+`store` is the sidecar as loaded and normalized (with `detached[]`), or null when absent. `bom`
+says whether the text the host read keeps a leading UTF-8 BOM, which the fetch strips from the
+text the viewer shows: a stored `anchorAt` is an offset into the host's text, and the panel maps
+it into the view's by this bit (the painting paragraph under Commenting from either view).
 `hunks` is `engine.toHunks(store.suggestions)`: one row per change with `id, author, ts, kind,
 curFrom, curTo, baseFrom, baseTo, oldText, newText, anchor`, sorted by offset. `unsent` is the
 derivation from the comments log described below: `{comments: [id], replies: [{commentId, ts}],
@@ -395,8 +416,31 @@ exactly as `track-comment` does; a whole-file comment has no anchor, no `target`
 `${now}-0`. For a passage comment it re-reads the file and runs
 `engine.locateAnchor` on the fresh text with the anchor the browser built from the displayed
 text, hinted by the start offset; it saves only when the located text equals the quote,
-rebuilding the anchor at the located position, and refuses `anchor-not-found` when the passage is
-gone and `anchor-ambiguous` when two candidates tie. Reject writes the sidecar first, then the
+rebuilding the anchor at the located position with the smallest context, from 24 characters in
+steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the
+whole text (past the cap it is saved at the cap), storing the located offset beside it as
+`anchorAt`, and refuses `anchor-not-found` when the passage is gone and `anchor-ambiguous` when
+two candidates tie and the request's offset cannot settle it: no offset was sent, or the offset
+sent sits on none of the tied copies in the text the host read, because the text moved after the
+selection; that offset is refused, with a message that says the text moved, rather than placed on
+the nearest copy (the anchors follow-on, 2026-09-07, and its review; before the follow-on every
+tie was refused). Every sidecar write the host makes refreshes `anchorAt`, in `stageSidecar`, the
+one function every sidecar write goes through, and once more before the reply is measured, so the
+bytes the refresh adds count against `too-large`; the refresh reads where each comment's whole
+anchor sits in the text the sidecar is saved for: at one place, the position becomes that place
+when the comment had none or the quote occurs nowhere else, and otherwise moves only where the
+recorded changes (the pending ops, the ops the write settles, among them the changes a save's
+editor accepted, the edits the write applies) can have carried it, to that copy or to the one
+other occurrence of the quote, since the one whole copy may be the other copy of a passage whose
+own surroundings were edited; at several, the position stands where it still names a copy and
+otherwise moves only to the one copy, or the one occurrence of the quote, those changes can have
+carried it to, and only while the sidecar's fingerprint matches the file, since after an
+unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it.
+Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's
+scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage
+still at its position costs no scan, and past the budget the remaining comments keep their
+position and stderr says how many, once per write; and a stored comment's anchor is located
+with its `anchorAt` as the hint. Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
@@ -420,7 +464,15 @@ refusal  {type:"fileCommentsSendFailed", reqId, error}
 ```
 
 `tracked` is the client's post-toggle `status` verdict and picks the second bullet of the message.
-`desc` is the first 40 characters of the passage for an anchored comment, the change's old and
+`desc` is the first 40 characters of the passage for an anchored comment, and when the host
+widened the anchor's context past 24 characters because the passage recurs, also the copy by its
+whole surroundings (`, the one after "…" and before "…"`: the stored prefix and suffix,
+JSON-quoted so the message's `Comment <id> (…):` line stays one line; a side the file's bound left
+empty is not named), the text a session can pass to `track-edit --old`, which refuses text that
+is not unique, to reach that copy; a side wider than 120 characters (five widening steps) is not
+printed, and the desc says instead that the passage appears more than once with the same text
+around each copy, since at the host's cap the anchor may still tie, so the sides would name every
+copy, and would run to a kilobyte of escaped text (the anchors follow-on review, 2026-09-07); the change's old and
 new text for a comment bound by `suggestionId`, "this file" for a whole-file comment, and "the
 region at x, y, w, h" (with the page for a PDF) for a region comment. `body` is the comment's
 unsent `you` turns joined with a blank line, oldest first; a comment whose opening was already
@@ -626,7 +678,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
 ```
 
 - **Progressive disclosure**: the action-row label is the glance, the panel is one click, a
-  comment expands on click, keyed by comment id in a set that survives the poll's re-render. For
+  comment expands on click, keyed by comment id in a set that survives the poll's re-render, and
+  beside the body each card sits level with the passage it is about and scrolls with the text, so
+  the margin itself is the glance (the margin-layout follow-on, under Slice 2). For
   a file with neither sidecar nor tracked flag the action reads plain "Comments" and the panel
   holds the Track changes toggle (file or folder), the Comment on this file button, and an empty
   Log; counts and highlights appear once a sidecar exists.
@@ -639,7 +693,10 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
   it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
   every change mark off in both views and back on, at once and without a status round trip, and
-  the choice is kept in the shared webview settings across opens and pages. An unpainted change
+  the choice is kept in the shared webview settings across opens and pages. **All · Comments ·
+  Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and
+  the marks to one kind, Comments and Changes carrying their counts and All none, and is kept the
+  same way; Send to session is not narrowed. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -702,8 +759,11 @@ on load, and the two existing editor hosts treat it the same as a comment writte
 CLI. The browser builds the anchor from the displayed text with the engine's `makeAnchor` (the
 quote plus 24 characters of prefix and suffix) and sends it with the note and the start offset;
 the host script re-reads the file and locates the anchor with the engine's `locateAnchor`, hinted
-by that offset, and refuses when the located text differs from the quote or two candidates tie.
-The typed comment is never discarded by a refusal.
+by that offset, widens the stored anchor's context until it is unique in the file, stores the
+offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when
+two candidates tie and the offset cannot settle it: none was sent, or the one sent sits on no tied
+copy because the text moved after the selection, and the note is then refused rather than placed
+on the nearest copy. The typed comment is never discarded by a refusal.
 
 In Raw view the mapping is exact. Each logical line is one row whose text equals the source line
 (the viewer always soft-wraps, and the row number is CSS content that never enters a selection),
@@ -737,11 +797,28 @@ offers a switch to Raw that preselects the same passage when its text occurs in 
 fences) and otherwise opens scrolled to the block's first line with the comment intact (tables and
 HTML blocks).
 
-Painting distinguishes three states after the engine locates a comment's anchor in the current
-text: located at the quote, painted normally; quote gone but its context found
-(`engine.js:793-800`), painted over the between-context region in a text-changed style with a
-card; neither found, shown as a card only, marked detached in the panel. Detached is a rendering
-state here, not a stored flag; the host script never calls the engine's comment pruning, and the
+Painting distinguishes four states after the engine locates a comment's anchor in the current
+text, with the comment's stored `anchorAt` as the tie-break so a passage that recurs with
+identical surroundings past the anchor's context is painted on the copy that was chosen: located
+at the quote on a copy the comment vouches for, the anchor's one best hit or a tied copy the
+stored position names, painted normally; located at the quote on a guessed copy, painted in the
+dashed ring the text-changed state wears, with a "passage recurs" tag on the card and, on the open
+card, a line saying the copy is the nearest to the stored position, or the first, and not a
+confirmed one; quote gone but its context found (`engine.js:793-800`), painted over the
+between-context region in a text-changed style with a card; neither found, shown as a card only,
+marked detached in the panel. A copy is guessed when the anchor ties and the stored position
+names none of the tied copies, or the comment has no position (`copyUnsure`): the refresh keeps a
+position the recorded changes carried to no copy or to several, and every position after an edit
+nobody recorded, and an edit inside the chosen copy's context leaves the other copies whole to
+outscore it, so the engine's nearest-wins pick from such a position, or its earliest tie with
+none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
+review, 2026-09-07; before it the guess was painted as located). The stored position is an offset
+into the text the host read, which keeps a leading UTF-8 BOM the fetch strips from the viewer's
+text, so the reply says whether it does (`bom`) and the panel maps the position into the view's
+coordinates by it (`viewAt`) before the engine takes it as the hint and before the copy is
+judged; compared unmapped, a position naming the chosen copy missed it by one on every such file,
+and the copy was painted as a guess (the consolidation, 2026-09-08). Detached is a rendering state
+here, not a stored flag; the host script never calls the engine's comment pruning, and the
 comment stays in the sidecar. In Raw view a located comment is painted by offset over the line
 rows, with no text matching. In Rendered view the located source range is converted through the
 same index map to a highlight over the rendered text; a comment inside a refused block falls back
@@ -765,8 +842,17 @@ Acceptance criteria:
   element boundary) stores a quote equal to the source slice, and the highlight after reload
   wraps exactly the text nodes of that slice. A CR-only line and a selection ending past the last
   row are included.
-- Raw: a quote that occurs twice anchors to the selected occurrence, including when two lines
-  are inserted above the passage between the selection and the save.
+- Raw: a quote that occurs twice, with the same 24 characters around each copy so only the offset
+  can tell them apart, anchors to the selected occurrence, including when two lines are inserted
+  above the passage between the selection and the save, provided the panel painted the edited text
+  before the save (the poll's reload, Reload, a refresh: `followPassage` moves the pending pair with
+  its copy, exactly, and Save sends the moved offset, which the host finds on the selected copy).
+  When the save comes before the panel has shown the edit, the offset sent indexes the old text and
+  sits on no copy, and the host refuses `anchor-ambiguous` with a message that says the text moved,
+  writes nothing, and the note stays in the composer to be placed by selecting the passage again,
+  never on the nearest copy, which a stale offset picks by the insertion's length and not by the
+  selection (the anchors follow-on's review, 2026-09-07; the second review, 2026-09-08, amended
+  this criterion, which had stated the first outcome alone).
 - Rendered: for a fixture covering both heading styles, tight and loose lists, nested and task
   lists, blockquotes, emphasis, strong, strikethrough, inline code, every link form, images,
   escapes, hard breaks, and a reference definition, every selection inside aligned blocks yields
@@ -779,8 +865,11 @@ Acceptance criteria:
 - Every text format: a comment from the Raw view of an HTML, SVG, CSS, CSV, and code fixture
   stores the exact source slice.
 - Both: with the author label held equal, the comment object written from either view
-  deep-equals the one `addComment` writes for the same quote and note, apart from id and `ts`;
-  the sidecar's changes, fingerprint, and version are unchanged.
+  deep-equals the one `addComment` writes for the same quote and note, apart from id, `ts`, and
+  the romp-only `anchorAt` stored beside the anchor; the anchor is the one `addComment` writes
+  when its 24 characters of context locate the passage uniquely, and wider only when they tie
+  with another copy's (the anchors follow-on, 2026-09-07); the sidecar's changes, fingerprint,
+  and version are unchanged.
 - Both: after an agent edit moves the passage, the highlight follows the engine's relocation in
   both views; when only the context survives, the text-changed style appears in both views; when
   neither survives, the card shows detached in both views and the comment remains in the sidecar.
@@ -811,6 +900,17 @@ four reply types.
   (`kernel.py:34486-34493`); the shell forwards `todoId`, `files.ts` passes it to
   `openFileView(path, sid, {todoId})`, and relative paths resolve on the kernel through
   `_resolve_open_path`. When the pane is not framed by the shell, the detail stays plain text.
+- From a todo that names its file (the todo-file follow-on, 2026-09-07): a user todo record
+  carries an optional `file`, the absolute path the kernel resolved when the todo was filed
+  (`add_user_todo`'s `file` argument; a relative path resolves against the session's cwd; a path
+  that does not resolve is stored as given and the reply warns). The Waiting-on-you pane shows
+  it as a chip on the row and in the Reply modal (the basename, the full path on hover), which
+  posts the same `viewFile` message as a linkified path: path, sid, identity, todoId. The
+  `fileComments` status reply lists the open todos of the session whose `file` is the status'd
+  file (`todos: [{id, text}]`), so the panel's Send confirm offers to answer a todo however the
+  file was opened: one candidate is the checkbox, several are one radio group, and the chosen
+  id goes out as `fileCommentsSend`'s `todoId`. A todo that names its file only in the detail
+  still works through the opened-from link alone.
 - From the viewer: the Comments action, on any file, on a machine whose kernel has node. If the
   action is missing, the gear's row beside "File links open in" names the machine and the reason
   (`no-node`), and the same row warns when the agent-side tooling is not linked and offers to run
@@ -821,12 +921,17 @@ four reply types.
   symlinked by `install.sh:173` and appended to the system prompt by both backends) gains one
   sentence in its Working style section, after the paragraph on locating paths (the user
   2026-09-06), in the person's voice and conditional on the tool: when you want me to look at a
-  file, flag it with `add_user_todo` if you have that tool, with the file's absolute path in the
-  detail; I open it from there, and my comments come back to you as a message with instructions;
-  without the tool, say so in your reply. It does not go in the Housekeeping section, which
-  `CLAUDE.md` reserves for explaining romp's artifacts. The vendored skill gains the sentence on
-  asking for another look. Both speak as the person and name only what the agent already sees,
-  so the veil holds.
+  file, flag it with `add_user_todo` if you have that tool, and give the file's absolute path as
+  its `file` argument (not only as an absolute path in the detail, which can still describe it);
+  I open it from there, and my comments come back to you as a message with instructions; if you
+  don't have the tool, ask for the look in your reply and name the file. (As approved, the
+  sentence put the path in the detail; the todo-file follow-on, 2026-09-07, moved it to the `file`
+  argument, the structured link the chip and the Send confirm read, and left the detail its
+  descriptive role. Decision 35 says the same, and `tests/test_file_review_plan_prompt_sentence.py`
+  holds this bullet, that decision and the prompt to one another.) It does not go in the
+  Housekeeping section, which `CLAUDE.md` reserves for explaining romp's artifacts. The vendored
+  skill gains the sentence on asking for another look, naming the file. Both speak as the person
+  and name only what the agent already sees, so the veil holds.
 - An ended session's todo is hidden from Waiting on you until the session is revived, since the
   board lists living sessions only and gates ended ones (`kernel.py:25731, 26082-26087`; the
   chat's own card gate is at `24047-24062`), so a todo can vanish; the file is still on disk and
@@ -1032,6 +1137,305 @@ saying why, and Escape or Cancel hands the keyboard back to the card's Reply
 rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
 below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
 gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
+
+The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
+move with the window when possible, each trying to stay centered near the place in the text it was left as the reader
+scrolls, at least for markdown. The layout is the build's reading of that ask: comment cards that follow the text,
+laid out as margin-aligned cards the way document editors lay out comments, each card's top level with its passage
+rather than centered on it, overlapping cards pushed down in order and never up, and the passage centered only on a
+click. The build described the design to the user as the work began, so the user could redirect it early if it was not
+what the ask meant; the user has not yet said whether it is. Built: beside the body the aside wears the margin layout
+(`fc-margin`). The head and the composer sit at the top; Accept all · Reject all (moved out of the list), Send and the
+Log at the bottom, fixed in place while the track scrolls though not in size (the yield rule, below); the cards
+section between them is a track whose scroll is locked to the body's (each scroller's scroll event writes its position
+onto the other, the echo let through without a write back; every write copies an absolute position, so an event taken
+for the wrong scroller costs one write, and the next genuine one puts both scrollers at the same position again), and
+the two share one range. The track's box ends a footer's height above the body's, so a card level with the text's last
+lines would sit under the footer with the body at its end, where no scroll reached it: the pass pads the body's
+content at its end by the footer's height plus how far the last card hangs past the content's end (`padBody`, an
+inline `padding-bottom` written only when it changes and cleared by `layoutOff` when the layout ends: the fold, edit
+mode, the panel's close), and makes the list as tall as puts the track's farthest position at the body's, or as the
+last card's end, whichever is more, so the body itself reaches every card's end. Padding cannot lengthen a body that
+does not scroll (a short file, a picture sized to its box); there the track goes on alone as far as the last card's
+end, and a pass or a status reply leaves it there instead of pulling it back to the body (`followBody`). Such padding is
+taken back in the pass that wrote it: a box's padding comes out of its content box, and content sized to the box by a
+`min-height: 100%` (the standalone picture's box, which centers the picture in itself; the Raw view's) shrank by it
+instead of scrolling, so the body gained no range and a centered picture rose by half the footer at every open of the
+panel and fell back at the close, on no new information about it; the pass writes the padding, measures, and clears it
+where the body's scroll height is still its box's, and keeps it where the body did lengthen (a picture nearly the box's
+height, whose own box outgrows the padded content box: the body scrolls then, to a card at the picture's foot) — the
+third review. The track
+holds cards alone: every row the list held stands in the footer above Send (`moveRows`), the foot with Accept all ·
+Reject all first, then a wait's loader, a refusal row, the "… N more changes" and Resolved folds and the empty note,
+in the list's order. The footer begins under a rule whichever row comes first: the rule stands on the Send section's
+top edge in both sheets, and the Send box drops its own when nothing stands before it (the first review's rule stood on
+the foot alone, so a footer of rows with no pending change — a comments-only file with a resolved comment — began flush
+under the track's clipped cards and drew its one rule under the fold, above Send; the review's consolidation,
+2026-09-07). A row at the top of a track locked to the body's scroll was out of view for a reader anywhere but
+the top of the text, and the reload's loader and the fold that says why a painted change has no card were among them.
+Every card is absolutely positioned at its mark's top in the body's content, less the header's height the track begins
+under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
+laid by that top (ties by the list's order) and each takes the larger of it and the previous card's bottom plus the
+gap, so cards never overlap and only ever move down from their marks; a pushed card draws a dashed leader up the
+gutter to its mark's height. Cards with no mark — a whole-file comment, a detached anchor, a change the view does not
+paint, a region whose figure has not loaded — are the loose group at the top of the track, in the list's order, and
+the placed cards begin below it. The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies
+(`placeCards`) after every render, on the body's, the row's, the track's and the cards' resizes, on the body's
+content's resize (`watchContent`: the body is a flex-sized scroller whose box does not change when its content
+reflows, as when a `<details>` block opens, so its element children join the size observer each pass), on a figure's
+load and on the window's resize, one pass per frame, and never on scroll. The pass also makes the cards' DOM order the
+placement's, so the Tab order runs down the margin; `cardsInOrder` gives the keyboard's place that order before a
+rebuild and after it, and the foot's place is the last change card's. The rows' move into the footer and the reorder
+both detach a focused control, and `moving` gives the keyboard back to it, since the browser's focus-fixup rule
+otherwise drops it to the body; the selectors the pass builds from a comment id are CSS-escaped (`cssId`), so an id
+holding a quote places its card instead of throwing. A mark's click, a card's opening and a card's reference link
+scroll the body so the mark sits at the vertical center with the card level beside it, the pass having run first so
+the expanded card's height is known; a fold moves nothing. Where centering the mark would leave the card's end past
+the track's box (an open card, a pushed one), the body scrolls the least that shows the card's end, as far as keeps
+the mark's top in view; that scroll is track content, where the lock keeps the track's position the body's, so it
+carries no header term (`centerOn`): the first cut added one, and an opened card that fit the track landed with its
+head (the fold control, the reference link) under the panel's header. A comment saved while the text is scrolled
+scrolls to the card the save landed in, before the composer closes (`scrollToSaved`: the reply's render placed the
+cards under the composer's box and `centerOn` measures the header live, so the two agree; the host names no id in its
+reply, so the new comment is read off the reply's store as the one the status before the write did not hold,
+`savedCommentId`). A passage comment's or a reply's card is centered as an opened card is, and a loose card (a
+whole-file comment's, at the top of the track, where the lock keeps it out of view for a reader anywhere but the top
+of the text) is brought into the track's box by the least scroll that shows it, written onto the body and the track at
+once (`showLoose`, `scrollBoth`), since a track-only `scrollIntoView` moved the track alone and the frame's
+`followBody` pass pulled it back to the body; before that the composer closed and no card appeared, and the save read
+as having done nothing. The reply box the composer follow-on stands inside the card it answers (`placeComposer`) is placed
+with that card: a descendant of it, not a child of the list, so the sheet's absolute positioning and `moveRows` leave it
+where it stands, `swapCards` keeps the card around it across a render, and the card's observer covers the box's growth;
+Reply, and a render that moved the box while it held the keyboard, bring the box into the track's box the way a loose card
+is shown, through both scrollers and after the pass (`showComposer`: a card the fresh list built has no top until the
+pass places it, so a scroll before the pass went where the card would not stand). The narrow fold and edit mode are the list layout as before, and the two switch as the layout
+changes: the fold is read off the row's computed flex-direction, since the sheet's container query owns it — and that
+query, it turned out, had never fired: `.fileview-main` is the container it declares, a container query styles a
+container's descendants and never the container itself, and no ancestor declared one, so a narrow column got the
+fold's aside rules alone beside an unstacked body. The viewer's card (`.fileview`) now declares the container the fold
+resolves against. PDFs and standalone images take the same pass, their region rectangles the marks. The footer stays
+inside the panel, in both sheets: the panel is `overflow: hidden` (a panel that scrolled would carry the track off the
+body and every card off its mark), the track has a basis of 0 with a floor of 30% of the panel, and, as the first
+review built it, a footer section that outgrows its share (the Send section with its confirm up, the Log with its
+rows) shrinks and scrolls inside itself instead of pushing Send, Cancel or the Log toggle past the panel's edge, with
+the Log toggle sticky at the top of its scroller. The second review widened that yield to every section but the track,
+in two tiers, in both sheets (their file-comments blocks are held byte-equal): keyed on the confirm and the Log's
+rows, the first rule left every other growth (the composer, the Track file/folder choice, the Reject all confirm, a
+refusal row under the foot, a fold row, the tooling warning) pushing Send and the Log toggle past the panel's bottom,
+and a Tab onto one scrolled the clipped panel anyway, the head under the top edge and every card above its mark by
+that amount until the next pass. Now the head, the composer, the Send section and the Log all shrink (`flex: 0 1 auto;
+min-height: 0`) and scroll inside themselves when they do; the sections holding what grew give first (the composer
+while it shows; the head, the Send section and the Log while they hold anything beyond their controls), their
+flex-shrink a million times the others', so the collapsed sections keep their size to within a layout unit, down to a
+floor of one control row, or 15% of a panel too short for one (`min(15%, 2.4em)`: four grown sections at the floor and
+the track's 30% still fit); only then do the collapsed sections give, in proportion, scrolling too. The sections add
+up to the panel, always. The one range, the footer rows, the content observer, the placement order, the focus fixup,
+the escaping and the footer's yield rule are the follow-on's first review (2026-09-07); before it the list was sized
+to the body's scroll height less the header's offset, so the last lines' cards sat under the footer, the rows scrolled
+out of the locked track, a reflow inside the body left the cards off their marks, and a tall confirm or Log ran past
+the panel's bottom. The two tiers, the offset-free centering and the save's scroll are the follow-on's second review
+(2026-09-07), which also found the sheets' margin comment still attributing the level-with placement to the user and
+held it to this note's record; the pass without a render that un-pushes a card (the leader's attribute and its length
+leave the reused node) stood already and gained its pin in that round. The third review (2026-09-07) found the two tiers
+had reached styles.css alone, the feed page's sheet still carrying the first cut while the byte-equal pins stood red,
+and mirrored the block into feed.css; found the padding's shift of a centered picture and of a short Raw file, and made
+the pass take the padding back where it bought no range; and found the panel's own section comment still attributing
+the level-with placement to the user, and held it to this note's record as the sheets' had been. The loose group's
+place — cards with no mark at the top of the track, out of view for a reader anywhere else — is the third review's one
+finding left to the user's word, under Open questions. Tests: `card-layout.test.ts` (the rule),
+`file-comments-margin.test.ts` (the panel driven over a measuring stand-in), `file-comments-margin-browser.test.ts`
+(Chromium and Firefox: placed tops against marks, the collision, the lock to the far end, the fold); from the review,
+`file-comments-margin-review.test.ts` (the panel over a stand-in with the focus-fixup rule, clamped scroll positions,
+a footer under the track, a reflowing body, escaped selectors and media bodies: the one range and the overhang, the
+non-scrolling body, the footer rows, the placement order, the content observer, the escaping, the padding gone on
+close, a region card on an image and on a PDF page), `file-comments-margin-review-browser.test.ts` (the focus fixup,
+the `<details>` reflow, the Tab order and the footer rows in Chromium and Firefox), `feed-css-margin-footers.test.ts`
+and `styles-fc-margin-footer.test.ts` (each sheet's footer: the floor, the yield rule and the sticky toggle as
+declared, and the confirm and the Log scrolling within their sections in both engines),
+`feed-css-margin-leader.test.ts` (the pushed card's leader: the `::before` rule's declarations in feed.css, keyed on
+the attribute and the variable the pass writes, styles.css held to the same rule, and in both engines a dashed leader
+as tall as the push on a pushed card and none on an unpushed one), `tests/test_guide_files_margin_layout.py` (the
+guide's Files sentence held to the panel and the sheets) and `tools/file-review-plan-margin-review.test.mjs` (this
+account held to the panel, the sheets and the modules it names); from the second review,
+`styles-fc-margin-fit.test.ts` (styles.css's two tiers as declared, and in Chromium and Firefox at the review's panel
+heights nothing past the aside's edge, Send and the Log toggle in reach, the collapsed sections uncut, and a focus or
+a real Tab onto Send or the Log leaving the aside unscrolled and every card on its mark),
+`file-comments-margin-fixes.test.ts` (over the first review's stand-in with room for an open card: the opened card
+shown whole from its head and from its reference link, a card taller than the track clipped at its head by the excess
+alone, the un-push without a render, a whole-file comment saved while scrolled brought into the track's box by one
+write onto both scrollers with the composer closing after, a reply's save centering its card, the saved comment read
+off the reply's store, and at source the offset-free term and the save's scroll before the composer's close),
+`file-comments-margin-fixes-browser.test.ts` (the opening and the save in Chromium and Firefox over a rendered body),
+`styles-fc-margin-attribution.test.ts` (each sheet's margin comment held to the record
+`tools/file-review-plan-attribution.test.mjs` holds this note to) and
+`tools/file-review-plan-margin-review-2.test.mjs` (the second review's statements here held to the panel, the sheets
+and the modules they name); from the third review, `feed-css-margin-fit.test.ts` (feed.css's two tiers as declared and
+held to styles.css's rules, and in Chromium and Firefox under feed.css alone the fit at the review's panel heights),
+`file-comments-margin-image-pad.test.ts` (over the first review's stand-in with a picture world: the padding taken back
+where it bought no range, kept over a picture nearly the box's height, a short Raw file's taken back and a scrolling
+file's kept, and at source the write-then-measure), `file-comments-margin-image-browser.test.ts` (in Chromium and
+Firefox over the viewer's image body: the picture where the box centered it before and after the panel's open, its card
+level with the rectangle, and the near-full picture's padding kept), `file-comments-margin-attribution.test.ts` (the
+panel's section comment held to the record the plan's and the sheets' pins hold) and
+`tools/file-review-plan-margin-review-3.test.mjs` (the third review's statements here held to the panel, the sheets and
+the modules they name); from the review's consolidation, `feed-css-margin-footer-rule.test.ts` (the footer's rule on the
+Send section's edge in both sheets, after the shared rule it overrides, and in Chromium and Firefox one hairline between
+the track and the first row — the Send box alone, the Resolved fold, the foot — with the Send box's own only behind a
+row).
+
+The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
+recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
+refused `anchor-ambiguous`, whichever copy was selected, and a stored comment carried nothing but its
+three anchor fields to be placed by. Two changes, both in the host and both romp-only: the stored
+anchor's context widens until it is unique (`uniqueAnchor`: 24 characters, then 24 more at a time, to
+a cap of 480 or the file's bounds; a passage unique at 24 keeps the anchor `track-comment` writes, and
+one still tied at the cap is saved at the cap), and the comment gains `anchorAt`, the located offset,
+refreshed on every sidecar write the host makes (`refreshAnchorAts`, first thing in `stageSidecar`, the
+one function every sidecar write goes through, and again in `checkReplyFits` before the reply is
+measured, so the bytes it adds are counted). The refresh is exact and bounded (the review, 2026-09-07; its third round, 2026-09-08):
+an anchor that sits in whole at one place takes that place when the comment had no position or its quote
+occurs nowhere else, and otherwise, since the one whole copy may be the other copy of a passage whose own
+surroundings were edited, moves only where the recorded changes can have carried it, to that copy or to
+the one other occurrence of the quote, and stands otherwise; one that sits at several keeps its position
+where it still names a copy and otherwise moves only to the one copy the recorded changes (the pending
+ops, the ops the write settles, the edits the write applies, summed as bounds on the shift) can have
+carried it to, or to the one occurrence of the quote they can have (`movedCopy`), never to the nearest
+copy, and only while the sidecar's fingerprint says no unrecorded edit touched the file; one that sits
+nowhere in whole is placed by the engine's scoring under `REFRESH_SCAN_BUDGET`, past which the rest keep
+their position and stderr says how many, so no count of comments holds a write past the kernel's deadline;
+every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one
+budget per write, and a passage still at its position costs none. The panel passes a card's `anchorAt` to the
+engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
+copy that was chosen even where the anchor alone cannot tell, while the position names a tied copy;
+where it names none, or the comment has no position, the copy the engine returns is a guess, and
+the panel paints it as one: the dashed ring the text-changed state wears, a "passage recurs" tag
+and the card's words (`copyUnsure`, the review; the painting paragraph under Commenting from either
+view states the four states); a pending composer's passage moves exactly through an edit that does
+not reach it, and one the edit reaches is re-found through its anchor, with no offset sent when the
+copies now tie, so the host refuses instead of guessing (`followPassage`). The refusal remains for a
+tie the request cannot settle: no offset sent, or an
+offset that sits on none of the tied copies in the text the host read because the text moved after
+the selection (`locateExact` with `exact`, refused `anchor-ambiguous` with a message that says so,
+never placed on the nearest copy). The Raw acceptance criterion on a quote that occurs twice states
+both outcomes of lines inserted between the selection and the save: the note lands on the selected copy
+when the panel painted the edit before the save, since the follow moves the offset only from a repaint
+(`retargetComposer`, on `onRendered`), and is refused with the note kept when the save came first (the
+second review, 2026-09-08; the criterion had stated the first outcome alone). The sent message
+names a recurring passage by its widened surroundings (`passageDesc`, up to 120 characters a side;
+past that it says only that the passage recurs with the same text around each copy), so the
+session reading it can reach the chosen copy, or learns that `--old` with the nearby text will be
+refused. Tests: the host
+modules `tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and
+`-anchors-review-3`, two e2e cases (a 24-character
+tie told apart at 48, and a tie past the cap whose positions follow a tracked insertion above),
+`ui/webview/file-comments-anchors.test.ts`, `-follow` and `-model-recurring`, and this plan's pins in
+`tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`; the painted states in
+`ui/webview/file-comments-anchors-unsure.test.ts` (a guessed copy wears the dashed ring, the tag and the
+words; a copy the position names and a unique passage paint plainly) and `-region-tied` (the region
+composer's tied and elsewhere pairs); and `tools/file-review-plan-anchors-states.test.mjs`, which pins
+the painting paragraph's four states, this note's guessed-copy clause and the Raw criterion's two
+outcomes against the panel and the host.
+
+The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
+user todo and its file be structured, not a path in the detail's free text, and that any Send on the
+file answer the todo, not only a Send from a viewer opened through the todo's link. The record gains
+`file` (kernel), `add_user_todo` gains the argument and the session prompt says to pass it (postal),
+and on the panel side: `Status` gains `todos`, the open todos of the session that name the file,
+which the kernel adds to the `status` reply; `todoChoices` (`file-comments-model.ts`) lists the
+candidates: the todo the file was opened from first, with its text when the status lists it, then the
+status's todos in the kernel's order, each once, minus the todos a send from this page has stamped.
+The confirm renders one candidate as the checkbox (checked, the todo's text cut to one line, the
+whole text on hover and in the row's fold) and several as one radio group, Answer: the first selected, the others, none, so
+one send still answers one todo (decision 28); `chosenTodoId` is what `doSend` puts in `todoId`. After
+a send the list follows the next status, which no longer carries the settled todo; the page's memory of
+what it stamped covers the moment before that status, and a send the kernel could not stamp leaves the
+todo offered, as before. A status asked after the send's reply that still lists the todo is the kernel's
+word that it is open (a parked send stamps at its drain; a recalled or lost answer reopens the todo) and
+releases the memory, so the todo is offered again — the review found a reopened todo hidden from every
+confirm on the page until a reload; only the todo the file was opened from whose `file` is another file,
+which no status of that viewer lists, stays answered for good. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
+(`fileChip`: openPathLink's span restyled, so the list delegate's and the modal's `openpath` open it
+with the same `viewFile` message: path, sid, identity, todoId); the detail's linkified paths stay. The
+chat's todo card and its Reply modal show the same chip (render.ts `todoFileChip`; the `.ut-file` pill in styles.css,
+which the review found missing: the class named no rule, so the card's chip was a plain link). The guide's Waiting on
+you and Files sections say both.
+
+The filter follow-on (2026-09-07): reviewing a document with dozens of routine changes, the user found
+the few comments that mattered buried among the change cards, and could not tell a comment card from a
+change card at a glance. The panel header gained a filter on the row under the two toggles, one group of
+the toggles' buttons, **All · Comments N · Changes M**, offered once the file has a card to filter
+(`filterOffered`) and kept as `commentsFilter` in the shared webview settings (`settings.ts`, "all" by
+default) the way `changesInline` is: read when a panel opens, written on each pick, and reaching an open
+panel elsewhere through the settings signal. Its counts are the action-row label's (`cardCounts` in
+`file-comments-model.ts`: the open comments and the pending changes), so the label and the control
+agree; All carries no count. A detached change is neither an open comment nor a pending change, so the
+Changes option carries the label's detached count after its own, "Changes 0 · 1 detached", and its title
+says the detached changes are listed in a group of their own: a file holding detached changes alone does
+not read as one with nothing to show (the review, 2026-09-07). **Comments** lists every comment card on
+its own, a comment bound to a pending change included
+(with the change's words as its reference and an "on a change" tag), with no change card, group, fold or
+Accept all · Reject all foot, and paints no change mark in the text; **Changes** lists the change cards
+alone, each with the comments made on it, and paints no comment highlight or region rectangle; **All**
+is the list as before. Show changes inline applies on top ("Changes" with the marks off shows the cards
+and no mark), the keyed expand state is untouched by a pick, and Send to session is not filtered: the
+confirm lists everything unsent as before. The buttons are one group for the keyboard: an arrow chooses
+the next or previous option, wrapping at the ends, and Home and End the first and last. Every card head
+names its kind, Comment, Change, or Region, in a word before the author's chip, styled like `.fc-note`
+(`--dim`, 0.86em; the `.fc-kind` rule), and the card's left edge is colored by kind, a 3px border in the
+accent for a comment (a region is one) and in `--text-muted` for a change (`data-cue`; both sheets,
+tokens only); a detached card keeps its dashed edge. A reply's box whose card the filter hides returns to
+the panel's slot with a line saying so, and Escape or Cancel moves the focus to the All button, the one
+that brings the card back. The review of 2026-09-07 settled five more behaviors. Under Comments a comment
+bound to a change is read as one on no change when the reply's box is placed (`replyAway`), so a resolved
+bound comment's line names the Resolved fold, where its card is, and Cancel focuses that fold; Comments
+never names a "… N more changes" row it does not render. The "on a change" tag's title says the change is
+pending only when it is among the status's hunks and says detached otherwise, naming the Detached changes
+group, and a detached change card's kind cue offers no accept or reject. A comment saved while Changes is
+chosen is hidden by the choice, its highlight or rectangle with it, and a save that shows nothing reads
+as one that failed: the panel keeps the saved comment's id (`hiddenSaved`) and renders a dismissable line
+at the top of the list saying the comment is saved and that All or Comments shows it (`hiddenSavedRow`);
+the line ends once the card shows, the comment is gone from the file, the ✕ is clicked, or the panel
+closes, a later return to Changes does not bring it back, and the kept choice is unchanged; a comment
+made from a change card's Reply rides that card under Changes and gets no line. Under the margin layout
+(the margin-layout follow-on, above) the line is one of the list's rows and stands in the footer above Send
+with the foot and the folds (`moveRows`), in view wherever the text is scrolled, where a row at the top of the
+locked track is not; the margin's scroll to a saved card (`scrollToSaved`) finds no card for a comment the
+filter hides and moves nothing. The filter hides a card by leaving it out of the list (`renderCards`), never by
+styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
+repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
+of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
+collapsed tier while that row is all the head holds beyond its buttons (`:has(.fc-head > :nth-child(n+2):not(.fc-filter))`
+in both sheets), so the head gives only in the collapsed tier's turn while it holds its two control rows alone;
+a Track choice or a refusal row still counts as growth. While the Slice 5 editor
+is up the filter row is offered all the same (Show changes inline is not: the editor draws every change
+itself), and the option titles say the editor keeps every change marked in its text rather than that the
+marks are hidden. The rows answering a click on the toggles' row, the Track scope choice, the folder Stop
+confirm and the track slot's loader and refusal, are inserted above the filter's row, directly under the
+toggles (`underToggles`), and the filter's row is under the toggles again once the question is answered;
+the other head rows keep their place below it. The second review round (2026-09-07) settled two more.
+With no filter row to stand above (a file with nothing to filter, or no status) the track slot's loader
+and refusal are inserted above the head's other rows, the status refusal's, the poll's and the editor's,
+rather than appended after them, so the answer to a Track click never stands below a row about the
+file. Under Comments the read view paints no change mark whatever Show changes inline says, so the
+toggle stays offered (its setting is shared with All, Changes and the other panels) and its title says the
+filter hides the marks and that the setting governs All and Changes, never that the text carries marks it
+does not. Tests: `ui/webview/file-comments-filter.test.ts` (driven),
+`ui/webview/file-comments-filter-review.test.ts` (the first round's fixes, driven over the same stand-in,
+with source pins) and `ui/webview/file-comments-filter-fixes.test.ts` (the second round's, driven the same
+way: the track rows with and without a filter row, the Changes empty state's stray rows, the saved line's
+rectangle wording and its end when the comment comes to ride a change card, and the inline toggle's title
+under each filter); the third round (2026-09-07) added `ui/webview/file-comments-filter-saved-line.test.ts`
+(driven the same way: the saved line's pick among several fresh comments in one status, and the row's
+shape, `.fc-note` on the words alone so the ✕ keeps the panel buttons' size) and
+`ui/webview/file-comments-saved-line-sizes.test.ts` (the saved row's ✕ and words resolved through both
+sheets' real cascade); `ui/webview/feed-css-kind-cue.test.ts` holds the sheets' kind-cue comment to the
+terms above and to the declarations it describes, and `ui/webview/file-comments-filter-wording.test.ts`
+holds the four driven suites' and the two size probes' titles, assertion messages and comments to the same
+terms (the rule by its selector, the token by name, the focus move by where the focus goes, no figure for
+any); `tools/file-review-plan.test.mjs`,
+`tools/file-review-plan-kind-cue.test.mjs`, `tools/file-review-plan-filter-review.test.mjs`,
+`tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
+the guide's paragraph to the source.
 
 ### Slice 3: region comments on images
 
@@ -1417,10 +1821,44 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   src-less contract shape told from its passage, and its re-place; the figure fence:
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
   the save, nothing written and no landmark created, a malformed `figureHash` refused before any disk
-  read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
-  states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
+  read, `too-large` before `figure-changed`. The anchors follow-on
+  (`tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and
+  `-anchors-review-3`): the anchor's context widens only as far as
+  uniqueness needs and stops at the cap; a tie settled by the hint is placed, one without a hint
+  refuses, and one whose hint sits on no tied copy (the text moved) refuses too, on a plain and on
+  a tracked file; `anchorAt` is set at creation, kept by `track-reply` and `track-edit`, refreshed by the
+  next host write after an edit above, never added to a comment without an anchor, and round-trips
+  through `store-io`; a tied position follows its copy through a tracked insertion above, its
+  reject, an accept and the person's own save, and keeps its position after an edit nobody recorded, after
+  changes above that span a copy, and when the comment has no position; a comment whose one whole
+  copy is the other copy of a passage whose surroundings were edited keeps its position after an
+  edit nobody recorded and follows a tracked edit to the quote's other occurrence, and back through
+  its reject; a save settles the changes its editor accepted; the refresh scans only for anchors
+  that no longer sit at their position, charges every scan to one budget per write, past which the
+  rest keep their position and stderr says so once, and 300 cap-width tied comments on a near-cap
+  file, and 400 on a text of one repeated character, complete inside the kernel's
+  deadline; the reply is measured with the refreshed positions, so a store within the slack of the
+  cap refuses `too-large` instead of landing a reply the kernel discards. `tools/file-review-plan.test.mjs` pins what this plan
+  states for the target's shape, the anchor rule, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
-  fails a test.
+  fails a test. `tools/file-review-plan-acceptance.test.mjs` pins the Both acceptance criterion
+  on the comment `addComment` writes: its wording, the host test whose title makes the same
+  `anchorAt` exception, and on the fixture the anchor kept at 24 characters for a unique passage
+  and widened for a tied one. `tools/file-review-plan-anchors.test.mjs` pins what the contract,
+  the host paragraph, the commenting section and the follow-on note state after the follow-on's
+  review: the refresh by where the whole anchor sits, its two sites and its budget, the refusal of
+  an offset that sits on no tied copy once the text moved, and the `desc` sentence's widened form and
+  its 120-character bound, against the host and model sources, the fixture, and the test modules and
+  e2e cases the note names. `tools/file-review-plan-anchors-states.test.mjs` pins the painting
+  paragraph's four states and the follow-on note's guessed-copy clause against the panel (`copyUnsure`,
+  the dashed ring on a located mark, the tag and the card's words), the Raw criterion's two outcomes
+  against the host's `locateExact` on the Raw fixture and the panel's follow and Save, and the webview
+  modules that drive the painted states against the tree. `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
+  record: the ask as the user made it, with its hedges, and the layout as the build's reading of
+  it, awaiting the user's word (a review of the follow-on found the note had folded the build's
+  design into the ask, 2026-09-07); `ui/webview/styles-fc-margin-attribution.test.ts` holds each sheet's
+  margin comment to the same record (the second review found the sheets still said the user had asked
+  for what was built, 2026-09-07).
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).
@@ -1479,6 +1917,92 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   suite's tests.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
+- `ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and
+  `file-comments-margin-browser.test.ts` (the margin-layout follow-on, 2026-09-07): the push-down rule,
+  the ties, the gap, the loose group and an expanded card pushing the next; the track in two columns, the
+  loose group, the list fallback in the fold and in edit mode, the scroll lock and the re-layout on
+  expand, driven over a measuring stand-in; and in Chromium and Firefox the placed tops against the marks,
+  the collision, the lock both ways to the far end (a comment on the last paragraph, both ranges within
+  2px, the last card level with its mark from either scroller and from its reference link), the centering
+  and the fold, under the sheets' own rules. From the follow-on's first review (2026-09-07):
+  `file-comments-margin-review.test.ts` drives the panel over a stand-in that models what the first
+  stand-in did not (the browser's focus-fixup rule, scroll positions clamped to each scroller's range, a
+  footer under the track, a body whose content reflows without its box changing, escaped attribute
+  selectors, and media bodies) and pins the keyboard surviving the rows' move and the reorder, the one
+  range (the footer's height in the body's padding, the overhang growing it, the padding gone on close and
+  back on reopen), the non-scrolling body's track going on alone and coming back level, the footer rows in
+  the list's order, the placement order, a clamped write raising no echo, the content observer and the
+  observer taking the list layout's cards when the margin comes on, the escaped id, and a region card on
+  an image and on a PDF page; `file-comments-margin-review-browser.test.ts` runs the focus fixup, the
+  `<details>` reflow, the Tab order and the footer rows in Chromium and Firefox;
+  `feed-css-margin-footers.test.ts` and `styles-fc-margin-footer.test.ts` hold each sheet's footer block
+  (the floor, the yield rule, the sticky Log toggle) and, in both engines, the Send confirm with its
+  preview and the Log with its rows scrolling within their sections, Send, Cancel and every row in reach
+  and the track keeping its floor; `feed-css-margin-leader.test.ts` holds the pushed card's leader rule in
+  feed.css to the attribute and the variable the pass writes and styles.css to the same rule, and in both
+  engines reads the leader's box off a pushed card (dashed, as tall as the push, its top at the mark's
+  height) and finds none on an unpushed one; `tests/test_guide_files_margin_layout.py` holds the guide's
+  Files sentence (level with the passage, scrolling with the text, the narrow column listing the cards) to
+  the panel source and to both sheets; and `tools/file-review-plan-margin-review.test.mjs` holds the
+  note's Built account to the panel and the sheets, and every module the note and this bullet name to the
+  tree and to the pin credited to it (the round's commit message said the section named them, and it named
+  none; found in review, 2026-09-07). From the follow-on's second review (2026-09-07):
+  `styles-fc-margin-fit.test.ts` holds styles.css's margin sections to the two tiers (every section but
+  the track shrinking and scrolling inside itself; the composer, and the head, Send and the Log while they
+  hold more than their controls, giving first at a shrink factor a million times the others' down to a
+  floor of `min(15%, 2.4em)`; the track's floor and the panel's clip kept) and, in Chromium and Firefox at
+  the review's panel heights, measures nothing past the aside's edge, Send and the Log toggle in reach,
+  the collapsed sections uncut, and a focus or a real Tab onto Send or the Log leaving the aside
+  unscrolled and every card on its mark; `file-comments-margin-fixes.test.ts` drives the panel over the
+  first review's stand-in with room for an open card and pins the opened card shown whole (the least
+  scroll that shows its end, with no header term, so its head stays in the track's box, from the head
+  click and from the reference link), a card taller than the track clipped at its head by the excess
+  alone, a pass without a render un-pushing a card, a whole-file comment saved while scrolled brought into
+  the track's box by one write onto both scrollers with the composer closing after, a reply's save
+  centering its card, the saved comment read off the reply's store (one new comment; among several, the
+  one whose body is the note; none identifiable, nothing scrolls), and at source the offset-free term and
+  the save's scroll before the composer's close; `file-comments-margin-fixes-browser.test.ts` runs the
+  opening and the save in Chromium and Firefox over a rendered body;
+  `styles-fc-margin-attribution.test.ts` holds each sheet's margin comment to the record
+  `tools/file-review-plan-attribution.test.mjs` holds the note to (the layout as the build's reading, the
+  ask with its hedges, nothing level-with attributed to the user); and
+  `tools/file-review-plan-margin-review-2.test.mjs` holds the account's second-review statements to the
+  panel, the sheets and these modules (the second round's commit, like the first's, added modules this
+  section did not name; found in review, 2026-09-07). From the follow-on's third review (2026-09-07):
+  `feed-css-margin-fit.test.ts` holds feed.css's margin sections to the two tiers and to styles.css's
+  rules (the second review's change reached styles.css alone, and the byte-equal pins said so while
+  nothing measured the feed page's fit), and in Chromium and Firefox under feed.css alone measures the
+  fit at the review's panel heights; `file-comments-margin-image-pad.test.ts` drives the panel over the
+  first review's stand-in with a picture world (the box's min-height and the centering modelled) and
+  pins the footer's padding taken back in the pass that wrote it where the body gained no range, kept
+  over a picture nearly the box's height, a short Raw file's taken back and a scrolling file's kept, and
+  at source the write-then-measure; `file-comments-margin-image-browser.test.ts` measures the same over
+  the viewer's image body in Chromium and Firefox (the picture where the box centered it before and
+  after the panel's open, its card level with the rectangle, the near-full picture's padding kept);
+  `file-comments-margin-attribution.test.ts` holds the panel's margin-layout section comment to the
+  record the plan's and the sheets' pins hold (the first two rounds' corrections reached the plan and
+  the sheets, not the panel source); and `tools/file-review-plan-margin-review-3.test.mjs` holds the
+  account's third-review statements to the panel, the sheets and these modules (the third round's
+  commit, like the two before it, added modules this section did not name; found in the review's
+  consolidation, 2026-09-07). From the review's consolidation (2026-09-07):
+  `feed-css-margin-footer-rule.test.ts` holds both sheets to the footer's rule on the Send section's top
+  edge (after the shared section rule it overrides, the Send box's own dropped when it is first, the
+  first review's rule on the foot gone), and in Chromium and Firefox mounts the panel under feed.css
+  alone in three worlds — comments alone, a resolved comment with its fold first, a pending change with
+  its foot first — and reads one hairline at the section's top level with the track's bottom, none on
+  the first row, the Send box's own only behind a row, and nothing past the aside's edge.
+- The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
+  DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
+  payload, the Reply modal's chip, no chip without the field, the detail link beside it);
+  `file-comments-todo-choices.test.ts` drives the confirm (the checkbox from the status's `todos`
+  with no opened-from todo, the radio group with several, the chosen id in the `fileCommentsSend`
+  request, the todo gone after a send when the next status omits it, the stamp latch, the one-line
+  label) and runs `todoChoices`; `tests/test_guide_todo_file_chip.py` holds the guide's Waiting on
+  you and Files sections to the pane and the panel; `tools/file-review-plan.test.mjs` holds the
+  follow-on's note and its Getting into it bullet to the model, the panel and the pane;
+  `tests/test_file_review_plan_prompt_sentence.py` holds the From the session's side bullet,
+  decision 35 and `claude/romp-session-prompt.md` to one another on the `file` argument (the
+  review, 2026-09-07: the bullet still put the path in the detail after the prompt moved it).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
@@ -1500,15 +2024,54 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   its major is the one the section names; the caps are the section's 25 MB and 5,000 pages; the
   fallback is the frame; the worker asset is served behind `_authorize`.
 
+- The filter follow-on (2026-09-07): `ui/webview/file-comments-filter.test.ts` drives the panel through
+  the three states (the cards each shows, the marks each paints, the inline toggle on top), the default
+  and the kept choice, a pick elsewhere, the arrow keys, Send unchanged, the kind cue, and the counts
+  against the label's, and pins the delegate action, the header's order, the paint guards, the store's
+  key and default and the sheets' rules at source; `ui/webview/file-comments-filter-review.test.ts`
+  drives the review's six fixes over the same stand-in (the bound comment's reply under Comments in
+  three paths, the tag and cue titles for a detached change, the editor-up titles, the line for a
+  comment saved under Changes, the detached clause on the Changes option, and the head rows above the
+  filter's) and pins their source; `ui/webview/file-comments-filter-fixes.test.ts` drives the second
+  round's cases the same way (the track slot's loader and refusal with and without a filter row, the
+  Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
+  rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
+  under each filter) and pins the anchor and the title at source;
+  `ui/webview/file-comments-filter-saved-line.test.ts` drives the third round's cases the same way (a
+  status answering a save with several fresh comments, a session's among them, and the saved row's shape:
+  `.fc-note` on the words' span, the ✕ a `.fileview-btn` under the unsized row) and pins the row at
+  source; `ui/webview/file-comments-saved-line-sizes.test.ts` resolves the saved row's ✕ and words through
+  both sheets' whole cascade, holding them to `.fileview-btn`'s and `.fc-note`'s sizes;
+  `ui/webview/feed-css-kind-cue.test.ts`
+  holds the sheets' kind-cue comment to the note's terms and to the declarations it describes, byte-equal
+
+  across the two sheets, and `ui/webview/file-comments-filter-wording.test.ts` holds the four driven
+  suites' and the two size probes' titles, assertion messages and comments to the same terms (the rule by
+  its selector, the token by name, the focus move by where the focus goes, and none of the figures the
+  plan's review replaced); `tools/file-review-plan.test.mjs` and
+
+  `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
+  the source, `tools/file-review-plan-kind-cue.test.mjs` holds the note's kind-cue and focus
+  sentences to the sheets and the panel, `tools/file-review-plan-filter-review.test.mjs` holds the
+  note's review sentences and the UX paragraph's counts to the panel, the model and the guide, and
+  `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
+  and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
+  here and in the note.
+
 ## Docs
 
 `docs/guide.md`: "Reviewing a document" (`:29-45`) becomes a section on file comments and tracked
 changes, states that quote chips remain for one-off notes, tells the user to track the folder a
 session will write into, and to keep figures out of tracked folders until Slice 1's refusal is
-in place; "Waiting on you" notes the linked path and the ended-session case; "Files"
+in place; "Waiting on you" notes the linked path and the ended-session case (and, from the
+todo-file follow-on, the file chip); "Files"
 (`:126-138`) gains the panel, the poll, the consent gate the guide omits today, commenting in
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
-look when the action is missing. `docs/reference.md`, under install-time switches, notes the
+look when the action is missing (and, from the todo-file follow-on, that a Send answers the todo
+that named the file however the file was opened); with the margin-layout follow-on (2026-09-07) it says that beside
+the file each card sits level with the passage it is about and scrolls with the text, and that a
+narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds the sentence to the
+panel and both sheets). `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
@@ -1626,7 +2189,9 @@ document stands on its own, each with the reasoning it was given.
     through romp.
 34. **Whole-file comments on every file**, not only images and PDFs.
 35. **Sessions learn the pattern from romp's default session prompt** and from the skill: name
-    the file's absolute path in the todo's detail; ask for another look the same way.
+    the file's absolute path in the todo's detail; ask for another look the same way. (The todo-file
+    follow-on, 2026-09-07: the path goes to `add_user_todo`'s `file` argument, and the detail may
+    still describe it; the prompt's sentence says so. See Getting into it.)
 36. **The three Send checkboxes** keep their generic wording: answer the todo; turn on tracking so
     the session's edits come back as changes; accept the N pending changes.
 
@@ -1650,8 +2215,16 @@ document stands on its own, each with the reasoning it was given.
 
 ## Open questions for the user
 
-None remain. Every question raised by this document, by its reviews, or in the design interview
-has been ruled on; see Decisions.
+Every question raised by this document, by its reviews, or in the design interview has been ruled
+on; see Decisions. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
+is the build's reading of the ask, not a ruling, and the walk answers it. With it, the loose group's
+place: a card with no mark (a whole-file comment, a change the Rendered view cannot paint, a detached
+anchor, a region whose figure has not loaded) stands at the top of the track, which the lock keeps out
+of view for a reader anywhere but the top of the text; the follow-on's third review confirmed that and
+proposed a pinned band between the composer and the track for those cards, in the list's order, with
+its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than
+landing with the review's fixes (the save's scroll, `showLoose`, already brings a whole-file comment's
+card into view).
 
 ## Upstream
 

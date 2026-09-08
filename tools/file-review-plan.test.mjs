@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateTarget, FILE_HASH_CAP, EMBEDDED_HASH_CAP } from './file-comments-host.mjs';
+import { validateTarget, FILE_HASH_CAP, EMBEDDED_HASH_CAP, locateExact, uniqueAnchor, ANCHOR_CTX, ANCHOR_CTX_STEP, ANCHOR_CTX_CAP } from './file-comments-host.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -216,6 +216,54 @@ test('Security posture says the reply hashes what the sidecar holds, on status, 
   assert.ok(risks.includes('refusing such srcs on a reply is the follow-up'));
 });
 
+// ── the anchors follow-on (2026-09-07): the anchor rule the plan states, kept by the host, the model and the panel ──
+// Each plan sentence is pinned here up to the clause the host check or the fixture below demonstrates; the rest of
+// the sentence as the follow-on's review left it (the refresh's three cases and budget, the refusal of an offset that
+// sits on no tied copy) is pinned in tools/file-review-plan-anchors.test.mjs. The review rewrote these sentences once
+// and this module kept pinning the pre-review wording, so both modules were red or green only together (2026-09-08).
+
+test('the contract names anchorAt as the second optional field with its rule, and the host sets, refreshes and bounds it as stated', () => {
+  assert.ok(contract.includes('a second, `anchorAt`, a position'));
+  assert.ok(contract.includes('`anchorAt: <number>`, sits beside `anchor` on a passage comment and holds the offset the anchor located at'));
+  assert.ok(contract.includes('the host script refreshes it on every sidecar write it makes, against the text the sidecar is saved for, by where the whole anchor sits in that text'));
+  assert.ok(contract.includes('A comment without an anchor never carries it'));
+  // the host: set at creation after the widened anchor; refreshed first thing in the one function every sidecar
+  // write goes through; skipped for a comment with no usable anchor
+  assert.ok(/anchor: uniqueAnchor\(text, loc\.from, loc\.to\)\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host), 'set at creation, after the anchor');
+  assert.ok(/function stageSidecar\(root, storePath, store, text\) \{\s*\n\s*refreshAnchorAts\(store, text\);/.test(host), 'stageSidecar, the one function every sidecar write goes through, calls refreshAnchorAts first');
+  assert.ok(/if \(!c \|\| !c\.anchor \|\| typeof c\.anchor !== 'object' \|\| typeof c\.anchor\.quote !== 'string' \|\| !c\.anchor\.quote\) continue;/.test(host), 'never on a comment without an anchor');
+  assert.ok(/const loc = locateExact\(text, c\.anchor, undefined\);\s*\n\s*if \(!loc\.error\) c\.anchorAt = loc\.from;/.test(host), "an anchor that sits in whole nowhere is placed by the engine's scoring, hintless (unique or an error), under the write's scan budget");
+  // the model and the panel: the field rides on the store comment and the card beside an anchor, and is the painter's hint
+  assert.ok(model.includes('anchor?: Anchor | null; anchorAt?: number;'), 'the store comment type');
+  assert.ok(/const anchorAt = anchor && typeof c\.anchorAt === "number" && Number\.isFinite\(c\.anchorAt\) \? c\.anchorAt : null;/.test(model), 'the card carries it only beside an anchor');
+  assert.ok(/const at = this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/.test(panel), 'the painter passes it as the hint, in the view\'s coordinates');
+  assert.ok(/if \(card\.anchorAt === null\) return undefined;\s*\n\s*return this\.status && this\.status\.bom \? card\.anchorAt - 1 : card\.anchorAt;/.test(panel), 'viewAt: 0 is a position, and a BOM file\'s runs one ahead');
+  assert.ok(ux.includes('with the comment\'s stored `anchorAt` as the tie-break'), 'the painting paragraph says so');
+});
+
+test('the host paragraph and the commenting section state the widening and the refusal as the host does them, on the fixture', () => {
+  assert.ok(op.includes("with the smallest context, from 24 characters in steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the whole text"));
+  assert.ok(op.includes("`anchor-ambiguous` when two candidates tie and the request's offset cannot settle it: no offset was sent"));
+  assert.ok(op.includes("a stored comment's anchor is located with its `anchorAt` as the hint"));
+  assert.ok(/locateExact\(text, validateAnchor\(c\.anchor\), hintOf\(c\)\)/.test(host) && /locateExact\(text, anchor, hintOf\(c\)\)/.test(host), 'retarget and the passage-figure read use the stored hint');
+  assert.deepEqual([ANCHOR_CTX, ANCHOR_CTX_STEP, ANCHOR_CTX_CAP], [24, 24, 480]);
+  assert.ok(ux.includes("widens the stored anchor's context until it is unique in the file, stores the offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when two candidates tie and the offset cannot settle it"));
+  // behavior, on the fixture whose "Ship it." recurs with the same 24 characters either side
+  const text = read('tests', 'fixtures', 'file_comments', 'report.md');
+  const a = text.indexOf('Ship it.'), b = text.indexOf('Ship it.', a + 1);
+  assert.ok(b > a);
+  const at24 = { quote: 'Ship it.', prefix: text.slice(b - 24, b), suffix: text.slice(b + 8, b + 32) };
+  assert.deepEqual(locateExact(text, at24, undefined), { error: 'anchor-ambiguous' }, 'a tie with no offset');
+  assert.deepEqual(locateExact(text, at24, b), { from: b, to: b + 8 }, 'the offset settles it');
+  const u = uniqueAnchor(text, b, b + 8);
+  assert.deepEqual([u.unique, u.anchor.prefix.length], [true, 48], 'one step wider is unique');
+  assert.ok(host.includes('and ${unsent} was not sent to tell the copies apart') && host.includes(`"the selection's position"`) && host.includes(`"the region's position"`), 'the refusal text states the rule as it is now, in the words of the gesture (a passage selected, a region drawn)');
+  // the follow-on note stands beside the Slice 2 build notes; the Tests section names the module, which exists
+  assert.ok(section('### Slice 2: the session', '### Slice 3: region comments on images').includes('The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that recurs'));
+  assert.ok(tests.includes('`tools/file-comments-host-anchors.test.mjs`'));
+  assert.ok(fs.existsSync(path.join(HERE, 'file-comments-host-anchors.test.mjs')));
+});
+
 // ── Tests: the plan names the modules that exist ────────────────────
 
 test('the Tests section names Slice 3\'s host modules and this pin, and they exist', () => {
@@ -226,4 +274,180 @@ test('the Tests section names Slice 3\'s host modules and this pin, and they exi
   assert.ok(tests.includes('the figure fence: `figure-changed`'), 'the Tests section says what the review-3 module pins');
   assert.ok(read('tools', 'file-comments-host-review-3.test.mjs').includes("'figure-changed'"), 'and it pins figure-changed');
   assert.ok(tests.includes('`tools/file-review-plan.test.mjs`'));
+});
+
+// ── the margin-layout follow-on (2026-09-07): the Slice 2 note, the UX bullet, the sheets ────
+
+const slice2 = section('### Slice 2: the session\'s changes as accept/reject cards and inline marks', '### Slice 3: region comments on images');
+const surface = section('### The surface, in its Slice 2 state', '### Commenting from either view, and in every format');
+const styles = read('ui', 'webview', 'styles.css');
+const feed = read('ui', 'webview', 'feed.css');
+const guide = read('docs', 'guide.md');
+
+test('the margin-layout note stands beside the Slice 2 build note and names what was asked and what was built', () => {
+  assert.ok(slice2.includes('The margin-layout follow-on (2026-09-07), panel side.'), 'the note, in the Slice 2 section');
+  // The ask as the user made it, hedges kept, then the build's reading of it: the review-round-1 rewording
+  // (tools/file-review-plan-attribution.test.mjs holds the two apart; this pin says the note carries both).
+  assert.ok(slice2.includes('asked whether comments could move with the window when possible, each trying to stay centered near the place in the text it was left as the reader scrolls, at least for markdown'), 'what the user asked for');
+  assert.ok(slice2.includes('The layout is the build\'s reading of that ask: comment cards that follow the text'), 'what was built, named as the build\'s reading');
+  assert.ok(slice2.includes('laid out as margin-aligned cards the way document editors lay out comments'));
+  // the layout model, as the note states it, is the code's
+  assert.ok(slice2.includes('a track whose scroll is locked to the body\'s'));
+  assert.ok(/body\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("body"\)\);/.test(panel), 'the lock: the body\'s scroll event');
+  assert.ok(/track\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("track"\)\);/.test(panel), '…and the track\'s');
+  assert.ok(slice2.includes('each takes the larger of it and the previous card\'s bottom plus the gap'));
+  assert.ok(slice2.includes('The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies (`placeCards`)'));
+  const layout = read('ui', 'webview', 'card-layout.ts');
+  assert.ok(/export function layoutCards\(items: LayoutItem\[\], gap: number = CARD_GAP\): Layout/.test(layout), 'the module exports the rule');
+  assert.ok(/Math\.max\(it\.desired as number, floor\)/.test(layout), 'the push-down rule is the larger of desired and the floor');
+  assert.ok(/import \{ layoutCards, CARD_GAP, type LayoutItem, type PlacedItem \} from "\.\/card-layout";/.test(panel), 'the panel imports it');
+  assert.ok(/placeCards\(fromRender: boolean\): void \{/.test(panel));
+  assert.ok(slice2.includes('one pass per frame, and never on scroll'));
+  assert.ok(!/"scroll", \(\) => this\.(scheduleLayout|placeCards)/.test(panel), 'no pass on scroll');
+  assert.ok(slice2.includes('the loose group at the top of the track, in the list\'s order'));
+  assert.ok(slice2.includes('Accept all · Reject all (moved out of the list)'));
+  assert.ok(/this\.sections\.send\.insertBefore\(foot, this\.sections\.send\.firstChild\);/.test(panel), 'the foot moves to the footer');
+});
+
+test('the note\'s fold statement is the sheets\': the row\'s computed flex-direction is read, and the viewer\'s card is the query container', () => {
+  assert.ok(slice2.includes('the fold is read off the row\'s computed flex-direction, since the sheet\'s container query owns it'));
+  assert.ok(/getComputedStyle\(row\)\.flexDirection !== "column"/.test(panel));
+  assert.ok(slice2.includes('`.fileview-main` is the container it declares, a container query styles a container\'s descendants and never the container itself'));
+  assert.ok(slice2.includes('The viewer\'s card (`.fileview`) now declares the container the fold resolves against.'));
+  for (const [name, css] of [['styles.css', styles], ['feed.css', feed]]) {
+    const at = css.indexOf('\n.fileview {');
+    assert.ok(at >= 0, name + ' has the card rule');
+    const rule = css.slice(at, css.indexOf('}', at) + 1);
+    assert.ok(rule.includes('container-type: inline-size;'), name + ': the card is the container');
+    assert.ok(/\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/.test(css), name + ': the row stays a container for the aside\'s own fold rules');
+    assert.ok(/@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/.test(css), name + ': the fold stacks the row');
+    assert.ok(/\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/.test(css), name + ': the margin layout\'s root rule');
+    // basis 0 with a 30% floor since the footer fix (styles-fc-margin-footer.test.ts pins the chat sheet's geometry;
+    // this pins that both sheets carry the same rule)
+    assert.ok(/\.fc-margin > \.fc-sec-cards \{ flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; \}/.test(css), name + ': the track is the scroller');
+  }
+});
+
+test('the UX bullet on progressive disclosure carries the margin clause, the guide says the same, and the Tests section names the three modules', () => {
+  assert.ok(surface.includes('beside the body each card sits level with the passage it is about and scrolls with the text, so the margin itself is the glance (the margin-layout follow-on, under Slice 2)'));
+  const files = guide.slice(guide.indexOf('### Files')).replace(/\s+/g, ' ');
+  assert.ok(files.includes('opens a panel beside the file, where each card sits level with the passage it is about and scrolls with the text; when the column is narrow the panel drops below the file and lists the cards instead.'));
+  assert.ok(tests.includes('`ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and `file-comments-margin-browser.test.ts` (the margin-layout follow-on, 2026-09-07)'));
+  for (const f of ['card-layout.test.ts', 'file-comments-margin.test.ts', 'file-comments-margin-browser.test.ts']) {
+    assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', f)), `${f} exists`);
+  }
+});
+
+// ── the todo-file follow-on (2026-09-07): the plan's record against the model, the panel and the pane ──
+// The Getting into it bullet and the note beside Slice 2's build record describe the structured todo→file path
+// and the confirm's two controls; the sources named here do what they say, so a change to one side without the
+// other fails here (the pattern of the Slice 3 pins above).
+const gettingIn = section('### Getting into it', '## Build slices');
+// `slice2` is the margin-layout block's above: the same section, read once
+const waiting = read('ui', 'webview', 'waiting.ts');
+
+test('Getting into it states the structured path: the record\'s file, the chip, the status\'s todos, one send answers one todo', () => {
+  assert.ok(gettingIn.includes('From a todo that names its file (the todo-file follow-on, 2026-09-07)'));
+  assert.ok(gettingIn.includes('carries an optional `file`'));
+  assert.ok(gettingIn.includes('the basename, the full path on hover'));
+  assert.ok(gettingIn.includes('`todos: [{id, text}]`'));
+  assert.ok(gettingIn.includes('one candidate is the checkbox, several are one radio group'));
+  assert.ok(gettingIn.includes("the chosen id goes out as `fileCommentsSend`'s `todoId`"));
+  assert.ok(gettingIn.includes('still works through the opened-from link alone'), 'the detail-path todo is not broken by the structured one');
+  // the model, the panel and the pane do what the bullet says
+  assert.ok(/todos\?: Array<\{ id: string; text: string \}> \| null;/.test(model), 'Status carries the kernel\'s list');
+  assert.ok(/export function todoChoices\(/.test(model));
+  assert.ok(/cb\.type = "checkbox"; cb\.checked = this\.sendOpts\.todo; cb\.dataset\.opt = "todo";/.test(panel), 'one candidate: the checkbox');
+  assert.ok(/r\.type = "radio"; r\.name = "fc-todo"; r\.value = c\.id; r\.checked = c\.id === pick; r\.dataset\.opt = "todopick";/.test(panel), 'several: the radio group');
+  assert.ok(/const todoId = this\.chosenTodoId\(s\);[\s\S]*?if \(todoId\) msg\.todoId = todoId;/.test(panel), 'the chosen id is the send\'s todoId');
+  assert.ok(/function fileChip\(file: string, sid: string\): HTMLElement \{/.test(waiting), 'the pane\'s chip');
+  assert.ok(/chip\.title = file;/.test(waiting), 'the full path on hover');
+  assert.ok(/const chip = framed \? openPathLink\(base, file, false, sid\) : el\("span", ""\);/.test(waiting), 'a path link: the same viewFile message as a linkified path');
+});
+
+test('the follow-on note sits beside the Slice 2 build note and states the candidate order, the two controls and the latch as built', () => {
+  assert.ok(slice2.includes('The todo-file follow-on (2026-09-07):'));
+  assert.ok(slice2.includes("the todo the file was opened from first, with its text when the status lists it, then the status's todos in the kernel's order, each once, minus the todos a send from this page has stamped"));
+  assert.ok(slice2.includes('one radio group, Answer: the first selected, the others, none'));
+  assert.ok(slice2.includes('`chosenTodoId` is what `doSend` puts in `todoId`'));
+  assert.ok(slice2.includes('a send the kernel could not stamp leaves the todo offered'));
+  assert.ok(slice2.includes("the detail's linkified paths stay"));
+  // the order the note states is the order the model builds, and each once minus the answered
+  const tc = model.slice(model.indexOf('export function todoChoices('), model.indexOf('export const TODO_OPENED_FROM'));
+  assert.ok(tc.indexOf('if (todoId)') < tc.indexOf('for (const t of listed)'), 'the opened-from todo is pushed before the listed ones');
+  assert.ok(/if \(seen\.has\(id\) \|\| answered\(id\)\) return;/.test(tc), 'each once, minus the answered');
+  assert.ok(/if \(todoId && reply\.todoStamped\) answeredTodos\.add\(todoId\);/.test(panel), 'the latch is the stamp');
+  assert.ok(/\{ id: "", label: "none", title: null \}/.test(panel), 'the none choice closes the group');
+  assert.ok(/g\.appendChild\(el\("span", "fc-note", "Answer:"\)\);/.test(panel), 'the group is led by Answer:');
+  assert.ok(/if \(this\.todoPick === ""\) return null;/.test(panel) && /return cands\[0\]\.id;/.test(panel), 'none answers nothing; nothing picked answers the first');
+});
+
+test('the Tests section names the follow-on\'s modules, and they exist', () => {
+  for (const f of ['ui/webview/waiting-file-chip.test.ts', 'ui/webview/file-comments-todo-choices.test.ts', 'tests/test_guide_todo_file_chip.py']) {
+    assert.ok(fs.existsSync(path.join(REPO, f)), `${f} exists`);
+    const bare = f.replace('ui/webview/', '');
+    assert.ok(tests.includes('`' + bare + '`') || tests.includes('`' + f + '`'), `the Tests section names ${f}`);
+  }
+  assert.ok(tests.includes('The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts`'));
+});
+
+// ── the filter follow-on (2026-09-07) ───────────────────────────────
+
+const settingsTs = read('ui', 'webview', 'settings.ts');
+const filterNote = (() => {
+  const a = plan.indexOf('The filter follow-on (2026-09-07):');
+  assert.ok(a >= 0, 'the plan carries the filter follow-on note');
+  const b = plan.indexOf('\n\n', a);
+  return plan.slice(a, b).replace(/\s+/g, ' ');
+})();
+
+test('the filter follow-on note stands beside the other follow-on notes under Slice 2, says what the user hit, and names the control, the setting, the counts and the cue as the panel and the store build them', () => {
+  const slice2At = plan.indexOf('### Slice 2: the session\'s changes as accept/reject cards and inline marks');   // offsets: the section text is `slice2` above
+  const slice3At = plan.indexOf('### Slice 3: region comments on images');
+  const at = plan.indexOf('The filter follow-on (2026-09-07):');
+  assert.ok(slice2At < at && at < slice3At, 'under Slice 2, before Slice 3');
+  assert.ok(plan.indexOf('The composer follow-on (2026-09-07):') < at, 'after the composer follow-on note');
+  assert.ok(filterNote.includes('dozens of routine changes'), 'what the user hit: the comments buried among routine changes');
+  assert.ok(filterNote.includes('could not tell a comment card from a change card at a glance'));
+  // the control, as the panel builds it
+  assert.ok(filterNote.includes('**All · Comments N · Changes M**'));
+  assert.ok(/\["all", "All", [^\]]+\],\s*\["comments", "Comments " \+ n\.comments, [^\]]+\],\s*\["changes", "Changes " \+ n\.changes, [^\]]+\],/.test(panel), 'the panel offers the three options in that order');
+  assert.ok(filterNote.includes('offered once the file has a card to filter (`filterOffered`)') && /export function filterOffered\(/.test(model) && /if \(filterOffered\(s\)\) \{/.test(panel));
+  // the setting, as the store keeps it
+  assert.ok(filterNote.includes('kept as `commentsFilter` in the shared webview settings (`settings.ts`, "all" by default)'));
+  assert.ok(/^\s+commentsFilter: CommentsFilter;/m.test(settingsTs), 'settings.ts has the field');
+  assert.ok(/export const DEFAULT_SETTINGS: RompSettings = \{[^\n]*\bcommentsFilter: "all"[,\s}]/.test(settingsTs), '"all" by default');
+  assert.ok(/saveSettings\(\{ commentsFilter: f \}\);/.test(panel), 'written on each pick');
+  assert.ok(/live\.filter !== s\.commentsFilter/.test(panel), 'a pick elsewhere reaches the open panel');
+  // the counts, one source with the label
+  assert.ok(filterNote.includes('`cardCounts` in `file-comments-model.ts`'));
+  assert.ok(/export function cardCounts\(/.test(model) && /const \{ comments: open, changes: n \} = cardCounts\(s\);/.test(model), 'actionLabel reads the same counts');
+  assert.ok(/const n = cardCounts\(s\);/.test(panel), 'the header reads them too');
+  // the three states, as the list and the painters build them
+  assert.ok(filterNote.includes('paints no change mark in the text') && /if \(this\.activeFilter\(\) === "comments"\) return;/.test(panel));
+  assert.ok(filterNote.includes('paints no comment highlight or region rectangle') && /this\.activeFilter\(\) === "changes" \? \[\] : this\.cards\(\)/.test(panel) && /const hideRegions = this\.activeFilter\(\) === "changes";/.test(panel));
+  assert.ok(filterNote.includes('an "on a change" tag') && /el\("span", "fc-tag", "on a change"\)/.test(panel));
+  assert.ok(filterNote.includes('Send to session is not filtered'));
+  // the cue
+  assert.ok(filterNote.includes('Comment, Change, or Region') && /el\("span", "fc-kind", c\.kind === "region" \? "Region" : "Comment"\)/.test(panel) && /el\("span", "fc-kind", "Change"\)/.test(panel));
+  assert.ok(filterNote.includes('(`data-cue`; both sheets, tokens only)'));
+  for (const sheet of ['styles.css', 'feed.css']) {
+    const css = read('ui', 'webview', sheet);
+    assert.ok(css.includes('.fc-card[data-cue="comment"]:not(.fc-card-detached) { border-left: 3px solid var(--accent); }'), sheet + ': the comment edge');
+    assert.ok(css.includes('.fc-card[data-cue="change"]:not(.fc-card-detached) { border-left: 3px solid var(--text-muted); }'), sheet + ': the change edge');
+  }
+  // the keyboard
+  assert.ok(filterNote.includes('an arrow chooses the next or previous option, wrapping at the ends, and Home and End the first and last'));
+  assert.ok(/const FILTER_KEYS = new Set\(\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"\]\);/.test(panel));
+  // the tests it names exist
+  for (const rel of ['ui/webview/file-comments-filter.test.ts', 'tests/test_guide_files_filter.py']) {
+    assert.ok(filterNote.includes('`' + rel + '`'), 'the note names ' + rel);
+    assert.ok(fs.existsSync(path.join(REPO, rel)), rel + ' exists');
+  }
+});
+
+test('the UX paragraph names the filter beside Show changes inline, and the Tests section carries its bullet', () => {
+  assert.ok(surface.includes('**All · Comments · Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and the marks to one kind'));
+  assert.ok(surface.includes('Send to session is not narrowed'));
+  assert.ok(tests.includes('- The filter follow-on (2026-09-07): `ui/webview/file-comments-filter.test.ts`'));
 });

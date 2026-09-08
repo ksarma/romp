@@ -306,7 +306,7 @@ def _judge_usage_rows_held():
 # says what each component is; tests/test_chat_build_sig_inputs.py maps every read build_session
 # makes to one of them.
 _CHAT_SIG_LABELS = ("transcript", "states", "store", "hold", "archive", "episodes", "reg", "gone",
-                    "tasks", "todos", "cut", "note", "needs",
+                    "tasks", "todos", "pins", "cut", "note", "needs",
                     "live", "row", "clock", "backend", "ops", "limit", "retry", "bg", "watch", "stamp", "anchors",
                     "downtime", "names", "flags", "ncards", "colormap", "acct", "cleared", "host",
                     "cwd", "claudemd", "fork",
@@ -5656,7 +5656,12 @@ def _prune_notify_cards(live_ids):
 # A need a session registers with the person it works for — a decision, input, or action only they
 # can provide — held open while the agent keeps working on whatever else it can. user-todos.json
 # under STATE maps sid → a list of records; resolution STAMPS (`resolved: {kind, t}`, kind one of
-# answered / dismissed / withdrawn) rather than deletes, so a record carries its own history.
+# answered / dismissed / withdrawn) rather than deletes, so a record carries its own history. A
+# record may name the FILE it is about (`file`, an absolute path on this kernel's disk, resolved at
+# filing — the todo-file follow-on, 2026-09-07; or the value AS GIVEN, with a warning on the filing
+# reply, when it could not be resolved — that value names no file): the Waiting-on-you chip opens it,
+# and a Send from the file's comments panel can answer the todo however the file was opened
+# (_user_todos_naming_file).
 # Exactly three events clear one — the user answers (the split card's Reply), the user dismisses,
 # the agent withdraws (the postal tool) — and NOTHING that reasons by inference may write this
 # store: no judge, no unblocker (grep-provable; test_user_todos.py pins that judge.py never names
@@ -5753,7 +5758,9 @@ def _write_user_todos(cur):
 # folds lines back into the store shape, so a recovery is one call instead of a transcript scrape.
 # Line shape: {"t", "sid", "id", "kind", "text", "detail"} plus "reply" on an answered line — the
 # DELIVERED answer text (the anchored "Re: <ask> — <reply>" body, or the merged tmux batch): the
-# stamp is delivery-keyed, and at a parked drain or a merged paste the body is all that exists.
+# stamp is delivery-keyed, and at a parked drain or a merged paste the body is all that exists —
+# plus "file" on every line of a todo that names one (as the store holds it), so a rebuilt store
+# keeps the link between the todo and its file.
 USER_TODOS_LOG_FILE = "user-todos-log.jsonl"
 _USER_TODOS_LOG_ROTATE_BYTES = 5 * 1024 * 1024
 
@@ -5771,11 +5778,14 @@ def _user_todos_log_write(line):
         f.write(line + "\n")
 
 
-def _log_user_todo_event(sid, tid, kind, text, detail="", reply=None):
+def _log_user_todo_event(sid, tid, kind, text, detail="", reply=None, file=None):
     """Append one lifecycle line. Called after the store write landed; a failure here is one loud
-    stderr line and nothing else — the todo operation already succeeded and must not unwind."""
+    stderr line and nothing else — the todo operation already succeeded and must not unwind.
+    `file` rides only when the todo names one: a file-less todo's line keeps the documented shape."""
     rec = {"t": int(time.time()), "sid": str(sid), "id": str(tid), "kind": str(kind),
            "text": str(text or ""), "detail": str(detail or "")}
+    if str(file or "").strip():
+        rec["file"] = str(file)
     if kind == "answered":
         rec["reply"] = str(reply or "")
     try:
@@ -5810,12 +5820,16 @@ def _user_todos_from_log(lines):
                 row = {"id": tid, "text": str(rec.get("text") or ""), "createdT": int(rec.get("t") or 0)}
                 if str(rec.get("detail") or "").strip():
                     row["detail"] = str(rec["detail"])
+                if str(rec.get("file") or "").strip():
+                    row["file"] = str(rec["file"])
                 rows.append(row)
         elif kind in ("answered", "dismissed", "withdrawn"):
             if hit is None:
                 hit = {"id": tid, "text": str(rec.get("text") or ""), "createdT": 0}
                 if str(rec.get("detail") or "").strip():
                     hit["detail"] = str(rec["detail"])
+                if str(rec.get("file") or "").strip():
+                    hit["file"] = str(rec["file"])
                 rows.append(hit)
             hit["resolved"] = {"kind": kind, "t": int(rec.get("t") or 0)}
         elif kind == "lost":
@@ -5824,10 +5838,147 @@ def _user_todos_from_log(lines):
     return {s: r for s, r in store.items() if r}
 
 
-def _add_user_todo(sid, text, detail=""):
-    """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
-    for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
-    optional longer context; empty means the short line carries it all and no key is stored."""
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")   # `scheme://` — a URL, not a path
+
+try:
+    # The longest path string the OS takes, its terminator counted (PATH_MAX: 4096 on Linux, 1024 on
+    # macOS). A spelling that long or longer is ENAMETOOLONG to lstat and open alike, so no probe of it
+    # can answer and no file bears it — what _normpath_keeping_links and _user_todo_file key on.
+    _PATH_MAX = int(os.pathconf(os.sep, "PC_PATH_MAX"))
+except (OSError, ValueError, AttributeError):
+    _PATH_MAX = 4096
+
+
+def _is_dir_link(p):
+    """Is `p` a symlink whose target is a directory — the one shape of link the OS walks `..` THROUGH.
+    islink is true of a link to a FILE, and of a dangling one, too — but `link/..` is ENOTDIR (ENOENT)
+    to the OS for those: that spelling opens nothing, so there is nothing to keep (the review,
+    2026-09-07: `fl/../x.md` with fl -> t.txt was stored as given and the chip opened nothing, while
+    realpath walked the `..` lexically and a Send from x.md offered the todo). Both probes swallow
+    OSError and ValueError."""
+    return os.path.islink(p) and os.path.isdir(p)
+
+
+def _normpath_keeping_links(p):
+    """os.path.normpath's cleanup of an ABSOLUTE spelling — `.` and doubled slashes dropped, `dir/..`
+    collapsed — except that a `..` right after a DIRECTORY symlink stays in the string. The OS walks
+    `link/..` through the link's TARGET, so the lexical collapse names a different file than the one the
+    spelling opens: with repo/docs-link -> vault/docs, `repo/docs-link/../notes/x.md` is vault/notes/x.md
+    on disk but repo/notes/x.md to normpath (the GitHub-link builder hit the same class and moved to
+    realpath). This keeps the spelling — the chip and the todo's row show the path the agent named, which
+    is why it is not realpath — while every `..` in it means what it means to the OS: realpath of the
+    result is the file the agent's spelling opens. A `..` above a kept one is kept too (`link/../..` is
+    two steps from the link's target); `/..` is `/`, as for normpath; a `..` after a link to a FILE, or a
+    dangling one, collapses as normpath collapses it (_is_dir_link: the OS opens nothing for that
+    spelling, so the lexical answer is the file the agent named).
+
+    The link probe needs the prefix as one string, and re-joining it for every `..` made the cost
+    quadratic in the spelling: a 180 KB `file` held the /usertodo handler thread, under the GIL, for 8 s
+    before the todo was written, past the postal bus's 2 s timeout, whose "try again" filed a duplicate
+    per retry (the review, 2026-09-07). The prefix's length is carried instead, and no prefix of
+    PATH_MAX or more is joined or probed: lstat refuses it (islink answers False either way), so the
+    result is unchanged and the work is linear in the spelling."""
+    out = []
+    n = 0                                            # len(os.sep + os.sep.join(out)), kept incrementally
+    for part in p.split(os.sep):
+        if part in ("", "."):
+            continue
+        if part != "..":
+            out.append(part)
+            n += len(part) + 1
+        elif out and out[-1] == "..":
+            out.append("..")                         # a step above a kept one: two steps from the target
+            n += 3
+        elif out and n < _PATH_MAX and _is_dir_link(os.sep + os.sep.join(out)):
+            out.append("..")                         # the OS resolves this step through the link: keep it
+            n += 3
+        elif out:
+            n -= len(out.pop()) + 1
+    return os.sep + os.sep.join(out)
+
+
+def _user_todo_file(value, sid):
+    """A todo's optional `file` as the store keeps it, and the warning the filing reply carries when it
+    did not resolve: (stored, warning). (None, None) when no file was given. The value is resolved the
+    way a click-to-open path is (_resolve_open_path: ~ expanded, a RELATIVE path against the session's
+    recorded cwd) and stored absolute and normalized — the spelling, not the realpath, so the chip and
+    the todo's row show the path the agent named (normalized by _normpath_keeping_links, so a `..` that
+    crosses a directory symlink still names the file the spelling opens); the comments panel matches by
+    realpath at status time (_user_todos_naming_file). A file:// URI — a spelling the tool's `text`
+    lists as linkable, and one the CLIENT converts before a clicked link reaches the kernel
+    (fileUriToPath), so nothing downstream of this store would — becomes its path here: scheme off,
+    percent-decoded, and it must carry an absolute path (file:///…), never joined onto the cwd as if
+    `file:` were a directory. RFC 8089's no-authority spelling, file:/…, is the same URI and converts the
+    same way (the review, 2026-09-07: it has no `://`, so it slipped past both the URI branch and the
+    URL check and was joined onto the cwd as `<cwd>/file:/…` — absolute, hence silently wrong). A value
+    that cannot become a path on this disk — a relative path for a session with no recorded cwd, a URI
+    without an absolute path, another URL scheme, a body value that is not a string, a spelling holding
+    a NUL byte (no path holds one, and Python 3.12's os.path.realpath RAISES on it rather than answering,
+    so a stored one is matched by nothing), a spelling still PATH_MAX or longer once normalized (no path
+    that long opens on this machine: ENAMETOOLONG) — is stored AS GIVEN with a warning that names the
+    reason; never a refusal: the todo is the person's to see, and a path that does not resolve is worth
+    a line in the tool's reply, not a lost todo (the todo-file follow-on, 2026-09-07). The NUL is checked
+    on the value AS GIVEN, before any resolution: os.path.expanduser hands a `~name` spelling's name to
+    pwd.getpwnam, which raises ValueError on an embedded NUL, and a check on the converted spelling alone
+    never saw `~\\0/x.md` — the route answered 500 and filed nothing (the review, 2026-09-07). The words
+    of every warning reach the agent verbatim (the postal tool appends them to its reply), so they name
+    the object a todo, never by a word CONTEXT.md's User todo entry avoids."""
+    if value is None:
+        return None, None
+    opens = "so the person can open it from the todo and their comments on it can answer the todo"
+    if not isinstance(value, str):                   # a hand-built POST: not a path, so not resolved
+        raw = str(value)
+        return raw, ("the file value %s is not a path string, so it was kept as given; pass the file's "
+                     "absolute path as a string %s" % (raw, opens))
+    raw = value.strip()
+    if not raw:
+        return None, None
+    tail = "so it was kept as given; pass the file's absolute path " + opens
+    if "\x00" in raw:
+        p = raw                                      # never resolved: the check below names the byte
+    elif raw[:5].lower() == "file:":
+        # file:///x (an empty authority, the client's own spelling) and file:/x (no authority, RFC 8089)
+        # both name /x; file://host/x and file://docs/x carry no local absolute path
+        rest = raw[5:]
+        p = unquote(rest[2:] if rest[:2] == "//" else rest)
+        if not os.path.isabs(p):
+            return raw, ("the file path %s did not resolve to an absolute path (a file:// URI must carry "
+                         "the absolute path, as file:///…), %s" % (raw, tail))
+    elif _URL_SCHEME_RE.match(raw):
+        return raw, ("the file path %s did not resolve to an absolute path (it is a URL, not a path on "
+                     "this machine's disk), %s" % (raw, tail))
+    else:
+        p = _resolve_open_path(raw, sid)
+    if "\x00" in p:
+        # checked on the converted spelling, so a percent-encoded %00 in a URI is caught too; shown with
+        # the byte spelled out, since a NUL in the reply's text is invisible
+        return raw, ("the file path %s did not resolve to a path on this machine's disk (it holds a NUL "
+                     "byte, which no path can), %s" % (raw.replace("\x00", "\\0"), tail))
+    if os.path.isabs(p):
+        p = _normpath_keeping_links(p)
+        if len(p) >= _PATH_MAX:
+            # shown by its head and its length: a spelling this long repeated whole is the reply
+            return raw, ("the file path %s… (%d characters) did not resolve to a path on this machine's disk "
+                         "(no path longer than %d characters opens here), %s"
+                         % (raw[:60], len(raw), _PATH_MAX - 1, tail))
+        return p, None
+    return raw, ("the file path %s did not resolve to an absolute path (it is relative and no working "
+                 "directory is recorded for this session), %s" % (raw, tail))
+
+
+def _register_user_todo(sid, text, detail="", file=None):
+    """Register a user todo for `sid`: (tid, stored, warning) — the minted id ("ut-" + 8 hex, the
+    agent's handle for withdraw_user_todo, so it must never collide within the session's list), the
+    `file` as the record keeps it (None when none was given), and the warning an unresolved one earns,
+    all from the ONE resolution (_user_todo_file) the record was written from. The /usertodo route
+    answers from this triple and never resolves again: a second resolution for the reply re-read the
+    session's cwd from the names registry, and a cwd that became known between the two reads (a
+    comment thread promoted while its todo was filing) stored the relative spelling — which no Send
+    can ever match — while the reply carried no warning, so the agent was never told to pass the
+    absolute path; the reverse order stored the absolute path and warned falsely (the review,
+    2026-09-07). `detail` is the optional longer context; empty means the short line carries it all
+    and no key is stored."""
+    stored, warning = _user_todo_file(file, sid)
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
         cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
@@ -5838,11 +5989,19 @@ def _add_user_todo(sid, text, detail=""):
         rec = {"id": tid, "text": str(text), "createdT": int(time.time())}
         if str(detail or "").strip():
             rec["detail"] = str(detail)
+        if stored:
+            rec["file"] = stored
         lst.append(rec)
         cur[sid] = lst
         _write_user_todos(cur)
-        _log_user_todo_event(sid, tid, "filed", rec["text"], rec.get("detail", ""))   # after the store landed
-    return tid
+        _log_user_todo_event(sid, tid, "filed", rec["text"], rec.get("detail", ""),   # after the store landed
+                             file=rec.get("file"))
+    return tid, rec.get("file"), warning
+
+
+def _add_user_todo(sid, text, detail="", file=None):
+    """_register_user_todo's minted id alone — the form every in-process filer uses."""
+    return _register_user_todo(sid, text, detail, file)[0]
 
 
 # Per-sid bound on RESOLVED rows (round 2, 2026-08-22): on a self-hosted box sessions live for
@@ -5896,7 +6055,8 @@ def _resolve_user_todo(sid, tid, kind, reply=None):
             lst = [t for i, t in enumerate(lst) if i not in drop]
         cur[sid] = lst
         _write_user_todos(cur)
-        _log_user_todo_event(sid, tid, str(kind), hit.get("text"), hit.get("detail", ""), reply=reply)
+        _log_user_todo_event(sid, tid, str(kind), hit.get("text"), hit.get("detail", ""), reply=reply,
+                             file=hit.get("file"))
     return True
 
 
@@ -5963,13 +6123,15 @@ def _reopen_user_todo(sid, tid):
         del hit["resolved"]
         cur[sid] = lst
         _write_user_todos(cur)
-        _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""))   # the answer never arrived
+        _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""),   # the answer never arrived
+                             file=hit.get("file"))
     return True
 
 
 def _open_user_todos(sid):
     """The still-open todos for one session, oldest first — the exact shape the chat payload ships
-    (id, text, createdT, optional detail). STORE VALUES ONLY: this rides the dedup-compared chat
+    (id, text, createdT, optional detail, optional file — the absolute path of the file the todo is
+    about, as filed). STORE VALUES ONLY: this rides the dedup-compared chat
     payload, so a derived per-build value here (an age, a `now`) would defeat _send_client's
     serialized-payload dedup and re-send the full chat every push — the firstSeen lesson.
 
@@ -5987,8 +6149,52 @@ def _open_user_todos(sid):
         rec = {"id": str(t["id"]), "text": str(t.get("text") or ""), "createdT": t.get("createdT") or 0}
         if str(t.get("detail") or "").strip():
             rec["detail"] = str(t["detail"])
+        if str(t.get("file") or "").strip():
+            rec["file"] = str(t["file"])
         out.append(rec)
     out.sort(key=lambda t: (t["createdT"], t["id"]))
+    return out
+
+
+def _user_todos_naming_file(sid, real):
+    """The OPEN user todos of `sid` that name the file at `real` — an absolute REAL path, the one
+    _file_comments_path resolved a comments request to — as [{id, text}], oldest first: what the
+    comments panel's Send confirm offers to answer, however the file was opened (the todo-file
+    follow-on, 2026-09-07). Matched on the structured `file` alone, by realpath, so a symlinked
+    spelling on either side still names the same file; a todo whose file lives only in its detail is
+    not matched here (it still answers through the opened-from-link path, the client's own todoId).
+    Settled todos never appear (_open_user_todos), nor another session's, nor one without `file`;
+    [] with no sid, and [] while the user-todos switch is off (the same read answers [] then).
+
+    A `file` the store kept AS GIVEN — a relative path, filed while the session had no recorded cwd
+    (_user_todo_file) — names no file here, ever: the filing reply told the agent as much (pass the
+    absolute path "so ... their comments on it can answer the todo"), and a Send that answers a todo is
+    a stamp, so the match is made on the path the kernel resolved at filing or not at all. Never
+    realpath'd bare: Python resolves a relative string against the kernel PROCESS's cwd, which listed
+    the todo on an unrelated file that happened to sit at that relative path under the kernel's own
+    directory (the review, 2026-09-07). The chip's click still resolves the same string against the
+    session's cwd of the moment (the /file route's best effort at opening); opening a file and stamping
+    a todo are held to different standards on purpose. A spelling of PATH_MAX or more is kept as given
+    the same way (no file bears it) and skipped here for the same reason, and for one more: realpath
+    walks it one lstat per component on the growing prefix — quadratic, on every comments reply of the
+    session — to answer with a lexical collapse the chip cannot open."""
+    if not sid or not real:
+        return []
+    out = []
+    for t in _open_user_todos(str(sid)):
+        f = str(t.get("file") or "")
+        if not f or not os.path.isabs(f) or len(f) >= _PATH_MAX:
+            continue
+        try:
+            same = os.path.realpath(f) == real
+        except (OSError, ValueError):
+            # ValueError: a stored spelling holding a NUL byte — absolute to isabs, kept as given and
+            # warned about at filing (_user_todo_file), and realpath under 3.12 raises on it. One such
+            # todo must not fail every comments reply of its session (this loop runs on each), so the
+            # arm stays: narrowing it to OSError breaks the panel for the whole session.
+            same = False
+        if same:
+            out.append({"id": t["id"], "text": t["text"]})
     return out
 
 
@@ -6056,6 +6262,234 @@ def _user_todo_fp(sid):
     # the switch (2026-09-03) folds in too: a flip changes the split card with NO store write, and a
     # sid-less prefix keeps the fold byte-stable across builds while the switch holds
     return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
+
+
+# ── pinned notes (the user 2026-09-08) ────────────────────────────────────────────────────────────
+# A short note a session pins above its own transcript for the person it works for: what they should
+# see first whenever they open it (where things stand, a warning, a summary). pinned-notes.json under
+# STATE maps sid → a list of records {id, text, detail?, createdT}, oldest first, PINNED_NOTES_MAX per
+# session; a pin past the bound drops the OLDEST (the newest is what the session just decided the
+# person should see). Two events change a list: the session pins (POST /pinnote, from the postal bus's
+# pin_note) and someone unpins (POST /unpinnote from unpin_note, or the strip's own control through the
+# unpinNote drive op); every door lands on _pin_note / _unpin_note, and nothing else writes the store.
+# The rows ride build_session's `pinnedNotes` field and every chatTail (the userTodos seam's shape), and
+# _chat_build_sig folds _pinned_notes_fp so a background tab's cached chat repaints on the next push.
+# Same mtime+size cache, not-a-store guard, lock and atomic publish as the user-todo store above; the
+# records are sid-keyed like it, so they survive a kernel restart and a session's revival.
+PINNED_NOTES_FILE = "pinned-notes.json"
+PINNED_NOTES_MAX = 8
+# The bounds on one note (review round 1, 2026-09-08): the rows ride build_session's payload and EVERY
+# chatTail for the session, so an unbounded text or detail would ride every delta frame. The postal tool
+# refuses over-long input before posting (its copy of these two numbers is pinned equal by test); the
+# route refuses it again with a 400 that names the bound.
+PINNED_TEXT_MAX = 300
+PINNED_DETAIL_MAX = 4000
+# An unpinned note leaves a tombstone ({"id", "unpinnedT"[, "dropped"]}) in the session's list, so a second
+# unpin of the same id is told "already unpinned" (the withdraw route's #325 shape: a met need is not the
+# caller's error) while an id that was never this session's stays a loud refusal. Bounded per sid.
+PINNED_TOMBSTONES_MAX = 16
+# The cleaner the kernel and the postal tool share (the tool carries an identical copy, since the bus imports
+# nothing from the kernel; tests/test_pinned_notes.py pins the two sources equal): a pasted terminal line
+# arrives with escape sequences, and dropping only the control bytes left their parameters as the note
+# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So every escape sequence goes WHOLE first, then the
+# remaining control characters. The families (ECMA-48), each with its 8-bit C1 introducer: CSI (ESC [ or
+# U+009B; parameters, intermediates, one final byte: colours, cursor moves, erases); OSC (ESC ] or U+009D, to
+# BEL or ST: a hyperlink, a window title); DCS, SOS, PM and APC (ESC P, X, ^, _ or U+0090, 98, 9E, 9F, to ST:
+# sixel data, terminal replies); any other ESC with its intermediates and one final byte (ESC ( B, ESC =, ESC 7).
+# ST is ESC \ or U+009C. A string never crosses a line break: one with no terminator on its line is cut back to
+# its introducer, its body stays as text, and the next line is never swallowed. Review round 3, 2026-09-08: the
+# cleaner knew CSI only, so OSC, DCS and two-byte sequences left their bodies in the note (a hyperlink's URL
+# fused onto its path) and the 8-bit forms went untouched.
+_PINNED_ANSI_RE = re.compile(
+    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"                                  # CSI, whole
+    r"|(?:\x1b\]|\x9d)[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)"             # OSC, to BEL or ST
+    r"|(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^\x1b\x9c\n]*(?:\x1b\\|\x9c)"    # DCS, SOS, PM, APC, to ST
+    r"|\x1b[ -/]*[0-~]")                                                 # any other ESC sequence: intermediates, one final byte
+_PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")   # control characters (C0, DEL, the 8-bit C1 set), except newline and tab
+
+
+def _pinned_note_clean(s):
+    """A note's text or detail as stored: ANSI escape sequences dropped whole, then control characters
+    (a NUL, a stray ESC) except newline and tab, then the surrounding whitespace. A value that is nothing
+    but those cleans to "", which is refused as a blank is."""
+    return _PINNED_CTRL_RE.sub("", _PINNED_ANSI_RE.sub("", str(s or ""))).strip()
+
+
+class PinnedNotesUnreadable(RuntimeError):
+    """The store file on disk is not a store (see _pinned_notes), so a write was refused and nothing
+    changed. A route answers it as an account naming the fault (state "unreadable", the unpin side's
+    shape), never a 500 with a traceback the tool folds into "try again shortly" (review round 2,
+    2026-09-08: a retry does nothing until the file is fixed)."""
+_pinned_notes_cache = {}   # str(path) -> ((mtime_ns,size), dict)
+_pinned_notes_bad = {}     # str(path) -> (mtime_ns,size) of a file VERSION that is not a store (read as empty, loudly)
+_pinned_notes_lock = threading.RLock()   # every read-modify-write below holds it: routes, drive ops and the
+#                                          pusher read the same file, and an unlocked pair of pins loses one
+
+
+def _pinned_notes():
+    """The store, mtime+size cached. A file that is not sid → list of records (the user-todo store's
+    shape, _user_todo_store_shaped) reads as EMPTY, says so on stderr once per file version, and pins
+    that version in _pinned_notes_bad so _write_pinned_notes refuses to replace it: fail loudly, never
+    silently overwrite someone's notes."""
+    p = jd.STATE / PINNED_NOTES_FILE
+    try:
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _pinned_notes_bad.pop(str(p), None)          # the file is gone: nothing is flagged any more
+        return {}
+    hit = _pinned_notes_cache.get(str(p))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        d = json.loads(p.read_text())
+        found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
+    except Exception as e:
+        d, found = None, "unparsable JSON (%s)" % e
+    if not _user_todo_store_shaped(d):
+        if _pinned_notes_bad.get(str(p)) != key:
+            _pinned_notes_bad[str(p)] = key
+            sys.stderr.write("pinned-notes: %s is not a pinned-notes store (top-level keys must be session "
+                             "ids, each mapping to a list of records; found: %s). Reading it as EMPTY and "
+                             "refusing to overwrite it until it is fixed or removed.\n" % (p, found or "<empty object>"))
+        d = {}
+    else:
+        _pinned_notes_bad.pop(str(p), None)
+    _pinned_notes_cache[str(p)] = (key, d)
+    return d
+
+
+def _write_pinned_notes(cur):
+    """Publish the store. REFUSES (PinnedNotesUnreadable, a RuntimeError, loud) while the file on disk is
+    still the version _pinned_notes flagged as not-a-store: every writer copies the (empty) read and would
+    otherwise replace the unreadable file with a one-row one."""
+    p = jd.STATE / PINNED_NOTES_FILE
+    bad = _pinned_notes_bad.get(str(p))
+    if bad is not None:
+        try:
+            st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None                               # the file is gone: nothing left to protect
+        if key == bad:
+            sys.stderr.write("pinned-notes: refusing to overwrite %s: it is not a pinned-notes store (see the "
+                             "earlier line). Fix or remove the file first.\n" % p)
+            raise PinnedNotesUnreadable("the pinned-notes store (%s) is not readable; nothing changed" % p)
+    _atomic_write(p, json.dumps(cur, sort_keys=True))
+
+
+def _pinned_note_rows(cur, sid):
+    """One session's LIVE records as fresh dict copies, oldest first (createdT; file order for ties).
+    Tombstones (_pinned_tombstones) are not rows: nothing that ships to a client or a tool sees them."""
+    rows = [dict(t) for t in cur.get(str(sid)) or [] if isinstance(t, dict) and t.get("id") and not t.get("unpinnedT")]
+    rows.sort(key=lambda t: int(t.get("createdT") or 0))
+    return rows
+
+
+def _pinned_tombstones(cur, sid):
+    """One session's unpinned-note records, in file order (oldest unpin first)."""
+    return [dict(t) for t in cur.get(str(sid)) or [] if isinstance(t, dict) and t.get("id") and t.get("unpinnedT")]
+
+
+def _pinned_notes_unreadable():
+    """True while the store file on disk is the version _pinned_notes flagged as not-a-store (it reads as
+    EMPTY, once loudly on stderr). A reader that would otherwise conclude "no note of yours" from that
+    empty read names the store fault instead (fail loudly, never a wrong plain answer)."""
+    _pinned_notes()                                  # refresh the flag against the current file version
+    return str(jd.STATE / PINNED_NOTES_FILE) in _pinned_notes_bad
+
+
+def _pin_note(sid, text, detail=""):
+    """Pin a note above `sid`'s transcript. Returns (the minted id, "pn-" + 8 hex, unique within the
+    session's list; the list after the pin, oldest first; the records the bound evicted, oldest first,
+    usually none). `detail` is the optional longer text; empty means the line carries it all and no key
+    is stored. Past PINNED_NOTES_MAX the oldest notes go, each leaving a tombstone marked dropped so a
+    later unpin of its id is told what became of it. `sid` must be a session id (_safe_id): one row under
+    any other key would make the whole file read as not-a-store for every session. Raises
+    PinnedNotesUnreadable (from the write) while the store file is not a store: the route answers the
+    fault by name."""
+    sid = str(sid)
+    if not _safe_id(sid):
+        raise ValueError("pinned-notes: %r is not a session id" % sid[:80])
+    with _pinned_notes_lock:                         # full read-modify-write under the lock (copy: never
+        cur = dict(_pinned_notes())                  # mutate the cached dict in place)
+        lst = _pinned_note_rows(cur, sid)
+        tombs = _pinned_tombstones(cur, sid)
+        taken = {t.get("id") for t in lst} | {t.get("id") for t in tombs}
+        nid = "pn-" + uuid.uuid4().hex[:8]
+        while nid in taken:
+            nid = "pn-" + uuid.uuid4().hex[:8]
+        now = int(time.time())
+        rec = {"id": nid, "text": str(text), "createdT": now}
+        if str(detail or "").strip():
+            rec["detail"] = str(detail)
+        lst.append(rec)
+        dropped = lst[:-PINNED_NOTES_MAX]
+        lst = lst[-PINNED_NOTES_MAX:]
+        tombs += [{"id": t["id"], "unpinnedT": now, "dropped": True} for t in dropped]
+        cur[sid] = lst + tombs[-PINNED_TOMBSTONES_MAX:]
+        _write_pinned_notes(cur)
+    return nid, lst, dropped
+
+
+def _unpin_note(sid, nid):
+    """Take down one of `sid`'s notes by id. The account, the withdraw route's shape: `ok` means THIS call
+    took the note down; `state` says what the id is to this session: "unpinned" (now), "already" (a note
+    of its own, taken down before; `at` is when, and `dropped` True when the bound evicted it rather than
+    an unpin), "unknown" (never this session's: another session's id, or one it never held; the store is
+    sid-keyed, so a session can only ever reach its own rows), or "unreadable" (the store file is not a
+    store, so nothing can be said about the id; `error` names the fault). "already" is a plain answer for
+    the caller, not a failure (the #325 lesson: two sessions read a plain "already closed" as an error and
+    folded a met need into a failure path); "unknown" and "unreadable" are LOUD. `notes` is the live list
+    either way, so the caller sees what the person sees."""
+    sid, nid = str(sid), str(nid)
+    with _pinned_notes_lock:
+        if _pinned_notes_unreadable():
+            return {"ok": False, "state": "unreadable", "notes": [],
+                    "error": "the pinned-notes store (%s) is not readable; nothing changed" % (jd.STATE / PINNED_NOTES_FILE)}
+        cur = dict(_pinned_notes())
+        lst = _pinned_note_rows(cur, sid)
+        tombs = _pinned_tombstones(cur, sid)
+        keep = [t for t in lst if t.get("id") != nid]
+        if len(keep) == len(lst):
+            gone = next((t for t in tombs if t.get("id") == nid), None)
+            if gone is None:
+                return {"ok": False, "state": "unknown", "error": "no pinned note of yours with that id", "notes": lst}
+            return {"ok": False, "state": "already", "at": gone.get("unpinnedT"), "dropped": bool(gone.get("dropped")),
+                    "error": "already unpinned", "notes": lst}
+        tombs.append({"id": nid, "unpinnedT": int(time.time())})
+        cur[sid] = keep + tombs[-PINNED_TOMBSTONES_MAX:]
+        _write_pinned_notes(cur)
+    return {"ok": True, "state": "unpinned", "notes": keep}
+
+
+def _pinned_notes_for(sid):
+    """The session's pinned notes, oldest first: build_session's `pinnedNotes` field and the chatTail's.
+    Fixed store values only (the firstSeen lesson): this rides the dedup-compared payload, so nothing
+    here may tick with the clock. Shown whatever the session's liveness: a note on a closed session's
+    read-only transcript is still the first thing to read there."""
+    return _pinned_note_rows(_pinned_notes(), sid)
+
+
+def _pinned_notes_fp(sid):
+    """The chat-build-sig fold for one sid (the _user_todo_fp shape): a pin or an unpin changes the
+    payload with NO transcript write, so without this a background tab's cached chat kept the old
+    strip until the file next changed. Cheap: the mtime-cached dict and a handful of rows."""
+    rows = _pinned_notes().get(str(sid))
+    return json.dumps(rows, sort_keys=True) if rows else ""
+
+
+def _remote_no_answer_why(r, st, route):
+    """One line saying why a forwarded control call got no usable answer from the remote kernel (the
+    /usertodo/withdraw, /pinnote and /unpinnote routes share it), by status: 0 a dead tunnel (the redial
+    is already demanded), 404 a remote kernel that predates the route (version skew), any other non-200
+    its HTTP status, a 200 a body this kernel cannot read."""
+    host = r.get("host") or "that host"
+    if st == 0:
+        return "the tunnel to %s is not answering (re-dialing)" % host
+    if st == 404:
+        return "the kernel on %s predates %s: update romp there and restart it" % (host, route)
+    if st != 200:
+        return "the kernel on %s answered HTTP %d" % (host, st)
+    return "the kernel on %s answered a body that is not JSON" % host
 
 
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
@@ -6171,7 +6605,10 @@ def _user_todo_context_block(sid):
         text = _neutralize_romp_markers(str(t.get("text") or "").strip()) or "(untitled)"
         ct = int(t.get("createdT") or 0)
         when = (", opened " + time.strftime("%Y-%m-%d", time.localtime(ct))) if ct else ""
-        lines.append("- %s (%s%s)" % (text, t["id"], when))
+        # the file the todo names, after the text (the todo-file follow-on, 2026-09-07): the agent's
+        # own path, marker-neutralized like the text, so it can find the file it asked about
+        fpath = _neutralize_romp_markers(str(t.get("file") or "").strip())
+        lines.append("- %s (%s%s)%s" % (text, t["id"], when, (" — file: %s" % fpath) if fpath else ""))
     if len(rows) > _USER_TODO_CONTEXT_CAP:
         lines.append("- …and %d more from earlier" % (len(rows) - _USER_TODO_CONTEXT_CAP))
     lines += ["", "If one is met or moot now, withdraw it (withdraw_user_todo); otherwise "
@@ -15301,7 +15738,7 @@ def _drive(msg, client):
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
               "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
-              "userTodoAnswer", "userTodoDismiss", "commentMerge")
+              "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
@@ -15617,6 +16054,18 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn",
                                        "text": "That request was already settled — the agent withdrew "
                                                "it, or it was answered moments ago."}))
+        _push_soon()
+    elif t == "unpinNote" and msg.get("noteId"):
+        # the person takes a pinned note down from the strip above the transcript (the user
+        # 2026-09-08): the same _unpin_note the postal tool's /unpinnote route lands on. LOUD when the
+        # id is gone already (the session unpinned it, or a second click on a removed row).
+        acct = _unpin_note(sid, str(msg["noteId"]))
+        if not acct.get("ok"):
+            state = acct.get("state")
+            text = ("That note was already unpinned." if state == "already"
+                    else "Couldn't unpin it: %s." % acct.get("error") if state == "unreadable"
+                    else "No such note is pinned on this session.")
+            client["send"](json.dumps({"type": "warn", "text": text}))
         _push_soon()
     elif t == "mcpAction" and msg.get("server"):
         # enable / disable / reconnect ONE MCP server (SDK control requests). The panel refetches after,
@@ -26365,6 +26814,7 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     # stat here made every session's write rebuild every tab once, extra load the register route's
     # postal caller then waited behind.
     sig.append(_user_todo_fp(sess.get("sid") or ""))
+    sig.append(_pinned_notes_fp(sess.get("sid") or ""))   # a pin / unpin (the user 2026-09-08): the same no-transcript-write class, folded per sid
     # a pending DELETE rollback changes the payload with NO transcript write (the parse-cache lesson,
     # one level up): without this a BACKGROUND tab's cached, uncut payload keeps pushing the deleted
     # tail until the file next changes. Cheap: live SDK sessions answer from memory, no I/O.
@@ -31259,6 +31709,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
             # only), and a later slice's tab glyph derives from this field. Fixed store values only:
             # like firstSeen below, this rides the dedup-compared payload — NEVER a per-build value.
             "userTodos": _user_todos_open,
+            # pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript reads
+            # this field; it rides every chatTail too (_send_chat), so a caught-up client hears of a pin
+            # with no event change. Fixed store values only, like userTodos above.
+            "pinnedNotes": _pinned_notes_for(sid),
             # NEVER `now`. This rides the chat payload, and _send_client dedups by comparing the
             # SERIALIZED payload against what that client last received — so a firstSeen that ticked
             # with the wall clock made every build differ, defeated the dedup entirely, and re-sent the
@@ -33685,7 +34139,8 @@ def build_feed(now, tmux=None):
             # when nothing changed (_send_client dedups on the bytes — the firstSeen lesson).
             "userTodos": {k: _ut_map[k] for k in sorted(_ut_map)},
             # the same open todos as ROWS for the "Waiting on you" pane (ui/webview/waiting.ts): one
-            # {sid, name, color, todos:[{id, text, createdT, detail?}]} per session with open todos,
+            # {sid, name, color, todos:[{id, text, createdT, detail?, file?}]} per session with open todos
+            # (`file`: the absolute path the todo names, the pane's file chip — the todo-file follow-on),
             # sorted by sid — store values only (no ages, no `now`), so the bytes hold across builds
             # when nothing changed. Rides _feed_parts' `rest` → a delta client gets it under `top`;
             # federation prefixes each row's sid+name (OBJ_SID) and concatenates across hosts.
@@ -38347,7 +38802,8 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
                 # unconditionally is dedup-safe — store values only, byte-stable when unchanged —
                 # where a changed-only attach would need per-client prev tracking to save a few
                 # bytes of small rows.
-                "userTodos": m.get("userTodos") or []}
+                "userTodos": m.get("userTodos") or [],
+                "pinnedNotes": m.get("pinnedNotes") or []}   # the same seam for the pinned-notes strip (2026-09-08)
         if led_changed:                               # the TOC only changed on a judge pass → usually omitted
             tail["ledger"] = m.get("ledger")
         _send_client(c, ("chat", sid), tail, kind="delta")   # the chat's delta form, for /perf's sends split
@@ -39295,7 +39751,10 @@ def _save_dropped_file(name, b64):
 def _resolve_open_path(p, sid=None):
     """Resolve a click-to-open path to an absolute one: expand ~, and resolve a RELATIVE path against the
     SESSION's cwd — a linkified `design/foo.md` is relative to the repo the agent runs in, NOT the kernel's
-    launch cwd (the user 2026-07-06). An absolute path (incl. a file:// caption link) passes through. Best
+    launch cwd (the user 2026-07-06). An absolute path passes through — a clicked file:// caption link
+    arrives as one, because the CLIENT strips the scheme before posting the path (fileUriToPath); a URI
+    handed to the kernel unconverted is not absolute and would be joined onto the cwd like any relative
+    spelling, so a route that takes a path from an agent converts it first (_user_todo_file). Best
     effort: unknown sid / no cwd leaves a relative path as-is."""
     p = os.path.expanduser(str(p))
     if not os.path.isabs(p) and sid:
@@ -39805,6 +40264,12 @@ def _file_comments_call(path, verb, args=None, fence=None):
     except ValueError:
         return None, ("host-error", "the comments helper answered with something other than one JSON "
                                     "object for %s%s" % (_tilde(path), _file_comments_tail(err_b or stdout)))
+    if err_b:
+        # What the host said on stderr while it answered: a refresh that kept positions past its budget
+        # (refreshAnchorAts), an unreadable log line skipped, a figure it could not hash. The reply carries
+        # none of the first, and only a FAILED call put the tail in its error, so a successful write that
+        # left positions stale said so to nobody (the review, 2026-09-08). Logged, bounded like that tail.
+        sys.stderr.write("file-comments %s on %s%s\n" % (verb, _tilde(path), _file_comments_tail(err_b)))
     if not out.get("ok"):
         return out, (str(out.get("code") or "host-error"),
                      str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
@@ -39898,6 +40363,12 @@ def _file_comments_op(msg):
         return fail(code, error)
     rep = {k: v for k, v in out.items() if k != "ok"}
     rep.update({"type": "fileCommentsResult", "reqId": rid, "verb": verb})
+    # the open user todos of the request's session that name this file, [{id, text}] (the todo-file
+    # follow-on, 2026-09-07): what the panel's Send confirm offers to answer, however the file was opened.
+    # On EVERY successful reply, not the status verb's alone: the panel takes each verb's reply as its
+    # current status (applyStatus), so a list that rode the status verb only would vanish from the model
+    # at the first comment. Settled todos are not listed, so an answered one leaves at the next reply.
+    rep["todos"] = _user_todos_naming_file(msg.get("sid"), p)
     return rep
 
 
@@ -39934,7 +40405,10 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
     {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
-    (on "<passage>", on this file, on the region at …); `body` is the comment's unsent turns
+    (on "<passage>" — for a passage the host widened because it recurs, followed by the copy's
+    surroundings, `, the one after "…" and before "…"`, or past the model's bound by the short clause
+    that it appears more than once (file-comments-model.ts passageDesc); on this file; on the region
+    at …); `body` is the comment's unsent turns
     verbatim. The path and every request-supplied string are marker-neutralized; on the two command
     lines the path is then one shell word (_sh_word), in the prose it stays plain. The second
     "To respond" bullet depends on the file: track-edit for a TRACKED text file, edit-normally for
@@ -44258,6 +44732,9 @@ def _chat_body():
     return ('<div id="winframe"></div><div id="tabbar"><span id="tabs"></span></div>'
             '<div id="tabbar-resize" title="Drag to resize the tab strip"></div>'
             '<div id="ledger" style="display:none"></div>'
+            # pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript; MUST mirror
+            # vscode-extension/src/page-skeleton.ts (pinned by ui/webview/pinned-notes.test.ts)
+            '<div id="pinned-notes" style="display:none"></div>'
             # the live-ask picker lives INSIDE #content (the user 2026-06-27) so it flows at the bottom of the
             # transcript and scrolls WITH the chat history, instead of a fixed mini-window below it.
             '<div id="content"><div id="live-ask" style="display:none"></div></div>'
@@ -49799,10 +50276,21 @@ class Handler(BaseHTTPRequestHandler):
                 # Register a USER TODO — a need the session flags with the person it works for while
                 # it keeps working (plans/user-todos.md). The postal bus's add_user_todo posts here
                 # the way set_working posts /working. Body: {"id": <sid>, "text": <one short line>,
-                # "detail"?: <longer context>} → {"ok": true, "todoId": "ut-…"}. Only answer /
+                # "detail"?: <longer context>, "file"?: <path of the file it is about>} → {"ok": true,
+                # "todoId": "ut-…", "warning"?: <the file path did not resolve>}. Only answer /
                 # dismiss / withdraw ever clear it (the authority tier, docs/adr/0001) — no judge
                 # writes this store. Like the other postal-called routes, the body is shape-validated
                 # and the sid's existence is not (the house style: be honest about outcomes instead).
+                # `file` (the todo-file follow-on, 2026-09-07) is resolved against the session's cwd
+                # and stored absolute (_user_todo_file: a file:// URI becomes its path); a value that
+                # does not resolve — a relative path with no cwd to join, a URL, a body value that is
+                # not a string (handed on AS IS, not str()'d, so the helper can name the shape; a falsy
+                # one — 0, false, [], {} — no differently from a truthy one: `fraw or None` once dropped
+                # it while the reply said it was kept, the review 2026-09-07) — is kept as given and
+                # named in `warning`. The
+                # todo is filed either way, never refused for its file. The reply echoes `file` as the
+                # record keeps it, from the same resolution (_register_user_todo) — never a second one,
+                # which could read a different cwd and describe a store the filing did not make.
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -49818,19 +50306,51 @@ class Handler(BaseHTTPRequestHandler):
                     # the bus asked, before any forward: the switch is per machine, and the remote
                     # kernel's own copy of this route applies its own answer to a forwarded ask.
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
+                fraw = body.get("file")
+                if isinstance(fraw, str):
+                    fraw = fraw.strip() or None                     # absent, null and blank all mean: no file
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    res = _remote_forward(r, "/usertodo", {"id": sid, "text": text,
-                                                           "detail": str(body.get("detail") or "")})
+                    fwd = {"id": sid, "text": text, "detail": str(body.get("detail") or "")}
+                    if fraw is not None:
+                        fwd["file"] = fraw                          # the remote kernel resolves it against ITS disk
+                    res = _remote_forward(r, "/usertodo", fwd)
                     tid = str((res or {}).get("todoId") or "")
-                    return self._send(200, json.dumps({"ok": bool(tid), "todoId": tid}), "application/json")
-                tid = _add_user_todo(sid, text, str(body.get("detail") or ""))
+                    out = {"ok": bool(tid), "todoId": tid}
+                    if isinstance(res, dict):
+                        if res.get("file"):
+                            out["file"] = str(res["file"])          # the path as the remote's record keeps it
+                        if res.get("warning"):
+                            out["warning"] = str(res["warning"])    # the remote's account of an unresolved path
+                        elif "file" in fwd and tid and "file" not in res:
+                            # Version skew (the review, 2026-09-07): a kernel that predates a todo's
+                            # file reads id/text/detail alone and answers {ok, todoId}, so the file was
+                            # neither stored there nor warned about — and a kernel that takes it echoes
+                            # `file` (or warns), so a reply with neither is the older route. Named here
+                            # rather than swallowed: the todo stands there without its file, and the
+                            # caller would otherwise hear plain success. Through the postal tool this
+                            # branch is out of reach (a session's tool posts to its own host's kernel,
+                            # whose GET /sessions lists local sessions only); API for any token holder.
+                            host = r.get("host") or "that host"
+                            out["warning"] = ("the file path %s was not recorded (the kernel on %s predates a "
+                                              "todo's file: update romp there and restart it); the todo stands "
+                                              "there without it, so name the path in its detail meanwhile"
+                                              % (fwd["file"], host))
+                            sys.stderr.write("user-todos: %s's file not recorded on %s: its kernel predates a "
+                                             "todo's file\n" % (sid[:8], host))
+                    return self._send(200, json.dumps(out), "application/json")
+                tid, stored, warning = _register_user_todo(sid, text, str(body.get("detail") or ""), file=fraw)
                 # ack-fast (the push-architecture rule, 2026-07-05): wake the pusher, never build the
                 # whole payload set synchronously on this handler thread — the postal bus times its
                 # POST out at 2s, so an inline _push_all here turned a SAVED todo into a loud false
                 # "will NOT see it — try again" at the agent, whose retry then filed a duplicate.
                 _push_soon()                                        # the split card shows the new row at once
-                return self._send(200, json.dumps({"ok": True, "todoId": tid}), "application/json")
+                out = {"ok": True, "todoId": tid}
+                if stored:
+                    out["file"] = stored                            # what the record carries — the same resolution
+                if warning:
+                    out["warning"] = warning
+                return self._send(200, json.dumps(out), "application/json")
             if u.path == "/usertodo/withdraw":
                 # The agent takes back its own todo, by id — the ONE agent-side clearing event. An
                 # unknown or already-cleared id answers ok:false and the tool surface says so LOUDLY:
@@ -49866,17 +50386,9 @@ class Handler(BaseHTTPRequestHandler):
                         # branch is out of reach (a session's tool posts to its own host's kernel, and
                         # GET /sessions lists that host's sessions only, so _host_for_sid is None
                         # there); the route is API for any token holder all the same.
-                        host = r.get("host") or "that host"
-                        if st == 0:
-                            why = "the tunnel to %s is not answering (re-dialing)" % host
-                        elif st == 404:
-                            why = "the kernel on %s predates /usertodo/withdraw: update romp there and restart it" % host
-                        elif st != 200:
-                            why = "the kernel on %s answered HTTP %d" % (host, st)
-                        else:
-                            why = "the kernel on %s answered a body that is not JSON" % host
+                        why = _remote_no_answer_why(r, st, "/usertodo/withdraw")
                         sys.stderr.write("user-todos: withdraw of %s for %s not forwarded: %s\n" % (tid, sid[:8], why))
-                        return self._send(502, json.dumps({"ok": False, "error": why, "host": host}),
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": r.get("host") or "that host"}),
                                           "application/json")
                     out = {"ok": bool(res.get("ok"))}
                     # the remote's account rides through when it gives one (its error too: the
@@ -49896,6 +50408,105 @@ class Handler(BaseHTTPRequestHandler):
                 #                                                     postal caller's 2s POST never waits
                 #                                                     behind a synchronous build of every
                 #                                                     session's payload
+                return self._send(200, json.dumps(acct), "application/json")
+            if u.path == "/pinnote":
+                # Pin a note above a session's transcript (the user 2026-09-08): the postal bus's pin_note
+                # posts here the way add_user_todo posts /usertodo. Body: {"id": <sid>, "text": <one short
+                # line>, "detail"?: <longer text>} → {"ok": true, "noteId": "pn-…", "notes": [the session's
+                # list after the pin, oldest first]}. Shape-validated; the sid's existence is not (the
+                # postal-called routes' house style). A remote session's pin is forwarded to the kernel that
+                # owns it, and a forward that lands nothing is a 502 saying why, never a 200 the tool would
+                # echo back as pinned.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                if not isinstance(body, dict):                      # a JSON string or list is a 400, never a traceback
+                    return self._send(400, json.dumps({"ok": False, "error": "a JSON object body is required"}), "application/json")
+                sid = str(body.get("id") or "")
+                for field in ("text", "detail"):
+                    # a list, a dict or a number is a 400, never stored as its repr (review round 2, 2026-09-08)
+                    if body.get(field) is not None and not isinstance(body.get(field), str):
+                        return self._send(400, json.dumps({"ok": False, "error": "%s must be a string" % field}), "application/json")
+                text = _pinned_note_clean(body.get("text"))
+                detail = _pinned_note_clean(body.get("detail"))
+                if not sid or not text:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
+                if not _safe_id(sid):
+                    # one row under a non-session key would make the whole file read as not-a-store
+                    # for EVERY session (review round 1, 2026-09-08): refuse it here, before the store
+                    return self._send(400, json.dumps({"ok": False, "error": "id is not a session id"}), "application/json")
+                if len(text) > PINNED_TEXT_MAX:
+                    return self._send(400, json.dumps({"ok": False, "error": "text is longer than %d characters (%d)"
+                                                       % (PINNED_TEXT_MAX, len(text))}), "application/json")
+                if len(detail) > PINNED_DETAIL_MAX:
+                    return self._send(400, json.dumps({"ok": False, "error": "detail is longer than %d characters (%d)"
+                                                       % (PINNED_DETAIL_MAX, len(detail))}), "application/json")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    st, res = _remote_forward_status(r, "/pinnote", {"id": sid, "text": text, "detail": detail})
+                    if isinstance(res, dict) and res.get("state") == "unreadable":
+                        # the remote kernel's own store fault: its account rides through (as on /unpinnote),
+                        # not a 502 about the tunnel, so the tool names the fault
+                        return self._send(200, json.dumps({"ok": False, "state": "unreadable", "notes": res.get("notes") or [],
+                                                           "error": str(res.get("error") or "the pinned-notes store there is not readable"),
+                                                           "host": r.get("host") or ""}), "application/json")
+                    if not isinstance(res, dict) or not res.get("noteId"):
+                        why = _remote_no_answer_why(r, st, "/pinnote")
+                        sys.stderr.write("pinned-notes: pin for %s not forwarded: %s\n" % (sid[:8], why))
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": r.get("host") or ""}),
+                                          "application/json")
+                    return self._send(200, json.dumps({"ok": True, "noteId": str(res.get("noteId")),
+                                                       "notes": res.get("notes") or [],
+                                                       "dropped": res.get("dropped") or []}), "application/json")
+                try:
+                    nid, notes, dropped = _pin_note(sid, text, detail)
+                except PinnedNotesUnreadable as e:
+                    # the store file is not a store: the fault, named, as _unpin_note's account names it (a
+                    # 200 the tool reads, since it folds every non-2xx into "try again shortly"; nothing
+                    # changed, so no wake). Before this a 500 traceback (review round 2, 2026-09-08).
+                    return self._send(200, json.dumps({"ok": False, "state": "unreadable", "notes": [], "error": str(e)}),
+                                      "application/json")
+                _push_soon()                                        # ack-fast: the strip repaints on the pusher's
+                #                                                     woken cycle; the bus's 2s POST never waits
+                #                                                     behind a synchronous build of every payload
+                # `dropped`: the notes the bound evicted for this pin (usually none), so the tool can name
+                # them instead of the agent diffing its own memory of ids (review round 1, 2026-09-08)
+                return self._send(200, json.dumps({"ok": True, "noteId": nid, "notes": notes, "dropped": dropped}), "application/json")
+            if u.path == "/unpinnote":
+                # Take a pinned note down, by id: the postal bus's unpin_note; the strip's own control
+                # reaches the same _unpin_note through the unpinNote drive op. Body: {"id": <sid>, "noteId":
+                # "pn-…"} → _unpin_note's account: ok, the remaining notes, and on ok:false the reason (an
+                # id that is not this session's own, unknown, or already unpinned) so the tool says so
+                # LOUDLY instead of reporting a success nothing happened for.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                if not isinstance(body, dict):
+                    return self._send(400, json.dumps({"ok": False, "error": "a JSON object body is required"}), "application/json")
+                sid = str(body.get("id") or "")
+                nid = str(body.get("noteId") or "")
+                if not sid or not nid:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and noteId required"}), "application/json")
+                if not _safe_id(sid):
+                    return self._send(400, json.dumps({"ok": False, "error": "id is not a session id"}), "application/json")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    st, res = _remote_forward_status(r, "/unpinnote", {"id": sid, "noteId": nid})
+                    if not isinstance(res, dict):
+                        why = _remote_no_answer_why(r, st, "/unpinnote")
+                        sys.stderr.write("pinned-notes: unpin of %s for %s not forwarded: %s\n" % (nid, sid[:8], why))
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": r.get("host") or ""}),
+                                          "application/json")
+                    out = {"ok": bool(res.get("ok")), "notes": res.get("notes") or []}
+                    for k in ("state", "at", "dropped", "error"):   # the remote's account rides through when it gives one
+                        if k in res:
+                            out[k] = res[k]
+                    return self._send(200, json.dumps(out), "application/json")
+                acct = _unpin_note(sid, nid)
+                if acct["ok"]:
+                    _push_soon()                                    # ack-fast, as on /pinnote
                 return self._send(200, json.dumps(acct), "application/json")
             if u.path == "/usertodo/context":
                 # The re-surfacing read (plans/user-todos.md slice 3): the SessionStart hook

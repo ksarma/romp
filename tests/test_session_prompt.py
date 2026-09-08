@@ -58,6 +58,27 @@ class SessionPrompt(unittest.TestCase):
         self.assertIn("make progress", self.flat,
                       "the prompt must license taking any visible path to progress without checking in")
 
+    def test_a_look_at_a_file_goes_through_the_tools_file_argument(self):
+        # The todo-file follow-on (2026-09-07): a session that wants the user to look at a file
+        # passes the file's absolute path as add_user_todo's `file` argument — the structured
+        # field the todo shows and the user's comments on that file answer — rather than only
+        # naming the path in the detail (the detail may still describe it). The sentence stays in
+        # Working style, conditional on the tool (the User todos switch gates it), and speaks as
+        # the person: no romp nouns, nothing the agent cannot see.
+        working, housekeeping = self.text.split("# Housekeeping", 1)
+        flat = re.sub(r"\s+", " ", working).lower()
+        self.assertIn("flag it with `add_user_todo` if you have that tool", flat)
+        self.assertIn("absolute path as its `file` argument", flat,
+                      "the file's absolute path goes in the `file` argument, not only the detail")
+        self.assertIn("absolute path in the detail, which can still describe it", flat,
+                      "the detail keeps its descriptive role; the path there is no longer the mechanism")
+        self.assertIn("my comments", flat, "says what comes back: the person's comments")
+        self.assertIn("if you don't have the tool", flat, "the fallback when the switch is off")
+        self.assertNotIn("add_user_todo", housekeeping, "Housekeeping explains romp's artifacts only")
+        for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check",
+                     "viewer", "panel", "dashboard", "pane", "chip", "todo id", "waiting on you"):
+            self.assertNotIn(word, flat, "%r names machinery the agent cannot see" % word)
+
     def test_housekeeping_note_preexplains_romp_artifacts(self):
         # The ONE place romp is named to a session (the user 2026-07-25): pre-explain the artifacts
         # every session eventually sees — [romp] notices and <!-- romp-* --> comments — so a kernel

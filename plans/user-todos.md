@@ -101,7 +101,7 @@ you work for" and name no romp machinery. Working drafts, to be jld-polished at 
 > updates or FYIs — only things you are waiting on them for.
 >
 > **withdraw_user_todo** — Take back a need you flagged (by id) once it's met, answered some
-> other way, or no longer applies — so the person you work for doesn't act on a stale request.
+> other way, or no longer applies — so the person you work for doesn't act on a need that no longer stands.
 
 Construction is `set_working`'s exact shape: one `MCP_TOOLS` schema entry + one `_mcp_call`
 branch each (`postal_service.py:2536` onward), backed by kernel routes (`POST /usertodo`,

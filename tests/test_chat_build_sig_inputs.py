@@ -116,6 +116,7 @@ CENSUS = {
     "_patch_rows": ("pure", "over a structured patch"),
     "_path_links": ("sig", "pathlink", "a resolved token latches for the message's life; an unresolved one is retried, and the retry is the pathlink dep"),
     "_path_pins": ("sig", "pathlink", "the pins latched beside the links"),
+    "_pinned_notes_for": ("sig", "pins", "the sid's pinned-note rows, serialized (the _user_todo_fp shape)"),
     "_postal_card_deps": ("sig", "postal"),
     "_postal_index": ("sig", "postal", "memoized on the log's identity"),
     "_queue_recallable": ("sig", "backend"),
@@ -548,6 +549,16 @@ class Differential(_World):
         self.assertEqual(self.moved(b, c), ("note",))
         km._feed_needs_input[0] = frozenset({SID})
         self.assertEqual(self.moved(c, self.sig()), ("needs",))
+
+    def test_a_pin_and_an_unpin_each_miss_under_pins_and_a_peers_pin_does_not(self):
+        a = self.sig()
+        nid, _, _ = km._pin_note(SID, "staging is on port 8443")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("pins",), "a pin writes no transcript line; the fold is the only way the tab hears of it")
+        km._pin_note(PEER, "a peer's note")
+        self.assertEqual(self.moved(b, self.sig()), (), "the fold is per sid: another session's pin moves nothing here")
+        self.assertTrue(km._unpin_note(SID, nid)["ok"])
+        self.assertEqual(self.moved(b, self.sig()), ("pins",))
 
     def test_the_live_tail_misses_under_live_for_an_echo_and_for_its_dropped_mark(self):
         a = self.sig()

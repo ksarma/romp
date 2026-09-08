@@ -59,6 +59,15 @@ A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
 directory has as its `origin` remote; when that remote is not on GitHub, the number stays
 plain text.
 
+**Pinned notes.** A session can pin a short note for you above its transcript: where things
+stand, a warning, a summary. The notes appear in a strip between the tab bar and the transcript,
+oldest first, one line each, and the strip is absent while a session has pinned nothing. Click a
+row that shows a *details* hint to read the rest (a cut line's full text is there too); when more
+than three notes are pinned, the older ones fold behind a *+N more* row, and the strip scrolls once
+it is a few rows tall. Paths and pull request numbers in a note are links. **Unpin**, clicked
+twice, removes a note; a session can also unpin its own. A note stays until unpinned, across
+restarts and revivals, and a session keeps at most eight; a ninth drops the oldest.
+
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
 file served from the dashboard's own address (a published report, an evidence doc). Figures
@@ -211,8 +220,12 @@ reply. A file path in a todo's text or its detail is a link: click it and the
 file opens in the Files pane, which comes forward if it was closed. Absolute
 paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
-(`notes/plan.md`, not `notes/plan`). The pane is off by default,
-like the outline; turn it on from the bottom bar. Sessions flag todos only where
+(`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
+file's name as a chip on the row and in the Reply box, with the full path on
+hover; the session's own todo card in the chat shows the same chip. Click the
+chip and the file opens the same way; a **Send to session** from that file can
+then answer the todo (see Files). The pane is off by default, like the outline;
+turn it on from the bottom bar. Sessions flag todos only where
 the gear's **User todos** switch is on, and the switch is per machine: while it
 is off on this one, the pane says so and still lists the
 other machines' todos. A todo you expected can be missing for two reasons. A
@@ -307,8 +320,9 @@ viewer, and a section link scrolls to it; an image map (`<map>`, `usemap`) is dr
 GitHub.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
-the file (below it when the column is narrow). Select a passage in either view, Rendered or
-Raw, and press the **Comment** button that appears next to the selection; type the comment
+the file, where each card sits level with the passage it is about and scrolls with the text;
+when the column is narrow the panel drops below the file and lists the cards instead. Select a
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
@@ -320,7 +334,11 @@ format the session's own tools read. A comment made here and a reply the session
 the same object, and the two other editors that read the format see them too. Each comment
 is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
 the card, under the comment and its replies. The passage it
-refers to is highlighted in the file. When the session has rewritten the passage, the card
+refers to is highlighted in the file, and a comment on text that occurs more than once stays
+on the occurrence you chose. When the file has changed around that occurrence and the panel can
+no longer tell which copy the comment meant, its highlight is dashed and the card carries a
+**passage recurs** tag: the copy shown is a guess, and the card says so. When the session has
+rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
 
@@ -362,7 +380,15 @@ the file in both views: an insertion is tinted, a deletion is struck at its poin
 substitution shows both, the struck old text before the tinted new text. **Show changes
 inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
 the file reads as it is and the cards alone show the changes. The setting is kept for every
-file you open. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
+appear under those two toggles and choose what the panel lists; Comments and Changes show
+their counts. **Comments** lists only the comments, including comments on changes, and hides
+the change marks in the file; **Changes** lists only the changes, each with the comments made
+on it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+choice is kept like the marks setting and changes only what is shown: **Send to session**
+still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
+**Region**, before the author's chip, and its left edge is colored by kind, the accent for a
+comment and a muted tone for a change, so the two are told apart at a glance. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
 text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it
@@ -385,16 +411,17 @@ the editor rewrites its line endings, which would move them; accept or reject th
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
 what it refers to and the commands the session needs to answer it. The number on the button
-is what will go, and the confirm lists it, with the message itself one click away. When the
-file was opened from a request under Waiting on you, a checkbox answers that request with
-the same send; when tracking is off, another turns it on first, so the session's revisions
-come back as changes. When changes are pending, a third checkbox, **accept the pending
-changes**, accepts them all before the send, so the session's later edits arrive as new
-changes instead of folding into an old one; the message then says how many changes you
-accepted and rejected. All are checked by default. One send answers a request; a request
-that named several files is answered by the first, and later sends show no checkbox. The
-panel then says **Sent to** the session and when, or **Queued for** it when the session has
-gone quiet, in which case the message goes when it wakes.
+is what will go, and the confirm lists it, with the message itself one click away. When a
+todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
+answers that todo with the same send; when several todos name the file, a row of choices
+picks the one to answer, or none. When tracking is off, another checkbox
+turns it on first, so the session's revisions come back as changes. When changes are pending,
+a third checkbox, **accept the pending changes**, accepts them all before the send, so the
+session's later edits arrive as new changes instead of folding into an old one; the message
+then says how many changes you accepted and rejected. All are checked by default. One send
+answers one todo; a todo that named several files is answered by the first, and later sends
+no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
+it when the session has gone quiet, in which case the message goes when it wakes.
 
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the

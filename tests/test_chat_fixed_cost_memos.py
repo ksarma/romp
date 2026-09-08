@@ -51,7 +51,7 @@ class SigLabels(unittest.TestCase):
         markers = {"transcript": "sig.append((st.st_mtime, st.st_size))", "states": "sig.append(tuple(states))",
                    "store": "jd._store_identity(sid)[1:]", "hold": "_rewind_hold_get(sid)", "archive": "jd.ARCHDIR",
                    "episodes": "jd.EPIDIR", "reg": 'jd.STATE / "sdk"', "gone": "jd.GONEDIR", "tasks": "_task_store_fp(",
-                   "todos": "_user_todo_fp(", "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
+                   "todos": "_user_todo_fp(", "pins": "_pinned_notes_fp(", "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
                    "live": "Sessions.live_rev(sid, be)", "row": '"snapT", "interrupting"', "clock": "_idle_faded(",
                    "backend": "_queue_recallable(", "ops": "_pending_ops.get(sid)", "limit": "_limit_hold(sid, usage=",
                    "retry": "_retry_gate_state(sid)", "bg": "_bg_live_norm(sid, path, live=tm)", "watch": "_watch_awaiting(sid)",

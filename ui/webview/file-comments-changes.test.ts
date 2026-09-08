@@ -273,7 +273,8 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   // the third checkbox: checked by default, offered when any change is pending, wired through the same change listener
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/);
   assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", "accept the " \+ pending \+ " pending " \+ \(pending === 1 \? "change" : "changes"\)\)\);/);
-  assert.match(SRC, /k !== "todo" && k !== "track" && k !== "accept"/);
+  assert.match(SRC, /else if \(k === "todo" \|\| k === "track" \|\| k === "accept"\) this\.sendOpts\[k\] = t\.checked;/, "the three checkboxes land in sendOpts…");
+  assert.match(SRC, /if \(k === "todopick"\) this\.todoPick = t\.value;/, "…and the todo radio group (the todo-file follow-on) in todoPick; anything else flips nothing");
   assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/, "the preview and the list use the send's own counts");
   assert.match(SRC, /buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)/);
 });

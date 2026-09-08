@@ -81,7 +81,9 @@ const SETUP = `window.__setup = () => {
     media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { savedCb = cb; }, onClose: noop,
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
-    aside: (el) => { if (el) aside.appendChild(el); else aside.replaceChildren(); },
+    // the panel root becomes the aside, as file-view.ts aside() makes it (the margin layout lays the panel's sections out
+    // over the row's height, so the panel must be the row's flex item, not a child of one)
+    aside: (el) => { const old = document.querySelector(".fileview-aside"); if (el) { el.classList.add("fileview-aside"); old.replaceWith(el); } else { const d = document.createElement("div"); d.className = "fileview-aside"; old.replaceWith(d); } },
     setMode: noop, scrollToOffset: noop, reload: noop,
   };
   const unit = window.__romp.fileCommentsAction.mount(ctx);

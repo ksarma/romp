@@ -617,7 +617,7 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
 
 test("the body's width: a ResizeObserver on the body fires onRendered once per animation frame when the width changed; not for its first report, a same-width report, a width back where it was, or a media body; it leaves with the viewer", async (t) => {
   const o = await open(REPORT, t);
-  assert.equal(watching(o.body).length, 1, "one observer on the body, the width's own event (never a timer)");
+  assert.equal(watching(o.body).length, 2, "two observers on the body, each a size's own event (never a timer): the viewer's width observer here, and the comments panel's margin sizer (file-comments.ts installLayout), which re-places the cards when the body's box changes");
   assert.equal(paints, 1);
   report(o.body, 900); frame();
   assert.equal(paints, 1, "the observe() call's own first report describes no change");
