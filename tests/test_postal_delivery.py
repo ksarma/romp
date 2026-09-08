@@ -119,13 +119,6 @@ class PushThroughKernel(unittest.TestCase):
         self.assertNotIn(self.THREAD, pm.HEARTBEATS)
         self.assertEqual(self.fetches, [True], "the handler asks for thread rows")
 
-    def test_heartbeat_route_answers_the_locality_bit(self):
-        # The wire contract the MCP loop reads: {ok, local}. Pinned in source so an edit that drops
-        # the bit fails here, not as a remote session that never stops beating.
-        src = open(os.path.join(BIN, "romp-postal-service"), encoding="utf-8").read()
-        self.assertIn('local = _record_heartbeat(data.get("id"), data.get("name", "?"))', src)
-        self.assertIn('return self._send({"ok": True, "local": local})', src)
-
     def test_source_uses_the_kernel_deliver_not_a_tmux_inject(self):
         src = open(os.path.join(BIN, "romp-postal-service"), encoding="utf-8").read()
         self.assertIn('_kernel_post("/deliver"', src, "the live-push wakes via the kernel")
@@ -360,6 +353,51 @@ class PushOverTheWire(unittest.TestCase):
             self.assertLessEqual(n, pm._POST_MAX_BYTES)
         self.assertEqual(pm.read_box(self.SID, consume=False), [], "both landed: nothing left in new/")
         self.assertEqual([l for l in self.logged if "deferred" in l or "refused" in l], [])
+
+
+class HeartbeatRoute(unittest.TestCase):
+    """POST /heartbeat answers {ok, local} over the wire: the contract a session's MCP loop reads to
+    stop beating (2026-09-06). The real Handler serves on a loopback ThreadingHTTPServer (the token
+    gate's pattern) and the bus's listing is stubbed at _kernel_sessions_checked, so an edit that drops
+    the bit, or answers local for a sid the listing does not hold, fails here and not as a remote
+    session that never stops beating."""
+    LOCAL, REMOTE = PushThroughKernel.LOCAL, PushThroughKernel.REMOTE
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), pm.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self._saved = pm._kernel_sessions_checked
+        pm._kernel_sessions_checked = lambda threads=False: ([{"id": self.LOCAL, "name": "mysess"}], True)
+        pm.HEARTBEATS.clear()
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        pm._kernel_sessions_checked = self._saved
+        pm.HEARTBEATS.clear()
+
+    def _beat(self, sid, name):
+        req = urllib.request.Request("http://127.0.0.1:%d/heartbeat" % self.port, method="POST",
+                                     data=json.dumps({"id": sid, "name": name}).encode("utf-8"),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pm.SERVE_TOKEN})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    def test_a_sid_the_listing_holds_hears_local(self):
+        self.assertEqual(self._beat(self.LOCAL, "mysess"), {"ok": True, "local": True})
+        self.assertNotIn(self.LOCAL, pm.HEARTBEATS, "a local beat is not remote presence")
+
+    def test_a_sid_the_listing_lacks_hears_remote_and_is_recorded(self):
+        self.assertEqual(self._beat(self.REMOTE, "remotetest"), {"ok": True, "local": False})
+        self.assertIn(self.REMOTE, pm.HEARTBEATS, "the beat is presence, as it always was")
 
 
 if __name__ == "__main__":

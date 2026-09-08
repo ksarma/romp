@@ -10,6 +10,8 @@ ends the first time the bus confirms this session local from its own answered li
 
 The kernel is the ROMP_SESSIONS_FILE seam; fetches are counted at _kernel_sessions_checked, the one
 function every listing read goes through. Synthetic only: placeholder UUIDs, the notes-api demo sessions."""
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -229,6 +231,18 @@ class Counting(unittest.TestCase):
         self.assertFalse(pm._heartbeat_once())
         self.assertFalse(pm._LOCAL_CONFIRMED[0])
 
+    # ── the bus's side of the beat ────────────────────────────────────────────────────────────
+
+    def test_the_bus_answers_local_for_a_thread_row_through_the_seam(self):
+        # the handler decides locality from a listing WITH thread rows; the seam filters them out on
+        # threads=False exactly as the route does, so a comment thread's beat is local here only if the
+        # handler asked for them (otherwise it is filed as remote presence, the phantom of 2026-09-06)
+        pm.HEARTBEATS.clear()
+        self.addCleanup(pm.HEARTBEATS.clear)
+        self.assertTrue(pm._record_heartbeat(THREAD, "web-t1"), "a thread row is local to its own bus")
+        self.assertNotIn(THREAD, pm.HEARTBEATS, "and never remote presence")
+        self.assertEqual(self.fetches, [True], "one listing for the beat, thread rows included")
+
     # ── the bus's retry pass ──────────────────────────────────────────────────────────────────
 
     def _dead_boxes(self, names):
@@ -268,6 +282,18 @@ class Counting(unittest.TestCase):
         finally:
             for f in (pm.MAILROOT / API / "new").iterdir():
                 f.unlink()
+
+    def test_recall_by_id_fetches_only_when_a_removed_row_needs_a_name(self):
+        # by id with no recipient, the listing serves only the removed rows' names: a recall that
+        # removes nothing fetches nothing, and one that removes a row fetches once, at first need
+        # (the sent-receipts idiom)
+        dead = self._dead_boxes(["ghost-a", "ghost-b", "ghost-c"])
+        (pm.MAILROOT / dead[2] / "new" / "m5").write_text("From: web\nFrom-Id: %s\nX-Park: 1\n\nparked body" % WEB)
+        self.assertEqual(pm._recall(WEB, "", "no-such-id"), [])
+        self.assertEqual(self.fetches, [], "nothing removed, no name to look up, no listing")
+        removed = pm._recall(WEB, "", "m5")
+        self.assertEqual([(r["id"], r["to"]) for r in removed], [("m5", "ghost-c")])
+        self.assertEqual(self.fetches, [True], "one listing, fetched when the first removed row needs its name")
 
     def test_sent_receipts_fetch_once_for_every_unnamed_row(self):
         # check_sent names each row's recipient; rows without a stored toName used to cost one
@@ -319,6 +345,98 @@ class Counting(unittest.TestCase):
                 for f in (pm.MAILROOT / sid / "new").glob("*"):
                     f.unlink()
                 pm._mark_pending(sid)
+
+    # ── a peer's send during a kernel blink ───────────────────────────────────────────────────
+
+    def test_after_the_latch_a_local_peer_is_unreachable_by_name_during_a_blink(self):
+        # What changed on 2026-09-06, pinned (review find, 2026-09-08): a local session's beat that landed
+        # while the kernel's listing was unanswered used to be filed as remote presence (the bus could not
+        # call it local), so a send to its name during the blink resolved to that row and delivered into its
+        # mailbox with no wake; the mail sat there unannounced until the kernel returned. Once the bus has
+        # confirmed the session local, its loop has ended and its per-call beat is skipped, so no such row
+        # appears, and the standing blink refusal (503, retry shortly, never a death ruling) covers every
+        # local peer alike: the mail stays with the sender, who is told so.
+        pm.HEARTBEATS.clear()
+        self.addCleanup(pm.HEARTBEATS.clear)
+        self.assertTrue(pm._heartbeat_once(), "web is confirmed local while the kernel answers")
+        self.assertTrue(pm._record_heartbeat(WEB, "web"), "the bus's side of that beat: local, no presence row")
+        self.assertNotIn(WEB, pm.HEARTBEATS)
+        # the kernel blinks: the listing does not answer
+        pm._kernel_sessions_checked = lambda threads=False: (self.fetches.append(threads), ([], False))[1]
+        self.posts.clear()
+        pm._mcp_call("list_agents", {})                          # web keeps using postal through the blink...
+        self.assertEqual([p[1] for p in self.posts], ["/agents?me="], "...and beats nothing: the latch holds")
+        r = pm.resolve_recipient("web", frm_id=API)
+        self.assertEqual((r["kind"], r["status"]), ("error", 503))
+        self.assertIn("Retry shortly", r["error"])
+        self.assertNotIn("no live romp session", r["error"], "never a death ruling")
+        # the pre-latch shape, still what a beat landing in the blink does (legacy mode, a remote session)
+        self.assertFalse(pm._record_heartbeat(WEB, "web"), "unanswered listing: not local")
+        self.assertIn(WEB, pm.HEARTBEATS, "filed as remote presence")
+        r = pm.resolve_recipient("web", frm_id=API)
+        self.assertEqual(r["kind"], "direct", "which is what made the name reachable before the latch")
+        self.assertTrue(r["agent"].get("remote"), "as a presence row, delivered with no wake")
+
+    # ── `romp mail remote` after the latch ────────────────────────────────────────────────────
+
+    def _remote_setup_sandbox(self):
+        """setup_remote's side effects land in a scratch dir: the client-only marker and the bus pid file."""
+        root = Path(tempfile.mkdtemp())
+        saved = (pm.CLIENT_ONLY, pm.PIDFILE)
+        pm.CLIENT_ONLY, pm.PIDFILE = root / "client-only", root / "server.pid"
+        pm.PIDFILE.write_text("not-a-pid")     # a bus "running" here; a stop attempt prints its line and fails
+        self.addCleanup(lambda: (setattr(pm, "CLIENT_ONLY", saved[0]), setattr(pm, "PIDFILE", saved[1])))
+        return root
+
+    def test_peer_mode_remote_setup_refuses_after_the_latch_force_included(self):
+        # the latch's premise is that the bus behind BASE stays this box's own for the life of the process;
+        # `romp mail remote --force` used to break it in peer mode: it stopped the local bus, and a hub's bus
+        # swapped in behind the port never heard from a session whose beats had ended, so the session went
+        # silent on the hub (review find, 2026-09-08). The command refuses in peer mode before any side
+        # effect, --force included, and says why.
+        self._remote_setup_sandbox()
+        self.assertTrue(pm._heartbeat_once(), "peer mode, local:true: latched")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = pm.setup_remote(force=True)
+        self.assertEqual(rc, 2, "a refusal, not the 0 of 'nothing to set up'")
+        text = out.getvalue()
+        self.assertIn("peer mode", text)
+        self.assertIn("heartbeat", text, "the refusal names its reason: the beats that ended")
+        self.assertNotIn("Stopped the local-only bus", text, "the local bus is left running")
+        self.assertFalse(pm.CLIENT_ONLY.exists(), "no client-only marker")
+        self.assertTrue(pm._LOCAL_CONFIRMED[0], "the latch stands, and its premise with it")
+        self.posts.clear()
+        pm._mcp_call("list_agents", {})
+        self.assertEqual([p[1] for p in self.posts], ["/agents?me=web"],
+                         "the per-call beat stays skipped: the bus behind BASE is still this box's own")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pm.main(["remote", "--force"]), 2, "the CLI route refuses the same way")
+            self.assertEqual(pm.main(["remote"]), 2, "with or without --force")
+        self.assertFalse(pm.CLIENT_ONLY.exists())
+
+    def test_peer_mode_unreachable_hint_never_points_at_remote_setup(self):
+        # the bus-unreachable hint used to send every SSH'd box to `romp mail remote`; in peer mode that
+        # command refuses (above), so the hint would be a dead end: the generic server.log hint instead,
+        # and the tunnel hint only in the legacy scheme the command belongs to (review find, 2026-09-08)
+        os.environ["SSH_CONNECTION"] = "1 2 3 4"
+        self.addCleanup(os.environ.pop, "SSH_CONNECTION", None)
+        self.assertNotIn("romp mail remote", pm._unreachable_hint(), "peer mode: never the refused command")
+        self.assertIn("server.log", pm._unreachable_hint())
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+        self.assertIn("run: romp mail remote", pm._unreachable_hint(), "legacy scheme: the tunnel hint stands")
+
+    def test_legacy_mode_remote_setup_still_configures_the_client(self):
+        # ROMP_POSTAL_PEERS=0 is where the command applies: the loop never ends there, so the hub hears every
+        # beat once the tunnel is up; with the bus reachable the command configures the client and connects
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+        self._remote_setup_sandbox()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = pm.setup_remote(force=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("Already connected", out.getvalue())
+        self.assertTrue(pm.CLIENT_ONLY.exists(), "the client-only marker is written")
 
 
 if __name__ == "__main__":

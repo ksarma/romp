@@ -5895,13 +5895,14 @@ class ViewBuilder(unittest.TestCase):
         # commands with output DEVNULL'd, so the picker's Revive silently did nothing (the user
         # 2026-07-05). Full coverage: tests/test_kernel_revive.py.
         import subprocess as _sp
-        calls, saved = [], km.subprocess.run
+        calls, saved, saved_tmux = [], km.subprocess.run, km._tmux_sessions
         km.subprocess.run = (lambda *a, **k:
                              calls.append(list(a[0])) or _sp.CompletedProcess(a[0], 0, "", ""))
+        km._tmux_sessions = lambda: {}   # the door's live snapshot (names reserved atomically) — not the tmux probe
         try:
             km._revive_session("deadsid000")
         finally:
-            km.subprocess.run = saved
+            km.subprocess.run, km._tmux_sessions = saved, saved_tmux
         self.assertTrue(calls, "revive must shell out to the resume path")
         argv = calls[0]
         self.assertTrue(str(argv[0]).endswith("/romp"),
@@ -8591,7 +8592,10 @@ class CheckinMechanics(unittest.TestCase):
         os.environ["ROMP_HOST_NAME"] = "TESTHOST"
         p = km._checkin_payload({"rk_port": 50003, "rb_port": 50004, "local_port": 50001})
         self.assertEqual((p["host"], p["kernelPort"], p["busPort"]), ("TESTHOST", 50003, 50004))
-        self.assertTrue(p["token"], "the token is HANDED to the hub — it never fetches credentials")
+        self.assertEqual(p["token"], km.TOKEN,
+                         "the token is HANDED to the hub, which never fetches credentials, and it is the one "
+                         "this kernel SERVES: a re-read of the file at runtime could mint one the gate "
+                         "rejects (review find, 2026-09-08)")
 
     def test_checkin_apply_records_a_sshless_row(self):
         payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 50003,
