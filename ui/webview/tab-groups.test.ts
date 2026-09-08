@@ -1645,4 +1645,9 @@ test("executed: the words of the way back: the open header whose snapshot the pa
   assert.equal(headWords("infra", 3, 0, false, false, false, true).title, "infra — 3 sessions; click to fold this group; drag to reorder the groups");
   assert.equal(headWords("infra", 3, 0, false, false, false, true).label, headWords("infra", 3, 0, false, false).label, "the spoken label carries no click clause and is as before");
   assert.equal(headWords("infra", 3, 0, false, true, true, true).title, headWords("infra", 3, 0, false, true, true).title, "back wins: the way back's words");
+  // folded and `shown` (round 4): the header's click folded the section and put its sessions in the pane, so the click opens
+  // it and the title says that alone
+  assert.equal(headWords("infra", 3, 3, true, true, false, true).title, "infra — 3 sessions folded; holds the tab you are reading; click to open this group");
+  assert.equal(headWords("infra", 2, 0, true, false, false, true).title, "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open this group");
+  assert.equal(headWords("infra", 3, 3, true, true, false, true).label, headWords("infra", 3, 3, true, true).label, "the spoken label as before");
 });

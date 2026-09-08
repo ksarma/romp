@@ -5285,19 +5285,21 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // never from the store, and the delegate ("toggle-group") also shows the section in the pane.
   head.dataset.act = "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
-  if (snapView === name) head.classList.add("snap-shown");   // the pane is showing this section
+  // `shown`: the pane is showing this section, whatever the fold. The one bit the header's mark, its words (headWords),
+  // its own way back and the doors' act below (doorAct) are derived from. A header the pane shows drops the promise to
+  // show what the pane already shows from its title: open without the tab being read, "click to fold this group";
+  // folded, "click to open this group" (headWords `shown`; round 4 of the tabhide review: "and see its sessions at a
+  // glance" stood beside a count that said "shown below", and on the folded header the click had just put the sessions
+  // in the pane).
+  const shown = snapView === name;
+  if (shown) head.classList.add("snap-shown");
   // THE WAY BACK (the 2026-09-06 review: a header click swapped the pane and only a session pick swapped it
   // back). The header whose snapshot the pane shows, OPEN, holding the tab being read, is the click that put
   // the section in the pane: a second click puts the transcript back (show-transcript, leaveSnapshot) instead
   // of folding the section under its reader. The act is derived from the rendered state, as the fold is
-  // (data-folded), and the title says which click this is. Escape does the same from anywhere.
-  // `shown`, the pane showing this OPEN section, is the one bit the header's way back, its words and the doors'
-  // act below (doorAct) are derived from. An open header the pane shows WITHOUT the tab being read keeps its
-  // fold (toggle-group), and its title drops the promise to show what the pane already shows (headWords `shown`;
-  // round 4 of the tabhide review: "click to fold this group and see its sessions at a glance" stood beside a
-  // count that said "shown below").
-  const shown = !collapsed && snapView === name;
-  const back = shown && holdsActive;
+  // (data-folded), and the title says which click this is. Escape does the same from anywhere. An open header the
+  // pane shows WITHOUT the tab being read keeps its fold (toggle-group; round 3).
+  const back = shown && !collapsed && holdsActive;
   if (back) head.dataset.act = "show-transcript";
   const total = sec.ids.length;
   const words = headWords(name, total, hidden.length, collapsed, holdsActive, back, shown);
@@ -5358,8 +5360,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // section). Folded, the count is a plain span: the header's click opens the group and shows the section, and
   // the flag opens the group (open-group), as before.
   // THE WAY BACK, on the doors too (round 3): while the pane already shows this section (`shown` above, the bit the
-  // header's own way back is derived from), show-group changed nothing and the words still promised the pane, so the
-  // three doors (the count, and the pip and the flag below) mirror the header's second click:
+  // header's own way back is derived from; the doors exist on an open header alone, so doorAct is read only where
+  // `shown` means the pane on this open section), show-group changed nothing and the words still promised the pane,
+  // so the three doors (the count, and the pip and the flag below) mirror the header's second click:
   // their act is show-transcript (doorAct; leaveSnapshot) and their click clause is the way back (tab-state.ts doorClick;
   // the count's words say the sessions are shown below, sectionDoorTitle `shown`). Whether or not the header holds the
   // tab being read: another section's open header still folds on its own click, a real act, while its doors did

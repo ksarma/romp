@@ -629,8 +629,8 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  the fold hides nothing, and a "0" beside two visible tabs read as a broken number (the 2026-09-06
  *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
  *  truthful either way — the section IS folded, and the click opens it. A click also shows the section
- *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so, except an open
- *  header's while the pane already shows its section (`shown`). `holdsActive`
+ *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so, except while the
+ *  pane already shows the section (`shown`), when the click's clause names the fold alone. `holdsActive`
  *  — the section holds the tab being read — is a phrase in the words, not a different action: the
  *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
 export interface HeadWords { count: string; title: string; label: string }
@@ -658,13 +658,17 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     return { count: hidden > 0 ? `${hidden} hidden` : String(total), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
              title: `${name} — ${n(total)}${hid}${reading}; ${click}; drag to reorder the groups` };
   }
+  // folded and `shown`: the header's click just folded the section and put its sessions in the pane (render.ts
+  // toggle-group sets snapView on a fold too), so the click opens it and the title says that alone (round 4 of the
+  // tabhide review: "see its sessions at a glance" described what the pane was already showing)
+  const open = shown ? "click to open this group" : "click to open and see its sessions at a glance";
   if (hidden === 0) {
     const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
     return { count: String(total), label: `${name}, ${n(total)}, folded, all shown${here}`,
-             title: `${name} — folded, but ${all} set to show when folded, so none is hidden${reading}; click to open and see its sessions at a glance` };
+             title: `${name} — folded, but ${all} set to show when folded, so none is hidden${reading}; ${open}` };
   }
   return { count: String(hidden), label: `${name}, ${n(hidden)} folded${here}`,
-           title: `${name} — ${n(hidden)} folded${reading}; click to open and see its sessions at a glance` };
+           title: `${name} — ${n(hidden)} folded${reading}; ${open}` };
 }
 
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =

@@ -200,7 +200,16 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
                    [headWords("infra", 3, 1, false, false).count, headWords("infra", 3, 1, false, false).label], "shown: the count and the spoken label are as they were (the label carries no click clause)");
   assert.deepEqual(headWords("infra", 3, 1, false, true, true, true), headWords("infra", 3, 1, false, true, true), "shown and holding the tab being read: the way back's words, as before (back implies shown)");
   assert.deepEqual(headWords("infra", 3, 1, false, false, false, false), headWords("infra", 3, 1, false, false), "the default: the pane shows something else, the promise stands");
-  assert.deepEqual(headWords("infra", 3, 3, true, false, false, true), headWords("infra", 3, 3, true, false), "folded: the words as they were (render.ts derives `shown` from open + the pane on this section, so this never renders; the helper ignores the bit)");
+  // ...and the FOLDED header the pane shows (the header's click folded it and put its sessions in the pane): the click opens
+  // it, and the title says that alone, without "and see its sessions at a glance"
+  assert.equal(headWords("infra", 3, 3, true, false, false, true).title, "infra — 3 sessions folded; click to open this group");
+  assert.equal(headWords("infra", 3, 3, true, true, false, true).title, "infra — 3 sessions folded; holds the tab you are reading; click to open this group");
+  assert.equal(headWords("infra", 1, 0, true, false, false, true).title, "infra — folded, but its one session is set to show when folded, so none is hidden; click to open this group");
+  assert.equal(headWords("infra", 2, 0, true, false, false, true).title, "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open this group");
+  assert.deepEqual([headWords("infra", 3, 3, true, true, false, true).count, headWords("infra", 3, 3, true, true, false, true).label], [headWords("infra", 3, 3, true, true).count, headWords("infra", 3, 3, true, true).label], "folded, shown: the count and the spoken label as they were");
+  assert.deepEqual(headWords("infra", 3, 3, true, false, false, false), headWords("infra", 3, 3, true, false), "folded, the pane elsewhere: the promise stands");
+  for (const w of [headWords("infra", 3, 3, true, false, false, true), headWords("infra", 1, 0, true, false, false, true), headWords("infra", 3, 1, false, false, false, true)])
+    assert.doesNotMatch(w.title, /at a glance/, w.title);
   assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);/, "the header passes the bit its own way back and the doors' act read");
   assert.equal(headWords("infra", 3, 2, true, false).count, "2", "folded: the folded-away members, a bare number, as before");
   // render.ts: the marks' block runs whenever the header stands in for a member (folded or open), over `hidden`, the pip
@@ -458,7 +467,7 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   assert.equal(doorClick(true), BACK_TO_TRANSCRIPT_CLICK);
   assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true, true), sectionTodoPhrase({ count: 1, names: ["api"] }) + "; " + BACK_TO_TRANSCRIPT_CLICK, "the flag, shown: the who phrase, then the way back");
   assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true, false), sectionTodoTitle({ count: 1, names: ["api"] }, true), "not shown: as it was");
-  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, false, true), sectionTodoPhrase({ count: 1, names: ["api"] }) + "; click to open this group", "folded: opens the group whatever the pane shows (shown is derived with door, so this never renders; the helper still says the true thing)");
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, false, true), sectionTodoPhrase({ count: 1, names: ["api"] }) + "; click to open this group", "folded: opens the group whatever the pane shows (round 4: a folded header the pane shows renders this; the header's title says the same clause)");
   assert.match(ui("webview", "tab-state.ts"), /export function doorClick\(shown: boolean\): string \{\s*\n\s*return shown \? BACK_TO_TRANSCRIPT_CLICK : SHOW_GROUP_CLICK;\s*\n\}/);
   assert.match(ui("webview", "tab-state.ts"), /return `\$\{lead\}; \$\{doorClick\(true\)\}`;/);
   assert.match(ui("webview", "tab-state.ts"), /\$\{door \? doorClick\(shown\) : "click to open this group"\}/);
@@ -470,9 +479,10 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   assert.match(HEAD, /const door = !collapsed;\s*\n\s*const doorAct = shown \? "show-transcript" : "show-group";\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one; shown, the way back; one act for the three doors");
   assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = doorAct;\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length, total, shown\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act (the way back while the pane shows the section), words (the visible count first) and spoken label");
   assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").split("doorAct").length - 1, 4, "declared once, used by the count, the pip and the flag (the comments aside)");
-  assert.match(HEAD, /const shown = !collapsed && snapView === name;\s*\n\s*const back = shown && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "one bit, the pane on this open section (round 4: declared once, before the header's own way back): the header's way back adds holdsActive (without it: another section's header still folds on its own click, its door did nothing), the doors' act and the header's words take the bit as it is");
-  assert.equal(HEAD.split("snapView === name").length - 1, 2, "the mark and `shown`: one rendered state");
-  assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").replace(/"snap-shown"/g, "").split("shown").length - 1, 7, "declared once; read by the header's way back, its words, the doors' act, the count's title, the pip's clause and the flag's title (the comments and the snap-shown mark aside)");
+  assert.match(HEAD, /const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "one bit, the pane on this section whatever the fold (round 4: declared once, with the header's mark)");
+  assert.match(HEAD, /const back = shown && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "the header's way back adds open and holdsActive (without holdsActive: another section's header still folds on its own click, its door did nothing); the doors' act and the header's words take the bit as it is");
+  assert.equal(HEAD.split("snapView === name").length - 1, 1, "one rendered state, read once");
+  assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").replace(/"snap-shown"/g, "").split("shown").length - 1, 8, "declared once; read by the mark, the header's way back, its words, the doors' act, the count's title, the pip's clause and the flag's title (the comments and the snap-shown class string aside)");
   assert.match(HEAD, /n\.draggable = true;\s*\n\s*n\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/, "a press on it never starts the header's drag (the flag's rule)");
   assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = doorAct; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
   assert.match(HEAD, /b\.dataset\.act = door \? doorAct : "open-group";/, "the flag: the doors' act open, open-group folded");

@@ -232,7 +232,7 @@ test("pinned: render.ts shows the snapshot on a header click — snapView set BE
     "one rule for open and folded headers: fold or open, and look at the section");
   assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
     "setActive: the pick ends the snapshot, opens a folded-away tab's section (not a hidden one's: tab-hide.test), and puts the transcript back even when the pick is the tab already active");
-  assert.match(RENDER, /if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
+  assert.match(RENDER, /const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
   assert.match(CSS, /\.tab-group-head\.snap-shown \.tab-group-name \{ color: var\(--fg\); \}/);
 });
 

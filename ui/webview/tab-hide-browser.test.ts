@@ -299,6 +299,10 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, s.snapView, s.paneShown, s.transcriptShown], [[], "1", "infra", true, false]);
     assert.deepEqual([s.shownRows, s.hiddenRows, s.foldShown], [["web", "api", "tests"], [], false]);
+    // ROUND 4: folded by that click, with its sessions in the pane, the header no longer promises "and see its sessions at a
+    // glance": the click opens the group, and the title says that alone (the header stands in for web, the tab being read)
+    assert.equal(h.title, headWords("infra", 3, 3, true, true, false, true).title, h.title);
+    assert.ok(!/at a glance/.test(h.title) && h.title.endsWith("; click to open this group") && h.act === "toggle-group", h.title);
 
     // S3: Hide in the pane: the store, not the fold
     await page.click(act("api"));
@@ -318,8 +322,9 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
 
     // S5: Escape leaves the pane; the group stays open
     await page.keyboard.press("Escape");
-    s = await state();
+    s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, s.tabs], [false, true, null, ["web", "tests"]]);
+    assert.ok(h.title.includes("; click to fold this group and see its sessions at a glance; "), "the pane gone, the open header's promise returns: " + h.title);
 
     // S6: THE DOOR: the pane comes, the fold, the strip and the store stay as they were
     const before = JSON.stringify(s.stored);
@@ -497,8 +502,17 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state();
     assert.deepEqual([s.hiddenRows, s.foldShown, s.foldOpen], [["old1"], true, false], "archived's fold starts closed, whatever infra's is");
     await page.click(nameOf("infra"));   // open, the pane on another section: the click folds infra and shows it
-    s = await state();
+    s = await state(); h = await head("infra");
     assert.deepEqual([s.snapView, s.hiddenRows, s.foldOpen], ["infra", ["api"], true], "infra's own fold state, still open");
+    assert.ok(h.folded === "1" && h.title.endsWith("; click to open this group"), "folded with its sessions in the pane (round 4): " + h.title);
+    // S14: the pane gone while the header is still folded: the folded promise returns; opened again with the pane elsewhere, the open one
+    await page.keyboard.press("Escape");
+    s = await state(); h = await head("infra");
+    assert.ok(s.snapView === null && h.folded === "1" && h.title.endsWith("; click to open and see its sessions at a glance"), h.title);
+    await page.click(nameOf("infra"));   // opens infra and shows it in the pane
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.snapView, h.folded, s.tabs], ["infra", "0", ["web", "tests"]], "infra open again (api hidden inside it, old1 hidden inside archived)");
+    assert.ok(h.title.includes("; " + BACK_TO_TRANSCRIPT_CLICK + "; "), "open, shown and holding web: the way back's words");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   } finally { await browser.close(); }
