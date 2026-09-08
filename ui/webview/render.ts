@@ -73,6 +73,7 @@ import { retainLiveOmitted } from "./tab-order";
 import { userTurnShows } from "./user-turn-content";
 import { ScrollDiagBudget, classifyScroll, scrollWriteRow } from "./scroll-write";
 import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
+import { publishReloadHold } from "./reload-hold";   // the chat page's hold on the reload core while ships await their ack (T215 meets T265)
 import { keepResidentEvents } from "./frame-merge";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -14211,6 +14212,7 @@ function addPendingShip(id: string | null, name: string, shipId: string): void {
   const list = pendingShips.get(id) || [];
   list.push({ name, shipId });
   pendingShips.set(id, list);
+  publishReloadHold(pendingShips.size);   // the reload core waits for this ship's ack (reload-hold.ts)
   persistDrafts();   // the NAMES ride the draft store so a reload can say what it lost (T215)
   if (id === activeId) renderComposerFiles(id);
 }
@@ -14243,6 +14245,7 @@ function retirePendingShip(key: string, shipId?: string): string | null {
     if (i < 0) i = list.findIndex((p) => k.endsWith("-" + shipSafeName(p.name)));
     list.splice(i >= 0 ? i : 0, 1);
     if (!list.length) pendingShips.delete(id);
+    publishReloadHold(pendingShips.size);   // the last retirement releases a reload the core is holding (reload-hold.ts)
     persistDrafts();
     if (id === activeId) renderComposerFiles(id);
     return id;
@@ -14374,6 +14377,10 @@ try {
     }
   }
 } catch { /* ignore */ }
+// The reload core's hold, published from load (reload-hold.ts; the fork's 2026-09-08 fold, T215 meets T265): false
+// here, since the ships this page may have lost were named just above and no payload survived to re-ship them, so
+// a reload the core owes at startup is never held on their account. Every change to pendingShips republishes it.
+publishReloadHold(pendingShips.size);
 
 // Composer EDIT mode (per session): set when the user clicks a bubble's edit affordance — the composer
 // then sends a rewindSend (branch from just before that message) instead of a plain message. The chip
@@ -14688,6 +14695,7 @@ function renderComposerFiles(id: string | null): void {
       if (!list) return;
       list.splice(i, 1);
       if (!list.length && id) pendingShips.delete(id);
+      publishReloadHold(pendingShips.size);   // a dismissed chip no longer holds the reload core (reload-hold.ts)
       persistDrafts();   // the dismissed chip's name must not resurface as a reload-loss toast
       // dismissing the LAST chip settles an armed hold the same way a nack does — cancelled
       // LOUDLY, never auto-sent: the ✕ removed the very entry whose ack the hold was waiting

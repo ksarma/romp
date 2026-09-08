@@ -11,7 +11,12 @@ The fix, both faces:
   * same-page reconnect (the served dashboard): every pending entry retains its encoded payload
     and re-ships on romp:wsup — the exact kernel-is-back event, never a timer. The ack/nack
     echoes the client's shipId, so a duplicate ack from a re-ship race retires exactly the chip
-    that asked, and a stray twin is DROPPED instead of attached to the active tab.
+    that asked, and a stray twin is DROPPED instead of attached to the active tab. Since the fold
+    that brought the reload core (T265: a kernel-served page reloads itself when the kernel serving
+    it restarts), the page also publishes a hold on that reload while any ship awaits its ack
+    (ui/webview/reload-hold.ts, window.__rompReloadHold; the core's shipsHold defers and re-checks),
+    so the heal runs first and the reload follows it. Without the hold the reload landed about 1.7 s
+    after the relaunch and took the payload with it (the fork's 2026-09-08 fold).
   * reload (the VS Code pipe reloads its webview on kernel reconnect): the payload dies with
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.
@@ -22,7 +27,8 @@ Two guards here:
   * ServedWedge — the executed guard: boots the hermetic kernel, opens the real /chat page,
     SIGSTOPs the kernel so the dropFile is shipped on a live socket that will never answer,
     holds a send behind the ship gate, SIGKILLs and relaunches the kernel — and asserts the
-    reconnect re-ships, the thumbnail lands, and the held send fires. Plus the regression leg:
+    reconnect re-ships, the thumbnail lands, and the held send fires, and only THEN the page reloads
+    itself onto the relaunched kernel's boot id, with no loss to announce. Plus the regression leg:
     a normal ship+send against the restarted kernel behaves exactly as before. Skips LOUDLY
     when the extension deps or a playwright browser are absent (CI installs no browsers).
 
@@ -121,26 +127,65 @@ out.wedge.gateOffered = await waitBtn.count();
 if (out.wedge.gateOffered) await waitBtn.click();
 out.wedge.inputHeld = await page.inputValue("#composer-input");
 out.wedge.chipStillPendingHeld = await page.locator(".composer-file-pending").count();
+// ---- the order pin (the fork's 2026-09-08 fold, T215 meets T265): the page heals, THEN the reload core reloads it.
+// A marker names this document, and a latch inside it records the heal in sessionStorage (which survives the
+// reload) the moment the strip and the composer show it, so the driver can read what the old page saw after that
+// page is gone. The MutationObserver runs as a microtask, ahead of any navigation; the interval is the belt.
+const bootBefore = await page.evaluate((msg) => {
+  window.__probe = 1;
+  sessionStorage.removeItem("probe:healedHere");
+  const look = () => {
+    if (sessionStorage.getItem("probe:healedHere")) return;
+    const input = document.getElementById("composer-input");
+    const pending = document.querySelectorAll(".composer-file-pending").length;
+    if (pending === 0 && input && input.value === "")
+      sessionStorage.setItem("probe:healedHere", JSON.stringify({
+        hold: window.__rompReloadHold, waiting: window.__rompReload ? window.__rompReload.waiting : null,
+        contentHasMsg: (document.getElementById("content")?.textContent || "").includes(msg) }));
+  };
+  new MutationObserver(look).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+  setInterval(look, 20);
+  return window.__rompReload ? window.__rompReload.boot : null;
+}, cfg.msg);
+out.wedge.bootBefore = bootBefore;
+out.wedge.holdWhileShipping = await page.evaluate(() => window.__rompReloadHold);
 // ---- the restart: the old socket dies with the ack still owed; a fresh kernel takes the port ----
 process.kill(cfg.kernelPid, "SIGKILL");
 const k2 = spawn(cfg.relaunch.cmd, [], { env: cfg.relaunch.env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
 k2.unref();   // the kernel outlives this driver — an un-unref'd child held node open past RESULT
 fs.writeSync(1, "KPID:" + k2.pid + "\n");
+// a poll that survives the reload: an evaluate that lands while the document is being replaced throws, and that
+// is not an answer, so it asks again. Returns the predicate's (truthy) value, or false at the deadline.
+const settle = async (fn, arg, ms) => {
+  const t0 = Date.now();
+  for (;;) {
+    let v = false;
+    try { v = await page.evaluate(fn, arg); } catch (e) { /* mid-navigation */ }
+    if (v) return v;
+    if (Date.now() - t0 > ms) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
 // today (pre-fix) this wait dies: the chip pulses forever and the held send never fires.
-// with the fix: romp:wsup re-ships, the ack retires the chip, and fireHeldSend sends the message.
-const healed = await page.waitForFunction((msg) => {
-  const input = document.getElementById("composer-input");
-  const pending = document.querySelectorAll(".composer-file-pending").length;
-  const content = document.getElementById("content");
-  return pending === 0 && input && input.value === "" &&
-         !!content && content.textContent.includes(msg);
-}, cfg.msg, { timeout: 45000 }).then(() => true).catch(() => false);
-out.wedge.healedAfterRestart = healed;
+// with the fix: romp:wsup re-ships, the ack retires the chip, and fireHeldSend sends the message. The latch
+// writes only while the marker page lives, so a record means THAT page healed, before any reload.
+const rec = await settle(() => JSON.parse(sessionStorage.getItem("probe:healedHere") || "null"), null, 45000);
+out.wedge.healedAfterRestart = !!rec;
+out.wedge.healRecord = rec || null;
+// ...then the reload core's turn (T265): the marker is gone and the page carries the relaunched kernel's boot id
+out.wedge.reloadedAfterHeal = await settle(
+  (boot) => window.__probe !== 1 && !!window.__rompReload && window.__rompReload.boot !== boot, bootBefore, 30000);
+await page.waitForSelector("#composer-input", { timeout: 20000 }).catch(() => {});
+out.wedge.bootAfter = await page.evaluate(() => window.__rompReload ? window.__rompReload.boot : null).catch(() => null);
 out.wedge.pendingAfterRestart = await page.locator(".composer-file-pending").count();
 out.wedge.inputAfterRestart = await page.inputValue("#composer-input");
-out.wedge.contentHasMsg = await page.evaluate(
-  (msg) => (document.getElementById("content")?.textContent || "").includes(msg), cfg.msg);
+// the fresh page draws the transcript from the kernel, which holds the send the ack released
+out.wedge.contentHasMsg = await settle(
+  (msg) => (document.getElementById("content")?.textContent || "").includes(msg), cfg.msg, 15000);
+// every ship settled BEFORE the reload, so the reload has no loss to announce
+out.wedge.lossToast = await page.evaluate(
+  () => (document.getElementById("warn-toasts")?.textContent || "").includes("still uploading"));
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-wedge.png" });
 
 // ---- regression: a normal ship+send against the restarted kernel, untouched ----
@@ -317,6 +362,14 @@ class ServedWedge(_ShipLab):
         self.assertEqual(w["pendingAfterRestart"], 0, "no chip may pulse over an upload that settled: %r" % w)
         self.assertEqual(w["inputAfterRestart"], "", "the held send must have fired: %r" % w)
         self.assertTrue(w["contentHasMsg"], "the sent message must be in the transcript view: %r" % w)
+        # ...and only THEN the reload core's reload (the fork's 2026-09-08 fold, T215 meets T265): the page held
+        # the reload while the ship awaited its ack, the core deferred, and the fresh page has no loss to announce
+        self.assertTrue(w["holdWhileShipping"],
+                        "the page publishes window.__rompReloadHold while a ship awaits its ack: %r" % w)
+        self.assertTrue(w["reloadedAfterHeal"],
+                        "the reload core reloads once the ships settled (a new boot id, the marker gone): %r" % w)
+        self.assertNotEqual(w["bootAfter"], w["bootBefore"], "the fresh page carries the relaunched kernel's boot id: %r" % w)
+        self.assertFalse(w["lossToast"], "the reload came after the ack, so it has no loss to announce: %r" % w)
         # regression: the restarted kernel serves a NORMAL ship+send exactly as before
         self.assertFalse(reg["lossToast"], "a clean reload must not cry ship-loss: %r" % reg)
         self.assertTrue(reg["thumbnailLanded"], "normal ship: chip → thumbnail on the ack: %r" % reg)

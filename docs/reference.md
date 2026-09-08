@@ -37,6 +37,10 @@ ask* shows the banner, *Install automatically* converges on its own at the next 
 hears nothing about it and keeps running what it has until they restart Romp themselves. The
 reload prompt that reads "A newer romp build is available" is separate and stays on in every
 mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
+A page also reloads itself when the kernel serving it restarts, once any gesture in progress has ended. A
+chat page with an attachment still uploading first finishes the upload and sends any message waiting on it,
+then reloads; if the upload has not finished within a minute, the page reloads anyway and reports the lost
+attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that

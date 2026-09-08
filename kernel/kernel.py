@@ -48879,12 +48879,26 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # only THIS page's own socket and /version (federation.ts drops remote `ka` frames, so they never reach the shim's
 # dv check, and the relay never forwards a remote kernel's boot id). tests/test_dashboard_auto_reload.py runs
 # this code in node with fakes and pins the wiring.
+# Fork addition (2026-09-08, the fourth upstream fold): the 'ships' hold. A kernel restart is also the event T215
+# heals on the chat page (ui/webview/render.ts pendingShips: a file shipped before the restart re-ships on the
+# socket's reopen, its ack retires the chip and releases a send held behind the ship gate). On the served /chat page
+# this reload landed about 1.7 s after the relaunch and took the in-memory payload with it, so nothing re-shipped,
+# nothing was sent, and the fresh page showed T215's loss toast (tests/test_ship_reship.py ServedWedge, red once
+# the core arrived). Ruling: both stand, the heal first. The chat page publishes window.__rompReloadHold while any
+# ship awaits its ack (ui/webview/reload-hold.ts, a boolean word in the style of the paint gate's
+# window.__rompPaneHidden); busyHere reads it as the 'ships' hold, so the shell's composition across its panes
+# covers it too. The page has no ending event the core listens to, so tryFire re-checks the hold on a short timer
+# (shipsHold, 500 ms) and reloads once it clears; after HOLD_MAX (60 s) it reloads anyway and says why in a console
+# line (the fresh page's loss toast then names what was lost). tests/test_dashboard_auto_reload.py ShipsHoldExecuted
+# runs the hold in node; the served order (heal, then reload) is ServedWedge's executed pin.
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,ptr=0,drag=false,owed=null,fired=false;
+var holdT=0,holdTimer=null,HOLD_MAX=60000;/*fork: the ships hold (see the comment above)*/
 function shell(){try{var p=window.parent;if(p&&p!==window&&p.__rompReload)return p.__rompReload;}catch(e){}return null;}
 function busyHere(){if(ptr>0)return 'pointer';if(drag)return 'drag';
 try{var s=document.getSelection&&document.getSelection();if(s&&s.rangeCount&&!s.isCollapsed&&String(s).length)return 'selection';}catch(e){}
 try{var c=document.getElementById('composer-input');if(c&&document.activeElement===c&&(c.value||'').trim())return 'composer';}catch(e){}
+try{if(window.__rompReloadHold===true)return 'ships';}catch(e){}/*fork: uploads awaiting their ack (render.ts publishReloadHold)*/
 return '';}
 function panes(){var out=[],fs=document.querySelectorAll?document.querySelectorAll('iframe'):[];
 for(var i=0;i<fs.length;i++){try{var w=fs[i].contentWindow;if(w&&w.__rompReload)out.push(w);}catch(e){}}return out;}
@@ -48896,7 +48910,10 @@ try{sessionStorage.setItem('romp:reloaded',JSON.stringify({reason:owed.reason,de
 persist();
 try{document.body.classList.remove('settings-open','picker-open');}catch(e){}
 try{location.reload();}catch(e){fired=false;R.waiting='refused';if(R.refused)R.refused(owed);}}
-function tryFire(){if(!owed||fired)return;var b=busy();if(b){R.waiting=b;return;}R.waiting='';fire();}
+function shipsHold(){var now=Date.now();if(!holdT)holdT=now;
+if(now-holdT>=HOLD_MAX){try{console.warn('romp: reloading with uploads still awaiting their ack after '+Math.round((now-holdT)/1000)+' s; the hold did not clear, and the next load names what was lost');}catch(e){}return '';}
+if(!holdTimer)holdTimer=setTimeout(function(){holdTimer=null;tryFire();},500);return 'ships';}
+function tryFire(){if(!owed||fired)return;var b=busy();if(b==='ships')b=shipsHold();if(b){R.waiting=b;return;}R.waiting='';fire();}
 function request(reason,detail){var s=shell();if(s){s.request(reason,detail);return;}if(fired)return;
 if(!owed)owed={reason:reason,detail:detail||''};tryFire();}
 function noteDv(dv){if(LOADED&&dv&&dv>LOADED)request('build',String(dv));}

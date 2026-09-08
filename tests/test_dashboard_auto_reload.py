@@ -237,6 +237,91 @@ out({ inShell: R.inShell(), after: state() });""")
         self.assertEqual(s["after"]["reloads"], 1, "an iframe in another app reloads itself")
 
 
+class ShipsHoldExecuted(unittest.TestCase):
+    """The fork's 'ships' hold (the 2026-09-08 fold, T215 meets T265): a chat page with uploads awaiting their ack
+    publishes window.__rompReloadHold (ui/webview/reload-hold.ts); the core defers a reload it owes while the word is
+    true, re-checks on a 500 ms timer, reloads once it clears, and after 60 s reloads anyway with a console line.
+    The timers, the clock and the console are the scenario's own fakes (the core calls setTimeout, Date.now and
+    console.warn by name, so a bare assignment in the sloppy-mode script replaces the global)."""
+
+    FAKES = """
+var TIMERS = [], WARNS = [], NOW = 5000000;
+var realST = setTimeout;
+setTimeout = function (f, ms) { if (ms >= 100) { TIMERS.push(f); return 77; } return realST(f, ms); };
+Date.now = function () { return NOW; };
+console.warn = function () { WARNS.push(Array.prototype.join.call(arguments, " ")); };
+function runTimers() { TIMERS.splice(0).forEach(function (f) { f(); }); }
+"""
+
+    def test_held_means_no_reload_now_and_a_re_check_later_which_reloads_once_the_hold_clears(self):
+        s = run_core(self.FAKES + """
+var R = window.__rompReload;
+window.__rompReloadHold = true;
+VERSION = { boot: "2.2", dist_ver: 7 }; R.checkBoot(); await tick(); await tick(); var held = state();
+var armed = TIMERS.length;
+emit("pointerup"); var armedAfterEnd = TIMERS.length;   // an ending event re-asks, finds the hold, stacks no second timer
+runTimers(); var rechecked = state(); var rearmed = TIMERS.length;
+window.__rompReloadHold = false;
+runTimers();
+out({ held: held, armed: armed, armedAfterEnd: armedAfterEnd, rechecked: rechecked, rearmed: rearmed, after: state(),
+      left: TIMERS.length, warns: WARNS });""")
+        self.assertEqual(s["held"]["reloads"], 0, "held: no reload now")
+        self.assertEqual(s["held"]["waiting"], "ships")
+        self.assertEqual(s["held"]["owed"]["reason"], "restart", "armed, not dropped")
+        self.assertEqual(s["armed"], 1, "one re-check timer")
+        self.assertEqual(s["armedAfterEnd"], 1, "a gesture's ending event does not stack a second one")
+        self.assertEqual(s["rechecked"]["reloads"], 0, "the re-check found the hold still up")
+        self.assertEqual(s["rechecked"]["waiting"], "ships")
+        self.assertEqual(s["rearmed"], 1, "...and re-armed")
+        self.assertEqual(s["after"]["reloads"], 1, "cleared: the next re-check reloads")
+        self.assertEqual(s["after"]["waiting"], "")
+        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+        self.assertEqual(s["after"]["persisted"], 1, "the pane persisted before the reload, as always")
+        self.assertEqual(s["left"], 0, "nothing armed after the fire")
+        self.assertEqual(s["warns"], [], "no deadline line: the hold cleared in time")
+
+    def test_the_deadline_reloads_anyway_and_says_why_in_the_console(self):
+        s = run_core(self.FAKES + """
+var R = window.__rompReload;
+window.__rompReloadHold = true;
+R.noteVersion({ boot: "2.2", dist_ver: 7 }); var held = state();
+NOW += 59000; runTimers(); var under = state(); var underWarns = WARNS.length;
+NOW += 1000; runTimers();
+out({ held: held, under: under, underWarns: underWarns, after: state(), warns: WARNS, left: TIMERS.length });""")
+        self.assertEqual(s["held"]["reloads"], 0)
+        self.assertEqual(s["under"]["reloads"], 0, "59 s in, still held")
+        self.assertEqual(s["under"]["waiting"], "ships")
+        self.assertEqual(s["underWarns"], 0)
+        self.assertEqual(s["after"]["reloads"], 1, "60 s: reloads anyway")
+        self.assertEqual(s["after"]["stored"]["reason"], "restart")
+        self.assertEqual(len(s["warns"]), 1, s["warns"])
+        self.assertIn("uploads still awaiting their ack after 60 s", s["warns"][0])
+        self.assertIn("the hold did not clear", s["warns"][0])
+        self.assertEqual(s["left"], 0)
+
+    def test_a_panes_hold_holds_the_shells_reload_and_its_clearing_releases_it(self):
+        s = run_core(self.FAKES + """
+var R = window.__rompReload; var paneHold = "ships";
+IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return paneHold; } } } }];
+R.request("restart", "2.2"); var held = state(); var armed = TIMERS.length;
+paneHold = ""; runTimers();
+out({ held: held, armed: armed, after: state() });""")
+        self.assertEqual(s["held"]["reloads"], 0)
+        self.assertEqual(s["held"]["waiting"], "ships", "a pane's ships hold holds the shell's reload")
+        self.assertEqual(s["armed"], 1, "the shell re-checks on its own timer")
+        self.assertEqual(s["after"]["reloads"], 1)
+
+    def test_a_page_with_no_hold_reloads_at_once_and_arms_no_timer(self):
+        s = run_core(self.FAKES + """
+var R = window.__rompReload;
+window.__rompReloadHold = false;
+R.noteVersion({ boot: "2.2", dist_ver: 7 });
+out({ after: state(), left: TIMERS.length, warns: WARNS });""")
+        self.assertEqual(s["after"]["reloads"], 1)
+        self.assertEqual(s["left"], 0)
+        self.assertEqual(s["warns"], [])
+
+
 class ReloadWiringPinned(unittest.TestCase):
     def test_every_kernel_served_page_embeds_the_core_with_its_build_and_boot(self):
         shim = km._shim("feed", 123)
