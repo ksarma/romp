@@ -20,8 +20,9 @@ const CSS = ui("webview", "styles.css");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
-// the folded-only block of the header: from `if (collapsed) {` to the drag wiring that follows it
-const FOLDED = HEAD.slice(HEAD.indexOf("if (collapsed) {"), HEAD.indexOf("head.draggable = true;"));
+// the header's stand-in block, where the member-derived marks live: from `if (hidden.length) {` (folded, the unpinned
+// members; open, the members hidden inside the section, 2026-09-08) to the drag wiring that follows it
+const FOLDED = HEAD.slice(HEAD.indexOf("if (hidden.length) {"), HEAD.indexOf("head.draggable = true;"));
 const HANDLER = RENDER.slice(RENDER.indexOf('"open-group": (el) => {'), RENDER.indexOf('"open-group": (el) => {') + 260);
 
 // the demo world: web + api in "infra", tests + old1 in "archived" (folded by default), a loose one
@@ -35,7 +36,7 @@ const V = {
 type Sess = { name: string; userTodos?: { id: string; text: string }[] };
 const todo = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i + 1}`, text: `synthetic need ${i + 1}` }));
 const heads = (items: ReturnType<typeof planStrip>["items"]) =>
-  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
+  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] } => "head" in i);
 
 test("executed: a folded section with ONE member holding an open todo shows the flag, count 1, that session named", () => {
   const sessions = new Map<string, Sess>([["tests", { name: "tests", userTodos: todo(1) }], ["old1", { name: "old1", userTodos: [] }]]);
@@ -96,20 +97,22 @@ test("executed: federation — a remote host's session counts for its section th
     "the name is the one its tab shows — host-prefixed like the label");
 });
 
-test("the flag never appears twice for one section: one construction, inside the folded block, one append; open headers carry none", () => {
+test("the flag never appears twice for one section: one construction, inside the stand-in block, one append; an open header with nothing hidden carries none", () => {
   assert.equal(RENDER.split('b.className = "tab-group-flag";').length - 1, 1, "exactly one place builds it (renderTabs' focus restore only looks one up)");
-  assert.equal(FOLDED.split("sectionTodoFlag(").length - 1, 1, "…inside the header's folded-only block");
+  assert.equal(FOLDED.split("sectionTodoFlag(").length - 1, 1, "…inside the header's stand-in block");
   assert.equal(FOLDED.split("head.appendChild(b);").length - 1, 1, "appended once");
-  assert.equal(HEAD.indexOf("sectionTodoFlag("), FOLDED.indexOf("sectionTodoFlag(") + HEAD.indexOf("if (collapsed) {"),
-    "no second derivation outside the folded block");
+  assert.equal(HEAD.indexOf("sectionTodoFlag("), FOLDED.indexOf("sectionTodoFlag(") + HEAD.indexOf("if (hidden.length) {"),
+    "no second derivation outside the stand-in block");
   // and one header per section in the plan — the flag rides the header, so one flag per section
   const plan = planStrip(["web", "api", "tests", "old1"], viewTagUnion(V), parseTabGroups(null), "web", false);
   assert.deepEqual(heads(plan.items).map((h) => h.head.name), ["infra", "archived"]);
-  // OPEN headers (the active tab's section renders open whatever the store says): every member tab
-  // wears its own glyph there, so a header flag would be a second mark over the same need
+  // OPEN headers with nothing hidden inside them: every member tab wears its own glyph there, so a header
+  // flag would be a second mark over the same need; `hidden` is empty, and the block does not run. (Open with a
+  // member hidden inside the section, the block runs over that member: tab-hide.test, the user 2026-09-08.)
   const infra = heads(plan.items).find((h) => h.head.name === "infra")!;
-  assert.deepEqual([infra.folded, infra.active], [false, true]);
-  assert.match(FOLDED, /^if \(collapsed\) \{/, "the flag lives in the `if (collapsed)` block — never rendered on an open header");
+  assert.deepEqual([infra.folded, infra.active, infra.hidden], [false, true, []]);
+  assert.match(FOLDED, /^if \(hidden\.length\) \{/, "the marks live in the stand-in block: rendered exactly when the header stands in for a member with no tab");
+  assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block any more: an open header stands in for its hidden members too");
 });
 
 test("expanding via the flag: its own data-act opens the group explicitly (never a toggle), on the stable #tabs delegate, one render path", () => {
@@ -196,7 +199,7 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.match(FOLDED, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/);
   assert.ok(FOLDED.indexOf("sectionPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
   assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("sectionPip("), "both after the count — subordinate to the label");
-  assert.equal(HEAD.split("sectionPip(").length - 1, 1, "one pip derivation, inside the folded block — open headers carry neither mark");
+  assert.equal(HEAD.split("sectionPip(").length - 1, 1, "one pip derivation, inside the stand-in block — an open header with nothing hidden carries neither mark");
   assert.match(HEAD, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the pip's tooltip names the sessions, like the flag's");
   assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px;/, "small");
 });

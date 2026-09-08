@@ -33,6 +33,7 @@ test("every input the strip renders is in the signature", () => {
     "settings.tabCtx", "settings.theme", "settings.colormap", 'titleWithKey("Open a session", "session.new")',
     'surfaceLens(effViews(), "chat")', "viewTagUnion(effViews())",
     "it.head.name", "it.head.localId", "it.head.color", "it.head.ids", "it.folded", "it.active", "it.hidden",
+    "it.hides",   // the members hidden inside the section (the snapshot's Hide): the open header's marks and count words derive from them
     "snapView",   // the section whose snapshot the pane shows: a header's snap-shown mark and its way-back act derive from it (makeGroupHead), and leaveSnapshot changes it with no fold change
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",

@@ -9,8 +9,10 @@
 //
 // Per-browser state, this viewer's like romp:vieworder: whether the strip sections at all (ON by
 // default whenever some tag holds a visible tab; the chat tag-lens menu's "Group tabs by tag" turns
-// it off), which sections are folded, and which members show through their section's fold (the
-// tab menu's "Show when folded"). `archived` starts folded — that tag exists to put sessions away.
+// it off), which sections are folded, which members show through their section's fold (the
+// tab menu's "Show when folded"), and which members are hidden inside their section while it is open
+// (the section snapshot's Hide, the user 2026-09-08). `archived` starts folded — that tag exists to
+// put sessions away.
 // Notification is view-order.ts's two-path idiom: localStorage reaches other panes (the storage
 // event), a same-window CustomEvent reaches the writer. Pure and DOM-free (the tab-order.ts
 // pattern) so the rule executes in node tests; render.ts paints it.
@@ -53,6 +55,14 @@ export interface TabGroupsState {
   collapsed: string[];  // sections the user folded
   expanded: string[];   // default-folded sections the user opened
   pinned: PinnedRef[];  // members shown under their folded section
+  /** members kept OFF the strip while their section is open: the section snapshot's Hide (the user
+   *  2026-09-08, who wanted single sessions put away inside a group, apart from the group's fold). The
+   *  same entry shape as a pin, one per (tab, section), matched and written the same way (isHidden /
+   *  setHidden), carried across a tag's rename and pruned beside the pins. A fold or an open never
+   *  changes it: collapsing the section folds everything, expanding it brings back exactly the members
+   *  not hidden. Where a member is both pinned and hidden the hide wins, in either fold state. A store
+   *  from before the list reads as nothing hidden (parseTabGroups). */
+  hidden: PinnedRef[];
   /** the name each renamed tag's pins were last carried to, by tag id — followTagRenames' once-per-
    *  browser memory; absent until a rename was followed */
   followed?: Record<string, string>;
@@ -99,7 +109,7 @@ export function anySectioned(visibleIds: readonly string[], unions: readonly Tag
   return visibleIds.some((id) => homeTag(id, unions) !== null);
 }
 
-const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [] });
+const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:
  *  a corrupt entry may cost you a preference, never the dashboard). `unions` — the current tag
@@ -143,7 +153,9 @@ export function parseTabGroups(raw: string | null | undefined, unions: readonly 
       return Object.keys(out).length ? out : undefined;
     };
     const followedSeq = seqs(o.followedSeq);
-    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned),
+    // `hidden` (2026-09-08) reads through the pins' parser: the same entry shape, and a blob written before
+    // the list has none, so nothing is hidden
+    return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned), hidden: pins(o.hidden),
              ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}) };
   } catch {
     return fresh();
@@ -162,7 +174,7 @@ export function readTabGroups(unions: readonly TagUnion[] = []): TabGroupsState 
  *  window gets the same news through a CustomEvent (one notification path, two deliveries). */
 export function writeTabGroups(st: TabGroupsState): void {
   try {
-    const blob: Record<string, unknown> = { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned };
+    const blob: Record<string, unknown> = { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned, hidden: st.hidden };
     if (st.followed && Object.keys(st.followed).length) blob.followed = st.followed;
     if (st.followedSeq && Object.keys(st.followedSeq).length) blob.followedSeq = st.followedSeq;
     localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob));
@@ -228,13 +240,37 @@ export function isPinned(st: TabGroupsState, sec: SectionRef, sid: string): bool
  *  (round 4 of the 2026-09-06 review: an on that replaced every entry silently dropped a pin set
  *  under another section, and the row's copy had promised a per-section preference). */
 export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
-  const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p)));
-  if (on && sec.name !== null) pinned.push(pinEntry(sec, sid));
-  return { ...st, pinned };
+  return { ...st, pinned: setEntry(st.pinned, sec, sid, on) };
 }
 
 export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): TabGroupsState {
   return setPinned(st, sec, sid, !isPinned(st, sec, sid));
+}
+
+/** The one write rule for a per-(tab, section) list, the pins' and the hides': on adds, or replaces, the
+ *  tab's entry for this section (the entries naming it by name or by id collapse into one), off removes
+ *  exactly those; entries for other sections stand either way. */
+function setEntry(list: readonly PinnedRef[], sec: SectionRef, sid: string, on: boolean): PinnedRef[] {
+  const out = list.filter((p) => !(p.sid === sid && pinNames(sec, p)));
+  if (on && sec.name !== null) out.push(pinEntry(sec, sid));
+  return out;
+}
+
+/** Is this member HIDDEN inside its section (the user 2026-09-08): off the strip while the section is open,
+ *  listed under the snapshot's Hidden fold? An entry for the sid naming the section, as a pin's is. */
+export function isHidden(st: TabGroupsState, sec: SectionRef, sid: string): boolean {
+  return st.hidden.some((p) => p.sid === sid && pinNames(sec, p));
+}
+
+/** Set a member's hide EXPLICITLY, per section, the pin's own idiom (the snapshot row passes the state it
+ *  rendered: a Hide button on a shown row, a Show button on a hidden one). The fold state is untouched:
+ *  hiding is the user's word about the SESSION, folding about the group, and neither writes the other. */
+export function setHidden(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
+  return { ...st, hidden: setEntry(st.hidden, sec, sid, on) };
+}
+
+export function toggleHidden(st: TabGroupsState, sec: SectionRef, sid: string): TabGroupsState {
+  return setHidden(st, sec, sid, !isHidden(st, sec, sid));
 }
 
 /** Drop the pins nothing can render any more, judged PER ENTRY — and only where the entry's session
@@ -273,9 +309,12 @@ export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): 
  *  member stands); the user sets them again. */
 export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], knownIds: ReadonlySet<string>, hosts: ReadonlySet<string>): TabGroupsState {
   const judged = (sid: string) => { const h = hostOf(sid); return knownIds.has(sid) || h === "" || hosts.has(h); };
-  const pinned = st.pinned.filter((p) => !judged(p.sid) || (knownIds.has(p.sid)
-    && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid))));
-  return pinned.length === st.pinned.length ? st : { ...st, pinned };
+  const stands = (p: PinnedRef) => !judged(p.sid) || (knownIds.has(p.sid)
+    && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid)));
+  // the hides are judged by the same rule (2026-09-08): a session that left the section, or closed, takes its
+  // hide with it, so a later return to the group starts shown once a write has run in between
+  const pinned = st.pinned.filter(stands), hidden = st.hidden.filter(stands);
+  return pinned.length === st.pinned.length && hidden.length === st.hidden.length ? st : { ...st, pinned, hidden };
 }
 
 /** The lists the federation router publishes on `window.__rompFed` (federation.ts start()) that the pin
@@ -483,28 +522,33 @@ export function followTagRenames(st: TabGroupsState, renames: readonly TagRename
   if (!fresh.length) return stale ? remembered(st) : st;
   const matches = (p: PinnedRef, x: TagRename) => (p.id !== undefined && x.id === p.id)
     || ((p.id === undefined || !x.local) && x.from === p.name && x.members.includes(p.sid));
-  const out: PinnedRef[] = [];
-  const seen = new Set<string>();
-  const put = (p: PinnedRef) => { const k = `${p.sid} ${p.name} ${p.id ?? ""}`; if (!seen.has(k)) { seen.add(k); out.push(p); } };
-  for (const p of st.pinned) {
-    const rs = fresh.filter((x) => matches(p, x));
-    if (!rs.length) { put(p); continue; }
-    // the entry MOVES with its own tag's rename (by id) or, id-less, with any it matches; a remote rename
-    // matched by name against a local-id entry adds the remote half and leaves the entry, whose local
-    // tag still holds the tab under its own name
-    if (p.id !== undefined && !rs.some((r) => r.id === p.id)) put(p);
-    for (const r of rs) put(r.local ? { sid: p.sid, name: r.to, id: r.id } : { sid: p.sid, name: r.to });
-    for (const from of new Set(rs.map((r) => r.from))) {
-      const rest = unions.find((u) => u.name === from && u.members.includes(p.sid));
-      if (rest) put(pinEntry(sectionRef(rest), p.sid));
+  // the carry, one list at a time: the pins and the hides (2026-09-08) follow the same renames the same way
+  const carry = (list: readonly PinnedRef[]): PinnedRef[] => {
+    const out: PinnedRef[] = [];
+    const seen = new Set<string>();
+    const put = (p: PinnedRef) => { const k = `${p.sid} ${p.name} ${p.id ?? ""}`; if (!seen.has(k)) { seen.add(k); out.push(p); } };
+    for (const p of list) {
+      const rs = fresh.filter((x) => matches(p, x));
+      if (!rs.length) { put(p); continue; }
+      // the entry MOVES with its own tag's rename (by id) or, id-less, with any it matches; a remote rename
+      // matched by name against a local-id entry adds the remote half and leaves the entry, whose local
+      // tag still holds the tab under its own name
+      if (p.id !== undefined && !rs.some((r) => r.id === p.id)) put(p);
+      for (const r of rs) put(r.local ? { sid: p.sid, name: r.to, id: r.id } : { sid: p.sid, name: r.to });
+      for (const from of new Set(rs.map((r) => r.from))) {
+        const rest = unions.find((u) => u.name === from && u.members.includes(p.sid));
+        if (rest) put(pinEntry(sectionRef(rest), p.sid));
+      }
     }
-  }
+    return out;
+  };
+  const pinned = carry(st.pinned), hidden = carry(st.hidden);
   for (const r of fresh) {   // the frame's renames re-stamp the checked memory, at the tag's store's seq
     followed[r.id] = r.to;
     const s = storeSeq(r.id);
     if (s !== null && s > 0) seqs[r.id] = s; else delete seqs[r.id];
   }
-  return remembered({ ...st, pinned: out });
+  return remembered({ ...st, pinned, hidden });
 }
 
 /** Is the blob NEWER than the memory's evidence for some tag it names otherwise — a STAMPED memory entry
@@ -583,8 +627,11 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
     // about what it does (the round-2 review)
     const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
-    return { count: String(total), label: `${name}, ${n(total)}${here}${back ? "; back to the transcript" : ""}`,
-             title: `${name} — ${n(total)}${reading}; ${click}; drag to reorder the groups` };
+    // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count stays the
+    // total, and the words say how many of them are off the strip, so "5" beside three tabs is explained
+    const hid = hidden > 0 ? `, ${hidden} hidden` : "";
+    return { count: String(total), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
+             title: `${name} — ${n(total)}${hid}${reading}; ${click}; drag to reorder the groups` };
   }
   if (hidden === 0) {
     const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
@@ -596,9 +643,11 @@ export function headWords(name: string, total: number, hidden: number, folded: b
 }
 
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
- *  the member ids a folded header stands in for — its members less the pinned ones, [] when open) or
- *  a tab. */
-export type StripItem = { head: TabSection; folded: boolean; active: boolean; hidden: string[] } | { id: string };
+ *  the member ids the header stands in for, the ones with no tab on the strip: folded, its members less
+ *  the pinned ones that are not hidden; open, the hidden ones; `hides` = the members hidden inside the
+ *  section by their own flag (isHidden), in strip order, whatever the fold, a subset of `hidden`) or a tab. */
+export type StripHead = { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] };
+export type StripItem = StripHead | { id: string };
 export interface StripPlan {
   items: StripItem[];
   folded: Set<string>;   // the ids a folded header stands in for — keyboard cycling skips them
@@ -616,6 +665,12 @@ export interface StripPlan {
  *  - A folded section hides its members EXCEPT the pinned ones (the tab menu's "Show when folded"),
  *    which keep their place under the header in strip order; the header stands in for `hidden` alone
  *    (its count and its flag read those), and only those ids join the `folded` set.
+ *  - A member HIDDEN inside its section (the snapshot's Hide, the user 2026-09-08) has no tab in either
+ *    fold state: open, the header stands in for the hidden members (its pip and flag read them, so a
+ *    hidden session's needs-you stays on the strip); folded, they fold with the rest, a pin on one
+ *    notwithstanding (the hide wins). The fold's own lists are never read or written here for them, so
+ *    collapsing and expanding the section leaves exactly the hidden set hidden. Hidden ids join the
+ *    `folded` set too: the keyboard skips them and the header is an active one's stand-in.
  *  - The ACTIVE tab's section folds like any other (the user 2026-09-06; until then it was forced open
  *    so keyboard focus never landed on a hidden node). Its header is marked `active` whether open or
  *    folded: folded, the header is the hidden tab's stand-in — render.ts focuses it where it would
@@ -639,8 +694,9 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   for (const sec of sectionTabs(visibleIds, u)) {
     const active = activeId !== null && sec.ids.includes(activeId);
     const f = sec.name !== null && isSectionCollapsed(st, sec.name);
-    const hidden = f ? sec.ids.filter((id) => !isPinned(st, sec, id)) : [];
-    items.push({ head: sec, folded: f, active, hidden });
+    const hides = sec.name !== null ? sec.ids.filter((id) => isHidden(st, sec, id)) : [];
+    const hidden = f ? sec.ids.filter((id) => hides.includes(id) || !isPinned(st, sec, id)) : hides;
+    items.push({ head: sec, folded: f, active, hidden, hides });
     for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
   return { items, folded, sectioned };

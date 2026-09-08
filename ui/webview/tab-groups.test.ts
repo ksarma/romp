@@ -63,7 +63,7 @@ test("executed: sectioning is on by default exactly when some tag holds a visibl
 
 test("executed: per-browser state — on by default, archived starts folded, toggles remember, junk reads as the default", () => {
   const d = parseTabGroups(null);
-  assert.deepEqual(d, { on: true, collapsed: [], expanded: [], pinned: [] });
+  assert.deepEqual(d, { on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
   assert.equal(isSectionCollapsed(d, "infra"), false);
   assert.equal(isSectionCollapsed(d, "archived"), true, "the archived tag exists to put sessions away — folded until opened");
   assert.ok(DEFAULT_COLLAPSED.has("archived"));
@@ -74,7 +74,7 @@ test("executed: per-browser state — on by default, archived starts folded, tog
   assert.equal(isSectionCollapsed(opened, "archived"), false, "opening a default-folded section is remembered…");
   assert.deepEqual(opened.expanded, ["archived"]);
   assert.equal(isSectionCollapsed(toggleSectionCollapsed(opened, "archived"), "archived"), true, "…and folding it again drops the memory");
-  assert.deepEqual(parseTabGroups('{"on":false,"collapsed":["qa",3],"expanded":"x"}'), { on: false, collapsed: ["qa"], expanded: [], pinned: [] },
+  assert.deepEqual(parseTabGroups('{"on":false,"collapsed":["qa",3],"expanded":"x"}'), { on: false, collapsed: ["qa"], expanded: [], pinned: [], hidden: [] },
     "wrong-typed entries drop; on=false is the one way off");
   assert.deepEqual(parseTabGroups("not json"), d, "a corrupt entry costs the preference, never the dashboard");
   assert.deepEqual(parseTabGroups("[1,2]"), d);
@@ -86,9 +86,9 @@ test("executed: write → read round-trips through localStorage under romp:tabgr
   const savedLS = g.localStorage;
   g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
   try {
-    writeTabGroups({ on: false, collapsed: ["qa"], expanded: ["archived"], pinned: [{ sid: "web", name: "infra", id: "g2" }] });
+    writeTabGroups({ on: false, collapsed: ["qa"], expanded: ["archived"], pinned: [{ sid: "web", name: "infra", id: "g2" }], hidden: [] });
     assert.ok(store.has(TABGROUPS_KEY), "persisted under the one key");
-    assert.deepEqual(readTabGroups(), { on: false, collapsed: ["qa"], expanded: ["archived"], pinned: [{ sid: "web", name: "infra", id: "g2" }] }, "the pins ride the same blob");
+    assert.deepEqual(readTabGroups(), { on: false, collapsed: ["qa"], expanded: ["archived"], pinned: [{ sid: "web", name: "infra", id: "g2" }], hidden: [] }, "the pins ride the same blob");
   } finally {
     g.localStorage = savedLS;
   }
@@ -127,13 +127,13 @@ test("executed: planStrip — sections + folds; the flat strip when off or untag
   const p = planStrip(["web", "old1", "loose", "old2"], unions, st, "web", false);
   assert.equal(p.sectioned, true);
   assert.deepEqual(p.items, [
-    { head: { name: "infra", localId: "g2", color: "#4EC9B0", ids: ["web"] }, folded: false, active: true, hidden: [] }, { id: "web" },
-    { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1", "old2"] }, folded: true, active: false, hidden: ["old1", "old2"] },
-    { head: { name: null, localId: null, color: "", ids: ["loose"] }, folded: false, active: false, hidden: [] }, { id: "loose" },
+    { head: { name: "infra", localId: "g2", color: "#4EC9B0", ids: ["web"] }, folded: false, active: true, hidden: [], hides: [] }, { id: "web" },
+    { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1", "old2"] }, folded: true, active: false, hidden: ["old1", "old2"], hides: [] },
+    { head: { name: null, localId: null, color: "", ids: ["loose"] }, folded: false, active: false, hidden: [], hides: [] }, { id: "loose" },
   ], "archived starts folded: its header alone stands in for old1/old2; infra holds the active tab");
   assert.deepEqual([...p.folded], ["old1", "old2"], "the ids keyboard cycling skips");
   const active = planStrip(["web", "old1", "loose"], unions, st, "old1", false);
-  assert.deepEqual(active.items[2], { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1"] }, folded: true, active: true, hidden: ["old1"] },
+  assert.deepEqual(active.items[2], { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1"] }, folded: true, active: true, hidden: ["old1"], hides: [] },
     "the active tab's section folds as the store says (the user 2026-09-06) and is marked as holding it — the header is the hidden tab's stand-in");
   assert.deepEqual([...active.folded], ["old1"], "the active id is folded away too: visibleOrder drops it, the header takes its place");
   assert.equal(active.items.some((i) => "id" in i && i.id === "old1"), false, "no tab node for it — nothing hidden takes focus");
@@ -149,7 +149,7 @@ test("executed: the PHONE layout renders the flat strip — every visible id, no
   // tab; it has no header to unfold and no switch, so a folded section there (archived, by default)
   // made its sessions unreachable from the only switcher
   const unions = viewTagUnion({ ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2"] }] });
-  for (const st of [parseTabGroups(null), { on: true, collapsed: ["infra", "qa"], expanded: [], pinned: [] }]) {
+  for (const st of [parseTabGroups(null), { on: true, collapsed: ["infra", "qa"], expanded: [], pinned: [], hidden: [] }]) {
     const p = planStrip(["web", "old1", "loose", "old2", "tests"], unions, st, null, true);
     assert.equal(p.sectioned, false);
     assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "loose" }, { id: "old2" }, { id: "tests" }], "the flat strip, in strip order");
@@ -178,14 +178,14 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   const unions = viewTagUnion(V);
   const st = parseTabGroups(null);
   const marks = (activeId: string | null) => planStrip(["web", "api", "tests", "loose"], unions, st, activeId, false).items
-    .filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i).map((i) => [i.head.name, i.active]);
+    .filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] } => "head" in i).map((i) => [i.head.name, i.active]);
   assert.deepEqual(marks("web"), [["qa", false], ["infra", true], [null, false]], "exactly the section holding the active tab");
   assert.deepEqual(marks("tests"), [["qa", true], ["infra", false], [null, false]]);
   assert.deepEqual(marks(null), [["qa", false], ["infra", false], [null, false]]);
   // a user-folded section holding the active tab: FOLDED and marked; its hidden set holds the active id
   const folded = setSectionCollapsed(st, "infra", true);
   const plan = planStrip(["web", "api", "tests"], unions, folded, "web", false);   // qa: api, tests (api's home is its first holder) | infra(folded): web
-  const inf = plan.items.find((i) => "head" in i && i.head.name === "infra") as { head: TabSection; folded: boolean; active: boolean; hidden: string[] };
+  const inf = plan.items.find((i) => "head" in i && i.head.name === "infra") as { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] };
   assert.deepEqual([inf.folded, inf.active, inf.hidden], [true, true, ["web"]]);
   assert.deepEqual([...plan.folded], ["web"]);
   // a pinned active tab shows through the fold like any pinned member — then it is on screen and no stand-in is needed
@@ -226,9 +226,10 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir > 0 \? 1 : -1\);\s*\n\s*if \(nb\) setActive\(nb\);/,
     "cycleTab (the host's nextTab/prevTab commands, not the window's keys, which the test below pins)");
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir\);\s*\n\s*if \(nb\) \{ setActive\(nb\); focusActiveTab\(\); \}/, "onTabKey (a focused tab's ←/→)");
-  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);\s*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{/, "setActive opens the picked tab's section before its early return");
+  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{/,
+    "setActive opens the picked tab's section before its early return (not for a tab hidden inside its section, whose pick brings no tab on screen: tab-hide.test)");
   assert.match(RENDER, /function unfoldSectionOf\(id: string\): void \{\s*\n\s*const home = homeSectionOf\(lastStripItems, id\);\s*\n\s*if \(home && home\.name !== null\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), home\.name, false\)\);/);
-  assert.match(RENDER, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan the stand-in rules read is the one the strip rendered");
+  assert.match(RENDER, /collapsedTabIds = plan\.folded;\s*\n\s*hiddenTabIds = [^\n]*\n\s*lastStripItems = plan\.items;/, "the plan the stand-in rules read is the one the strip rendered");
 });
 
 test("executed: a create in flight sections under the FIRST requested tag in tagOrder — its future home — from the first paint", () => {
@@ -255,9 +256,9 @@ test("executed: the header click sets the fold state from what it RENDERED — n
   // for good, and nothing visible changed
   const d = parseTabGroups(null);
   // archived: stored folded, rendered OPEN (active tab inside) → the click says "fold" → still folded, stored minimally
-  assert.deepEqual(setSectionCollapsed(d, "archived", true), { on: true, collapsed: [], expanded: [], pinned: [] });
+  assert.deepEqual(setSectionCollapsed(d, "archived", true), { on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
   assert.equal(isSectionCollapsed(setSectionCollapsed(d, "archived", true), "archived"), true);
-  assert.deepEqual(toggleSectionCollapsed(d, "archived"), { on: true, collapsed: [], expanded: ["archived"], pinned: [] },
+  assert.deepEqual(toggleSectionCollapsed(d, "archived"), { on: true, collapsed: [], expanded: ["archived"], pinned: [], hidden: [] },
     "…where the stored toggle would have OPENED it");
   // infra folded by the user, then rendered open (active tab inside), click "fold" → stays folded
   const folded = setSectionCollapsed(d, "infra", true);
@@ -448,7 +449,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
 const VP = { ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2", "old3"] }] };
 const ARCH: SectionRef = { name: "archived", localId: "g4" };
 const headsOf = (p: ReturnType<typeof planStrip>) =>
-  p.items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
+  p.items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] } => "head" in i);
 const MAKE_HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 /** the strip as the user reads it — headers as #name, (folded) when folded, tabs by id — and the ids folded away */
 const strip = (visible: readonly string[], unions: readonly TagUnion[], st: TabGroupsState, active: string) => {
@@ -1063,7 +1064,7 @@ test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9)
   assert.equal(followAdoption(l2, L2, { ...L2, tagOrder: ["ops", "api", "web"], seq: 7 }), l2, "a local write that renames nothing bumps the seq and changes no name: no news, no write");
   // an entry with NO stamp (a store from before it) stands no blob down: the check runs as it did, and the first blob
   // that moves the entry stamps it — the late-intermediate flap remains for such an entry until then (THE LIMITS)
-  const legacy: TabGroupsState = { on: l1.on, collapsed: l1.collapsed, expanded: l1.expanded, pinned: l1.pinned, followed: l1.followed };
+  const legacy: TabGroupsState = { on: l1.on, collapsed: l1.collapsed, expanded: l1.expanded, pinned: l1.pinned, hidden: l1.hidden, followed: l1.followed };
   const moved = followTagRenames(legacy, [], viewTagUnion(L0), L0);
   assert.deepEqual([moved.pinned, moved.followed, moved.followedSeq], [[{ sid: "m1", name: "web", id: "g1" }], { g1: "web" }, { g1: 4 }], "unstamped: the older blob is not known to be older, and its carry stamps the entry");
   assert.equal(followAdoption(legacy, L0, L0), legacy, "…while the same blob re-adopted is caught by the names, stamp or none");
@@ -1375,8 +1376,9 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   // render.ts: the pin row's write is the ONE prune site, over every tab the strip knows (a view-hidden
   // session still exists); the plan reads pins and never rewrites them — a prune per render could act
   // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
-  assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site");
-  assert.match(RENDER, /writeTabGroups\(prunePinned\(togglePinned\(tabGroups\(\), sec, id\), unionFor\(\), knownTabIds\(\), reachableHosts\(\)\)\); build\(\);/);
+  assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site: writeTabGroupsPruned, which the pin row and the snapshot's Hide and Show share (tab-hide.test)");
+  assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);\s*\n\}/);
+  assert.match(RENDER, /writeTabGroupsPruned\(togglePinned\(tabGroups\(\), sec, id\)\); build\(\);/);
   assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
   const TG = ui("webview", "tab-groups.ts");
   const plan = TG.slice(TG.indexOf("export function planStrip("), TG.indexOf("export function reorderTagOrder("));
@@ -1453,7 +1455,7 @@ test("executed: a host DETACHED, DOWN, or PENDING (attached and up, its tab list
 test("executed: the pin persists with the fold state under romp:tabgroups, survives the fold writes, junk entries drop, and the store's earlier shape migrates on read; unpin hides the tab again", () => {
   const d = parseTabGroups(null);
   const on = togglePinned(d, ARCH, "old2");
-  assert.deepEqual(on, { on: true, collapsed: [], expanded: [], pinned: [{ sid: "old2", name: "archived", id: "g4" }] });
+  assert.deepEqual(on, { on: true, collapsed: [], expanded: [], pinned: [{ sid: "old2", name: "archived", id: "g4" }], hidden: [] });
   assert.deepEqual(setSectionCollapsed(on, "infra", true).pinned, on.pinned, "a fold write carries the pins through");
   assert.deepEqual(toggleSectionCollapsed(on, "archived").pinned, on.pinned);
   const off = togglePinned(on, ARCH, "old2");
@@ -1512,8 +1514,8 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   assert.match(pin, /lb\.textContent = "Show when folded";/);
   assert.match(pin, /sb2\.textContent = on \? `stays on the strip while \$\{home\.name\} is folded` : `keep this tab on the strip while \$\{home\.name\} is folded`;/,
     "the copy speaks of the home section alone — and the write is per section, so it is the whole truth");
-  assert.match(pin, /writeTabGroups\(prunePinned\(togglePinned\(tabGroups\(\), sec, id\), unionFor\(\), knownTabIds\(\), reachableHosts\(\)\)\); build\(\);/,
-    "the write prunes, notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
+  assert.match(pin, /writeTabGroupsPruned\(togglePinned\(tabGroups\(\), sec, id\)\); build\(\);/,
+    "the write prunes (writeTabGroupsPruned, the one prune site), notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
   assert.doesNotMatch(pin, /renderTabs\(\)|setTimeout/);
   // every store read on a path that WRITES passes the unions, so an entry in the earlier shape is migrated
   // faithfully before it is written back; the plan reads with the unions it plans by

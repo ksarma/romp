@@ -149,6 +149,19 @@ The transcript comes back when you pick a session, press Escape, or click that h
 its section is open and holds the tab you are reading. Sections, and this view with them, are for
 the desktop layout; the phone layout keeps its flat list.
 
+**Hiding a session inside its group.** Each row in this view has a **Hide** button. Hiding a
+session takes its tab off the strip while its group is open and moves its row under a
+**Hidden (N)** fold at the foot of the view, one click away; the row's **Show** button puts the
+tab back. Hiding is separate from folding: fold the group and open it again, and the hidden
+sessions stay hidden while the rest come back. Nothing is lost by hiding: the group's header keeps
+the dot and the ⚑ flag for its hidden sessions, the header's count says how many are hidden, and
+when a hidden session needs you the fold's head says so in red before you open it, and its row
+says **needs you**. Clicking a hidden session's row shows its transcript, with the header standing
+in for the tab, and leaves it hidden. A session set to **Show when folded** stays hidden while it is
+hidden: the hide wins, and the setting resumes when you show it again. A hidden session keeps the
+setting when its group is renamed, and shows again wherever it lands when it leaves the group.
+Like the sections, hiding is per browser and for the desktop layout.
+
 ### The feed
 
 The feed is Romp's task-management layer: a card for each task. Romp's

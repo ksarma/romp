@@ -34,7 +34,9 @@ export interface SnapLedgerLike {
   tree?: ReadonlyArray<{ text?: string; current?: boolean }> | null;
   recent?: ReadonlyArray<{ text?: string; t?: number }> | null;
 }
-export interface SnapSectionLike { name: string | null; color: string; ids: readonly string[] }
+/** `hides`: the members hidden inside the section (tab-groups.ts StripHead.hides, the user 2026-09-08); the
+ *  pane lists them under its Hidden fold, with a Show button each. Absent or empty: nothing hidden. */
+export interface SnapSectionLike { name: string | null; color: string; ids: readonly string[]; hides?: readonly string[] }
 
 /** The pip a row wears — the tab's own colors by the tab's own rule (tab-state.ts), plus the two
  *  states the strip paints on the chip rather than the tab: `waiting` (idle, but background work it
@@ -74,9 +76,17 @@ export interface SnapRow {
   closed: boolean;
   /** no session frame yet (a placeholder tab): name and color from the strip's meta alone */
   loading: boolean;
+  /** hidden inside its section (the user 2026-09-08): no tab on the strip while the section is open; the
+   *  pane lists the row under its Hidden fold, with a Show button where a shown row has Hide */
+  hidden: boolean;
 }
 
 export interface SnapModel { name: string; color: string; rows: SnapRow[] }
+
+/** The hidden members' needs-you count, for the Hidden fold's chip: what a hidden session must not lose. */
+export function hiddenNeeds(rows: readonly SnapRow[]): number {
+  return rows.filter((r) => r.hidden && r.needsYou).length;
+}
 
 const NOW_MAX = 200;      // the now line: one row, the CSS ellipsis does the rest; the cap bounds the model
 const MSG_MAX = 400;      // the hover excerpt
@@ -176,7 +186,7 @@ export function rowState(st: SnapStatusLike | null | undefined): { pip: SnapPip;
  *  word reached (review r2 2026-09-06); "needs you" is true of every card there. */
 export const FEED_BLOCK_STATE = "needs you";
 
-export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined): SnapRow {
+export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined, hidden = false): SnapRow {
   const st = rowState(s?.status);
   const todos = Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
   // NEEDS YOU is the feed's call (review 2026-09-06): the tab's rule (tab-state.ts) knows only the live
@@ -201,13 +211,14 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
     lastMsg: s ? lastMessage(s) : "",
     closed: st.closed,
     loading: !s,
+    hidden,
   };
 }
 
 const sameRow = (a: SnapRow, b: SnapRow): boolean =>
   a.id === b.id && a.name === b.name && a.emoji === b.emoji && a.pip === b.pip && a.state === b.state
   && a.needsYou === b.needsYou && a.waiting === b.waiting && a.todos === b.todos && a.now === b.now
-  && a.note === b.note
+  && a.note === b.note && a.hidden === b.hidden
   && a.lastT === b.lastT && a.lastMsg === b.lastMsg && a.closed === b.closed && a.loading === b.loading
   && (a.color === b.color || (!!a.color && !!b.color && a.color.bg === b.color.bg && a.color.fg === b.color.fg));
 
@@ -221,15 +232,38 @@ export function sameModel(a: SnapModel | null | undefined, b: SnapModel): boolea
  *  has changed, so the caller can skip the rebuild (the same-object contract the tests pin). */
 export function snapshotModel(sec: SnapSectionLike, session: (id: string) => SnapSessionLike | null | undefined,
                               ledger: (id: string) => SnapLedgerLike | null | undefined, prev: SnapModel | null): SnapModel {
+  const hides = sec.hides || [];
   const next: SnapModel = { name: sec.name ?? "", color: sec.color || "",
-                            rows: sec.ids.map((id) => snapshotRow(id, session(id), ledger(id))) };
+                            rows: sec.ids.map((id) => snapshotRow(id, session(id), ledger(id), hides.includes(id))) };
   return prev && sameModel(prev, next) ? prev : next;
 }
 
-/** The heading's words: the section's name and its count, and the spoken label for the region. */
-export function snapshotHeading(name: string, n: number): { count: string; label: string } {
-  const count = `${n} session${n === 1 ? "" : "s"}`;
+/** The heading's words: the section's name and its count (and how many are hidden, when any are), and the
+ *  spoken label for the region. */
+export function snapshotHeading(name: string, n: number, hidden = 0): { count: string; label: string } {
+  const count = `${n} session${n === 1 ? "" : "s"}` + (hidden > 0 ? `, ${hidden} hidden` : "");
   return { count, label: `${name}: ${count}; click one to open it` };
+}
+
+/** The Hidden fold's words (the user 2026-09-08): its text, the needs-you chip over the hidden members (""
+ *  when none needs you: the chip is the one thing a hide must not put away), the button's spoken label and
+ *  its hover. `open`: the fold is showing its rows, so the click folds them. */
+export function hiddenFoldWords(n: number, needs: number, open: boolean): { text: string; needs: string; label: string; title: string } {
+  const text = `Hidden (${n})`;
+  const chip = needs === 0 ? "" : needs === 1 ? "1 needs you" : `${needs} need you`;
+  const click = open ? "click to fold them" : "click to see them";
+  const who = `${n} session${n === 1 ? "" : "s"} hidden from the strip while this group is open`;
+  return { text, needs: chip, label: `Hidden, ${who}${chip ? `, ${chip}` : ""}; ${click}`,
+           title: `${who}${chip ? `; ${chip}` : ""}; ${click}` };
+}
+
+/** The Hide or Show button's words for a row: `text` its face, `label` what a reader hears, `title` the hover.
+ *  Hide speaks of THIS section: the flag is per section, as a pin is, and the row is offered in the section's
+ *  own view. */
+export function actWords(r: SnapRow, section: string): { text: string; label: string; title: string } {
+  if (r.hidden) return { text: "Show", label: `Show ${r.name} on the strip again`, title: `Put ${r.name}'s tab back on the strip` };
+  return { text: "Hide", label: `Hide ${r.name} from the strip while ${section} is open`,
+           title: `Hide ${r.name}'s tab from the strip while ${section} is open; it stays in ${section}, listed under Hidden here, and its needs-you still shows on the header` };
 }
 
 /** A row's spoken label (name, needs you, state, what it needs, what it is doing, its own note) and its
@@ -239,6 +273,7 @@ export function snapshotHeading(name: string, n: number): { count: string; label
  *  replaces its content for a reader, so a word only the chip carried was never spoken. */
 export function rowWords(r: SnapRow): { label: string; title: string } {
   const parts = [r.name];
+  if (r.hidden) parts.push("hidden from the strip");   // the row sits under the Hidden fold; a reader hears why (2026-09-08)
   const stateWord = r.loading ? "opening" : r.state;
   if (r.needsYou && !stateWord.startsWith(FEED_BLOCK_STATE)) parts.push(FEED_BLOCK_STATE);
   if (stateWord) parts.push(stateWord);

@@ -335,6 +335,17 @@ one of 70, 80, 90, 100, 115, 130, 150, 175 or 200 percent, set by the **A−** /
 its headings, the code and the Raw view together, and the prose measure with
 them; a value outside the table reads as 100.
 
+### The tab strip's per-browser choices
+
+The chat tab strip keeps its grouping choices in the browser's own storage, under
+`romp:tabgroups`, not on the kernel: whether the tabs are grouped by tag, which groups
+are folded, which tabs show while their group is folded (**Show when folded**), and
+which sessions are hidden inside their group (the group view's **Hide**). A pin or a
+hide names the session and its group (the tag's name, and the tag's id when it is this
+kernel's), follows the tag through a rename, and is dropped on the next change once the
+session has left the group or closed. Folding or opening a group never changes which of
+its sessions are hidden. A store written before hiding existed reads as nothing hidden.
+
 ### Model and effort, from the statusline or a typed command
 
 Typing `/model X` or `/effort X` into the chat composer, or sending one with

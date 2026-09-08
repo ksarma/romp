@@ -37,9 +37,9 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
-         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
-import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, setHidden, prunePinned, reachableFrom, headWords,
+         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
+import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
 import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
@@ -872,6 +872,11 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // stand-in — focusActiveTab lands there, ←/→ step from its position (neighborOfFolded over the last
 // plan's items, kept here for both), and the pane shows the section's snapshot (renderSnapshot).
 let collapsedTabIds = new Set<string>();
+// the ids hidden INSIDE their section by their own flag (the snapshot's Hide, the user 2026-09-08): a subset of
+// collapsedTabIds in either fold state. A pick of one shows its transcript with the header as stand-in and
+// leaves its section's fold alone (setActive): the gesture named the session, and a hidden tab comes on screen
+// through Show, not through a pick
+let hiddenTabIds = new Set<string>();
 let lastStripItems: StripItem[] = [];
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
@@ -888,6 +893,15 @@ function reachableHosts(): Set<string> { return reachableFrom((window as any).__
  *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
  *  only looks at `.on` needs none. */
 function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
+/** THE ONE PRUNE SITE: a gesture's write of the per-member lists (the tab menu's pin row; the snapshot's Hide
+ *  and Show) drops the entries nothing can render any more, judged against every tab the strip knows and the
+ *  hosts it can reach (tab-groups.ts prunePinned), then persists and notifies (TABGROUPS_EVENT); the strip
+ *  re-renders, the fold's own path. A prune here moves nothing on screen, where a prune per render could act
+ *  on a transient frame (a views blob mid-write, a reattached host's tags a pass behind its tabs) and put a
+ *  tab away with no gesture. */
+function writeTabGroupsPruned(st: TabGroupsState): void {
+  writeTabGroups(prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()));
+}
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -5324,7 +5338,10 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   const n = el("span", "tab-group-count");
   n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
   head.appendChild(n);
-  if (collapsed) {
+  // THE MEMBER-DERIVED MARKS ride the header whenever it stands in for a member with no tab on the strip:
+  // folded, the unpinned members; open, the members hidden inside the section (the user 2026-09-08). An open
+  // header with nothing hidden carries neither: every member tab wears its own.
+  if (hidden.length) {
     // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
     // hidden member blocked on you or waiting for you, gold for working, amber for an API error
     // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
@@ -5614,6 +5631,7 @@ function renderTabs() {
   const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
+  hiddenTabIds = new Set(plan.items.flatMap((it) => ("head" in it ? it.hides : [])));
   lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
   // AN UNCHANGED STRIP IS NOT REBUILT (2026-09-06). The signature is every input the loop below and the
   // controls after it paint — the plan (ids in order, section headers with their folds and hidden members),
@@ -5632,7 +5650,7 @@ function renderTabs() {
     activeId, peekId, phoneLayout(), plan.sectioned, ids, visibleIds, activeId ? tabInView(activeId) : null,
     settings.tabCtx, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
     surfaceLens(effViews(), "chat"), viewTagUnion(effViews()),
-    plan.items.map((it) => ("head" in it ? ["h", it.head.name, it.head.localId, it.head.color, it.head.ids, it.folded, it.active, it.hidden] : it.id)),
+    plan.items.map((it) => ("head" in it ? ["h", it.head.name, it.head.localId, it.head.color, it.head.ids, it.folded, it.active, it.hidden, it.hides] : it.id)),
     snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
     visibleIds.map((id) => {
       const s = sessions.get(id);
@@ -6408,8 +6426,8 @@ function showTabMenu(e: MouseEvent, id: string) {
         // prunes the pins of tags and sessions that are gone — judging only entries whose session this
         // page can know about: a known tab, a local sid, or one on a host that is attached and up with
         // its tabs in this pane (reachableHosts); a detached, down or still-arriving host's pins wait
-        // for it — (this is the one write path,
-        // and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
+        // for it — (writeTabGroupsPruned, the one prune site, which the snapshot's Hide and Show
+        // share; a prune there moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
         // re-renders, the fold's own path.
         if (home) {
           const sec = sectionRef(home);
@@ -6423,7 +6441,7 @@ function showTabMenu(e: MouseEvent, id: string) {
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroupsPruned(togglePinned(tabGroups(), sec, id)); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -10844,6 +10862,10 @@ function runPrebuild(deadline: IdleDeadline): void {
 // and then only the "ago" texts are refreshed in place: no rebuild, nothing moves.
 let snapView: string | null = null;
 let snapModel: SnapModel | null = null;
+// THE HIDDEN FOLD's open state (the user 2026-09-08): page state like snapView, never stored. Closed by default:
+// the fold's head carries the count and the needs-you chip, so the hidden members' one mark that matters is on
+// screen without opening it, and a fold that opened itself on a needs-you would move on no gesture.
+let snapHiddenOpen = false;
 function snapshotHost(): HTMLElement | null {
   let host = document.getElementById("tab-snapshot");
   if (host) return host;
@@ -10867,6 +10889,18 @@ function snapshotHost(): HTMLElement | null {
     // the release's flush (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
     if (!rowStillOpen(snapModel?.rows.find((r) => r.id === id), sessions.has(id), tabMeta.has(id), closingTabs.has(id))) return;
     setActive(id); focusActiveTab();
+  },
+  // HIDE and SHOW (the user 2026-09-08): the row's button passes the state it RENDERED (the fold's idiom: a Hide
+  // on a shown row, a Show on a hidden one), explicit, never a toggle of the stored bit. The write is the pin
+  // row's (writeTabGroupsPruned: the one prune site), notifies, and the strip re-renders; the rows follow through
+  // stripAftermath → renderSnapshot, where the row moves between the two lists and focus follows it.
+  hide: (node) => setRowHidden(node.dataset.id, true),
+  show: (node) => setRowHidden(node.dataset.id, false),
+  // the Hidden fold's head: open or fold the hidden rows; view state, no store, no strip render
+  "toggle-hidden": () => {
+    snapHiddenOpen = !snapHiddenOpen;
+    const h = document.getElementById("tab-snapshot");
+    if (h && snapModel) syncHiddenFold(h, snapModel);
   } });
   // CLICK-SAFE (ui/CLAUDE.md; the 2026-09-06 review): the rows are rebuilt by renderTabs on every push that
   // changes one, and a rebuild between mousedown and mouseup leaves the click with no row under it. A press
@@ -10932,12 +10966,13 @@ installSnapshotEscape(window, {
  *  snapView is cleared and the caller shows the transcript; the section's absence is the event. */
 function renderSnapshot(): boolean {
   if (!snapView) return false;
-  const head = lastStripItems.find((it): it is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in it && it.head.name === snapView);
+  const head = lastStripItems.find((it): it is StripHead => "head" in it && it.head.name === snapView);
   if (!head) { snapView = null; hideSnapshot(); return false; }
   const host = snapshotHost();
   if (!host) return false;
   const now = Date.now() / 1000;
-  const next = snapshotModel(head.head, (id) => sessions.get(id) ?? null, (id) => ledgers.get(id) ?? null, snapModel);
+  // the plan's `hides` (the members hidden inside the section) ride the model: a row is hidden or shown by them
+  const next = snapshotModel({ ...head.head, hides: head.hides }, (id) => sessions.get(id) ?? null, (id) => ledgers.get(id) ?? null, snapModel);
   if (next === snapModel && host.childElementCount) {
     // nothing a row shows changed: the times tick in place, the DOM stands
     for (const w of host.querySelectorAll<HTMLElement>(".snap-when[data-t]")) {
@@ -10952,52 +10987,117 @@ function renderSnapshot(): boolean {
   // renders the strip, and the strip renders this. The times above still ticked in place: no node was lost.
   if (tabPointerHeld && host.childElementCount) { renderPendingWhilePressed = true; return true; }
   snapModel = next;
-  const words = snapshotHeading(next.name, next.rows.length);
+  // TWO LISTS (the user 2026-09-08): the shown members, then the Hidden fold with the members hidden inside the
+  // section, each row with its Hide or Show button; the heading counts both and says how many are hidden
+  const shown = next.rows.filter((r) => !r.hidden), hid = next.rows.filter((r) => r.hidden);
+  const words = snapshotHeading(next.name, next.rows.length, hid.length);
   host.setAttribute("aria-label", words.label);
   // THE ROWS UPDATE IN PLACE, KEYED BY SESSION ID (the round-2 review; tab-snapshot-view.ts reconcileRows). The
-  // heading and the list are made once, with the host's first paint; from then on the heading's parts are
-  // patched and the rows reconciled: a standing row keeps its node (fillSnapshotRow rewrites its parts), a row
-  // that came is made, one that went is removed, a reordered one moved. The strip keeps focus across its
-  // rebuild by re-focusing the active tab; the rows keep it by keeping their nodes: sameRow folds lastT and
-  // lastMsg, so the model changes on nearly every push while a member works, and the wholesale replaceChildren
-  // destroyed the button the user had Tabbed onto (focus to body, Enter dead) and dismissed a hover's title
-  // within seconds. The event is the push that changed the model; the same-object path above moves nothing.
-  let list = host.querySelector<HTMLElement>(".snap-list");
+  // heading, the list and the Hidden fold are made once, with the host's first paint; from then on the heading's
+  // parts are patched and the rows reconciled, list by list: a standing row keeps its node (fillSnapshotItem
+  // rewrites its parts), a row that came is made, one that went is removed, a reordered one moved. The strip
+  // keeps focus across its rebuild by re-focusing the active tab; the rows keep it by keeping their nodes:
+  // sameRow folds lastT and lastMsg, so the model changes on nearly every push while a member works, and the
+  // wholesale replaceChildren destroyed the button the user had Tabbed onto (focus to body, Enter dead) and
+  // dismissed a hover's title within seconds. The event is the push that changed the model; the same-object
+  // path above moves nothing.
+  let list = host.querySelector<HTMLElement>(":scope > .snap-list");
   if (!list) {
     const h = document.createElement("h2"); h.className = "snap-head";
     const sw = el("span", "tab-group-swatch"); sw.setAttribute("aria-hidden", "true");
     h.append(sw, el("span", "snap-name"), el("span", "snap-count"));
     list = el("div", "snap-list"); list.setAttribute("role", "list");
-    host.replaceChildren(h, list);
+    // THE HIDDEN FOLD: a real button for its head (data-act="toggle-hidden" on the host's delegate; Enter and
+    // Space are its own), the strip's caret glyph, the count, and the needs-you chip in the row's own red; its
+    // list is a second keyed list. Shown only while something is hidden (syncHiddenFold).
+    const fold = el("div", "snap-hidden");
+    const fh = document.createElement("button"); fh.type = "button"; fh.className = "snap-hidden-head"; fh.dataset.act = "toggle-hidden";
+    const caret = el("span", "tab-group-caret"); caret.textContent = "▸"; caret.setAttribute("aria-hidden", "true");
+    fh.append(caret, el("span", "snap-hidden-text"), el("span", "snap-flag needs snap-hidden-needs"));
+    const hl = el("div", "snap-list snap-hidden-list"); hl.setAttribute("role", "list");
+    fold.append(fh, hl);
+    host.replaceChildren(h, list, fold);
   }
+  const hlist = host.querySelector<HTMLElement>(".snap-hidden-list")!;
   const part = (cls: string) => host.querySelector<HTMLElement>(".snap-head > ." + cls)!;
   part("tab-group-swatch").style.background = next.color || "";
   part("snap-name").textContent = next.name;
   part("snap-count").textContent = words.count;
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
-  // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under
-  // focus (its session left the section): the row now in its place takes it, the last when it was last, so a
-  // removal does not drop the keyboard user to body either.
+  // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row that CHANGED
+  // LISTS under focus (its Hide or Show button was the click): the same session's button in the other list
+  // takes it, or the fold's head when that list is folded away. A row GONE from under focus (its session left
+  // the section): the row now in its place takes it, the last when it was last, so a removal does not drop the
+  // keyboard user to body either.
   const focused = document.activeElement as HTMLElement | null;
-  const focusedAt = focused && list.contains(focused) ? Array.from(list.children).indexOf(focused.closest(".snap-item")!) : -1;
-  reconcileRows<SnapRow, Element>(list, next.rows, (n) => n.getAttribute("data-id"), (r) => snapshotRowNode(r, now), (n, r) => fillSnapshotRow(n.firstElementChild as HTMLElement, r, now));
-  if (focused && list.contains(focused)) { if (document.activeElement !== focused) focused.focus(); }
-  else if (focusedAt >= 0 && list.children.length) list.children[Math.min(focusedAt, list.children.length - 1)].querySelector<HTMLElement>(".snap-row")?.focus();
+  const focusedList = focused && list.contains(focused) ? list : focused && hlist.contains(focused) ? hlist : null;
+  const focusedAt = focusedList ? Array.from(focusedList.children).indexOf(focused!.closest(".snap-item")!) : -1;
+  const focusedAct = focused && focusedList && focused.classList.contains("snap-act") ? focused.dataset.id : undefined;
+  const keyOf = (n: Element) => n.getAttribute("data-id");
+  reconcileRows<SnapRow, Element>(list, shown, keyOf, (r) => snapshotRowNode(r, now, next.name), (n, r) => fillSnapshotItem(n as HTMLElement, r, now, next.name));
+  reconcileRows<SnapRow, Element>(hlist, hid, keyOf, (r) => snapshotRowNode(r, now, next.name), (n, r) => fillSnapshotItem(n as HTMLElement, r, now, next.name));
+  syncHiddenFold(host, next);
+  const moved = focusedAct !== undefined ? host.querySelector<HTMLElement>(`.snap-act[data-id="${focusedAct}"]`) : null;
+  if (focused && host.contains(focused)) { if (document.activeElement !== focused) focused.focus(); }
+  else if (moved) (snapHiddenOpen || !moved.closest(".snap-hidden-list") ? moved : host.querySelector<HTMLElement>(".snap-hidden-head"))?.focus();
+  else if (focusedList && focusedAt >= 0 && focusedList.children.length) focusedList.children[Math.min(focusedAt, focusedList.children.length - 1)].querySelector<HTMLElement>(".snap-row")?.focus();
+  else if (focusedList) host.querySelector<HTMLElement>(focusedList === hlist ? ".snap-hidden-head" : ".snap-row")?.focus();
   host.style.display = "";
   return true;
 }
-// One row: a real button (Tab reaches it, Enter opens) carrying data-act="open" for the host's delegate, in
-// an item that carries the row's key (the session id) for the keyed update. The button is the node that
-// stands across rebuilds (focus and the title are its), so a made row and a patched row take their parts
-// from the one fillSnapshotRow.
-function snapshotRowNode(r: SnapRow, now: number): HTMLElement {
+/** The Hidden fold as the model and the fold's open state say: shown while a member is hidden, its head's words
+ *  (tab-snapshot.ts hiddenFoldWords) and its list's visibility. Run by every paint and by the head's own click. */
+function syncHiddenFold(host: HTMLElement, m: SnapModel): void {
+  const fold = host.querySelector<HTMLElement>(".snap-hidden");
+  if (!fold) return;
+  const n = m.rows.filter((r) => r.hidden).length;
+  fold.style.display = n ? "" : "none";
+  fold.classList.toggle("open", snapHiddenOpen);
+  const words = hiddenFoldWords(n, hiddenNeeds(m.rows), snapHiddenOpen);
+  const fh = fold.querySelector<HTMLElement>(".snap-hidden-head")!;
+  fh.setAttribute("aria-expanded", snapHiddenOpen ? "true" : "false");
+  fh.setAttribute("aria-label", words.label);
+  fh.title = words.title;
+  fold.querySelector<HTMLElement>(".snap-hidden-text")!.textContent = words.text;
+  const chip = fold.querySelector<HTMLElement>(".snap-hidden-needs")!;
+  chip.textContent = words.needs;
+  chip.style.display = words.needs ? "" : "none";
+  fold.querySelector<HTMLElement>(".snap-hidden-list")!.style.display = snapHiddenOpen ? "" : "none";
+}
+/** The Hide or Show write for a snapshot row (the host's delegate): the section is the one the pane shows,
+ *  addressed as a pin addresses it (its name and its local tag's id, tab-groups.ts SectionRef); `on` is the
+ *  state the button asked for. Nothing to write without a section on the strip or an id. */
+function setRowHidden(id: string | undefined, on: boolean): void {
+  const head = snapView ? lastStripItems.find((it): it is StripHead => "head" in it && it.head.name === snapView) : undefined;
+  if (!id || !head || head.head.name === null) return;
+  writeTabGroupsPruned(setHidden(tabGroups(), head.head, id, on));
+}
+// One row: a real button (Tab reaches it, Enter opens) carrying data-act="open" for the host's delegate, and
+// beside it the Hide or Show button (data-act="hide" / "show"), in an item that carries the row's key (the
+// session id) for the keyed update. The buttons are the nodes that stand across rebuilds (focus and the title
+// are theirs), so a made row and a patched row take their parts from the one fillSnapshotItem.
+function snapshotRowNode(r: SnapRow, now: number, section: string): HTMLElement {
   const item = el("div", "snap-item"); item.setAttribute("role", "listitem");
   item.dataset.id = r.id;
   const btn = document.createElement("button");
   btn.type = "button";
-  fillSnapshotRow(btn, r, now);
-  item.appendChild(btn);
+  const act = document.createElement("button");
+  act.type = "button";
+  item.append(btn, act);
+  fillSnapshotItem(item, r, now, section);
   return item;
+}
+/** Both buttons of an item, from the row: the open button's parts (fillSnapshotRow) and the Hide or Show button's
+ *  face, act and words (tab-snapshot.ts actWords). */
+function fillSnapshotItem(item: HTMLElement, r: SnapRow, now: number, section: string): void {
+  fillSnapshotRow(item.firstElementChild as HTMLElement, r, now);
+  const act = item.lastElementChild as HTMLElement;
+  const w = actWords(r, section);
+  act.className = "snap-act";
+  act.dataset.act = r.hidden ? "show" : "hide"; act.dataset.id = r.id;
+  act.textContent = w.text;
+  act.title = w.title;
+  act.setAttribute("aria-label", w.label);
 }
 // The row's attributes and parts, written onto its button: on a made row once, on a standing row at every
 // model change (the classes rewritten whole, the parts emptied and appended in order). The parts reuse the
@@ -14265,7 +14365,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // the header) opens its section — the gesture named that session, so the strip follows it.
   const leavingSnap = snapView !== null;
   snapView = null;
-  if (collapsedTabIds.has(id)) unfoldSectionOf(id);
+  if (collapsedTabIds.has(id) && !hiddenTabIds.has(id)) unfoldSectionOf(id);   // not a hidden tab's: see hiddenTabIds
   if (activeId === id && anchor == null && anchorT == null) {   // already active, nothing to do…
     if (leavingSnap) { renderTabs(); showActive(); }             // …except put its transcript back
     return;
