@@ -22,7 +22,7 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
 // the chat's global anchor-click delegate (the same isolation chat-link-open.test.ts uses)
-const HANDLER = (RENDER.match(/closest\?\.\("a\[href\]"\)[\s\S]*?\}, true\);/) || [""])[0];
+const HANDLER = (RENDER.match(/closest\?\.\((?:"a\[href\]"|LINK_SEL)\)[\s\S]*?\}, true\);/) || [""])[0];   // the delegate keys on LINK_SEL since the 2026-09-07 review
 // the URL viewer, from its export to the next top-level function
 const URL_FN = (VIEW.split("export function openUrlView")[1] || "").split("// Kick the browser's downloader")[0];
 // the markdown renderer
@@ -267,12 +267,12 @@ test("EVERY exit that stops short of consuming the body aborts this open's contr
 test("mdBlock takes the document's location and rewrites relative img/src and a/href AFTER DOMPurify", () => {
   assert.match(VIEW, /type MdDocLoc = \{ kind: "url"; href: string \} \| \{ kind: "file"; path: string; sid: string \| null \};/);
   assert.match(VIEW, /function mdBlock\(text: string, doc\?: MdDocLoc\): HTMLElement \{/);
-  const sanitize = MD_FN.indexOf("DOMPurify.sanitize(");
+  const sanitize = MD_FN.indexOf("sanitizeMd(");
   const rewrite = MD_FN.indexOf("resolveDocRelative(");
   assert.ok(sanitize > -1 && rewrite > sanitize, "sanitise first; the rewrite only ever sees what DOMPurify kept");
   // the ATTRIBUTE, never the property — .src/.href are already resolved against the page (the wrong base)
   assert.match(MD_FN, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(MD_FN, /const href = a\.getAttribute\("href"\) \|\| "";/);
+  assert.match(MD_FN, /const href = linkHref\(a\);/);   // linkHref reads the href attribute (or xlink:href), never the property
   assert.doesNotMatch(MD_FN, /img\.src\b|a\.href\b/, "no property reads");
   // URL mode: both resolve against the document URL through the executed helper
   assert.match(MD_FN, /const abs = resolveDocRelative\(src, doc\.href\);\s*\n\s*if \(abs !== src\) img\.setAttribute\("src", abs\);/);
@@ -280,7 +280,7 @@ test("mdBlock takes the document's location and rewrites relative img/src and a/
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
   // the helpers arrive from the pure module
-  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs \} from "\.\/md-links";/);
+  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref \} from "\.\/md-links";/);
 });
 
 test("local file mode: a relative image is the sibling over the kernel's /file route (fileUrl, never hand-built)", () => {
@@ -312,24 +312,39 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
   assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void =\n\s*\(path, sid, line, frag\) => \{ openFileView\(path, sid, \{ line, frag \}\); \};/);
   assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 0, "no fv-open delegate in the local viewer: the body's one click listener reads every link (file-view-links.test.ts pins it)");
   assert.ok(OPEN_FN.indexOf('body.addEventListener("click"') > 0 && OPEN_FN.indexOf('body.addEventListener("click"') < OPEN_FN.indexOf("const fetchFile = "), "installed in the open itself, before any bytes can land");
-  // the chat's document-level delegate ignores a scheme-less href (and a path link's href comes off), so the click reaches the body listener
-  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
+  // the chat's document-level delegate keys on LINK_SEL, an element that CARRIES an href, and a path link's href comes off
+  // (linkMarkdownAnchors), so its click is never the delegate's and reaches the body listener. A scheme-less href the delegate
+  // does see is no longer left to the browser's default action: it is resolved against the page the way that action would
+  // resolve it and opened by the delegate, so a `//host` or a control character before `https:` in a message cannot navigate
+  // the chat document (md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle)
+  assert.match(HANDLER, /closest\?\.\(LINK_SEL\) as HTMLElement \| SVGElement \| null;\n\s*if \(!a\) return;/);
+  assert.match(MOD, /a\.removeAttribute\("href"\);\s*\/\/ the browser must not follow it/, "the path link carries no href for either listener to follow");
+  assert.doesNotMatch(HANDLER, /\/i\.test\(href\)\) return;/, "no scheme-less href is handed to the default action any more");
+  // A MESSAGE's scheme-less href only (`if (!msg) return;` first, the `.md` body the `#` branch reads too): the page's own
+  // `<a href="/file?..." download>` controls (the viewer's Download button, the file browser's download row, the lightbox's
+  // control) are scheme-less anchors the browser's download UI answers, and the branch as first written turned each into
+  // window.open, a popup where the download was (review round 3; chat-link-open.test.ts pins the scope, the schemeless
+  // browser leg presses each control). A message's own same-origin download link keeps the browser's download the same way.
+  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!msg\) return;\n\s*if \(!href\) \{ e\.preventDefault\(\); return; \}\n\s*let url: URL \| null = null;\n\s*try \{ url = new URL\(href, document\.baseURI\); \} catch \{ url = null; \}\n\s*if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*if \(a\.hasAttribute\("download"\) && url\.origin === location\.origin\) return;\n\s*href = url\.href;\n\s*\}/,
+    "a message's link only; an empty href opens nothing; a same-origin download link is the browser's; every other scheme-less href is the browser's own parse against the document, opened when it is a web URL and left to the browser otherwise (VS Code's webview scheme, a parse failure)");
 });
 
 // ── 6. in-document fragments: heading ids, and `#links` that land instead of spawning a tab ──
 
 test("every heading gets id=md-<slug> after sanitisation, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
   assert.match(MD_FN, /const heads = Array\.from\(box\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
-  const sanitize = MD_FN.indexOf("DOMPurify.sanitize(");
+  const sanitize = MD_FN.indexOf("sanitizeMd(");
   const ids = MD_FN.indexOf('h.id = "md-"');
   const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');
-  assert.ok(sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate — every mode, every caller");
+  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate: every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
   assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
 test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL document (or one with no location); every other anchor there still does; a file's anchors are the module's", () => {
-  assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\("a\[href\]"\)\.forEach\(\(node\) => \{\n\s*const a = node as HTMLAnchorElement;\n\s*if \(\(a\.getAttribute\("href"\) \|\| ""\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\n\s*a\.target = "_blank";\n\s*a\.rel = "noopener";/);
-  const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll("a[href]")'));
+  // setAttribute, not the properties: an SVG <a> is a link too, and its `target` property is read-only (md-sanitize-viewer-links.test.ts);
+  // LINK_SEL and linkHref, so the SVG anchor is reached and read like the HTML one
+  assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\(LINK_SEL\)\.forEach\(\(node\) => \{\n\s*const a = node as HTMLElement \| SVGElement;\n\s*if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\n\s*a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
+  const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll(LINK_SEL)'));   // every link element, not only <a href>
   assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the arm every non-file document takes: a URL, or no location at all");
   assert.ok(!finalLoop.includes("linkMarkdownAnchors"), "…and never over a local file's anchors, which the module sorted in the other arm");
 });
@@ -399,17 +414,21 @@ test("URL mode: a 200 labelled text/html is refused as a web page, with the way 
 test("rendered markdown never carries data-* attributes into the page, in the viewer and in the chat alike", () => {
   // a document's or a message's raw HTML with data-act=\"stopRetrying\" would otherwise bubble to the
   // document-level delegate and interrupt the active session on a click
-  const sanitizes = (MD_FN.match(/DOMPurify\.sanitize\([^)]*\)/g) || []);
+  // one shared call (sanitizeMd, md-sanitize.ts; plans/markdown-viewer.md Slice 1) in the viewer and in the chat,
+  // and the profile's data-* verdict is spelled once, in the module both import
+  const sanitizes = (MD_FN.match(/sanitizeMd\([^)]*\)/g) || []);
   assert.equal(sanitizes.length, 1);
-  assert.match(sanitizes[0], /ALLOW_DATA_ATTR: false/);
-  // the chat's md() takes the sanitized DOM back to link PR references (pr-links.ts; md(src, repo) since 2026-09-06),
-  // so the profile arrives spread; chat-md.test.ts pins userMd() to the byte-identical argument
+  assert.doesNotMatch(MD_FN, /DOMPurify\.sanitize|ALLOW_DATA_ATTR|USE_PROFILES/, "no per-call profile in the viewer");
+  // the chat's md() takes the sanitized DOM back to link PR references (pr-links.ts; md(src, repo) since 2026-09-06)
   const chatMd = (RENDER.split("function md(src: string, repo: string | null = prRepoFor()): string {")[1] || "").split("\nfunction ")[0];
-  assert.match(chatMd, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);
   assert.doesNotMatch(chatMd, /ALLOW_DATA_ATTR/, "no per-call override of the shared profile's data-* verdict");
-  assert.match(RENDER, /const MD_PURIFY: Config = \{.*ALLOW_DATA_ATTR: false \};/, "the chat's shared sanitizer config forbids data-*");
+  const SAN = web("md-sanitize.ts");
+  assert.match(SAN, /export const MD_PURIFY: Config = \{[\s\S]*?ALLOW_DATA_ATTR: false,[\s\S]*?\};/, "the shared sanitizer config forbids data-*");
+  assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1, "the module holds the one DOMPurify.sanitize call");
+  assert.match(SAN, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
-  assert.ok(MD_FN.indexOf("DOMPurify.sanitize(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("DOMPurify.sanitize(") < MD_FN.indexOf("linkMarkdownAnchors(box"));
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box"));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {
