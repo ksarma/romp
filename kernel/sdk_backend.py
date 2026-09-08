@@ -5069,6 +5069,57 @@ class SdkSession:
             self.backend._log("keyswap (%s): became busy before the reconnect ran — not cycled; cycle it "
                               "again when it is quiet" % self.name)
 
+    def _release_hold_at_exit(self):
+        """THE CLI'S EXIT is the one event on which the CLI loses its prompt queue, and so the one event
+        besides a teardown (the loop top, above _reconcile_stranded) that must release a feed hold
+        (_untaken) itself: a hold whose text left the CLI's queue with no drain turn and no landed record
+        has no releasing frame, and it would park every later text for good, with the reconnect deferred
+        behind it (review round 2, 2026-09-08). Verified on the installed CLI 2.1.263 over stream-json
+        against a logging stand-in Messages endpoint (2026-09-08):
+          * the INTERRUPT control request is NOT a loss event: a text queued mid-turn survived it; the
+            interrupted turn's result (error_during_execution) was followed 6 ms later by a new init and
+            the queued text's own turn. The CLI's schema says the same (queued commands survive an
+            interrupt without `cancel_queued`, which the SDK's interrupt() never sends), so the settle
+            marks the hold settled as for any result and the drain's first frame releases it;
+          * a SIGINT (the stop ladder's second rung) made the CLI emit the interrupted result and EXIT 30 ms
+            later WITHOUT running the queued text; a kill emits nothing at all; a crash is a kill. In every
+            case the stream ends and this thread ends with it, which is where this runs (_run's finally,
+            before _on_session_gone reads the counters).
+        With the process gone the transcript is final, so its verdict is proof, the rule _mark_dropped_echoes
+        applies to a dead spawn: a scan that finds no record of the held text means the text reached no
+        turn, and it goes back to the HEAD of _pending with its ids (ahead of what queued behind it, as it
+        was), persisted to the reg mirror, so the next client (the next send, the crash heal's respawn, the
+        boot reconcile) feeds it first and the chat shows it queued, with its ✕, meanwhile; a record found
+        means the CLI took it (its echo prunes on that record); a scan that cannot read the transcript
+        takes the flag path, never a re-feed on doubt. Never a silent block, never a timer. The counters
+        are left as they are: an unsettled hold's turn was running (inflight > 0) and _on_session_gone
+        reads that as the cut it is; a settled hold's CLI was between turns, and an idle death settles
+        'waiting' as before, its message owed and visible instead of lost until the next spawn's scan."""
+        u = getattr(self, "_untaken", None)
+        if u is None:
+            return
+        self._untaken = None
+        item = u.get("item", u["text"])
+        try:
+            seen = self.backend._text_landed(self.sid, u["text"], u.get("t"), u.get("off"), u.get("fsid"),
+                                             cursor=u)
+        except Exception:
+            seen = None
+        if seen is False:
+            with self._lock:
+                self._pending.insert(0, item)
+            self._persist_queue()
+            self.backend._log("sdk %s: the CLI exited while it still held a fed text (never landed): back at "
+                              "the head of the queue for the next client" % self.sid[:8])
+        elif seen:
+            self.backend._log("sdk %s: the CLI exited after taking the last fed text; nothing to re-feed"
+                              % self.sid[:8])
+        else:
+            self.backend._log("sdk %s: the CLI exited while it held a fed text and the transcript could not "
+                              "be read (%s): the text's echo is flagged, not re-fed on doubt"
+                              % (self.sid[:8], u.get("scan_error") or "unreadable"), problem=True)
+            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
+
     def _reconcile_stranded(self):
         """RECONCILE ACROSS A RECONNECT, at the loop's top where no client is connected so nothing can
         legitimately be in flight (the user 2026-07-01, who switched the model on a new session and it
@@ -5553,6 +5604,7 @@ class SdkSession:
         finally:
             self._fire_boot_settled()   # a dead thread must free its boot-stagger slot (first, so
             #                             a raising _on_session_gone can never leak the slot)
+            self._release_hold_at_exit()   # the CLI's queue died with it: a held text goes back to the queue
             self.backend._on_session_gone(self)
 
     async def _amain(self):
@@ -6275,6 +6327,7 @@ class SdkSession:
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "inflight", None) == 0 and getattr(self, "_lock", None) is not None \
+                and not getattr(self, "_move_settle_expected", False) \
                 and self._turn_frame(msg, AssistantMessage, ResultMessage, SystemMessage):
             # A turn frame while nothing romp fed is in flight: the CLI opened a turn on its own (it
             # drained a text fed mid-turn once the last turn ended, or a subagent's or task's
@@ -6285,6 +6338,11 @@ class SdkSession:
             # busy() reads the turn, a reconnect defers to its result, and the settle zeroes it as it
             # does every turn. When a settled hold is what this frame releases, its text is what the CLI
             # drained: it rejoins the fed-turn twin so a teardown mid-turn still reconciles it.
+            # NOT while an accepted live move's settle is expected: the CLI answers a set_cwd with an
+            # init and a turn-less result, no query sent (_consume_move_settle), and counting that init
+            # left an idle session busy (a reconnect deferred, a drive op parked) until its next real
+            # turn (review round 2, 2026-09-08); should a count slip through anyway, the move's result
+            # zeroes it.
             with self._lock:
                 if self.inflight == 0:
                     self.inflight = 1
@@ -6677,6 +6735,9 @@ class SdkSession:
                     # a text fed MID-turn is still in the CLI's queue at this result: the CLI drains it
                     # into the NEXT turn, whose first frame is the take (_untaken_taken). Not cleared
                     # here — a feed right after this result would land in the same drain (the fold).
+                    # An INTERRUPTED turn's result is no exception: the CLI keeps its queue across the
+                    # interrupt control request and drains it the same way (verified on CLI 2.1.263,
+                    # 2026-09-08; see _release_hold_at_exit for the one event that does lose it).
                     self._untaken["settled"] = True
                 # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
                 # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
@@ -6752,6 +6813,15 @@ class SdkSession:
         if getattr(msg, "num_turns", None) != 0:
             return False
         self._move_settle_expected = False
+        # The move's init counts no CLI-owned turn (_on_message skips the count while the arm stands);
+        # should a count have fired anyway, this turn-less result is the last frame the move emits, so
+        # the count must not outlive it: nothing was fed (an empty fed-turn twin), and an idle session
+        # stays idle: busy() False, a requested reconnect fires at once (review round 2, 2026-09-08).
+        lock = getattr(self, "_lock", None)
+        if lock is not None:
+            with lock:
+                if self.inflight and not getattr(self, "_inflight_texts", None):
+                    self.inflight = 0
         self.backend._log("sdk %s: the move's turn-less result arrived — not a turn end" % self.sid[:8])
         return True
 
@@ -11308,13 +11378,18 @@ class SdkBackend:
 
     def busy(self, sid: str) -> "bool | None":
         """Authoritative in-flight signal (see SessionBackend.busy): a turn is running (inflight>0) OR one is
-        queued and about to run (_pending). Either means a drive op pressed now must PARK to hold press-order,
-        with no wait for the transcript to catch up. None when we don't run this sid (→ cached-parse fallback)."""
+        queued and about to run (_pending) OR the CLI still holds a fed text (_untaken: fed mid-turn, its turn
+        ended, and the CLI drains it into a turn right after the result). Any of the three means a drive op
+        pressed now must PARK to hold press-order, with no wait for the transcript to catch up. The hold is
+        read here as the reconnect gate reads it (_do_request_reconnect): in the settled gap the counters said
+        idle, so a parked /compact drained and a typed slash command bypassed the park, and the feeder held
+        both behind the text and fed them into the drained turn mid-turn, where the CLI answers a command as
+        text (review round 2, 2026-09-08). None when we don't run this sid (→ cached-parse fallback)."""
         s = self.sessions.get(sid)
         if not s:
             return None
         with s._lock:
-            return s.inflight > 0 or bool(s._pending)
+            return s.inflight > 0 or bool(s._pending) or getattr(s, "_untaken", None) is not None
 
     def compacting(self, sid: str) -> "bool | None":
         """Authoritative 'is a /compact in progress' (see SessionBackend.compacting): set when /compact is

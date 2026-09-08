@@ -76,7 +76,7 @@ test("every composer-shaped send rides the same gate — staged flush and provis
   // the staged flush releases each message through routeUserMessage…
   assert.match(RENDER, /function flushStaged\(sid: string\): number \{\s*\n\s*const batch = stagedMsgs\.takeAll\(sid\);\s*\n\s*for \(const s of batch\) routeUserMessage\(sid, s\.text, s\.cites as Citation\[\]\);/);
   // …whose every branch registers the optimistic bubble (2026-08-23), so the gate covers them all
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ [^\n]*registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ [^\n]*registerOptimistic\(sid, text, imgPaths\);[^\n]*\}/);   // registered first, then posted with its id (2026-09-08)
   assert.match(RENDER, /else if \(quoteCites\.length\) \{ [^\n]*registerOptimistic\(sid, body, imgPaths\);[^\n]*\}/);
   assert.match(RENDER, /else \{ [^\n]*registerOptimistic\(sid, text, imgPaths\);[^\n]*\}/);
   // provisional adoption re-sends through registerOptimistic too

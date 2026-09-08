@@ -27,6 +27,16 @@ The review round (2026-09-08) tightened four edges, each pinned below:
     when that frame is the result), never a silent per-frame miss that parks the queue for good;
   * a reconnect defers while a hold is live (the CLI still owes the drain), and a hold that reaches the
     loop top anyway hands its text to the stranded reconcile (re-head or a flagged echo, never a drop).
+Round 2 (2026-09-08) pinned three more:
+  * an accepted live move's init (no query; the CLI answers a set_cwd with an init and a turn-less result)
+    counts no CLI-owned turn, and the move's result zeroes a count that fired anyway: an idle session stays
+    idle (busy() False, a reconnect fires at once);
+  * busy() reads a live hold as in flight, as the reconnect gate does, so a drive op or a slash command
+    pressed in the settled gap parks instead of landing in the drained turn as text;
+  * the CLI's EXIT is the one event that loses its queue (the interrupt is not: verified on CLI 2.1.263,
+    which drains a queued text into a new turn right after the interrupted result, while a SIGINT makes it
+    exit without running the text): at the exit a held text that never landed goes back to the head of the
+    queue for the next client; one the CLI took is left alone; an unreadable transcript flags, never re-feeds.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -77,6 +87,7 @@ class _SystemMessage:
 class _RateLimitEvent:
     """A frame that is NOT a turn frame (the SDK's RateLimitEvent): proves nothing about the CLI's queue."""
     def __init__(self, uuid="rl1"): self.uuid = uuid
+_EOF = object()   # pushed as a frame: the CLI process exited, its stream ends (receive_messages returns)
 _TextBlock.__name__ = "TextBlock"; _AssistantMessage.__name__ = "AssistantMessage"
 _ResultMessage.__name__ = "ResultMessage"; _SystemMessage.__name__ = "SystemMessage"
 _RateLimitEvent.__name__ = "RateLimitEvent"
@@ -96,6 +107,7 @@ class OneFedTextAtATime(unittest.TestCase):
             self.options = options
             self.no = len(type(self).instances) + 1
             type(self).instances.append(self)
+            self.loop = asyncio.get_running_loop()   # the session loop this client serves (a respawn has its own)
             self.writes = []                # (text, phase) — the test's own phase label at the write
             self.phase = "before-turn-1"
             self.frames = asyncio.Queue()   # the scripted stream: the test pushes frames
@@ -124,6 +136,8 @@ class OneFedTextAtATime(unittest.TestCase):
         async def receive_messages(self):
             while True:
                 f = await self.frames.get()
+                if f is _EOF:
+                    return          # the CLI process exited: the stream ends, and its queue died with it
                 yield f
 
     class _Options:
@@ -142,6 +156,10 @@ class OneFedTextAtATime(unittest.TestCase):
         fake.SystemMessage, fake.TextBlock = _SystemMessage, _TextBlock
         self._saved_sdk = sys.modules.get("claude_agent_sdk")
         sys.modules["claude_agent_sdk"] = fake
+        # a session the backend respawns itself (the exit tests) has no per-instance stub: quiet the class
+        async def _noop_refresh(self): pass
+        self._saved_refresh = sb.SdkSession._do_refresh_usage
+        sb.SdkSession._do_refresh_usage = _noop_refresh
         self.state = tempfile.mkdtemp()
         self.cwd = os.path.join(self.state, "proj")
         os.makedirs(self.cwd)
@@ -157,9 +175,14 @@ class OneFedTextAtATime(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
-        self.s.shutdown()
-        if self.s.thread.ident is not None:
-            self.s.thread.join(timeout=10)
+        sessions = {id(x): x for x in [self.s] + list(self.be.sessions.values())}.values()   # respawns too
+        for x in sessions:
+            if x.thread.is_alive():          # a session whose CLI exited already closed its loop
+                x.shutdown()
+        for x in sessions:
+            if x.thread.ident is not None:
+                x.thread.join(timeout=10)
+        sb.SdkSession._do_refresh_usage = self._saved_refresh
         if self._saved_sdk is None:
             sys.modules.pop("claude_agent_sdk", None)
         else:
@@ -182,7 +205,7 @@ class OneFedTextAtATime(unittest.TestCase):
         time.sleep(dt)
 
     def _push(self, client, frame):
-        self.s.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
+        client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
 
     def _uid(self):
         self.n += 1
@@ -200,6 +223,19 @@ class OneFedTextAtATime(unittest.TestCase):
                                    session_id=FSID, duration_ms=1, duration_api_ms=1, total_cost_usd=0.01,
                                    usage={"input_tokens": 1, "output_tokens": 1}, result="ok",
                                    parent_tool_use_id=None))
+
+    def _move_result(self, client):
+        """The turn-less result an accepted set_cwd emits after its init (verified 2026-09-02): num_turns 0."""
+        self._push(client, _result(uuid=self._uid(), subtype="success", is_error=False, num_turns=0,
+                                   session_id=FSID, duration_ms=0, duration_api_ms=0, total_cost_usd=0.0,
+                                   usage={}, result="", parent_tool_use_id=None))
+
+    def _interrupted_result(self, client):
+        """The result of an interrupted turn, as CLI 2.1.263 emits it: error_during_execution, is_error."""
+        self._push(client, _result(uuid=self._uid(), subtype="error_during_execution", is_error=True,
+                                   num_turns=2, session_id=FSID, duration_ms=1, duration_api_ms=1,
+                                   total_cost_usd=0.01, usage={"input_tokens": 1, "output_tokens": 1},
+                                   result=None, parent_tool_use_id=None))
 
     def _sys(self, client, subtype):
         """A system frame that is NOT the init: the CLI's background-task, hook and status machinery
@@ -730,6 +766,187 @@ class OneFedTextAtATime(unittest.TestCase):
             be._update_reg = real
         self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), ["plain"],
                          "the mirror ends as the latest snapshot, never the stale empty one")
+
+    # -- round 2 (2026-09-08) --
+    def test_an_accepted_live_move_leaves_an_idle_session_idle(self):
+        """An accepted set_cwd makes the CLI emit an init and a turn-less result (num_turns 0) with no query,
+        then commands_changed frames. The init is a turn frame at inflight 0, so the CLI-owned-turn count
+        read it as a turn the settle never zeroed (_consume_move_settle skips the settle on purpose): the
+        idle session stayed busy until its next real turn, a reconnect asked for in between deferred, a
+        drive op parked. The count skips the init while the move's settle is expected; the session stays
+        idle and a reconnect fires at once."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)   # move() arms BEFORE its request
+        c.phase = "move"
+        self._init(c)                                    # the CLI relocated: its init, no query behind it
+        self._move_result(c)
+        self._sys(c, "commands_changed")
+        self._sys(c, "commands_changed")
+        self._wait(lambda: not s._move_settle_expected, "the move's turn-less result consumed")
+        self._settle()
+        self.assertEqual(s.inflight, 0, "the move's init is no turn of the CLI's")
+        self.assertEqual(s.fed_texts(), [])
+        self.assertFalse(self.be.busy(SID), "an idle session stays idle after an accepted move")
+        s.request_reconnect()                            # an /effort change right after the move
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
+                   "the reconnect fired at once, not deferred to a turn end that never comes")
+        self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(c.writes, [("first turn", "turn-1")], "nothing fed by the move")
+
+    def test_the_moves_turn_less_result_zeroes_a_count_that_fired_anyway(self):
+        """The backstop: should the count have read the move's init as a turn (nothing fed, an empty fed-turn
+        twin), the turn-less result is the last frame the move emits, so it zeroes the count rather than
+        leaving the session busy until some later real turn."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        self._init(c)                                    # counted: the arm was not up yet
+        self._wait(lambda: s.inflight == 1, "a CLI-owned turn counted")
+        self.assertTrue(self.be.busy(SID))
+        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
+        self._move_result(c)
+        self._wait(lambda: s.inflight == 0, "the move's turn-less result zeroed the stray count")
+        self.assertFalse(self.be.busy(SID))
+        self.assertFalse(s._move_settle_expected, "the arm is spent")
+
+    def test_busy_reads_a_settled_hold_as_in_flight_like_the_reconnect_gate(self):
+        """After a mid-turn feed's result the counters read idle while the CLI still holds the text and is
+        about to drain it into a turn. The reconnect gate reads that hold as in flight (round 1); busy()
+        did not, so the kernel's _working_now let a parked /compact drain and a typed slash command bypass
+        the park in that gap, and the feeder then fed them into the drained turn mid-turn, as text. busy()
+        reads the hold now: True in the gap, True through the drained turn, False at its result."""
+        s, c = self.s, self._first_turn()
+        s.enqueue("mid-turn note")
+        self._wait(lambda: len(c.writes) == 2, "the note forwarded")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self.assertEqual(s.pending(), [])
+        self.assertTrue(self.be.busy(SID), "the CLI still holds a text it drains into a turn next: a drive op parks")
+        c.phase = "turn-2"
+        self._init(c)
+        self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain counted")
+        self.assertTrue(self.be.busy(SID), "…and the drained turn is a turn")
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "its result")
+        self.assertFalse(self.be.busy(SID), "idle for real now")
+
+    def test_an_interrupt_keeps_the_held_text_in_the_clis_queue_and_its_drain_releases_the_hold(self):
+        """The kernel's interrupt is NOT a loss event. Real CLI 2.1.263 over stream-json (2026-09-08): a text
+        queued mid-turn survived the interrupt control request; the interrupted turn's result
+        (error_during_execution) was followed 6 ms later by a new init and the queued text's own turn, and
+        the CLI's schema says queued commands survive an interrupt without cancel_queued, which the SDK's
+        interrupt() never sends. So the hold settles at the interrupted result like any other, the drain's
+        init releases it, and nothing is re-fed: the text reaches the agent once."""
+        s, c = self.s, self._first_turn()
+        s.enqueue("B mid-turn")
+        self._wait(lambda: len(c.writes) == 2, "B forwarded")
+        s.enqueue("C behind B")
+        self._settle()
+        self.assertEqual(len(c.writes), 2, "C waits behind B's hold")
+        s.interrupt()                                    # the stop button: the control request rung
+        self._wait(lambda: s._interrupted, "interrupting")
+        c.phase = "after-interrupt"
+        self._interrupted_result(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"),
+                   "the interrupted turn settled with B still in the CLI's queue")
+        self._settle()
+        self.assertFalse(s._interrupted, "the result settled the interrupt")
+        self.assertEqual(len(c.writes), 2, "nothing re-fed at the interrupt: the CLI keeps B")
+        self.assertEqual(s.pending(), ["C behind B"], "C still waits for B's take")
+        c.phase = "turn-2"
+        self._init(c)                                    # B's own turn, as the real CLI opens it
+        self._wait(lambda: len(c.writes) == 3, "C fed once B's drain showed")
+        self.assertEqual([w[0] for w in c.writes], ["first turn", "B mid-turn", "C behind B"], "B once, never twice")
+        self.assertEqual(c.writes[2][1], "turn-2")
+
+    def test_the_clis_exit_puts_a_held_text_back_at_the_head_of_the_queue_for_the_next_client(self):
+        """The one loss event: the CLI's process exits (a crash, a kill, the stop ladder's SIGINT rung, which
+        on CLI 2.1.263 emits the interrupted result and exits 30 ms later WITHOUT running the queued text).
+        Its queue dies with it, so a settled hold's text is nowhere: not in a counter, not in the queue,
+        no frame ever comes to release the hold. At the exit the hold is released and the text, whose
+        record the final transcript does not hold, goes back to the HEAD of the queue with its id, ahead
+        of what queued behind it, persisted for the next client; the chat shows it queued meanwhile; an
+        idle death still settles 'waiting' (no crash heal: the CLI was between turns)."""
+        s, c = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c.writes) == 2, "the note forwarded")
+        s.enqueue("behind the note")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self.assertEqual(s.pending(), ["behind the note"])
+        self._push(c, _EOF)                              # the CLI exits: its stream ends, its queue with it
+        self._wait(lambda: not s.thread.is_alive(), "the session thread ended with the stream")
+        self.assertIsNone(s._untaken, "the hold is released at the exit")
+        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()],
+                         [("mid-turn note", "s-note"), ("behind the note", "")],
+                         "the note is back at the head, with its id, ahead of what waited behind it")
+        mirror = sb._queue_texts((sb.read_reg(self.state, SID) or {}).get("queue"))
+        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in mirror],
+                         [("mid-turn note", "s-note"), ("behind the note", "")], "…and persisted for the next client")
+        self.assertEqual(self.be.pending_queued(SID), ["mid-turn note", "behind the note"],
+                         "the chat shows both queued while no CLI runs")
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
+        self.assertFalse(echo.get("dropped"), "not a loss: it is queued again")
+        self.assertTrue(any("exited while it still held a fed text" in l for l in self.lines), self.lines[-5:])
+        self.assertFalse(any("died mid-turn" in l for l in self.lines), "an idle death: no crash heal")
+        self.assertNotIn(SID, self.be.sessions, "the dead session is gone; the next send spawns")
+        # the next client (the next send, the boot reconcile) feeds the note FIRST, held until its turn shows
+        s2 = self.be._ensure(SID)
+        self.assertIsNotNone(s2)
+        self._wait(lambda: len(self._Client.instances) == 2 and len(self._Client.instances[1].writes) == 1,
+                   "the new client fed the note")
+        c2 = self._Client.instances[1]
+        self.assertEqual(c2.writes[0][0], "mid-turn note")
+        self.assertEqual(getattr(s2.fed_texts()[0], "send_id", ""), "s-note", "the id rode along")
+        self._settle()
+        self.assertEqual(len(c2.writes), 1, "what queued behind it still waits for its take")
+        c2.phase = "resumed"
+        self._init(c2)
+        self._wait(lambda: len(c2.writes) == 2, "…and follows once the note's turn showed")
+        self.assertEqual(c2.writes[1][0], "behind the note")
+        self.assertFalse(any("re-delivering a typed send" in l for l in self.lines),
+                         "the spawn's echo scan had nothing to add: the queue already held it")
+
+    def test_the_clis_exit_leaves_alone_a_held_text_the_cli_did_take(self):
+        """The record landed (the CLI spliced or drained the text and wrote its record) but no frame reached
+        the kernel before the exit: the hold is still live, and re-feeding would land the text twice. The
+        final transcript decides: found means taken, nothing goes back to the queue."""
+        s, c = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c.writes) == 2, "the note forwarded")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self._append(self._user_record("mid-turn note"))  # the drain wrote the record, then the CLI died
+        self._push(c, _EOF)
+        self._wait(lambda: not s.thread.is_alive(), "the thread ended")
+        self.assertIsNone(s._untaken)
+        self.assertEqual(s.pending(), [], "taken: never re-fed")
+        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), [])
+        self.assertTrue(any("after taking the last fed text" in l for l in self.lines), self.lines[-5:])
+
+    def test_the_clis_exit_flags_a_held_text_it_cannot_check_rather_than_re_feed_on_doubt(self):
+        """The transcript unreadable at the exit: neither a proof of loss nor of a take. The echo takes the
+        flag path ('never delivered', with restore), the queue gets nothing, and the log says why."""
+        s, c = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c.writes) == 2, "the note forwarded")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self._fault_the_transcript()
+        self._push(c, _EOF)
+        self._wait(lambda: not s.thread.is_alive(), "the thread ended")
+        self.assertEqual(s.pending(), [], "nothing re-fed on doubt")
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
+        self.assertTrue(echo.get("dropped"), "the possible loss is visible")
+        self.assertTrue(any("could not be read" in l for l in self.lines), self.lines[-5:])
 
 
 class QueueEntryWire(unittest.TestCase):

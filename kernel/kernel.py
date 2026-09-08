@@ -15842,9 +15842,14 @@ def _drive(msg, client):
         # record resolves before the real user atom lands). The echo + the while-working queued fold keep it
         # visible across that gap, then prune when the atom lands. author "romp" for a nudge → gray bubble even
         # in the brief idle-send case; "human" for a typed follow-up → blue. Mid-compaction the whole send is
-        # PARKED instead (queued bubble; delivered when compaction ends — _send_or_park).
+        # PARKED instead (queued bubble; delivered when compaction ends — _send_or_park). `sendId` is the
+        # chat's id for the optimistic bubble a typed citation follow-up drew (review round 2, 2026-09-08):
+        # it rides the parked op or the backend's queue entry like a plain send's, so the bubble's ✕ cancels
+        # exactly this entry instead of missing by id while the follow-up stays queued. The feed's own
+        # buttons (Nudge, Continue, Check status) draw no bubble and post none.
         _send_or_park(be, sid, body,
-                      echo=("romp" if msg.get("nudge") else "human") if be is _TMUX else None)
+                      echo=("romp" if msg.get("nudge") else "human") if be is _TMUX else None,
+                      send_id=str(msg.get("sendId") or "") or None)
         if iid:                                           # optimistic: reopen the card NOW, before the judge pass
             _predict_working("followup", ids=[iid])       # instant cue to every feed view (chat-typed citation
             #                                               follow-ups included) — the reopen below is what the
@@ -15923,10 +15928,19 @@ def _drive(msg, client):
         # AUTHORITATIVE (the user 2026-07-20): ok:false means the op already ran/was delivered — the
         # client toasts the 'too late' text and reverts its optimistic composer restore, instead of
         # the old silent miss that read as a successful cancel.
-        err = _cancel_parked(sid, int(msg["park"]), str(msg.get("md") or ""),
-                             send_id=str(msg.get("sendId") or "") or None)
+        md = str(msg.get("md") or "")
+        _sid_id = str(msg.get("sendId") or "") or None
+        err = _cancel_parked(sid, int(msg["park"]), md, send_id=_sid_id)
+        if err and _sid_id and hasattr(be, "unqueue") \
+                and _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id) is None:
+            # the id names no parked op: the send DRAINED into the backend's queue between the push that
+            # drew the bubble (park + sendId) and the click, where it dwells behind the feed hold until the
+            # CLI takes the text ahead of it (one message each, 2026-09-08), so it is still recallable there.
+            # Looked up by id only, as the md-only arm does (review round 2): an id-less park cancel keeps
+            # the single look, since a body could relocate onto a same-words neighbour in that queue.
+            err = None
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
-                                   "md": str(msg.get("md") or ""), "text": err or ""}))
+                                   "md": md, "text": err or ""}))
         _push_soon()
     elif t == "cancelQueued" and msg.get("idx") is not None and hasattr(be, "unqueue"):
         # ✕ on a backend-queue message: pull it back out (drift-guarded by the bubble's body); the

@@ -13720,11 +13720,13 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
   // inconsistency reported). The quote branch echoes the COMPOSED body, which is byte-identical to
   // what lands (quoteReplyBody IS the send path), so the reconcile's includes() match is exact; the
   // follow-up echoes the typed words, a substring of the goal-wrapped landing.
-  // The plain and quote sends post the bubble's own `sendId` (registered FIRST, so the id exists to post):
-  // the kernel carries it on the queue entry, the echo and the landed record, and the reconcile matches
-  // this bubble on it (send-pending.ts). The follow-up goes through the kernel's own wrapping path, which
-  // mints no id; its bubble keeps the text match.
-  if (goalCite?.itemId) { vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid }); registerOptimistic(sid, text, imgPaths); }
+  // Every branch posts the bubble's own `sendId` (registered FIRST, so the id exists to post): the kernel
+  // carries it on the queue entry, the echo and the landed record, and the reconcile matches this bubble
+  // on it (send-pending.ts). The follow-up goes through the kernel's own wrapping path, which carries the
+  // id onto the parked op or queue entry it makes of the wrapped body, so the bubble's ✕ cancels exactly
+  // that entry (review round 2, 2026-09-08); its bubble keeps the text match as well, a substring of the
+  // goal-wrapped landing.
+  if (goalCite?.itemId) { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid, sendId: p.sendId }); }
   else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); const p = registerOptimistic(sid, body, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body, sendId: p.sendId }); }
   else { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text, sendId: p.sendId }); }
   // One breadcrumb per composer send (client-diag.jsonl): sid, when, how long, which route — never the

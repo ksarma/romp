@@ -4,7 +4,10 @@ its 5th slot, the drain hands it to the backend, build_session stamps it on the 
 queue entry's or a parked op's), on the send's echo event and on the record that landed it
 (_note_send_landings), and a ✕ that names its send cancels EXACTLY that entry; an id no queue holds is
 the honest miss, never a relocation onto a neighbour wearing the same words (review round 1). The
-landed-ids map is bounded and its walk is guarded against a concurrent build of the same session.
+landed-ids map is bounded and its walk is guarded against a concurrent build of the same session. Round 2
+(2026-09-08): a goal-cited follow-up carries its bubble's id into the park or the queue entry, and the park
+arm of cancelQueued looks in the backend queue by id before answering a miss (a parked run drains there and
+dwells behind the feed hold).
 
 The neighbours pin the same surfaces by source text (tests/test_kernel_send_park.py,
 tests/test_kernel.py); this module drives the functions. Loader and isolation as in
@@ -185,6 +188,69 @@ class CancelParkedById(_ParkFixture):
         self.assertEqual(km._pending_ops[SID], [self.OP1])
 
 
+class _DriveFixture(_ParkFixture):
+    """_drive's collaborators for a session this kernel HAS (tests/test_kernel_card_predict.py's shape): the
+    name registry answers, the backend is ours, the feed fan-out and the goal store are stubbed, and the
+    client records every frame the handler answers with."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved_drive = (km._name_of, km._send_to_app, km.jd.optimistic_followup)
+        km._name_of = lambda sid: "web"
+        km._send_to_app = lambda app, m: None
+        km.jd.optimistic_followup = lambda *a, **k: False
+        self.frames = []
+        self.client = {"send": lambda raw: self.frames.append(json.loads(raw))}
+
+    def tearDown(self):
+        km._name_of, km._send_to_app, km.jd.optimistic_followup = self._saved_drive
+        super().tearDown()
+
+
+class AFollowUpCarriesTheBubblesId(_DriveFixture):
+    """A chat-typed citation follow-up (askFollowUp with the composer's sendId): the kernel wraps the text in
+    the goal body and the id rides the parked op or the backend queue entry like a plain send's, so the
+    bubble's ✕ finds exactly that entry. Before, the handler passed no id while the bubble wore one: the ✕
+    missed by id and toasted 'too late' with the follow-up still queued (review round 2)."""
+
+    FU = {"type": "askFollowUp", "itemId": SID + ":g1", "text": "and the tests?", "sid": SID}
+
+    def test_a_parked_follow_up_carries_the_id_as_its_fifth_slot_and_its_cancel_finds_it(self):
+        km._compacting_now = lambda sid: True
+        be = _IdKeepingBackend()
+        km.Sessions.backend_for = lambda sid: be
+        self.assertTrue(km._drive({**self.FU, "sendId": "s-fu"}, self.client))
+        ops = km._pending_ops.get(SID) or []
+        self.assertEqual(len(ops), 1, ops)
+        self.assertEqual(ops[0][0], "send")
+        self.assertTrue(ops[0][1].startswith("and the tests?"), "the typed words lead the wrapped body")
+        self.assertIn("<!-- romp-goal-id: %s:g1 -->" % SID, ops[0][1], "the goal marker rides along")
+        self.assertEqual(ops[0][4], "s-fu", "the bubble's id is the op's 5th slot")
+        self.assertEqual(be.calls, [], "parked, not sent")
+        self.assertIsNone(km._cancel_parked(SID, -1, "and the tests?", send_id="s-fu"),
+                          "the bubble's ✕ names its send and finds the parked follow-up")
+        self.assertNotIn(SID, km._pending_ops)
+
+    def test_a_delivered_follow_up_hands_the_backend_the_id(self):
+        be = _IdKeepingBackend()
+        km.Sessions.backend_for = lambda sid: be
+        self.assertTrue(km._drive({**self.FU, "sendId": "s-fu2"}, self.client))
+        self.assertEqual(len(be.calls), 1, be.calls)
+        text, kw = be.calls[0]
+        self.assertTrue(text.startswith("and the tests?"))
+        self.assertEqual(kw.get("send_id"), "s-fu2", "the queue entry, echo and landing name the bubble")
+
+    def test_a_feed_button_follow_up_posts_no_id_and_stays_bare(self):
+        be = _IdKeepingBackend()
+        km.Sessions.backend_for = lambda sid: be
+        self.assertTrue(km._drive({**self.FU, "nudge": True}, self.client))
+        self.assertEqual(len(be.calls), 1, be.calls)
+        self.assertEqual(be.calls[0][1], {}, "no id was posted, none is invented")
+        km._compacting_now = lambda sid: True
+        self.assertTrue(km._drive(self.FU, self.client))
+        self.assertEqual(len(km._pending_ops[SID][0]), 3, "a bare follow-up parks in the 3-slot shape")
+
+
 class _QueueBackend:
     """A backend that owns its queue (exposes unqueue) and keeps send ids on its entries, mirroring
     SdkBackend.unqueue's contract for the kernel's decision: records every pop it is asked for."""
@@ -244,6 +310,52 @@ class CancelBackendQueuedById(unittest.TestCase):
         self.assertIsNone(km._cancel_backend_queued(be, SID, 0, "go ahead", send_id="s-1"))
         self.assertEqual(be.unqueued, [(0, "go ahead", None)], "the id located it; the pop fell back to the 3-arg form")
         self.assertEqual(be._p, [])
+
+
+class TheParkArmLooksInTheBackendQueueById(_DriveFixture):
+    """The ✕ on a bubble drawn as PARKED (park + sendId) after the run drained: the op left the kernel FIFO
+    for the backend's queue, where it dwells behind the feed hold until the CLI takes the text ahead of it,
+    still recallable. The park arm used to answer the miss at once; now, for an id no parked op carries, it
+    looks in the backend queue by that id, as the md-only arm does (review round 2). By id only: an id-less
+    park cancel keeps the single look, since a body could relocate onto a same-words neighbour there."""
+
+    def _cancel(self, be, **fields):
+        km.Sessions.backend_for = lambda sid: be
+        self.frames.clear()
+        self.assertTrue(km._drive({"type": "cancelQueued", "id": SID, **fields}, self.client))
+        res = [f for f in self.frames if f.get("type") == "cancelResult"]
+        self.assertEqual(len(res), 1, self.frames)
+        return res[0]
+
+    def test_a_drained_parked_send_is_still_cancelled_from_its_park_bubble_by_id(self):
+        be = _QueueBackend([_q("go ahead", "s-1")])           # the FIFO is empty: the run drained
+        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(be.unqueued, [(0, "go ahead", "s-1")], "found in the backend queue by id, popped there")
+        self.assertEqual(be._p, [])
+
+    def test_an_id_neither_queue_holds_is_the_miss_and_touches_nothing(self):
+        be = _QueueBackend([_q("go ahead", "s-2")])           # a same-words neighbour, another send's
+        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["text"], MISS)
+        self.assertEqual(be.unqueued, [], "no pop attempted")
+        self.assertEqual([q.send_id for q in be._p], ["s-2"], "the neighbour survives")
+
+    def test_an_id_less_park_cancel_keeps_the_single_look(self):
+        be = _QueueBackend(["go ahead"])
+        r = self._cancel(be, park=0, md="go ahead")
+        self.assertFalse(r["ok"], "the parked op is gone and no id names the send: the honest miss")
+        self.assertEqual(be.unqueued, [], "the backend queue is not searched by body from this arm")
+        self.assertEqual(be._p, ["go ahead"])
+
+    def test_a_parked_op_that_is_still_there_wins_without_consulting_the_backend(self):
+        km._pending_ops[SID] = [("send", "go ahead", "human", "", "s-1")]
+        be = _QueueBackend([_q("go ahead", "s-9")])
+        r = self._cancel(be, park=0, md="go ahead", sendId="s-1")
+        self.assertTrue(r["ok"])
+        self.assertNotIn(SID, km._pending_ops)
+        self.assertEqual(be.unqueued, [])
 
 
 class TheBackendUnqueueHonoursTheSameRule(unittest.TestCase):

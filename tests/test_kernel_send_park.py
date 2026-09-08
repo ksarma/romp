@@ -428,8 +428,10 @@ class QueuedBubble(unittest.TestCase):
         src = inspect.getsource(km._drive)
         self.assertIn('t == "cancelQueued" and msg.get("park") is not None', src)
         # both cancels also carry the client's send id (2026-09-08), so a ✕ names its own entry exactly
-        self.assertIn('_cancel_parked(sid, int(msg["park"]), str(msg.get("md") or ""),\n'
-                      '                             send_id=str(msg.get("sendId") or "") or None)', src)
+        self.assertIn('err = _cancel_parked(sid, int(msg["park"]), md, send_id=_sid_id)', src)
+        # …and a park cancel whose id names no parked op looks in the backend queue by that id before
+        # answering the miss: the send may have drained there since the push (review round 2, 2026-09-08)
+        self.assertIn('and _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id) is None:', src)
         self.assertIn('_cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""),\n'
                       '                                     send_id=str(msg.get("sendId") or "") or None)', src,
                       "the backend-queue cancel goes through the drift guard now")
