@@ -1950,8 +1950,9 @@ started. The route takes the serve token. The counters cost a lock and a few
 dictionary increments per event, so they stay on; nothing is formatted or
 serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
-one screen: pusher cycles and wakes per second, cycle time percentiles, the
-share of cycle time in each stage, CPU split between the pusher thread, the
+one screen: pusher cycles and wakes per second, the cycles the minimum
+interval between cycle starts held and the watched-tab wakes exempt from it,
+cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
@@ -1993,10 +1994,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
   memos report their own occupancy under `memos`.
 - `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
-  cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
-  `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
-  `cycle_cpu_ms_sum` (the pusher thread's own CPU time), and `cycle_ms_p50`,
-  `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles.
+  cycle), `wakes_live` (the wakes that carried a session id: that session's
+  live tail changed), `wakes_event` and `wakes_backstop` (how the cycle came
+  to run: a wake arrived before it started, or none did and the 0.5 s backstop
+  ran it), `held` and `held_ms` (cycles the minimum interval between cycle
+  starts delayed, and the total delay), `exempt` (cycles that ran inside the
+  interval because a watched chat tab's live tail changed; a cycle released
+  early from a hold counts in both), `cycle_ms_sum`, `cycle_ms_max` (since
+  start), `cycle_ms_last`, `cycle_cpu_ms_sum` (the pusher thread's own CPU
+  time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
+  from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
+  the kernel): a cycle starts no sooner than that after the previous one
+  began unless a chat tab a connected client is watching changed (streamed
+  text, an echo), which runs its cycle at once. `ROMP_PUSH_MIN_INTERVAL=<seconds>`
+  in the kernel's environment overrides it; 0 removes the bound.
 - `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,

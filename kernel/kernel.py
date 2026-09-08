@@ -346,9 +346,15 @@ class _PerfStats:
                                    task_seg / session_tok {entries}; see _cache_gauges. The memos'
                                    own occupancy stays under `memos`
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
-                                   call; a burst coalesces into one cycle), wakes_event /
-                                   wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
-                                   timeout), cycle_ms_sum / cycle_ms_max (since start) /
+                                   call; a burst coalesces into one cycle), wakes_live (the wakes
+                                   _pusher_wake_live recorded with a sid: a session's live tail
+                                   changed), wakes_event / wakes_backstop (how the cycle came to run:
+                                   a wake arrived before it started, or none did and the 0.5 s
+                                   backstop ran it), held / held_ms (cycles the minimum interval
+                                   between cycle starts, PUSH_MIN_INTERVAL_S, delayed, and the delay
+                                   in total), exempt (cycles that ran inside the interval because a
+                                   watched chat tab's live tail changed; a cycle released early from
+                                   a hold counts in both), cycle_ms_sum / cycle_ms_max (since start) /
                                    cycle_ms_last, cycle_cpu_ms_sum (the pusher thread's own CPU,
                                    time.thread_time, so a forked tmux read is excluded), and
                                    cycle_ms_p50 / cycle_ms_p90 / cycle_ms_ring_max / ring_n from a
@@ -550,7 +556,8 @@ class _PerfStats:
     def reset(self):
         with self.lock:
             self.since = time.time()
-            self.pusher = {"cycles": 0, "wakes": 0, "wakes_event": 0, "wakes_backstop": 0,
+            self.pusher = {"cycles": 0, "wakes": 0, "wakes_live": 0, "wakes_event": 0, "wakes_backstop": 0,
+                           "held": 0, "held_ms": 0.0, "exempt": 0,
                            "cycle_ms_sum": 0.0, "cycle_ms_max": 0.0, "cycle_ms_last": 0.0,
                            "cycle_cpu_ms_sum": 0.0}
             self.ring = collections.deque(maxlen=self.RING)
@@ -572,6 +579,20 @@ class _PerfStats:
     def wake_kind(self, by_event):
         with self.lock:
             self.pusher["wakes_event" if by_event else "wakes_backstop"] += 1
+
+    def wake_live(self):
+        with self.lock:
+            self.pusher["wakes_live"] += 1
+
+    def hold(self, dt):
+        """dt: the seconds the minimum interval delayed one cycle's start (see _pusher)."""
+        with self.lock:
+            self.pusher["held"] += 1
+            self.pusher["held_ms"] += dt * 1000.0
+
+    def exempt(self):
+        with self.lock:
+            self.pusher["exempt"] += 1
 
     def cycle(self, dt, cpu_dt=0.0):
         """dt: the cycle's wall seconds; cpu_dt: the pusher thread's own CPU seconds over it."""
@@ -14861,6 +14882,7 @@ def _sdk_locked():
             _sdk_backend = sbmod.SdkBackend(
                 jd.STATE, _claude_bin(), _send_to_app,
                 poke=_wake_kernel, push=_pusher_wake.set,   # poke = the turn END: judges AND parked-op delivery
+                push_live=_pusher_wake_live,      # the same wake carrying WHICH tail changed (the interval's exemption)
                 push_session=_push_session_now,   # targeted one-session push for per-session chip events (connect)
                 mcp_config=(str(_SDK_MCP) if _SDK_MCP.exists() else None),
                 append_prompt_path=(str(_SDK_PROMPT) if _SDK_PROMPT.exists() else None),
@@ -22336,6 +22358,7 @@ def _optimistic_echo(sid, text, author="human"):
     if be and be.owns(str(sid)):
         return                                       # SDK send() already echoed (its own store)
     _tmux_echo_add(str(sid), text, author=author)
+    _pusher_wake_live(str(sid))                      # the tmux tail changed: the wake carries the sid (see _pusher)
 
 
 # The permission mode has NO slash command — it's the shift+tab cycle (mirrored from the terminal UI,
@@ -42302,6 +42325,53 @@ _producer_wake = _CountedEvent(lambda: _PERF_STATS.judge_wake())
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
 _pusher_wake = _CountedEvent()      # a threading.Event; set() also counts the wake for /perf
+# The CAUSE a wake carries (perf round 5, 2026-09-08): the sids whose in-memory live tail changed since the
+# pusher loop last read this set. The loop's minimum interval between cycle starts (PUSH_MIN_INTERVAL_S)
+# holds every other wake; a wake for a tab a connected chat client is watching runs its cycle at once, so
+# the chat pane is as live as before the interval. Recorded at the wake site BEFORE the set(), read and
+# cleared by the loop AFTER its clear(): a sid recorded between the two is read next time, never lost.
+# The set is the cause and nothing more: whether the tab is watched is read from the clients at the moment
+# the loop decides (_watched_sids), so the exemption keys on the event and the client's own word.
+_live_wake_lock = threading.Lock()
+_live_wake_sids = set()
+
+
+def _note_live_wake(sid):
+    """Record that `sid`'s live tail changed, for the wake that follows (see _pusher_wake_live)."""
+    with _live_wake_lock:
+        _live_wake_sids.add(str(sid))
+    _PERF_STATS.wake_live()
+
+
+def _pusher_wake_live(sid):
+    """A live-tail wake: `sid`'s in-memory tail changed (a streamed atom, an input echo added, retired or
+    flagged, a command chip) — the SDK backend's `push_live` callback and the tmux echo's twin. The sid
+    rides the wake so the loop can exempt a watched tab's cycle from the minimum interval."""
+    _note_live_wake(sid)
+    _pusher_wake.set()
+
+
+def _take_live_wake_sids():
+    """The sids recorded since the last take, cleared: the loop's read, after its clear() of the event."""
+    with _live_wake_lock:
+        if not _live_wake_sids:
+            return frozenset()
+        sids = frozenset(_live_wake_sids)
+        _live_wake_sids.clear()
+        return sids
+
+
+def _watched_sids():
+    """The chat tabs connected clients are looking at: each alive, ready chat client's active sid (the
+    ?active= connect hint or the activeTab message; the same set _push builds first)."""
+    with _clients_lock:
+        return {str(c["active"]) for c in _clients
+                if c.get("app") == "chat" and c.get("alive", True) and _client_ready(c) and c.get("active")}
+
+
+def _live_wake_watched(sids):
+    """Whether any of the live-tail sids `sids` is a watched tab: the exemption's test."""
+    return bool(sids) and not sids.isdisjoint(_watched_sids())
 # The last kernel-side OPTIMISTIC mutation (a parked-op chip, a follow-up card reopen, a model-pending
 # stamp, an interrupt click): state that lives in MEMORY or a goal store, which NO file-mtime signature
 # sees. _cached_feed/_cached_timeline must rebuild past this mark — even inside REBUILD_MIN_S and even on
@@ -42465,6 +42535,21 @@ _skel_wire = None   # (timeline, frame, pre, sig) — the lanes {type:"data"} fr
 # connect serves a near-fresh cache instantly; the feed/timeline lag content by at most this window (the CHAT
 # is real-time on its own delta path, unaffected). Idle fleets still reuse indefinitely via the sig.
 REBUILD_MIN_S = 2.0
+# The pusher loop's cadence (perf round 5, decision 3, 2026-09-08). PUSH_BACKSTOP_S is the poll: with no
+# wake at all a cycle still runs this long after the previous one ended, for the changes nothing pokes us
+# for (a tmux session's mid-turn output). PUSH_MIN_INTERVAL_S is a rate bound on cycle STARTS: after a
+# cycle, a wake that is not a watched tab's live-tail wake (see _pusher_wake_live) waits until this long
+# after the previous cycle began, and every wake that arrives during that wait is served by the one cycle
+# that follows. Round 4 made the builders 3-5x cheaper and the process line did not move: the pusher was
+# wall-saturated (0.93 wakes/s against 0.32 cycles/s), so cheaper cycles became twice as many cycles
+# (0.65/s at a 1.37 s mean, 89% of wall busy). The bound turns that saving into idle CPU; REBUILD_MIN_S
+# above bounds the full view rebuilds within a cycle and is unchanged. The chat pane is exempt where it
+# is watched: streamed text and echoes for the tab a connected client is looking at run their cycle at
+# once, so its latency is what it was. Override for a measurement or to restore the old loop:
+# ROMP_PUSH_MIN_INTERVAL=<seconds> in the kernel's environment (0 removes the bound; the loop is then
+# exactly the pre-interval one).
+PUSH_BACKSTOP_S = 0.5
+PUSH_MIN_INTERVAL_S = float(os.environ.get("ROMP_PUSH_MIN_INTERVAL", "1.0"))
 # Monotonic id of each feed BUILD, assigned at build START (the user 2026-07-21). It is how a client tells
 # "this payload could not possibly know about my click yet" from "this payload is the kernel's answer to it":
 # a card-move ack carries the id of the newest build already underway, and only a payload with a HIGHER id
@@ -43890,15 +43975,45 @@ def _pusher_cycle_jobs(now, tmux, any_client):
     _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push)
 
 
-def _pusher():
+def _pusher(clock=None, wake=None):
+    """The pusher thread's loop: a cycle, then the wait for the next one. `clock` and `wake` are
+    time.monotonic and _pusher_wake unless a test hands in a fake clock and a fake event
+    (tests/test_pusher_cadence.py runs this loop over synthetic wakes with no sleeps)."""
+    clock = time.monotonic if clock is None else clock
+    wake = _pusher_wake if wake is None else wake
     while True:
+        start = clock()
         _pusher_cycle()
         # Event-driven (woken by the SDK live-tail and by /tick on hook events) with a SHORT 0.5s backstop
         # poll, so tmux sessions — which have no per-message event for mid-turn streaming — still refresh
         # responsively as the model generates, instead of waiting out a multi-second tick (the user 2026-06-22).
         # Cheap when nothing changed: _parse is cached and _send_client dedups, so a no-change poll sends nothing.
-        _woke = _pusher_wake.wait(0.5)    # True: the flag was set (an event); False: the backstop timed out
-        _pusher_wake.clear()
+        _woke = wake.wait(PUSH_BACKSTOP_S)    # True: the flag was set (an event); False: the backstop timed out
+        wake.clear()
+        live = _take_live_wake_sids()         # after the clear: a sid recorded in between is read next time
+        # The minimum interval between cycle STARTS (PUSH_MIN_INTERVAL_S; the comment there says why). Inside
+        # it, a wake for a watched tab's live tail runs now; anything else waits for the deadline, and every
+        # wake that lands during the wait is served by the one cycle that follows (nothing is dropped: the
+        # cycle reads the whole world, not the wake). An interval already elapsed changes nothing, a
+        # watched-tab wake then is an ordinary wake, and PUSH_MIN_INTERVAL_S = 0 is the loop as it was.
+        due = clock()
+        deadline = start + PUSH_MIN_INTERVAL_S
+        if due < deadline:
+            exempt = _live_wake_watched(live)
+            held = False
+            while not exempt:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    break
+                held = True
+                if wake.wait(remaining):          # a wake inside the hold
+                    wake.clear()
+                    _woke = True                  # the cycle runs for an event, whenever it runs
+                    exempt = _live_wake_watched(_take_live_wake_sids())
+            if held:
+                _PERF_STATS.hold(clock() - due)
+            if exempt:
+                _PERF_STATS.exempt()
         _PERF_STATS.wake_kind(_woke)
 
 
