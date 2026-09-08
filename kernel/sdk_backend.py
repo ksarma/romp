@@ -4887,8 +4887,20 @@ class SdkSession:
         flag bare: the new client's inputs() is created after it and reads the flag on its first pass."""
         self._move_settle_expected = False
         loop, wake = getattr(self, "loop", None), getattr(self, "_input_wake", None)
-        if loop is not None and wake is not None:
+        if loop is None or wake is None:
+            return
+        # The session's thread may have ended: asyncio.run closed its loop and self.loop is never nulled,
+        # and move() lowers the arm from the kernel thread after a claim the CLI's exit can outrun
+        # (review round 5, 2026-09-08). There is no feeder left to wake then, and a raise here left
+        # move()'s exit half done (a RuntimeError in place of the SDK's named error, cwdPending kept).
+        # Lowering the arm is the point: wake only an open loop, and never raise.
+        closed = getattr(loop, "is_closed", None)
+        if callable(closed) and closed():
+            return
+        try:
             loop.call_soon_threadsafe(wake.set)
+        except RuntimeError:     # closed between the check and the call
+            pass
 
     def unqueue(self, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
@@ -11460,7 +11472,11 @@ class SdkBackend:
         if not s:
             return None
         with s._lock:
-            return s._busy_under_lock()
+            # called as a plain function on the session, not as its method: busy() is duck-typed (the
+            # delete-while-busy tests hand it a double carrying inflight, _pending and _lock only, no
+            # SdkSession methods), and the helper reads nothing but those attributes (review round 5,
+            # 2026-09-08, after round 4's method call broke seven of them)
+            return SdkSession._busy_under_lock(s)
 
     def compacting(self, sid: str) -> "bool | None":
         """Authoritative 'is a /compact in progress' (see SessionBackend.compacting): set when /compact is
@@ -11731,13 +11747,16 @@ class SdkBackend:
             r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
         ok = not err and isinstance(r, dict) and r.get("status") == "ok"
         if not ok:
+            # Each exit drops the claim FIRST and lowers the arm after (review round 5, 2026-09-08): the
+            # claim is the reg's, and a kept one refuses every later move of this session until a kernel
+            # boot heals it, so nothing that can fail may stand between the exit and its drop.
             if err == _NO_CONTROL_SENDER:
-                s._disarm_move_settle()                         # nothing was sent
                 self._update_reg_dropping(sid, ("cwdPending",))
+                s._disarm_move_settle()                         # nothing was sent
                 return err
             if isinstance(r, dict) and r.get("status") == "rejected":
-                s._disarm_move_settle()                         # the CLI answered: it did nothing
                 self._update_reg_dropping(sid, ("cwdPending",))
+                s._disarm_move_settle()                         # the CLI answered: it did nothing
                 if r.get("reason") == "busy":
                     return "busy"
                 return str(r.get("message") or r.get("reason") or "the CLI rejected the move")
@@ -11750,9 +11769,16 @@ class SdkBackend:
             self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old})
             after = read_reg(self.state_dir, sid) or {}
             if after.get("cwd") == target and not after.get("cwdPending"):
-                # it moved (and the CLI's turn-less result is still expected — the arm stands)
-                self._log("sdk %s: set_cwd's reply was lost (%s) but the transcript is under %s — the move stands"
-                          % (sid[:8], why, target))
+                # It moved, and the CLI's turn-less result is still expected: the arm stands, and with it
+                # the feeder's hold on the queue (inputs(), round 4). A hold that outlives move()'s return
+                # is announced on the problem ring (review round 5, 2026-09-08): a CLI that relocated and
+                # then hung leaves every queued send waiting with nothing else saying why. The hold ends
+                # on the exact events that lower the arm (the CLI's result, or its exit and the loop-top
+                # clear at the reconnect); no timer, since nothing short of those proves the result will
+                # never come.
+                self._log("sdk %s (%s): set_cwd's reply was lost (%s) but the transcript is under %s: the move "
+                          "stands, and queued sends wait for the CLI's result of it; they go on when it arrives "
+                          "or at the session's next reconnect" % (sid[:8], s.name, why, target), problem=True)
                 return ""
             s._disarm_move_settle()
             if after.get("cwdPending"):
@@ -11762,8 +11788,8 @@ class SdkBackend:
             return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
         if r.get("changed") is False or new == old:
-            s._disarm_move_settle()                             # no relocation → no turn-less result is coming
             self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
+            s._disarm_move_settle()                             # no relocation → no turn-less result is coming
             return ""
         self._finish_move(s, sid, old, new)
         return ""

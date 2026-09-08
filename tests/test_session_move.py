@@ -342,7 +342,8 @@ class LostReply(MoveBase):
         self.assertEqual(s.cwd, self.new)
         self.assertTrue(s._move_settle_expected, "the CLI's turn-less result is still coming — the arm stands")
         self.assertTrue(os.path.exists(sb.transcript_path(self.new, EPISODE_FSID)), "prior episodes follow")
-        self.assertTrue(any("reply was lost" in m for m, p in self.logs))
+        self.assertTrue(any("reply was lost" in m and p for m, p in self.logs),
+                        "on the problem ring: the arm outlives move() and holds the queue (review round 5)")
 
     def test_a_lost_reply_with_the_transcript_nowhere_is_uncertain_and_keeps_the_flag(self):
         s = self._wire([RuntimeError("control request timed out")])

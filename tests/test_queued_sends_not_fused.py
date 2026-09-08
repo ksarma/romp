@@ -50,6 +50,13 @@ Round 4 (2026-09-08) pinned one more:
     turn-less result, whose late arrival the settle would then take for a turn end. The hold lifts on the
     exact events that lower the arm (the move's result consumed; move() refused), never on a timer, and the
     move's own request rides the control channel, so the hold never delays it.
+Round 5 (2026-09-08) pinned two more:
+  * move()'s exits drop the claim (cwdPending) before they lower the arm, and the disarm tolerates the closed
+    loop of a session whose CLI exited after the claim: move() returns the SDK's named error, not a raise, and
+    a later move is not refused as already pending;
+  * a lost reply after the CLI relocated keeps the arm, and the hold it leaves on the queue is announced on the
+    problem ring (the session named, queued sends wait for the move's result); the chip shows the text queued,
+    busy() reads it, and the hold ends on the exact event that lowers the arm, never on a timer.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -107,10 +114,13 @@ class _ControlChannel:
     """The SDK client's private control-request sender, scripted and GATED: the request is recorded the
     moment it is sent (it rides the control channel, not the feeder), and the CLI's answer waits for the
     test's gate, which stands in for the relocation the CLI performs BEFORE it replies to a set_cwd."""
-    def __init__(self, answer):
+    def __init__(self, answer, on_request=None):
         self.answer, self.requests, self.gate = answer, [], threading.Event()
+        self.on_request = on_request     # what the CLI does on receipt, before any answer (a relocation)
 
     async def _send_control_request(self, req):
+        if self.on_request is not None:
+            self.on_request(dict(req))
         self.requests.append(dict(req))
         await asyncio.get_running_loop().run_in_executor(None, self.gate.wait)
         return self.answer
@@ -1133,13 +1143,13 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: s.inflight == 0, "idle")
         return c
 
-    def _start_move(self, c, answer):
+    def _start_move(self, c, answer, on_request=None):
         """Drive the REAL move() on a kernel-side thread against the running session. Its control channel
         is the gated fake on the client: the set_cwd request goes out at once and the CLI's answer waits
         for the gate. Returns the target folder, the thread and the dict move()'s answer lands in."""
         new = os.path.join(self.state, "moved")
         os.makedirs(new, exist_ok=True)
-        c._query = _ControlChannel(answer(new) if callable(answer) else answer)
+        c._query = _ControlChannel(answer(new) if callable(answer) else answer, on_request=on_request)
         self.addCleanup(c._query.gate.set)   # a failed assertion before the gate must not wedge the teardown
         out = {}
         t = threading.Thread(target=lambda: out.__setitem__("r", self.be.move(SID, new)), daemon=True)
@@ -1217,6 +1227,72 @@ class OneFedTextAtATime(unittest.TestCase):
         c.phase = "turn-2"
         self._init(c)
         self._wait(lambda: s._untaken is None, "the text's own turn started: its hold released")
+
+    def test_a_move_whose_cli_exited_after_the_claim_names_the_error_and_drops_the_claim(self):
+        """Round 5: the CLI exits between move()'s claim and its request (an idle death: the stream ends,
+        the session's thread ends with it, asyncio.run closes its loop, and self.loop is never nulled). The
+        request finds no client and move() takes the _NO_CONTROL_SENDER exit, which lowers the arm through
+        _disarm_move_settle. At round 4 that raised RuntimeError on the closed loop before the claim was
+        dropped: the kernel reported the raise in place of the SDK's named error, and every later move of
+        the session was refused as already pending until a kernel boot healed it. The exit drops the claim
+        first, and the disarm tolerates a closed loop."""
+        s, c = self.s, self._idle_after_the_first_turn()
+        new = os.path.join(self.state, "moved")
+        os.makedirs(new, exist_ok=True)
+        real = self.be._claim_cwd_pending
+
+        def claim_then_the_cli_exits(*a):
+            out = real(*a)
+            self._push(c, _EOF)
+            self._wait(lambda: not s.thread.is_alive(), "the session thread ended after the claim")
+            return out
+        self.be._claim_cwd_pending = claim_then_the_cli_exits
+        self.assertEqual(self.be.move(SID, new), sb._NO_CONTROL_SENDER, "the SDK's named error, not a raise")
+        self.assertTrue(s.loop.is_closed(), "the loop the disarm would have woken is closed")
+        self.assertFalse(s._move_settle_expected, "the arm is down")
+        self.assertNotIn("cwdPending", sb.read_reg(self.state, SID) or {}, "the claim is dropped")
+        self.assertEqual(real(SID, new), "", "a later move's claim is accepted")
+        self.be._update_reg_dropping(SID, ("cwdPending",))
+
+    def test_a_lost_reply_after_the_cli_relocated_announces_the_hold_it_leaves(self):
+        """Round 5: the CLI relocated the transcript for the set_cwd and never answered (a hang after the
+        rename). The control request's own timeout returns move() to the heal, which finds the transcript
+        under the target and finishes romp's half; the arm stands, since the CLI's turn-less result is
+        still owed, and with it the round-4 hold on the queue. That hold outlives move()'s return, so it is
+        announced: a problem-ring line naming the session and that queued sends wait for the move's
+        result. The chip shows the text queued meanwhile, busy() reads it, and the hold ends on the exact
+        event that lowers the arm (here a real turn's result, the stale-arm drop); no timer."""
+        from unittest import mock
+        s, c = self.s, self._idle_after_the_first_turn()
+        fsid = str((sb.read_reg(self.state, SID) or {}).get("lastSid") or SID)
+
+        def relocate(req):
+            dst = sb.transcript_path(req["path"], fsid)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.rename(self._transcript(), dst)
+        with mock.patch.object(sb, "MOVE_CONTROL_TIMEOUT", 0.7):   # the pre-existing round-trip bound, shortened
+            new, t, out = self._start_move(c, None, on_request=relocate)
+            c.phase = "hung-move"
+            s.enqueue("sent during a hung move")
+            t.join(10)
+        self.assertFalse(t.is_alive(), "move() returned on the control request's timeout")
+        self.assertEqual(out.get("r"), "", "the move stands: the transcript is under the target")
+        self.assertEqual(s.cwd, new)
+        self.assertTrue(s._move_settle_expected, "the CLI's result is still owed: the arm stands")
+        self.assertEqual(c.writes, [("first turn", "turn-1")], "the text is held")
+        self.assertEqual(self.be.pending_queued(SID), ["sent during a hung move"], "the chip shows it queued")
+        self.assertTrue(self.be.busy(SID))
+        rows = [r for r in self.be.problems() if "queued sends wait for the CLI's result" in r["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems())
+        self.assertIn("(web)", rows[0]["text"], "names the session")
+        # the hold ends on the exact event: a real turn's result drops the stale arm and the text is fed
+        c.phase = "cli-owned-turn"
+        self._init(c)
+        self._assistant(c)
+        self._result_frame(c)
+        self._wait(lambda: len(c.writes) == 2, "fed at the stale arm's drop")
+        self.assertEqual(c.writes[1], ("sent during a hung move", "cli-owned-turn"))
+        self.assertFalse(s._move_settle_expected)
 
 
 class QueueEntryWire(unittest.TestCase):
