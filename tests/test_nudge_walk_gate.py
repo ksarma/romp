@@ -230,10 +230,18 @@ class WakeOnlyWalkCost(_Base):
 
     def test_a_fallback_store_is_computed_every_cycle_and_never_memoized(self):
         # no store file: load_goals_shared hands through load_goals' private fresh store, a mutable
-        # object with a new identity every call, so the gate runs uncached (plan_bypass) as before
+        # object that could change under an entry, so the gate runs uncached (plan_bypass) and
+        # publishes nothing. The call counts alone cannot tell this from an identity memo that merely
+        # misses on a fresh object each cycle (review 2026-09-08): the bypass counter and the memo's
+        # occupancy are what pin the branch.
         self._toggle(False)
+        before = dict(km._nudge_walk_stats)
         c1, c2 = self._cycle(), self._cycle(NOW + 5)
         self.assertEqual((c1["plan_units"], c2["plan_units"]), (1, 1))
+        d = {k: km._nudge_walk_stats[k] - before[k] for k in before}
+        self.assertEqual((d["plan_bypass"], d["plan_miss"], d["plan_hit"]), (2, 0, 0),
+                         "computed uncached both cycles: neither memoized nor served")
+        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "no entry holds a private mutable store")
         self.assertEqual(self.fb.sent, [])
 
 
