@@ -162,8 +162,9 @@ built departs from the text above, and why:
    in a note measured the whole viewport, and `elementFromPoint` at the close button's centre and at the
    Comments aside's first button returned that box (headless Chromium 151, measured in review on 2026-09-07
    after the first draft of this note credited `container-type` with containing it). With the md rule the same
-   box measures the md rect and both hits return the buttons. Slice 2's move of `container-type: inline-size`
-   to `.fileview` serves its container query and adds no containment; the md rule stays. The region layer
+   box measures the md rect and both hits return the buttons. Fork PR #375 (merged 2026-09-08, folded into this
+   branch the same day) put `container-type: inline-size` on `.fileview` too, for the Comments panel's fold
+   query; it adds no containment, and the md rule stays. The region layer
    (`.fc-overlay`, absolute inside its own `position: relative` wrap), the Comment float (`.fc-float`, appended
    to `document.body`) and the `.fc-hl` highlights (inline) are unaffected: all 47 file-comments test files
    pass, the regions browser leg included.
