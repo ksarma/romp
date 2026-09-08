@@ -130,6 +130,21 @@ These are for scripting and for agents rather than daily use:
 | `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
 
+Raw `POST` callers, anything that talks to the kernel's routes directly rather
+than through `romp`, follow one body contract, and the postal bus's own routes
+share it. The request carries the serve token (`X-Romp-Token`, or `?token=`)
+and is authorized before its body is read. The body is delimited by
+`Content-Length` alone: no `Transfer-Encoding` (411), the header once and a
+plain decimal (400 otherwise), and at most 1 MiB (413 beyond that, refused
+before a byte is read). A body that arrives short of its announced length is
+400, one that stalls for 30 seconds is 408, and every refusal closes the
+connection. The body is a JSON object; an array, string, number or `null` is a
+400 naming what arrived, echoed bounded and well formed. A flag field
+(`delete`, `on`, `mkdir`, `tracked`, and the like) is a JSON boolean: `true`
+and `false` apply, an absent field or an explicit `null` reads as the route's
+default, and anything else (the string `"false"`, `0`, `1`) is a 400 naming the
+field, with nothing acted on.
+
 `--env` gives one session its own environment, so two sessions in the same
 directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
 switch) without editing the directory's `.claude/settings*.json`, which reaches
@@ -578,8 +593,9 @@ For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
 
 - `ROMP_DIR=<path>` where to clone; default `~/romp`.
-- `ROMP_REF=<tag|branch>` install a specific ref; default is the newest `v*`
-  release tag, falling back to `main` when none is published.
+- `ROMP_REF=<tag|branch>` install a specific ref; default is the newest
+  `vMAJOR.MINOR.PATCH` release tag (prerelease-suffixed tags are skipped),
+  falling back to `main` when none is published.
 - `ROMP_NO_PATH=1` leaves your shell rc alone.
 
 **File comments** (the viewer's Comments panel) have two prerequisites and one
