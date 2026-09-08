@@ -14870,13 +14870,15 @@ def _sdk_locked():
                 # class). CONSTRUCTOR-wired on purpose: the boot echo reseed fires drop marks
                 # from __init__, before any post-construction assignment could arm the seam.
                 todo_lost=_user_todo_answer_lost,
-                # the API-health aggregator's boot clock: the same _STARTED the /api-health route stamps as
-                # bootAt, so a bucket the boot seeded is unknown since the kernel's own start and the hover's
-                # head, divider and restart row name one time (the aggregator's own clock ran seconds later:
-                # this backend is built after the boot's imports, migrations and warm-up). The float, never
-                # int(): truncated to the second boundary BEFORE the process started, the seed sorted under
-                # a row the previous kernel filed in that same second, and the tail read the old kernel's
-                # last state as current above the restart row (review round 3)
+                # the API-health aggregator's boot clock: this kernel's own _STARTED, which the aggregator
+                # truncates to the millisecond (the precision of every stamp in the payload) and serves as
+                # /api-health's bootAt, so a bucket the boot seeded is unknown since the kernel's own start
+                # and the hover's head, divider and restart row name one time (the aggregator's own clock ran
+                # seconds later: this backend is built after the boot's imports, migrations and warm-up). The
+                # float, never int(): truncated to the second boundary BEFORE the process started, the seed
+                # sorted under a row the previous kernel filed in that same second, and the tail read the old
+                # kernel's last state as current above the restart row (review round 3). /version's `started`
+                # is the same start in whole seconds.
                 boot_at=_STARTED)
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
@@ -45639,9 +45641,10 @@ return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span>
 // state it closed must not read 'so far' beside it). A row the boot filed says so; where the tail crosses this
 // kernel's bootAt with no such row shown above the crossing (the bucket was already unknown at shutdown, so the boot
 // filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Any restart row above
-// suppresses it, not only the one right above: the backend seeds the restart row one millisecond past a row the
-// previous kernel filed at or after this start, so that row can sit between the two, and one restart is one mark
-// (review round 3). Every bucket comes back unknown at a restart, so a hold from before the boot ends at the boot and
+// suppresses it, not only the one right above, so one restart is one mark whatever sits between (review round 3).
+// bootAt is the backend's own seed stamp (the start to the millisecond, or one millisecond past a row the previous
+// kernel filed at or after it), so every restored row is before it and the restart rows sit at it (review round 4).
+// Every bucket comes back unknown at a restart, so a hold from before the boot ends at the boot and
 // is never 'so far'; a bucket the boot seeded carries that same boot clock as its stateSince, so the head and the
 // tail name one time. Never hidden.
 function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
@@ -49095,11 +49098,15 @@ class Handler(BaseHTTPRequestHandler):
                 now = time.time()
                 out = fn(now, uptime_s=now - _STARTED)
                 out["bootId"] = _BOOT_ID
-                # the kernel's start to the millisecond, the precision of every other stamp in this payload
-                # (asOf, transitions[].t, stateSince): the backend's aggregator is seeded from the same
-                # _STARTED, so a bucket the boot seeded carries this very number as its stateSince and the
-                # restart row's t. /version's `started` is its whole-second form (int(bootAt) == started).
-                out["bootAt"] = round(_STARTED, 3)
+                # bootAt rides the snapshot: the aggregator's boot_stamp, this kernel's _STARTED (passed at
+                # construction, _sdk_locked) truncated to the millisecond, the precision of every other stamp
+                # in the payload (asOf, transitions[].t, stateSince), or one millisecond past the newest
+                # transition the previous kernel left when that overlaps the start. The aggregator owns the
+                # number, so a bucket the boot seeded carries it as its stateSince and the restart row's t in
+                # every case, clamp or not (review round 4: a round(_STARTED, 3) stamped here was a second
+                # number whenever the clamp fired, and named the next second when the start's fraction
+                # rounded up). /version's `started` is int(_STARTED), the same start in whole seconds:
+                # int(bootAt) == started unless the clamp moved the stamp.
                 # coverage's kernel half: tmux-backed sessions have no SDK stream and sit outside
                 # the signal — the count says how much of the box the signal does not see. A null
                 # (never a silent 0) when the live enumeration fails.

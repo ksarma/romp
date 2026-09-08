@@ -1639,10 +1639,13 @@ and `key:managed` name sources whose material the kernel never holds.
   is the response time. A clock step moves it; a reader that wants a freshness
   check a clock step cannot fake uses `seq`.
 - `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
-  `/version` and `X-Romp-Boot` carry. `bootAt` is the kernel's start to the
-  millisecond, the precision of every other stamp in the payload; `/version`'s
-  `started` is its whole seconds. A changed `bootId` means a restart, and
-  the windows restarted with it.
+  `/version` and `X-Romp-Boot` carry. `bootAt` is the boot's stamp in this
+  signal: the kernel's start truncated to the millisecond, the precision of
+  every other stamp in the payload, or, when the previous kernel's last
+  transition overlaps the start, one millisecond past that row; every bucket
+  the boot seeded carries this same number as its `stateSince`, and so does
+  every row the boot filed. `/version`'s `started` is the whole-second boot
+  time. A changed `bootId` means a restart, and the windows restarted with it.
 - `complete`: true once the longest window (900 s) fits inside the uptime.
 - `seq`: count of ring events (attempts, successful responses and give-ups)
   ingested since boot. Monotonic within a boot: two reads with the same `seq`
@@ -1878,15 +1881,16 @@ tail, so it stays bounded however many transitions pass; per-request events
 are never written. The event ring itself is in memory only, so a restart
 empties the windows: `seq` restarts at 0, `bootId` changes, `complete` stays
 false until each window fits inside the new uptime, and every bucket the state
-file knows comes back `unknown` with `stateSince` at the boot time. For each
+file knows comes back `unknown` with `stateSince` at the boot's stamp. For each
 bucket whose persisted state was not already `unknown` the reload files
-`<state> -> unknown` at boot, so the transitions list is continuous across the
-restart, and the first read with enough evidence records `unknown -> <state>`
-after it. The boot's stamp is `bootAt` itself, or one millisecond past the
-newest transition the file carries when that one is not before the boot (the
-previous kernel filed it after this one started, or the clock stepped), so
-the restart row is always the newest row; the kernel log says when the stamp
-was moved. The pre-restart state is not carried over: an empty ring is no
+`<state> -> unknown` at that stamp, so the transitions list is continuous across
+the restart, and the first read with enough evidence records `unknown -> <state>`
+after it. The boot's stamp is the kernel's start truncated to the millisecond,
+or one millisecond past the newest transition the file carries when that one
+is not before the start (the previous kernel filed it after this one started,
+or the clock stepped), so the restart row is always the newest row; the payload
+serves that stamp as `bootAt`, and the kernel log says when it was moved. The
+pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the SDK backend from starting.
 
@@ -1955,11 +1959,12 @@ dashboard's own cookie the way its other reads do. Nothing polls; the frame
 carries no history and is unchanged. The section shows `overall.state` with
 the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
 count when there is more than one; a bucket the boot seeded is `unknown`
-since `bootAt`, the kernel's own start, because the backend seeds its
-`stateSince` from that clock, the stamp the tail uses for the boot), one row
-per window from `config.windows` (`requests` plus `noStatus` as the attempts,
-saying how many of them had no status when there are any, `rate429` and
-`rate5xx` as percentages over the attempts with a status, `gaveUp`, and
+since `bootAt`: the boot time or, when an older kernel's last row overlaps
+it, one millisecond past that row, because the backend seeds its `stateSince`
+with the stamp it serves as `bootAt`, the one the tail uses for the boot),
+one row per window from `config.windows` (`requests` plus `noStatus` as the
+attempts, saying how many of them had no status when there are any, `rate429`
+and `rate5xx` as percentages over the attempts with a status, `gaveUp`, and
 `sessionsRetrying` as the sessions that retried in the window; a window
 reads `no attempts` only when every one of those is zero; a window whose
 `complete` is false says how long the kernel has been up), up to six rows

@@ -15,12 +15,16 @@ history and _api_health_push still sends nothing on an unchanged world, a route 
 backend's aggregator is seeded with the kernel's own boot clock, the one the route stamps as bootAt, so a bucket
 the boot seeded has one since-time in the head, the divider and the boot's row (review round 2); that clock is the
 float, to the millisecond, and the seed is clamped past the restored tail, so the restart row is the newest row
-however close the previous kernel's last transition came to this start (review round 3).
+however close the previous kernel's last transition came to this start (review round 3); the aggregator owns that
+stamp (truncated with floor, so its whole seconds are /version's started) and serves it as bootAt, so bootAt, the
+seeded stateSince and the restart row are one number clamp or not, and a restored row with a null t is skipped, never
+the whole history (review round 4).
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
 import inspect
 import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -90,7 +94,7 @@ class _Backend:
     """A stand-in SDK backend over a REAL aggregator on a scratch state dir, one storm in its ring."""
 
     def __init__(self, storm=True):
-        self.ah = sb.ApiHealth(tempfile.mkdtemp())
+        self.ah = sb.ApiHealth(tempfile.mkdtemp(), boot_at=km._STARTED)     # seeded the way _sdk_locked seeds the live one
         self.label = _label(self.ah)
         if storm:
             now = time.time()
@@ -186,7 +190,9 @@ class Payload(unittest.TestCase):
         self.assertIn("if(!crossed&&pre){crossed=true;", HIST)
         self.assertIn("if(!sawRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\">", HIST)
         self.assertIn("<span class=ah-hword>kernel restarted</span>", HIST)
-        self.assertIn('out["bootAt"] = round(_STARTED, 3)', inspect.getsource(km.Handler.do_GET))
+        self.assertIn('"bootAt": self.boot_stamp', inspect.getsource(sb.ApiHealth.snapshot),
+                      "bootAt is the aggregator's own seed stamp, served in its snapshot")
+        self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET), "the route stamps no second number")
 
 
 class OneClock(unittest.TestCase):
@@ -198,7 +204,11 @@ class OneClock(unittest.TestCase):
     because the read that serves the payload replaces that reason with its own. Round 3: the clock is the FLOAT, to
     the millisecond the payload's stamps carry (int() sat on the second boundary before the process started, under a
     row the previous kernel filed in that same second, and the tail read that row as current above the restart row),
-    and the seed is clamped one millisecond past a restored row that is not before it, with one log line."""
+    and the seed is clamped one millisecond past a restored row that is not before it, with one log line. Round 4: the
+    aggregator owns the stamp (ApiHealth.boot_stamp: the start truncated to the millisecond with floor, or the clamp)
+    and serves it as bootAt, so the route stamps nothing of its own: bootAt, the seeded stateSince and the restart row
+    are one number in the clamp case too (the route's round(_STARTED, 3) was a second number there, and it named the
+    next second when the start's fraction rounded up, so int(bootAt) == started failed for a fraction of boots)."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -231,29 +241,83 @@ class OneClock(unittest.TestCase):
         src = inspect.getsource(km._sdk_locked)
         self.assertIn("boot_at=_STARTED)", src)
         self.assertNotIn("boot_at=int(_STARTED)", src)
-        self.assertIn('out["bootAt"] = round(_STARTED, 3)', inspect.getsource(km.Handler.do_GET))
+        self.assertIn('"bootAt": self.boot_stamp', inspect.getsource(sb.ApiHealth.snapshot))
+        self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET))
         # and the section reads stateSince alone: no why-keyed branch, nothing for it to be dead on
         self.assertIn("var since=b?b.stateSince:0;", HIST)
         self.assertNotIn("b.why===RESTART_WHY", HIST)
 
     def test_the_route_serves_boot_at_state_since_and_the_restart_row_as_one_number(self):
+        be = self._seeded(self.d, km._STARTED, [])              # seeded the way _sdk_locked seeds the live one
+        out = self._route(be)
+        b = out["buckets"][self.key]
+        row = [r for r in out["transitions"] if r["why"] == sb.API_HEALTH_RESTART_WHY][-1]
+        self.assertEqual(out["bootAt"], be.ah.boot_stamp, "the aggregator's own stamp, served as bootAt")
+        self.assertLessEqual(out["bootAt"], km._STARTED)
+        self.assertLess(km._STARTED - out["bootAt"], 0.001, "the kernel's start truncated to the millisecond")
+        self.assertEqual(int(out["bootAt"]), int(km._STARTED),
+                         "/version's started: the same start in whole seconds (the restored tail is years old: no clamp)")
+        self.assertEqual(b["stateSince"], out["bootAt"], "head since and bootAt: one number")
+        self.assertEqual(row["t"], out["bootAt"], "the restart row's stamp too")
+
+    @staticmethod
+    def _seeded(d, boot, lines):
         class _Seeded(_Backend):
-            def __init__(inner, d, boot):
-                inner.ah = sb.ApiHealth(d, boot_at=boot)
+            def __init__(inner):
+                inner.ah = sb.ApiHealth(d, boot_at=boot, log=lines.append)
+        return _Seeded()
+
+    def _route(self, be):
         saved = km._sdk
         try:
-            km._sdk = lambda: _Seeded(self.d, km._STARTED)     # seeded the way _sdk_locked seeds the live one
+            km._sdk = lambda: be
             status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
         finally:
             km._sdk = saved
         self.assertEqual(status, 200, body[:200])
-        out = json.loads(body)
-        b = out["buckets"][self.key]
+        return json.loads(body)
+
+    def test_a_same_second_race_reads_one_stamp_in_the_head_the_divider_and_the_restart_row(self):
+        # the previous kernel's last read filed AFTER this kernel's start (it drains under SIGTERM while still serving
+        # and the manager respawns at once, or the clock stepped): the seed is clamped past that row, and bootAt IS the
+        # clamped stamp. Before (review round 4): the route stamped round(_STARTED, 3), so the head (stateSince) and the
+        # restart row read the clamped stamp while the divider read bootAt, and with a minute boundary inside the gap
+        # the head named one minute and the divider the one before
+        d, key = self._previous_kernel(km._STARTED + 0.2)
+        lines = []
+        be = self._seeded(d, km._STARTED, lines)
+        out = self._route(be)
+        b = out["buckets"][key]
         row = [r for r in out["transitions"] if r["why"] == sb.API_HEALTH_RESTART_WHY][-1]
-        self.assertEqual(out["bootAt"], round(km._STARTED, 3), "the kernel's start to the millisecond")
-        self.assertEqual(int(out["bootAt"]), int(km._STARTED), "/version's started is its whole seconds")
-        self.assertEqual(b["stateSince"], out["bootAt"], "head since and bootAt: one number")
-        self.assertEqual(row["t"], out["bootAt"], "the restart row's stamp too")
+        old = round(km._STARTED + 0.2, 3)
+        self.assertEqual(out["bootAt"], be.ah.boot_stamp, "bootAt is the seed's own stamp")
+        self.assertAlmostEqual(out["bootAt"], old + 0.001, delta=1e-6, msg="one millisecond past the previous kernel's row")
+        self.assertEqual(b["stateSince"], out["bootAt"], "the head's since")
+        self.assertEqual(row["t"], out["bootAt"], "the restart row")
+        self.assertEqual(row["t"], max(r["t"] for r in out["transitions"]), "the newest row")
+        self.assertIn(int(out["bootAt"]), (int(km._STARTED), int(km._STARTED) + 1),
+                      "the clamp may cross the second; /version's started stays int(_STARTED)")
+        self.assertEqual(len([ln for ln in lines if "not before this boot" in ln]), 1, lines)
+        # the section reads the three from these fields and nothing else, so they show one time
+        self.assertIn("var since=b?b.stateSince:0;", HIST)
+        self.assertIn("boot=d.bootAt,", HIST)
+        self.assertIn("<span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span>", HIST)
+
+    def test_the_stamp_is_the_start_truncated_to_the_millisecond_so_its_whole_seconds_are_versions_started(self):
+        # floor, never round: a start at X.9996 rounded to (X+1).000 while /version's started is int(X.9996) = X, and
+        # the int(bootAt) == started pins failed for the boots whose fraction was .9995 or more (review round 4). The
+        # floor never lands on the next second either: a float one step below a whole second multiplies to more than
+        # half an ulp below it, so the largest float under X+1 truncates to X.999
+        for x in (T0, T0 + 0.4, T0 + 0.9994, T0 + 0.9995, T0 + 0.9996, T0 + 0.9999,
+                  math.nextafter(T0 + 1, 0), math.nextafter(T0 + 2, 0), time.time()):
+            ah = sb.ApiHealth(tempfile.mkdtemp(), boot_at=x)
+            self.assertEqual(int(ah.boot_stamp), int(x), repr(x))
+            self.assertLessEqual(ah.boot_stamp, x, repr(x))
+            self.assertLess(x - ah.boot_stamp, 0.001, repr(x))
+            self.assertEqual(ah.boot_stamp, round(ah.boot_stamp, 3), "at the millisecond")
+            self.assertEqual(ah.snapshot(x + 1)["bootAt"], ah.boot_stamp, "served as bootAt")
+        self.assertEqual(sb.ApiHealth(tempfile.mkdtemp(), boot_at=T0 + 0.9996).boot_stamp, T0 + 0.999)
+        self.assertEqual(sb.ApiHealth(tempfile.mkdtemp(), boot_at=math.nextafter(T0 + 1, 0)).boot_stamp, T0 + 0.999)
 
     def _previous_kernel(self, last_t):
         """A state file as the previous kernel left it: its last read filed unknown -> thrashing at `last_t`."""
@@ -272,35 +336,87 @@ class OneClock(unittest.TestCase):
         # state above the restart row while the head said unknown since the boot (review round 3)
         d, key = self._previous_kernel(T0 + 0.7)
         lines = []
-        snap = sb.ApiHealth(d, boot_at=T0 + 0.9, log=lines.append).snapshot(T0 + 1.5)
+        ah = sb.ApiHealth(d, boot_at=T0 + 0.9, log=lines.append)
+        snap = ah.snapshot(T0 + 1.5)
         rows = snap["transitions"]
         self.assertEqual(rows[-1]["why"], sb.API_HEALTH_RESTART_WHY)
-        self.assertAlmostEqual(rows[-1]["t"], T0 + 0.9, delta=1e-6, msg="the restart row at the float boot")
+        self.assertEqual(ah.boot_stamp, T0 + 0.9, "the float boot, already at the millisecond")
+        self.assertEqual(rows[-1]["t"], ah.boot_stamp, "the restart row at the float boot")
+        self.assertEqual(snap["bootAt"], ah.boot_stamp, "served as bootAt")
         self.assertEqual(rows[-1]["t"], max(r["t"] for r in rows), "the newest row in the tail")
         self.assertAlmostEqual(rows[-2]["t"], T0 + 0.7, delta=1e-6)
         self.assertGreater(rows[-2]["t"], int(T0 + 0.9), "the int seed sat under this row")
         b = snap["buckets"][key]
-        self.assertGreaterEqual(b["stateSince"], rows[-1]["t"])
         self.assertEqual(b["stateSince"], rows[-1]["t"], "the head's since and the row: one number")
         self.assertEqual([ln for ln in lines if "not before this boot" in ln], [], "nothing to clamp: the boot is past the row")
 
     def test_a_boot_not_past_the_restored_tail_seeds_one_millisecond_past_it_and_says_so_once(self):
         # the previous kernel filed AFTER this one's start (the two overlapped, or the clock stepped back): the seed
         # moves one millisecond past that row and the log says so once. Judged at the millisecond the tail is kept
-        # in: a boot inside the row's own millisecond is clamped too, one 0.6 ms past it rounds past it on its own
-        for boot, clamped in ((T0 + 0.65, True), (T0 + 0.7, True), (T0 + 0.7004, True), (T0 + 0.7006, False)):
+        # in: a boot anywhere inside the row's own millisecond truncates to it and is clamped; one in the next
+        # millisecond truncates to that and stamps there on its own (review round 4: floor, where round() sent a
+        # boot 0.6 ms into the row's millisecond past it unreported)
+        for boot, clamped in ((T0 + 0.65, True), (T0 + 0.7, True), (T0 + 0.7004, True), (T0 + 0.7009, True),
+                              (T0 + 0.701, False), (T0 + 0.7015, False)):
             d, key = self._previous_kernel(T0 + 0.7)
             lines = []
-            snap = sb.ApiHealth(d, boot_at=boot, log=lines.append).snapshot(T0 + 2)
+            ah = sb.ApiHealth(d, boot_at=boot, log=lines.append)
+            snap = ah.snapshot(T0 + 2)
             row, b = snap["transitions"][-1], snap["buckets"][key]
             self.assertEqual(row["why"], sb.API_HEALTH_RESTART_WHY, boot)
             self.assertAlmostEqual(row["t"], T0 + 0.701, delta=1e-6, msg=repr(boot))
             self.assertEqual(row["t"], max(r["t"] for r in snap["transitions"]), "the restart row stays the newest")
             self.assertEqual(b["stateSince"], row["t"], "one number: the head's since and the row")
+            self.assertEqual(snap["bootAt"], row["t"], "and bootAt, clamp or not: the aggregator's own stamp")
+            self.assertEqual(ah.boot_stamp, row["t"])
             said = [ln for ln in lines if "not before this boot" in ln]
             self.assertEqual(len(said), 1 if clamped else 0, (boot, lines))
             if clamped:
                 self.assertIn("%.3f" % (T0 + 0.7), said[0])
+
+
+class StateFileRows(unittest.TestCase):
+    """A restored row the seed cannot stamp is skipped and counted, and never costs the other rows (review round 4:
+    the seed's max over the restored stamps met a null t that _row_ok had passed, raised, and the outer guard dropped
+    every bucket and transition the file held, with the file's other rows sound)."""
+
+    def test_a_row_with_a_null_or_missing_t_is_skipped_and_the_rest_of_the_history_kept(self):
+        d = tempfile.mkdtemp()
+        ah = sb.ApiHealth(d)
+        label = _label(ah)
+        key = label + "|fable"
+        for e in _storm(T0 - 600, T0, label):
+            ah._push(e)
+        ah.snapshot(T0)                                        # unknown -> thrashing at T0, persisted
+        p = Path(d, sb.API_HEALTH_STATE_FILE)
+        doc = json.loads(p.read_text())
+        good = list(doc["transitions"])
+        self.assertEqual([(r["from"], r["to"], r["t"]) for r in good], [("unknown", "thrashing", T0)])
+        # a hand-edited file, or a row from a build that wrote t differently: null, missing, a string, a bool, NaN
+        bad = [dict(good[0], t=None), {k: v for k, v in good[0].items() if k != "t"}, dict(good[0], t="%.3f" % (T0 + 1)),
+               dict(good[0], t=True), dict(good[0], t=float("nan"))]
+        doc["transitions"] = [bad[0], good[0], bad[1], bad[2]]
+        doc["buckets"][key]["transitions"] = [bad[3], good[0], bad[4]]
+        p.write_text(json.dumps(doc))
+        lines = []
+        ah2 = sb.ApiHealth(d, boot_at=T0 + 10, log=lines.append)
+        snap = ah2.snapshot(T0 + 11)
+        self.assertEqual([ln for ln in lines if "unreadable" in ln], [], "the file is readable; five ROWS are not")
+        skipped = [ln for ln in lines if "malformed row(s) skipped" in ln]
+        self.assertEqual(len(skipped), 1, lines)
+        self.assertIn("5 malformed", skipped[0])
+        self.assertEqual(ah2.boot_stamp, T0 + 10, "nothing to clamp: every row the seed could stamp is before the boot")
+        self.assertEqual(snap["bootAt"], T0 + 10)
+        self.assertEqual([(r["from"], r["to"], r["t"]) for r in snap["transitions"]],
+                         [("unknown", "thrashing", T0), ("thrashing", "unknown", T0 + 10)],
+                         "the sound row kept, the restart row filed after it")
+        b = snap["buckets"][key]
+        self.assertEqual((b["state"], b["stateSince"]), ("unknown", T0 + 10), "the bucket came back")
+        self.assertEqual([r["t"] for r in b["transitions"]], [T0, T0 + 10], "its own tail too")
+        for r in bad:
+            self.assertFalse(sb.ApiHealth._row_ok(r), r)
+        self.assertTrue(sb.ApiHealth._row_ok(good[0]))
+        self.assertTrue(sb.ApiHealth._row_ok(dict(good[0], t=int(T0))), "an int stamp is a number")
 
 
 class Route(unittest.TestCase):
@@ -406,6 +522,19 @@ class Docs(unittest.TestCase):
         self.assertIn("`kernel restarted`", sec)
         self.assertIn("never the previous numbers", sec)
         self.assertIn("Nothing polls", sec)
+
+    def test_the_reference_says_what_the_boot_stamp_is(self):
+        # review round 4: the seeded-bucket sentence said `bootAt` is the kernel's own start, which the clamp case
+        # contradicted, and the field said `started` is bootAt's whole seconds, which a rounded-up fraction broke
+        doc = re.sub(r"\s+", " ", Path(DOCS, "reference.md").read_text())
+        sec = re.sub(r"\s+", " ", self._section())
+        self.assertIn("a bucket the boot seeded is `unknown` since `bootAt`: the boot time or, when an older kernel's "
+                      "last row overlaps it, one millisecond past that row", sec)
+        self.assertIn("`bootAt` is the boot's stamp in this signal: the kernel's start truncated to the millisecond", doc)
+        self.assertIn("`/version`'s `started` is the whole-second boot time", doc)
+        self.assertIn("the payload serves that stamp as `bootAt`, and the kernel log says when it was moved", doc)
+        self.assertNotIn("`started` is its whole seconds", doc)
+        self.assertNotIn("The boot's stamp is `bootAt` itself", doc)
 
     def test_the_guide_tells_the_user_what_the_hover_shows(self):
         guide = Path(DOCS, "guide.md").read_text()

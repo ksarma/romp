@@ -77,9 +77,12 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
   assert.ok(!HIST.includes("b.why===RESTART_WHY"), "no why-keyed clock in the head");
   assert.ok(BACKEND.includes("self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)"), "the backend hands its boot_at to the aggregator");
   // the float, to the millisecond the payload's stamps carry (review round 3: int() sat on the second boundary before the
-  // process started, under a row the previous kernel filed in that same second, and the tail read that row as current)
-  assert.ok(KERNEL.includes("boot_at=_STARTED)") && KERNEL.includes('out["bootAt"] = round(_STARTED, 3)'), "the kernel passes the clock the route stamps");
+  // process started, under a row the previous kernel filed in that same second, and the tail read that row as current);
+  // the aggregator truncates it and serves its own stamp as bootAt, so bootAt, the seeded stateSince and the restart row
+  // are one number clamp or not (review round 4: the route's own round(_STARTED, 3) was a second number when the clamp fired)
+  assert.ok(KERNEL.includes("boot_at=_STARTED)") && BACKEND.includes('"bootAt": self.boot_stamp'), "the kernel passes the clock, the aggregator serves the stamp");
   assert.ok(!KERNEL.includes("boot_at=int(_STARTED)"), "never truncated to the second");
+  assert.ok(!KERNEL.includes('out["bootAt"] ='), "the route stamps no second number");
   assert.ok(HIST.includes("(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')"));
   assert.ok(HIST.includes("if(b&&b.why)h+='<div class=\"ah-line ru-tip-reset\">'+esc(b.why)+'</div>';"), "the reason in the small annotation grammar, no new font size");
   // the windows come from the config in force, labelled in minutes, the incomplete one saying how long the kernel is up

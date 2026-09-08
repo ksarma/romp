@@ -29,7 +29,8 @@ counts every attempt once and says how many had no status.
 Review round 3: the previous kernel's last row filed in the same second as this kernel's start sits UNDER the restart
 row (the boot is the kernel's start to the millisecond, the row seeded at it); a row filed after the start sits under
 the clamped restart row with one restart mark, not a row and a divider; the cell's description at focus time, in the
-focus's own task, carries the state word the frame put on the cell, and the landed one its since.
+focus's own task, carries the state word the frame put on the cell, and the landed one its since. Round 4: bootAt is
+the clamped stamp itself (the backend serves its own seed stamp), so that row is the first pre-boot row.
 
 Synthetic only: invented bucket labels, a fixed shape, times relative to the run so the same-day clock words
 apply; no real data."""
@@ -167,9 +168,11 @@ PAYLOADS = {
                        transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
                                     _tr(BOOT + 0.7, KEY, "thrashing", "healthy"), _tr(BOOT + 0.9, KEY, "healthy", "unknown", RESTART)]),
     # the previous kernel filed AFTER this one's start (the two overlapped, or the clock stepped): the backend seeds
-    # the restart row one millisecond past that row, so the row sits between the restart row and the pre-boot rows;
-    # one restart, one mark: the restart row above suppresses the divider at the crossing
-    "clamped": _base(bootAt=BOOT + 0.9, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
+    # the restart row one millisecond past that row and serves that stamp as bootAt (review round 4: the route's own
+    # round(_STARTED, 3) sat before the row, so head and divider could name different minutes), so the old row is the
+    # first pre-boot row, its hold ending at the restart row; one restart, one mark: the restart row above suppresses
+    # the divider at the crossing. uptimeS stays the kernel's own (_STARTED at BOOT + 0.9)
+    "clamped": _base(bootAt=BOOT + 0.951, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
                      buckets={KEY: _bucket(KEY, "unknown", BOOT + 0.951, FEW, QUIET_WINS)},
                      transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
                                   _tr(BOOT + 0.95, KEY, "thrashing", "healthy"), _tr(BOOT + 0.951, KEY, "healthy", "unknown", RESTART)]),
@@ -731,16 +734,17 @@ class ServedHistory(unittest.TestCase):
 
     def test_a_row_the_previous_kernel_filed_after_this_start_sits_under_the_clamped_restart_row_with_one_mark(self):
         h, rows = self.R["clamped"]["head"], self.R["clamped"]["rows"]
-        self.assertEqual(h["since"], "since " + _hmd(BOOT + 0.951))
+        self.assertEqual(h["since"], "since " + _hmd(BOOT + 0.951), "the head reads the clamped stamp, which is bootAt")
         tail = rows[3:]
         self.assertEqual([(r["k"], r["w"], r["v"], r["boot"]) for r in tail],
                          [(_hmd(BOOT + 0.951), "unknown · kernel restarted", _dur(NOW - (BOOT + 0.951)) + " so far", False),
                           (_hmd(BOOT + 0.95), "healthy", "0 s", False),
-                          (_hmd(NOW - 1500), "thrashing", _dur(BOOT + 0.9 - (NOW - 1500)), False),
+                          (_hmd(NOW - 1500), "thrashing", _dur(BOOT + 0.95 - (NOW - 1500)), False),
                           (_hmd(NOW - 3000), "healthy", "25 min", False)],
-                         "the old row sits between the restart row and the pre-boot rows (its hold ends at the restart row); the "
-                         "pre-boot hold ends at the boot; the restart row above suppresses the divider: one restart, one mark")
-        self.assertFalse(any(r["boot"] for r in tail), "no divider under a shown restart row, whatever sits between")
+                         "the old row is the first pre-boot row (its hold ends at the restart row, one millisecond on); the row "
+                         "before it closed at the old row; the restart row above suppresses the divider: one restart, one mark")
+        self.assertEqual(h["since"], "since " + tail[0]["k"], "head since == the restart row's stamp == bootAt: one number")
+        self.assertFalse(any(r["boot"] for r in tail), "no divider under a shown restart row")
         self.assertEqual(sum(1 for r in tail if "kernel restarted" in (r["w"] or "")), 1)
 
     def test_a_transition_the_hover_s_own_read_filed_closes_the_state_before_it(self):

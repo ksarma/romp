@@ -523,7 +523,7 @@ class _ApiHealthBackend:
     served payload is the real shape and the leak checks have something to catch."""
 
     def __init__(self):
-        self.ah = sb.ApiHealth(tempfile.mkdtemp())
+        self.ah = sb.ApiHealth(tempfile.mkdtemp(), boot_at=km._STARTED)     # seeded the way _sdk_locked seeds the live one
         label = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt=self.ah.salt(),
                                          work_key=_AH_KEY_MATERIAL, launched_keyed=True)
         now = time.time()
@@ -619,9 +619,12 @@ class ApiHealthRouteGate(unittest.TestCase):
         v = km._version_info()
         self.assertEqual(out["bootId"], km._BOOT_ID)
         self.assertEqual(out["bootId"], v["boot"], "the same id /version and X-Romp-Boot carry — never a third")
-        self.assertEqual(int(out["bootAt"]), v["started"], "bootAt is the same start to the millisecond (the payload's stamp "
-                         "precision, so a bucket the boot seeded carries the very number); started is its whole seconds")
-        self.assertEqual(out["bootAt"], round(km._STARTED, 3))
+        self.assertEqual(out["bootAt"], self.be.ah.boot_stamp, "bootAt is the aggregator's own seed stamp")
+        self.assertEqual(int(out["bootAt"]), v["started"], "the same start: bootAt truncated to the millisecond (the payload's "
+                         "stamp precision, so a bucket the boot seeded carries the very number), started to the whole second; "
+                         "a fresh state dir, so nothing moved the stamp")
+        self.assertLessEqual(out["bootAt"], km._STARTED)
+        self.assertLess(km._STARTED - out["bootAt"], 0.001)
         self.assertAlmostEqual(out["uptimeS"], v["uptime_s"], delta=2.0)
         self.assertIsInstance(out["complete"], bool)
         self.assertEqual(out["complete"], out["uptimeS"] >= 900)
