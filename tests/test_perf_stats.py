@@ -112,6 +112,13 @@ class Collector(unittest.TestCase):
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline"})
+        self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
+        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss"},
+                         "the chat builder carries the active/background split and the miss attribution (round-4 P3)")
+        self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
+        self.assertEqual(set(km._PerfStats.CHAT_MISS),
+                         {"judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "tmux", "cold", "nosig"})
+        self.assertEqual(sum(snap["builds"]["chat"]["bg_miss"].values()), 0)
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
@@ -139,11 +146,29 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
-                          "feed_segs", "lanes"},
+                          "feed_segs", "lanes",
+                          "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
                          "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
         self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
+        self.assertEqual(set(snap["memos"]["chat_ledger"]),
+                         {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"},
+                         "the ledger memo (round-4 P3 a, interim): counters, its three bypasses, its occupancy")
+        for k, v in snap["memos"]["chat_ledger"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_fold_tasks"]), {"hit", "miss", "entries"},
+                         "the per-turn task fold memo (round-4 P3 b, interim)")
+        for k, v in snap["memos"]["chat_fold_tasks"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_merge_sets"]), {"hit", "miss", "entries"},
+                         "the live-merge sets memo (round-4 P3 d): counters plus its occupancy")
+        for k, v in snap["memos"]["chat_merge_sets"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_postal"]), {"gate", "hit", "commit_new"},
+                         "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
+        for k, v in snap["memos"]["chat_postal"].items():
+            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
                          "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
@@ -336,7 +361,10 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 750.0)
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 100.0)
-        self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0})
+        chat = snap["builds"]["chat"]
+        self.assertEqual({k: chat[k] for k in ("cached", "built", "ms")}, {"cached": 1, "built": 1, "ms": 40.0})
+        self.assertEqual((chat["active_built"], chat["bg_built"], sum(chat["bg_miss"].values())), (0, 0, 0),
+                         "the plain writer records no split; build_chat does (test_chat_fixed_cost_memos)")
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
         self.assertEqual(snap["judge"]["passes"], 2)

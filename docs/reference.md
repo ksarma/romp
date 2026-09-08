@@ -1966,6 +1966,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
   clear, a follow-up: the mutation is invisible to the signature and must not wait out the
   rebuild interval).
+  `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
+  tab, which always rebuilds, against rebuilds of a background tab whose
+  signature moved) and `bg_miss`, a map from each labelled component of the
+  chat-build signature (`judge_gen`, `transcript`, `states`, `tasks`, `todos`,
+  `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
+  `nosig` for one whose signature could not be taken) to the background
+  rebuilds it caused. A rebuild with several moved components counts under
+  each, so the map's sum can exceed `bg_built`. `romp perf` prints the split
+  and the non-zero causes after the chat average.
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
@@ -2141,6 +2150,41 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build's lane set or past the 256-entry bound), the gauge `entries`, and
   `segs_hit` and `segs_miss`, the segments served against derived, which
   weight the hit rate by cost.
+  `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
+  a parsed transcript (the uuids and user texts the transcript already holds,
+  and the newest human turn's time), one entry per session keyed on the
+  parsed session object's identity, shared by the chat, feed and timeline
+  builds of one cycle: `hit` and `miss` (merges served from the memo against
+  derived) and the gauge `entries` (sessions held; the pusher drops a session
+  that is neither shown as a tab nor alive).
+  `chat_postal` is the chat fold's memo of a tab's sealed postal cards, keyed
+  on the values the cards embed from outside the transcript (the message log's
+  identity and, per card, its caption and its peer's name and colour): `gate`
+  (fold-gate checks that re-hydrated a tab's sealed cards because one of those
+  values moved, or because the entry was sealed outside the pusher's names
+  snapshot and had to be verified), `hit` (checks that verified the sealed
+  cards from their recorded values without hydrating), and `commit_new` (raw
+  postal events hydrated at fold commits: the events a folding build newly
+  seals, or every relevant event of the prefix a demoted build rebuilds, so a
+  demotion counts its rebuilt tail again; the sealed cards a folding build
+  reuses are not counted). Before this memo every judge pass re-hydrated every tab's
+  sealed cards, although a caption is the only judge-written value a card
+  carries.
+  `chat_ledger` is the chat build's memo of a session's goal-tree walk and
+  live roots (interim: the round-4 plan expects P4's complete chat signature
+  to remove most of the rebuilds it serves), keyed on the parsed transcript's
+  identity, the store's identity and seams, `cleared.jsonl`'s identity and
+  the warm-anchor table's per-session revision: `hit` and `miss`,
+  `bypass_live` (a build that merged live atoms: the last turn's segments
+  differ from the parse's), `bypass_hold` (an armed rewind hold filters a
+  store copy per build), `bypass_empty` (a store with no nodes), `evict`
+  (entries dropped for tabs no longer shown) and the gauge `entries`.
+  `chat_fold_tasks` is the per-turn memo of the transcript's task fold
+  (interim, the same reason). It serves repeated builds over one parse: a
+  live-merged build of an unchanged transcript scans its last turn only. A
+  build after a transcript write scans every turn again, since a parse mints
+  new atom lists. `hit` and `miss` count turns served from the memo against
+  turns scanned, plus the gauge `entries` (sessions held).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
