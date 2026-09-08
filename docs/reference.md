@@ -897,10 +897,10 @@ from `service.env` **only**. A key that reaches the manager some other way, a
 systemd drop-in `Environment=` or a launchd plist entry, is ignored and said
 so once in the kernel log with its fingerprint; sessions then launch with
 nothing of Romp's injected, whatever their Billing pick, so Claude Code's own
-credential (its `apiKeyHelper` or login) applies. Remove such a key from the
-drop-in rather than moving it into `service.env`, which stays key-free (see
-[the file mode](#api-keys-on-disk-the-file-mode)); sessions then use Claude
-Code's own credential, or a provider named there.
+credential (its `apiKeyHelper` or login) applies. Remove the line and rotate
+the value: a key in a unit or plist is a copy that outlives its rotation. Do
+not move it into `service.env`, which stays key-free (see [the file
+mode](#api-keys-on-disk-the-file-mode)) and may name a provider instead.
 
 For a foreground manager, the same provider can be supplied in its
 environment:

@@ -9,9 +9,10 @@
 // word first. render.ts has no paint gate (every frame paints), so chat-visibility.ts publishes the same two
 // measures the gating panes do, from the same events. Three legs: the module over stand-ins (the ordering rule:
 // nothing before the observer's first word), the source pins (render.ts installs it once, on the body, from its
-// own visibility), and real browsers: a chat page in the shell's iframe, shown, then hidden by the kernel's own
-// CSS rule, with the kernel's own paneHidden() text deciding. The browser legs skip LOUDLY without playwright or
-// a browser (CI installs none).
+// own visibility), and real browsers: a chat page in the shell's iframe, shown, then hidden each way the shell
+// hides a pane (the desktop rail's rule takes the pane WRAPPER to display:none; the phone shell's tab switch
+// takes the IFRAME itself to display:none by moving m-on to another tab), with the kernel's own CSS and
+// paneHidden() text deciding. The browser legs skip LOUDLY without playwright or a browser (CI installs none).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -102,16 +103,37 @@ test("source pins: render.ts installs the publisher once, at top level, over the
   const shim = /function paneHidden\(\)\{[^\n]*/.exec(KERNEL)?.[0] ?? "";
   assert.match(shim, /\(window\.parent!==window&&\(window\.innerWidth===0\|\|window\.innerHeight===0\)\)\|\|window\.__rompPaneHidden===true/, "the shim: the probe OR a published word of true (Firefox zeroes the viewport and stalls the observer; Chromium keeps the size and runs it)");
   assert.doesNotMatch(shim, /typeof window\.__rompPaneHidden==="boolean"\)return window\.__rompPaneHidden/, "never the word first: a stale word must not override a probe that says zero viewport");
-  assert.match(KERNEL, /"body:not\(\.po-chat\) #chat-pane\{display:none\}/, "the shell hides the chat pane by display:none on its iframe's pane, the case the probe misses after a first show");
+  assert.match(KERNEL, /"body:not\(\.po-chat\) #chat-pane\{display:none\}/, "the desktop rail hides a toggled-off pane's WRAPPER by display:none (body loses po-chat), the case the probe misses after a first show");
+  // the phone shell hides differently: the wrappers dissolve, and the iframe itself is display:none unless it carries
+  // m-on, which the tab switch moves; the phone browser leg drives that mechanism
+  assert.match(KERNEL, /"#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane\{display:contents!important\}"/, "the phone shell dissolves the pane wrappers: the desktop rule hides nothing there");
+  assert.match(KERNEL, /"iframe\{position:static;display:none;width:100%;height:100%;border:0\}"/, "...and hides the iframes themselves");
+  assert.match(KERNEL, /"#f-chat\.m-on,#f-fleet\.m-on,#f-feed\.m-on,#f-waiting\.m-on,#f-files\.m-on\{display:block\}"/, "...except the one tab carrying m-on");
+  assert.match(KERNEL, /function show\(p\)\{[^\n]*for\(var k in F\)F\[k\]\.classList\.toggle\('m-on',k===p\);/, "the tab switch moves m-on across the iframes: what the phone leg drives");
 });
 
 // ── the browser legs ──────────────────────────────────────────────────────────────────────────────
-// the landing CSS that hides a toggled-off pane, verbatim from kernel.py (the rule the phone shell's tab switch flips)
-function paneCss(): string {
-  const a = KERNEL.indexOf('"body:not(.po-chat) #chat-pane{display:none}');
-  assert.ok(a > 0, "the landing's pane-hiding rule moved: re-anchor");
-  return KERNEL.slice(a + 1, KERNEL.indexOf('"', a + 1));
+// The shell hides a pane two ways, and a leg drives each with the kernel's own CSS, lifted verbatim:
+//   desktop: the rail takes po-<pane> off the body, and `body:not(.po-chat) #chat-pane{display:none}` hides the pane
+//            WRAPPER (the iframe keeps its own display);
+//   phone:   the media block forces the wrappers to display:contents (so that desktop rule hides nothing there), sets
+//            every iframe display:none and shows the one carrying m-on, which show(p) moves on a tab switch.
+// The phone rules sit inside `@media _MOBILE_MQ{...}` in kernel.py; the leg applies them unconditionally, since the
+// test's viewport is a desktop's.
+type Shell = "desktop" | "phone";
+function kernelRule(rule: string, what: string): string {
+  assert.ok(KERNEL.includes('"' + rule + '"'), what + " moved in kernel.py: re-anchor");
+  return rule;
 }
+const DESKTOP_RULE = () => {
+  const a = KERNEL.indexOf('"body:not(.po-chat) #chat-pane{display:none}');
+  assert.ok(a > 0, "the desktop rail's pane-hiding rule moved in kernel.py: re-anchor");
+  return KERNEL.slice(a + 1, KERNEL.indexOf('"', a + 1));      // the whole rule: every pane's po-* clause
+};
+const PHONE_RULES = () =>
+  kernelRule("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}", "the phone shell's wrapper rule") +
+  kernelRule("iframe{position:static;display:none;width:100%;height:100%;border:0}", "the phone shell's iframe rule") +
+  kernelRule("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}", "the phone shell's m-on rule");
 // the shim's paneHidden(), the one line, verbatim (no backslash in it, so Python served it as written)
 function shimPaneHidden(): string {
   const line = /function paneHidden\(\)\{[^\n]*/.exec(KERNEL)?.[0] ?? "";
@@ -137,11 +159,15 @@ function bundleInstall(): string {
   });
   return r.outputFiles[0].text;
 }
-const SHELL_HTML = () => `<!DOCTYPE html><html><head><meta charset=utf-8>
-<style>${paneCss()}.pane{display:inline-block;vertical-align:top}iframe{width:600px;height:400px;border:0}</style></head>
+// Both shells carry the desktop rule (the real stylesheet does; on the phone the media block overrides it), show the
+// chat first (po-chat on the body, m-on on its iframe: the phone's default tab, which no desktop rule reads) and hold
+// two panes the shell never shows. The test's iframe size comes last so the phone rule's 100% sizing yields to it.
+const SHELL_HTML = (shell: Shell) => `<!DOCTYPE html><html><head><meta charset=utf-8>
+<style>${DESKTOP_RULE()}${shell === "phone" ? PHONE_RULES() : ".pane{display:inline-block;vertical-align:top}"}iframe{width:600px;height:400px;border:0}</style></head>
 <body class="po-chat">
-<div id=chat-pane class=pane><iframe id=f-chat src=/chat></iframe></div>
+<div id=chat-pane class=pane><iframe id=f-chat class=m-on src=/chat></iframe></div>
 <div id=feed-pane class=pane><iframe id=f-feed src=/chat></iframe></div>
+<div id=waiting-pane class=pane><iframe id=f-waiting src=/chat></iframe></div>
 </body></html>`;
 const CHAT_HTML = () => `<!DOCTYPE html><html><head><meta charset=utf-8></head><body>${chatSkeleton()}
 <script>${shimPaneHidden()}</script>
@@ -150,8 +176,12 @@ const CHAT_HTML = () => `<!DOCTYPE html><html><head><meta charset=utf-8></head><
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-for (const name of ["chromium", "firefox", "webkit"]) {
-  test(`in ${name}: the chat page hidden after a first show reads hidden (by the word where the iframe kept its size, by the probe where it went to zero); shown again, it reads shown; a pane hidden since load reads hidden`, async (t) => {
+const SHELLS: Array<[Shell, string]> = [
+  ["desktop", "the desktop rail's rule (the pane wrapper goes display:none)"],
+  ["phone", "the phone shell's tab switch (the iframe itself goes display:none as m-on moves)"],
+];
+for (const name of ["chromium", "firefox", "webkit"]) for (const [shell, how] of SHELLS) {
+  test(`in ${name}, hidden by ${how}: the chat page hidden after a first show reads hidden (by the word where the iframe kept its size, by the probe where it went to zero); shown again, it reads shown; a pane hidden since load reads hidden`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
@@ -163,7 +193,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
       await page.route("http://romp.test/**", (route: any) => {
         const u = new URL(route.request().url());
-        if (u.pathname === "/shell") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: SHELL_HTML() });
+        if (u.pathname === "/shell") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: SHELL_HTML(shell) });
         if (u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: CHAT_HTML() });
         if (u.pathname === "/dist/chat-visibility.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: install });
         return route.fulfill({ status: 404, body: "" });
@@ -180,17 +210,32 @@ for (const name of ["chromium", "firefox", "webkit"]) {
         ((document.getElementById(fid) as HTMLIFrameElement).contentWindow as any).__rompPaneHidden === want, [id, v] as [string, boolean], { timeout: 10000 });
       const shimIs = (id: string, v: boolean) => page.waitForFunction(([fid, want]: [string, boolean]) =>
         ((document.getElementById(fid) as HTMLIFrameElement).contentWindow as any).paneHidden() === want, [id, v] as [string, boolean], { timeout: 10000 });
-      // shown first (the phone shell's default): the observer's first word says on screen, in every browser
+      const display = (id: string) => page.evaluate((i: string) => getComputedStyle(document.getElementById(i)!).display, id);
+      // the shell's two switches, as the kernel makes them: the rail takes po-chat off the body; the phone's show(p)
+      // sets data-tab and toggles m-on across the iframes (kernel.py: for(var k in F)F[k].classList.toggle('m-on',k===p))
+      const tab = (p: string) => page.evaluate((want: string) => {
+        document.body.setAttribute("data-tab", want);
+        for (const f of Array.from(document.querySelectorAll("iframe"))) f.classList.toggle("m-on", f.id === "f-" + want);
+      }, p);
+      const hideChat = () => shell === "desktop" ? page.evaluate(() => document.body.classList.remove("po-chat")) : tab("feed");
+      const showChat = () => shell === "desktop" ? page.evaluate(() => document.body.classList.add("po-chat")) : tab("chat");
+      // shown first (po-chat on the body; the chat is the phone's default tab): the observer's first word says on screen
       await wordIs("f-chat", false);
       let s = await read("f-chat");
       assert.equal(s.body, true, "the chat skeleton is up in the frame");
       assert.ok(s.iw > 0 && s.ih > 0, "a shown frame has a viewport");
       assert.equal(s.shim, false, "shown: the shim says not hidden");
-      // the shell hides the chat (the tab switch: body loses po-chat, the kernel's CSS rule display:none's #chat-pane)
-      await page.evaluate(() => document.body.classList.remove("po-chat"));
+      // the shell hides the chat, its way
+      await hideChat();
       await shimIs("f-chat", true);
       s = await read("f-chat");
-      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("chat-pane")!).display), "none", "the pane is display:none");
+      if (shell === "desktop") {
+        assert.equal(await display("chat-pane"), "none", "the rail's rule: the pane wrapper is display:none");
+      } else {
+        assert.equal(await display("chat-pane"), "contents", "the phone shell dissolves the wrapper: the rail's rule hides nothing here");
+        assert.equal(await display("f-chat"), "none", "...the iframe itself is display:none once m-on moved off it");
+        assert.equal(await display("f-feed"), "block", "...and the feed tab shows with no po-feed on the body: the media block's !important beats the rail's rule");
+      }
       assert.equal(s.shim, true, "the shim reads hidden: no banner from a pane nobody can see");
       // which measure carried it is the browser's business, and the two disagree: Chromium keeps the hidden
       // iframe's size (the probe is blind, the observer fires, the word says hidden); Firefox zeroes the viewport
@@ -203,13 +248,14 @@ for (const name of ["chromium", "firefox", "webkit"]) {
         assert.equal(s.probe, true, "a frame whose viewport went to zero: the probe carries the verdict (" + name + ")");
       }
       // shown again: no resize for a same-size re-show, so the observer's callback (or the viewport) is the event
-      await page.evaluate(() => document.body.classList.add("po-chat"));
+      await showChat();
       await shimIs("f-chat", false);
       s = await read("f-chat");
       assert.equal(s.shim, false, "re-shown: the shim raises again if genuinely stale");
       assert.ok(s.iw > 0 && s.ih > 0);
-      // a chat frame hidden SINCE LOAD (the second pane never had po-feed): hidden either way, by the word or the probe
-      const c = await read("f-feed");
+      // a chat frame hidden SINCE LOAD (a pane the shell never showed: no po-waiting on the body, no m-on on its
+      // iframe): hidden either way, by the word or the probe
+      const c = await read("f-waiting");
       assert.equal(c.shim, true, "hidden since load reads hidden: the word if the observer spoke, the probe (zero viewport) otherwise");
       assert.equal(c.probe, true, "a never-shown iframe has a zero viewport in every browser: the probe is right at boot, which is why nothing need be published before the observer speaks");
       assert.ok(c.word === true || c.word === undefined, "the word, if any, agrees: " + JSON.stringify(c));

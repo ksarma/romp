@@ -809,15 +809,22 @@ class HelpAndDocsAgree(unittest.TestCase):
         # entry closed by telling the operator to move it into service.env, which this fork's own file-mode
         # section forbids (API keys never go in it) and whose kernel reports such a line as a problem under
         # ROMP_EXPECTED_AUTH=key (sdk_backend._warn_credential_lines_in_env_file). The 2026-09-08 fold's round 3
-        # re-ended it on the fork's guidance: remove the key from the drop-in; sessions then use Claude Code's
-        # own credential, or a provider. The anchor it points at is the file-mode heading.
+        # re-ended it on the fork's guidance (remove the key from the drop-in); round 4 added the rotation the
+        # kernel's own rows for such a line demand, with the file-mode section's reason (a key in a unit is a copy
+        # that outlives its rotation). The anchor it points at is the file-mode heading.
         ref = self._read("docs/reference.md")
         flat = " ".join(ref.split())
         self.assertNotIn("Move such a key into `service.env`", flat)
-        self.assertIn("Remove such a key from the drop-in rather than moving it into `service.env`, which stays key-free "
-                      "(see [the file mode](#api-keys-on-disk-the-file-mode)); sessions then use Claude Code's own "
-                      "credential, or a provider named there.", flat)
+        self.assertIn("Remove the line and rotate the value: a key in a unit or plist is a copy that outlives its rotation. "
+                      "Do not move it into `service.env`, which stays key-free (see [the file mode](#api-keys-on-disk-the-file-mode)) "
+                      "and may name a provider instead.", flat)
         self.assertIn("\n### API keys on disk: the file mode\n", ref, "the heading the anchor resolves to")
+        # the kernel's two rows for a credential-shaped line in a unit (command mode; a declared auth) say the same:
+        # remove and rotate. Adjacent string literals joined, so a row split across source lines reads whole.
+        src = re.sub(r'"\s*"', "", self._read("kernel/sdk_backend.py"))
+        for row in ("copies on disk the command mode exists to remove. Remove them and rotate the values.",
+                    "A credential in a unit contradicts the declared auth model; remove the lines and rotate the values."):
+            self.assertIn(row, src, "the kernel row the paragraph agrees with")
 
     def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
         ref = self._read("docs/reference.md")
