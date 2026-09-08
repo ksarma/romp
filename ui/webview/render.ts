@@ -5256,8 +5256,10 @@ function releaseTabStrip(): void {
 // loose ones never read as one run. `hidden` is what the header stands in for: folded, its members less
 // the ones pinned to show through the fold; open, the members hidden inside the section (planStrip), so
 // its marks read those, never a member whose own tab is on screen; its words (count, title, spoken label)
-// are headWords, pure. Open over hidden members, the marks are also the non-folding door to the pane
-// (show-group; round 1 of the tabhide review, 2026-09-08): the header's own click folds, the marks do not.
+// are headWords, pure. Open, its count is also the non-folding door to the pane, on every open header
+// (show-group; rounds 1 and 2 of the tabhide review, 2026-09-08), and over hidden members the pip and the
+// flag are doors too: the header's own click folds, the doors do not. While the pane already shows the
+// section, the count's press is the way back to the transcript instead (show-transcript; round 3).
 // To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
 // the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
 // name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
@@ -5348,14 +5350,21 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // still went through that fold (round 2). The header's own click keeps its meaning (fold, and show the
   // section). Folded, the count is a plain span: the header's click opens the group and shows the section, and
   // the flag opens the group (open-group), as before.
+  // THE WAY BACK, on the door too (round 3): while the pane already shows this section (snapView, the state the
+  // header's snap-shown mark and its own way back are derived from), show-group changed nothing and the words still
+  // promised the pane, so the door mirrors the header's second click: its act is show-transcript (leaveSnapshot) and
+  // its words say the sessions are shown below and the click goes back to the transcript (sectionDoorTitle `shown`).
+  // Whether or not the header holds the tab being read: another section's open header still folds on its own click,
+  // a real act, while its door's did nothing. The fold is untouched either way.
   const door = !collapsed;
+  const shown = door && snapView === name;
   const n = door ? document.createElement("button") : el("span", "tab-group-count");
   if (n instanceof HTMLButtonElement) {
     n.type = "button";
     n.className = "tab-group-count tab-group-door";
-    n.dataset.act = "show-group";
+    n.dataset.act = shown ? "show-transcript" : "show-group";
     n.dataset.group = name;
-    n.title = sectionDoorTitle(hidden.length, total);
+    n.title = sectionDoorTitle(hidden.length, total, shown);
     n.setAttribute("aria-label", n.title);
     // the innermost draggable under a press, so ITS dragstart fires first and is cancelled: a press that wanders
     // never starts the header's group drag (the flag's rule below)
@@ -17156,16 +17165,17 @@ setupSettings();
       writeTabGroups(setSectionCollapsed(tabGroups(), name, el.dataset.folded !== "1"));
       showActive();
     },
-    // the header whose snapshot the pane shows, open, holding the tab being read (makeGroupHead derives this
-    // act from that rendered state): the click that swapped the pane, undone. The transcript comes back and
-    // the fold stays as it is. Escape from anywhere while the snapshot shows does the same (leaveSnapshot).
+    // the header whose snapshot the pane shows, open, holding the tab being read, and the count of any open header
+    // whose snapshot the pane shows (round 3 of the tabhide review; makeGroupHead derives both acts from that
+    // rendered state): the click that swapped the pane, undone. The transcript comes back and the fold stays as it
+    // is. Escape from anywhere while the snapshot shows does the same (leaveSnapshot).
     "show-transcript": () => leaveSnapshot(),
-    // THE NON-FOLDING DOOR (round 1 of the tabhide review, 2026-09-08): an OPEN header's marks over the members
-    // hidden inside its section (the "K hidden" count, the pip, the ⚑ flag; makeGroupHead) show the section in
-    // the pane and leave the fold as it is. No store write (a fold is the header's own click), so the strip is
-    // re-rendered here for the header's snap-shown mark and its way-back act, and showActive swaps the pane.
-    // Hide and Show in the pane then never fold the group, and a Show puts the tab back on the strip at once
-    // (the write's own render, TABGROUPS_EVENT).
+    // THE NON-FOLDING DOOR (rounds 1 and 2 of the tabhide review, 2026-09-08): an OPEN header's count, a button on
+    // every open header ("K hidden" over members hidden inside the section, the total otherwise), and over hidden
+    // members its pip and ⚑ flag too (makeGroupHead), show the section in the pane and leave the fold as it is. No
+    // store write (a fold is the header's own click), so the strip is re-rendered here for the header's snap-shown
+    // mark and its way-back acts, and showActive swaps the pane. Hide and Show in the pane then never fold the
+    // group, and a Show puts the tab back on the strip at once (the write's own render, TABGROUPS_EVENT).
     "show-group": (el) => {
       const name = el.dataset.group;
       if (!name) return;

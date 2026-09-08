@@ -160,12 +160,13 @@ when one of them needs you), and its count says how many are hidden. When a hidd
 you, the fold's head says so in red before you open it, and its row says **needs you**. While the
 group is open, its count opens this view without folding the group, so hiding a session never needs
 a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
-the flag opens the group, as before. Clicking a hidden session's row shows its transcript, with the
-header standing in for the tab, and leaves it hidden, its group folded or open as it was. A session
-set to **Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes
-when you show it again. A hidden session keeps the setting when its group is renamed, and shows
-again wherever it lands when it leaves the group. Like the sections, hiding is per browser and for
-the desktop layout.
+the flag opens the group, as before. While this view shows a group, that group's count takes you
+back to the transcript. Clicking a hidden session's row shows its transcript, with the header
+standing in for the tab, and leaves it hidden, its group folded or open as it was. A session set to
+**Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes when
+you show it again. A hidden session keeps the setting when its group is renamed, and shows again
+wherever it lands when it leaves the group. Like the sections, hiding is per browser and for the
+desktop layout.
 
 ### The feed
 

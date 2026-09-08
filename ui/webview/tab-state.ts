@@ -107,14 +107,28 @@ export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | unde
  *  snapshot in the pane, the fold as it was. The flag, the pip and the count wear it there. */
 export const SHOW_GROUP_CLICK = "click to show this group's sessions";
 
+/** THE WAY BACK's click phrase: what a press does while the pane already shows the section (render.ts show-transcript,
+ *  leaveSnapshot). The header's second click says it (tab-groups.ts headWords, `back`: open, holding the tab being
+ *  read) and so does the count of any open header whose section the pane shows (sectionDoorTitle `shown`; round 3 of
+ *  the tabhide review): one voice for one act. */
+export const BACK_TO_TRANSCRIPT_CLICK = "click to go back to the transcript";
+
 /** EVERY OPEN header's count, as the button it is there (render.ts makeGroupHead): what a reader hears and the
  *  hover. The words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count: "K hidden" over hidden members, the
  *  total otherwise), so the name a voice control hears contains the label it sees (round 2 of the tabhide
  *  review). Over hidden members the click shows the group's sessions in the pane; with nothing hidden they are
  *  all on the strip already, so the words say what the pane is for instead (round 2: the door existed only once
  *  something was hidden, and the first hide of a group went through the header's click, which folds the group
- *  over its reader). The fold's own words for the hidden members are hiddenFoldWords (tab-snapshot.ts). */
-export function sectionDoorTitle(hidden: number, total: number): string {
+ *  over its reader). The fold's own words for the hidden members are hiddenFoldWords (tab-snapshot.ts).
+ *  WHILE THE PANE ALREADY SHOWS THE SECTION (`shown`; round 3: the door's click then changed nothing and its words
+ *  still promised the pane), the door mirrors the header's way back: the words say the sessions are shown below and
+ *  the click goes back to the transcript (BACK_TO_TRANSCRIPT_CLICK), still led by the visible count. */
+export function sectionDoorTitle(hidden: number, total: number, shown = false): string {
+  if (shown) {
+    const lead = hidden > 0 ? `${hidden} hidden from the strip while this group is open; the group's sessions are shown below`
+                            : `${total} session${total === 1 ? "" : "s"}, shown below`;
+    return `${lead}; ${BACK_TO_TRANSCRIPT_CLICK}`;
+  }
   if (hidden > 0) return `${hidden} hidden from the strip while this group is open; ${SHOW_GROUP_CLICK}`;
   return total === 1 ? "1 session; click to see it at a glance and hide it from the strip"
                      : `${total} sessions; click to see them at a glance and hide any from the strip`;

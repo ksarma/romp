@@ -18,6 +18,7 @@
 // pattern) so the rule executes in node tests; render.ts paints it.
 import { SessionViews, TagUnion, viewTags, viewTagUnion } from "./session-views";
 import { hostOf } from "./host-prefix";
+import { BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 
 export const TABGROUPS_KEY = "romp:tabgroups";
 export const TABGROUPS_EVENT = "romp-tabgroups";
@@ -643,7 +644,7 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     // and the spoken label names the action too: render.ts drops the header's aria-expanded in that state
     // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
     // about what it does (the round-2 review)
-    const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
+    const click = back ? BACK_TO_TRANSCRIPT_CLICK : "click to fold this group and see its sessions at a glance";
     // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count says how many
     // are off the strip ("1 hidden" beside two tabs), the total moves to the words. Round 1 of the review: the
     // count stayed the total, so "3" beside two tabs read as a wrong number, and the guide had promised the

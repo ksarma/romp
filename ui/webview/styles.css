@@ -847,11 +847,14 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* PROGRESSIVE DISCLOSURE (round 1 of the review): a permanent Hide on every row grew the pane's compact form by one
    control per session, the one control most rows never need. The act shows on its item's hover and while anything
    in the item has keyboard focus (opacity, never display: Tab still reaches it and a reader still hears it), and
-   stands always where hover is not a thing (hover: none) AND wherever the pointer is a finger (pointer: coarse;
-   round 2: a touchscreen laptop reports hover, and opacity 0 does not stop a tap, so a finger near the row's right
-   end hid the session through a control it could not see). */
+   stands always where hover is not a thing (hover: none) AND wherever ANY pointing device is a finger
+   (any-pointer: coarse). any-pointer, not pointer: `pointer` and `hover` describe the PRIMARY pointing device, and a
+   laptop with a trackpad and a touchscreen reports pointer: fine and hover: hover, so neither clause fired there
+   (round 3 of the review; round 2 had written pointer: coarse for exactly that laptop). `any-pointer` is the union
+   of every pointing device present, and the touchscreen makes it coarse. The reason it matters (round 2): opacity 0
+   does not stop a tap, so a finger near the row's right end hid the session through a control it could not see. */
 .snap-item:hover .snap-act, .snap-item:focus-within .snap-act { opacity: 1; }
-@media (hover: none), (pointer: coarse) { .snap-act { opacity: 1; } }
+@media (hover: none), (any-pointer: coarse) { .snap-act { opacity: 1; } }
 .snap-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .snap-act:active { transform: scale(0.96); }
 .snap-act:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }

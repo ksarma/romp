@@ -10,6 +10,9 @@
 //   - the count is a door on EVERY open header, nothing hidden included (round 2): a click on it shows the pane and
 //     leaves the fold, the strip and the store's bytes as they were, so the first hide never goes through a fold;
 //     its words lead with its visible text, and the header's spoken label never ends in the flag's click clause;
+//   - while the pane already shows the section, the door is the way back (round 3): its act is show-transcript, its
+//     words say the sessions are shown below, and a click puts the transcript back with nothing written, whether or
+//     not the header holds the tab being read;
 //   - a repeat click (the platform's count) acts on nothing and shows no acknowledgement pulse (round 2);
 //   - the open header over a hidden member wears "1 hidden" as a button, and a click on it, on the pip or on the
 //     flag shows the pane and leaves the fold and the strip as they were; Show from that pane puts the tab back on
@@ -19,6 +22,8 @@
 //     fold's head counts it;
 //   - focus: the last hidden row shown from another pane, or gone from the section, under keyboard focus, lands
 //     on a shown row, never on body; the Hidden fold's open state is the section's own.
+// A second test launches Chromium as a trackpad-plus-touchscreen laptop (pointer: fine, hover: hover, any-pointer:
+// coarse) and reads the pane's Hide at opacity 1 from the real sheet (round 3: the primary-device feature missed it).
 // A slice that stops compiling against the stand-in fails loudly here (a ReferenceError in the page), which is
 // the point: render.ts's code runs, not a copy. Skips, never fails, where playwright or Chromium is missing (CI
 // installs none). The notes-api demo world, synthetic ids.
@@ -27,7 +32,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { sectionDoorTitle, sectionTodoPhrase, SHOW_GROUP_CLICK } from "./tab-state";
+import { sectionDoorTitle, sectionTodoPhrase, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -180,7 +185,7 @@ window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
     const host = document.getElementById("tab-snapshot");
     const q = (root: Element, sel: string) => root.querySelector<HTMLElement>(sel);
     const heads = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).map((h) => ({
-      name: h.dataset.group, folded: h.dataset.folded, act: h.dataset.act, snapShown: h.classList.contains("snap-shown"),
+      name: h.dataset.group, folded: h.dataset.folded, act: h.dataset.act, title: h.title, snapShown: h.classList.contains("snap-shown"),
       count: q(h, ".tab-group-count")?.textContent ?? null, countTag: q(h, ".tab-group-count")?.tagName ?? null,
       countAct: q(h, ".tab-group-count")?.dataset.act ?? null, countTitle: q(h, ".tab-group-count")?.title ?? null,
       pip: q(h, ".tab-group-pip")?.className ?? null, pipAct: q(h, ".tab-group-pip")?.dataset.act ?? null, pipTitle: q(h, ".tab-group-pip")?.title ?? null,
@@ -222,7 +227,7 @@ const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=styleshee
 <style>body{margin:0;padding:8px} #tabs{display:flex;flex-wrap:wrap;gap:4px;padding:4px}</style></head>
 <body><div id=tabs></div><div id=content><div id=transcript>transcript</div></div><script src=/probe.js></script></body></html>`;
 
-type Head = { name?: string; folded?: string; act?: string; snapShown: boolean; count: string | null; countTag: string | null; countAct: string | null; countTitle: string | null;
+type Head = { name?: string; folded?: string; act?: string; title: string; snapShown: boolean; count: string | null; countTag: string | null; countAct: string | null; countTitle: string | null;
   pip: string | null; pipAct: string | null; pipTitle: string | null; flagAct: string | null; flagTitle: string | null; label: string | null };
 type State = { tabs: string[]; heads: Head[]; snapView: string | null; paneShown: boolean; transcriptShown: boolean; shownRows: string[]; hiddenRows: string[];
   foldShown: boolean; foldOpen: boolean; foldNeeds: string; stored: any; active: string };
@@ -271,6 +276,20 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.snapView, h.folded, h.snapShown, s.tabs, s.shownRows, s.hiddenRows, s.foldShown], [true, "infra", "0", true, ["web", "api", "tests"], ["web", "api", "tests"], [], false]);
     assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), null, "the door writes nothing");
+    // S1c: THE WAY BACK ON THE DOOR (round 3): with the pane already showing this section the door's click changed nothing and
+    // its words still promised the pane; now it mirrors the header's second click (the header holds web, so both say so): act
+    // show-transcript, words that say the sessions are shown below and end in the header's own way-back clause. The click puts
+    // the transcript back; the fold, the strip and the store (still none) stay as they were, and the count is the door again
+    assert.deepEqual([h.act, h.countAct, h.countTitle], ["show-transcript", "show-transcript", sectionDoorTitle(0, 3, true)]);
+    assert.ok(h.countTitle!.startsWith(h.count!) && h.countTitle!.endsWith(BACK_TO_TRANSCRIPT_CLICK), h.countTitle!);
+    assert.ok(h.title.includes("; " + BACK_TO_TRANSCRIPT_CLICK + "; "), "one voice with the header: " + h.title);
+    await page.click(inHead("infra", ".tab-group-door"));
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, h.folded, h.snapShown, h.act, h.countAct, h.countTitle, s.tabs],
+                     [false, true, null, "0", false, "toggle-group", "show-group", sectionDoorTitle(0, 3), ["web", "api", "tests"]]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), null, "the way back writes nothing either");
+    await page.click(inHead("infra", ".tab-group-door"));   // the pane again, for the Escape below
+    s = await state(); assert.deepEqual([s.paneShown, s.snapView], [true, "infra"]);
     await page.keyboard.press("Escape");
     s = await state(); assert.deepEqual([s.paneShown, s.snapView], [false, null]);
 
@@ -291,7 +310,8 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.click(nameOf("infra"));
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, s.snapView, s.paneShown, h.snapShown], [["web", "tests"], "0", "infra", true, true]);
-    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-group", sectionDoorTitle(1, 3)]);
+    // the header's click showed the section, so the count is the way back (round 3), its words led by its visible text
+    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-transcript", sectionDoorTitle(1, 3, true)]);
     assert.ok(h.countTitle!.startsWith(h.count!), "label in name (round 2): the door's words lead with its visible text");
     assert.ok(h.label!.startsWith("infra, 3 sessions, 1 hidden"), h.label!);
 
@@ -305,6 +325,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.click(inHead("infra", ".tab-group-door"));
     s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.snapView, h.folded, h.snapShown, s.tabs, JSON.stringify(s.stored)], [true, "infra", "0", true, ["web", "tests"], before]);
+    assert.deepEqual([h.countAct, h.countTitle], ["show-transcript", sectionDoorTitle(1, 3, true)], "shown: the door is the way back (round 3)");
 
     // S7: Show from that pane: the tab back at once, the group still open, the pane still up
     await page.click("#tab-snapshot .snap-hidden-head");
@@ -322,7 +343,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.snapView, h.folded, h.snapShown, s.tabs, s.shownRows], [true, "infra", "0", true, ["web", "api", "tests"], ["web", "api", "tests"]]);
     assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawBefore, "the store's bytes, untouched");
-    assert.ok(h.countTitle!.startsWith(h.count!) && h.countTitle === sectionDoorTitle(0, 3), h.countTitle!);
+    assert.ok(h.countTitle!.startsWith(h.count!) && h.countTitle === sectionDoorTitle(0, 3, true) && h.countAct === "show-transcript", h.countTitle!);
 
     // S8: the flag on an OPEN header is a door too (round 1: it opened a group that was already open, and nothing moved)
     await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
@@ -425,6 +446,21 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.click(nameOf("archived"));   // folded: the click opens it and shows its snapshot
     s = await state();
     assert.deepEqual([s.snapView, s.shownRows, s.foldShown, s.foldOpen], ["archived", ["old1"], false, false]);
+    // S13b: THE WAY BACK ON THE DOOR of a header that does NOT hold the tab being read (round 3): archived's header keeps its
+    // fold (toggle-group) while its count is the way back; infra's count, open and not shown, stays the door. The click puts
+    // the transcript back and the store's bytes stand (archived's open state was written by the header's click); the count
+    // is the door again, and takes the pane back for what follows
+    let ah = await head("archived");
+    assert.deepEqual([ah.act, ah.countAct, ah.countTitle, (await head("infra")).countAct], ["toggle-group", "show-transcript", sectionDoorTitle(0, 1, true), "show-group"]);
+    const rawShown = await page.evaluate(() => localStorage.getItem("romp:tabgroups"));
+    assert.ok(rawShown && rawShown.includes("archived"), "the header's click wrote archived's open state");
+    await page.click(inHead("archived", ".tab-group-door"));
+    s = await state(); ah = await head("archived");
+    assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, ah.folded, ah.act, ah.countAct, s.tabs], [false, true, null, "0", "toggle-group", "show-group", ["web", "tests", "old1"]]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawShown, "the way back writes nothing");
+    await page.click(inHead("archived", ".tab-group-door"));
+    s = await state();
+    assert.deepEqual([s.snapView, s.shownRows, (await head("archived")).countAct], ["archived", ["old1"], "show-transcript"]);
     await page.evaluate(() => (window as any).__probe.otherPane("archived", "old1", true));
     s = await state();
     assert.deepEqual([s.hiddenRows, s.foldShown, s.foldOpen], [["old1"], true, false], "archived's fold starts closed, whatever infra's is");
@@ -434,4 +470,52 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   } finally { await browser.close(); }
+});
+
+// THE TOUCHSCREEN LAPTOP (round 3 of the review). Round 2 put `(pointer: coarse)` beside `(hover: none)` for a laptop with a
+// trackpad and a touchscreen, and neither fires there: `pointer` and `hover` describe the PRIMARY pointing device, which
+// Chromium reports fine and hovering whenever a fine device is present, whatever the touchscreen can do; `any-pointer` is
+// the union of the devices present, and the touchscreen makes it coarse. Playwright's hasTouch cannot build that laptop
+// (its touch emulation makes the primary pointer coarse and the primary hover none, so the two clauses flip together),
+// so Chromium is launched with Blink's own device settings: available pointer types coarse|fine (2|4) with the primary
+// fine (4), available hover types none|hover (1|2) with the primary hover (2). The context is asserted before the sheet
+// is, so a Chromium that stopped honouring the flag fails on the context, not on the opacity.
+const LAPTOP = "--blink-settings=availablePointerTypes=6,primaryPointerType=4,availableHoverTypes=3,primaryHoverType=2";
+const ONE_ROW = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css></head>
+<body><div id=tab-snapshot><div class=snap-item><button class=snap-row>api</button><button class=snap-act>Hide</button></div></div></body></html>`;
+type Pointing = { pointerCoarse: boolean; pointerFine: boolean; hoverNone: boolean; hoverHover: boolean; anyPointerCoarse: boolean; opacity: string };
+
+test("in Chromium launched as a trackpad-plus-touchscreen laptop (pointer: fine, hover: hover, any-pointer: coarse): the pane's Hide stands at opacity 1 from the real sheet, where the desktop rests it at 0", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  const read = async (args: string[]): Promise<Pointing> => {
+    let browser: any;
+    try { browser = await pw.chromium.launch({ args }); }
+    catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return null as unknown as Pointing; }
+    try {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: ONE_ROW });
+        if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/page");
+      return await page.evaluate(() => {
+        const m = (q: string) => matchMedia(q).matches;
+        return { pointerCoarse: m("(pointer: coarse)"), pointerFine: m("(pointer: fine)"), hoverNone: m("(hover: none)"), hoverHover: m("(hover: hover)"),
+                 anyPointerCoarse: m("(any-pointer: coarse)"), opacity: getComputedStyle(document.querySelector(".snap-act")!).opacity };
+      });
+    } finally { await browser.close(); }
+  };
+  const laptop = await read([LAPTOP]);
+  if (!laptop) return;
+  assert.deepEqual([laptop.pointerCoarse, laptop.pointerFine, laptop.hoverNone, laptop.hoverHover, laptop.anyPointerCoarse], [false, true, false, true, true],
+    "the laptop: the primary pointer fine and hovering (round 2's clauses both false), a coarse pointer present");
+  assert.equal(laptop.opacity, "1", "the Hide stands: the sheet's any-pointer clause fired where pointer: coarse and hover: none are both false");
+  const desktop = await read([]);
+  if (!desktop) return;
+  assert.deepEqual([desktop.pointerFine, desktop.hoverHover, desktop.anyPointerCoarse, desktop.opacity], [true, true, false, "0"],
+    "the desktop: no coarse pointer anywhere, so the act rests unseen until the row's hover or focus (round 1's disclosure)");
 });
