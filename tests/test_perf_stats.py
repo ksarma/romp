@@ -112,7 +112,7 @@ class Collector(unittest.TestCase):
             self.assertEqual(p[k], 0.0, k)
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
-        self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline"})
+        self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson"})
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved"},
                          "the chat builder carries the active/background split, the miss attribution (round-4 P3) "
@@ -204,9 +204,11 @@ class Collector(unittest.TestCase):
         for k, v in snap["memos"]["goals_shared"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["wire"]),
-                         {"feed_cards_hit", "feed_cards_miss", "feed_body", "bars_body", "bars_sig_fallback", "default_str"},
-                         "the pusher's wire caches (2026-09-06): the per-card memo, the whole frames actually made, "
-                         "the unkeyable bars fallback, the values a wire encoder shipped as str()")
+                         {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
+                          "bars_sig_fallback", "default_str"},
+                         "the pusher's wire caches: the feed's per-card memo, the collection-split memo the bars and "
+                         "the slot path share (_delta_split_memo), the whole frames actually made, the unkeyable bars "
+                         "fallback, the values a wire encoder shipped as str()")
         for k, v in snap["memos"]["wire"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["intr_marks"]), {"hit", "miss", "evict", "entries"},

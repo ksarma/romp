@@ -4,7 +4,7 @@ Both functions searched tool_result blocks for text — _seg_mids for romp-msg-i
 build (once per segment), _fold_tasks for the 'Task #N' in a TaskCreate result on every chat build — and
 both encoded every list-shaped result to do it. A list-shaped result is mostly image blocks (base64) and
 tool_reference blocks that can never carry either string, and the encoding was 2.6% of the pusher
-(kernel4 profile, 2026-09-06). _seg_mids now walks the strings the encoding would write and encodes only a
+(push-thread cProfile, 2026-09-06). _seg_mids now walks the strings the encoding would write and encodes only a
 string that carries the marker literal; _fold_tasks stores the raw content and encodes only the TaskCreate
 result it reads. The match semantics are the encoding's, exactly: these tests pin that with the pre-change
 _seg_mids kept below as the oracle, over every content shape the SDK passes through (str, list of block
@@ -19,6 +19,7 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -162,6 +163,31 @@ class SegMidsShapes(unittest.TestCase):
         with self.assertRaises(TypeError):
             _seg_mids_encoding(seg)
         self.assertEqual(km._seg_mids(seg), [MID])
+
+    def test_only_strings_carrying_the_literal_are_encoded(self):
+        # the saving itself: json.dumps runs on the one string that holds the marker literal — never on the image data
+        # string, the block dicts or the marker-free text (test_the_blocks_are_not_encoded pins the container; this pins
+        # the prefilter, which is what the micro-benchmark's saving comes from)
+        seen = []; real = json.dumps
+
+        def spy(obj, *a, **k):
+            seen.append(obj)
+            return real(obj, *a, **k)
+        seg = result_seg([text_block("before " + marker(MID)), IMAGE_BLOCK, *REFERENCE_BLOCKS, text_block("after")])
+        with mock.patch.object(json, "dumps", spy):
+            ids = km._seg_mids(seg)
+        self.assertEqual(ids, [MID])
+        self.assertEqual(seen, ["before " + marker(MID)], "one encode, of the one string that carries the literal")
+
+    def test_string_result_content_is_matched_raw_not_encoded(self):
+        # a str tool_result content is matched as it is, never encoded — for the marker shapes the encoding would
+        # escape too, where an encoded match would come back changed (a\"b, a\\\\b, caf\\u00e9); the plain-string case
+        # above only exercises an id that encodes to itself
+        for c in ('<!-- romp-msg-id: a"b -->', "<!-- romp-msg-id: a\\b -->", "<!-- romp-msg-id: café -->"):
+            with self.subTest(content=c):
+                seg = result_seg(c)
+                self.assertEqual(km._seg_mids(seg), POSTAL_RE.findall(c), "the raw match")
+                self.assertEqual(km._seg_mids(seg), _seg_mids_encoding(seg), "…which is what the oracle did for a str")
 
     def test_encoded_mids_covers_keys_values_and_nesting_in_document_order(self):
         # every string the encoding writes: keys, values, inside lists, tuples and dicts, in the order the

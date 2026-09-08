@@ -1,11 +1,11 @@
 // GitHub pull-request references in rendered text become links to the PR page of the repository the
-// session works in (the user 2026-09-06: a session's chat, its feed cards and its notes rendered
-// "merged #199" and "fork PR #197" as plain text). The kernel names the repository per session —
+// session works in (the user 2026-09-06, whose sessions' chat, feed cards and notes rendered their own
+// PR numbers, `merged #12` say, as plain text). The kernel names the repository per session —
 // `githubRepo` (owner/repo, or null) on the session frame and on the feed's session rows, derived from
 // the session tree's origin remote by the same parser the file viewer's GitHub link uses — and this
 // module does the text work in ONE place for every surface: the chat's markdown (render.ts md()), its
-// plain-text user-todo rows, the feed's card titles, distiller lines, checklists and modal (feed.ts),
-// the outline's goal rows (fleet.ts) and the Waiting-on-you pane's asks (waiting.ts).
+// plain-text user-todo rows, the feed's card titles, distiller lines, checklists, held-mail gists and
+// modal (feed.ts), the outline's goal rows (fleet.ts) and the Waiting-on-you pane's asks (waiting.ts).
 //
 // Shapes that link — each needs a word boundary BEFORE it (start of text, whitespace, an opening
 // bracket or quote, a comma/semicolon/colon, an em or en dash), so a `#` glued to letters, a path or a

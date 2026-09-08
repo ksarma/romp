@@ -10,8 +10,8 @@ test doubles the retry-detail and give-up suites use), then the pure functions w
 
 Everything is synthetic: placeholder sids, TESTHOST, an invented key material that is not shaped
 like any real credential (assembled, never a credential-shaped literal — the scanner reads this
-repo too), and a rebuilt timeline of the incident the design note backtested — its SHAPE, not its
-data. State is redirected before the module loads.
+repo too), and a rebuilt timeline of one rate-limit incident — its SHAPE, not its data. State is
+redirected before the module loads.
 """
 import asyncio
 import ast
@@ -39,10 +39,10 @@ sb = load_source("romp_sdk_backend_apihealth", os.path.join(BIN, "romp_sdk_backe
 SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "11111111-2222-3333-4444-666666666666"
 KEY_MATERIAL = "test-key-material-" + "q" * 28   # invented; not shaped like any provider's key
+KEY_FP = sb._keysrc.fingerprint(KEY_MATERIAL)      # what _options records at a keyed launch (_launched_key_fp)
 # A resolved bucket label, as a session would cache it — DERIVED at run time from the real function,
 # never written out: a literal `key:<hex>` is exactly what the credential scanner reads this repo for.
-LABEL = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="test-salt", work_key=KEY_MATERIAL,
-                                 launched_keyed=True)
+LABEL = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="test-salt", key_fp=KEY_FP, launched_keyed=True)
 T0 = 1_756_800_000.0                # a fixed synthetic epoch (the derivation is pure in `now`)
 KEY = LABEL + "|fable"
 
@@ -71,8 +71,8 @@ class FakeResultMessage:
         self.parent_tool_use_id = parent_tool_use_id
 
 
-# The wire frame the 2.1.257 CLI emits for one retry attempt (field names per the design note; the
-# values are invented). error_status is the int the aggregator classifies on; `error` the category.
+# The wire frame the 2.1.257 CLI emits for one retry attempt (its field names; the values are
+# invented). error_status is the int the aggregator classifies on; `error` the category.
 def retry_frame(status=429, category="rate_limit", attempt=1, **extra):
     d = {"attempt": attempt, "max_retries": 10, "retry_delay_ms": 2000,
          "error_status": status, "error": category, "uuid": "u-retry-%s" % attempt, "session_id": SID}
@@ -112,6 +112,9 @@ def _session(be, sid=SID, label=LABEL, model_id="claude-fable-5-1"):
     s._input_wake, s._reconnect_when_idle, s.ended = None, False, False
     s._interrupted, s._intr_level = False, 0
     s.api_key_auth, s.thread_of = True, ""
+    # what _options records at launch and the init's billing check reads bare (meant_key): a login
+    # launch by default — the SaltedLabels tests set the keyed pair per case
+    s._launched_keyed, s._launched_key_fp, s._launched_unkeyed_pick = False, "", False
     s._do_refresh_context = _noop_coro
     s._do_refresh_usage = _noop_coro
     return s
@@ -176,7 +179,7 @@ class IngestsTheRealBranches(unittest.TestCase):
                          "the settle-time recovery ledger has no per-attempt status — never a source")
 
     def test_the_retry_hook_reads_only_error_status_and_error_from_the_frame(self):
-        """ADR (d): the aggregator reads `error_status` and `error` from the wire frame, nothing else —
+        """The aggregator reads `error_status` and `error` from the wire frame, nothing else —
         not attempt / max_retries (no field of the signal uses them; the one-shot sorted(msg.data)
         line shows they are there) and not the chat card's retry_info alternates."""
         fn = sb.SdkSession._ah_note_retry
@@ -270,7 +273,7 @@ class IngestsTheRealBranches(unittest.TestCase):
     def test_a_give_up_pairs_the_error_frame_with_the_settles_status(self):
         """The error-stamped AssistantMessage arrives BEFORE the ResultMessage that carries
         api_error_status, so the frame parks a marker and the settle files the give-up with the status.
-        The settle travels the REAL branch (finding 8): a regression that moves the hook below one of
+        The settle travels the REAL branch: a regression that moves the hook below one of
         the branch's early returns goes red here, not only in the source-position pin."""
         be = _backend()
         _stub_settle(be)
@@ -292,14 +295,20 @@ class IngestsTheRealBranches(unittest.TestCase):
         self.assertEqual(s.inflight, 0)
 
     def test_the_settle_branch_calls_the_hook(self):
+        """At the top of the branch, before the settle's own work: between the branch head and the hook
+        there is nothing but the try that contains the whole branch (its finally IS the settle, so the
+        hook sits inside it) and comments — no bookkeeping step, no early return."""
         src = inspect.getsource(sb.SdkSession._on_message)
         i_branch = src.index("elif isinstance(msg, ResultMessage):")
         i_hook = src.index("self._ah_note_result(msg)")
         self.assertLess(i_branch, i_hook)
-        self.assertLess(i_hook - i_branch, 200, "at the top of the branch, before the settle's own work")
+        between = src[i_branch:i_hook].splitlines()[1:]
+        code = [ln.strip() for ln in between
+                if ln.strip() and not ln.strip().startswith("#") and ln.strip() != "try:"]
+        self.assertEqual(code, [], "a statement runs ahead of the hook: %r" % (code,))
 
     def test_is_error_gates_the_status_read(self):
-        """ADR (c): api_error_status is defined only when is_error is true (SDK types.py:1247-1249).
+        """api_error_status is defined only when is_error is true (SDK types.py:1247-1249).
         A clean settle carrying a stray status files nothing; an error settle with a status and no
         marker files a give-up in that status counter; an error settle with a null status and no
         marker is not an API failure (max turns, budget, execution) and files nothing."""
@@ -323,7 +332,7 @@ class IngestsTheRealBranches(unittest.TestCase):
         _feed_settle(s, FakeResultMessage(is_error=True, api_error_status=None))
         w = _win(be)
         self.assertEqual((w["gaveUp"], w["serverErrors"]), (1, 1))
-        # the 'unknown' category with no status is the noStatus counter (ADR (c))
+        # the 'unknown' category with no status is the noStatus counter
         _feed(s, FakeAssistantMessage(model="<synthetic>", message_id="msg_err2", error="unknown"))
         _feed_settle(s, FakeResultMessage(is_error=True, api_error_status=None))
         w = _win(be)
@@ -397,6 +406,27 @@ class IngestsTheRealBranches(unittest.TestCase):
         _feed(s, FakeSystemMessage("api_retry", retry_frame()))
         s._ah_note_result(FakeResultMessage(is_error=True, api_error_status=500))
         self.assertEqual(s._ah_turn, 1)
+
+
+class FamilyAttribution(unittest.TestCase):
+    def test_ah_family_prefers_the_raw_id_and_falls_back_to_the_display_name(self):
+        """A retry carries no model, so it is filed under the session's current one: the raw id the
+        CLI reported when there is one, else the display badge (`Fable 5`), else `unknown`."""
+        be = _backend()
+        s = _session(be, model_id="claude-haiku-4-5-20251001")
+        s.model = "Fable 5"
+        self.assertEqual(s._ah_family(), "haiku", "the raw id wins over the badge")
+        s._model_id = ""
+        self.assertEqual(s._ah_family(), "fable", "no raw id yet: the badge names the family")
+        s.model = ""
+        self.assertEqual(s._ah_family(), "unknown", "nothing learned yet")
+
+    def test_a_retry_on_a_generation_first_id_files_under_its_family(self):
+        be = _backend()
+        s = _session(be, model_id="claude-3-5-sonnet-20241022")
+        _feed(s, FakeSystemMessage("api_retry", retry_frame()))
+        self.assertIsNotNone(_bucket(be, family="sonnet"), "the family, not the catch-all")
+        self.assertIsNone(_bucket(be, family="other"))
 
 
 class Windows(unittest.TestCase):
@@ -538,7 +568,7 @@ class DerivedState(unittest.TestCase):
         st = sb.api_health_state(evs, T0, ("healthy", T0 - 1000), self.cfg)
         self.assertEqual(st["state"], "thrashing", "24 ≥ fastMinRequests at 100%: the fast path alone fires")
         self.assertIn("over 60 s", st["why"])
-        self.assertEqual(st["evidence"]["window"], 60, "the evidence is the DECIDING window's (finding 4)")
+        self.assertEqual(st["evidence"]["window"], 60, "the evidence is the DECIDING window's")
         self.assertEqual(st["evidence"]["n"], 24)
 
     def test_degraded_on_server_errors_and_thrashing_wins_when_both(self):
@@ -551,7 +581,7 @@ class DerivedState(unittest.TestCase):
         self.assertEqual(sb.api_health_state(both, T0, None, self.cfg)["state"], "thrashing")
 
     def test_degraded_goes_to_thrashing_at_once_when_the_429_condition_holds(self):
-        """ADR (a): thrashing takes precedence over degraded whenever the 429 enter condition holds —
+        """Derived state: thrashing takes precedence over degraded whenever the 429 enter condition holds —
         on entry and afterwards. No exit, no hold: the move is immediate."""
         # 12 attempts over 300 s: 3 × 5xx (0.25) AND 3 × 429 (0.25)
         evs = _pattern(T0 - 290, T0, 25, "ffxxfxoooooo")
@@ -564,7 +594,7 @@ class DerivedState(unittest.TestCase):
         self.assertEqual((st["state"], st["transitions"]), ("degraded", []))
 
     def test_thrashing_never_goes_straight_to_degraded(self):
-        """ADR (a): there is no thrashing → degraded. Leaving thrashing goes through recovering (the
+        """Derived state: there is no thrashing → degraded. Leaving thrashing goes through recovering (the
         429 exit held for holdS), and recovering → degraded fires IN THE SAME READ when the 5xx
         condition holds — two rows, one `at`."""
         storm = _storm(T0 - 900, T0 - 600)                        # 429s until 10 minutes ago
@@ -584,7 +614,7 @@ class DerivedState(unittest.TestCase):
         self.assertEqual(st["since"], T0 + 400)
 
     def test_recovering_to_healthy_needs_both_exits_and_the_hold(self):
-        """ADR (b): recovering → healthy requires BOTH exit conditions held throughout the last holdS
+        """Derived state: recovering → healthy requires BOTH exit conditions held throughout the last holdS
         AND now − stateSince ≥ holdS. The function does not know which state recovering came from
         (its input is (state, stateSince), never the transitions list), so a bucket with one rate
         between its exit and enter thresholds stays recovering — the accurate label."""
@@ -601,7 +631,7 @@ class DerivedState(unittest.TestCase):
         self.assertEqual(st["state"], "healthy")
         self.assertEqual([(t["from"], t["to"]) for t in st["transitions"]], [("recovering", "healthy")])
         self.assertIn("recovering for 120 s", st["why"])
-        self.assertIn("throughout the last 120 s", st["why"], "the run length that decided it (finding 3)")
+        self.assertIn("throughout the last 120 s", st["why"], "the run length that decided it")
 
     def test_a_break_inside_the_hold_keeps_the_state(self):
         # clean for 15 min except ONE 429-heavy minute 60 s ago that pushed the mid window over exit:
@@ -634,8 +664,8 @@ class DerivedState(unittest.TestCase):
     def test_a_dead_band_reading_moves_nothing(self):
         """Between exit (0.10) and enter (0.20) the state HOLDS — the hysteresis. A true dead band:
         one 429 in eight (0.125) sustained for 75 minutes after the storm, long past the point where
-        the storm has left every window (finding 2 / 5: the old sweep restarted from healthy each read
-        and flipped thrashing → healthy at 44.5 min with no exit condition met)."""
+        the storm has left every window (a sweep that restarted from healthy on each read flipped
+        thrashing → healthy at 44.5 min with no exit condition met)."""
         evs = _storm(T0, T0 + 900) + _pattern(T0 + 900, T0 + 5400, 15, "ooooooox")
         runs, prev = _poll(evs, T0, T0 + 5400, cfg=self.cfg)
         self.assertEqual([s for _, s in runs], ["unknown", "thrashing"])
@@ -707,9 +737,9 @@ class DerivedState(unittest.TestCase):
         self.assertEqual(st["since"], T0 - 500)
 
     def test_the_backtested_incident_shape(self):
-        """The design note's per-bucket backtest of the 2026-09-01 incident, rebuilt SYNTHETICALLY
-        from its shape: a ~40% 429 share on one family for ~2h23m, a 21-minute clean lull, the storm
-        again for ~63 minutes, then clean. The note's runs: thrashing at +1:25 on n = 10; recovering
+        """One rate-limit incident's per-bucket shape, rebuilt SYNTHETICALLY: a ~40% 429 share on one
+        family for ~2h23m, a 21-minute clean lull, the storm again for ~63 minutes, then clean. The
+        backtest on the real traffic ran: thrashing at +1:25 on n = 10; recovering
         ~15 minutes into the lull and healthy two minutes later; thrashing again ~2 minutes into the
         second storm; recovering ~15 minutes after it ended, healthy two minutes later — two entries,
         no flap. The timings here follow from the same rules on the rebuilt traffic."""
@@ -724,7 +754,7 @@ class DerivedState(unittest.TestCase):
             m.setdefault(s, []).append(minute)
         self.assertLessEqual(m["thrashing"][0], 3.0, "entry on the first ten attempts")
         # no recovery until the slow window is clean enough (≥ 11 min of clean traffic at this rate)
-        # and the hold has passed — the note saw ~15 min on the real, burstier traffic
+        # and the hold has passed — the backtest saw ~15 min on the real, burstier traffic
         self.assertGreaterEqual(m["recovering"][0], 143 + 11)
         self.assertLessEqual(m["recovering"][0], 143 + 17)
         self.assertAlmostEqual(m["healthy"][0] - m["recovering"][0], 2.0, delta=0.1)
@@ -756,7 +786,7 @@ class DerivedState(unittest.TestCase):
         self.assertEqual((self.cfg["enter429"], self.cfg["enter429Slow"], self.cfg["enter429Fast"], self.cfg["exit429"]),
                          (0.20, 0.15, 0.50, 0.10))
         self.assertEqual(self.cfg["retentionS"], 1020,
-                         "ADR (e): the slow window plus the hold — the 900 s window at asOf − 120 s reaches back 1020 s")
+                         "retention is the slow window plus the hold — the 900 s window at asOf − 120 s reaches back 1020 s")
         os.environ["ROMP_API_HEALTH_MIN_REQUESTS"] = "3"
         os.environ["ROMP_API_HEALTH_HOLD_S"] = "10"
         os.environ["ROMP_API_HEALTH_ENTER_429"] = "0.5"
@@ -820,29 +850,35 @@ class OverallState(unittest.TestCase):
 
 class SaltedLabels(unittest.TestCase):
     def test_same_material_same_label_within_one_install(self):
-        a = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", work_key=KEY_MATERIAL, launched_keyed=True)
-        b = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", work_key=KEY_MATERIAL, launched_keyed=True)
+        a = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", key_fp=KEY_FP, launched_keyed=True)
+        b = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", key_fp=KEY_FP, launched_keyed=True)
         self.assertEqual(a, b)
         self.assertRegex(a, r"^key:[0-9a-f]{12}$")
 
     def test_a_different_salt_gives_a_different_label(self):
-        a = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", work_key=KEY_MATERIAL, launched_keyed=True)
-        b = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-2", work_key=KEY_MATERIAL, launched_keyed=True)
+        a = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-1", key_fp=KEY_FP, launched_keyed=True)
+        b = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="salt-2", key_fp=KEY_FP, launched_keyed=True)
         self.assertNotEqual(a, b, "the label is not a cross-install equality oracle")
-        # …and the empty salt is the documented switch to a plain digest
-        import hashlib
-        plain = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="", work_key=KEY_MATERIAL, launched_keyed=True)
-        self.assertEqual(plain, "key:" + hashlib.sha256(KEY_MATERIAL.encode()).hexdigest()[:12])
+        # …and the empty salt is the documented switch to the identity the kernel prints elsewhere: the
+        # key's fingerprint (the kernel log, `romp keyswap`), so an operator can match the bucket to it
+        plain = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="", key_fp=KEY_FP, launched_keyed=True)
+        self.assertEqual(plain, "key:" + KEY_FP)
+        self.assertEqual(sb.api_health_auth_label("none", salt="", acct="0123456789ab"), "login:0123456789ab",
+                         "the login arm the same way: the account digest the usage bars stamp")
 
     def test_no_fragment_of_the_key_is_in_the_label(self):
-        lab = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", work_key=KEY_MATERIAL, launched_keyed=True)
+        lab = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", key_fp=KEY_FP, launched_keyed=True)
         for i in range(len(KEY_MATERIAL) - 4):
             self.assertNotIn(KEY_MATERIAL[i:i + 5], lab)
+        # a salted label is not the fingerprint either: the salt is what keeps the bucket name from being
+        # the identity the log prints (an empty salt is the operator's choice to make it so)
+        self.assertNotEqual(lab, "key:" + KEY_FP)
+        self.assertNotIn(KEY_FP, lab)
 
     def test_the_source_words_map_to_constant_labels(self):
-        self.assertEqual(sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", work_key="", launched_keyed=False),
+        self.assertEqual(sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", key_fp="", launched_keyed=False),
                          "key:env", "the kernel injected nothing → no material to digest")
-        self.assertEqual(sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", work_key=KEY_MATERIAL, launched_keyed=False),
+        self.assertEqual(sb.api_health_auth_label("ANTHROPIC_API_KEY", salt="s", key_fp=KEY_FP, launched_keyed=False),
                          "key:env", "a key the CLI found on its own is not the kernel's material")
         self.assertEqual(sb.api_health_auth_label("apiKeyHelper", salt="s"), "key:helper")
         self.assertEqual(sb.api_health_auth_label("/login managed key", salt="s"), "key:managed")
@@ -866,11 +902,11 @@ class SaltedLabels(unittest.TestCase):
         self.assertEqual(sb.ApiHealth(d).salt(), "", "the empty file is the switch")
 
     def test_two_instances_minting_at_once_get_one_salt(self):
-        """Finding 1: the mint used to create the file (O_EXCL) and then write it — a reader in
-        between saw an EMPTY file, the documented unsalted switch, cached '' and labelled the same
-        key differently. The write is widened here to make the gap certain.
+        """A mint that creates the file (O_EXCL) and then writes it lets a reader in between see an
+        EMPTY file — the documented unsalted switch — cache '' and label the same key differently.
+        The write is widened here to make the gap certain.
 
-        Round 2: the reader is a PEER instance over the same state dir (a second kernel process, or
+        The reader is a PEER instance over the same state dir (a second kernel process, or
         a sibling aggregator in this one), not a second thread on one instance. One instance's
         `_salt_lock` serialises nothing across instances, so only the atomic publish (bytes to a
         temp, the name taken by link) keeps the peer from ever seeing the file empty — a mutant
@@ -908,7 +944,7 @@ class SaltedLabels(unittest.TestCase):
         self.assertEqual(os.listdir(d), [sb.API_HEALTH_SALT_FILE], "the loser's temp is gone too")
 
     def test_a_writer_that_dies_mid_mint_leaves_no_salt_file_and_the_next_boot_mints(self):
-        """Finding 1, round 2: a kernel that dies between creating its temp and publishing it must
+        """A kernel that dies between creating its temp and publishing it must
         leave NOTHING at the salt path — the next boot then mints a real salt. A create-then-write
         mutant leaves an EMPTY salt file behind, which every later reader takes for the unsalted
         switch, for the life of the install."""
@@ -956,15 +992,15 @@ class SaltedLabels(unittest.TestCase):
 
     def test_the_init_resolves_the_label_once_onto_the_session(self):
         be = _backend()
-        be.work_key = KEY_MATERIAL
         s = _session(be, label="unknown")
         s._launched_keyed = True
+        s._launched_key_fp = KEY_FP          # what _options recorded at the keyed launch
         s.auth = ""
         s.api_key_auth = False
         s.auth_live = ""
         be._note_auth_source(s, "ANTHROPIC_API_KEY")
         self.assertRegex(s.auth_label, r"^key:[0-9a-f]{12}$")
-        self.assertEqual(s.auth_label, "key:" + sb._api_health_digest(be.api_health.salt(), KEY_MATERIAL))
+        self.assertEqual(s.auth_label, "key:" + sb._api_health_digest(be.api_health.salt(), KEY_FP))
         # the frames that follow file under it
         _feed(s, FakeSystemMessage("api_retry", retry_frame()))
         snap = be.api_health_snapshot()
@@ -978,14 +1014,73 @@ class SaltedLabels(unittest.TestCase):
         blob = json.dumps(snap) + open(os.path.join(be.state_dir, sb.API_HEALTH_STATE_FILE)).read()
         for i in range(len(KEY_MATERIAL) - 4):
             self.assertNotIn(KEY_MATERIAL[i:i + 5], blob)
+        self.assertNotIn(KEY_FP, blob, "salted: the fingerprint the log prints is not the bucket's name")
+
+    def test_the_init_never_resolves_the_key_source(self):
+        """The label is built from the launch's recorded fingerprint. A work_key read here would resolve
+        the configured source — on a machine whose key is a 1Password reference, one `op read` per
+        init — so the hook must not touch it, and a source that cannot resolve must not matter."""
+        be = _backend()
+        be.work_key = ""                    # a pinned EMPTY source: resolving it yields no key
+        s = _session(be, label="unknown")
+        s._launched_keyed = True
+        s._launched_key_fp = KEY_FP
+        s.auth = ""
+        s.api_key_auth = False
+        s.auth_live = ""
+        reads = []
+        be.__class__ = type("Spy", (sb.SdkBackend,), {"work_key": property(lambda self: reads.append(1) or "")})
+        be._note_auth_source(s, "ANTHROPIC_API_KEY")
+        self.assertEqual(reads, [], "the hook never read work_key")
+        self.assertEqual(s.auth_label, "key:" + sb._api_health_digest(be.api_health.salt(), KEY_FP))
+        # a login launch carries no fingerprint and labels as env-found when the CLI reports a key
+        s2 = _session(be, label="unknown")
+        s2._launched_keyed = False
+        s2._launched_key_fp = ""            # a login launch records no fingerprint
+        s2.auth, s2.api_key_auth, s2.auth_live = "", False, ""
+        be._note_auth_source(s2, "ANTHROPIC_API_KEY")
+        self.assertEqual(s2.auth_label, "key:env")
 
     def test_the_label_source_reuses_the_existing_auth_knowledge(self):
         # not a re-derivation: the same init word _note_auth_source already judges, the kernel's
         # work_api_key material, the usage bars' account digest
         src = inspect.getsource(sb.SdkBackend._note_auth_source)
         self.assertIn("self.api_health.auth_label(", src)
-        self.assertIn("work_key=self.work_key", src)
+        self.assertIn('key_fp=getattr(sess, "_launched_key_fp", "")', src, "the launch's own record")
+        self.assertNotIn("self.work_key", src, "never a source resolution at init time")
         self.assertIn("acct_digest()", inspect.getsource(sb.ApiHealth.auth_label))
+
+    def test_a_login_init_labels_from_the_account_digest_it_reads(self):
+        """The login arm EXECUTES acct_digest: an init whose CLI reports no key (the field absent, or
+        the literal 'none' in any casing and spacing) labels as login:<salted digest of the account the
+        usage bars stamp>, and the frames that follow file under it. The source-text pin above is not
+        enough on its own: with the call dropped, every login labelled login:unknown and the suite
+        stayed green."""
+        be = _backend()
+        real = sb.acct_digest
+        sb.acct_digest = lambda: "0123456789ab"
+        try:
+            want = "login:" + sb._api_health_digest(be.api_health.salt(), "0123456789ab")
+            for src in ("none", "", None, " None "):
+                s = _session(be, label="unknown")
+                s._launched_keyed = False
+                s._launched_key_fp = ""             # a login launch records no fingerprint
+                s.auth, s.api_key_auth, s.auth_live = "", False, ""
+                be._note_auth_source(s, src)
+                self.assertEqual(s.auth_label, want, repr(src))
+                self.assertRegex(s.auth_label, r"^login:[0-9a-f]{12}$")
+            _feed(s, FakeSystemMessage("api_retry", retry_frame()))
+            self.assertIn(want + "|fable", be.api_health_snapshot()["buckets"])
+            # no readable account: the arm still runs, and says so rather than inventing a name
+            sb.acct_digest = lambda: ""
+            s2 = _session(be, label="unknown")
+            s2._launched_keyed = False
+            s2._launched_key_fp = ""
+            s2.auth, s2.api_key_auth, s2.auth_live = "", False, ""
+            be._note_auth_source(s2, "none")
+            self.assertEqual(s2.auth_label, "login:unknown")
+        finally:
+            sb.acct_digest = real
 
 
 def _doc(d):
@@ -1013,7 +1108,7 @@ class TransitionLedger(unittest.TestCase):
         self.assertEqual(rows[0]["evidence"]["window"], 300, "the deciding window rides the row")
         self.assertEqual(rows[0]["t"], T0)
         b = snap["buckets"][KEY]
-        self.assertEqual(b["stateSince"], rows[0]["t"], "stateSince IS the row's time — one clock (finding 9)")
+        self.assertEqual(b["stateSince"], rows[0]["t"], "stateSince IS the row's time — one clock")
         self.assertEqual(b["evidence"], rows[0]["evidence"])
         self.assertEqual(b["why"], rows[0]["why"])
         self.assertEqual(b["transitions"], rows, "the bucket carries its own transitions")
@@ -1027,8 +1122,8 @@ class TransitionLedger(unittest.TestCase):
         self.assertEqual(snap["transitions"], rows, "the payload carries the ledger's tail")
 
     def test_a_bucket_whose_events_all_aged_out_between_reads_closes_its_episode(self):
-        """Finding 7: the read iterated only buckets present in the ring, so a bucket whose events
-        were all evicted between two reads kept its last state forever — and when its traffic came
+        """A read that iterates only the buckets present in the ring lets a bucket whose events
+        were all evicted between two reads keep its last state forever — and when its traffic came
         back, the first row was misdated. Every known bucket is derived on every read: absent from
         the ring is `unknown`, filed at the read that found it so."""
         d = tempfile.mkdtemp()
@@ -1053,7 +1148,7 @@ class TransitionLedger(unittest.TestCase):
         self.assertEqual((rows[-1]["from"], rows[-1]["to"], rows[-1]["t"]), ("unknown", "healthy", T0 + 5300))
 
     def test_a_restart_sets_every_bucket_unknown_at_boot_and_the_first_qualifying_read_classifies_afresh(self):
-        """The design note's persistence rule: the ring is lost at restart, so the reload sets every
+        """The persistence rule: the ring is lost at restart, so the reload sets every
         bucket to unknown with stateSince = the boot time, filing `<state> -> unknown` for each bucket
         whose persisted state was not already unknown — the transitions list is continuous across the
         restart — and the first read with enough evidence records `unknown -> <state>` after it. No
@@ -1153,7 +1248,7 @@ class TransitionLedger(unittest.TestCase):
         thread's _push takes the same lock — measured 70–376 ms stalls at 15k–40k ring events. The
         ring is copied under the lock, derived outside it, and the lock is re-taken only to file.
 
-        Round 2: the probe covers the WHOLE phase-2 derivation — the state function AND the window
+        The probe covers the WHOLE phase-2 derivation — the state function AND the window
         counts of every bucket — not the state function alone. A mutant that re-took the lock around
         the counts (the bulk of the per-bucket work) passed the narrower probe."""
         ah = sb.ApiHealth(tempfile.mkdtemp())
@@ -1229,10 +1324,9 @@ class TransitionLedger(unittest.TestCase):
 
 
 class StateFile(unittest.TestCase):
-    """Persistence per the design note: one bounded STATE/api-health.json — the per-bucket
-    (state, stateSince, why, evidence) and the transition tail — rewritten atomically on every
-    transition and reloaded at boot. There is no jsonl; the first cut's append-only ledger is read
-    once, at the first boot without a state file, and left alone."""
+    """Persistence: one bounded STATE/api-health.json — the per-bucket (state, stateSince, why,
+    evidence) and the transition tail — rewritten atomically on every transition and reloaded at
+    boot. Per-request events are never written."""
 
     def test_the_state_file_round_trips_the_bucket_state_and_the_tail(self):
         d = tempfile.mkdtemp()
@@ -1360,9 +1454,9 @@ class StateFile(unittest.TestCase):
         self.assertEqual([(r["from"], r["to"]) for r in _rows(d)], [("thrashing", "unknown")])
 
     def test_a_churning_bucket_does_not_truncate_a_quiet_neighbours_history(self):
-        """Finding 4 (round 2): the per-bucket `transitions` was a filter of the GLOBAL 50-row tail, so
-        a neighbour churning through fifty transitions erased a quiet bucket's history from its own
-        payload. The design note: per-bucket `transitions` is that bucket's own last 50; the top-level
+        """A per-bucket `transitions` that is a filter of the GLOBAL 50-row tail lets a neighbour
+        churning through fifty transitions erase a quiet bucket's history from its own payload. The
+        rule: per-bucket `transitions` is that bucket's own last 50; the top-level
         list is the global last 50, each stamped with its bucket. Both tails persist."""
         d = tempfile.mkdtemp()
         ah = sb.ApiHealth(d)
@@ -1394,10 +1488,10 @@ class StateFile(unittest.TestCase):
         self.assertEqual(snap2["transitions"], snap["transitions"])
 
     def test_every_transition_logs_one_line_in_the_kernel_log(self):
-        """The design note: a read that finds a transition appends it, writes the state file and logs
-        one stderr line in the existing `retry-pause:` style. The line names the bucket, the move and
-        the why, so the kernel log alone reconstructs an incident. Finding 5 (round 2): the build wrote
-        the row and logged nothing."""
+        """A read that finds a transition appends it, writes the state file and logs one stderr line
+        in the existing `retry-pause:` style. The line names the bucket, the move and the why, so the
+        kernel log reconstructs an incident as a polling reader observed it (a transition is derived
+        only by a read of the signal; nothing derives while nobody reads)."""
         d = tempfile.mkdtemp()
         lines = []
         ah = sb.ApiHealth(d, log=lines.append)

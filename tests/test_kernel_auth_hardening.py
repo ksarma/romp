@@ -523,6 +523,7 @@ class BusyDrainWriteGate(unittest.TestCase):
 
 
 _AH_KEY_MATERIAL = "test-key-material-" + "z" * 28   # invented; not shaped like any provider's key
+_AH_KEY_FP = sb._keysrc.fingerprint(_AH_KEY_MATERIAL)   # what a keyed launch records (_launched_key_fp)
 
 
 class _ApiHealthBackend:
@@ -533,7 +534,7 @@ class _ApiHealthBackend:
     def __init__(self):
         self.ah = sb.ApiHealth(tempfile.mkdtemp(), boot_at=km._STARTED)     # seeded the way _sdk_locked seeds the live one
         label = sb.api_health_auth_label("ANTHROPIC_API_KEY", salt=self.ah.salt(),
-                                         work_key=_AH_KEY_MATERIAL, launched_keyed=True)
+                                         key_fp=_AH_KEY_FP, launched_keyed=True)
         now = time.time()
         for i in range(20):
             is429 = i % 5 in (3, 4)
@@ -619,6 +620,7 @@ class ApiHealthRouteGate(unittest.TestCase):
             self.assertFalse(s.startswith("~"), s)
         for i in range(len(_AH_KEY_MATERIAL) - 4):
             self.assertNotIn(_AH_KEY_MATERIAL[i:i + 5], body, "a fragment of the key material leaked")
+        self.assertNotIn(_AH_KEY_FP, body, "salted: the key's fingerprint is not the bucket's name either")
         self.assertNotIn(os.path.expanduser("~"), body)
 
     def test_boot_identity_is_versions_own(self):

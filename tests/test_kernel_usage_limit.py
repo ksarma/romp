@@ -103,9 +103,11 @@ class UsageLimitSignal(unittest.TestCase):
 class AutoPauseOnLimit(unittest.TestCase):
     """The flip's delivery (perf batch 2 P1, 2026-09-06): the tick job WAKES the pusher and builds nothing
     inline; the flag rides the next push's globalRetryPaused frame. No view reads retry-paused.json, so
-    the dirty mark must NOT move (a dirty mark here is a full feed + timeline rebuild for nothing). The
-    idempotent path (already paused) neither wakes nor dirties. _views_dirty is a module global shared
-    across the suite, so each test records its own floor rather than asserting an absolute value."""
+    the dirty mark must NOT move (a dirty mark here is a full feed + timeline rebuild for nothing; this
+    fork's _set_retry_paused marks nothing, and its callers wake the pusher with _push_soon). An inline
+    _push_all is the regression the tripwire in setUp catches. The idempotent path (already paused)
+    writes nothing, so it neither wakes nor dirties. _views_dirty is a module global shared across the
+    suite, so each test records its own floor rather than asserting an absolute value."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -113,7 +115,7 @@ class AutoPauseOnLimit(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         self._usage = km._usage_limits      # the pause reads the limits half (perf round 4 P18)
         self._push = km._push_all
-        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline; it should wake the pusher")
         self._was_set = km._pusher_wake.is_set()
         km._pusher_wake.clear()
 
@@ -200,7 +202,7 @@ class AutoPauseOnSpendLimit(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved = (jd.STATE, km._alive_sessions, km._api_error, km._push_all)
         jd.STATE = Path(self.td.name)
-        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline; it should wake the pusher")
         self._was_set = km._pusher_wake.is_set()
         km._pusher_wake.clear()
 

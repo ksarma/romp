@@ -80,11 +80,12 @@ test("the singleton stays breaks:false — assistant rendering is unchanged", ()
 test("userMd() renders through the breaks:true instance and the SAME DOMPurify profile as md()", () => {
   // both renderers take the sanitized DOM back (RETURN_DOM) to link PR references before serializing (pr-links.ts,
   // 2026-09-06), so each spreads the shared profile and only the return shape differs (the 2026-09-07 fold of
-  // upstream's userMd split; MD_PURIFY itself, with upstream's ALLOW_DATA_ATTR: false, is the one profile)
-  const fn = RENDER.match(/function userMd\(src: string\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  // upstream's userMd split; MD_PURIFY itself, with upstream's ALLOW_DATA_ATTR: false, is the one profile);
+  // both signatures carry an optional repo parameter for the PR links, so the match on them is loose
+  const fn = RENDER.match(/function userMd\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(fn, "userMd() must exist");
   assert.match(fn, /DOMPurify\.sanitize\(userMdHtml\(src\), \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
-  const mdFn = RENDER.match(/function md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.match(mdFn, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/, "md() sanitizes with the same shared profile");
   const profileOf = (src: string) => src.match(/DOMPurify\.sanitize\([^,]+, (\{[^}]*\}|MD_PURIFY)\)/)?.[1];
   assert.ok(profileOf(fn) && profileOf(fn) === profileOf(mdFn), "byte-identical sanitizer arguments: one profile, one return shape");

@@ -277,8 +277,8 @@ test("a hidden-sender message draws the mirror stub: horizontal just ABOVE the l
   near(r._attrs.y1, s._attrs.y2, "…from the track");
   near(r._attrs.y2, laneY(panel)(0), "…down to the bar, meeting the arrival dot");
   assert.equal(r._attrs["stroke-dasharray"], undefined, "solid, like its arrived stub");
-  // the time-positioned glyphs live in draw()'s plot group (the live tick translates it, 2026-09-06); the
-  // paint order inside it is the one this test has always pinned
+  // the time-positioned glyphs live in draw()'s plot group (the live tick translates it); the paint order
+  // inside it is the one this test has always pinned
   const kids = panel.svg.children.find((n: any) => n._attrs["data-tl-plot"]).children;
   const dotI = kids.findIndex((n: any) => n.tag === "circle" && Math.abs(n._attrs.cx - X(panel)(now - 100)) < 1e-6);
   assert.ok(dotI >= 0, "the arrival dot still draws on the recipient lane");

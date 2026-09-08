@@ -162,6 +162,23 @@ function lensBlob(base, fields) {
   }
   return v;
 }
+// The keys a lens write is ABOUT are named by its caller (`own`, _setLens): value-diffing cannot name
+// them once a surface is held locally (a held surface differs from the store by construction, and the
+// click that re-posts a held filter to save it differs from nothing shown). lensSame / shownTagOrder
+// serve the hold-and-release bookkeeping (_holdLocalLens / _releaseLocalLens).
+function lensSame(a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); }
+function shownTagOrder(v) { return (v && v.tagOrder) || viewTagUnion(v).map((g) => g.name); }
+// The local lens OVER a blob (a copy), PER KEY: a held surface entry replaces only that surface's entry
+// in the store's map, a held `active` or `tagOrder` only itself — the store's other surfaces show and
+// post as the store has them (viewTagUnion orders by the blob's tagOrder, so the order needs no re-sort here).
+function overlayLensFields(v, fields) {
+  const nv = JSON.parse(JSON.stringify(v || { active: 'all', tags: [] }));
+  nv.tags = viewTags(nv).slice(); delete nv.groups;
+  if (fields.active !== undefined) nv.active = fields.active;
+  if (fields.actives) nv.actives = Object.assign({}, nv.actives || {}, JSON.parse(JSON.stringify(fields.actives)));
+  if (fields.tagOrder) nv.tagOrder = fields.tagOrder.slice();
+  return nv;
+}
 // A tag IS its NAME, everywhere (user ruling 2026-08-24: "if the UX requires understanding that
 // tags exist across different kernels, it is not good"): one name = one identity, membership the
 // UNION across every kernel defining that name, the LOCAL store's color winning the render. The
@@ -452,11 +469,13 @@ const MAX_INTERP_AHEAD = 150;  // seconds the edge may glide past the last data.
                                // the kernel's 60 s repost of an unchanged frame (a quiet board sends nothing
                                // sooner, since 2026-09-04 the skeleton dedups too), so a healthy kernel never
                                // stalls the edge; a dead one is announced by the socket, not by this cap
-// A full REBUILD advances the live edge in whole-pixel steps: when the last build left the tick no plot group to
-// translate (a glyph rides the live edge; see _tickLive), the loop looks once the edge could have moved this far
-// at the current zoom (_liveWaitMs, 100-2000 ms between looks) and rebuilds then. It used to be 0.15 px on every
-// animation frame — a full SVG rebuild about twice a second at a one-hour window, on the main thread every
-// pane shares, which is what a chat tab click waited behind (measured 2026-09-04).
+// A REBUILD advances the live edge in whole-pixel steps: when the last build left the tick no plot group to
+// translate (a glyph rides the live edge; see _tickLive), the loop looks once the edge could have moved this far at
+// the current zoom (_liveWaitMs, 100-2000 ms between looks) and rebuilds then. Before the pacing it was 0.15 px on
+// every animation frame: a full rebuild about twice a second at a one-hour window, on the main thread every pane
+// shares, which is what a chat tab click waited behind (measured 2026-09-04). With a plot group to translate, a
+// look is one transform write (_tickTranslate) and the loop runs on animation frames under the finer TICK_MIN_PX
+// guard below: the glide is a pacing choice, not a rebuild cost.
 const LIVE_MIN_PX = 1;
 // A TRANSLATE (the tick's usual frame, _tickTranslate: one transform write on the plot group the build left) is
 // written once the edge would move at least this many px; below it the frame is a no-op — small so the glide
@@ -689,6 +708,14 @@ function readableRgb(rgb) {
 // The romp accent blue (same as the Fleet pill / focus accent) — the DARK theme's accent; the light
 // theme swaps in clay via PAL().accent / the ACCENT binding below.
 const ROMP_BLUE = '#9cd2ff';
+// what every refused write says when no kernel answers (_kernelPost): the panel never writes the state
+// files itself, so with romp down the gesture lands nowhere, and this is the whole of what happened
+const KERNEL_DOWN = 'the kernel is not running; start romp and try again';
+// ...and when the state dir holds no serve-port record at all, so the port was the CLI's default or
+// environment: a kernel older than this panel writes the token and no record (the live kernel lags
+// the checkout until `romp refresh`, and the plugin loads this file on its own), so "not running" alone
+// would be false against one that is
+const KERNEL_DOWN_NO_RECORD = 'the kernel is not running, or the one running predates this panel and left no port record; start or restart romp and try again';
 const PAL_DARK = {
   modelFg: '#9aa0a6',            // muted secondary text (MODEL_FG)
   metaHoverFg: '#e6edf3',        // hover-brightened text (META_HOVER_FG)
@@ -1034,6 +1061,7 @@ class TimelinePanel {
     this._caps = new Set();      // what the LOCAL kernel announced at `ready` ({type:"caps"}); 'tagEdit' = targeted ops, acks, seq (setCaps)
     this._pendingTagEdits = {};  // remote-tag edits held optimistically until the owner's poll echoes (federation v1): id → {tag: shape|null(=deleted), age}
     this._tagEditErr = null;     // the LOUD failure of the last tag edit ({host, name, error}), shown in the dialog until dismissed
+    this._localLens = null;      // {fields, reason}: a filter kept LOCAL because no kernel could save it (the Obsidian panel, kernel down): applied in _curViews, said in the Filter menu, cleared by the next lens write a kernel takes (_kernelViewsAnswer)
     this._viewsMenu = null;      // the Show-dropdown element, when open
     this._viewsDialog = null;    // the sessions/group dialog backdrop, when open
     this._viewsDialogKey = null; // its Escape hook {doc, fn}, removed on every close path
@@ -1066,7 +1094,7 @@ class TimelinePanel {
     // hiccups the edge. _wasLive = were we live-following at the last poll (→ re-anchor on re-entry).
     // _lastLiveNow = effective-now of the last live move. _tickPlot = the last full build's handle for the
     // tick (its plot group, live-edge riders and scale; draw()): the tick moves that group by a transform
-    // instead of rebuilding the svg (_tickTranslate, 2026-09-06). Re-armed each poll; self-stops when not live.
+    // instead of rebuilding the svg (_tickTranslate). Re-armed each poll; self-stops when not live.
     this._nowBaseSec = null; this._nowBaseMs = null; this._wasLive = false;
     this._liveRAF = null; this._liveTO = null; this._liveResume = false; this._lastLiveNow = null; this._tickPlot = null;
     // Newest data.now sample ever seen this page-lifetime (see isFreshNowSample): a push carrying an
@@ -1848,14 +1876,14 @@ class TimelinePanel {
   // Arm the rAF loop (no-op if already running or not currently live+visible). Re-armed each poll by
   // update(), so even after the loop self-stops it returns within one poll once we're live again. NOT
   // called from draw() — draw() runs inside the tick, and re-arming there would double the loop.
-  // The live-follow loop: a look (translate the plot the last build left, or draw when only a rebuild can express
-  // the frame; see _tickLive), then the next look on an animation frame, or, when the look had to rebuild and
-  // got no plot to translate, a sleep sized to the edge's speed first. Restarted by update()/applyBars() (each
-  // frame re-paces it: a pending sleep computed for the old zoom or data is dropped), by gestures, and by the
-  // pointer release when a look was skipped under a held pointer. Hidden pane: the loop STOPS (its old 2 s
-  // sleep re-entered _isVisible()'s forced offsetParent layout every wake, for a pane nobody could see —
-  // 2026-09-07) and the paint hold's release (_releasePaintHold) re-arms it; not live-following: it stops
-  // until a gesture pins the edge again.
+  // The live-follow loop: a look (a translate if the edge moved TICK_MIN_PX, a draw where a translate cannot
+  // express the frame; see _tickLive), then the next look: on the next animation frame while the build left a
+  // plot group to translate, or, when the look had to rebuild and got no handle, after a sleep sized to the edge's
+  // speed (_liveWaitMs). Restarted by update()/applyBars() (each frame re-paces it: a pending sleep computed for
+  // the old zoom or data is dropped), by gestures, and by the pointer release when a look was skipped under a
+  // held pointer. Hidden pane: the loop STOPS (its old 2 s sleep re-entered _isVisible()'s forced offsetParent
+  // layout every wake, for a pane nobody could see — 2026-09-07) and the paint hold's release
+  // (_releasePaintHold) re-arms it; not live-following: it stops until a gesture pins the edge again.
   _startLiveTick() {
     if (!this._liveFollowing() || !this._isVisible()) return;
     if (this._liveRAF != null) return;                                        // a look is already imminent
@@ -1866,10 +1894,11 @@ class TimelinePanel {
     this._liveTO = setTimeout(() => { this._liveTO = null; this._liveRAF = requestAnimationFrame(() => this._tickLive()); }, ms);
   }
   // How long until the live edge has moved LIVE_MIN_PX at the current zoom — the loop sleeps exactly that
-  // long between looks instead of waking every animation frame. A full redraw is what a look costs, so at a
-  // one-hour window over a few hundred px that is a redraw every several seconds, not two a second; and the
-  // sleeping loop touches no layout (the old per-frame _isVisible() read forced one — measured 2026-09-04:
-  // ~40% of the main thread on an idle four-pane dashboard, on the thread the chat pane's clicks share).
+  // long between looks that must REBUILD (the build left no plot group to translate; see _tickLive) instead of
+  // waking every animation frame: at a one-hour window over a few hundred px that is a look every several
+  // seconds, not two a second; and the sleeping loop touches no layout (the old per-frame _isVisible() read
+  // forced one — measured 2026-09-04: ~40% of the main thread on an idle four-pane dashboard, on the thread
+  // the chat pane's clicks share). A look with a plot group is a translate on the next animation frame.
   _liveWaitMs() {
     const g = this._geom;
     if (!g || !g.winSec || !g.plotW) return 1000;
@@ -1883,43 +1912,44 @@ class TimelinePanel {
     // Click-safe: don't rebuild the SVG under a pressed pointer (a click in progress). The release event
     // (_release) restarts the loop — no polling for it. See the constructor.
     if (this._pointerHeld) { this._liveResume = true; return; }
-    const g = this._geom;
-    // The tick MOVES THE VIEW, it does not rebuild it (2026-09-06): the last full build left a plot group and its
-    // live-edge riders (draw(), `_tickPlot`), and advancing the edge is one transform write on that group plus a
-    // width write per rider (_tickTranslate), cheap enough to run on every animation frame. It also owns the
-    // sub-pixel guard (TICK_MIN_PX), in COMPRESSED movement (inside a collapsed trailing gap the edge does not move
-    // on screen at all, where the old real-seconds guard redrew two or three times a second for nothing). The full
-    // draw() stays for what a translate cannot express — no build yet, a message glyph riding the live edge, a
-    // drift into the gutter — never for the clock's advance. When the last build handed back NO handle (a glyph
-    // rides the edge, so the next look must rebuild too), the loop paces itself as a rebuild must be (the
-    // 2026-09-04 fix): draw once the edge has moved a whole pixel (LIVE_MIN_PX) since the last live draw, then
-    // sleep until it could have moved that far again (_liveWaitMs) instead of rebuilding on every frame.
-    if (!this._tickPlot) {
-      if (!g || this._lastLiveNow == null || ((this._liveNow() - this._lastLiveNow) / g.winSec * g.plotW) >= LIVE_MIN_PX) {
-        this.draw();
-      }
-      if (!this._tickPlot) { this._sleep(this._liveWaitMs()); return; }   // still no handle: the next look rebuilds too
-    } else if (!g || this._lastLiveNow == null || !this._tickTranslate(this._liveNow())) {
-      this.draw();   // the drift reached the gutter: rebuild now and glide on from the fresh handle
-    }
-    this._liveRAF = requestAnimationFrame(() => this._tickLive());
-  }
-  _stopLiveTick() {
-    if (this._liveRAF != null) { cancelAnimationFrame(this._liveRAF); this._liveRAF = null; }
-    if (this._liveTO != null) { clearTimeout(this._liveTO); this._liveTO = null; }
-    this._liveResume = false;
+    const g = this._geom, nowS = this._liveNow();
+    // The look MOVES the view, it does not rebuild it: the last full build left a plot group and its live-edge
+    // riders (draw(), `_tickPlot`), and advancing the edge is one transform write on that group plus a width write
+    // per rider — _tickTranslate, which also owns the sub-pixel guard (TICK_MIN_PX), in COMPRESSED movement (inside
+    // a collapsed trailing gap the edge does not move on screen at all, where a real-seconds guard redrew for
+    // nothing). The full draw() stays for what a translate cannot express — no build yet, a glyph riding the live
+    // edge, the next gridline entering the window, a drift into the gutter, never for the clock's advance. A
+    // build that left NO handle (a glyph rode the live edge) has only the full draw for a look, and that look
+    // keeps the guard the loop always had (review find, 2026-09-08): the edge must have moved LIVE_MIN_PX since
+    // the build (_lastLiveNow, set by draw()). Without it such a board redrew the whole svg on every look, every
+    // 2 s at a wide window, where the edge moves a fraction of a pixel between looks and the redraw showed
+    // nothing new. The hand-backs from a handle (a gridline due, the drift cap) are events, not drift: they draw.
+    const tp = this._tickPlot;
+    if (!g || this._lastLiveNow == null) this.draw();
+    else if (!tp || !tp.g || !tp.g.parentNode) { if ((nowS - this._lastLiveNow) / g.winSec * g.plotW >= LIVE_MIN_PX) this.draw(); }
+    else if (!this._tickTranslate(nowS)) this.draw();
+    // The next look. With a plot group to translate: the next animation frame, a translate being cheap enough to
+    // run on every frame, and the finer guard keeps the glide smooth at high zoom (2026-09-06). With none (a glyph
+    // rides the live edge, so the next look must rebuild too): a sleep paced as a rebuild must be (_liveWaitMs,
+    // the 2026-09-04 fix) instead of rebuilding on every frame.
+    if (this._tickPlot) this._liveRAF = requestAnimationFrame(() => this._tickLive());
+    else this._sleep(this._liveWaitMs());
   }
   // Advance the live edge to `nowS` by moving the plot group (see draw()'s plot group and `_tickPlot`). Returns
   // true when the frame is expressed — including the no-op of a sub-TICK_MIN_PX move, or no movement in
-  // compressed time (a collapsed trailing gap) — and false when only a full draw() can: no handle (the loader,
-  // or a glyph riding the live edge was drawn), or the drift since the build has reached the gutter gap (no
-  // frame has rebuilt since — a quiet or disconnected kernel; a frame every ≤5 s keeps it far below that at
-  // any window of a quarter hour or more). The window geometry the handlers read (_geom's cT0/t0/t1, the held
-  // right edge) follows the move, so a pan or a focus jump begun between builds starts from what is on screen,
-  // and the hover re-arms as after a rebuild: the content moved under a pointer that did not.
+  // compressed time (a collapsed trailing gap) — and false when only a full draw() can: no handle (the loader, or
+  // a glyph riding the live edge was drawn); the clock has reached the next axis gridline (`nextTick`: nothing is
+  // pre-drawn outside the window, so an entering gridline and its clock ARE a rebuild, and the build dated the
+  // event rather than leaving it to the next kernel frame — the kernel dedups an unchanged skeleton and reposts
+  // it every 60 s, so a quiet board would otherwise show a stale axis for up to a minute); or the drift since the
+  // build has reached the gutter gap (no frame has rebuilt since — a quiet or disconnected kernel). The window
+  // geometry the handlers read (_geom's cT0/t0/t1, the held right edge) follows the move, so a pan or a focus
+  // jump begun between builds starts from what is on screen, and the hover re-arms as after a rebuild: the
+  // content moved under a pointer that did not.
   _tickTranslate(nowS) {
     const tp = this._tickPlot, g = this._geom;
     if (!tp || !g || !tp.g || !tp.g.parentNode) return false;
+    if (!tp.trailing && nowS >= tp.nextTick) return false;    // a gridline enters at the right edge: the full draw draws it (inside a trailing gap the axis does not move, so none can)
     const dc = tp.trailing ? 0 : (g.compress(nowS) - tp.cNow);   // compressed seconds the edge moved since the build
     const px = dc * tp.k;
     if (px < 0 || px >= tp.maxDrift) return false;
@@ -1936,6 +1966,11 @@ class TimelinePanel {
     this._holdReal = g.t1;
     this._rehover();
     return true;
+  }
+  _stopLiveTick() {
+    if (this._liveRAF != null) { cancelAnimationFrame(this._liveRAF); this._liveRAF = null; }
+    if (this._liveTO != null) { clearTimeout(this._liveTO); this._liveTO = null; }
+    this._liveResume = false;
   }
 
   // (The restart ↻ handler moved to the feed's top-right gear (the kernel's _GEAR_JS) along with the
@@ -2361,9 +2396,10 @@ class TimelinePanel {
     this._suppressClick = true;
     const visOrder = this._dragOrder || d.order;
     this._dragOrder = null;
+    const prev = ((this.data && this.data.sessions) || []).map((s) => s.id);   // what a refused persist puts back
     const full = this._mergeVisibleOrder(visOrder);            // full SID list with only the visible lanes permuted
     this._applyOrderToData(full);                              // optimistic in-place reorder → no snap-back pre-poll
-    this._persistOrder(full);                                  // write the shared file (tabs watch it)
+    this._persistOrder(full, prev, d.sid);                     // the shared store (tabs follow it), through the kernel
     this.draw();
     ev.preventDefault();
   }
@@ -2380,25 +2416,29 @@ class TimelinePanel {
     const oidx = new Map(full.map((id, i) => [id, i]));
     this.data.sessions.sort((a, b) => ((oidx.has(a.id) ? oidx.get(a.id) : Infinity) - (oidx.has(b.id) ? oidx.get(b.id) : Infinity)));
   }
-  // Persist the full SID order to ~/.local/state/romp/session-order.json. VS Code webview has no Node →
-  // hand it to the extension host (which writes atomically); Obsidian desktop writes directly (tmp+rename).
-  _persistOrder(order) {
+  // Persist the full SID order. Web / VS Code: the host hook (→ the kernel's reorderTabs merge). Obsidian:
+  // the kernel's POST /order — the SAME merge, so lanes the drag did not carry keep their slots (the
+  // whole-file write this replaced dropped every one of them; _kernelPost has the rule). `prev` is the
+  // order before the drag and `sid` the lane it moved, both captured by the caller: a refusal puts the
+  // lanes back at once and names the reason in the dragged lane's gear (settingRefused) — the one
+  // place a lane has for a notice here, the web shell's notice bell having no Obsidian counterpart.
+  // Under PLAIN node with a window shim (the `node --test` runner) there is no romp UI at all, so
+  // nothing is written: the lane-drag test once landed in the old direct write and WIPED
+  // ~/.local/state/romp/session-order.json to its two fixture sids on every `npm test` — the "tabs keep
+  // reordering themselves" bug the order-audit log finally pinned (the user 2026-07-02). _kernelHost's
+  // Electron-or-nothing guard is that rule.
+  _persistOrder(order, prev, sid, from) {
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineWriteOrder === 'function') {
         window.__rompTimelineWriteOrder(order); return;
       }
-      // The direct write is the OBSIDIAN DESKTOP path — an Electron app. Under PLAIN node with a window
-      // shim (the `node --test` runner) there is no romp UI at all, so never touch the real state file:
-      // the lane-drag test used to land here and WIPE ~/.local/state/romp/session-order.json to its
-      // two fixture sids on every `npm test`, which is exactly the "tabs keep reordering themselves"
-      // bug the order-audit log finally pinned (the user 2026-07-02). Electron-or-nothing, no heuristic.
-      if (typeof process === 'undefined' || !process.versions || !process.versions.electron) return;
-      const fs = require('fs'), path = require('path'), os = require('os');
-      const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
-      const root = process.env.ROMP_STATE_DIR || path.join(base, 'romp');   // per-kernel state root (plans/multi-kernel.md)
-      const f = path.join(root, 'session-order.json'), tmp = f + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(order));
-      fs.renameSync(tmp, f);
+      if (!this._kernelHost()) return;
+      return this._kernelPost('/order', { order }).then((r) => {   // the settle promise, for the tests that await it; callers ignore it
+        if (r.ok) return;                                        // the next poll shows the merged order
+        if (Array.isArray(prev)) this._applyOrderToData(prev);   // back to what stood before the drag
+        this.settingRefused({ gesture: 'order', sid: sid || '', from: from || '',
+                              text: r.refusal ? r.error : "couldn't save the new order — " + r.error });
+      });
     } catch (e) { /* no host hook + no Node → can't persist; the drag still reordered visually until next poll */ }
   }
 
@@ -3113,6 +3153,18 @@ class TimelinePanel {
   // timeline display toggles; the dialog holds the per-session checkboxes. All pointerdown-based
   // (the redraw-eats-click rule) and rebuilt per draw like the gear/lock.
   _curViews() {
+    // what the panel SHOWS: the write base, with the unsaved filter (a lens no kernel could take,
+    // _localLens) overlaid per key — this viewer's own surfaces over whatever the store says
+    const base = this._writeBase();
+    return this._localLens ? overlayLensFields(base, this._localLens.fields) : base;
+  }
+
+  // The blob a WRITE is built over: the pending copy or the store, the remote halves' pending edits
+  // overlaid — and never the local lens (review find, 2026-09-08: built from the shown blob, a tag
+  // create or a member edit on the Obsidian panel carried the unsaved filter to the kernel through an
+  // unrelated gesture, persisting a value the kernel never took while the not-saved note stayed). The
+  // local lens leaves this panel only through a LENS write of its own surface (_setLens).
+  _writeBase() {
     const base = this._pendingViews || this._views || { active: 'all', hidden: [], tags: [] };
     const ids = Object.keys(this._pendingTagEdits || {});
     if (!ids.length) return base;
@@ -3162,17 +3214,41 @@ class TimelinePanel {
     }
   }
 
+  // the host hook a remote-tag edit rides (the web dashboard, VS Code); the Obsidian panel has none
+  _remoteBridge() {
+    return typeof window !== 'undefined' && typeof window.__rompTimelineEditTag === 'function';
+  }
+
+  // the refusal for homes this panel cannot reach: ONE notice however many, every host named, and
+  // a remedy that covers each of them and, when the local half was held back too (`local`), that
+  // half (review find, 2026-09-08: the per-host notice overwrote itself across a fan-out, so a tag
+  // homed on two kernels named only the second and gave a remedy for it alone). The dialog's
+  // disabled actions and the chip wear the same text as their tooltip, so a gesture that can only
+  // end here says so before the click.
+  _unreachableText(hosts, local) {
+    const named = hosts.map((h) => h || 'the owner');
+    const cmds = hosts.map((h) => 'romp tag --host ' + (h || '<kernel>'));
+    if (local) cmds.push('romp tag (no --host) for this kernel');
+    return 'this panel cannot reach ' + named.join(' or ') + ', so nothing was changed. Edit with: ' + cmds.join(', then ');
+  }
+
+  _refuseUnreachable(hosts, name, local) {
+    this._tagEditErr = { host: hosts.filter(Boolean).join(', '), name: name, error: this._unreachableText(hosts, local) };
+    this.draw();
+  }
+
   // one remote-tag edit, dispatched to its HOME kernel and rendered optimistically meanwhile.
   // Ids ride viewer-relative; the kernel sends only the bare sid tails (sids are global) and the
   // owner resolves them into ITS frame. No hook (the Obsidian panel) → the tag stays read-only
-  // and the refusal is immediate and visible, never a silent drop.
+  // and the refusal is immediate and visible, never a silent drop — and, since _editTagUnion
+  // holds the local half back when a remote half is refused HERE, that refusal IS the outcome:
+  // nothing was changed anywhere, which the text says. With a hook the `true` answers for the
+  // POST, not for the owner's verdict: the bridge's editTag frame carries no id, and the kernel
+  // answers it only on failure (tagEditFailed, later) and never with an ack a caller could wait
+  // on, so a bridged home's refusal reverts its own overlay and nothing else (federation v1;
+  // review find, 2026-09-08).
   _editRemoteTag(rt, edit) {
-    if (typeof window === 'undefined' || typeof window.__rompTimelineEditTag !== 'function') {
-      this._tagEditErr = { host: rt.host, name: rt.name,
-                           error: 'this panel cannot reach ' + (rt.host || 'the owner') + " — edit with: romp tag --host " + (rt.host || '<kernel>') };
-      this.draw();
-      return false;
-    }
+    if (!this._remoteBridge()) { this._refuseUnreachable([rt.host], rt.name, false); return false; }
     let next = null;
     if (!edit.delete) {
       next = { id: rt.id, host: rt.host, name: edit.rename || rt.name, color: edit.color || rt.color,
@@ -3223,10 +3299,26 @@ class TimelinePanel {
       this._laneRefusal = { sid, flag, text };
       if (this._laneMenu && this._laneMenu._sid === sid && this._laneMenuBuild) this._laneMenuBuild();
     }
+    let shell = false;
     try {
-      if (typeof window !== 'undefined' && window.parent && window.parent !== window)
-        window.parent.postMessage({ romp: 'notify', kind: 'refused', text, sid }, '*');
+      shell = !!(typeof window !== 'undefined' && window.parent && window.parent !== window);
+      if (shell) window.parent.postMessage({ romp: 'notify', kind: 'refused', text, sid }, '*');
     } catch (e) { /* no parent frame (Obsidian, headless) */ }
+    if (!shell && m && m.gesture === 'order' && sid) {
+      if (m.from === 'dialog') {
+        // a row dragged INSIDE the tags dialog: the dialog's own row carries it, and only the dialog's —
+        // the gear is not where that gesture was made, and the same sentence in both slots rendered twice
+        // there (review find, 2026-09-08). `kind: 'order'`: the Filter menu, unrelated to a drag, skips it;
+        // the dialog's close clears it (_closeViewsDialog).
+        this._tagEditErr = { host: '', name: '', error: text, kind: 'order' };
+      } else {
+        // no shell bell to carry a refused lane drag (the Obsidian panel, _persistOrder): the dragged
+        // lane's gear shows it, the same dismissible row a refused toggle gets, until ✕ or a later refusal
+        this._laneRefusal = { sid, flag: '', text };
+        if (this._laneMenu && this._laneMenu._sid === sid && this._laneMenuBuild) this._laneMenuBuild();
+      }
+      this._repaintTagSurfaces();   // the dialog's rows, if it is open, back in the order that stands, with the reason
+    }
     this.draw();
   }
 
@@ -3240,16 +3332,40 @@ class TimelinePanel {
   // write, and the renames and assignments were lost; by NAME, a recolor queued behind a refused
   // rename went looking for the name the rename would have given the tag and found the other tag
   // that already had it); remote writes ride _editRemoteTag (optimistic overlay + loud
-  // tagEditFailed, federation v1).
+  // tagEditFailed, federation v1). The REMOTE halves go first, and the local half commits only
+  // once every one of them was DISPATCHED (review find, 2026-09-08): with no remote bridge (the
+  // Obsidian panel) the dispatch is refused at once, and before this the local half had already
+  // been written — the tag renamed, its member dropped or the tag deleted in the local store
+  // alone, under an error that named only the remote. That synchronous refusal now leaves every
+  // store as it was, names every home it could not reach, and the error text says so. It is the
+  // dispatch the local half waits for, not the owner's verdict: a bridged home answers only on
+  // failure and only later (tagEditFailed, no ack to wait on), so its refusal reverts that home's
+  // overlay and finds the local half already posted (federation v1's optimistic design, unchanged).
   _editTagUnion(g, edit) {
     // a create still in flight has no id to address (its row wears the placeholder the ack
     // replaces): the builders offer no gesture on it, and one that arrives anyway does nothing
     // rather than posting a tid the kernel refuses as a tag that does not exist
     if (g.pending) return;
     const meta = { name: g.name, tid: g.localId };
+    // the local half's optimistic copy, taken BEFORE the remote fan-out: _curViews overlays the
+    // remote halves' pending copies, and those must not ride a local post — and taken from the WRITE
+    // base, never the shown blob: an unsaved filter (_localLens) must not ride a tag edit either
+    const localCopy = () => (g.localId ? JSON.parse(JSON.stringify(this._writeBase())) : null);
+    // the fan-out to the remote halves a gesture reaches: every one is dispatched, and the local half
+    // rides only if every one was taken. The refused halves make ONE notice naming each of them and
+    // whether the local half was held back too (review find, 2026-09-08: each half's own notice
+    // overwrote the last, so a tag homed on two kernels named only the second and gave a remedy for
+    // it alone). The only synchronous refusal today is the no-bridge one, which refuses every half
+    // alike; a refusal with a bridge present keeps its own notice
+    const fanOut = (targets, mk, local) => {
+      const refused = [];
+      for (const rt of targets) if (!this._editRemoteTag(rt, mk())) refused.push(rt.host);
+      if (refused.length && !this._remoteBridge()) this._refuseUnreachable(refused, g.name, local);
+      return !refused.length;
+    };
     if (edit.add && edit.add.length) {
-      if (g.localId) {
-        const nv = JSON.parse(JSON.stringify(this._curViews()));
+      const nv = localCopy();
+      if (nv) {
         const t = viewTags(nv).find((x) => x.id === g.localId);
         if (t) {
           t.members = Array.from(new Set((t.members || []).concat(edit.add)));
@@ -3258,21 +3374,22 @@ class TimelinePanel {
       } else if (g.remotes.length) this._editRemoteTag(g.remotes[0], { add: edit.add.slice() });
     }
     if (edit.remove && edit.remove.length) {
-      if (g.localId) {
-        const nv = JSON.parse(JSON.stringify(this._curViews()));
-        const t = viewTags(nv).find((x) => x.id === g.localId);
-        if (t && (t.members || []).some((m) => edit.remove.indexOf(m) >= 0)) {
+      const nv = localCopy();
+      const t = nv ? viewTags(nv).find((x) => x.id === g.localId) : null;
+      const localHit = !!(t && (t.members || []).some((m) => edit.remove.indexOf(m) >= 0));
+      const ok = fanOut(g.remotes.filter((rt) => (rt.members || []).some((m) => edit.remove.indexOf(m) >= 0)),
+                        () => ({ remove: edit.remove.slice() }), localHit);
+      if (ok && nv) {
+        if (localHit) {
           t.members = (t.members || []).filter((m) => edit.remove.indexOf(m) < 0);
           this._postTagEdit(nv, { op: 'removeMember', tid: g.localId, sids: edit.remove.slice() }, meta);
         }
       }
-      for (const rt of g.remotes)
-        if ((rt.members || []).some((m) => edit.remove.indexOf(m) >= 0))
-          this._editRemoteTag(rt, { remove: edit.remove.slice() });
     }
     if (edit.rename || edit.color || edit.delete) {
-      if (g.localId) {
-        const nv = JSON.parse(JSON.stringify(this._curViews()));
+      const nv = localCopy();
+      const ok = fanOut(g.remotes, () => ({ rename: edit.rename, color: edit.color, delete: !!edit.delete }), !!g.localId);
+      if (ok && nv) {
         if (edit.delete) {
           nv.tags = viewTags(nv).filter((x) => x.id !== g.localId); delete nv.groups;
           if (nv.active === g.localId) nv.active = 'all';
@@ -3287,15 +3404,14 @@ class TimelinePanel {
           }
         }
       }
-      for (const rt of g.remotes)
-        this._editRemoteTag(rt, { rename: edit.rename, color: edit.color, delete: !!edit.delete });
     }
   }
 
   // the chips for ONE session — one solid chip per union tag holding it, ✕ = remove-everywhere.
   // Home-kernel detail lives in the tooltip at most (kernels are plumbing).
   _tagChips(box, s, rebuild) {
-    for (const g of viewTagUnion(this._curViews())) {
+    const cur = this._curViews();
+    for (const g of viewTagUnion(cur)) {
       if (g.members.indexOf(s.id) < 0) continue;
       const tc = g.color || MENU_FG;
       const ch = box.createSpan();
@@ -3310,6 +3426,17 @@ class TimelinePanel {
         // tag (the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
         ch.style.cursor = 'default';
         ch.setAttribute('title', 'creating "' + g.name + '"…');
+        ch.setAttribute('aria-disabled', 'true');
+        continue;
+      }
+      // the ✕ takes the pair off EVERY store holding it: with a remote half holding this session and
+      // no bridge, _editTagUnion can only refuse it, so the chip wears no ✕ and its tooltip says why
+      // (review find, 2026-09-08)
+      const homesHolding = (g.remotes || []).filter((rt) => (rt.members || []).indexOf(s.id) >= 0).map((rt) => rt.host);
+      if (homesHolding.length && !this._remoteBridge()) {
+        const localHolds = !!g.localId && viewTags(cur).some((t) => t.id === g.localId && (t.members || []).indexOf(s.id) >= 0);
+        ch.style.cursor = 'default';
+        ch.setAttribute('title', 'tagged "' + g.name + '": ' + this._unreachableText(homesHolding, localHolds));
         ch.setAttribute('aria-disabled', 'true');
         continue;
       }
@@ -3370,7 +3497,7 @@ class TimelinePanel {
     });
     ni.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || !ni.value.trim() || ni.disabled || this._createInFlight()) return;
-      const nv = JSON.parse(JSON.stringify(this._curViews()));
+      const nv = JSON.parse(JSON.stringify(this._writeBase()));   // the write base: an unsaved filter never rides a create
       const used = new Set(viewTags(nv).map((t) => t.color));
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
       // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id, and the ack's blob
@@ -3471,6 +3598,7 @@ class TimelinePanel {
   _repaintTagSurfaces() {
     if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
     if (this._laneMenu && typeof this._laneMenuBuild === 'function') this._laneMenuBuild();
+    if (this._viewsMenu && typeof this._viewsMenu._build === 'function') this._viewsMenu._build();   // the Filter menu (the display menu shares the slot and has no build)
   }
 
   // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
@@ -3567,47 +3695,128 @@ class TimelinePanel {
     this.draw();
   }
 
-  // Persist the whole views blob — the lens and order edits, which have no targeted op. Web/VS
-  // Code: the host WS hook (→ kernel setTimelineViews, which normalizes + rebroadcasts, and answers
-  // viewsAck with the stale-writer guard's refusals, if any). Obsidian/headless fallback: write the
-  // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
-  // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
+  // Persist the whole views blob — the lens and order edits, which have no targeted op, and every tag
+  // edit of a panel with no targeted bridge (_postTagEdit). Web/VS Code: the host WS hook (→ kernel
+  // setTimelineViews, which normalizes + rebroadcasts, and answers viewsAck with the stale-writer
+  // guard's refusals, if any). Obsidian: the kernel's POST /views — the same op, the same judge, and
+  // the same viewsAck document back (_kernelViewsAck), so the copy clears or reverts on the ack
+  // exactly as it does on a socket; the panel no longer writes timeline-views.json itself (_kernelPost
+  // has the why). Optimistic, like the lane flags.
   // A LENS or ORDER write — {active?, actives?, tagOrder?}: the whole blob is built from the STORE's
   // blob (this._views, the last one adopted) plus these fields, never from the pending copy (the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
   // dialog's claim on those tags, and a rename the kernel had refused as a duplicate landed through
   // the next lens toggle). The pending copy SHOWN is the current one with the same fields applied,
   // so in-flight edits stay visible; the in-flight record keeps the fields for rederiveViews.
-  _setLens(fields) {
-    this._setViews(lensBlob(this._views, fields), [], fields);
+  // `own` — what the gesture is ABOUT: {surfaces: [name…]} for the `actives` entries it changed (the
+  // Filter menu and the corner chips: the timeline's; the dialog's pane-filter rows: theirs), {tagOrder:
+  // true} for a pill drag, {active: true} for the legacy scalar. The rest of `fields` is the base the
+  // write was built over (_lensBaseActives) and nobody's change. A write no kernel takes keeps its own
+  // keys local (_holdLocalLens); a ruled write releases only them (_releaseLocalLens). Omitted, every
+  // key `fields` carries counts as the gesture's — right for a caller that posts only its own change.
+  _setLens(fields, own) {
+    own = own || { surfaces: Object.keys(fields.actives || {}), tagOrder: 'tagOrder' in fields, active: 'active' in fields };
+    this._setViews(lensBlob(this._views, fields), [], fields, own);
   }
 
-  _setViews(v, edited, lens) {
-    this._pendingViews = lens ? applyLensFields(this._curViews(), lens) : v; this._legacyViewsAge = 0;
+  // the map a lens gesture's `actives` is built over: the WRITE base's (the store's, or the pending
+  // copy's) — never the shown map, whose local entries would post an unsaved filter of another surface
+  // as this gesture's claim, and a chat lens the store has since moved past over the dashboard's
+  _lensBaseActives() { return Object.assign({}, this._writeBase().actives || {}); }
+
+  _setViews(v, edited, lens, own) {
+    // a lens write's pending copy is the WRITE base plus the gesture's own fields — never the shown blob:
+    // that copy is what _writeBase returns while the write is in flight, and built from the shown blob it
+    // carried every OTHER held key of the local lens into the next tag create or pane-filter write
+    // (review find, 2026-09-08). The local lens is overlaid at render only (_curViews).
+    this._pendingViews = lens ? applyLensFields(this._writeBase(), lens) : v; this._legacyViewsAge = 0;
+    // a lens gesture takes its keys over from any unsaved filter held for them, NOW: the pending copy is
+    // what shows (not the older local value under it) and its note goes; an answer no kernel gives holds
+    // the NEW value again, a ruled one leaves the kernel's blob standing (_kernelViewsAnswer)
+    if (lens && own) this._releaseLocalLens(own);
+    let settled = null;   // the kernel POST's settle promise (Obsidian), for the tests that await it; callers ignore it
     try {
-      if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
+      const hook = typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function';
+      if (hook || this._kernelHost()) {
         const writeId = this._mintWriteId();
         // the record is what this write DID: its lens/order fields, else the blob IS its state (rederiveViews)
         this._viewsWrites.push(lens ? { id: writeId, name: '', lens } : { id: writeId, name: '', blob: v });
         // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
         // refusal on a tag this dialog never touched (a stale copy of it) as ok, with the refusal listed:
         // the newer blob is adopted and no notice shows, since nothing the user did was refused
-        window.__rompTimelineSetViews(v, writeId, Array.isArray(edited) ? edited : []);
-      } else if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
-        // Obsidian only — the Electron guard keeps a bare-node test run from ever touching the real
-        // file (the 2026-07-02 _persistOrder lesson). Resolve the state root the way the kernel does
-        // (ROMP_STATE_DIR, then XDG_STATE_HOME, then the default), write tmp+rename so a reader never
-        // sees a torn blob.
-        const fs = require('fs'), os = require('os'), path = require('path');
-        const root = process.env.ROMP_STATE_DIR
-          || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'romp');
-        fs.mkdirSync(root, { recursive: true });
-        const fp = path.join(root, 'timeline-views.json');
-        fs.writeFileSync(fp + '.tmp', JSON.stringify(v));
-        fs.renameSync(fp + '.tmp', fp);
-        this._views = v; this._pendingViews = null;   // the file IS the store: the write settled, no ack to wait for
+        const ed = Array.isArray(edited) ? edited : [];
+        if (hook) window.__rompTimelineSetViews(v, writeId, ed);
+        else settled = this._kernelPost('/views', { views: v, edited: ed, writeId }).then((r) => this._kernelViewsAnswer(r, writeId, lens, own));
       }
-    } catch (e) { /* no host hook + no Node fs → session-local only */ }
+    } catch (e) { /* no host hook + no Node → session-local only */ }
     this.draw();
+    return settled;
+  }
+
+  // The kernel's answer to a POST /views. A kernel that RULED (ok, or its own refusal — ok:false, a typed
+  // 400, a refused token) is fed to the viewsAck door as the very document the route returns, so the
+  // copy clears or reverts as it does on a socket. A LENS write that reached NO kernel (down, a foreign
+  // service on the recorded port, a kernel that predates the route) keeps the filter LOCAL instead
+  // (review find, 2026-09-08): the lens is the one write whose value is purely this viewer's own
+  // filter, so a snap-back would make filtering impossible without a kernel; the Filter menu says the
+  // filter is not saved and why (_localLens), and the next lens write a kernel takes clears it. Every
+  // other write that reached no kernel reverts, with the reason where the gesture was made.
+  _kernelViewsAnswer(r, writeId, lens, own) {
+    if (lens && r && r.unreachable) {
+      const i = this._viewsWrites.findIndex((w) => w.id === writeId);
+      if (i >= 0) this._viewsWrites.splice(i, 1);
+      this._pendingViews = this._viewsWrites.length ? rederiveViews(this._views, this._viewsWrites) : null;
+      this._holdLocalLens(lens, own || {}, r.error);
+      this._repaintTagSurfaces();
+      this.draw();
+      return;
+    }
+    const had = this._localLens;
+    if (lens && r && !r.unreachable) this._releaseLocalLens(own || {});   // a kernel ruled on these keys (released at post already; kept for a caller that posts without _setViews)
+    this.viewsAck(this._kernelViewsAck(r, writeId));
+    if (had !== this._localLens) this._repaintTagSurfaces();   // the note changed under an open menu
+  }
+
+  // The local lens is held PER KEY — `active`, each surface under `actives`, `tagOrder` — so a second
+  // gesture no kernel takes merges into what is held (a pill drag beside a filter), and a ruled write
+  // releases only the keys it carried (a tagOrder the kernel took leaves the viewer's timeline filter
+  // local, with its note). An entry equal to the store's is not held: a filter toggled back to what
+  // the store has is the store's, not unsaved.
+  _holdLocalLens(fields, own, reason) {
+    const store = this._views || {}, copy = (x) => JSON.parse(JSON.stringify(x));
+    const f = (this._localLens && this._localLens.fields) || {};
+    const held = { active: f.active, actives: Object.assign({}, f.actives || {}), tagOrder: f.tagOrder };
+    if (own.active) { if (fields.active === undefined || lensSame(fields.active, store.active)) delete held.active; else held.active = fields.active; }
+    for (const k of (own.surfaces || [])) {
+      const v = (fields.actives || {})[k];
+      if (v === undefined || lensSame(v, (store.actives || {})[k])) delete held.actives[k]; else held.actives[k] = copy(v);
+    }
+    if (own.tagOrder) { if (!fields.tagOrder || lensSame(fields.tagOrder, shownTagOrder(store))) delete held.tagOrder; else held.tagOrder = fields.tagOrder.slice(); }
+    this._localLens = this._heldLens(held, reason);
+  }
+  _releaseLocalLens(own) {
+    if (!this._localLens) return;
+    const f = this._localLens.fields;
+    const held = { active: f.active, actives: Object.assign({}, f.actives || {}), tagOrder: f.tagOrder };
+    if (own.active) delete held.active;
+    for (const k of (own.surfaces || [])) delete held.actives[k];
+    if (own.tagOrder) delete held.tagOrder;
+    this._localLens = this._heldLens(held, this._localLens.reason);
+  }
+  _heldLens(held, reason) {
+    const fields = {};
+    if (held.active !== undefined) fields.active = held.active;
+    if (Object.keys(held.actives).length) fields.actives = held.actives;
+    if (held.tagOrder) fields.tagOrder = held.tagOrder;
+    return Object.keys(fields).length ? { fields, reason } : null;
+  }
+
+  // the viewsAck frame for a POST /views answer: the route's own document when a kernel ruled; a
+  // refusal no kernel ruled on becomes an ack that is not ok, carrying the reason and no blob to adopt
+  _kernelViewsAck(r, writeId) {
+    const body = r && r.body && typeof r.body === 'object' ? r.body : {};
+    const ack = Object.assign({}, body, { type: 'viewsAck', writeId, ok: !!(r && r.ok) });
+    if (!ack.ok) ack.error = r && r.unreachable ? 'nothing was changed — ' + r.error : (r && r.error) || 'refused';
+    return ack;
   }
 
   // ── THE CORNER BAR — real HTML over the SVG strip (the user 2026-08-25, round three) ─────────
@@ -3703,7 +3912,7 @@ class TimelinePanel {
       x.title = 'remove \u201c' + c.label + '\u201d from this timeline\u2019s filter';
       x.addEventListener('pointerdown', (e) => {
         e.preventDefault(); e.stopPropagation();
-        this._setLens({ actives: Object.assign({}, v.actives, { timeline: lensToggle(lens, c.pick) }) });
+        this._setLens({ actives: Object.assign(this._lensBaseActives(), { timeline: lensToggle(lens, c.pick) }) }, { surfaces: ['timeline'] });
       });
       x.addEventListener('click', (e) => e.stopPropagation());
       chip.appendChild(x);
@@ -3727,6 +3936,7 @@ class TimelinePanel {
   _closeViewsDialog() {
     if (!this._viewsDialog) return;
     this._viewsDialog.remove(); this._viewsDialog = null; this._viewsDialogBuild = null;
+    this._tagEditErr = null;   // a notice the dialog showed was seen; it does not follow the user to the gear or the Filter menu
     this._tagNewDraft = null; this._tagNewInput = null;   // the join menu's draft dies with the dialog (_closeLaneMenu's rule)
     if (this._viewsDialogKey) {   // the Escape hook dies with the dialog on EVERY close path, not just Escape
       try { this._viewsDialogKey.doc.removeEventListener('keydown', this._viewsDialogKey.fn); } catch (e) {}
@@ -3780,7 +3990,7 @@ class TimelinePanel {
       const v = this._curViews();
       const lens = timelineLens(v);
       const apply = (nl, close) => {
-        this._setLens({ actives: Object.assign({}, v.actives, { timeline: nl }) });
+        this._setLens({ actives: Object.assign(this._lensBaseActives(), { timeline: nl }) }, { surfaces: ['timeline'] });
         if (close) this._closeViewsMenu(); else build();
       };
       item('All', { current: lensAll(lens) }).addEventListener('click', () => apply({ all: true }, true));
@@ -3794,8 +4004,31 @@ class TimelinePanel {
         this._closeViewsMenu();
         this._openViewsDialog(null);
       });
+      // a refused write shows HERE too (review find, 2026-09-08: a lens click's refusal showed only in
+      // the dialog and the lane gear, surfaces the click never opened, so the menu dead-ended — every
+      // toggle snapped back with no reason in sight): the dialog's notice in the menu's compact idiom,
+      // ✕ to dismiss; viewsAck / setCaps repaint the open menu (menu._build) as they repaint the dialog
+      const noticeStyle = 'display:flex;align-items:center;gap:6px;margin:2px 8px 4px;padding:3px 8px;'
+        + 'border:1px solid #F85B5A;border-radius:5px;color:#F85B5A;font-size:0.82em;';
+      if (this._tagEditErr && this._tagEditErr.kind !== 'order') {   // a lens or tag refusal; a dialog drag's is the dialog's
+        const er = menu.createDiv();
+        er.setAttribute('style', noticeStyle);
+        er.createSpan({ text: '⚠ ' + (this._tagEditErr.host ? this._tagEditErr.host + ': ' : '') + this._tagEditErr.error });
+        const ex = er.createSpan({ text: '✕' });
+        ex.setAttribute('style', 'margin-left:auto;cursor:pointer;opacity:0.7;');
+        ex.addEventListener('click', (e) => { e.stopPropagation(); this._tagEditErr = null; build(); });
+      }
+      // a filter kept LOCAL because no kernel could save it (_kernelViewsAnswer): the same row, no ✕ —
+      // the note stands as long as the filter is unsaved, and the next lens click a kernel takes clears
+      // both, so an unsaved filter is never shown as a saved one
+      if (this._localLens) {
+        const nr = menu.createDiv();
+        nr.setAttribute('style', noticeStyle);
+        nr.createSpan({ text: '⚠ this filter is not saved — ' + this._localLens.reason });
+      }
     };
     build();
+    menu._build = build;   // viewsAck / setCaps / _kernelViewsAnswer repaint the open menu with a refusal or the not-saved note
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     h.doc.body.appendChild(menu);
     menu.style.left = Math.max(6, Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - 220)) + 'px';
@@ -3907,7 +4140,7 @@ class TimelinePanel {
       // NAME-KEYED (user ruling 2026-08-24): whichever store's id opened this, the header is the
       // tag's ONE identity — rename/recolor/delete fan out to every kernel defining the name
       // (_editTagUnion), and no host prefix appears; kernels are plumbing.
-      const canEdit = typeof window !== 'undefined' && typeof window.__rompTimelineEditTag === 'function';
+      const canEdit = this._remoteBridge();
       const head = card.createDiv();
       head.setAttribute('style', 'display:flex;align-items:center;gap:8px;margin:0 0 8px;');
       const ttl = head.createDiv({ text: 'Sessions & tags' });
@@ -3938,8 +4171,17 @@ class TimelinePanel {
         const tgrid = card.createDiv();
         tgrid.setAttribute('style', 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
           + 'column-gap:14px;row-gap:4px;align-items:center;margin:2px 0 6px;');
-        const action = (row, text, title) => {
+        // `held`: the reason a gesture cannot be honoured here; the action renders disabled (dim, no
+        // pointer, aria-disabled) wearing that reason as its tooltip, in place of a click that could
+        // only end in the refusal notice (review find, 2026-09-08)
+        const action = (row, text, title, held) => {
           const a = row.createSpan({ text });
+          if (held) {
+            a.setAttribute('style', 'cursor:default;opacity:0.35;color:' + MENU_FG + ';');
+            a.setAttribute('title', held);
+            a.setAttribute('aria-disabled', 'true');
+            return a;
+          }
           a.setAttribute('style', 'cursor:pointer;opacity:0.7;color:' + MENU_FG + ';');
           a.setAttribute('title', title);
           return a;
@@ -3949,6 +4191,11 @@ class TimelinePanel {
           // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
           // that does not exist (the 2026-09-05 review) — it reads "creating…" instead
           const editable = !tg.pending && (tg.localId || canEdit);
+          // rename, recolor and delete fan out to EVERY home the name is defined on: with remote halves
+          // and no bridge, _editTagUnion can only refuse them (the remote halves go first), so the row
+          // shows the three disabled with the refusal as their tooltip (review find, 2026-09-08)
+          const held = editable && !canEdit && (tg.remotes || []).length
+            ? this._unreachableText((tg.remotes || []).map((rt) => rt.host), !!tg.localId) : '';
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
           // DRAGGABLE (the user 2026-08-25): grab a pill to reorder the tags — the drop writes
@@ -3993,7 +4240,7 @@ class TimelinePanel {
                 // the union display order, remote-homed names included; the kernel orders the
                 // stored tags array by it (lensBlob's own re-sort matters on the Electron path,
                 // where the posted blob is the file)
-                this._setLens({ tagOrder: names });
+                this._setLens({ tagOrder: names }, { tagOrder: true });
                 build();
               };
               pillCell.addEventListener('pointermove', onMove);
@@ -4058,7 +4305,8 @@ class TimelinePanel {
           // delete — the destructive convention: dim at rest, red on hover
           const del = tgrid.createDiv();
           if (editable) {
-            const d = action(del, 'delete', 'DELETE the tag \u201c' + tg.name + '\u201d everywhere (members keep running, just untagged)');
+            const d = action(del, 'delete', 'DELETE the tag \u201c' + tg.name + '\u201d everywhere (members keep running, just untagged)', held);
+            if (!held) {
             d.addEventListener('mouseenter', () => { d.style.color = '#F85B5A'; d.style.opacity = '1'; });
             d.addEventListener('mouseleave', () => { d.style.color = MENU_FG; d.style.opacity = '0.7'; });
             d.addEventListener('click', () => {
@@ -4066,14 +4314,17 @@ class TimelinePanel {
               this._editTagUnion(tg, { delete: true });
               build();
             });
+            }
           }
           // rename — turns the pill into an input
           const ren = tgrid.createDiv();
           if (editable) {
-            const r = action(ren, 'rename', 'rename this tag (everywhere it is defined)');
+            const r = action(ren, 'rename', 'rename this tag (everywhere it is defined)', held);
+            if (!held) {
             r.addEventListener('mouseenter', () => { r.style.opacity = '1'; });
             r.addEventListener('mouseleave', () => { r.style.opacity = '0.7'; });
             r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); this._tagRenameDraft = null; build(); });
+            }
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
@@ -4084,11 +4335,12 @@ class TimelinePanel {
           colCell.setAttribute('style', 'display:grid;grid-template-columns:repeat(' + swCols
             + ',14px);gap:6px;align-items:center;');
           if (editable) {
+            if (held) { colCell.setAttribute('title', held); colCell.setAttribute('aria-disabled', 'true'); }
             for (const c of (this._palette && this._palette.length ? this._palette : [tc])) {
               const sw = colCell.createSpan();
-              sw.setAttribute('style', 'width:14px;height:14px;border-radius:50%;cursor:pointer;background:' + c + ';'
-                + (c === tg.color ? 'outline:2px solid #ffffff;outline-offset:1px;' : 'opacity:0.7;'));
-              sw.addEventListener('click', () => { this._editTagUnion(tg, { color: c }); build(); });
+              sw.setAttribute('style', 'width:14px;height:14px;border-radius:50%;cursor:' + (held ? 'default' : 'pointer') + ';background:' + c + ';'
+                + (c === tg.color ? 'outline:2px solid #ffffff;outline-offset:1px;' : held ? 'opacity:0.35;' : 'opacity:0.7;'));
+              if (!held) sw.addEventListener('click', () => { this._editTagUnion(tg, { color: c }); build(); });
             }
           }
         }
@@ -4123,7 +4375,7 @@ class TimelinePanel {
           // name skips the ones in use rather than counting rows. The write names the new id as
           // edited: a kernel that reads `edited` takes an unnamed unknown tag for a stale copy
           // re-creating a deleted one.
-          const nv = JSON.parse(JSON.stringify(v));
+          const nv = JSON.parse(JSON.stringify(this._writeBase()));   // the write base, not the shown blob: an unsaved filter never rides a create
           const names = new Set(viewTags(nv).map((t) => t.name));
           let n = 1; while (names.has('tag ' + n)) n++;
           const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + n, color, members: [] };
@@ -4163,7 +4415,7 @@ class TimelinePanel {
           if (key === '*' || key !== 'feed') {
             const upd = key === '*' ? { chat: lens, timeline: lens, outline: lens } : {};
             if (key !== '*') upd[key] = lens;
-            this._setLens({ actives: Object.assign({}, this._curViews().actives, upd) });
+            this._setLens({ actives: Object.assign(this._lensBaseActives(), upd) }, { surfaces: Object.keys(upd) });
           }
           if (key === '*' || key === 'feed') {
             try { localStorage.setItem('romp:feedTags-set', JSON.stringify({ lens, t: Date.now() })); } catch (e) {}
@@ -4293,9 +4545,10 @@ class TimelinePanel {
               if (toIdx === fromIdx) return;
               const vis = cells.map((c) => c._sid);
               vis.splice(toIdx, 0, vis.splice(fromIdx, 1)[0]);
+              const prev = ((this.data && this.data.sessions) || []).map((s) => s.id);   // what a refused persist puts back
               const full = this._mergeVisibleOrder(vis);   // only the shown rows permute within the full order
               this._applyOrderToData(full);                // optimistic — no snap-back before the next poll
-              this._persistOrder(full);                    // the shared store: tabs + lanes follow
+              this._persistOrder(full, prev, vis[toIdx], 'dialog');   // the shared store: tabs + lanes follow
               renderRows();
             };
             nameCell.addEventListener('pointermove', onMove);
@@ -4484,37 +4737,150 @@ class TimelinePanel {
     if (this._dismissed.size) this.data.sessions = this.data.sessions.filter((s) => !this._dismissed.has(s.id));
   }
 
-  // Persist a per-session flag. Web dashboard: the host WS hook (→ kernel setSessionFlag → rebuild feed).
-  // Obsidian desktop fallback: write the same session-flags.json the kernel's build_feed reads, with the
-  // discipline the kernel's own writer has (review find, 2026-09-08). Before this it was the exact shape
-  // the kernel dropped: any read fault or torn bytes became {} and was written over EVERY session's flags
-  // (postal isolation included), and the write truncated the live file in place, so the kernel's strict
-  // reader could observe 0 bytes mid-write and quarantine the very file being written. Now it mirrors
-  // _persistOrder / _setViews: Electron-or-nothing (a bare-node test run must never touch the real file),
-  // the kernel's state root, a refusal on any read fault or non-object parse (only a MISSING file reads as
-  // empty; the kernel quarantines torn bytes on its own next read), and an atomic tmp + rename publish.
+  // Persist a per-session flag. Web dashboard: the host WS hook (→ kernel setSessionFlag → rebuild
+  // feed). Obsidian: the kernel's POST /flag — the same setter, the same JSON-boolean gate, and the same
+  // refusal, delivered to the settingRefused door this page already renders from (the lane gear ends its
+  // optimistic state and says why). Until 2026-09-08 this path read-modify-wrote session-flags.json
+  // itself, with no lock against the kernel's own setter; the panel writes none of the state files now
+  // (_kernelPost has the rule). Plain node (the runner) has neither a hook nor Electron and writes
+  // nothing — the guard every writer here wears.
   _setSessionFlag(s, flag, value) {
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetFlag === 'function') {
         window.__rompTimelineSetFlag(s.id, flag, value); return;
       }
-      if (typeof process === 'undefined' || !process.versions || !process.versions.electron) return;
+      if (!this._kernelHost()) return;
+      return this._kernelPost('/flag', { id: s.id, flag, value: !!value }).then((r) => {   // the settle promise, for the tests that await it
+        if (r.ok) return;                                          // the next data poll confirms it; _pendingFlags holds it sticky meanwhile
+        // the kernel's own refusal (200, ok:false) carries the value it still paints; a refusal it never
+        // ruled on (nothing answering, a 403, a typed 400) puts the toggle back where the click found it
+        const painted = r.body && typeof r.body.value === 'boolean' ? r.body.value : !value;
+        this.settingRefused({ gesture: 'flag', sid: s.id, flag, value: painted,
+                              text: r.refusal ? r.error : "couldn't save that setting — " + r.error });
+      });
+    } catch (e) { /* no host hook + no Node → can't persist */ }
+  }
+
+  // ── the Obsidian panel writes THROUGH the kernel (2026-09-08) ───────────────────────────────
+  // The panel runs inside Obsidian's Electron with Node's fs and the state dir, and no socket to the
+  // kernel — so it used to write session-flags.json, timeline-views.json and session-order.json ITSELF: a
+  // second writer beside the kernel, whose whole-blob views write skipped the judge and the stale-writer
+  // guard (a concurrent dashboard edit could be rolled back and the guard never saw the write), whose
+  // flag write raced the kernel's own setter with no lock, and whose order write skipped the merge that
+  // keeps untouched lanes' slots. Now every write is a POST to the kernel's /flag, /views and /order,
+  // which land through the same setters the dashboards' socket ops use, with the same validation and
+  // the same refusals. READS are unchanged: the host still builds the data from the files. With no
+  // kernel to post to — no serve-port record under the state dir, nothing answering on it, or a token
+  // it refuses — the gesture is REFUSED and the panel says so where the gesture was made (the lane
+  // gear, the tags dialog): an authority that cannot be reached is surfaced, never replaced by a write
+  // it cannot check, since this panel cannot tell "no kernel anywhere" from "a kernel it cannot see"
+  // (a stale record, another port, a token from another state dir), and the second case is exactly the
+  // race this removes. Same-user trust boundary as every kernel client: the serve token comes from the
+  // kernel's 0600 file and rides the X-Romp-Token header (never a URL), the port from the kernel's own
+  // record (never a guess). A panel reading SYNCED state on another machine finds a record no kernel of
+  // its own answers on and lands in the same refusal. Node's http, not fetch: a fetch from Obsidian's
+  // app:// origin with a custom header needs a CORS preflight, and a failed preflight reads exactly like
+  // a kernel that is down.
+  _kernelHost() {
+    // Electron (Obsidian) only: a bare-node run (the test runner) and a browser page (which has its host
+    // hooks) have no kernel to post to from here — the guard the file writers wore (the user 2026-07-02)
+    if (typeof process === 'undefined' || !process.versions || !process.versions.electron) return null;
+    // the requires sit INSIDE a try, like every Node require in this file (_tmuxPath, the shell-outs, the
+    // writers this replaced): this file is also bundled for the BROWSER (esbuild, platform browser, the
+    // webview's timeline-main.ts inlines it), and esbuild leaves an unresolvable require alone only when
+    // a try/catch wraps it — a bare one fails the build (PR #1078's first CI run). The guard above keeps
+    // the page from ever evaluating them.
+    try {
       const fs = require('fs'), os = require('os'), path = require('path');
-      const dir = process.env.ROMP_STATE_DIR
-        || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'romp');
-      const fp = path.join(dir, 'session-flags.json');
-      let cur = {};
-      try { cur = JSON.parse(fs.readFileSync(fp, 'utf8')); }
-      catch (e) { if (!e || e.code !== 'ENOENT') return; }   // unreadable or torn: never write over a store we could not read
-      if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return;   // valid JSON of the wrong shape: not ours to overwrite
-      const f = (cur[s.id] && typeof cur[s.id] === 'object') ? cur[s.id] : {};
-      if (value) f[flag] = true; else delete f[flag];
-      if (Object.keys(f).length) cur[s.id] = f; else delete cur[s.id];
-      fs.mkdirSync(dir, { recursive: true });
-      const tmp = fp + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(cur));
-      fs.renameSync(tmp, fp);
-    } catch (e) { /* no host hook + no Node fs → can't persist */ }
+      const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+      const root = process.env.ROMP_STATE_DIR || path.join(base, 'romp');   // per-kernel state root (plans/multi-kernel.md; tests/test_state_dir_override.py pins this line)
+      return { fs, path, root };
+    } catch (e) { return null; }
+  }
+
+  // One POST to the kernel → a promise of {ok, status?, body?, error?, refusal?, unreachable?, foreign?};
+  // it never rejects. `error` is always a bare REASON the caller frames ("couldn't save that setting —
+  // …", "nothing was changed — …"). ok is true only for a 2xx whose body is a romp kernel's
+  // {ok:true, …}; ok:false carries the KERNEL'S words when a kernel ruled — a 200 with ok:false is its
+  // own refusal (`refusal`: the full sentence the dashboards see), a 4xx with ok:false its typed
+  // complaint, a 401/403 the token it would not take — and `unreachable` when NO romp kernel took the
+  // request: nothing answering (KERNEL_DOWN, or KERNEL_DOWN_NO_RECORD when the port was the CLI's
+  // default rather than the kernel's record), a record or token file this panel could not read, a
+  // kernel that predates the route (a 404), or some other local service that now owns the recorded
+  // port (`foreign`: a 2xx that is not a romp answer — read as accepted, that left the optimistic toggle
+  // re-applied on every push until a value that never comes, the silent divergence this change exists
+  // to remove). A body that stalls or a socket that drops after the headers settles too (res 'error' /
+  // 'aborted' / 'close' behind the done guard): unsettled, the optimistic state stood forever with no
+  // message, and the unhandled 'error' was an uncaught exception in the renderer.
+  _kernelPost(route, body) {
+    const h = this._kernelHost();
+    if (!h) return Promise.resolve({ ok: false, unreachable: true, error: KERNEL_DOWN });
+    const at = (name) => h.path.join(h.root, name);
+    const unreadable = (what, p, e) => Promise.resolve({ ok: false, unreachable: true,
+      error: "this panel could not read the kernel's " + what + ' ' + p + ' (' + ((e && e.code) || 'error') + ')' });
+    let tok = '';
+    try { tok = h.fs.readFileSync(at('serve-token'), 'utf8').trim(); }
+    catch (e) { if (!e || e.code !== 'ENOENT') return unreadable('token file', at('serve-token'), e); }
+    if (!tok) return Promise.resolve({ ok: false, unreachable: true, error: KERNEL_DOWN });   // never minted: no kernel has run against this state dir
+    let port = 0, recorded = true, envVar = '', envRaw = '';
+    try { port = parseInt(h.fs.readFileSync(at('serve-port'), 'utf8'), 10); }
+    catch (e) {
+      if (!e || e.code !== 'ENOENT') return unreadable('port record', at('serve-port'), e);
+      // no record: a kernel older than this panel writes the token and no port. Resolve the port the way
+      // the CLI does — the environment in cli/keyswap.py _kernel_urls' order (ROMP_KERNEL_PORT, then
+      // ROMP_SERVE_PORT; an empty value is unset), else bin/romp's default, ${ROMP_KERNEL_PORT:-29855}
+      // (keyswap alone goes on to probe two older ports; this panel does not) — and try it; only a
+      // refused connection then reads as down. An unusable override is refused, never silently replaced
+      // by the default (_kernel_urls' rule: that replacement hands the token to whatever answers there).
+      recorded = false;
+      const pick = (name) => String(process.env[name] || '').trim();
+      envVar = pick('ROMP_KERNEL_PORT') ? 'ROMP_KERNEL_PORT' : (pick('ROMP_SERVE_PORT') ? 'ROMP_SERVE_PORT' : '');
+      envRaw = envVar ? pick(envVar) : '29855';
+      port = /^\d+$/.test(envRaw) ? parseInt(envRaw, 10) : 0;
+    }
+    if (!(port > 0 && port < 65536))
+      return Promise.resolve({ ok: false, unreachable: true, error: recorded
+        ? "this panel could not read the kernel's port record " + at('serve-port') + ' (not a port number)'
+        : envVar + '=' + JSON.stringify(envRaw) + ' is not a port' });
+    const down = recorded ? KERNEL_DOWN : KERNEL_DOWN_NO_RECORD;
+    const where = '127.0.0.1:' + port;
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (r) => { if (!done) { done = true; resolve(r); } };
+      const dropped = () => finish({ ok: false, unreachable: true, error: down });
+      try {
+        const data = JSON.stringify(body);
+        const req = require('http').request({
+          host: '127.0.0.1', port, path: route, method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), 'X-Romp-Token': tok },
+        }, (res) => {
+          let text = '';
+          res.setEncoding('utf8');
+          res.on('data', (c) => { text += c; });
+          res.on('error', dropped); res.on('aborted', dropped); res.on('close', dropped);   // a 'close' after a complete 'end' is a no-op behind the guard
+          res.on('end', () => {
+            const st = res.statusCode || 0;
+            let j = null;
+            try { j = JSON.parse(text); } catch (e) { j = null; }
+            if (!j || typeof j !== 'object' || Array.isArray(j)) j = null;
+            if (st === 401 || st === 403)
+              return finish({ ok: false, status: st, error: 'the kernel on ' + where + " refused this panel's token (HTTP " + st + ')' });
+            if (j && j.ok === false)             // a romp kernel's refusal: its own sentence on a 200, its typed complaint on a 4xx
+              return finish({ ok: false, status: st, body: j, refusal: st >= 200 && st < 300, error: j.error || 'refused' });
+            if (st >= 200 && st < 300 && j && j.ok === true)
+              return finish({ ok: true, status: st, body: j });
+            if (st >= 200 && st < 300)           // a 2xx that no romp kernel sent
+              return finish({ ok: false, status: st, unreachable: true, foreign: true, error: where + ' answered, but not as a romp kernel' });
+            if (st === 404)                      // a romp kernel from before these routes, found on the CLI's port
+              return finish({ ok: false, status: st, unreachable: true, error: 'the kernel on ' + where + ' predates this panel and has no ' + route + ' route; restart romp (`romp refresh`) and try again' });
+            return finish({ ok: false, status: st, error: 'the kernel on ' + where + ' answered HTTP ' + st });
+          });
+        });
+        req.on('error', dropped);
+        req.setTimeout(10000, () => req.destroy());
+        req.end(data);
+      } catch (e) { dropped(); }
+    });
   }
 
   // Clear a DEAD lane's leftover row from the timeline (the Clear pill on a struck-through lane). The kernel
@@ -4578,26 +4944,27 @@ class TimelinePanel {
     // that breathes between two tones on a sine ease. That's a per-<text> SMIL `<animate fill>` (added
     // where the chip is drawn below), so no gradient def is needed here.
     svg.appendChild(defs);
-    // THE PLOT GROUP (2026-09-06, the live tick as a transform write). Every element positioned by TIME through
-    // x() below goes into this one <g> — bars and their hits, the awaiting/compacting spans, clear seams, branch
-    // and message connectors, arrival and prompt dots, comment squares, the judging runs, the axis gridlines,
-    // clocks and gap squiggles — while the chrome that sits at the window's edges or in the gutter (row hits,
-    // lane lines, names, gear, chips, batteries, the judge rails, the now line, the lock) stays on the svg.
-    // Between builds the live edge advances with the clock, and moving the view by Δc compressed seconds is
-    // one attribute write on this group (translate(-Δc·plotW/winSec, 0)) plus a width write on each element
-    // whose right edge rides the live now (`riders`): the tick (_tickLive → _tickTranslate) does exactly that
-    // and nothing else, where it used to wipe and rebuild the whole svg up to sixteen times a second at a
-    // zoomed-in window. The group is APPENDED after the lane chrome so its paint order matches the old one:
-    // over the rows' hit rects and lane lines (a bar must take the hover), under the lock and the jump button.
-    // Clipping stays arithmetic (this file has no clipPath; see the stub comment): content the build clamped
-    // at the window's left edge pokes into the gutter gap by the drift since that build, which the next frame's
-    // rebuild resets — the skeleton the kernel re-sends every 5 s bounds it — and _tickTranslate hands the tick
-    // back to a full draw() before the drift reaches the battery column. Glyphs are anchored rather than clamped
-    // and overhang their anchor, so the ones anchored within that cap of the edge are listed (`edge`) and the
-    // tick hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is
-    // painted over the gutter either way. The tick only moves what the build drew: a gridline or clock whose
-    // tick enters the window between builds, or a lane aging out, waits for the next full draw — there is no
-    // clip, so nothing is pre-drawn outside the window — a lag the kernel's 5 s skeleton rebuild bounds.
+    // THE PLOT GROUP (the live tick as a transform write). Every element positioned by TIME through x() below
+    // goes into this one <g> — bars and their hits, the awaiting/compacting spans, clear seams, branch and
+    // message connectors, arrival and prompt dots, comment squares, the judging runs, the axis gridlines, clocks
+    // and gap squiggles — while the chrome that sits at the window's edges or in the gutter (row hits, lane
+    // lines, names, gear, chips, batteries, the judge rails, the now line, the lock) stays on the svg. Between
+    // builds the live edge advances with the clock, and moving the view by Δc compressed seconds is one attribute
+    // write on this group (translate(-Δc·plotW/winSec, 0)) plus a width write on each element whose right edge
+    // rides the live now (`riders`): the tick (_tickLive → _tickTranslate) does exactly that and nothing else,
+    // where every look of the live loop used to wipe and rebuild the whole svg. The group is APPENDED after the
+    // lane chrome so its paint order matches the old one: over the rows' hit rects and lane lines (a bar must
+    // take the hover), under the lock and the jump button. Clipping stays arithmetic (this file has no clipPath;
+    // see the stub comment): content the build clamped at the window's left edge pokes into the gutter gap by
+    // the drift since that build, which the next frame's rebuild resets, and _tickTranslate hands the tick back
+    // to a full draw() before the drift reaches the battery column. Glyphs are anchored rather than clamped and
+    // overhang their anchor, so the ones anchored within that cap of the edge are listed (`edge`) and the tick
+    // hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is painted
+    // over the gutter either way. The tick only moves what the build drew — nothing is pre-drawn outside the
+    // window — so what enters or changes between builds waits for a full draw: a gridline and its clock reaching
+    // the right edge get one the moment the clock reaches it (the build dates that, `nextTick`); a lane aging
+    // out or a time-latched visual waits for the next kernel frame — the next push on a changed board, the 60 s
+    // repost of an unchanged skeleton on a quiet one.
     const plot = el('g', { 'data-tl-plot': '1' });
     const riders = [];          // {el, attr, base, min} or {el, fn}: the live-edge riders — an open bar's/span's/run's width (or x2) is max(min, base + the drift), base the UN-clamped extent so the floor applies to the grown value; fn re-derives a placement the build centred
     const edge = [];            // {el, x}: glyphs anchored within the drift cap of the plot's left edge — the tick hides one once its anchor crosses the edge (_tickTranslate), the event a full draw culls it on
@@ -4814,7 +5181,7 @@ class TimelinePanel {
     placedLabels.push([lockCx - lockHalf, lockCx + lockHalf]);
     for (let tk = Math.ceil(t0 / step) * step; tk <= t1; tk += step) {
       if (inGap(tk)) continue;
-      nearEdge(plot.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 })), x(tk));
+      nearEdge(plot.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1, 'pointer-events': 'none' })), x(tk));   // in the plot group it paints OVER the row hits it used to sit under: the row keeps the pointer
       this._mc.font = '10px ' + this._fontFace();
       const hw = this._mc.measureText(clock(tk)).width / 2;
       if (!placeLabel(x(tk) - hw, x(tk) + hw)) continue;
@@ -4965,13 +5332,17 @@ class TimelinePanel {
       // input (historical, from the state-transition log), plus the current open one. The
       // dashed white overlay reads as a distinct texture vs a solid "still working" bar.
       const aw = (s.awaiting && s.awaiting.length) ? s.awaiting
-                 : ((s.live && (s.state === 'permission' || s.state === 'needsInput' || s.state === 'awaiting') && s.since != null) ? [[s.since, t1]] : []);
+                 : ((s.live && (s.state === 'permission' || s.state === 'needsInput' || s.state === 'awaiting') && s.since != null) ? [[s.since, t1, true]] : []);
       for (const span of aw) {
-        // OPEN = the session is STILL in the state: the kernel (_state_intervals) ends such a span at the
-        // payload's own clock, so an end within 2 s of data.now (or a null one) means open. Draw it to the
-        // live edge, the way barEndT draws an open work bar, so the stripe glides with the edge instead of
-        // sitting at the build clock until the next kernel rebuild (2026-09-06).
-        const open = span[1] == null || span[1] >= data.now - 2;
+        // OPEN = the session is STILL in the state, which the kernel says outright: an interval with no later
+        // transition carries true as its third element ([start, end, true], _state_intervals) beside its
+        // numeric end at the build clock. Draw it to the live edge, the way barEndT draws an open work bar,
+        // so the stripe glides with the edge instead of sitting at the build clock until the next kernel
+        // rebuild. The mark, never the end's distance from data.now (review find, 2026-09-08): a connect
+        // frame carries the cycle's clock over the cached build's lanes, so that distance is the cache's age,
+        // and the 2 s tolerance this read used to be drew a lane blocked right now closed on every connect
+        // over a cache older than that. A null end reads open too (a span this renderer made itself, above).
+        const open = span[1] == null || span[2] === true;
         const a0 = span[0], b0 = open ? Math.max(nowS, a0) : span[1];
         const sa = Math.max(a0, t0), sb = Math.min(b0, t1); if (sb <= sa) continue;
         // The awaiting interval (state log) and the work bars (transcript) come from different
@@ -5011,9 +5382,9 @@ class TimelinePanel {
       // compacting RIGHT NOW. This is the in-progress indicator; the isCompactSummary marker below is the
       // after-the-fact one. Same figure-ground as the awaiting candy-cane.
       const comp = (s.compacting && s.compacting.length) ? s.compacting
-                   : ((s.live && s.state === 'compacting' && s.since != null) ? [[s.since, t1]] : []);
+                   : ((s.live && s.state === 'compacting' && s.since != null) ? [[s.since, t1, true]] : []);
       for (const span of comp) {
-        const open = span[1] == null || span[1] >= data.now - 2;   // still compacting: to the live edge (see the awaiting loop)
+        const open = span[1] == null || span[2] === true;   // still compacting (the kernel's open mark): to the live edge (see the awaiting loop)
         const a0 = span[0], b0 = open ? Math.max(nowS, a0) : span[1];
         const sa = Math.max(a0, t0), sb = Math.min(b0, t1); if (sb <= sa) continue;
         const eh = BAR_H + 5, cx = x(sa), cwRaw = x(sb) - x(sa), cw = Math.max(2, cwRaw);
@@ -5826,11 +6197,13 @@ class TimelinePanel {
     // left of the plot (COLGAP past the battery column, 4 px without one): content the build clamped at the
     // window's left edge may poke that far into the gap before the tick hands back to a full draw; the glyphs
     // anchored within the cap of the edge (`edge`, nearEdge) overhang their anchor, and the tick hides each once
-    // its anchor crosses the edge (`left`), so none reaches the battery column either.
+    // its anchor crosses the edge (`left`), so none reaches the battery column either. nextTick is the first axis
+    // tick past the window's right edge, in real seconds: the same interval the axis pass above draws at, so the
+    // tick hands back for a full draw exactly when a gridline and its clock would enter.
     this._tickPlot = liveRiders ? null : {
       g: plot, riders, edge, left: M.left, cNow, cT0, winSec, k: plotW / winSec, applied: 0,
       trailing: !!(cmap && cmap.gaps.length && cmap.gaps[cmap.gaps.length - 1].trailing),
-      maxDrift,
+      maxDrift, nextTick: (Math.floor(t1 / step) + 1) * step,
     };
 
     // far-right ⟩⟩ jump-to-now button — only when held back off the live edge (unpinned)

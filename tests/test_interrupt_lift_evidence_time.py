@@ -294,7 +294,7 @@ class EndToEndThroughTheTick(_TickFixture):
 
 
 class TheTickPushesNothingInline(_TickFixture):
-    """perf batch 2 P1 (2026-09-06): the tick's flips reach the feed through the writers' own dirty mark
+    """The tick's flips reach the feed through the writers' own dirty mark
     and pusher wake — the next cycle's rebuild — never through an inline _push_all on the tick. The
     stand-down lift (a marker whose block a judge now owns) writes nothing and so moves nothing.
     _views_dirty is a module global shared across the suite: each test records its own floor."""

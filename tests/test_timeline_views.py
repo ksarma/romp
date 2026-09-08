@@ -267,6 +267,9 @@ class TimelineViews(unittest.TestCase):
         self.assertIn('return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
                       '            "views": _views_client(), "live": sorted({str(x) for x in live})}', src, "tabOrder frames carry it")
         self.assertIn('_tab_order_frame(tab_order, tab_meta, tmux)', src, "tabOrder pushes carry it (the one frame builder, T258)")
+        # every tabOrder frame is built by ONE helper (2026-09-06: the frame also carries selfHost)
+        self.assertIn('return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
+                      '            "views": _views_client(), "live": sorted({str(x) for x in live})}', src, "tabOrder frames carry it")
         self.assertIn('"views": _views_client(), "live":', src, "…which carries the blob")
         # the connect-time tabOrder IS the push's (the ready handler's own frame is gone, 2026-09-03; upstream's
         # T258 spelling of that frame, `_frame = _tab_order_frame(_o, _tabs, _tm)`, has no home here either)

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""_interrupt_marks on the pusher thread: the narrowing (P2 S1/S2, 2026-09-06) and the memo (P2).
+"""_interrupt_marks on the pusher thread: the author gate and the memo.
 
-The tick, build_feed and the user-todo floor each tallied a session's user atoms every cycle: a
-flatten, a per-atom is_interrupt_record text join (most of the cost, and most user records are
-tool_result-only harness lines that can never be an interrupt record or a human prompt), and the
-floor's call was a second full scan over the very turns the card's badge had just read.
+The interrupt tick, the nudge tick and build_feed's badge each tallied a session's user atoms every
+cycle: a flatten, then a per-atom is_interrupt_record text join (most of the cost, and most user
+records are tool_result-only harness lines that can never be an interrupt record or a human prompt),
+and the user-todo floor's call was a second full scan over the very turns the card's badge had just read.
 
-S1 drops the atoms the file adapter marked text-less (author None) before the text scan; exact,
-because author_of returns None on no other shape. S2 hands build_feed's badge read into the floor.
-The memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
+The gate drops the atoms the file adapter marked text-less (author None) before the text scan; exact,
+because author_of returns None on no other shape. build_feed hands its badge read into the floor. The
+memo keys on the parse object's identity plus the machineCut stamp, per (sid, parse family).
 
 Synthetic fixtures only: placeholder UUIDs, invented prompt text, hostname-free paths.
 """
@@ -16,6 +16,8 @@ import inspect
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
@@ -86,7 +88,7 @@ class _Counter:
 
 
 class AuthorNoneAtomsAreSkipped(unittest.TestCase):
-    """S1: a user atom carrying author None (author_of's answer for a text-less record) is dropped before
+    """A user atom carrying author None (author_of's answer for a text-less record) is dropped before
     the text scan; no tally changes. The file adapter OMITS the key for that answer rather than writing
     it (pinned below), so the gate's reach on disk-parsed sessions is nil and a key-less atom is still
     scanned: the SDK live tail carries texty user atoms without the key."""
@@ -163,13 +165,13 @@ class AuthorNoneAtomsAreSkipped(unittest.TestCase):
                     a = em.author_of(blocks, ps, {}, sdk_human)
                     if a is None:
                         self.assertEqual(em._text_of(blocks), "",
-                                         "author None with text present would make S1 inexact (%r %r)" % (blocks, ps))
+                                         "author None with text present would make the gate inexact (%r %r)" % (blocks, ps))
                     if em._text_of(blocks):
                         self.assertIsNotNone(a, "every branch on a non-empty text returns an author (%r)" % ps)
 
 
 class FloorReusesTheBadgeRead(unittest.TestCase):
-    """S2: _user_todo_idle takes the caller's interrupt read instead of scanning the same turns again;
+    """_user_todo_idle takes the caller's interrupt read instead of scanning the same turns again;
     an unknown (None) read still computes, and build_feed hands its badge value through."""
 
     def setUp(self):
@@ -326,7 +328,7 @@ class _MemoHarness(unittest.TestCase):
         km._autonudge_cache.clear()
         km._pending_ops.clear()
         km._intr_marks_memo.clear()
-        jd._PARSE_CACHE.clear()
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
 
     def tearDown(self):
         jd._rebind_state(self.saved[0])
@@ -479,6 +481,24 @@ class MemoAcrossTheCycle(_MemoHarness):
                          "the session left the alive set: both of its entries are released")
         self.assertEqual(self._stats()["evict"], s0["evict"] + 2)
 
+    def test_the_nudge_tick_reads_the_judge_entry_without_a_scan(self):
+        # the third per-cycle caller: the nudge tick's interrupt gate reads the judge parse through the memo, so after
+        # the interrupt tick has filled the (sid, "judge") entry the nudge tick text-scans no atom
+        km._interrupt_block_tick(NOW, self.tmux)
+        self.assertIn((SID, "judge"), km._intr_marks_memo)
+        row = next(r for r in km._alive_sessions(NOW, self.tmux) if r["sid"] == SID)
+        s0 = self._stats()
+        c = _Counter(km.em, "is_interrupt_record")
+        try:
+            verdict = km._auto_nudge_session(row, NOW, self.tmux, {}, {}, alive_ids={SID})
+        finally:
+            c.close()
+        self.assertEqual(verdict, "user-interrupt", "the gate ruled on the interrupt")
+        self.assertEqual(len(c.calls), 0, "the nudge tick read the judge entry: no atom was text-scanned")
+        s1 = self._stats()
+        self.assertEqual(s1["hit"], s0["hit"] + 1); self.assertEqual(s1["miss"], s0["miss"])
+        self.assertEqual(sorted(k for k in km._intr_marks_memo if k[0] == SID), [(SID, "judge")], "no second entry was minted")
+
     def test_the_cap_clears_the_memo(self):
         saved = km._INTR_MARKS_MEMO_MAX
         km._INTR_MARKS_MEMO_MAX = 4
@@ -501,6 +521,37 @@ class MemoAcrossTheCycle(_MemoHarness):
         self.assertEqual(after["hit"], before["hit"] + 1)
         self.assertEqual(after["entries"], len(km._intr_marks_memo))
         self.assertEqual(set(after), {"hit", "miss", "evict", "entries"})
+
+
+class CounterBumpsAreAtomic(unittest.TestCase):
+    """The memo's counters are bumped from the pusher thread and from connect-time builds on socket threads at once,
+    so they go through _intr_marks_bump under a lock; a bare `+= 1` is a read-modify-write that loses increments.
+    Under the GIL alone the loss is rare, so a dict whose reads yield the thread forces the interleaving."""
+
+    def test_concurrent_bumps_lose_nothing(self):
+        class _Yielding(dict):
+            def get(self, k, d=None):
+                v = dict.get(self, k, d); time.sleep(0); return v
+
+            def __getitem__(self, k):
+                v = dict.__getitem__(self, k); time.sleep(0); return v
+        saved = km._intr_marks_memo_stats
+        km._intr_marks_memo_stats = _Yielding(saved)
+        try:
+            s0 = km._intr_marks_memo_stats["hit"]
+
+            def run():
+                for _ in range(300):
+                    km._intr_marks_bump("hit")
+            ts = [threading.Thread(target=run, daemon=True) for _ in range(8)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(60)
+            self.assertFalse(any(t.is_alive() for t in ts))
+            self.assertEqual(km._intr_marks_memo_stats["hit"] - s0, 8 * 300)
+        finally:
+            km._intr_marks_memo_stats = saved
 
 
 if __name__ == "__main__":

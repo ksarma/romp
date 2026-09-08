@@ -381,7 +381,7 @@ class NudgeTickBoundary(_World):
                   mock.patch.object(km, "_compacting_now", lambda sid, **kw: False),
                   mock.patch.object(km, "_api_error", lambda path: None),
                   mock.patch.object(km, "_session_working", lambda turns: False),
-                  mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, sid="", **kw: False),   # (family=)
+                  mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, sid="", **k: False),
                   mock.patch.object(km, "_backend_queued", lambda sid: False),
                   mock.patch.object(km, "_backend_rewind_pending", lambda sid: False),
                   mock.patch.object(km, "_last_state", lambda sid: ("", 0)),
