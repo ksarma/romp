@@ -30031,7 +30031,10 @@ def _note_send_landings(sid, live, turns, tx_text_t):
             ent["keys"].append(key)
             break
     while len(ids) > _LANDED_SEND_IDS_CAP:
-        del ids[next(iter(ids))]                       # insertion order: the oldest landing goes first
+        try:
+            del ids[next(iter(ids))]                   # insertion order: the oldest landing goes first
+        except (KeyError, StopIteration, RuntimeError):
+            break                                      # another build (an HTTP request's) trimmed it meanwhile
 
 
 def _merge_live_atoms(session, sid, shown_texts=()):
