@@ -875,21 +875,57 @@ function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
   return { placed, lexError };
 }
 
-function analyzeRendered(root: DElement, source: string): RenderedIndex {
+// ── the source half of the rendered index, kept for the last source ──────────────────────────────────
+/** A block as the walk over the source alone answers it, before any root's pairing: everything in Block but `dom`
+ *  (`refused` here is the walk's own, which the pairing may overwrite per root). */
+type Walked = Omit<Block, "dom">;
+/** What the rendered index reads from the source alone: N and its offset map, marked's top-level tokens placed over N
+ *  and the block table they make (sourceBlockSpans), and, once a Rendered root has asked for it, each block's walk
+ *  (Walked). One entry, keyed on the source string: the viewer shows one text at a time and paints it many times over
+ *  new roots (a Rendered/Raw switch swaps the body's children and keeps the text; a reload of unchanged bytes does the
+ *  same), and the reader's place seats through this table on every paint of a text view (reader-place.ts), so a fresh
+ *  root used to pay the whole build again (the Slice 2 review, round 4: 5,000 paragraphs, 147 ms per fresh root, of
+ *  which the lex was 48 ms and the walk about 70; the pairing, the root's own, about 22). The walk waits for the first
+ *  Rendered root, so a Raw view (any non-markdown file) pays the lex alone, as before. */
+type SourceTable = { source: string; N: string; nStart: Int32Array | null; lexError: string | null; placed: Placed[]; spans: SourceRange[]; walked: Walked[] | null };
+let sourceCache: SourceTable | null = null;
+function sourceTable(source: string): SourceTable {
+  if (sourceCache && sourceCache.source === source) return sourceCache;
   const { N, nStart } = normalizeSource(source);
-  const blocks: Block[] = [];
   const { placed, lexError } = placeTokens(N);
-  for (const { t, startN, endN, textEndN, broken } of placed) {
+  const idx = { nStart };
+  const spans: SourceRange[] = lexError !== null
+    ? [{ start: 0, end: source.length }]
+    : placed.map((p) => ({ start: nOf(idx, p.startN), end: nOf(idx, p.textEndN) }));
+  sourceCache = { source, N, nStart, lexError, placed, spans, walked: null };
+  return sourceCache;
+}
+/** The walk over each placed token (walkBlocks: the block's rendered text with a source position per character, its
+ *  holes, its refusal), run once per source and kept on its table. */
+function walkedBlocks(table: SourceTable): Walked[] {
+  if (table.walked) return table.walked;
+  const out: Walked[] = [];
+  for (const { t, startN, endN, textEndN, broken } of table.placed) {
     const em = new Emitter();
     let refused: string | null = broken;
     if (refused === null) {
-      try { walkBlocks([t], View.identity(N, 0), em, startN); }
+      try { walkBlocks([t], View.identity(table.N, 0), em, startN); }
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
     const isHtml = t.type === "html";
-    blocks.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, dom: [], isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t) });
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t) });
   }
-  if (lexError !== null) blocks.length = 0;
+  if (table.lexError !== null) out.length = 0;
+  table.walked = out;
+  return out;
+}
+
+function analyzeRendered(root: DElement, source: string): RenderedIndex {
+  const table = sourceTable(source);
+  const { N, nStart, lexError } = table;
+  // one Block per walked block for THIS root: the pairing below writes `dom`, and `refused` for an html block or a
+  // mismatch, and another root over the same source starts from the walk's own answers
+  const blocks: Block[] = walkedBlocks(table).map((w) => ({ ...w, dom: [] }));
   // ── the DOM's top-level nodes and their text
   const topNodes: DNode[] = [];
   const topStart: number[] = [];
@@ -976,19 +1012,8 @@ function renderedIndex(root: DElement, source: string): RenderedIndex {
  *  here is block b there (renderedBlockIndex, renderedBlockElements). Markdown the lexer could not parse is one block
  *  over the whole text. For the reader's place (reader-place.ts): the blocks of the Raw view, which its rows alone do
  *  not show (a blank row between two paragraphs belongs to neither, one inside a fenced code block to the code block).
- *  The last source's table is kept: the viewer reads the same text once per scroll frame. */
-let spansCache: { source: string; spans: SourceRange[] } | null = null;
-export function sourceBlockSpans(source: string): SourceRange[] {
-  if (spansCache && spansCache.source === source) return spansCache.spans;
-  const { N, nStart } = normalizeSource(source);
-  const { placed, lexError } = placeTokens(N);
-  const idx = { nStart };
-  const spans: SourceRange[] = lexError !== null
-    ? [{ start: 0, end: source.length }]
-    : placed.map((p) => ({ start: nOf(idx, p.startN), end: nOf(idx, p.textEndN) }));
-  spansCache = { source, spans };
-  return spans;
-}
+ *  The last source's table is kept (sourceTable): the viewer reads the same text once per scroll frame. */
+export function sourceBlockSpans(source: string): SourceRange[] { return sourceTable(source).spans; }
 
 /** The index, into sourceBlockSpans(source), of the top-level block that renders `node`, a child of `renderedRoot`;
  *  -1 when `node` is no block's (whitespace between blocks, a node an html block's resync left over). */

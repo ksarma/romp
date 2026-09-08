@@ -185,9 +185,11 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
   assert.match(mdFn, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);/, "md(): sanitize (math rendered inside it), then link PR refs");
-  const userFn = render.match(/function userMd\(src: string\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  // userMd carries an optional repo parameter and hands it to linkifyPrRefs, the same as md() above (the 2026-09-08
+  // fold of upstream's converged userMd; chat-md.test.ts pins the same loose signature), so the match on it is loose
+  const userFn = render.match(/function userMd\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(userFn, "userMd() must exist");
-  assert.match(userFn, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/, "userMd(): the same order");
+  assert.match(userFn, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);/, "userMd(): the same order");
   // The last link, that sanitizeMd runs every registered pass on the sanitized body before handing it back,
   // is the sanitizer's own contract and is pinned once, in md-sanitize.test.ts (the registry and the loop).
 });

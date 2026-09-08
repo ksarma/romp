@@ -685,7 +685,7 @@ EOF
     _romp_cmd "romp down [--now] [--wait N]" romp-manager "Stop the kernel and keep it stopped until romp up; turns in flight get N seconds (default 5) to finish, --now skips the wait"
     _romp_cmd "romp up [--foreground]"     romp-manager "Start the kernel manager: through the login service when installed, else in the foreground"
     _romp_cmd "romp version"               romp-version "Versions across the parts (tree, kernel, served vs built bundles)"
-    _romp_cmd "romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]" romp-keyswap "Which API key the sessions bill (fingerprints only). With ROMP_CREDENTIAL_COMMAND set, <name> selects a declared credential and --refresh re-runs the command; --cycle/--cycle-all reconnect quiet sessions after a rotation. <name> is refused where the key lives in a file: this fork does not write API keys to files"
+    _romp_cmd "romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]" romp-keyswap "Which API key the sessions bill (fingerprints only; a ROMP_API_KEY_CMD key command or ROMP_API_KEY_REF reference is a source identity, never run here). With ROMP_CREDENTIAL_COMMAND set, <name> selects a declared credential and --refresh re-runs the command; --cycle/--cycle-all reconnect quiet sessions after a rotation. <name> is refused where the key source lives in service.env (a key line, a key command or a reference profile): this fork does not write API keys to files"
     _romp_cmd "romp spend-rebuild"         romp-spend-rebuild "Recount the spend ledger's token columns from the transcripts (dry run; --apply writes, dollars untouched)"
     _romp_cmd "romp uninstall"             romp-uninstall "Remove romp's installed footprint (--purge also deletes recorded state)"
     _romp_cmd "romp help"                  -            "Show this help"
@@ -701,9 +701,9 @@ For scripts / agents:
 EOF
     _romp_cmd "romp url"                   -            "Print ONLY the tokened dashboard URL (for scripts; humans just run \`romp\`)"
     _romp_cmd "romp sessions [--json]"     -            "List the fleet with each session's state, colours and backend"
-    _romp_cmd "romp api-health"            -            "The API-health signal across your sessions (GET /api-health as JSON: per-key/family retry rates and a thrash state)"
     _romp_cmd "romp perf [--interval <s>|--json|log on|off]" - "Kernel performance counters as rates over two snapshots (pusher cycles, stage times, build cache hits, bytes sent, goal loads, judge passes, rss, cpu); --json one raw snapshot; log on|off flips the romp-perf stderr log without a restart"
     _romp_cmd "romp perf client [--minutes <n>|--json]" - "Browser-side performance of the open dashboards (client-diag.jsonl, surface perf): handler ms/min by frame type with window p50/p90/p99 and max, main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last <n> minutes (default 10)"
+    _romp_cmd "romp api-health"            -            "The API-health signal across your sessions (GET /api-health as JSON: per-key/family retry rates and a thrash state)"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
     _romp_cmd "romp move <session> <dir>"   -           "Move an SDK session's working directory (its conversation follows; mid-turn it waits for the turn to end)"
@@ -770,23 +770,25 @@ fi
 # history intact. With ROMP_CREDENTIAL_COMMAND set (the key-free mode, kernel/envsource.py) `<name>`
 # writes the one-token selector file the command reads as $1 and --refresh makes the kernel re-run it.
 # Without it, upstream's `romp keyswap <name>` rewrites the credential line of
-# ~/.config/romp/service.env from a sibling profile (`ANTHROPIC_API_KEY=`, or since 2026-09-05 a
-# `ROMP_API_KEY_REF=op://…` reference the kernel's keysource resolves through `op` at launch;
-# _romp_op_consumer below asks whether one is configured); this fork refuses that form (the user
-# 2026-09-05: the fork does not write API keys to files) — romp-keyswap (python) says so and exits 2.
-# Prints fingerprints, never keys.
+# ~/.config/romp/service.env from a sibling profile: `ANTHROPIC_API_KEY=`, since 2026-09-05 a
+# `ROMP_API_KEY_REF=op://…` reference the kernel's keysource resolves through `op` at launch, or since
+# 2026-09-07 a `ROMP_API_KEY_CMD=` key command it runs at launch (_romp_op_consumer below asks whether
+# either provider is configured); this fork refuses that form (the user 2026-09-05: the fork does not
+# write API keys to files) — romp-keyswap (python) says so and exits 2. Prints fingerprints, never keys.
 if [[ "${1:-}" == "keyswap" ]]; then
     shift
     exec romp-keyswap "$@"
 fi
 
-# Is romp itself the one running `op`? Yes when a 1Password reference is configured — in this
-# environment, or as a ROMP_API_KEY_REF= line of the service env file (the same file and the same
-# line-by-line read as bin/romp-node-launch and bin/romp-service, never sourced). The kernel's
-# keysource.op_consumer answers the same question from Python; a kernel-spawned `romp new` may lack
-# the variable when the reference was swapped in with no manager restart, so the file decides too.
+# Is romp itself the one fetching the key? Yes when a key PROVIDER is configured — a key command
+# (ROMP_API_KEY_CMD, 2026-09-07) or a 1Password reference (ROMP_API_KEY_REF) — in this environment, or as
+# a line of the service env file (the same file and the same line-by-line read as bin/romp-node-launch
+# and bin/romp-service, never sourced). The kernel's keysource.provider_consumer answers the same
+# question from Python; a kernel-spawned `romp new` may lack the variable when the provider was swapped
+# in with no manager restart, so the file decides too. The name predates the command kind.
 _romp_op_consumer() {
     [[ -n "${ROMP_API_KEY_REF:-}" ]] && return 0
+    [[ -n "${ROMP_API_KEY_CMD:-}" ]] && return 0
     local _f="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}}"
     [[ -f "$_f" ]] || return 1
     local _line
@@ -794,6 +796,7 @@ _romp_op_consumer() {
         _line="${_line#"${_line%%[![:space:]]*}"}"
         case "$_line" in
             ROMP_API_KEY_REF=*) return 0 ;;
+            ROMP_API_KEY_CMD=*) return 0 ;;
         esac
     done < "$_f"
     return 1
@@ -959,21 +962,6 @@ for r in rows:
     print("%-*s  %-10s  %-5s  %s" % (w, r.get("name") or "", r.get("state") or "",
                                      r.get("backend") or "", r.get("dir") or ""))
 '
-    exit 0
-fi
-
-# `romp api-health` — the kernel's API-health signal, verbatim JSON (GET /api-health): per
-# (auth label, model family) attempt/response/give-up counts over 60/300/900 s windows and the
-# thrash/degraded/recovering state the kernel derives from them. For scripts and consumers that act
-# on it (switch a key, hold a job); the kernel holds no policy of its own. Same shape as `sessions`:
-# the token on stdin, a dead kernel fails loudly, an unknown flag is refused.
-if [[ "${1:-}" == "api-health" ]]; then
-    shift
-    if [[ $# -gt 0 ]]; then echo "usage: romp api-health" >&2; exit 2; fi
-    _kport="${ROMP_KERNEL_PORT:-29855}"
-    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/api-health")" \
-        || { echo "romp api-health: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
-    printf '%s\n' "$_resp"
     exit 0
 fi
 
@@ -1427,7 +1415,7 @@ st = {k: dl("stages_ms", k) for k in ("jobs", "push", "push.chat", "push.feed", 
 print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)"
       % tuple(share(st[k]) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")))
 parts = []
-for k in ("chat", "feed", "timeline"):
+for k in ("chat", "feed", "timeline", "feedJson"):     # feedJson: GET /feed.json's own reads, apart from the pusher's feed
     built, cached, ms = dl("builds", k, "built"), dl("builds", k, "cached"), dl("builds", k, "ms")
     split = ""
     if k == "chat":
@@ -1502,6 +1490,36 @@ print("http      " + ("   ".join(("%s %d" % (pth, n)) if pth.endswith("/ws") els
                                  for n, ms, pth in rows) or "no requests in the window"))
 PY
     exit $?
+fi
+
+# `romp api-health` — the kernel's API-health signal, verbatim JSON (GET /api-health): per
+# (auth label, model family) attempt/response/give-up counts over 60/300/900 s windows and the
+# thrash/degraded/recovering state the kernel derives from them. For scripts and consumers that act
+# on it (switch a key, hold a job); the kernel holds no policy of its own. Same shape as `sessions`:
+# the token on stdin, a dead kernel fails loudly, an unknown flag is refused.
+if [[ "${1:-}" == "api-health" ]]; then
+    shift
+    if [[ $# -gt 0 ]]; then echo "usage: romp api-health" >&2; exit 2; fi
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    # The HTTP status rides the reply's last line (-w), so a refusal is reported AS ITSELF. With
+    # `curl -f` every non-2xx wore the one "kernel not reachable" message, which hid the route's own
+    # 503 (the SDK backend is not up: a signal that does not exist yet, not a kernel that is down),
+    # a refused token (401/403) and a kernel that predates the route (404) behind "is romp running?".
+    # Only a reply that never came (connection refused, a timeout) is "not reachable".
+    _raw="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' "http://127.0.0.1:$_kport/api-health")" \
+        || { echo "romp api-health: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    _code="${_raw##*$'\n'}"
+    _body="${_raw%$'\n'*}"; _body="${_body%$'\n'}"
+    case "$_code" in
+        2??) printf '%s\n' "$_body"; exit 0 ;;
+        503) # the route's own message rides its body as {"error": "..."}: print that, not a guess
+             _why="$(printf '%s' "$_body" | python3 -c 'import json, sys; print(json.load(sys.stdin)["error"])' 2>/dev/null)" \
+                 || _why="$_body"
+             echo "romp api-health: no signal, the kernel answered HTTP 503: $_why" >&2; exit 1 ;;
+        401|403) echo "romp api-health: the kernel refused the serve token (HTTP $_code): a stale ROMP_SERVE_TOKEN, or a state dir that is not this kernel's" >&2; exit 1 ;;
+        404) echo "romp api-health: this kernel has no /api-health route (HTTP 404): it predates this command, restart romp" >&2; exit 1 ;;
+        *)   echo "romp api-health: the kernel answered HTTP $_code on :$_kport" >&2; exit 1 ;;
+    esac
 fi
 
 # Fork a session into a NEW parallel one (the user 2026-08-19, via the lab workflow: per-stage
@@ -2880,9 +2898,10 @@ case "${1:-}" in
                            # VALUE is meaningful (explicitly setting empty), but a missing '=' or a
                            # NAME outside [A-Za-z_][A-Za-z0-9_]* is a usage error, never a silent
                            # skip. Toggles only (FEATURE_FLAG=1, CLAUDE_CODE_*) — real secrets stay
-                           # in the manager's environment, behind a credential command or a
-                           # ROMP_API_KEY_REF reference, or in the apiKeyHelper, never in a file,
-                           # since this payload is copied into per-sid files and the session registry.
+                           # in the manager's environment, behind a key command (ROMP_API_KEY_CMD), a
+                           # credential command (ROMP_CREDENTIAL_COMMAND) or a ROMP_API_KEY_REF
+                           # reference, or in the apiKeyHelper, never in a file, since this payload is
+                           # copied into per-sid files and the session registry.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
                                echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
@@ -3051,8 +3070,8 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     fi
     # $_be — the effective backend — was resolved at parse time (the `new` case), where the
     # model/effort guards needed it; an explicit --codex already won there.
-    # env pairs ride as trailing argv (behind the tags) — the builder splits each on the FIRST '=' only, so
-    # values carrying '=' survive; a repeated NAME keeps the LAST value, like re-exporting in a shell.
+    # env pairs ride as trailing argv — the builder splits each on the FIRST '=' only, so values
+    # carrying '=' survive; a repeated NAME keeps the LAST value, like re-exporting in a shell.
     # argv[6] is the --no-env flag: it sends the EXPLICIT empty declaration ("env": {}) — absent still
     # means "don't touch", so a plain `romp new` never carries an env key at all.
     _noenv=""; if $no_env; then _noenv=1; fi
@@ -3120,7 +3139,6 @@ print(json.dumps(d))' "$session_arg" "$_dir" "$_be" "$model_arg" "$effort_arg" "
             # The rest of the line follows the ECHO, so it cannot contradict the "applied" line
             # below: an explicit --in still lands beside an ignored parent (tagsApplied names what
             # landed), and a name that already runs inherits nothing by design (no creation event).
-            # "starts in no tags" was false in both cases (review finding, 2026-09-04).
             _pign=""; _pexist=""; _pnames=""
             _pinfo="$(python3 -c 'import json,sys
 r = json.loads(sys.argv[1]); a = [t for t in (r.get("tagsApplied") or []) if t]
@@ -3423,12 +3441,13 @@ else
     # op's credential never rides a session: when romp itself runs `op` (a reference is configured), the
     # tmux SERVER's globals — what every new pane inherits — are scrubbed of it before the pane exists
     # (review, 2026-09-05: the server the manager started carried service.env's token to `exec claude`).
-    # The manager's startup ANTHROPIC_API_KEY goes with it: once a reference governs, a pane billing the
-    # key the manager started with bills a key nobody chose (a keyswap retired it); without the variable
-    # the pane falls to Claude Code's own auth. A box with no reference keeps both — static-key panes rely
-    # on the inheritance. "Configured" is the client's environment OR the env file's own line
-    # (2026-09-06): a kernel-spawned `romp new` on a box that swapped to a reference without a manager
-    # restart carries no ROMP_API_KEY_REF, and the guard on the variable alone left the token in place.
+    # The manager's startup ANTHROPIC_API_KEY goes with it: once a provider (a key command or a reference)
+    # governs, a pane billing the key the manager started with bills a key nobody chose (a keyswap retired
+    # it); without the variable the pane falls to Claude Code's own auth. A box with no provider keeps
+    # both — static-key panes rely on the inheritance. "Configured" is the client's environment OR the env
+    # file's own line (2026-09-06): a kernel-spawned `romp new` on a box that swapped to a provider without
+    # a manager restart carries no ROMP_API_KEY_* variable, and the guard on the variable alone left the
+    # token in place.
     # The name list mirrors kernel/keysource.py is_tmux_scrub_name.
     if _romp_op_consumer; then
         tmux show-environment -g 2>/dev/null \

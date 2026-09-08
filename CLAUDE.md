@@ -185,23 +185,55 @@ broad `git add` will sweep up your work). Conventions:
   `origin`. In this clone that remote is the project, not the fork: the kernel's update
   and drift probes read the project's main and tags, and the release script is not
   ours to run (see the fork section above).
-- **Every PR carries exactly one tier label** (maintainers' rule, 2026-09-06). The
-  project's `pr-tier` check holds a PR with no tier label, or two, red, so an unlabeled
-  offer never auto-merges there. The fork's copy of the check
-  (`.github/workflows/pr-tier.yml`) counts the same four labels plus two of its own:
-  `docs`, upstream's coming name for tests-only, passes in its place, and a batch PR
-  (`scripts/batch.py`, `docs/batching.md`) carries `batch` alone and no tier, so adding
-  a tier to a batch PR turns the check red. Every other fork PR carries one tier label.
-  The author picks the tier at filing time:
-  - `tests-only` (tier 0): tests, docs, repo plumbing; no behavior change. Merges on green
-    upstream; on the fork it lands through a batch like every PR.
-  - `fix` (tier 1): a bug fix with a test that fails before it.
+- **Every PR carries exactly one tier label, and upstream ENFORCES the tier**
+  (maintainers' rule, 2026-09-06; the policy decided 2026-09-07). The project holds a PR
+  with two required checks: "Exactly one tier label" (`pr-tier`) goes red on a PR with
+  no tier label, or two, so an unlabeled offer never auto-merges there; "Tier policy"
+  then holds it until the tier's gate is met. The rules are a pure function
+  (`scripts/ci/tier_policy.py`, pinned by `tests/test_tier_policy.py`); the workflow
+  (`.github/workflows/tier-policy.yml`) only fetches PR data and posts the verdict. See
+  `docs/pr-tiers.md`. The fork's copy of the first check (`.github/workflows/pr-tier.yml`)
+  counts the same labels plus one of its own: a batch PR (`scripts/batch.py`,
+  `docs/batching.md`) carries `batch` alone and no tier, so adding a tier to a batch PR
+  turns the check red. Every other fork PR carries one tier label, and on the fork every
+  PR lands through a batch whatever its tier. The fork's copy of the second check
+  (`.github/workflows/tier-policy.yml`) is gated to the upstream repository by its
+  job-level `if:` (the header comment there says why), so on the fork it evaluates nothing
+  and posts no Tier policy verdict; a fork PR is judged by the label check alone. The
+  author picks the tier at filing time:
+  - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
+    still accept the old spelling): no behavior change. On the fork that is tests, docs
+    and repo plumbing, landing through a batch like every PR. Upstream the tier means
+    documentation ONLY (files under `docs/` or `*.md` anywhere, never `.github/` or
+    `scripts/`) and merges on green; an offer that touches anything else takes another tier.
+  - `fix` (tier 1): a bug fix with a test that fails before it. Upstream it merges on the
+    other maintainer's approval, or after seven days with the head unchanged and no
+    changes requested (the clock is the unbroken chain of hourly Tier policy verdicts
+    the PR received on its current head, or the head's arrival on the PR if later, never
+    a commit date; a head with no verdict yet has not started its clock, and a sibling
+    PR's verdicts on the same sha lend nothing).
   - `feature` (tier 2): a self-contained new capability inside romp's existing model;
-    put the design points in the body.
+    put the design points in the body. Upstream it merges on the other maintainer's
+    approval.
   - `major-feature` (tier 3): new functionality that changes what romp does or its
     contracts. Discussed first (an issue, or the PR as the RFC) and merged only on
-    agreement, so an offer at this tier is filed **without** `--auto` and the merge is
+    agreement: upstream that is the other maintainer's approval AND a linked issue
+    (`#N` in the body) with a comment by someone other than the author, the opener alone
+    not counting. An offer at this tier is filed **without** `--auto` and the merge is
     left to the maintainers.
+  "Approval" upstream is a standing APPROVED review by a maintainer other than the
+  author on the CURRENT head (standing = their latest approval, change request or
+  dismissal; comment-only reviews never change it; a dismissed approval never counts,
+  whoever dismissed it, and a dismissed change request clears only when the reviewer
+  dismissed it themselves, so the author cannot dismiss the peer's objection away to
+  reopen the seven-day path). GitHub forbids self-approval and the user's sessions act
+  under the user's account, so it structurally means the other maintainer. A renamed
+  file counts under both its paths. Any PR touching `.github/` or `scripts/ci/`, the
+  gate's own workflow and code, needs an approval regardless of tier (a PR's own
+  `pull_request` workflow can post a same-named check run, so a human looks; the
+  residual and the CODEOWNERS rule that closes it are in `docs/pr-tiers.md`). None of
+  this changes what a session may do here: offering stays a PR from a fork branch, and
+  merging or approving upstream stays the user's per-PR call (the fork section above).
   The line that matters is 2 vs 3: adds a capability inside the existing model, `feature`;
   changes what romp is, `major-feature`, talk first. The ledger entry's `tier:` line
   records the pick for an offer.

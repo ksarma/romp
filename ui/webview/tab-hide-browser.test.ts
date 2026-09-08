@@ -64,7 +64,7 @@ const SESS: Record<string, unknown> = {
 /** The probe: render.ts's own header, header acts and pane, over the stand-in page, as one browser bundle. */
 function probeSource(): string {
   const HEAD = slice("function makeGroupHead(", "function sectionHeadOf(");
-  const SNAP = slice("let snapView: string | null = null;", "function showActive() {");
+  const SNAP = slice("let snapView: string | null = null;", "function showActive(");
   const ACTS = slice('"toggle-group": (el) => {', "    close: (el) => {");
   const RELEASE = slice("function releaseTabStrip(): void {", "// A SECTION HEADER for the tab strip");
   const WRITE = slice("function tabGroups() {", "let draggedGroup: string | null = null;");
@@ -74,6 +74,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, setHidde
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
 import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK } from "./tab-state";
+import { tagChip } from "./tag-menu";   // the header wears the tag as its chip (upstream T251), the real builder, not a stub
 import { viewTagUnion } from "./session-views";
 import { hostNameNodes } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
@@ -255,7 +256,8 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.goto("http://romp.test/page");
     const state = (): Promise<State> => page.evaluate(() => (window as any).__probe.state());
     const head = async (name: string): Promise<Head> => { const s = await state(); const h = s.heads.find((x) => x.name === name); assert.ok(h, "a header for " + name); return h!; };
-    const nameOf = (g: string) => `#tabs .tab-group-head[data-group="${g}"] .tab-group-name`;
+    // the header's label is the tag chip since upstream T251 (the swatch and the plain name span are gone): the click lands on it
+    const nameOf = (g: string) => `#tabs .tab-group-head[data-group="${g}"] .tab-group-chip`;
     const act = (id: string) => `#tab-snapshot .snap-item[data-id="${id}"] .snap-act`;
     const inHead = (g: string, part: string) => `#tabs .tab-group-head[data-group="${g}"] ${part}`;
     await page.evaluate(([v, sess]: [unknown, unknown]) => (window as any).__probe.setup(v, ["web", "api", "tests", "old1"], sess, "web"), [V, SESS] as [unknown, unknown]);

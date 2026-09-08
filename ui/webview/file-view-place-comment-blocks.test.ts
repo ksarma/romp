@@ -2,7 +2,7 @@
 // review added: such a block renders no node, so the pairing gives it none and reads past it). The Slice 2 review's
 // second round found the rule's first form, an anchored regex over the whole raw, wrong in two ways, both pinned here:
 // it tried every way of splitting a line of adjacent comments among its repeats when the raw ended in anything but a
-// comment and doubled its time per comment (91 ms at 22 comments, some 20 s at 30, on every Rendered paint of the
+// comment and doubled its time per comment (91 ms at 22 comments, 144 s at 30, on every Rendered paint of the
 // file); and it let a comment at each end of the line vouch for whatever stood between them, so a line like
 // `<!-- a --> words <!-- b -->` read as blank though it renders the words, the pairing skipped it, the next paragraph
 // took the rendered words as its own node and was refused, and every block after it paired one node early (the Raw
@@ -12,7 +12,6 @@
 // Comment node is never a paired node. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { performance } from "node:perf_hooks";
 import { marked } from "marked";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, mapRenderedSelection, type SelLike } from "./anchor-map";
 
@@ -111,37 +110,42 @@ function pairedAfter(md: FakeElement, src: string): void {
 // marked lexes a line of comments and whatever follows them on that line as ONE html token (its block html rule
 // takes the rest of the line after the first comment), so the whole line is the raw the rule reads. The regex this
 // replaced took 91 ms at 22 comments with a tag after them and doubled per comment; the scan reads the raw once.
-// The bound is loose (the scan takes well under a millisecond here); a doubling per comment stands no chance of it.
+// The cost is read as the process's CPU time, not the wall clock: node runs test files in parallel, and a process the
+// scheduler holds off between two wall-clock reads accrues no CPU time (the Slice 2 review's fourth round measured a
+// 3 ms scan at 1.6 s of wall clock on a starved core), while the regressed form's backtracking was all CPU. The bound
+// is loose (the scan takes well under a millisecond here); a doubling per comment stands no chance of it.
 test("an html block of many adjacent comments is read in its length: 30 comments and a tag pair at once, 30 alone are a blank block", () => {
   const BOUND_MS = 250;
+  /** The CPU milliseconds (user and system, every thread of the process) building the rendered index over `src` costs. */
   const timed = (src: string): { md: FakeElement; ms: number } => {
     const md = rendered(src);
-    const t0 = performance.now();
+    const c0 = process.cpuUsage();
     renderedBlockIndex(El(md), src, Nd(md.childNodes[0]));   // builds the rendered index, which reads every html block's raw
-    return { md, ms: performance.now() - t0 };
+    const c = process.cpuUsage(c0);
+    return { md, ms: (c.user + c.system) / 1000 };
   };
   // comments then a tag: not blank; the tag is the block's node and the paragraphs after it pair to their own blocks
   const withTag = around(comments(30) + " <b>badge</b>");
   let r = timed(withTag);
-  assert.ok(r.ms < BOUND_MS, `30 comments and a tag: the index built in ${r.ms.toFixed(1)} ms`);
+  assert.ok(r.ms < BOUND_MS, `30 comments and a tag: the index cost ${r.ms.toFixed(1)} ms of CPU`);
   assert.deepEqual(tags(renderedBlockElements(El(r.md), withTag, 4)), ["B"], "the html block renders as the badge");
   pairedAfter(r.md, withTag);
   // comments alone: blank, no node, the paragraphs after it pair to their own blocks
   const alone = around(comments(30));
   r = timed(alone);
-  assert.ok(r.ms < BOUND_MS, `30 comments alone: the index built in ${r.ms.toFixed(1)} ms`);
+  assert.ok(r.ms < BOUND_MS, `30 comments alone: the index cost ${r.ms.toFixed(1)} ms of CPU`);
   assert.deepEqual(renderedBlockElements(El(r.md), alone, 4), [], "a block of comments alone renders nothing");
   pairedAfter(r.md, alone);
   // comments then words, and comments then an unterminated comment (the two other failing tails), read in their length too
   for (const tail of [" trailing words", " <!-- open"]) {
     r = timed(around(comments(30) + tail));
-    assert.ok(r.ms < BOUND_MS, `30 comments then ${JSON.stringify(tail)}: the index built in ${r.ms.toFixed(1)} ms`);
+    assert.ok(r.ms < BOUND_MS, `30 comments then ${JSON.stringify(tail)}: the index cost ${r.ms.toFixed(1)} ms of CPU`);
   }
   // the gaps can be any whitespace, and a comment may span lines (the block ends with the line holding its `-->`)
   for (const line of [comments(30, "\t  "), "<!-- a comment\nover two lines --> \t <!-- and another -->"]) {
     const spaced = around(line);
     r = timed(spaced);
-    assert.ok(r.ms < BOUND_MS, `${JSON.stringify(line.slice(0, 24))}...: the index built in ${r.ms.toFixed(1)} ms`);
+    assert.ok(r.ms < BOUND_MS, `${JSON.stringify(line.slice(0, 24))}...: the index cost ${r.ms.toFixed(1)} ms of CPU`);
     assert.deepEqual(renderedBlockElements(El(r.md), spaced, 4), [], "still a block of comments alone");
     pairedAfter(r.md, spaced);
   }

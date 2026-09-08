@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
@@ -88,38 +89,31 @@ class StoreCas(unittest.TestCase):
         finally:
             Path.read_text = real
 
-    def test_a_fallback_load_is_marked_unread_and_the_mark_is_never_serialized(self):
-        # load_goals swallows a read failure and answers an EMPTY store. Readers that cache "what the
-        # file holds" by its identity (the kernel's awaiting-lift gate) must be able to tell that answer
-        # from a parsed one, so the fallback carries a transient `_unread` mark — beside `_baseRev`,
-        # popped before a publish and outside the content hash. An ABSENT file is not marked: empty is
-        # its content, and a fresh session's store is born that way.
+    def test_a_store_loaded_without_its_unreadable_journal_is_marked_and_the_mark_is_never_serialized(self):
+        # A store FILE that exists and cannot be read raises (ReadFaultCas), and an unparseable one is
+        # quarantined aside and legitimately fresh, so the one load that answers with less than the files
+        # hold is a parsed store whose override JOURNAL exists and could not be read: _replay_overrides
+        # returns it without the user's rows. A reader that caches "what the files hold" by their identity
+        # (the kernel's awaiting-lift gate) must tell that answer from a complete one, so it carries a
+        # transient `_unread` mark beside `_baseRev`: popped before a publish and outside the content hash.
         self.assertNotIn("_unread", jd.load_goals(SID), "no file: an empty store IS the truth")
         self._seed()
-        self.assertNotIn("_unread", jd.load_goals(SID), "a parsed store is what the file says")
-        gp = jd.GOALDIR / (SID + ".json")
-        with self._reads_raise(gp):
-            s = jd.load_goals(SID)
-        self.assertEqual(s.get("_unread"), "store", "the file exists and was not read: a fallback, marked with why")
-        self.assertEqual(s["nodes"], {})
-        self.assertNotIn("_unread", json.loads(jd._store_content(s)), "not store content")
-        with self.assertRaises(jd.UnreadStoreError):
-            jd.save_goals(SID, s)                   # a fallback is never published, readable file or not: the
-        raw = json.loads(gp.read_text())            # decisions in it were made over an empty view of the
-        self.assertNotIn("_unread", raw)            # session (tests/test_unread_store_save.py)
-        self.assertIn(self._nid(1), raw["nodes"], "the file is left as it was")
-
-    def test_an_unreadable_journal_marks_the_store_unread(self):
-        self._seed()
+        self.assertNotIn("_unread", jd.load_goals(SID), "a parsed store with no journal is what the files say")
         jd.append_override(SID, self._nid(1), "resolve", T0 + 60)
         with self._reads_raise(jd._overrides_dir() / (SID + ".jsonl")):
             s = jd.load_goals(SID)
         self.assertIn(self._nid(1), s["nodes"], "the store itself was read")
-        self.assertEqual(s.get("_unread"), "journal", "…but the journal was not: the store is not what its files say")
+        self.assertEqual(s.get("_unread"), "journal", "...but the journal was not: the user's gestures are missing")
+        self.assertFalse(s["nodes"][self._nid(1)].get("nodeComplete"), "the journaled resolve is not in this view")
         self.assertEqual(s["_baseRev"], jd._disk_rev(SID), "the CAS base is the parsed store's, as before")
+        self.assertNotIn("_unread", json.loads(jd._store_content(s)), "not store content")
         s["nodes"][self._nid(1)]["text"] = "A goal, retitled"
-        jd.save_goals(SID, s)                       # the journal's rows replay on every load: publishing loses nothing
-        self.assertNotIn("_unread", json.loads((jd.GOALDIR / (SID + ".json")).read_text()), "the mark is never written to disk")
+        jd.save_goals(SID, s)
+        gp = jd.GOALDIR / (SID + ".json")
+        self.assertNotIn("_unread", json.loads(gp.read_text()), "the mark is never written to disk")
+        nd = jd.load_goals(SID)["nodes"][self._nid(1)]
+        self.assertEqual(nd["text"], "A goal, retitled")
+        self.assertTrue(nd.get("nodeComplete"), "the journal replays on the next load: the publish lost nothing durable")
 
     def test_a_stale_pass_no_longer_erases_a_concurrent_block(self):
         # THE BUG: pass A loads, goes off to its model call; the nudge tick blocks the card and publishes;
@@ -260,6 +254,127 @@ class StoreCas(unittest.TestCase):
         jd.record_verdict(s, s["nodes"][gid], "planner", "done", T0 + 30, why="shipped")
         jd.save_goals(SID, s)                        # nobody else wrote → straight publish
         self.assertTrue(jd.load_goals(SID)["nodes"][gid].get("nodeComplete"))
+
+
+class ReadFaultCas(unittest.TestCase):
+    """The CAS can never publish over a file it could not READ.
+
+    Before this, every reader in the save path answered a read failure with the ABSENT-file value:
+    load_goals returned a fresh store at base 0, _disk_rev read 0, _matches_disk read "no match" and
+    _rebase_onto_disk had "nothing to rebase onto". So on an EIO, an EACCES or a corrupt file, save_goals
+    found base 0 == disk 0 and published the empty store over the user's goals. Now a read fault raises
+    from every one of those readers and the file on disk is left byte for byte as it was.
+
+    Mints goals, so it uses a PRIVATE synthetic sid (CLAUDE.md, 2026-08-24) and cleans that sid's override
+    journal in tearDown."""
+    FSID = "7b2c3d4e-5f60-4182-93a4-b5c6d7e8f901"
+
+    def setUp(self):
+        self._saved = jd.STATE
+        self.td = tempfile.TemporaryDirectory()
+        jd._rebind_state(Path(self.td.name))
+
+    def tearDown(self):
+        (jd._overrides_dir() / (self.FSID + ".jsonl")).unlink(missing_ok=True)
+        jd._rebind_state(self._saved)
+        (jd._overrides_dir() / (self.FSID + ".jsonl")).unlink(missing_ok=True)
+        self.td.cleanup()
+
+    def _file(self):
+        return jd.GOALDIR / (self.FSID + ".json")
+
+    def _gid(self):
+        return "%s:g1" % self.FSID
+
+    def _seed(self):
+        s = {"rompUuid": self.FSID, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {},
+             "placements": {}, "status": {}}
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "A goal"}], [])
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(self.FSID, s)
+
+    @contextlib.contextmanager
+    def _eio_on_the_store(self):
+        """Every reader of THIS store's path raises EIO; every other read is untouched. Path.read_text is the
+        load path's reader; the save path's memoized readers (_disk_entry, _disk_rev) open a descriptor of
+        their own and read from it (_disk_read), so os.open faults for the path as well."""
+        target, orig_read_text, orig_open = self._file(), Path.read_text, os.open
+
+        def faulting(path, *a, **kw):
+            if path == target:
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return orig_read_text(path, *a, **kw)
+
+        def faulting_open(path, *a, **kw):
+            if os.fspath(path) == str(target):
+                raise OSError(errno.EIO, "Input/output error", str(target))
+            return orig_open(path, *a, **kw)
+        with mock.patch.object(Path, "read_text", faulting), mock.patch.object(os, "open", faulting_open):
+            yield
+
+    def test_a_read_fault_raises_from_load_instead_of_reading_as_an_empty_store(self):
+        self._seed()
+        with self._eio_on_the_store():
+            with self.assertRaises(OSError) as cm:
+                jd.load_goals(self.FSID)
+        self.assertEqual(cm.exception.errno, errno.EIO, "the fault itself, not a fresh store")
+        self.assertEqual(len(self._sidecars()), 0, "a FAULT is not corruption: nothing is moved aside")
+
+    def test_a_read_fault_at_save_publishes_nothing_and_the_file_is_untouched(self):
+        self._seed()
+        before = self._file().read_bytes()
+        s = jd.load_goals(self.FSID)                 # a snapshot taken while the disk was healthy...
+        jd.record_verdict(s, s["nodes"][self._gid()], "planner", "done", T0 + 30, why="shipped")
+        with self._eio_on_the_store():               # ...then the store becomes unreadable
+            with self.assertRaises(OSError):
+                jd.save_goals(self.FSID, s)
+        self.assertEqual(self._file().read_bytes(), before,
+                         "the publish did not go ahead over bytes it failed to compare against")
+
+    def test_a_file_corrupted_after_load_is_not_overwritten_by_the_save(self):
+        """The save path never quarantines (that is load's job, after the evidence is preserved): a store
+        that turned unparseable underneath a held snapshot makes the save raise, and the bytes stay put for
+        the next load to move aside."""
+        self._seed()
+        s = jd.load_goals(self.FSID)
+        jd.record_verdict(s, s["nodes"][self._gid()], "planner", "done", T0 + 30, why="shipped")
+        self._file().write_text("{not json")
+        with self.assertRaises(ValueError):
+            jd.save_goals(self.FSID, s)
+        self.assertEqual(self._file().read_text(), "{not json", "the save wrote nothing")
+        self.assertEqual(len(self._sidecars()), 0, "and moved nothing: the save path only reads")
+        fresh = jd.load_goals(self.FSID)             # the next load is the one that quarantines
+        self.assertEqual(len(self._sidecars()), 1)
+        jd.save_goals(self.FSID, fresh)
+        self.assertEqual(json.loads(self._file().read_text())["rompUuid"], self.FSID)
+
+    def test_disk_rev_reads_zero_only_for_an_absent_file(self):
+        self.assertEqual(jd._disk_rev(self.FSID), 0, "absent → 0, a create")
+        self._seed()
+        self.assertGreater(jd._disk_rev(self.FSID), 0)
+        with self._eio_on_the_store():
+            with self.assertRaises(OSError):
+                jd._disk_rev(self.FSID)
+        self._file().write_text("{not json")
+        with self.assertRaises(ValueError):
+            jd._disk_rev(self.FSID)
+
+    def test_matches_disk_and_rebase_raise_on_a_fault_or_a_corrupt_file(self):
+        """Each reader in the save path on its own: a version of either that swallowed the read and answered
+        'no match' / 'nothing to rebase onto' would let save_goals go ahead and passed every other test."""
+        self._seed()
+        s = jd.load_goals(self.FSID)
+        self.assertTrue(jd._matches_disk(self.FSID, s), "premise: a healthy read matches")
+        with self._eio_on_the_store():
+            self.assertRaises(OSError, jd._matches_disk, self.FSID, s)
+            self.assertRaises(OSError, jd._rebase_onto_disk, self.FSID, s)
+        self._file().write_text("{not json")
+        self.assertRaises(ValueError, jd._matches_disk, self.FSID, s)
+        self.assertRaises(ValueError, jd._rebase_onto_disk, self.FSID, s)
+        self.assertEqual(self._file().read_text(), "{not json", "neither reader touched the file")
+
+    def _sidecars(self):
+        return sorted(jd.GOALDIR.glob(self.FSID + ".json.corrupt-*"))
 
 
 if __name__ == "__main__":

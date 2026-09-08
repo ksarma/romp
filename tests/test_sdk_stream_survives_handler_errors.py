@@ -3,9 +3,8 @@
 threads share must be safe to sweep (2026-09-06).
 
 What happened live: a session's receive loop died on `KeyError: '<message uuid>'` — the only line
-the journal had — and the client teardown that followed closed its CLI mid-work (an in-flight turn,
-a Workflow run with four subagents and a background agent), then the session came back as a crash
-resume. The KeyError came from a live-tail sweep at the ResultMessage settle (retire_live_work)
+the log had — and the client teardown that followed closed its CLI mid-work (the in-flight turn, its
+subagents and its background tasks), then the session came back as a crash resume. The KeyError came from a live-tail sweep at the ResultMessage settle (retire_live_work)
 racing the kernel thread's prune_live on the same unlocked dict: `for k in list(d.keys()): a = d[k]`
 with the kernel thread deleting the just-landed reply between the snapshot and the read. The review
 then found the same unlocked dict raising RuntimeError out of the pusher's build (_persist_echoes)
@@ -16,7 +15,7 @@ and a fourth the review of the settle turned up:
   * the live tail has ONE lock (SdkBackend._live_lock): every stash, every pop, the sid-level pop and
     every iterating read take it; sweeps walk a snapshot taken under it; the emptiness check and the
     sid-level pop are one step; the lock is never held across I/O or a callback. Real-thread hammers
-    below drive the shapes the reviewers' probes reproduced on the lock-free tail;
+    below drive the shapes review probes reproduced on the lock-free tail;
   * the sweeps still walk a snapshot and pop with a default (belt-and-braces), and prune_live /
     _evict_live_overflow report a key that vanishes anyway once per site per kernel life — under the
     lock that means a mutator bypassed it;
@@ -39,6 +38,7 @@ Every id here is synthetic (the placeholder uuid family); no message content is 
 import asyncio
 import inspect
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -55,7 +55,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()       # hermetic state BEFORE the load (import-time root)
 os.environ.pop("ROMP_STATE_DIR", None)
 sb = load_source("romp_sdk_backend_streamsurvive",
-                      os.path.join(BIN, "romp_sdk_backend.py"))
+                 os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-aaaaaaaaaaa1"           # this module's own synthetic sid
 UNKNOWN_SID = "11111111-2222-3333-4444-bbbbbbbbbbb2"   # a session id the kernel never registered
@@ -110,6 +110,33 @@ class _RacyTail(dict):
     def _other_thread_prunes(self):
         if self.victim in self:
             dict.__delitem__(self, self.victim)
+
+
+class _ProbedTail(dict):
+    """A live tail whose EMPTINESS CHECK (`not d`, `d or {}`, `if d`: all __len__) lets a SECOND thread
+    try the tail lock without blocking and, if it gets in, stash an atom into the dict. Deterministic
+    where the hammers sample: the probe runs inside the sweep's own step and is joined before the check
+    returns, so its outcome is decided by whether the sweep holds the lock at that instant — refused
+    under the lock, landed without it. `__len__` answers the pre-stash length, so a sweep that pops
+    the sid on `not d` pops a dict the probe has just stashed into (the orphan shape)."""
+    def __init__(self, lock, *a, **k):
+        super().__init__(*a, **k)
+        self.lock, self.stashed, self.refused = lock, [], 0
+    def __len__(self):
+        n = super().__len__()
+        def other_thread():
+            if self.lock.acquire(blocking=False):
+                try:
+                    key = "echo:probe%d" % len(self.stashed)
+                    dict.__setitem__(self, key, _echo(key, "a send racing the sweep", 9))
+                    self.stashed.append(key)
+                finally:
+                    self.lock.release()
+            else:
+                self.refused += 1
+        t = threading.Thread(target=other_thread, name="probe")
+        t.start(); t.join()
+        return n
 
 
 def _backend(lines=None, **kw):
@@ -229,14 +256,14 @@ class TheLiveTailLock(unittest.TestCase):
     """REAL threads on plain dicts, with the interpreter's switch interval lowered so the interleavings
     the GIL permits show up within a second: one thread plays the session's loop (stash work atoms,
     retire them at the settle, mark dropped echoes at a reconnect), the other plays the kernel (stash
-    an echo at send, land it in prune_live, mirror it). On the lock-free tail the reviewers' probes
+    an echo at send, land it in prune_live, mirror it). On the lock-free tail, probes of this shape
     raised RuntimeError out of prune_live on 1412 of 1500 calls, out of _mark_dropped_echoes on 8 of
     3000, and orphaned 343 of 60000 stashes in the sid-level pop's window; under the lock nothing
     raises and nothing is orphaned. Each hammer runs until BOTH sides have done their floor of
     iterations (the kernel keeps hammering until the session thread has completed its turns), so the
     overlap asserted on is guaranteed by construction rather than sampled — under a lock convoy the
     session thread's count for a fixed 1500 kernel calls varied 10–447 run to run, and a `> 2` floor
-    on it was a margin by luck (round-2 review). A wall-clock cap is the only other stop, and hitting
+    on it was a margin by luck. A wall-clock cap is the only other stop, and hitting
     it FAILS the test: the work takes about a second idle, so the cap means a wedge, not load."""
     SEEDED = 60          # unlanded echoes sitting in the tail (the _persist_echoes walk's length)
     CAP_S = 20.0         # ~20x the idle runtime of the longest hammer
@@ -410,6 +437,39 @@ class TheLiveTailLock(unittest.TestCase):
         self.assertFalse([w for w, held in seen if held], "the lock was held across: %r" % [w for w, h in seen if h])
         self.assertNotIn(SID, be._live, "the dismiss emptied the tail and popped the sid entry")
 
+    def test_the_emptiness_check_of_every_sweep_runs_under_the_lock(self):
+        """The deterministic twin of the hammers above, which PASS with the lock dedented out of
+        _persist_echoes and _mark_dropped_echoes (a RuntimeError needs the interleaving to land inside
+        one dict walk, and the hammers only sample for it; the source pin below was the one thing that
+        caught the mutant). Every sweep's first step on the shared dict is its emptiness check, so a
+        dict subclass runs the probe there (_ProbedTail): a second thread tries the lock without
+        blocking. Under the lock the probe is refused, every time; without it the probe's stash lands
+        mid-sweep — and in prune_live and retire_live_work the check right before the sid-level pop
+        then pops a dict the stash just went into, orphaning it (the third refuter finding). Validated
+        against a scratch copy with the two `with self._live_lock:` lines dedented out (2026-09-07)."""
+        sweeps = (
+            ("_persist_echoes", lambda be: be._persist_echoes(SID), {"echo:a": _echo("echo:a", "hello", 5)}),
+            ("_mark_dropped_echoes", lambda be: be._mark_dropped_echoes(SID, [], refeed=False), {"echo:a": _echo("echo:a", "hello", 5)}),
+            ("prune_live", lambda be: be.prune_live(SID, {"landed"}, (), 0), {"landed": _work("landed", 1)}),
+            ("retire_live_work", lambda be: be.retire_live_work(SID), {"w1": _work("w1", 1)}),
+            ("live_atoms", lambda be: be.live_atoms(SID), {"echo:a": _echo("echo:a", "hello", 5)}),
+            ("dismiss_echo", lambda be: be.dismiss_echo(SID, uuid="echo:d"), {"echo:d": _echo("echo:d", "lost", 5, dropped=True)}),
+        )
+        for name, sweep, seed in sweeps:
+            with self.subTest(sweep=name):
+                be = _backend()
+                be._update_reg = lambda sid, **f: None
+                be._reply_on_disk = lambda sid, u: True
+                tail = _ProbedTail(be._live_lock, seed)
+                be._live[SID] = tail
+                sweep(be)
+                reachable = be._live.get(SID)
+                orphaned = [k for k in tail.stashed if reachable is None or k not in reachable]
+                self.assertEqual(tail.stashed, [], "%s ran its emptiness check WITHOUT the tail lock: a concurrent "
+                                                   "stash got in (%r)%s" % (name, tail.stashed,
+                                                                            "; the sid-level pop then orphaned %r" % orphaned if orphaned else ""))
+                self.assertGreaterEqual(tail.refused, 1, "%s checked the tail's emptiness under the lock" % name)
+
     def test_every_sweep_and_stash_is_locked_by_source(self):
         """A pin on the rule's coverage, so a new unlocked walk fails here before it fails live: every
         method that touches `_live` takes the lock (or goes through _stash_live, which does)."""
@@ -452,7 +512,7 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
     def test_the_line_says_what_that_message_lost_by_its_shape(self):
         """'(the transcript keeps it)' was true for assistant/user records only; a SystemMessage frame
         or a ResultMessage exists on the stream alone, and the line has to say so for the message it is
-        about. By SHAPE, not class (round-2 review): a compact_boundary IS a transcript record, a
+        about. By SHAPE, not class: a compact_boundary IS a transcript record, a
         `<local-command-stdout>` UserMessage from a control request is not, and a ResultMessage's turn
         'still closed' only if the settle ran — here the whole handler is replaced, so it did not."""
         lines = []
@@ -511,7 +571,7 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertRegex(probs[0], r"at .*\.py:\d+", "it carries the frame chain from the first")
         self.assertIn("(4 repeats this kernel life", probs[0], "…and the count of the repeats")
         self.assertEqual(be.problem_seq(), seq0 + 1, "one cache bust for the new problem, none per repeat")
-        logged = [l for l in lines if "KeyError while handling" in l]
+        logged = [l for l in lines if re.search(r"KeyError( at \S+:\d+ \w+)? while handling", l)]
         self.assertEqual(len(logged), 5, "every failure is a kernel-log line — nothing silent")
         self.assertIn("repeat 5", logged[4])
         self.assertNotRegex(logged[4], r"\.py:\d+", "repeats do not re-print the chain")
@@ -529,8 +589,8 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         self.assertIn("(5 repeats this kernel life", _problems(be)[0])
 
     def test_a_ring_entry_evicted_meanwhile_enters_again_as_new_with_the_full_line(self):
-        """The first-vs-repeat decision and the ring's dedupe were two independent counters (round-2
-        review): once the ring had evicted the entry, the next repeat logged the short line and the
+        """The first-vs-repeat decision and the ring's dedupe were two independent counters: once
+        the ring had evicted the entry, the next repeat logged the short line and the
         ring built its NEW row from it — no frame chain, no consequence, and a pointer at 'the first'
         in a kernel log that may have rotated. A repeat whose key is not in the ring now re-enters with
         the full line, counted; the repeats after it count on that row in the short form again."""
@@ -571,6 +631,30 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         for i in range(be.PROBLEM_RING):
             be._log("unrelated problem %d" % i, problem=True)
         self.assertFalse(be.problem_keyed(("k", 1)), "evicted → not in the ring")
+
+    def test_the_failing_site_leads_the_line_and_fits_the_error_centers_row(self):
+        """The error center shows a row's first 240 characters (kernel.py _sdk_problem_rows caps the text
+        at 400, badge-mirror.ts at 240) and the chain sat at the END of the line, after the consequence
+        prose — about 335 characters for a settled result — so the user never saw WHERE a handler
+        failed. The failing site now follows the exception type, ahead of the prose; the full chain
+        stays at the tail, innermost first, for the kernel log (2026-09-07 review)."""
+        be = _backend()
+        s = _session(be)
+        e, tail = LogHelpers._long_named_chain(10)
+        msg = _ResultMessage()
+        s._settled_msg = msg                            # the settle ran: the longest consequence prose
+        s._note_message_failure(msg, e)
+        line = _problems(be)[0]
+        site = "a_module_name_of_ordinary_length.py:20 " + tail
+        self.assertIn(site, line[:240], "the failing frame is inside the error center's row: %r" % line[:240])
+        self.assertTrue(line.startswith("sdk session web: KeyError at %s while handling a ResultMessage message; " % site),
+                        "the site follows the type, ahead of the prose: %r" % line[:200])
+        self.assertIn("the turn still settled", line)
+        self.assertRegex(line, r"\. Frames, innermost first: %s < a_module_name_of_ordinary_length\.py:\d+ "
+                               r"a_handler_frame_with_a_realistic_name_08 < " % site.replace(".", r"\."))
+        # a failure with no traceback (a hand-built exception) names no site rather than raising
+        s._note_message_failure(_SystemMessage("status"), ValueError("bare"))
+        self.assertIn("ValueError at ? while handling a SystemMessage/status message", _problems(be)[-1])
 
     def test_a_clean_handler_reports_true_and_logs_nothing(self):
         be = _backend()
@@ -614,7 +698,7 @@ class HandlerFailuresStayWithTheirMessage(unittest.TestCase):
         probs = _problems(be)
         self.assertEqual(len(probs), 2, "the report landed before the callback raised, and the broken "
                                         "callback is its own entry — each deduped across the repeats: %r" % probs)
-        self.assertIn("KeyError while handling a ResultMessage", probs[0])
+        self.assertRegex(probs[0], r"KeyError at \S+:\d+ boom while handling a ResultMessage")
         self.assertIn("(3 repeats this kernel life", probs[0])
         self.assertIn("reporting it failed too (BrokenPipeError)", probs[1])
         self.assertIn("(3 repeats this kernel life", probs[1])
@@ -628,8 +712,8 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
     while the session reads 'working'. The rule: the branch is ONE try from its first statement, and
     its finally is the whole settle. The first cut opened the try only ahead of the rewind steps, so
     the api-health note, the spend fold and even `inflight = 0` sat outside it: a raise there parked
-    the turn while the failure line claimed it had closed (round-2 review — the verifier's probes were
-    a failing spend write and a NaN usage field, both reproduced here)."""
+    the turn while the failure line claimed it had closed (the probes were a failing spend write and a
+    NaN usage field, both reproduced here)."""
     def setUp(self):
         sb.SdkSession._stream_fail_seen.clear()
 
@@ -683,12 +767,12 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
-        self.assertIn("OSError while handling a ResultMessage", probs[0])
+        self.assertRegex(probs[0], r"OSError at \S+:\d+ boom while handling a ResultMessage")
         self.assertIn("the turn still settled", probs[0])
 
     def test_a_raising_spend_write_still_settles_the_turn(self):
-        """The verifier's probe: _record_spend raising on a result that carries a cost — a step that sat
-        BEFORE the try and before inflight = 0 in the first cut, so the turn never settled. The result
+        """_record_spend raising on a result that carries a cost — a step that sat BEFORE the try and
+        before inflight = 0 in the first cut, so the turn never settled. The result
         carries a `modelUsage` map, the shape a current CLI emits: a paid result WITHOUT one takes the
         fold's per-turn fallback and files its own problem line first (usage_fallback_notice), which is
         that path's subject, not this test's — here the ring must hold the containment's line alone."""
@@ -703,7 +787,7 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
-        self.assertIn("OSError while handling a ResultMessage", probs[0])
+        self.assertRegex(probs[0], r"OSError at \S+:\d+ bad_spend while handling a ResultMessage")
         self.assertIn("the turn still settled", probs[0])
         self.assertIn("stopped where it failed", probs[0], "…and says the bookkeeping did not finish")
 
@@ -718,8 +802,48 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         self._assert_settled(s, out)
         probs = _problems(be)
         self.assertEqual(len(probs), 1)
-        self.assertIn("ValueError while handling a ResultMessage", probs[0])
+        self.assertIn("ValueError at ", probs[0])
+        self.assertIn("while handling a ResultMessage", probs[0])
         self.assertIn("the turn still settled", probs[0])
+
+    def test_a_failing_spend_step_skips_neither_the_rewind_consumption_nor_the_live_tail_sweep(self):
+        """The spend accounting ran FIRST inside the try, so a NaN usage field or a failing spend write
+        stopped the body there: the settle still closed the turn, but the rewind flag stayed armed (its
+        registry clear and the branch-take event never ran) and the live tail kept the turn's work atoms —
+        a reply the transcript never got stayed merged, forcing the turn open on the next build. The
+        spend step runs last now (2026-09-07 review): its failure costs the spend readout and nothing else."""
+        import json
+        for trigger in ("a NaN usage field", "a failing spend write"):
+            with self.subTest(trigger=trigger):
+                be = _backend()
+                s = self._busy(be)
+                s._rewind_to = s._rewind_leaf = "11111111-2222-3333-4444-dddddddddd04"
+                s._rewind_armed = True                 # the rewind turn is the one settling: its flag is consumed here
+                resolved = []
+                be.rewind_resolved_cb = lambda sid, outcome: resolved.append(outcome)
+                be._stash_live(SID, "w1", _work("w1", 1))    # a work atom of the turn, never landed
+                fields = {"total_cost_usd": 0.5}
+                if trigger == "a NaN usage field":
+                    fields["usage"] = json.loads('{"input_tokens": NaN, "output_tokens": 5}')
+                else:
+                    # a `modelUsage` map, as test_a_raising_spend_write_still_settles_the_turn: a paid result
+                    # WITHOUT one files the fold's usage-fallback line first, and this test wants the
+                    # containment's line alone in the ring
+                    fields["usage"] = {"input_tokens": 10}
+                    fields["model_usage"] = {"claude-test-model": {"inputTokens": 10, "outputTokens": 5}}
+                    def bad_spend(*a, **k):
+                        raise OSError(28, "No space left on device")
+                    be._record_spend = bad_spend
+                out = self._settle(be, s, ok_expected=False, msg=_result(**fields))
+                self._assert_settled(s, out)
+                self.assertEqual(s._rewind_to, "", "the rewind flag was consumed before the spend step failed")
+                self.assertFalse(s._rewind_armed)
+                self.assertEqual(resolved, ["taken"], "the branch-take event reached the kernel")
+                self.assertNotIn("w1", be._live.get(SID) or {}, "the live-tail sweep ran")
+                probs = _problems(be)
+                self.assertEqual(len(probs), 1, probs)
+                self.assertIn("while handling a ResultMessage", probs[0])
+                self.assertIn("the turn still settled", probs[0])
 
     def test_a_failure_before_the_branch_is_reported_as_not_settled(self):
         """The one place a ResultMessage's handling can fail OUTSIDE the branch is the elif chain
@@ -765,7 +889,7 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
         self.assertIn("settle (web): the 'waiting' state write failed: OSError", probs[0])
 
     def test_a_raising_log_callback_in_the_report_loop_keeps_the_bookkeepings_exception(self):
-        """Three failures at once (round-3 review): the bookkeeping raises (a NaN usage field), a settle
+        """Three failures at once: the bookkeeping raises (a NaN usage field), a settle
         step fails (the 'waiting' write at ENOSPC) AND the kernel's log callback raises (stderr closed
         under a service restart). The report loop was the one unguarded step left after the flags, and
         its raise REPLACED the bookkeeping's exception: the containment reported a BrokenPipeError and
@@ -792,8 +916,9 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
                         "the settle step's own report landed before the callback raised: %r" % probs)
         filed = [p for p in probs if "while handling a ResultMessage" in p]
         self.assertEqual(len(filed), 1, probs)
-        self.assertIn("ValueError while handling a ResultMessage", filed[0],
-                      "the bookkeeping's exception is the one the containment files, not the callback's")
+        # the fold's raise is in result_token_totals here (this backend's split of upstream's _turn_usage)
+        self.assertRegex(filed[0], r"ValueError at \S+:\d+ result_token_totals while handling a ResultMessage",
+                         "the bookkeeping's exception is the one the containment files, not the callback's")
         self.assertIn("the turn still settled", filed[0])
         self.assertIn("_on_message", filed[0], "…with the fold's frame")
         self.assertNotIn("BrokenPipeError while handling", " ".join(probs))
@@ -832,7 +957,7 @@ class TheSettleRunsWhateverTheResultsBookkeepingDid(unittest.TestCase):
 
 
 class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
-    """Pre-existing on main, found by the round-3 review of the settle: its finally wakes the input
+    """Pre-existing, found while reviewing the settle: its finally wakes the input
     feeder and THEN arms the deferred reconnect, both wakeups queued FIFO on the loop, so the feeder
     ran first and fed a message gate-held behind the interrupted turn to the client the waker was
     about to tear down; the teardown stranded it in flight and _reconcile_stranded — on a resumable
@@ -1134,9 +1259,10 @@ class UnknownIdsInTheNewSdkShapesDoNotRaise(unittest.TestCase):
                 self.assertTrue(self._run(s, _HookEventMessage(st, {"session_id": UNKNOWN_SID, "hook_id": MSG_UUID})))
         unhandled = [l for l in lines if "unhandled SystemMessage subtype" in l]
         self.assertEqual(len(unhandled), 5, "one line per subtype per kernel life: %r" % unhandled)
-        for l in unhandled:
-            self.assertNotIn(UNKNOWN_SID, l, "keys only — never the payload's values")
         self.assertEqual(_problems(be), [], "an unhandled subtype is a note, not a failure")
+        self.assertEqual(be.live_atoms(SID), [], "…and produces no atom")
+        for l in lines:
+            self.assertNotIn(UNKNOWN_SID, l, "keys only, never the payload's values in the log")
 
     def test_task_events_for_a_task_the_kernel_never_recorded(self):
         be = _backend()
@@ -1162,19 +1288,58 @@ class LogHelpers(unittest.TestCase):
             raise ValueError("v")
         try:
             inner()
-        except ValueError as e:
+        except ValueError as exc:
+            e = exc                                    # the except clause unbinds its own name on exit
             chain = sb._compact_tb(e)
-        self.assertRegex(chain, r"^test_sdk_stream_survives_handler_errors\.py:\d+ test_compact_tb_is_a_file_line_chain_without_locals"
-                                r" > test_sdk_stream_survives_handler_errors\.py:\d+ inner$")
+        self.assertRegex(chain, r"^test_sdk_stream_survives_handler_errors\.py:\d+ inner"
+                                r" < test_sdk_stream_survives_handler_errors\.py:\d+ test_compact_tb_is_a_file_line_chain_without_locals$",
+                         "innermost first: the failing site, then its caller")
         self.assertNotIn("secret", chain)
         self.assertNotIn(secret, chain)
         self.assertEqual(sb._compact_tb(ValueError("no traceback")), "?")
+        self.assertRegex(sb._failing_site(e), r"^test_sdk_stream_survives_handler_errors\.py:\d+ inner$")
+        self.assertEqual(sb._failing_site(ValueError("no traceback")), "?")
+
+    def test_the_failing_site_skips_synthetic_scopes_and_names_the_function(self):
+        """Before Python 3.12 (PEP 709) a comprehension runs in its own frame, so a raise inside one has
+        `<dictcomp>` as its innermost frame: the site read `file:line <dictcomp>` on 3.10 and 3.11 and
+        `file:line _turn_usage` on 3.12 and 3.13, and the NaN-usage settle test went red on two of the
+        four interpreters (upstream CI on the 2026-09-07 review). The site names the innermost REAL
+        function: every angle-bracketed scope is skipped, so a generator expression (its own frame on
+        every interpreter) names the function too, at the line the comprehension is on — while the
+        chain keeps every frame the interpreter made. With nothing real to name, the innermost stands."""
+        me = "test_sdk_stream_survives_handler_errors.py"
+        def a_fold_with_a_comprehension(u):
+            return {k: int(u[k]) for k in ("input_tokens",)}
+        def a_count_with_a_generator(u):
+            return sum(int(u[k]) for k in ("input_tokens",))
+        def a_caller(fn):
+            fn({"input_tokens": float("nan")})
+        for fn in (a_fold_with_a_comprehension, a_count_with_a_generator):
+            try:
+                a_caller(fn)
+            except ValueError as exc:
+                e = exc                                # the except clause unbinds its own name on exit
+            line = fn.__code__.co_firstlineno + 1      # the one-line body: the comprehension's line
+            self.assertEqual(sb._failing_frame(e), (me, line, fn.__name__))
+            self.assertEqual(sb._failing_site(e), "%s:%d %s" % (me, line, fn.__name__))
+            chain = sb._compact_tb(e)
+            self.assertIn("%s:%d %s < %s:" % (me, line, fn.__name__, me), chain, "the function is a step of the chain")
+            self.assertEqual(chain.startswith("%s:%d <" % (me, line)),
+                             fn is a_count_with_a_generator or sys.version_info < (3, 12),
+                             "the chain keeps the synthetic frame wherever the interpreter made one: %r" % chain)
+        # nothing real to name: a raise caught at the top level of an exec'd string has only synthetic
+        # frames (`<module>`, and before 3.12 the comprehension's own) — the innermost one is named
+        ns = {}
+        exec(compile("try:\n    [1 // 0 for _ in (0,)]\nexcept ZeroDivisionError as exc:\n    err = exc\n",
+                     "a_string_of_code.py", "exec"), ns)
+        self.assertRegex(sb._failing_site(ns["err"]), r"^a_string_of_code\.py:2 <(listcomp|module)>$")
 
     def test_compact_tb_is_bounded_to_the_innermost_frames_and_a_length_cap(self):
         """A RecursionError's chain ran to 18 KB — into the error-center ring and every feed payload that
-        carries it. The chain keeps the innermost COMPACT_TB_FRAMES frames (the failing site is at that
-        end), says how many outer ones it dropped, and fits COMPACT_TB_CHARS by dropping MORE outer
-        frames — never by clipping its tail, which is the failing frame."""
+        carries it. The chain keeps the innermost COMPACT_TB_FRAMES frames (the failing site LEADS, since
+        2026-09-07), says how many outer ones it dropped, and fits COMPACT_TB_CHARS by dropping MORE
+        outer frames — never by clipping the failing frame."""
         def rec(n):
             return rec(n + 1)
         try:
@@ -1185,19 +1350,19 @@ class LogHelpers(unittest.TestCase):
             depth = len(traceback.extract_tb(e.__traceback__))
         self.assertGreater(depth, 100)
         self.assertLessEqual(len(chain), sb.COMPACT_TB_CHARS)
-        self.assertRegex(chain, r"^…%d outer frames dropped… > " % (depth - sb.COMPACT_TB_FRAMES))
-        self.assertEqual(chain.count(" > "), sb.COMPACT_TB_FRAMES, "the prefix plus the kept frames")
-        self.assertTrue(chain.endswith(" rec"), "the innermost frame is kept: %r" % chain[-40:])
+        self.assertRegex(chain, r" < …%d outer frames dropped…$" % (depth - sb.COMPACT_TB_FRAMES))
+        self.assertEqual(chain.count(" < "), sb.COMPACT_TB_FRAMES, "the kept frames plus the suffix")
+        self.assertRegex(chain, r"^test_sdk_stream_survives_handler_errors\.py:\d+ rec < ", "the innermost frame leads: %r" % chain[:60])
         # a tight cap with every frame allowed: the cap drops outer frames and the failing one stays
-        # (150: room for the prefix and two of this file's ~50-character frames, not three)
+        # (150: room for the suffix and two of this file's ~50-character frames, not three)
         tight = sb._compact_tb(e, max_frames=depth, cap=150)
         self.assertLessEqual(len(tight), 150)
-        self.assertTrue(tight.endswith(" rec"), "the innermost frame survives the cap: %r" % tight)
-        kept = tight.count(" > ")                      # the prefix plus the kept frames
+        self.assertRegex(tight, r"^test_sdk_stream_survives_handler_errors\.py:\d+ rec < ", "the innermost frame survives the cap: %r" % tight)
+        kept = tight.count(" < ")                      # the kept frames plus the suffix
         self.assertEqual(kept, 2, "two frames fit in 150 characters, and both are kept whole: %r" % tight)
-        self.assertRegex(tight, r"^…%d outer frames dropped… > " % (depth - kept), "the prefix counts every drop")
+        self.assertRegex(tight, r" < …%d outer frames dropped…$" % (depth - kept), "the suffix counts every drop")
         # one dropped frame reads as one (an unbounded cap, so only the frame bound drops)
-        self.assertRegex(sb._compact_tb(e, max_frames=depth - 1, cap=10 ** 6), r"^…1 outer frame dropped… > ")
+        self.assertRegex(sb._compact_tb(e, max_frames=depth - 1, cap=10 ** 6), r" < …1 outer frame dropped…$")
 
     @staticmethod
     def _long_named_chain(depth, tail="a_failing_function_with_a_long_name", module="a_module_name_of_ordinary_length.py"):
@@ -1214,7 +1379,7 @@ class LogHelpers(unittest.TestCase):
             return e, tail
 
     def test_the_cap_drops_outer_frames_and_keeps_the_failing_one(self):
-        """Round-2 finding: the first cut clipped the chain's TAIL at the cap — the innermost frame —
+        """The first cut clipped the chain's TAIL at the cap — the innermost frame —
         so a chain through long-named frames lost its failing site."""
         e, tail = self._long_named_chain(10)
         frames = traceback.extract_tb(e.__traceback__)          # the builder's own frame + the ten exec'd ones
@@ -1222,11 +1387,12 @@ class LogHelpers(unittest.TestCase):
         self.assertGreater(len(full), sb.COMPACT_TB_CHARS, "the shape engages the cap")
         chain = sb._compact_tb(e)
         self.assertLessEqual(len(chain), sb.COMPACT_TB_CHARS)
-        self.assertTrue(chain.endswith(" " + tail), "the failing frame is the chain's last step: %r" % chain[-80:])
-        kept = chain.count(" > ")
-        self.assertRegex(chain, r"^…%d outer frames dropped… > " % (len(frames) - kept))
+        self.assertTrue(chain.startswith("a_module_name_of_ordinary_length.py:20 %s < " % tail),
+                        "the failing frame is the chain's first step: %r" % chain[:80])
+        kept = chain.count(" < ")
+        self.assertRegex(chain, r" < …%d outer frames dropped…$" % (len(frames) - kept))
         self.assertLess(kept, sb.COMPACT_TB_FRAMES, "the cap dropped frames the frame bound had kept")
-        self.assertNotIn("…", chain[chain.index(" > "):], "no step is clipped")
+        self.assertNotIn("…", chain[:chain.rindex(" < ")], "no step is clipped")
         self.assertEqual(sb._failing_frame(e), ("a_module_name_of_ordinary_length.py", 20, tail))
 
     def test_an_innermost_frame_wider_than_the_cap_keeps_its_file_and_line(self):
@@ -1235,14 +1401,14 @@ class LogHelpers(unittest.TestCase):
         one = sb._compact_tb(e, cap=80)
         self.assertEqual(len(one), 80)
         dropped = len(traceback.extract_tb(e.__traceback__)) - 1
-        self.assertTrue(one.startswith("…%d outer frames dropped… > %s " % (dropped, site)), "prefix and file:line stand: %r" % one)
-        self.assertTrue(one.endswith("…") and tail[:8] in one, "the function name is what gets clipped: %r" % one)
-        self.assertEqual(sb._compact_tb(e, cap=10000), " > ".join(sb._frame_step(f) for f in traceback.extract_tb(e.__traceback__)),
-                         "no cap engaged: the full chain, no prefix")
+        self.assertTrue(one.startswith(site + " " + tail[:8]), "the file:line stands, then the clipped name: %r" % one)
+        self.assertTrue(one.endswith("… < …%d outer frames dropped…" % dropped), "the function name is what gets clipped, the suffix stands: %r" % one)
+        self.assertEqual(sb._compact_tb(e, cap=10000), " < ".join(sb._frame_step(f) for f in reversed(traceback.extract_tb(e.__traceback__))),
+                         "no cap engaged: the full chain, innermost first, no suffix")
         self.assertEqual(sb._failing_frame(ValueError("no traceback")), None)
 
     def test_two_failing_sites_under_long_chains_are_two_ring_entries(self):
-        """Round-2 finding: with the cap engaged the dedupe key read off the rendering was the literal
+        """With the cap engaged, the dedupe key read off the rendering was the literal
         '…', folding every long-chained failure of one type into one entry. The key is the innermost
         frame's (file, line, function), read from the traceback."""
         be = _backend()
@@ -1251,9 +1417,11 @@ class LogHelpers(unittest.TestCase):
             e, _ = self._long_named_chain(10, tail=tail)
             s._note_message_failure(_ResultMessage(), e)
         probs = _problems(be)
-        self.assertEqual(len(probs), 2, "one entry per failing site: %r" % [p[-90:] for p in probs])
+        self.assertEqual(len(probs), 2, "one entry per failing site: %r" % [p[:120] for p in probs])
         for p, tail in zip(probs, ("a_failing_function_with_a_long_name", "a_completely_different_failing_function")):
-            self.assertTrue(p.endswith(" " + tail), "each entry names its own failing frame: %r" % p[-90:])
+            site = "a_module_name_of_ordinary_length.py:20 " + tail
+            self.assertIn("KeyError at %s while handling" % site, p, "each entry names its own failing frame: %r" % p[:120])
+            self.assertIn("Frames, innermost first: %s < " % site, p, "…and its chain leads with it: %r" % p[-200:])
         e, _ = self._long_named_chain(10)
         s._note_message_failure(_ResultMessage(), e)
         self.assertEqual(len(_problems(be)), 2, "the same site again counts on its entry")

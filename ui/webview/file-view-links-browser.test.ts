@@ -334,11 +334,18 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
     await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
+    // Still the one fetch: a text-size step repaints from the text on hand (setTextSize reads the place, restyles, seats;
+    // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
+    // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and
+    // the assertion below could not say whether it arrived during the size steps or at the click. The viewer has no path
+    // to it (reload is the panel's, on an mtime this fixture never moves; the pane's Recent rows are hidden while the
+    // viewer is up), and 12 re-runs under the same load passed, so it is read as the environment's, not the viewer's.
+    assert.deepEqual(served, [{ path: APP, sid: SID }], "one fetch so far, the file itself: the size steps fetched nothing");
 
     // ── a path link opens the file it names, with the viewer's session, and the pane records it as recent ─
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(await fetched(1), { path: CONFIG, sid: SID }, "the resolved path, the session the file belongs to");
+    assert.deepEqual(await fetched(1), { path: CONFIG, sid: SID }, "the click's open is the next fetch: the resolved path, the session the file belongs to (every fetch so far: " + JSON.stringify(served) + ")");
     const recent = await page.evaluate(() => JSON.parse(localStorage.getItem("romp:files-recent") || "[]").map((r: { path: string }) => r.path));
     assert.ok(recent.includes(CONFIG), "opened through the pane's own open: the Recent list has it");
 

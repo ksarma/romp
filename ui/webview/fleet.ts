@@ -5,6 +5,8 @@
 // bottom "Show completed" checkbox (default off). The recency colour helpers are copied verbatim from render.ts
 // so the colours are IDENTICAL to the ledger box.
 import { delegate, flash } from "./actions";
+import { paintHeld, paintReleased } from "./paint-gate";
+import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is upstream's text, pinned by its tests
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { SessionViews, viewTagUnion } from "./session-views";
@@ -62,7 +64,7 @@ let searchQuery = "";     // #fleet-search filter (the user 2026-06-29): show on
 let fleetViews: SessionViews | null = null;   // the rendered views blob off the feed payload — the outline lens reads it (2026-08-25)
 let outlineViewsWriteSeq = 0;                   // per-page counter behind this pane's lens-write ids (mintWriteId)
 // This pane's lens write: the frame copy it holds with only the outline lens changed, posted with a
-// writeId and `edited: []` (round 5 of the 2026-09-05 review) — the empty list is the kernel's word
+// writeId and `edited: []` (the 2026-09-05 review) — the empty list is the kernel's word
 // that the write changes NO tag, so the tags the copy carries are never applied over a newer store;
 // only the lens lands. The pane ignores the viewsAck and settles from the next feed frame, as it
 // always has (docs/read-side.md, the views contract).
@@ -414,15 +416,31 @@ function hostLoadStrip(): HTMLElement {
 // The pane is hidden by default in the dashboard shell (a display:none iframe) yet it received every feed
 // push and rebuilt its whole list for nobody, on the main thread every pane shares (2026-09-04). While the
 // list is not on screen the payload is kept and the rebuild deferred to the moment it comes into view.
-let paneVisible = true;
+// TWO measures of "not on screen" (the user 2026-09-07, whose dashboard froze on the return to its tab):
+// the observer sees a display:none pane but never fires while the TAB is hidden — so an on-screen pane in
+// a background tab kept rebuilding on every push, and nothing fired on the return — and document.hidden
+// sees the tab but never a display:none pane. Both gate, both events release, and the payload (sessions,
+// asksById, the pending hosts) is applied either way; only the rebuild waits (paint-gate.ts).
+let paneVisible: boolean | null = null;   // the observer's last word; null until it speaks (the gate reads null as on screen; the shim's word waits for it: paint-gate.ts)
 let paneDirty = false;
 function watchPaneVisibility(list: HTMLElement): void {
-  if (typeof IntersectionObserver === "undefined") return;   // no observer → always render, as before
+  if (typeof IntersectionObserver === "undefined") return;   // no observer → the tab's visibility alone gates
   new IntersectionObserver((entries) => {
     paneVisible = entries.some((e) => e.isIntersecting);
-    if (paneVisible && paneDirty) { paneDirty = false; render(); }
+    releasePaint();
   }).observe(list);
 }
+// Synchronous on purpose: a paint inside the event handler is the earliest fresh frame after the
+// compositor's cached one; a requestAnimationFrame hop is later at best and never fires in a hidden frame.
+function releasePaint(): void {
+  publishPaneHidden(document.hidden, paneVisible);   // the shim's word first, on every release event (paint-gate.ts)
+  if (!paintReleased(paneDirty, document.hidden, paneVisible)) return;
+  paneDirty = false;
+  render();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
+// the tab going hidden releases nothing, so the word is published on that arm here (the release publishes the other)
+document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, paneVisible); });
 let paneWatching = false;
 function render() {
   syncFleetTagBtn?.();
@@ -432,7 +450,7 @@ function render() {
   // Nobody can see it: paint when it is shown — except the FIRST content, which paints through so the reveal
   // shows the list at once rather than the pane loader fading out over an empty pane (an empty list IS the
   // loader-up state; one hidden render buys an instant reveal).
-  if (!paneVisible && list.childElementCount > 0) { paneDirty = true; return; }
+  if (paintHeld(document.hidden, paneVisible, list.childElementCount > 0)) { paneDirty = true; return; }
   list.replaceChildren();
   // BEFORE the first payload: leave the list EMPTY so the page's romp loader (_pane_spin over #fleet-list)
   // stays up — no child means it never hides — instead of flashing a false "no work" message (the user

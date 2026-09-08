@@ -23,6 +23,7 @@ pm = load_source("romp_postal", os.path.join(BIN, "romp-postal-service"))
 ALPHA = "11111111-2222-3333-4444-555555555555"
 GHOST = "99999999-8888-7777-6666-555555555555"
 THREAD = "11111111-2222-3333-4444-777777777777"
+PEER = "99999999-8888-7777-6666-555555555557"    # a federated peer: known here only by its heartbeat
 
 
 def _tool_names():
@@ -85,7 +86,7 @@ class RecallReachesParkedMailForTheDead(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("ROMP_SESSIONS_FILE", None)
-        for rid in (GHOST, "99999999-8888-7777-6666-555555555556"):
+        for rid in (GHOST, "99999999-8888-7777-6666-555555555556", PEER):
             box = pm.MAILROOT / rid / "new"
             if box.is_dir():
                 for f in box.iterdir():
@@ -128,6 +129,21 @@ class RecallReachesParkedMailForTheDead(unittest.TestCase):
         finally:
             for f in box.iterdir():
                 f.unlink()
+
+
+    def test_recall_by_a_remote_peers_name(self):
+        # a peer known here only through its heartbeat (a federated session: no local row, no names
+        # entry): recall by its name resolves through the remote presence _recip_id_for folds into the
+        # listing it is handed, as it did when it fetched the listing itself (2026-09-06)
+        pm.HEARTBEATS[PEER] = ("ghost", pm.time.time())
+        self.addCleanup(pm.HEARTBEATS.clear)
+        (pm.NAMES_DIR / PEER).unlink(missing_ok=True)       # only the heartbeat may name it
+        box = pm.MAILROOT / PEER / "new"
+        box.mkdir(parents=True, exist_ok=True)
+        (box / "m8").write_text("From: alpha\nFrom-Id: %s\n\nthe body" % ALPHA)
+        removed = pm._recall(ALPHA, "ghost", None)
+        self.assertEqual([r["id"] for r in removed], ["m8"])
+        self.assertEqual(list(box.iterdir()), [])
 
 
 class KernelSilenceIsNotDeadness(unittest.TestCase):

@@ -322,8 +322,16 @@ class Floors(unittest.TestCase):
         self.assertEqual(sb._unit_texts(), [], "no unit, no drop-in, no plist")
         self.assertEqual(es.helper_command(), "", "no settings.json, no apiKeyHelper")
         self.assertEqual(es.claude_config_dir(), os.environ["CLAUDE_CONFIG_DIR"])
-        self.assertTrue(os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR"),
-                        "the one live test that borrows the user's helper command has a way to the real location")
+        real = os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR") or ""
+        self.assertTrue(real, "the one live test that borrows the user's helper command has a way to the real location")
+        # ...and that way leads to the operator's location, captured BEFORE the floor was applied (the 2026-09-08
+        # fold's first cut saved the floor itself, and the live test skipped as "no auth"): never the run's
+        # temp dir, never the floor
+        self.assertNotEqual(os.path.realpath(real), os.path.realpath(os.environ["CLAUDE_CONFIG_DIR"]),
+                            "the saved location is the floor itself")
+        self.assertFalse(os.path.basename(real).startswith("romp-tests-claude-"), real)
+        self.assertFalse(os.path.realpath(real).startswith(os.path.realpath(tempfile.gettempdir()) + os.sep),
+                         "the saved location is under the run's temp root")
 
     def test_the_env_file_is_floored_to_a_path_that_does_not_exist(self):
         # both spellings keysource accepts, one path, absent — so every read is the "no file" case and no

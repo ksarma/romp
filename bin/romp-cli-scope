@@ -48,8 +48,8 @@
 #   `romp-cli-scope: ignored: …` — one of the per-session limits below was not applied: a value that
 #     does not parse, a property this systemd rejects, or an adjustment that parses but Linux will not
 #     let this process write. The CLI runs in its scope without it. The CLI starts, so the kernel logs
-#     this line the moment it arrives, as a problem naming the session, and counts no fallback for it
-#     (the scope is there). One launch can write more than one (the kernel counts lines, not launches).
+#     this line the moment it arrives, as a problem naming the session; it is not a fallback (the scope
+#     is there). One launch can write more than one.
 # The rest of the CLI's stderr the kernel only buffers, for a launch that fails.
 #
 # Per-session limits (2026-09-06), every one opt-in and none set by default. A session's shell that
@@ -185,6 +185,7 @@ fi
 # them: only a second failure of the properties themselves drops them (for the session's whole life),
 # so a passing fault on the first try — a bus hiccup, the 10 s bound — does not cost the limits. The
 # line quotes that second failure, the one that decided: the first may have been the passing fault.
+# shellcheck disable=SC2086  # $props is split on purpose (both branches): a validated value has no whitespace
 if ! preflight $props; then
     if [ -z "$props" ] || ! preflight; then
         echo "romp-cli-scope: fallback: systemd-run cannot start a transient scope (${err:-no detail}) — running the CLI directly, outside a scope; a service restart will take its background work down" >&2
@@ -201,5 +202,6 @@ case "$t" in
 esac
 unit="romp-session-$(printf '%.8s' "$sid")-$$-$t"
 
+# shellcheck disable=SC2086  # split on purpose, as above
 exec systemd-run --user --scope --quiet --collect --unit="$unit" \
     --description="romp session $sid" $props -- "$ROMP_CLI_REAL" "$@"

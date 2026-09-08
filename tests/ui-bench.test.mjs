@@ -28,10 +28,10 @@ import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  APPS, DELTA_SEP, REPO, STRIPPED_ENV, aggregateProfile, assertTmpPath, barsKeys, benchRoot, browserAvailability, buildReport, classifyFrame,
-  compareReports, frameKey, launchBrowser, loadFrames, mergeAggregates, percentile, rankProfile, recordFrames, refineAlignment, renderCompare,
-  renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize, sweepDeadRuns,
-  synthesizeFrames, writeFrames,
+  APPS, DELTA_SEP, REPO, STRIPPED_ENV, WHOLE_STATE_TYPES, aggregateProfile, assertTmpPath, barsKeys, benchRoot, browserAvailability, buildReport, classifyFrame,
+  compareReports, dispatchExpectation, dispatchType, frameKey, frameSettle, launchBrowser, loadFrames, matchDispatches, mergeAggregates, mergeWindows, percentile, rankProfile,
+  recordFrames, refineAlignment, renderCompare, renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize,
+  sweepDeadRuns, synthesizeFrames, writeFrames,
 } from "../tools/ui-bench.mjs";
 
 const TOOL = path.join(REPO, "tools", "ui-bench.mjs");
@@ -101,15 +101,22 @@ test("percentile is nearest-rank and summarize folds a sample", () => {
   assert.deepEqual(summarize([4, 2]), { n: 2, p50: 2, p90: 4, max: 4, mean: 3 });
 });
 
-function fakeRun({ perFrame, loaf = [], heapUsed = 1000, domElements = 10, consoleErrors = [], addListenerMessages = 0, banner = null }) {
+function fakeRun({ perFrame, loaf = [], heapUsed = 1000, domElements = 10, consoleErrors = [], addListenerMessages = 0, banner = null,
+  dispatch = { hook: true, unmatched: 0, flushTasks: 0, flushMs: 0 } }) {
   return {
     readyMs: 100, replayMs: 50, sent: perFrame, perFrame, misaligned: 0, reconnects: 0, clientMessages: { ready: 1 }, clientDiag: {},
-    loaf, loafKind: "long-animation-frame", domElements, heap: { used: heapUsed, total: heapUsed * 2 }, addListenerMessages, banner,
+    loaf, loafKind: "long-animation-frame", domElements, heap: { used: heapUsed, total: heapUsed * 2 }, addListenerMessages, banner, dispatch,
     cdp: { nodes: domElements * 3, documents: 1, jsEventListeners: 5, layoutCount: 3, recalcStyleCount: 4, layoutMs: 1.5, recalcStyleMs: 0.5, scriptMs: 20, taskMs: 30, heapUsed, heapTotal: heapUsed * 2 },
     consoleErrors, pageErrors: [], warnings: 0, failedResources: [],
   };
 }
-const pf = (i, type, bytes, handlerMs, settleMs) => ({ i, type, bytes, at: i, handlerMs, settleMs, t0: 1000 + i * 100, lenMatch: true });
+// A frame row as replayOnce builds it: pf without a handoff (a keepalive, or a frame the bench did not see handed
+// over), pfd with one, inside the handler (the inline shim) or from a flush task 20 ms after it (the deferred shim).
+const pf = (i, type, bytes, handlerMs, settleMs) => ({ i, type, bytes, at: i, handlerMs, settleMs, t0: 1000 + i * 100, lenMatch: true, dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null });
+const pfd = (i, type, bytes, handlerMs, settleMs, dispatchMs, where = "inline") => {
+  const f = pf(i, type, bytes, handlerMs, settleMs);
+  return { ...f, dispatchT0: where === "inline" ? f.t0 + 0.2 : f.t0 + handlerMs + 20, dispatchMs, dispatchInline: where === "inline" };
+};
 
 test("buildReport folds runs per frame type with percentiles, attribution and end state", () => {
   const run = fakeRun({
@@ -124,7 +131,7 @@ test("buildReport folds runs per frame type with percentiles, attribution and en
   assert.equal(r.tool, "ui-bench");
   assert.equal(r.frames.total, 5);
   assert.equal(r.frames.bytes, 5930);
-  assert.deepEqual(r.first, { index: 1, type: "feed", bytes: 5000, handlerMs: 40, settleMs: 90 }, "the first content frame skips the keepalive");
+  assert.deepEqual(r.first, { index: 1, type: "feed", bytes: 5000, handlerMs: 40, dispatchMs: null, settleMs: 90 }, "the first content frame skips the keepalive");
   assert.deepEqual(Object.keys(r.types), ["feed", "feedDelta", "ka"], "rows ordered by bytes");
   assert.equal(r.types.feedDelta.count, 3);
   assert.equal(r.types.feedDelta.measured, 3);
@@ -230,6 +237,260 @@ test("compareReports subtracts B from A per type and for the totals", () => {
   assert.equal(compareReports(A, paced).endComparable, false);
   assert.equal(compareReports(A, mk(150, 60, 5000, [], 1200)).endComparable, true, "a fifth is within tolerance");
   assert.equal(compareReports({ ...A, frames: undefined }, B).endComparable, false, "an older report without replayMs is not assumed comparable");
+  // The dispatch columns: reports written before they existed carry none, so both sides are null and the text says n/a, never NaN.
+  assert.deepEqual(c.types.feed.dispatchP50, { a: null, b: null, diff: null, pct: null });
+  assert.deepEqual(c.first.dispatchMs, { a: null, b: null, diff: null, pct: null });
+  assert.match(text, /first content frame: .*; handler 100 → 75 ms \(-25, -25%\); dispatch n\/a; settled 200 → 150 ms/);
+  assert.match(text, /^feed\s+count .*; handler p50 100 → 75 ms \(-25, -25%\); dispatch p50 n\/a$/m);
+  assert.doesNotMatch(text, /NaN|undefined/);
+  const A2 = mk(200, 100, 4000, []); A2.first.dispatchMs = 90; A2.types.feed.dispatchMs = { p50: 90, p90: 90, max: 90 };
+  const B2 = mk(150, 60, 5000, []); B2.first.dispatchMs = 60; B2.types.feed.dispatchMs = { p50: 60, p90: 70, max: 80 };
+  const cd = compareReports(A2, B2);
+  assert.deepEqual(cd.types.feed.dispatchP50, { a: 90, b: 60, diff: -30, pct: -33.3 });
+  assert.deepEqual(cd.types.feed.dispatchMax, { a: 90, b: 80, diff: -10, pct: -11.1 });
+  assert.deepEqual(cd.first.dispatchMs, { a: 90, b: 60, diff: -30, pct: -33.3 });
+  const td = renderCompare(cd);
+  assert.match(td, /first content frame: .*; dispatch 90 → 60 ms \(-30, -33\.3%\); settled/);
+  assert.match(td, /^feed\s+count .*; dispatch p50 90 → 60 ms \(-30, -33\.3%\)$/m);
+  assert.match(renderCompare(compareReports(A, B2)), /dispatch p50 - → 60 ms/, "one side only: the missing side prints as -, as every other one-sided field does");
+});
+
+// ── the dispatch hook's records: matching frames to the bundle's inbound calls ───────────────────
+
+test("dispatchType: keepalives and the restart notice never reach the bundle, a view delta reaches it as its slot, everything else as itself", () => {
+  assert.equal(dispatchType("ka"), null);
+  assert.equal(dispatchType("restarting"), null);
+  assert.equal(dispatchType("delta:bars"), "bars");
+  assert.equal(dispatchType("delta:feed"), "feed");
+  assert.equal(dispatchType("feedDelta"), "feedDelta");
+  assert.equal(dispatchType("data"), "data");
+  assert.equal(dispatchType("session"), "session");
+  assert.deepEqual([...WHOLE_STATE_TYPES].sort(), ["bars", "data", "feed", "globalRetryPaused", "tabOrder", "working"], "the shim's WHOLE set");
+});
+
+// The three tests below feed dispatch records WITHOUT n (the handler ordinal the page records), so they
+// exercise the clock fallback; the order rule has its own test after them.
+test("matchDispatches: the inline shim (each handoff inside its own frame's handler) matches every non-keepalive frame to itself", () => {
+  const sent = [{ type: "ka" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }, { type: "feedDelta" }, { type: "working" }];
+  const recs = sent.map((_s, i) => ({ t0: 100 + i * 10 }));
+  // the last handoff's start reads the same clock value as its handler's start (the page clock is coarsened to 0.1 ms)
+  const dispatches = [{ t0: 110.2, dur: 5, type: "feed", inHandler: true }, { t0: 120.1, dur: 1, type: "feedDelta", inHandler: true }, { t0: 140.1, dur: 1, type: "feedDelta", inHandler: true },
+    { t0: 150, dur: 0.1, type: "working", inHandler: true }];
+  const m = matchDispatches(sent, recs, dispatches);
+  assert.deepEqual(m.counts, { dispatched: 4, coalesced: 0, unmatched: 0 });
+  assert.deepEqual(m.perFrame[5], { dispatchT0: 150, dispatchMs: 0.1, coalesced: false, dispatchInline: true, dispatchSettleAt: null }, "a handler start equal to the handoff's start is a candidate (<=, not <)");
+  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null, dispatchSettleAt: null }, "a keepalive is never handed over");
+  assert.deepEqual(m.perFrame[1], { dispatchT0: 110.2, dispatchMs: 5, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 120.1, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.equal(m.perFrame[3].dispatchMs, null);
+  assert.deepEqual(m.perFrame[4], { dispatchT0: 140.1, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  const noFlag = matchDispatches(sent, recs, dispatches.map(({ inHandler, ...d }) => d));
+  assert.equal(noFlag.perFrame[1].dispatchInline, null, "without the page's handler-depth record the flag is unknown, not guessed");
+});
+
+test("matchDispatches: the deferred shim (every handoff after the burst, in queue order) matches chained frames first-in first-out and a whole-state type to its newest frame, the older ones coalesced", () => {
+  const sent = [{ type: "feed" }, { type: "feedDelta" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }];
+  const recs = sent.map((_s, i) => ({ t0: 100 + i * 10 }));
+  // the flush ran after all five handlers; the queue held [feedDelta, feed, feedDelta]: the newer feed took the
+  // older one's place and moved to the end
+  const dispatches = [{ t0: 200, dur: 2, type: "feedDelta", inHandler: false }, { t0: 203, dur: 30, type: "feed", inHandler: false }, { t0: 234, dur: 1, type: "feedDelta", inHandler: false }];
+  const m = matchDispatches(sent, recs, dispatches);
+  assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 0 });
+  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: true, dispatchInline: null, dispatchSettleAt: null }, "the older feed never reached the bundle");
+  assert.deepEqual(m.perFrame[1], { dispatchT0: 200, dispatchMs: 2, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 203, dispatchMs: 30, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[3], { dispatchT0: 234, dispatchMs: 1, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
+  assert.equal(m.perFrame[4].dispatchMs, null);
+});
+
+test("matchDispatches: a view delta matches the dispatch of its slot, a frame received after a handoff started waits for the next, and a dispatch with no candidate is unmatched", () => {
+  const sent = [{ type: "data" }, { type: "bars" }, { type: "delta:bars" }, { type: "delta:bars" }];
+  const recs = [{ t0: 100 }, { t0: 110 }, { t0: 120 }, { t0: 130 }];
+  const dispatches = [{ t0: 100.5, dur: 1, type: "data", inHandler: true }, { t0: 125, dur: 4, type: "bars", inHandler: false }, { t0: 131, dur: 3, type: "bars", inHandler: false }, { t0: 140, dur: 1, type: "session", inHandler: false }];
+  const m = matchDispatches(sent, recs, dispatches);
+  assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 1 });
+  assert.deepEqual(m.perFrame[0], { dispatchT0: 100.5, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.equal(m.perFrame[1].coalesced, true, "the full bars frame was replaced by the first delta's reassembled message before the flush");
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 125, dispatchMs: 4, coalesced: false, dispatchInline: false, dispatchSettleAt: null }, "the delta received before that flush is the one handed over");
+  assert.deepEqual(m.perFrame[3], { dispatchT0: 131, dispatchMs: 3, coalesced: false, dispatchInline: false, dispatchSettleAt: null }, "the delta received after it started waits for the next flush");
+  assert.deepEqual(matchDispatches(sent, [], dispatches).counts, { dispatched: 0, coalesced: 0, unmatched: 4 }, "without page records nothing can match");
+  assert.deepEqual(matchDispatches(sent, recs, []).counts, { dispatched: 0, coalesced: 0, unmatched: 0 });
+});
+
+test("dispatchExpectation: chained types by their frame count, whole-state types by their last frame", () => {
+  assert.deepEqual(dispatchExpectation([{ type: "ka" }, { type: "feed" }, { type: "feedDelta" }, { type: "feed" }, { type: "feedDelta" }, { type: "delta:bars" }, { type: "bars" }, { type: "restarting" }]),
+    { chained: { feedDelta: 2 }, wholeLast: { feed: 3, bars: 6 } });
+  assert.deepEqual(dispatchExpectation([{ type: "ka" }]), { chained: {}, wholeLast: {} });
+});
+
+test("matchDispatches keys candidacy on the handler order the page recorded (n), so same-type frames whose clock reads coincide are each matched to their own handoff; the clock is the fallback for records without n", () => {
+  // The page clock (performance.now(), not cross-origin isolated) is coarsened to 0.1 ms, so a handler that starts
+  // within a tick of a same-type handoff reads the same value; the order rule does not read the clock at all.
+  // The inline shim: two `working` frames handled back to back, each handed over inside its own handler, every read 100.0.
+  const inline = matchDispatches([{ type: "working" }, { type: "working" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 0, type: "working", inHandler: true, n: 1, settleAt: null }, { t0: 100, dur: 0, type: "working", inHandler: true, n: 2, settleAt: null }]);
+  assert.deepEqual(inline.counts, { dispatched: 2, coalesced: 0, unmatched: 0 }, "nothing coalesces on the inline shim, which has no queue");
+  assert.deepEqual(inline.perFrame[0], { dispatchT0: 100, dispatchMs: 0, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.deepEqual(inline.perFrame[1], { dispatchT0: 100, dispatchMs: 0, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  // The deferred shim: frame 0's flush task hands it over at 100.1 and frame 1's handler starts in the same tick.
+  const deferred = matchDispatches([{ type: "tabOrder" }, { type: "tabOrder" }], [{ t0: 100 }, { t0: 100.1 }],
+    [{ t0: 100.1, dur: 0, type: "tabOrder", inHandler: false, n: 1, settleAt: 130 }, { t0: 100.2, dur: 0, type: "tabOrder", inHandler: false, n: 2, settleAt: 131 }]);
+  assert.deepEqual(deferred.counts, { dispatched: 2, coalesced: 0, unmatched: 0 });
+  assert.deepEqual(deferred.perFrame[0], { dispatchT0: 100.1, dispatchMs: 0, coalesced: false, dispatchInline: false, dispatchSettleAt: 130 }, "the handoff's settle stamp rides along");
+  assert.deepEqual(deferred.perFrame[1], { dispatchT0: 100.2, dispatchMs: 0, coalesced: false, dispatchInline: false, dispatchSettleAt: 131 });
+  // The same records without n fall back to the clock, which cannot tell the two frames apart: the later frame takes
+  // the first handoff, the earlier one is called coalesced and the second handoff finds no candidate.
+  const byClock = matchDispatches([{ type: "working" }, { type: "working" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 0, type: "working", inHandler: true }, { t0: 100, dur: 0, type: "working", inHandler: true }]);
+  assert.deepEqual(byClock.counts, { dispatched: 1, coalesced: 1, unmatched: 1 });
+  // With n the order decides even when the clock says otherwise: a frame whose handler started after the flush began
+  // (index >= n) is not a candidate for that flush's handoff, whatever its t0 reads.
+  const later = matchDispatches([{ type: "feed" }, { type: "feed" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 30, type: "feed", inHandler: false, n: 1 }, { t0: 140, dur: 30, type: "feed", inHandler: false, n: 2 }]);
+  assert.deepEqual(later.counts, { dispatched: 2, coalesced: 0, unmatched: 0 });
+  assert.equal(later.perFrame[0].dispatchT0, 100);
+  assert.equal(later.perFrame[1].dispatchT0, 140);
+  // The deferred FIFO and whole-state coalescing under the order rule: one flush after all five handlers (n 5).
+  const sent = [{ type: "feed" }, { type: "feedDelta" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }];
+  const m = matchDispatches(sent, sent.map((_s, i) => ({ t0: 100 + i })),
+    [{ t0: 200, dur: 2, type: "feedDelta", inHandler: false, n: 5 }, { t0: 203, dur: 30, type: "feed", inHandler: false, n: 5 }, { t0: 234, dur: 1, type: "feedDelta", inHandler: false, n: 5 }]);
+  assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 0 });
+  assert.equal(m.perFrame[0].coalesced, true, "the older feed was replaced in the queue");
+  assert.deepEqual([m.perFrame[1].dispatchT0, m.perFrame[2].dispatchT0, m.perFrame[3].dispatchT0], [200, 203, 234]);
+  // A whole-state handoff from a flush that began after three handlers (n 3): frames 0 and 1 are its candidates, the
+  // newer one is handed over; frame 3 arrived later and waits for the next flush (n 4). Every clock value equal.
+  const bars = matchDispatches([{ type: "bars" }, { type: "delta:bars" }, { type: "ka" }, { type: "delta:bars" }], [{ t0: 100 }, { t0: 100 }, { t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 4, type: "bars", inHandler: false, n: 3 }, { t0: 100, dur: 3, type: "bars", inHandler: false, n: 4 }]);
+  assert.deepEqual(bars.counts, { dispatched: 2, coalesced: 1, unmatched: 0 });
+  assert.equal(bars.perFrame[0].coalesced, true);
+  assert.equal(bars.perFrame[1].dispatchMs, 4);
+  assert.equal(bars.perFrame[3].dispatchMs, 3);
+  // A dispatch recorded before any handler started (n 0) has no candidate.
+  assert.deepEqual(matchDispatches([{ type: "feed" }], [{ t0: 100 }], [{ t0: 50, dur: 1, type: "feed", inHandler: false, n: 0 }]).counts, { dispatched: 0, coalesced: 0, unmatched: 1 });
+});
+
+test("frameSettle: a frame's settle is the later of the handler's stamp and its handoff's stamp, both from the handler's start; a handler stamp that never landed stays missing", () => {
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: null }), 20, "the inline shim stamps no handoff settle: the handler's stamp alone");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: 150 }), 50, "the deferred shim in a burst: the handler's stamp landed before the frame's own handoff, the handoff's stamp is the settle");
+  assert.equal(frameSettle({ t0: 100, settle: 60 }, { dispatchSettleAt: 150 }), 60, "a paced replay: the handler's stamp landed after the handoff's");
+  assert.equal(frameSettle({ t0: 100, settle: -1 }, { dispatchSettleAt: 150 }), -1, "a handler stamp that never landed is reported missing, not replaced");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, undefined), 20, "a frame that was not matched (a keepalive, a coalesced frame)");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: -1 }), 20, "a handoff stamp that has not landed changes nothing");
+});
+
+test("profileWindows picks, per type, the largest frame that was handed to the bundle over a larger one the shim replaced in its queue, and a coalesced pick says so in its row", () => {
+  const cf = (functionName, url) => ({ functionName, url, lineNumber: 1, columnNumber: 0 });
+  const nodes = [{ id: 1, callFrame: cf("(root)", ""), children: [2, 5] }, { id: 2, callFrame: cf("rompBenchOnPort", "ui-bench-instrument.js"), children: [3] },
+    { id: 3, callFrame: cf("rompBenchDispatch", "ui-bench-instrument.js"), children: [4] }, { id: 4, callFrame: cf("render", "http://127.0.0.1:1/dist/timeline.js") }, { id: 5, callFrame: cf("(program)", "") }];
+  // The deferred shim under a back-to-back timeline replay: the first skeleton (data) and the single full bars frame
+  // were replaced in the queue before the first flush; a later skeleton and one reassembled delta were handed over.
+  const row = (i, type, bytes, extra) => ({ ...pf(i, type, bytes, 0.4, 5), t0: 100 + i, ...extra });
+  const frames = [
+    row(0, "data", 8200, { coalesced: true }),
+    row(1, "bars", 9000, { coalesced: true }),
+    row(2, "data", 8100, { dispatchT0: 130, dispatchMs: 15, dispatchInline: false }),
+    row(3, "delta:bars", 400, { dispatchT0: 146, dispatchMs: 40, dispatchInline: false }),
+    row(4, "delta:bars", 500, { coalesced: true }),
+    { ...pf(5, "ka", 30, 0.1, 5), t0: 200 },
+  ];
+  const truth = 20;
+  const times = [];
+  for (let x = 146.2; x < 186; x += 0.5) times.push({ x, n: 4 });   // 80 render samples inside the delta's dispatch span
+  for (let x = 186.2; x < 190; x += 0.5) times.push({ x, n: 5 });
+  const us = times.map((s) => Math.round((s.x - truth) * 1000));
+  const profile = { nodes, startTime: 0, endTime: us[us.length - 1] + 500, samples: times.map((s) => s.n), timeDeltas: us.map((u, i) => u - (i ? us[i - 1] : 0)) };
+  const run = { ...fakeRun({ perFrame: frames, dispatch: { hook: true, unmatched: 0, flushTasks: 2, flushMs: 55 } }), profiling: { p0: truth + 0.8, alignMs: 1, profile } };
+  const r = buildReport({ app: "timeline", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [run] });
+  const cp = r.cpuProfile;
+  const byLabel = Object.fromEntries(cp.windows.map((w) => [w.label, w]));
+  assert.deepEqual(Object.keys(byLabel), ["first content frame", "largest data", "largest bars", "largest delta:bars"]);
+  assert.equal(byLabel["first content frame"].index, 0, "the first content frame is the first frame whatever became of it");
+  assert.equal(byLabel["first content frame"].coalesced, true);
+  assert.equal(byLabel["first content frame"].dispatchMs, null);
+  assert.equal(byLabel["largest data"].index, 2, "the handed-over skeleton, though the replaced one was larger");
+  assert.equal(byLabel["largest data"].coalesced, false);
+  assert.equal(byLabel["largest data"].dispatchMs, 15);
+  assert.equal(byLabel["largest bars"].index, 1, "no bars frame reached the bundle, so the largest of the type stands");
+  assert.equal(byLabel["largest bars"].coalesced, true);
+  assert.equal(byLabel["largest delta:bars"].index, 3, "the handed-over delta over the larger replaced one");
+  assert.equal(byLabel["largest delta:bars"].samples, 80);
+  assert.equal(byLabel["largest delta:bars"].coalesced, false);
+  const text = renderProfile(cp);
+  assert.match(text, /window: first content frame \(coalesced: replaced in the shim's queue before the handoff, so the window holds the shim's parse only\) \(data, 8\.0 KB, frame 0\): handler 0\.4 ms, dispatch -, 0\.4 ms of window, 0 samples/);
+  assert.match(text, /window: largest bars \(coalesced: replaced in the shim's queue before the handoff, so the window holds the shim's parse only\) \(bars, 8\.8 KB, frame 1\)/);
+  assert.match(text, /window: largest data \(data, 7\.9 KB, frame 2\): handler 0\.4 ms, dispatch 15\.0 ms/);
+  assert.match(text, /window: largest delta:bars \(delta:bars, 400 B, frame 3\): handler 0\.4 ms, dispatch 40\.0 ms, 40\.4 ms of window, 80 samples/);
+  assert.doesNotMatch(text, /largest data \(coalesced/);
+});
+
+test("buildReport carries the dispatch times beside the handler times, says which shim shape ran, and renderReport prints them", () => {
+  const args = { app: "feed", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t" };
+  // the inline shim: every handoff inside its frame's handler
+  const inline = fakeRun({ perFrame: [pf(0, "ka", 30, 0.1, 5), pfd(1, "feed", 5000, 40, 90, 38), pfd(2, "feedDelta", 300, 4, 20, 3), pfd(3, "feedDelta", 500, 6, 30, 5)] });
+  const r = buildReport({ ...args, runs: [inline] });
+  assert.deepEqual(r.first, { index: 1, type: "feed", bytes: 5000, handlerMs: 40, dispatchMs: 38, settleMs: 90 });
+  assert.deepEqual(r.types.feedDelta.dispatchMs, { n: 2, p50: 3, p90: 5, max: 5, mean: 4 });
+  assert.equal(r.types.feedDelta.dispatched, 2);
+  assert.equal(r.types.feedDelta.coalesced, 0);
+  assert.deepEqual(r.types.ka.dispatchMs, { n: 0, p50: null, p90: null, max: null, mean: null });
+  assert.equal(r.types.ka.dispatched, 0);
+  assert.deepEqual(r.dispatch, { hook: true, inline: 3, deferred: 0, unmatched: 0, coalesced: 0, flushTasks: 0, flushMs: 0, hookError: null });
+  assert.equal(r.perFrame[1].dispatchMs, 38);
+  assert.equal(r.perFrame[1].dispatchT0, 1100.2);
+  assert.equal(r.perFrame[1].t0, 1100);
+  assert.equal(r.perFrame[0].dispatchMs, null);
+  const text = renderReport(r);
+  assert.match(text, /first content frame: feed, 4\.9 KB, handler 40\.0 ms, dispatch 38\.0 ms, settled 90\.0 ms/);
+  assert.match(text, /handler p50\/p90\/max ms\s+dispatch p50\/p90\/max ms\s+settle p50\/p90\/max ms/);
+  assert.match(text, /feedDelta\s+2\s+800 B\s+500 B\s+4\.0 \/ 6\.0 \/ 6\.0\s+3\.0 \/ 5\.0 \/ 5\.0\s+20\.0 \/ 30\.0 \/ 30\.0/);
+  assert.match(text, /^ka\s+1 .*0\.1 \/ 0\.1 \/ 0\.1\s+- \/ - \/ -\s+5\.0/m, "a keepalive is never handed over and is not flagged for it");
+  assert.match(text, /^dispatch \(the shim's handoff .*\): 3 inside the socket handler, 0 from a queued flush task; 0 coalesced .*, 0 unmatched; 0 flush tasks$/m);
+  assert.doesNotMatch(text, /warning:|not dispatched|coalesced\)/);
+  // the deferred shim: the same frames handed over from two flush tasks; a newer feed replaced the older one in the queue
+  const deferred = fakeRun({ perFrame: [pf(0, "ka", 30, 0.1, 5), { ...pf(1, "feed", 5000, 0.5, 90), coalesced: true }, pfd(2, "feed", 5200, 0.6, 95, 38, "deferred"), pfd(3, "feedDelta", 300, 0.1, 20, 3, "deferred")],
+    dispatch: { hook: true, unmatched: 0, flushTasks: 2, flushMs: 41.5 } });
+  const rd = buildReport({ ...args, runs: [deferred] });
+  assert.equal(rd.types.feed.count, 2);
+  assert.equal(rd.types.feed.dispatched, 1);
+  assert.equal(rd.types.feed.coalesced, 1);
+  assert.deepEqual(rd.types.feed.dispatchMs, { n: 1, p50: 38, p90: 38, max: 38, mean: 38 });
+  assert.equal(rd.first.dispatchMs, null, "the first content frame was replaced before it reached the bundle");
+  assert.deepEqual(rd.dispatch, { hook: true, inline: 0, deferred: 2, unmatched: 0, coalesced: 1, flushTasks: 2, flushMs: 41.5, hookError: null });
+  assert.equal(rd.perFrame[1].coalesced, true);
+  const td = renderReport(rd);
+  assert.match(td, /first content frame: feed, 4\.9 KB, handler 0\.5 ms, dispatch -, settled 90\.0 ms/);
+  assert.match(td, /^dispatch .*: 0 inside the socket handler, 2 from a queued flush task; 1 coalesced .*, 0 unmatched; 2 flush tasks, 41\.5 ms$/m);
+  assert.match(td, /^feed\s+2 .*  \(1 coalesced\)$/m);
+  assert.doesNotMatch(td, /not dispatched/);
+  // a frame of a dispatching type that was neither handed over nor replaced is flagged on its row
+  const missing = fakeRun({ perFrame: [pfd(0, "feed", 5000, 40, 90, 38), pf(1, "feedDelta", 300, 4, 20)] });
+  assert.match(renderReport(buildReport({ ...args, runs: [missing] })), /^feedDelta\s+1 .*  \(1 not dispatched\)$/m);
+  // without the page's handler-depth flag the shim shape comes from the spans: a dispatch span inside the handler span is inline
+  const unflagged = fakeRun({ perFrame: [{ ...pfd(0, "feed", 5000, 40, 90, 38), dispatchInline: null }, { ...pfd(1, "feedDelta", 300, 4, 20, 3, "deferred"), dispatchInline: null }] });
+  const ru = buildReport({ ...args, runs: [unflagged] });
+  assert.equal(ru.dispatch.inline, 1);
+  assert.equal(ru.dispatch.deferred, 1);
+  // two iterations pool: counts per run, percentiles over every handoff
+  const r2 = buildReport({ ...args, iters: 2, runs: [inline, inline] });
+  assert.equal(r2.types.feedDelta.dispatched, 2);
+  assert.equal(r2.types.feedDelta.dispatchMs.n, 4);
+  assert.equal(r2.dispatch.inline, 6);
+  assert.equal(r2.first.dispatchMs, 38);
+  // no hook: the page never assigned window.__rompFed; the report says so loudly
+  const unhooked = fakeRun({ perFrame: [pf(0, "feed", 5000, 40, 90)], dispatch: { hook: false, hookError: null, unmatched: 0, flushTasks: 0, flushMs: 0 } });
+  const rh = buildReport({ ...args, runs: [unhooked] });
+  assert.equal(rh.dispatch.hook, false);
+  assert.match(renderReport(rh), /^warning: the dispatch hook never engaged \(the page did not assign window\.__rompFed\); the dispatch columns are empty$/m);
+  const failed = fakeRun({ perFrame: [pf(0, "feed", 5000, 40, 90)], dispatch: { hook: false, hookError: "Cannot assign to read only property 'inbound'", unmatched: 0, flushTasks: 0, flushMs: 0 } });
+  assert.match(renderReport(buildReport({ ...args, runs: [failed] })), /warning: the dispatch hook never engaged \(the page did not assign window\.__rompFed: Cannot assign to read only property 'inbound'\)/);
+  assert.equal(buildReport({ ...args, iters: 2, runs: [inline, unhooked] }).dispatch.hook, false, "the hook must have engaged in every run");
+  // long-animation-frame attribution on the deferred shim: the flush task enters through the bench's port wrapper,
+  // whether the entry names the wrapper's function or only the port's onmessage as the invoker
+  const loaf = [{ start: 0, duration: 70, blocking: 20, scripts: [{ url: "ui-bench-instrument.js", fn: "rompBenchOnPort", invoker: "MessagePort.onmessage", duration: 60 }] },
+    { start: 100, duration: 60, blocking: 10, scripts: [{ url: "ui-bench-instrument.js", fn: "", invoker: "MessagePort.onmessage", duration: 55 }] },
+    { start: 200, duration: 55, blocking: 5, scripts: [{ url: "ui-bench-instrument.js", fn: "rompBenchOnMessage", invoker: "DOMWebSocket.onmessage", duration: 50 }] }];
+  const rl = buildReport({ ...args, runs: [fakeRun({ perFrame: deferred.perFrame, loaf })] });
+  assert.deepEqual(rl.loaf.topScripts.map((t) => [t.key, t.count]), [["flush task (shim queue + bundle) <MessagePort.onmessage>", 2], ["message handler (shim + bundle) <DOMWebSocket.onmessage>", 1]]);
 });
 
 // ── the path guard ───────────────────────────────────────────────────────────────────────────────
@@ -558,7 +819,7 @@ test("aggregateProfile attributes each sample's interval as self time to its nod
   assert.match(text, /written: \/tmp\/x\.cpuprofile/);
   assert.match(text, /top 2 by self time \(under a function, the lines[^\n]*\n\s+self ms\s+total ms\s+samples\s+url:function:line\n\s+0\.3\s+0\.5\s+3\s+feed\.js:render:20\n\s+67%\s+0\.2 ms  line 25\n\s+33%\s+0\.1 ms  line 20\n/);
   assert.match(text, /top 2 by total time\n[^\n]*\n\s+0\.1\s+0\.6\s+1\s+feed\.js:main:10/);
-  assert.match(text, /window: first content frame \(feed, 4\.9 KB, frame 0\): handler 0\.3 ms, 2 samples/);
+  assert.match(text, /window: first content frame \(feed, 4\.9 KB, frame 0\): handler 0\.3 ms, dispatch -, 0\.2 ms of window, 2 samples/);
   assert.doesNotMatch(text, /source:line/, "no source column without maps");
 });
 
@@ -633,7 +894,7 @@ test("the report claims source positions only for bundles whose maps loaded, and
     assert.equal(r2.alignRefined, false, "this profile has no wrapper samples, so the bracketing estimate stands");
     assert.equal(r2.alignMs, 1);
     assert.equal(r2.alignBoundMs, 1);
-    assert.match(t2, /±1\.0 ms \(the bracketing estimate; the refinement did not apply: no handler windows to check against\)/);
+    assert.match(t2, /±1\.0 ms \(the bracketing estimate; the refinement did not apply: no handler or dispatch windows to check against\)/);
     const first = r2.windows.find((w) => w.label === "first content frame");
     assert.equal(first.durationMs, 40, "a window's duration is the handler window's width");
     assert.equal(first.samples, 0, "and this profile has no samples in it");
@@ -678,6 +939,77 @@ test("refineAlignment recovers the page-to-profile offset from the wrapper's sam
   assert.ok(pl.alignMs >= 0.3 && pl.alignMs <= 0.5, `half the plateau's width (about a millisecond of slack), not the grid step: ${pl.alignMs}`);
   assert.ok(Math.abs(pl.p0 - truth) <= pl.alignMs, `the true offset lies within the reported uncertainty: ${pl.p0} ± ${pl.alignMs}`);
   assert.ok(Math.abs(pl.p0 - truth) < 0.7, `and the 0.7 ms estimate error was corrected: ${pl.p0}`);
+});
+
+test("mergeWindows joins overlapping and touching windows and drops empty ones; refineAlignment counts a sample after a nested dispatch window's end as inside the handler window around it", () => {
+  assert.deepEqual(mergeWindows([[10, 20], [12, 15], [20, 25], [30, 30], [40, 35], [27, 29]]), [[10, 25], [27, 29]]);
+  assert.deepEqual(mergeWindows([[5, 6], [1, 2]]), [[1, 2], [5, 6]]);
+  assert.deepEqual(mergeWindows([]), []);
+  // The inline shim's shape: the handler window [50.1, 51.05) holds the dispatch window [50.2, 50.6); the wrapper's
+  // samples run 0.1 ms apart across the whole handler window (true offset 50). Before the merge the search picked
+  // the nested window for every sample after 50.2 and called the four after 50.6 outside.
+  const cf = (functionName, url) => ({ functionName, url, lineNumber: 1, columnNumber: 0 });
+  const profile = {
+    nodes: [{ id: 1, callFrame: cf("(root)", ""), children: [2, 4] }, { id: 2, callFrame: cf("rompBenchOnMessage", "ui-bench-instrument.js"), children: [3] },
+      { id: 3, callFrame: cf("rompBenchDispatch", "ui-bench-instrument.js") }, { id: 4, callFrame: cf("(program)", "") }],
+    startTime: 0, endTime: 2100, samples: [...Array(10).fill(3), ...Array(10).fill(4)], timeDeltas: Array(20).fill(100),
+  };
+  const al = refineAlignment(profile, 53, 5, [[50.1, 51.05], [50.2, 50.6]]);
+  assert.equal(al.inside, 1, "every sample lies inside the outer window");
+  assert.ok(Math.abs(al.p0 - 50) <= 0.13, `refined to ${al.p0}`);
+  assert.equal(al.refined, true);
+  const same = refineAlignment(profile, 53, 5, [[50.1, 51.05]]);
+  assert.deepEqual(al, same, "the nested window changes nothing about the fit");
+  // the deferred shim's shape: a short handler window and a separate dispatch window later hold the samples between them (none falls in the gap)
+  const split = refineAlignment(profile, 53, 5, [[50.05, 50.52], [50.58, 51.05]]);
+  assert.equal(split.inside, 1);
+  assert.ok(Math.abs(split.p0 - 50) <= 0.13, `refined to ${split.p0}`);
+});
+
+test("profileReport: a frame whose samples lie in its dispatch span only (the deferred shim) still fills its window, sized to the union of its spans; a nested dispatch span (the inline shim) is folded once", () => {
+  const cf = (functionName, url) => ({ functionName, url, lineNumber: 1, columnNumber: 0 });
+  const nodes = [{ id: 1, callFrame: cf("(root)", ""), children: [2, 5] }, { id: 2, callFrame: cf("rompBenchOnPort", "ui-bench-instrument.js"), children: [3] },
+    { id: 3, callFrame: cf("rompBenchDispatch", "ui-bench-instrument.js"), children: [4] }, { id: 4, callFrame: cf("render", "http://127.0.0.1:1/dist/feed.js") }, { id: 5, callFrame: cf("(program)", "") }];
+  // page clock: the feed frame's handler ran [100, 100.5); the flush handed it over at [130, 170); the profile started at page time 20
+  const truth = 20;
+  const times = [];
+  for (let x = 130.2; x < 170; x += 0.5) times.push({ x, n: 4 });   // 80 render samples inside the dispatch span, each owning 0.5 ms
+  for (let x = 170.2; x < 175; x += 0.5) times.push({ x, n: 5 });   // then (program) samples outside every window
+  const us = times.map((s) => Math.round((s.x - truth) * 1000));
+  const profile = { nodes, startTime: 0, endTime: us[us.length - 1] + 500, samples: times.map((s) => s.n), timeDeltas: us.map((u, i) => u - (i ? us[i - 1] : 0)) };
+  const feed = { ...pf(0, "feed", 5000, 0.5, 90), t0: 100, dispatchT0: 130, dispatchMs: 40, dispatchInline: false };
+  const ka = { ...pf(1, "ka", 30, 0.1, 5), t0: 200 };
+  const args = { app: "feed", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t" };
+  const run = { ...fakeRun({ perFrame: [feed, ka], dispatch: { hook: true, unmatched: 0, flushTasks: 1, flushMs: 40.2 } }), profiling: { p0: truth + 0.8, alignMs: 1, profile } };
+  const r = buildReport({ ...args, runs: [run] });
+  const cp = r.cpuProfile;
+  assert.ok(cp, "a profile was folded");
+  assert.equal(cp.alignRefined, true, "the dispatch span's samples refined the alignment");
+  assert.equal(cp.wrapperSamplesInHandlers, 1);
+  const first = cp.windows.find((w) => w.label === "first content frame");
+  assert.ok(first, cp.windows.map((w) => w.label).join(", "));
+  assert.equal(first.handlerMs, 0.5);
+  assert.equal(first.dispatchMs, 40);
+  assert.equal(first.durationMs, 40.5, "the window is the handler span plus the dispatch span");
+  assert.equal(first.samples, 80, "the samples in the dispatch span fill the window");
+  assert.ok(Math.abs(first.sampledMs - 40) <= 1, `sampled ${first.sampledMs}`);
+  assert.equal(first.topSelf[0].key, "feed.js:render:2");
+  assert.deepEqual(cp.windows.map((w) => w.label), ["first content frame"], "a keepalive gets no window");
+  assert.match(renderProfile(cp), /window: first content frame \(feed, 4\.9 KB, frame 0\): handler 0\.5 ms, dispatch 40\.0 ms, 40\.5 ms of window, 80 samples, 40\.0 ms sampled/);
+  // the inline shim: the handler span [130, 170) holds the dispatch span [130.3, 169.8); the window is the handler span alone
+  const inline = { ...feed, t0: 130, handlerMs: 40, dispatchT0: 130.3, dispatchMs: 39.5, dispatchInline: true };
+  const ri = buildReport({ ...args, runs: [{ ...run, perFrame: [inline, ka] }] });
+  const fi = ri.cpuProfile.windows[0];
+  assert.equal(fi.durationMs, 40, "the union's width, not the sum of the spans");
+  assert.equal(fi.samples, 80, "no sample counted twice");
+  assert.equal(ri.cpuProfile.wrapperSamplesInHandlers, 1);
+  assert.equal(ri.dispatch.inline, 1);
+  // a frame the bench saw handled but never handed over (no dispatch span) keeps its handler-only window
+  const alone = { ...feed, t0: 130, handlerMs: 40, dispatchT0: null, dispatchMs: null };
+  const ra = buildReport({ ...args, runs: [{ ...run, perFrame: [alone, ka] }] });
+  assert.equal(ra.cpuProfile.windows[0].durationMs, 40);
+  assert.equal(ra.cpuProfile.windows[0].dispatchMs, null);
+  assert.equal(ra.cpuProfile.windows[0].samples, 80);
 });
 
 test("aggregateProfile spreads self time over lines by V8's ticks per hit, not per sample, and gives no lines when no hit was recorded", () => {
@@ -974,6 +1306,43 @@ for (const app of ["feed", "timeline"]) {
           assert.ok(s.settleMs.p50 >= s.handlerMs.p50, `${type}: the main thread is free no sooner than the handler returns`);
         }
         assert.equal(report.frames.settleMissing, 0);
+        // The bundle's work per frame: the shim's handoff, window.__rompFed.inbound, timed by the dispatch hook on both
+        // shims (inside the socket handler on the inline shim, from a queued flush task on the deferred one).
+        assert.equal(report.dispatch.hook, true, `federation.js assigned window.__rompFed and the bench wrapped its inbound${report.dispatch.hookError ? `: ${report.dispatch.hookError}` : ""}`);
+        assert.equal(report.dispatch.unmatched, 0, "every inbound call matched a frame the replay sent");
+        assert.equal(report.dispatch.inline + report.dispatch.deferred, Object.values(report.types).reduce((a, s) => a + s.dispatched, 0), "every handoff is counted as inline or deferred");
+        assert.ok(report.dispatch.inline + report.dispatch.deferred > 0);
+        // The inline/deferred split and the flush counter come from the page-side instrument (R.depth and the MessagePort
+        // wrapper), which only this test runs; the two relations below hold on both shims and fail when either breaks.
+        assert.ok(report.dispatch.inline === 0 || report.dispatch.deferred === 0, `one shim shape ran: every handoff inside the socket handler or every one from a flush task (${report.dispatch.inline} inline, ${report.dispatch.deferred} deferred)`);
+        assert.equal(report.dispatch.deferred > 0, report.dispatch.flushTasks > 0, `deferred handoffs come from flush tasks, and flush tasks exist only when handoffs were deferred (${report.dispatch.deferred} deferred, ${report.dispatch.flushTasks} flush tasks)`);
+        // A frame's settle is stamped two animation frames after the later of its handler and its handoff, so it lands after
+        // the frame's own handoff on both shims (the rows are rounded to 0.1 ms; 0.2 covers the rounding of three values).
+        for (const f of report.perFrame) {
+          if (f.dispatchT0 == null) continue;
+          assert.ok(f.t0 + f.settleMs + 0.2 >= f.dispatchT0 + f.dispatchMs, `frame ${f.i} (${f.type}): the settle stamp lands after the frame's own handoff (handler at ${f.t0}, settle ${f.settleMs} ms, handoff ${f.dispatchT0} to ${Math.round((f.dispatchT0 + f.dispatchMs) * 10) / 10})`);
+        }
+        for (const type of expected) {
+          const s = report.types[type];
+          if (dispatchType(type) == null) { assert.equal(s.dispatched, 0, `${type}: never handed to the bundle`); assert.equal(s.coalesced, 0); continue; }
+          assert.equal(s.dispatched + s.coalesced, s.count, `${type}: every frame handed to the bundle or replaced by a newer frame of its type before the handoff (${s.dispatched} + ${s.coalesced} of ${s.count})`);
+          assert.equal(s.dispatchMs.n, s.dispatched, `${type}: every handoff timed`);
+          assert.ok(s.dispatched === 0 || s.dispatchMs.p50 >= 0, `${type}: dispatch percentiles`);
+        }
+        // The first content frame's handoff. The feed stream holds one feed frame, so nothing can replace it and its
+        // render is milliseconds on any machine. The timeline's first frame is the skeleton (data), a whole-state type
+        // the stream repeats: on the deferred shim a back-to-back replay can queue a later skeleton before the first
+        // flush, and the shim then hands over only the newer one, so the first frame is coalesced and not timed.
+        const firstRow = report.perFrame[report.first.index];
+        if (firstRow.coalesced) {
+          assert.ok(WHOLE_STATE_TYPES.has(dispatchType(report.first.type)), `only a whole-state frame can be replaced before its handoff (${report.first.type})`);
+          assert.ok(report.types[report.first.type].dispatched >= 1, "a newer frame of its type was handed over instead");
+          assert.equal(report.first.dispatchMs, null);
+        } else {
+          assert.ok(report.first.dispatchMs > 0, `the first content frame's handoff took time (${report.first.dispatchMs} ms)`);
+          assert.ok(firstRow.dispatchT0 >= firstRow.t0, "the handoff starts no earlier than the frame's handler");
+        }
+        if (app === "feed") assert.ok(report.first.dispatchMs > 0, `the one feed frame is always handed over, and forty cards render in milliseconds (${report.first.dispatchMs} ms)`);
         assert.equal(report.frames.addListenerMessages, 0, "the pane's socket handler is the onmessage the bench times");
         assert.equal(report.frames.buildBannerRaised, 0, "a synthetic stream's keepalive dv never outruns the dist");
         assert.equal(report.frames.connBannerRaised, 0);
@@ -1007,7 +1376,7 @@ for (const app of ["feed", "timeline"]) {
           assert.equal(cp.samplingIntervalUs, 500);
           assert.equal(cp.alignRefined, true, "the wrapper's samples refined the clock alignment");
           assert.ok(cp.alignMs > 0 && cp.alignMs <= cp.alignBoundMs, `the refined uncertainty (${cp.alignMs} ms) is within the bracketing bound (${cp.alignBoundMs} ms)`);
-          assert.ok(cp.wrapperSamplesInHandlers >= 0.9, `the message handler's samples fall inside the handler windows (${cp.wrapperSamplesInHandlers})`);
+          assert.ok(cp.wrapperSamplesInHandlers >= 0.9, `the instrument's samples fall inside the frames' handler and dispatch windows (${cp.wrapperSamplesInHandlers})`);
           assert.equal(cp.sourceMaps, true);
           assert.deepEqual(cp.sourceMapsMissing, [], "every profiled bundle had its map beside it");
           assert.ok(cp.sourceMapsLoaded.includes("feed.js"), cp.sourceMapsLoaded.join(", "));
@@ -1024,10 +1393,13 @@ for (const app of ["feed", "timeline"]) {
           assert.ok(labels.includes("largest feedDelta"), labels.join(", "));
           const first = cp.windows.find((w) => w.label === "first content frame");
           assert.equal(first.type, "feed");
-          assert.ok(first.samples > 0 && first.topSelf.length > 0, "the first frame's handler window has samples");
-          assert.ok(Math.abs(first.sampledMs - first.handlerMs) <= Math.max(5, first.handlerMs * 0.25), `the window's sampled time (${first.sampledMs}) tracks the handler time (${first.handlerMs})`);
+          assert.ok(first.samples > 0 && first.topSelf.length > 0, "the first frame's window (its handler and dispatch spans) has samples");
+          assert.ok(first.dispatchMs > 0, `the first window row carries the frame's dispatch time (${first.dispatchMs})`);
+          assert.ok(first.durationMs >= Math.max(first.handlerMs, first.dispatchMs), `the window spans both (${first.durationMs} ms of window for handler ${first.handlerMs}, dispatch ${first.dispatchMs})`);
+          assert.ok(Math.abs(first.sampledMs - first.durationMs) <= Math.max(5, first.durationMs * 0.25), `the window's sampled time (${first.sampledMs}) tracks the union of its handler and dispatch spans (${first.durationMs})`);
+          assert.ok(first.topSelf.some((f) => /^feed\.js:/.test(f.key)), `the first frame's window holds the feed bundle's work: ${first.topSelf.slice(0, 5).map((f) => f.key).join(", ")}`);
           assert.match(text, /cpu profile: \d+ samples over/);
-          assert.match(text, /window: first content frame \(feed,/);
+          assert.match(text, /window: first content frame \(feed,.*handler [\d.]+ ms, dispatch [\d.]+ ms, [\d.]+ ms of window/);
         } else {
           assert.equal(report.cpuProfile, undefined);
         }

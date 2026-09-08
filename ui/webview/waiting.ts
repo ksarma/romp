@@ -26,6 +26,8 @@ import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo
 import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
 import { listenForFrames } from "./frame-listener";
+import { paintHeld, paintReleased } from "./paint-gate";
+import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is the shape the Outline's tests pin
 import { linkifyPathTokens, openPathLink } from "./path-links";
 
 type Color = { bg: string; fg: string } | null;
@@ -358,12 +360,45 @@ function releaseList(): void {
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => render(), 0); }
 }
 
+// The pane is display:none by default in the dashboard shell (the Outline pane's situation), yet every feed
+// frame reached render() and rebuilt the whole list for nobody, on the main thread every pane shares. The
+// paint gate the Outline and the feed use (paint-gate.ts, upstream #1016; the fold's steer 2 replaced this
+// fork's federation-level hold with it): the payload is applied on every frame (applyFrame never reads the
+// gate), and only the REBUILD waits while nobody can see the list. Two measures, because each is blind to
+// the other's case: the IntersectionObserver sees a display:none pane but never fires while the TAB is
+// hidden, and document.hidden sees the tab but never a display:none pane. Both gate, both events release.
+let paneVisible: boolean | null = null;   // the observer's last word; null until it speaks (the gate reads null as on screen; the shim's word waits for it: paint-gate.ts)
+let paneDirty = false;
+function watchPaneVisibility(list: HTMLElement): void {
+  if (typeof IntersectionObserver === "undefined") return;   // no observer: the tab's visibility alone gates
+  new IntersectionObserver((entries) => {
+    paneVisible = entries.some((e) => e.isIntersecting);
+    releasePaint();
+  }).observe(list);
+}
+// Synchronous on purpose: a paint inside the event handler is the earliest fresh frame after the
+// compositor's cached one; a requestAnimationFrame hop is later at best and never fires in a hidden frame.
+function releasePaint(): void {
+  publishPaneHidden(document.hidden, paneVisible);   // the shim's word first, on every release event (paint-gate.ts)
+  if (!paintReleased(paneDirty, document.hidden, paneVisible)) return;
+  paneDirty = false;
+  render();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
+// the tab going hidden releases nothing, so the word is published on that arm here (the release publishes the other)
+document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, paneVisible); });
+let paneWatching = false;
+
 function render(): void {
   const head = document.getElementById("waiting-head");
   const list = document.getElementById("waiting-list");
   if (!head || !list) return;
   if (!loaded) return;   // the rows have not been built yet: leave the list empty so the romp loader holds
   if (listPointerHeld) { renderPendingWhilePressed = true; return; }   // pressed: the release flushes (releaseList)
+  if (!paneWatching) { paneWatching = true; watchPaneVisibility(list); }
+  // Nobody can see it: paint when it is shown. The FIRST content paints through (paint-gate.ts): an empty list
+  // is the loader-up state, so one hidden render buys an instant reveal instead of the loader fading over nothing.
+  if (paintHeld(document.hidden, paneVisible, list.childElementCount > 0)) { paneDirty = true; return; }
   const items = flatten();
   const now = nowSec();
   const title = el("span", ""); title.textContent = "Waiting on you";

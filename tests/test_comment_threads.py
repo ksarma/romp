@@ -716,6 +716,27 @@ class ThreadProjection(CommentBase):
         finally:
             self._State.live = []
 
+    def test_an_echo_the_backends_scan_found_is_not_held(self):
+        # 2026-09-06 (send durability): the backend's boot/spawn scan reads a landing off the transcript
+        # itself and records the verdict on the echo (`_landed`) — a delivered send, merely un-pruned. The
+        # held count excludes it like a landed one, even though no record in the thread's own projection
+        # carries the text yet (the scan read a queued_command attachment the projection takes in later)
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        echo = {"type": "user", "author": "human", "t": t + 130, "uuid": "echo:1", "_echo_text": "and the cap?"}
+        try:
+            self._State.live = [dict(echo, _landed=True)]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 0, "found by the scan: delivered, nothing is held for it")
+            self.assertFalse(th["replyOwed"], "…and no green promise rides on it")
+            self._State.live = [dict(echo)]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 1, "the same echo without the verdict is a held send")
+            self.assertTrue(th["replyOwed"])
+        finally:
+            self._State.live = []
+
     def test_the_newest_record_uuid_moves_when_a_consumed_slash_command_lands(self):
         t = self.now - 500
         self._seed_thread(seen=self.now)
@@ -1095,8 +1116,10 @@ class CommentOps(CommentBase):
         self._saved_sessions = km._sessions
         self._saved_reveal = km._reveal_chat_for
         self._saved_push_now = km._push_session_now
+        self._saved_tmux = km._tmux_sessions
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
         km._sdk_ready = lambda: True
+        km._tmux_sessions = lambda: {}   # the create/promote doors' live snapshot (names reserved atomically) — never the box's tmux
         p = self._write(PARENT, self._parent_records())
         km._sessions = lambda now, window=None, forks=True: [
             {"sid": PARENT, "name": "parent", "path": str(p), "mtime": self.now}]
@@ -1109,6 +1132,7 @@ class CommentOps(CommentBase):
         km._sessions = self._saved_sessions
         km._reveal_chat_for = self._saved_reveal
         km._push_session_now = self._saved_push_now
+        km._tmux_sessions = self._saved_tmux
         self._clear_defaults()   # the module shares one hermetic STATE — never leak across tests
         super().tearDown()
 

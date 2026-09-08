@@ -382,7 +382,18 @@ def git_calls_total(rec):
 # ── the constructor-free SDK backend ────────────────────────────────────────────────────────────
 def make_backend(sbmod, state, dormant_rows, all_regs):
     class BenchSdkBackend(sbmod.SdkBackend):
+        # Capabilities the kernel asks a backend for with hasattr() and branches on, which this fork's SDK
+        # backend does NOT define: T252c's per-copy identity surfaces (qids_for_landing on every landed
+        # record, pending_queued_meta on a queued bubble). The fork's send id is the one queued-copy
+        # identity, so the kernel's guarded call sites are dead for SDK sessions and live for the tmux
+        # backend (upmerge4 fold, decision f). On the real class hasattr() reads False; the bench answers
+        # the same for exactly these two, so the build takes the branch it takes live instead of tripping
+        # the constructor tripwire below.
+        _PROBED_ABSENT = ("qids_for_landing", "pending_queued_meta")
+
         def __getattr__(self, name):          # only reached for attributes the constructor would have set
+            if name in self._PROBED_ABSENT:
+                raise AttributeError(name)    # absent on the real class too: hasattr() reads False, as live
             raise BenchError("perf-bench: the bench backend lacks attribute %r (a code path this tool "
                              "did not anticipate reached it — add it to make_backend)" % name)
 

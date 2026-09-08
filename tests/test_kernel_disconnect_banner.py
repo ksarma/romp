@@ -29,10 +29,14 @@ class DisconnectBanner(unittest.TestCase):
         js = km._shim("chat")
         # reports up/down to the shell
         self.assertIn('postMessage({romp:"wsState",app:APP,state:s}', js)
-        self.assertIn('ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");', js)   # lastRecv stamp → heartbeat watchdog; openT/openSock → the close rule + wsclose breadcrumb
+        self.assertIn('ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");', js)   # lastRecv stamp → heartbeat watchdog; openT/openSock → the close rule + ws
         self.assertIn('ws.onclose=function(ev){netState("down");', js)   # reconnects on close (wsdown loader + retry follow)
-        self.assertIn("setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);",
-                      js, "T217: an ANNOUNCED death redials tight; the blind 1.5s stays for real drops")
+        # T217: an ANNOUNCED death redials tight; since 2026-09-07 so does a close landing within STALE_MS
+        # of a foreground (the FIN a frozen tab thawed into); the blind 1.5s stays for unannounced drops
+        self.assertIn("var inWin=Date.now()-foregroundedAt<STALE_MS,d=1500;", js)
+        self.assertIn("if(inWin){d=eagerDial?0:250;eagerDial=false;}", js)   # the FIRST close after a foreground redials now; every further one in the window waits 250 ms
+        self.assertIn("if(restartAnnounced&&Date.now()-restartAnnounced<30000)d=Math.min(d,250);", js)
+        self.assertIn("setTimeout(connect,d);", js)
         self.assertIn("ws.onerror=function(){try{ws.close();}catch(e){}};", js)
         # a RECONNECT no longer silently reloads (the user 2026-07-05): it PROMPTS via raiseStale, and the fresh
         # socket resyncs live. The old auto-reload-on-reopen is gone.
@@ -68,7 +72,11 @@ class DisconnectBanner(unittest.TestCase):
         # hands that reconnect its reason; the reconnect's arm then follows the same two events as any other
         # (a keepalive or a close before the resync), and the resync frame disarms it (the user 2026-08-01).
         self.assertIn('document.addEventListener("visibilitychange"', js)
-        self.assertIn('Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;', js)
+        # 2026-09-07: the handler latches foregroundedAt, names its verdict (`stale`, filed as the return
+        # breadcrumb's decision) and only then hands the reconnect its reason — the test itself is unchanged
+        self.assertIn("var stale=!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS;", js)
+        self.assertIn('if(!stale){returnRow=row;returnDiag("return",row);return;}', js)   # held: a FIN queued in the thaw burst re-files it
+        self.assertIn('pendingWhy="foreground";freshPending=true;', js)
 
     def test_a_hidden_pane_never_raises_the_stale_banner(self):
         # the user 2026-08-15, on the phone: the mobile shell shows ONE pane, hiding the rest with
@@ -76,13 +84,29 @@ class DisconnectBanner(unittest.TestCase):
         # force-closing its own healthy socket and re-raising the banner every ~45s over a dashboard
         # that was visibly working. A display:none iframe has a ZERO viewport — raiseStale checks that
         # at raise time (no event exists for a CSS display flip) and stays silent while hidden; a pane
-        # shown while genuinely stale re-raises within one watchdog tick, now visible. Since 2026-09-06
-        # the shim asks federation's published answer first (window.__rompPaneHidden, the shell's own
-        # on-screen word): a pane hidden AFTER a first show keeps its iframe size, so the zero-viewport
-        # probe alone read it as visible. The probe stays as the fallback for a page without federation.
+        # shown while genuinely stale re-raises within one watchdog tick, now visible. The probe is right for
+        # a pane hidden SINCE LOAD only: a display:none iframe keeps the size of its last show (Chromium:
+        # innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane the shell
+        # hides after the user has looked at it, the phone shell's every tab switch. The pane's paint gate
+        # (ui/webview/paint-gate.ts, upstream #1016's hold, steer 2 of the 2026-09-08 fold) holds the two
+        # measures that do not miss it and publishes their union as window.__rompPaneHidden on its own events
+        # (publishPaneHidden: the observer callback, visibilitychange, the release; never a timer; the chat page
+        # through ui/webview/chat-visibility.ts). Firefox is the mirror image: a display:none iframe's viewport
+        # reads 0 there (the probe is right) but its IntersectionObserver does not run (the word goes stale), so
+        # the shim says hidden when EITHER says so at raise time (the fold's round 2 gave the fork's 2026-09-06
+        # read a publisher again; round 3 made the read the union after a Firefox probe showed a boolean-first
+        # read raising from a hidden pane there; the fold's first cut had pinned the probe alone, which
+        # re-opened the flap for every re-hidden pane in Chromium).
         js = km._shim("feed")
-        self.assertIn('function paneHidden(){try{if(typeof window.__rompPaneHidden==="function")return !!window.__rompPaneHidden();'
-                      "return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}", js)
+        self.assertIn("function paneHidden(){try{return (window.parent!==window&&(window.innerWidth===0||window.innerHeight===0))"
+                      "||window.__rompPaneHidden===true;}catch(e){return false;}}", js,
+                      "hidden when either says so: the zero-viewport probe, or a published word of true")
+        self.assertNotIn('typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden', js,
+                         "a stale word must never override a probe that says zero viewport (Firefox)")
+        gate = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "paint-gate.ts"), encoding="utf-8").read()
+        self.assertIn("export function publishPaneHidden(", gate, "the publisher, by name, in the pane's paint gate")
+        self.assertRegex(gate, r"\.__rompPaneHidden = ", "publishing the flag the shim reads, under that exact name")
+        self.assertNotIn("setInterval", gate, "published on the gate's own events, never a timer")
         self.assertIn('function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}', js,
                       "the visibility gate is at RAISE time, so hidden panes reconnect silently")
 
@@ -126,8 +150,9 @@ class DisconnectBanner(unittest.TestCase):
         # the watchdog handles EVERY socket state: half-open OPEN, stuck CONNECTING, and lost-timer CLOSED.
         # A quiet OPEN socket is ABANDONED and redialed in the same tick (2026-09-02): close() alone
         # starts a closing handshake a dead far side never answers, and the browser holds CLOSING ~60s
-        # before onclose — the audited phone panes came back 64s after their own watchdog-close.
-        self.assertIn('if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");abandon();connect();}return;}', js)
+        # before onclose — the audited phone panes came back 64s after their own watchdog-close. The bound is
+        # PROVISIONAL_MS while a resumed keep awaits its confirming frame, STALE_MS otherwise (review find, 2026-09-08).
+        self.assertIn('if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;if(everConnected&&Date.now()-lastRecv>bound){staleDiag("watchdog-close","quiet");abandon();connect();}return;}', js)
         self.assertIn("function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;", js)
         self.assertIn('netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}', js,
                       "the abandoned socket's onclose is disowned, so abandon() itself does what onclose did (banner + close rule + loader)")
@@ -214,7 +239,11 @@ class DisconnectBanner(unittest.TestCase):
         # a tab foregrounded onto a dead socket forces a reconnect and used to prompt immediately; that
         # reconnect resyncs like any other, so it arms the same window and disarms on the same frame
         js = km._shim("chat", 7777)
-        self.assertIn('Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;', js)
+        # 2026-09-07: the handler latches foregroundedAt, names its verdict (`stale`, filed as the return
+        # breadcrumb's decision) and only then hands the reconnect its reason — the test itself is unchanged
+        self.assertIn("var stale=!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS;", js)
+        self.assertIn('if(!stale){returnRow=row;returnDiag("return",row);return;}', js)   # held: a FIN queued in the thaw burst re-files it
+        self.assertIn('pendingWhy="foreground";freshPending=true;', js)
         self.assertNotIn("STALE_MS){raiseStale();", js)
 
     def test_a_standalone_page_retires_only_its_connection_bar(self):

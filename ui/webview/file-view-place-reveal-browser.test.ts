@@ -5,16 +5,19 @@
 // scrolls in ONE task. The scroll-time read used to skip every scroll under a body width it had not seen (taking it for
 // the reflow's own clamp), so the ResizeObserver's repaint seated the place read BEFORE the click and scrolled the body
 // back one frame later: at 900px the mark was centered at 280 then sat at 181, with the pre-click paragraph on top again
-// and a mark lower in the viewport pushed off the screen with its card; the reader saw the text jump twice. Now only the
-// browser's own adjustments are skipped, each by its signature: the clamp (a scroll that lands the body at its end coming
-// from above it) and the anchoring adjustment (the block the last read named with its top edge where it stood; round 2 of
-// the review: read as the place, it held the reader's depth in pixels and the repaint moved nothing, so each open of the
-// panel halved the depth the close had kept as a fraction; file-view-place-browser.test.ts drives that). Every other
-// scroll under the new width is read, so the repaint holds the reveal. The second test drives the generic form (any
-// scroll of the body plus a width change in one task) and the clamp the read still skips (the aside closing on a reader
-// deep in the narrow body). Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright browser
-// (CI installs none), as the other browser legs do. Synthetic values only: an invented report, /repo/notes-api paths, the
-// placeholder sid.
+// and a mark lower in the viewport pushed off the screen with its card; the reader saw the text jump twice. Rounds 1 and
+// 2 of the review read every such scroll but the browser's own, each told by a signature (the clamp's landing; for the
+// anchoring, the kept block's top edge where it stood), and the anchoring's signature missed a table, a list or a
+// blockquote, where the browser anchors on a row, an item or an inner paragraph (round 3; file-view-place-browser.test.ts
+// drives those). Now the width change itself is what the viewer sees: the panel mounts the aside through the seam's aside
+// hook, which reads the body's scrollTop after the mount (the browser's adjustment in it) and keeps the number; a scroll
+// under the new width that reports another number is a script's after the mount (the reveal) or the reader's and is read,
+// unless it is the clamp; one that reports the hook's number, or any scroll under a width change no hook saw, is the
+// browser's and skipped, so the repaint seats the place read before. The second test drives the no-hook case (a script's
+// scroll plus a page-width change in one task: the place read before is seated) and the clamp (the aside closing on a
+// reader deep in the narrow body). Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright
+// browser (CI installs none), as the other browser legs do. Synthetic values only: an invented report, /repo/notes-api
+// paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, closePanel, pageHtml, frames, paintsReach, topBlock, putAtTop, LONG, REPORT, SID, MT, ORIGIN, STATUS, type Mode, type Opened } from "./real-viewer-leg";
@@ -82,28 +85,32 @@ test("in a browser, the real module: a click on a highlight with the panel close
   });
 });
 
-test("in a browser, the real module: any scroll of the body in the same task as a width change is kept by the reflow's repaint (the generic form of the reveal), and the clamp of a body scrolled past its new end is still not read as the reader's move", { timeout: 120000 }, async (t) => {
+test("in a browser, the real module: a scroll in the same task as a width change no hook of the seam saw made (the page narrowing under the viewer) is the browser's to the read, and the repaint seats the place read before it; the clamp of a body scrolled past its new end on the aside's close is not read as the reader's move", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openViewer(browser, "pane", 900, 600);
     await putAtTop(page, "Paragraph 40:");
     await frames(page, 3);
     assert.equal((await topBlock(page))!.text, "Paragraph 40:");
     let paints: number = await page.evaluate(() => (window as any).__paints);
-    // one task: the body scrolled to paragraph 70, then the page narrowed under the viewer
+    // one task: the body scrolled to paragraph 70, then the page narrowed under the viewer. No hook of the seam saw the
+    // width change, so the one scroll event that follows (the script's scroll and the browser's anchoring together) is the
+    // browser's to the read, and the repaint seats paragraph 40, the place read before the task. Rounds 1 and 2 kept
+    // paragraph 70 here, by a signature that missed the anchoring inside a table, a list or a blockquote; the one such
+    // scroll a person meets, the panel's reveal, goes through the seam's aside hook and is kept (the first test)
     const w1: number = await page.evaluate(() => { (window as any).putAtTop("Paragraph 70:"); document.body.style.width = "700px"; return document.querySelector(".fileview-body")!.clientWidth; });
     assert.ok(w1 < 800, `the body narrowed in the task (${w1})`);
     await paintsReach(page, paints + 1);
     await frames(page, 3);
     let now = (await topBlock(page))!;
-    assert.equal(now.text, "Paragraph 70:", "the block scrolled to in the same task as the width change is the one kept (before the fix: paragraph 40, the place read before the scroll)");
+    assert.equal(now.text, "Paragraph 40:", "the place read before the task is seated: a width change no hook saw has no scroll of its own to keep (the reveal, which does, is the first test)");
     assert.ok(Math.abs(now.top) <= 1.5, `at the top edge (${now.top})`);
-    // the clamp, the one scroll under a new width the read still skips. Chromium's anchoring holds through a page-width
-    // change (above), so the clamp needs the case where it does not: the Comments aside closing, whose layout pass changes
-    // the body's padding (a suppression trigger for anchoring). The reader deep in the narrow body beside the aside
-    // (paragraph 86 at the top, a scrollTop past the wider layout's end), the aside closed: the content gets shorter than the
-    // scrollTop and the browser lands the body at its end, paragraph 89 on top there; the repaint seats the block read before
-    // the width moved, which the wider layout still reaches. Read as the reader's move, the clamp's landing would be seated
-    // instead (paragraph 89 on top; the no-gate variant of the read shows exactly that)
+    // the clamp on the aside's close, a toggle the hook sees: the reader deep in the narrow body beside the aside (paragraph
+    // 86 at the top, a scrollTop past the wider layout's end), the aside closed: the content gets shorter than the scrollTop
+    // and the browser lands the body at its end, paragraph 89 on top there. The landing is in the layout the hook reads (its
+    // number, skipped) or comes with the panel's padding write after it (the clamp's own signature, the body's end reached
+    // from above); either way the repaint seats the block read before the width moved, which the wider layout still
+    // reaches. Read as the reader's move, the clamp's landing would be seated instead (paragraph 89 on top; the no-gate
+    // variant of the read shows exactly that)
     await page.evaluate(() => { document.body.style.width = ""; });
     await frames(page, 3);
     await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; (window as any).__wideMax = b.scrollHeight - b.clientHeight; });

@@ -43,7 +43,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         self._orig_alive = km._alive_sessions
         self._orig_apierr = km._api_error
         self._orig_push = km._push_all
-        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline; it should wake the pusher")
         self._orig_rearm = km.jd.rearm_failed_summaries
         km.jd.rearm_failed_summaries = lambda now, **k: 0   # no given-up cards unless a test says so
         self._was_set = km._pusher_wake.is_set()

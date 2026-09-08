@@ -140,10 +140,9 @@ class ServedPaste(unittest.TestCase):
             {"sid": SID, "name": "web", "cwd": cwd, "mode": "auto", "effort": "high",
              "lastSid": SID, "alive": True, "model": "claude-fable-5-1", "liveModel": "Fable 5.1"}))
         claude = os.path.join(cls.lab, "claude")
-        # the CLI's project slug (sdk_backend.transcript_path): realpath, then EVERY non-alphanumeric char
-        # becomes '-'. A bare '/' swap put the file where the kernel never looks whenever the lab path
-        # carried a '.' or '_' (a TMPDIR under a dot-directory, a mkdtemp suffix with an underscore), and
-        # the chat then showed only the SDK-missing error card, no transcript.
+        # the kernel finds a session's transcript under Claude's project dir: EVERY non-alphanumeric char of the
+        # realpath becomes '-' (jd._proj_dir). A slashes-only munge missed the '_' pytest's temp root can carry,
+        # so the kernel found no transcript and drew an API-error turn instead (the batch-only flake, 2026-09-08).
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         # a CLOSED turn: an open one would invite the boot reconcile to resume it — no real CLI here

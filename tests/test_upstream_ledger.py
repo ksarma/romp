@@ -355,7 +355,7 @@ class EntryRules(unittest.TestCase):
         self.assertEqual(got, ["2026-09-06-alpha.md: pr must be blank or an integer, got '#199'"])
 
     def test_tier_is_one_of_the_fork_labels(self):
-        # `docs` is upstream's coming rename of tests-only, accepted ahead of the rename (2026-09-07 sync)
+        # `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; the old spelling stays accepted)
         for tier in ("fix", "tests-only", "docs", "feature", "major-feature"):
             self.assertEqual(_parse("2026-09-06-alpha.md", _entry(tier=tier))[1], [], tier)
         _, got = _parse("2026-09-06-alpha.md", _entry(tier="huge"))
@@ -952,7 +952,7 @@ class SetAndImport(unittest.TestCase):
         self.assertEqual(L.derive_status("**keep as-is — deliberate**"), (None, None))
 
     def test_a_tier_is_derived_from_the_label_form_so_docs_as_a_word_is_not_one(self):
-        # `docs` is both a tier (upstream's coming rename of tests-only) and an ordinary word in a status
+        # `docs` is both a tier (upstream's name for tier 0, renamed from tests-only) and an ordinary word in a status
         # cell; only the `label \`docs\`` form names the tier, as for fix and feature.
         header, _, _ = L.derive("t", "w", "**offered**, their PR #971, label `docs`", "")
         self.assertEqual((header["status"], header["tier"]), ("offered", "docs"))

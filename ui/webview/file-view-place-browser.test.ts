@@ -12,12 +12,16 @@
 // (the fourth scene: with twenty paragraphs inserted above, the block standing where the edit begins would be the first
 // inserted one); with that block gone too, by the block after, then by the nearest block that stands
 // (file-view-place-edits-browser.test.ts), and only with none standing does the place fall to where the edit begins. The
-// URL viewer's Rendered/Raw switch shares the helper. The last scene puts the reader PARTWAY into the top block, where a reflow of the
+// URL viewer's Rendered/Raw switch shares the helper. The last two scenes put the reader PARTWAY into the top block, where a reflow of the
 // same text keeps the depth as a fraction of the block's height (reader-place.ts): the Comments aside opening held it in
 // pixels instead (the browser's anchoring adjustment, read as the reader's place under the new width, left the repaint's
 // seat nothing to move) while the close applied the fraction, so every toggle walked the words at the body's top edge
 // toward the block's start, and a sized picture the reader was two thirds into went wholly above the edge on the first
-// open (the Slice 2 review, round 2). Legs await frames and paint counts, never a timer. Skips LOUDLY without a
+// open (the Slice 2 review, round 2). Round 2 told the anchoring by the kept block's top edge, which a table, a list or a
+// blockquote does not keep (the browser anchors on a row, an item or an inner paragraph, and the content above it inside
+// the block rewraps), so those blocks still walked (round 3; the sixth scene): the seam's aside hook now reads the
+// browser's adjustment itself, and the read skips the scroll that reports it (file-view.ts). Legs await frames and paint
+// counts, never a timer. Skips LOUDLY without a
 // playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented report,
 // /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
@@ -266,6 +270,76 @@ test("in a browser, the real module: a reader partway into the top block keeps t
       keepsFraction(d, pic.frac, `${step}`);
     }
     assert.deepEqual(errors, [], "figure: no script error");
+    await page.close();
+  });
+});
+
+// ── compound blocks: the browser anchors INSIDE them ──────────────────────────────────────────────
+/** The report with `block` between paragraphs 20 and 21. */
+const withBlock = (block: string): string => "# Report\n\n" + Array.from({ length: 20 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n\n" + block + "\n\n" + Array.from({ length: 40 }, (_, i) => PARA(i + 21)).join("\n\n") + "\n";
+/** Three blocks the browser anchors inside of when the reader is partway into them (a row, an item, an inner paragraph),
+ *  with content above the anchor that wraps differently at each width, so the block's own top edge moves while the
+ *  anchor's holds: a 40-row table (cells of one to three repeats of a phrase), a 40-item list (items of three to thirteen
+ *  words) and a 12-paragraph blockquote. */
+const COMPOUND: Array<[string, string, string]> = [
+  ["a 40-row table", "| Row | Cell | N |\n|---|---|---|\n" + Array.from({ length: 40 }, (_, i) => `| Row ${i + 1} | ${"cell words that may wrap ".repeat(1 + i % 3).trim()} | ${7 * (i + 1)} |`).join("\n"), ".fileview-md > table"],
+  ["a 40-item list", Array.from({ length: 40 }, (_, i) => `- Item ${i + 1}: ` + "word ".repeat(3 + (i * 7) % 11).trim()).join("\n"), ".fileview-md > ul"],
+  ["a 12-paragraph blockquote", Array.from({ length: 12 }, (_, i) => `> Quote ${i + 1}: ` + "some quoted words that wrap at a narrower width ".repeat(2 + i % 3).trim()).join("\n>\n"), ".fileview-md > blockquote"],
+];
+/** Scroll the body so the block `sel` selects is `frac` of its height above the body's top edge. */
+const scrollInto = (page: any, sel: string, frac: number): Promise<void> => page.evaluate(([s, f]: [string, number]) => {
+  const body = document.querySelector(".fileview-body")!, r = document.querySelector(s)!.getBoundingClientRect();
+  body.scrollTop += r.top - body.getBoundingClientRect().top + r.height * f;
+}, [sel, frac]);
+
+test("in a browser, the real module: a reader partway into a table, a list or a blockquote, blocks the browser anchors INSIDE of, keeps the depth as a fraction across the Comments aside's toggles and a pane drag (before: the open held pixels and the close applied the fraction, so each toggle walked a 40-row table two rows up, 0.4 to 0.35 to 0.298 to 0.243 of its height, a list 0.4 to 0.422, a blockquote 0.4 to 0.412; a drag held the table's pixels, 0.35 at 600px)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // the toggle: the aside open at pane 900 (the body 560), the reader 0.4 into the block, the panel closed and opened three times
+    for (const [what, block, sel] of COMPOUND) {
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: withBlock(block) } });
+      let paints: number = await page.evaluate(() => (window as any).__paints);
+      await openPanel(page);
+      await paintsReach(page, paints + 1);
+      await scrollInto(page, sel, 0.4);
+      await frames(page, 3);                                                  // the scroll-time read
+      const start = await depthInto(page, { sel });
+      assert.ok(start.isTop && start.height > 600, `${what}: the scene starts partway into the block (top ${start.top}, height ${start.height})`);
+      near(start.frac, 0.4, `${what}: 0.4 of the block's height above the edge`, 0.01);
+      for (let i = 1; i <= 3; i++) {
+        for (const step of ["close", "open"] as const) {
+          paints = await page.evaluate(() => (window as any).__paints);
+          if (step === "open") await openPanel(page); else await closePanel(page);
+          await paintsReach(page, paints + 1);
+          await frames(page, 2);
+          const d = await depthInto(page, { sel });
+          assert.ok(d.isTop, `${what}, ${step} ${i}: the block is the top block`);
+          keepsFraction(d, start.frac, `${what}, ${step} ${i}` + (step === "open" && i === 1 ? " (before the fix: the open held the pixels the browser's anchoring left, 0.35 of the table's height)" : ""));
+          if (step === "open") near(d.top, start.top, `${what}, open ${i}: the block's top edge is back where the scene started`, 2);
+        }
+      }
+      assert.deepEqual(errors, [], `${what}: no script error`);
+      await page.close();
+    }
+    // the drag (the viewport, here), the table alone, the aside closed: the fraction at 600px and back (before the fix: the
+    // anchoring's scroll was read as the place and the pixels held, 0.35 of the table's height at 600px)
+    const [what, block, sel] = COMPOUND[0];
+    const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: withBlock(block) } });
+    await scrollInto(page, sel, 0.4);
+    await frames(page, 3);
+    const wide = await depthInto(page, { sel });
+    assert.ok(wide.isTop, `${what}: the drag starts with the table on top`);
+    near(wide.frac, 0.4, `${what}: 0.4 in at 900px`, 0.01);
+    for (const width of [600, 900, 600, 900]) {
+      const paints: number = await page.evaluate(() => (window as any).__paints);
+      await page.setViewportSize({ width, height: 600 });
+      await paintsReach(page, paints + 1);
+      await frames(page, 2);
+      const d = await depthInto(page, { sel });
+      assert.ok(d.isTop, `${what} at ${width}px: the top block`);
+      keepsFraction(d, wide.frac, `${what} at ${width}px`);
+      if (width === 900) near(d.top, wide.top, `${what}: back at 900px the top edge is back where the drag started`, 2);
+    }
+    assert.deepEqual(errors, [], `${what}, the drag: no script error`);
     await page.close();
   });
 });

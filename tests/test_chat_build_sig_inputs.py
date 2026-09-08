@@ -166,7 +166,7 @@ DOTTED = {
     "jd.episode_rows": ("sig", "episodes"),
     "jd.episode_settles": ("sig", "episodes"),
     "jd.load_archive": ("sig", "archive"),
-    "jd.load_goals_shared": ("sig", "store"),
+    "jd.load_goals_shared_or_fault": ("sig", "store"),   # the shared read behind the per-session fault boundary (upstream #1019)
     "em.MSG_TAG_RE.search": ("pure", "over a text"),
     "em.parse_teammate_message": ("pure", "over a text"),
     "sb.echo_text_key": ("pure", "over a text"),
@@ -183,7 +183,9 @@ DOTTED = {
     "_landed_send_ids.get": ("memo", "the send ids of landed records, derived in _merge_live_atoms (this build, before the prune) from the live echoes and the parse"),
     "be.owns": ("sig", "reg"),
     "be.pending_queued": ("sig", "backend", "the SDK queue by value; the tmux queue is folded from the transcript"),
+    "_cbe.pending_queued_meta": ("sig", "backend", "each queued copy's (qid, qts) beside its text, folded as _qmeta where the backend keeps them (the tmux ledger's stamps, qid None; this fork's SDK backend has no such surface, the send id is the identity, so the hasattr probe answers False there); upmerge4 kernel-code DECISIONS 6"),
     "be.live_atoms": ("sig", "live"),
+    "be.qids_for_landing": ("sig", "live", "the queued-copy ids a landed record pairs with (T252c): a landing is a transcript record (transcript) or a live-tail change (live), and the fed ledger it would read fills with the feed that bumps live_rev; no backend of this fork defines it (the send id is the identity), so the hasattr probe answers False and the call never runs; upmerge4 kernel-code DECISIONS 6"),
     "_be_fk.fork_children": ("sig", "fork"),
     "os.path.exists": ("sig", "transcript", "whether the transcript exists yet"),
     "os.path.realpath": ("sig", "cwd", "the two tree tops compared through the filesystem"),

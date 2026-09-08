@@ -228,7 +228,7 @@ test("executed: a refusal reverts the optimistic copy at once and shows the reas
   assert.deepEqual(panel._tagEditErr, { host: "", name: "tag 1", error: why }, "the refusal names the tag and the reason");
   const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("⚠ "));
   assert.ok(shown && shown.startsWith("⚠ " + why), "…in the dialog, rebuilt in place (the tagEditFailed door's rendering, dismiss ✕ beside it)");
-  // finding 7: a recolor in the refusal window addresses the tag by ID — never by the name the
+  // A recolor in the refusal window addresses the tag by ID — never by the name the
   // rename would have given it (which is the OTHER tag's name)
   const u = viewTagUnion(panel._curViews()).find((x: any) => x.ids.includes(NEW_TID));
   panel._editTagUnion(u, { color: "#DD42FF" });
@@ -237,7 +237,7 @@ test("executed: a refusal reverts the optimistic copy at once and shows the reas
   assert.equal(panel._curViews().tags.find((t: any) => t.id === "gA").color, "#3b82f6", "\"web\" is untouched in the copy too");
 });
 
-// ── DIALOG BEHAVIOUR (the 2026-09-05 review, findings 10/11)
+// ── DIALOG BEHAVIOUR (the 2026-09-05 review)
 test("executed: a refusal's rebuild preserves another row's in-progress rename — text, caret and focus", () => {
   const S = copy(S0); S.tags.push({ id: "gB", name: "api", color: "#54B204", members: [SID2], mtime: 100 });
   const panel = drawnPanel(S);
@@ -280,7 +280,7 @@ test("executed: the lane gear menu shows a refusal inline, repaints on it, and �
   const anchor = makeNode("g"); anchor._rect = { left: 40, top: 60, right: 60, bottom: 76, width: 20, height: 16 };
   panel._openLaneMenu(s, anchor);
   assert.ok(panel._laneMenu, "the gear menu is open");
-  assert.equal(typeof panel._laneMenu._build, "function", "…and exposes its repaint");
+  assert.equal(typeof panel._laneMenuBuild, "function", "…and exposes its repaint");
   const notices = () => walk(panel._laneMenu).map((n) => n.textContent as string).filter((t) => t.startsWith("⚠ "));   // the notice spans themselves
   assert.deepEqual(notices(), [], "no notice at rest");
   // a tag gesture made FROM the menu (the [+] join option) is refused by the kernel
@@ -376,7 +376,7 @@ test("executed: lens and order edits keep the whole-blob post, now with a writeI
   assert.equal(panel._tagEditErr, null, "nothing the user did was refused, so nothing is said");
 });
 
-// ROUND 9 (the round-8 refuters' coverage gap): the door bounds a whole-blob write's refusal rows to 64 plus ONE
+// The 2026-09-05 review (a coverage gap): the door bounds a whole-blob write's refusal rows to 64 plus ONE
 // nameless summary row whose reason counts the rest (`more`, `moreEdited`). The chat pane's rendering of that row is
 // pinned in views-writes.test.ts (ackOutcome); the dialog's is here, on the real panel: the kernel's bounded `error`
 // line when it comes, the rows' reasons joined without it, and a nameless row alone as its reason — never a name read
@@ -405,7 +405,7 @@ test("executed: a refusal's nameless summary row renders in the dialog as its re
   assert.equal(rebuilt, 3);
 });
 
-// ── ORDERING (the 2026-09-05 review, findings 1/8/19): the store's write sequence decides which blob is
+// ── ORDERING (the 2026-09-05 review): the store's write sequence decides which blob is
 // newer, never the order the socket delivered them in. The pusher builds frames from a warmed cache that
 // can predate a write whose ack already arrived; federation re-emits stored blobs; a net-zero burst leaves
 // frames EQUAL to the copy while its writes are still in flight. The seq is exact where the exact-echo
@@ -492,7 +492,7 @@ test("executed: without the targeted-edit bridge (an Obsidian panel), a tag gest
   }
 });
 
-// ── CAPABILITY (the 2026-09-05 review, findings 2/12): the kernel announces `tagEdit` at every `ready`;
+// ── CAPABILITY (the 2026-09-05 review): the kernel announces `tagEdit` at every `ready`;
 // without it the panel takes the pre-cap path (the whole blob, reconciled by the legacy exact echo and
 // three-frame yield, since no ack will come); an op the kernel does not know is answered unknownOp.
 test("executed: against a kernel WITHOUT the tagEdit capability, a tag gesture posts the whole blob — the legacy path — and legacy frames settle it by exact echo or three silent frames", () => {
@@ -575,7 +575,7 @@ test("executed: a lost ack — the caps frame the kernel sends at every ready (a
   assert.equal(panel._tagEditErr, before);
 });
 
-// ── ROUNDS 6 and 7 of the 2026-09-05 review, the refuters' F6/F7: the caps frame adopts the blob the gate last
+// ── The 2026-09-05 review: the caps frame adopts the blob the gate last
 // turned away when its viewsSeq (the seq of the blob the kernel's own connect push served) names it, and never
 // opens the gate.
 test("executed: a restored store lands on the caps frame itself — the connect push the restarted kernel serves under an older seq is turned away, then adopted on the caps frame that names it, with nothing to wait for", () => {
@@ -608,7 +608,7 @@ test("executed: a healthy reconnect keeps the gate — the connect push is adopt
     const S1 = copy(S0); S1.seq = 1001; S1.tags[0].members = [SID1, SID2];
     frame(panel, S1);                                 // the connect push: current, adopted
     // the pusher thread's frame, built from its cache BEFORE that write and enqueued between the connect push and
-    // the caps frame — the window round 6 left open: the client turns it away and keeps it…
+    // the caps frame — the window an earlier fix left open: the client turns it away and keeps it…
     frame(panel, S0);
     assert.equal(panel._views.seq, 1001);
     assert.equal(warned.length, 1);
@@ -638,13 +638,13 @@ test("executed: a caps frame whose connect push served no views blob (viewsSeq n
   } finally { console.warn = cw; }
 });
 
-// ROUND 8 of the 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current
+// The 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current
 // store (the served blob's seq, or the store's current seq when the connect push carried no views frame; null
 // only when the kernel has no store at all). A restart over a store restored from an older copy, met by a
-// reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder), kept nothing for round
-// 7's rule to match: the pusher's next frame — the restored store, under its old seq — was turned away, and no
+// reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder), kept nothing for the earlier
+// rule to match: the pusher's next frame — the restored store, under its old seq — was turned away, and no
 // second caps frame comes. The announced seq is remembered in one slot until the next adoption that changes the
-// held blob (round 9), and a later
+// held blob, and a later
 // blob carrying exactly that seq is adopted below the held one.
 test("executed: a sentinel-cycle reconnect over a restored store — the caps frame announces the store's seq with nothing kept, the pusher's next frame at that seq is adopted below the held one, another lower seq is still turned away, and the slot clears on the adoption", () => {
   const panel = drawnPanel();
@@ -681,7 +681,7 @@ test("executed: the announced slot clears on an adoption that changes the held b
     frame(panel, Object.assign(copy(S0), { seq: 900 }));   // the pusher's frame built before that write
     assert.equal(panel._views.seq, 1100, "the announced seq is no longer a door: the store moved past it");
     assert.equal(panel._curViews().tags[0].name, "notes");
-    // the caps frame that adopts its kept blob (round 7's case) leaves no slot either
+    // the caps frame that adopts its kept blob (the earlier case) leaves no slot either
     const restored = copy(S0); restored.seq = 800;
     frame(panel, restored);
     assert.equal(panel._views.seq, 1100);
@@ -705,10 +705,10 @@ test("executed: the announced slot clears on an adoption that changes the held b
   } finally { console.warn = cw; }
 });
 
-// ROUND 9 of the 2026-09-05 review: the slot is cleared only by an adoption that CHANGES the held blob. In the browser
+// The 2026-09-05 review: the slot is cleared only by an adoption that CHANGES the held blob. In the browser
 // dashboard this pane sees the local blob only through the federation router's merged lanes payload, which replays the
 // router's stored blob on every re-emit (a remote host's lanes, a view-order storage event, a host drop) — a re-arrival
-// of the blob this pane already holds, at its own seq. Round 8's clear on ANY adoption spent the slot on that
+// of the blob this pane already holds, at its own seq. The earlier clear on any adoption spent the slot on that
 // re-arrival, and the restored store the router adopted and re-emitted next at the announced seq was turned away here:
 // router 900, pane 1000, silently, until the next write. Executed on the real panel frame by frame, then on the real
 // panel behind the real router (ui/webview/federation.ts) fed the same sequence.
@@ -734,7 +734,7 @@ test("executed: a re-arrival of the held blob leaves the announced slot standing
     assert.equal(panel._announcedViewsSeq, 900);
     frame(panel, restored);
     assert.equal(panel._announcedViewsSeq, null);
-    // a newer blob clears it, as in round 8
+    // a newer blob clears it, as before
     panel.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 850 });
     frame(panel, restored);                            // held again: the slot stands
     assert.equal(panel._announcedViewsSeq, 850);
@@ -790,7 +790,7 @@ test("executed: behind the real federation router, a re-emit between the caps fr
   }
 });
 
-test("executed: a caps frame without viewsSeq (a kernel from before the field) adopts the kept blob outright — the round-6 rule", () => {
+test("executed: a caps frame without viewsSeq (a kernel from before the field) adopts the kept blob outright — the pre-field rule", () => {
   const panel = drawnPanel();
   const warned: string[] = []; const cw = console.warn; console.warn = (s: any) => { warned.push(String(s)); };
   try {
@@ -833,7 +833,7 @@ test("executed: a write in flight at a restored-store reconnect is dropped and s
   } finally { console.warn = cw; }
 });
 
-// ── ROUND 3 (the 2026-09-05 review, verification round): the in-flight create gate, the legacy create's
+// ── The 2026-09-05 review: the in-flight create gate, the legacy create's
 // id, the join input's draft, the create ack and an open editor, and a refusal reverting only its own write.
 test("executed: [+ New tag] takes ONE click per create — the row reads creating… until the ack, then the button is back", () => {
   const panel = drawnPanel();
@@ -1016,12 +1016,13 @@ test("pins: no frame count settles a stamped kernel's write; the legacy exact ec
   assert.equal((rec.match(/>= 3/g) || []).length, 1, "one legacy yield, nowhere else");
   assert.match(SRC, /_postTagEdit\(nv, edit, meta\) \{\s*\n\s*if \(!this\._tagEditsTargeted\(\)\) \{\s*\n\s*if \(!nv\) return;[\s\S]{0,1200}?const edited = \[edit\.tid, edit\.tid_from, edit\.tid_to\]\.filter\(Boolean\);[\s\S]{0,400}?this\._setViews\(nv, edited\);\s*\n\s*return;\s*\n\s*\}/,
     "a targeted op needs the capability AND a bridge; otherwise the whole-blob write, naming the tags it changed (a create's row included)");
-  assert.match(SRC, /window\.__rompTimelineSetViews\(v, writeId, Array\.isArray\(edited\) \? edited : \[\]\);/, "the whole-blob hook carries the writeId and the edited tag ids");
+  assert.match(SRC, /const ed = Array\.isArray\(edited\) \? edited : \[\];\s*\n\s*if \(hook\) window\.__rompTimelineSetViews\(v, writeId, ed\);/,
+    "the whole-blob hook carries the writeId and the edited tag ids (the same list rides the Obsidian panel's POST /views, 2026-09-08)");
   assert.match(SRC, /window\.__rompTimelineTagEdit\(writeId, edit\);/, "the targeted hook carries the writeId beside the NESTED op");
   assert.doesNotMatch(SRC, /op: '(?:rename|recolor|addMember|removeMember|delete)', name:/, "no op but create carries a name — every one addresses by tid");
 });
 
-// ── ROUND 4 of the 2026-09-05 review ──────────────────────────────────────────────────────────────────
+// ── The 2026-09-05 review ──────────────────────────────────────────────────────────────────
 test("executed: a lens or order write is built from the STORE's blob — a rename still in flight never rides it, and its refusal reverts only the rename", () => {
   const panel = drawnPanel();
   const web = viewTagUnion(panel._curViews()).find((g: any) => g.name === "web");
@@ -1055,10 +1056,13 @@ test("executed: a lens or order write is built from the STORE's blob — a renam
   assert.deepEqual(o.v.tagOrder, ["api", "web"]);
   assert.deepEqual(panel._curViews().tagOrder, ["api", "web"]);
   // every lens and order site goes through _setLens: the pane-filter row, the pill drag, the corner chip, the menu
-  assert.match(SRC, /this\._setLens\(\{ actives: Object\.assign\(\{\}, this\._curViews\(\)\.actives, upd\) \}\);/, "the dialog's pane filters");
-  assert.match(SRC, /this\._setLens\(\{ tagOrder: names \}\);/, "the pill drag");
+  // …each naming what it is ABOUT (`own`), the keys a write no kernel takes keeps local and a ruled one
+  // releases (the Obsidian panel's local lens, 2026-09-08); the map is built over the WRITE base's, never the shown one
+  assert.match(SRC, /this\._setLens\(\{ actives: Object\.assign\(this\._lensBaseActives\(\), upd\) \}, \{ surfaces: Object\.keys\(upd\) \}\);/, "the dialog's pane filters");
+  assert.match(SRC, /this\._setLens\(\{ tagOrder: names \}, \{ tagOrder: true \}\);/, "the pill drag");
   assert.equal((SRC.match(/this\._setViews\(nv\);/g) || []).length, 0, "no whole-blob write from a copy remains outside the legacy tag path");
-  assert.match(SRC, /_setLens\(fields\) \{\s*\n\s*this\._setViews\(lensBlob\(this\._views, fields\), \[\], fields\);/, "built from this._views, the store's blob");
+  assert.match(SRC, /_setLens\(fields, own\) \{\s*\n\s*own = own \|\| \{ surfaces: Object\.keys\(fields\.actives \|\| \{\}\), tagOrder: 'tagOrder' in fields, active: 'active' in fields \};\s*\n\s*this\._setViews\(lensBlob\(this\._views, fields\), \[\], fields, own\);/,
+    "built from this._views, the store's blob; `own` defaults to every key the fields carry");
 });
 
 test("executed: a tag whose create is in flight takes no gesture — the dialog row reads creating… with no actions, its chip has no ✕, the join menu does not offer it; the ack restores them", () => {

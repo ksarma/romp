@@ -44,6 +44,11 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   `conftest.py`; `test_cli_scope_floor.py` pins both halves of it on the
   source, since a test that reads the value cannot tell the floor from
   `test_cli_scope.py`'s own import-time set.
+  `conftest.py` also unsets the four `ROMP_CLI_SCOPE_*` limit variables
+  (`ROMP_CLI_SCOPE_MEMORY_MAX` and the others): the kernel hands them to every
+  session's CLI and a tool shell inherits them, so a suite run from a session on
+  a self-hosted install would otherwise see them at every backend construction
+  and in every exact argv pin.
   Any test whose subject binds a loopback port picks it with `load
   free-port` + `free_port VAR...`, never a literal: a literal shared by two
   files collided within one run (`romp-manager-ensure.bats` once used
@@ -95,6 +100,38 @@ the developer's git configuration (CI has none), and the env identity outranks
 `git config user.*` and `-c user.*` — a test that must pin a particular author
 exports its own `GIT_AUTHOR_*` after the floor. `tests/test_tempdir_hygiene.py`
 and `tests/git-hermetic.bats` pin all of it.
+
+**No test report shows a process-environment value or a credential-shaped
+token.** An assertion whose container is an environment mapping prints the
+whole mapping when it fails (`assertNotIn("X", os.environ)` renders every
+variable), and on a developer's machine that mapping can hold a live key. The
+fix is to test membership and name the key; the report hook in
+`tests/conftest.py` is the net for an assertion still written the other way.
+It redacts two things from every report's text and captured-output sections,
+whatever the outcome (so `-rA`/`-rP` output for passed tests too), and from
+collection reports: a value present in the process environment that is 16
+characters or longer becomes `[REDACTED-ENV-VALUE]`, whole, per
+whitespace-separated chunk, and per piece left beside a cut pytest or
+unittest made (`'<head>...<tail>'`, `[N chars]`) when that piece is a
+substring of the value (values are noted at the moment they are written
+into `os.environ`, so one set inside `mock.patch.dict` and gone before the
+assertion is caught too; exempt, never when the name is credential-shaped,
+are path-valued names such as `PWD`, `HOME`, `TMPDIR` and the interpreter
+paths GitHub Actions exports, the names whose values are public, the ones
+GitHub Actions describes a run in (`GITHUB_REF`, `GITHUB_REPOSITORY`,
+`GITHUB_ACTOR` and the rest) and the conftest's own synthetic git identity,
+the `XDG_*` and `PYTEST_*` families, and any value that is an absolute path
+this machine has), and a credential-shaped token becomes
+`[REDACTED-CREDENTIAL]` wherever it came from, by the patterns in
+`tests/credential_patterns.py` (public key prefixes, a JWT by its shape, a
+long token where a value sits, pytest's own renderings of a failed comparison
+included; a named git sha and a dated Anthropic model id are left alone). A
+report the hook changes is rebuilt from the scrubbed text with
+its crash location kept, so the short test summary still ends in the
+assertion message; that report loses pytest's colour and source highlighting.
+One it leaves alone keeps pytest's own rendering.
+`tests/test_env_value_redaction.py` pins the rule, the write-time capture,
+the patterns, the scrub's cost and the hook end to end.
 
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.

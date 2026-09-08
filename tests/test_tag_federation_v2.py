@@ -193,12 +193,11 @@ class LateApply(unittest.TestCase):
         self.assertEqual(len(km._pending_tag_rows()), 1)
 
     def test_a_changed_reading_marks_the_views_dirty_with_nothing_retired(self):
-        """Round 8 of the 2026-09-06 tab-groups review: the apply's fresh read stored the reading BARE, and
-        _mark_views_dirty fired only when a row retired. With rows pending and every forward failing, the
-        apply's re-read is the pass's only real read (it stamps the poll gate, so the supervisor's own poll
-        serves the cache), so a change seen there reached the feed and timeline a cache bucket late and
-        woke no one. The reading goes through _cache_remote_views now: a change marks and wakes, an
-        equal re-read does neither."""
+        """The apply's fresh read stored the reading BARE, and _mark_views_dirty fired only when a row
+        retired. With rows pending and every forward failing, the apply's re-read is the pass's only real
+        read (it stamps the poll gate, so the supervisor's own poll serves the cache), so a change seen
+        there reached the feed and timeline a cache bucket late and woke no one. The reading goes through
+        _cache_remote_views now: a change marks and wakes, an equal re-read does neither."""
         self._rule({"delete": True})
         dirty = km._views_dirty[0]
         km._views_dirty[0] = 0.0
@@ -278,12 +277,12 @@ class Visibility(unittest.TestCase):
 
 
 class HostSeqRidesTheRows(unittest.TestCase):
-    """Round 9 of the 2026-09-06 tab-groups review: every remoteTags row carries its host's OWN views
-    store's write seq, read off the cached /views reading (a kernel stamps `seq` on its blob since
-    2026-09-05). A remote rename rides this kernel's blob with no change to the local `seq`, so a client
-    ordering what a blob says about a remote tag — the tab strip's rename follow, which stands down on a
-    blob older than its memory's evidence — needs the host's. A host that stamps none puts none on the
-    row, and the local blob's own `seq` stays the local store's."""
+    """Every remoteTags row carries its host's OWN views store's write seq, read off the cached /views
+    reading (a kernel stamps `seq` on its blob since 2026-09-05). A remote rename rides this kernel's
+    blob with no change to the local `seq`, so a client ordering what a blob says about a remote tag —
+    the tab strip's rename follow, which stands down on a blob older than its memory's evidence — needs
+    the host's. A host that stamps none puts none on the row, and the local blob's own `seq` stays the
+    local store's."""
 
     def tearDown(self):
         km._remotes.clear()
@@ -315,7 +314,7 @@ class SupervisorViewsCache(unittest.TestCase):
     """_cache_remote_views: the supervisor's store of a host's /views reading marks the views dirty and
     wakes the pusher when the reading CHANGED — a pane receives a remote host's tags only on the views
     blob the pusher ships, and a silent store left a reattached host's tags trailing its tabs by a
-    pusher cycle (round 7 of the 2026-09-06 tab-groups review). An unchanged reading is not news."""
+    pusher cycle. An unchanged reading is not news."""
 
     def setUp(self):
         self.r = _attach(views={"tags": [_remote_tag("g100", "web")]})
@@ -354,7 +353,7 @@ class SupervisorViewsCache(unittest.TestCase):
         self.assertFalse(km._pusher_wake.is_set())
 
     def test_every_store_of_a_reading_goes_through_the_cache(self):
-        """Round 8: round 7 routed the supervisor's own store through the helper and this test read the
+        """A first cut routed the supervisor's own store through the helper and this test read the
         supervisor's source alone, while _apply_pending_tag_edits (called from the same pass) and
         _forward_tag_edit still stored bare. The WHOLE module is scanned: the one `["views"] =` is the
         helper's own, and every reader of a host's /views calls it."""

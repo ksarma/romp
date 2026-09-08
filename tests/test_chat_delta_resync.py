@@ -181,6 +181,24 @@ def test_build_sig_still_tracks_the_fsid_states_file(tmp_path):
     assert before != km._chat_build_sig(sess)
 
 
+def test_build_sig_keys_the_rows_context_percentage(tmp_path):
+    """The snapshot row's context-% is `context`, the key the merged liveness row writes; the sig read `ctx`,
+    which no row carries, so a background tab's context change never busted its chat cache."""
+    jd._rebind_state(tmp_path)
+    km.jd = jd
+    sid = "11111111-2222-3333-4444-555555555555"
+    tx = tmp_path / (sid + ".jsonl")
+    tx.write_text('{"type":"user"}\n')
+    sess = {"sid": sid, "path": str(tx), "anchor": sid}
+    row = {"state": "working", "model": "m", "context": 10, "effort": "", "mode": "", "fast": "", "since": 1}
+    # this kernel's signature takes the liveness MAP (`tmux`, the push's guarded chat map) and folds the
+    # session's whole row from it, minus snapT and interrupting (the round-4 P4 shape; upmerge4 kernel-code
+    # DECISIONS 5), so the row rides under its sid rather than as upstream's `tm=` argument
+    before = km._chat_build_sig(sess, tmux={sid: dict(row)})
+    assert before == km._chat_build_sig(sess, tmux={sid: dict(row)})
+    assert before != km._chat_build_sig(sess, tmux={sid: {**row, "context": 20}}), "a context-% step busts the chat build sig"
+
+
 # ───────────────────────── the lost-first-frame class (the user 2026-09-02) ─────────────────────────
 
 def test_ready_forgets_the_whole_chat_base_so_the_repush_is_full_frames():

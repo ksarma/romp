@@ -31,6 +31,7 @@ All fixtures synthetic.
 import base64
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -57,7 +58,9 @@ class SourcePins(unittest.TestCase):
     def test_payload_retained_and_reshipped_on_the_reconnect_event(self):
         self.assertIn("interface PendingShip { name: string; shipId: string; b64?: string }", RENDER)
         self.assertIn("if (entry) entry.b64 = b64;", RENDER)
-        self.assertIn('window.addEventListener("romp:wsup", () => reshipPendingUploads());', RENDER)
+        # the listener grew a body (T246: the local active-tab re-arm rides the same open event); the re-ship
+        # is still its first statement
+        self.assertIn('window.addEventListener("romp:wsup", () => {\n  reshipPendingUploads();', RENDER)
         # …and the federated twin (review finding 2026-09-01): the relay's own (re)open re-ships THAT
         # host's entries — scoped by ack socket. The kernel-reported hostUp does NOT: it fires in the
         # tick federation re-dials the relay, before the socket is open (second review, same day)
@@ -198,7 +201,10 @@ class _ShipLab(unittest.TestCase):
         Path(cls.state, "usage.json").write_text(json.dumps(
             {"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))  # park sends: no CLI spawns in the lab
         claude = os.path.join(cls.lab, "claude")
-        proj = os.path.join(claude, "projects", cwd.replace("/", "-"))
+        # the kernel finds a session's transcript under Claude's project dir: EVERY non-alphanumeric char of the
+        # realpath becomes '-' (jd._proj_dir). A slashes-only munge missed the '_' pytest's temp root can carry,
+        # so the kernel found no transcript and drew an API-error turn instead (the batch-only flake, 2026-09-08).
+        proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         # a CLOSED turn (user + replied assistant): an OPEN one would invite the boot
         # reconcile to resume it — this lab must never spawn a real CLI

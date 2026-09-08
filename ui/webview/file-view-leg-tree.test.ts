@@ -1,6 +1,8 @@
 // The Slice 2 legs (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
 // file-view-fold-browser, file-view-place-blocks-browser, file-view-place-reveal-browser, file-view-place-edits-browser,
-// file-view-float-anchoring-browser, file-view-leg-page-browser) bundle the viewer and read the sheets through
+// file-view-float-anchoring-browser, file-view-leg-page-browser, file-view-place-float-browser,
+// file-view-place-html-browser, file-view-place-svg-source-browser, file-view-place-wrapper-end-browser) bundle the
+// viewer and read the sheets through
 // real-viewer-leg.ts, so the tree that module
 // resolves is the tree they test. It must be the cwd's, ../ui/webview from the vscode-extension npm test runs in, the way
 // every other browser leg and the node tests beside them find theirs. The module once let an environment variable name

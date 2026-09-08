@@ -177,7 +177,10 @@ class Plumbing(unittest.TestCase):
     (or an open Waiting-on-you pane alone would read as a closed dashboard and park every session)."""
 
     def test_waiting_is_in_the_feed_send_set_and_loop(self):
-        self.assertIn('want_feed = any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in targets)', SRC)
+        # the send set is ONE question, _feed_audience (upstream's helper, taught this pane in the
+        # upmerge4 fold, kernel-code H51): _push asks it of its targets, GET /feed.json of the connected set
+        self.assertIn('want_feed = _feed_audience(targets)', SRC)
+        self.assertIn('return any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in clients)', SRC)
         self.assertIn('if c["app"] in ("feed", "fleet", "waiting"):', SRC)
 
     def test_ready_serves_the_cached_frame_and_skips_the_ledgerless_connect_push(self):

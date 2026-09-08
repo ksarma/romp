@@ -11,6 +11,9 @@ and the initiator summarizes the answer, so the recipient card is pure noise. Th
 - undeclared legacy mail → the model's verdict stands, either way.
 
 Synthetic fixtures only (placeholder UUIDs, invented text, hostname TESTHOST)."""
+import contextlib
+import errno
+import io
 import json
 import os
 import re
@@ -19,6 +22,7 @@ import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -108,24 +112,75 @@ class CourierKindDemoteOnly(unittest.TestCase):
         seg_id = next(k for k in store["placements"] if not k.endswith(("#p", "#d", "#live")))
         return planted, store["placements"][seg_id]
 
-    def test_a_recipient_store_that_does_not_parse_stands_the_pass_down(self):
-        # the recipient's goals file exists and does not parse: the courier used to build its pending list from
-        # the empty fallback (every peer segment looked unplaced), call the model for each and publish the
-        # fallback over the file. It now stands down for that session (_fallback_store): the pass returns,
-        # nothing is placed, no call is made, the file is left as it is, and load_goals' row says why
-        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
-        gp = jd.GOALDIR / (RECIP + ".json")
-        gp.write_text("{ not the store")
+    @contextlib.contextmanager
+    def _fault_on(self, path):
+        """Every read of `path` raises EIO, at both seams this fork reads a store through (Path.read_text, and the
+        descriptor reader jd._disk_read behind the shared cache and the save path); every other read is untouched."""
+        orig, orig_disk = Path.read_text, jd._disk_read
+
+        def faulting(p, *a, **kw):
+            if p == path:
+                raise OSError(errno.EIO, "Input/output error", str(p))
+            return orig(p, *a, **kw)
+
+        def faulting_disk(fd, path_s):
+            if str(path_s) == str(path):
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return orig_disk(fd, path_s)
+        with mock.patch.object(Path, "read_text", faulting), mock.patch.object(jd, "_disk_read", faulting_disk):
+            yield
+
+    def _recipient_transcript(self):
         recs = [uline(T0, "what subnet is the new box on?\n<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID, "u1"),
                 aline(T0 + 30, "It's on the flat /24.", "a1", "u1")]
         (self.proj_dir / (RECIP + ".jsonl")).write_text("\n".join(json.dumps(r) for r in recs) + "\n")
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache["fp"] = None
-        jd.run_courier(now=T0 + 100)                                     # returns: no raise out of the pass
-        self.assertEqual(gp.read_text(), "{ not the store", "the file is left as it is")
-        self.assertEqual(self.calls, [], "no model call over an empty view of the session")
-        rows = [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()]
-        self.assertEqual([r["err"] for r in rows], ["store-unreadable"], "one row, from the load")
+
+    def _rows(self):
+        return [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()]
+
+    def test_a_recipient_store_that_does_not_read_stands_the_pass_down(self):
+        # the recipient's goals file exists and cannot be read: the courier used to build its pending list from an
+        # empty fallback (every peer segment looked unplaced), call the model for each and publish the fallback over
+        # the file. Under upstream #1019 (steer 1 of the 2026-09-08 fold) load_goals RAISES on a read fault and the
+        # scan files that session's pass-crash row itself (_courier_scan, the "store" note every pass wrapper uses):
+        # the pass returns, nothing is placed, no call is made, the file is left as it is
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        gp = jd.GOALDIR / (RECIP + ".json")
+        good = json.dumps({"rompUuid": RECIP, "seq": 1, "rev": 1, "nodes": {}, "placements": {}, "status": {}})
+        gp.write_text(good)
+        self._recipient_transcript()
+        with self._fault_on(gp):
+            jd.run_courier(now=T0 + 100)                                 # returns: no raise out of the pass
+        self.assertEqual(gp.read_text(), good, "the file is left as it is")
+        self.assertEqual(self.calls, [], "no model call over a session whose store did not read")
+        rows = self._rows()
+        self.assertEqual([r["err"] for r in rows], ["pass-crash"], "one row, the scan's own")
+        self.assertTrue(rows[0]["note"].startswith("store:"), rows[0]["note"])
+        self.assertIn("Input/output error", rows[0]["note"], "and it names the fault")
+
+    def test_a_recipient_store_that_does_not_parse_is_quarantined_and_the_pass_runs_on_the_fresh_store(self):
+        # bytes that do not parse are no stand-down any more (upstream #1019, steer 1): load_goals moves them aside to
+        # <file>.corrupt-<utc stamp> (evidence kept, one store-quarantined row, one stderr line) and answers a fresh
+        # store, so the pass runs to completion on it and nothing is ever published OVER the bytes that failed
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        gp = jd.GOALDIR / (RECIP + ".json")
+        gp.write_text("{ not the store")
+        self._recipient_transcript()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            jd.run_courier(now=T0 + 100)
+        aside = sorted(p for p in jd.GOALDIR.iterdir() if p.name.startswith(RECIP + ".json.corrupt-"))
+        self.assertEqual(len(aside), 1, "the bytes that did not parse are kept aside")
+        self.assertEqual(aside[0].read_text(), "{ not the store")
+        self.assertIn("moved aside", err.getvalue())
+        errs = [r["err"] for r in self._rows()]
+        self.assertEqual(errs.count("store-quarantined"), 1, errs)
+        self.assertFalse({"store-unreadable", "pass-crash"} & set(errs), "no stand-down: the fresh store is legitimate")
+        self.assertEqual(self.calls, ["delegate"], "the pass ran on the fresh store: the declared delegate reached the model")
+        store = jd.load_goals(RECIP)
+        self.assertEqual(len([nd for nd in store["nodes"].values() if isinstance(nd.get("origin"), dict)]), 1,
+                         "and planted the recipient's goal into it")
 
     def test_declared_question_files_fyi_without_a_model_call(self):
         planted, placement = self._deliver("question")

@@ -102,7 +102,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ["ROMP_SERVE_TOKEN"] = "testtok"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")  # setdefault like every other module: an unconditional set poisons a shared-name kernel loaded earlier in the worker
 km = load_source("romp_kernel_ut", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
@@ -3645,8 +3645,11 @@ class NudgeStandsDownForOpenTodos(_StoreSandbox):
         self._seed_goals({}, status={})
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         t_ask = NOW - 1800
+        # (last_any, last_ask, last_await): the wait maps carry a third map since upstream #1056 (the
+        # latest reply-requiring send per pair); a question is one, so the pair sits there too
         maps = ({(SID2, SID): t_ask},
-                {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")})
+                {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")},
+                {(SID2, SID): t_ask})
         patches = [
             mock.patch.object(km, "_postal_wait_maps", lambda: maps),
             mock.patch.object(km, "_name_of", lambda sid: {SID2: "api", SID: "web"}.get(sid)),

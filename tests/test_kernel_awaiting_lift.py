@@ -17,15 +17,20 @@ stamp (those remain the 6h backstop's job, the one case a timer is the only tool
 Since performance plan 4 (P16) the tick reads in two phases: every rule is decided on the shared
 read-only store (jd.load_goals_shared) and written nowhere; the writer's copy (jd.load_goals) is loaded
 only when that decision found a lift due, decided on again, and only that second decision is filed. The
-LiftGate class counts the two loaders apart.
+LiftGate class counts the two loaders apart. Since the 2026-09-08 fold both phases read through the
+per-session boundary (jd.load_goals_shared_or_fault, jd.load_goals_or_fault): a store that exists and
+cannot be read answers (None, fault), and the tick forgets its inputs gate for the session and retries
+next cycle instead of ruling on an empty store.
 
 SYNTHETIC fixtures only: placeholder UUIDs, invented task descriptions.
 """
+import errno
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -153,6 +158,38 @@ class AwaitingLift(unittest.TestCase):
         self.assertIsNotNone(self._stamp(), "precondition: the goal starts stamped")
         self._tick()
         self.assertIsNone(self._stamp(), "every dispatch came back → the wait is over")
+
+    def test_a_faulting_store_forgets_the_gate_so_the_next_tick_retries(self):
+        """The inputs gate (_lift_seen) is recorded before the store read; a read FAULT must forget it,
+        exactly as a raised ruling does, or the next tick over the same inputs would skip the session
+        and the lift would wait for the transcript to change."""
+        self._transcript([_launch("t1", LAUNCH), _launch("t2", LAUNCH + 5),
+                          _notification("t1", BACK), _notification("t2", BACK + 5)])
+        self._seed()
+        km._lift_seen.pop(SID, None)
+        km.jd._STORE_FAULTS.pop(SID, None)
+        target, orig, orig_disk = km.jd.GOALDIR / (SID + ".json"), Path.read_text, km.jd._disk_read
+
+        def faulting(path, *a, **kw):
+            if path == target:
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return orig(path, *a, **kw)
+
+        def faulting_disk(fd, path_s):
+            # Phase 1 PROBES through jd.load_goals_shared, whose store read is the descriptor read
+            # jd._disk_read, not Path.read_text (the writer's load_goals in phase 2 reads through
+            # Path.read_text): both reads fault, so the probe itself meets the fault, after the gate
+            # was recorded and before any lift was found due.
+            if path_s == str(target):
+                raise OSError(errno.EIO, "Input/output error", path_s)
+            return orig_disk(fd, path_s)
+        with mock.patch.object(Path, "read_text", faulting), \
+                mock.patch.object(km.jd, "_disk_read", faulting_disk):
+            self._tick()
+        self.assertIsNotNone(self._stamp(), "nothing is written to a store that could not be read")
+        self.assertNotIn(SID, km._lift_seen, "the gate is forgotten on a fault, not spent...")
+        self._tick()
+        self.assertIsNone(self._stamp(), "...so the very next tick, same inputs, retries and lifts")
 
     def test_one_still_running_keeps_the_stamp(self):
         self._transcript([_launch("t1", LAUNCH), _launch("t2", LAUNCH + 5),
@@ -599,6 +636,282 @@ class RestartReconcile(unittest.TestCase):
         self.assertIsNotNone(self._stamp(), "live subagents ARE the wait — never lifted from under them")
 
 
+class _HorizonBase(unittest.TestCase):
+    """Fixture for the evidence-HORIZON tests (2026-09-07): a live session on a PRIVATE sid (the
+    goal-store fixture rule), every outside fact the sweep reads stubbed at its documented seam — the
+    CLI epoch (_sdk_spawned_at), placement (_bg_placed_tops), the peer reply (_peer_answered_at, the
+    scalar seam _peer_answered names) — and the diary read back from the STORE, the row the gates
+    themselves read. SYNTHETIC fixtures."""
+
+    PSID = "55555555-6666-7777-8888-aaaaaaaaaaaa"
+    REPLY = STAMP + 50                                # a peer's answer after the stamp was written
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        self.saved = {k: getattr(km, k) for k in
+                      ("_alive_sessions", "_mark_views_dirty", "_sdk_spawned_at", "_bg_placed_tops",
+                       "_peer_answered_at", "_postal_wait_maps")}
+        self.saved_jd = (km.jd.STATE, km.jd.GOALDIR)
+        km.jd.STATE = td
+        km.jd.GOALDIR = td / "goals"
+        km.jd.GOALDIR.mkdir(parents=True)
+        self.path = str(td / (self.PSID + ".jsonl"))
+        km._alive_sessions = lambda now, tmux: [{"sid": self.PSID, "path": self.path}]
+        km._mark_views_dirty = lambda *a, **k: None
+        km._sdk_spawned_at = lambda sid: self.spawn
+        self.spawn = STAMP - 50                       # default: the CLI predates the stamp — no respawn story
+        self.gid, self.other = self.PSID + ":g1", self.PSID + ":g2"
+        km._peer_answered_at = lambda sid: self.reply
+        self.reply = 0                                # default: no peer ever answered
+        km._postal_wait_maps = lambda: ({}, {}, {})   # main returns (last_any, last_ask, last_await) since #1056
+        self._saved_watches = list(km._pr_watches)
+        km._lift_seen.pop(self.PSID, None)
+        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(km, k, v)
+        km._pr_watches[:] = self._saved_watches
+        try:                                          # while STATE is still the tempdir — after the restore
+            (km.jd._overrides_dir() / (self.PSID + ".jsonl")).unlink()   # this resolves to the shared floor
+        except OSError:
+            pass
+        km.jd.STATE, km.jd.GOALDIR = self.saved_jd
+        km._lift_seen.pop(self.PSID, None)
+        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        self.td.cleanup()
+
+    def _transcript(self, recs):
+        with open(self.path, "w") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+        km._bgall_cache.clear(); km._bgtasks_cache.clear()
+
+    def _write(self, nd):
+        (km.jd.GOALDIR / (self.PSID + ".json")).write_text(json.dumps(
+            {"rompUuid": self.PSID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}))
+
+    def _seed(self, kind, why="watching the rebuild; will pick the result up when it lands", written=None):
+        self._write({"id": self.gid, "text": "rebuild the notes-api index", "parentId": None,
+                     "nodeComplete": False, "blocked": False, "cleared": False, "trail": [],
+                     "t": BORN, "mt": BORN, "awaitingWhy": why, "awaitingAt": STAMP,
+                     **({"awaitingKind": kind} if kind else {}),
+                     "log": [{"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": why,
+                              **({"awaitKind": kind} if kind else {}),
+                              "at": STAMP if written is None else written}]})
+
+    def _node(self):
+        return json.loads((km.jd.GOALDIR / (self.PSID + ".json")).read_text())["nodes"][self.gid]
+
+    def _stamp(self):
+        return self._node().get("awaitingWhy") or None
+
+    def _lifts(self):
+        return [e for e in self._node().get("log") or [] if e.get("kind") == "awaiting" and e.get("lift")]
+
+    def _tick(self, snap=None, now=BACK + 100):
+        km._lift_seen.pop(self.PSID, None)
+        km._lift_spent_awaiting(now, {self.PSID: snap if snap is not None else {"state": ""}})
+
+
+class LiftHorizonJournaled(_HorizonBase):
+    """Each sweep lift that rests on a recorded ending journals that ending's time as its evidence
+    horizon (`endEv`, record_verdict end_ev) — the value the stand-down gates compare fresh evidence
+    against, in place of the row's arrival (the 2026-09-07 defect: a lift filed late for old evidence
+    silenced a fresh assert on evidence it never ruled on). One test per leg, through the real sweep,
+    asserting the journaled row: a leg that drops end_ev leaves the key missing."""
+
+    def test_a_the_dispatch_return_lift_journals_its_newest_citable_return(self):
+        self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])
+        self._seed(None)
+        self._tick()
+        self.assertIsNone(self._stamp(), "fixture: the return lifted the stamp")
+        self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the horizon is the return the lift cites")
+
+    def test_b_the_peer_supersede_lift_journals_the_reply_time(self):
+        self._transcript([])
+        self._seed("peer", why="asked the web session to verify; holding for the answer")
+        self.reply = self.REPLY
+        self._tick()
+        self.assertIsNone(self._stamp(), "fixture: the reply superseded the stamp")
+        self.assertEqual(self._lifts()[-1].get("endEv"), self.REPLY,
+                         "the reply is the evidence this lift ruled on")
+
+    def test_c_the_empty_world_lift_journals_the_newest_ending_it_cites(self):
+        # the agents shape whose deciding event is the CLI respawn past the anchor
+        self._transcript([])
+        self._seed("agents", why="workers still building the pieces; merges when they report")
+        self.spawn = BACK
+        self._tick({"state": "", "bgTasks": []})
+        self.assertIsNone(self._stamp(), "fixture: the orphaned agents stamp lifted")
+        self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the respawn is the ending it cites")
+        # the task/job shape (2026-09-05): every launch placed on a sibling top, the world emptied
+        # after the stamp — the horizon is the newest terminal record
+        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}   # the lift hands its store
+        self.spawn = STAMP - 50
+        self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])
+        self._seed("job")
+        self._tick({"state": "", "bgTasks": []})
+        self.assertIsNone(self._stamp(), "fixture: the in-harness world emptied after the stamp")
+        self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the last in-harness ending it cites")
+
+    def test_d_an_agents_lift_resting_on_no_recorded_ending_journals_the_registry_read(self):
+        # the misread-peers-as-agents shape: nothing ever ran, no respawn past the anchor. The lift is
+        # right (the notification can never arrive), and its ruling is "the registry shows nothing
+        # running NOW", so the registry read's moment is its horizon, as the dead-man journals its wake.
+        # Journaling none left the gates on the row's anchor, which disowns nothing: a lagging closer's
+        # re-assert from a segment triggered inside (anchor, lift) stood, and the next pass re-lifted the
+        # same empty world: a permanent flap on no new information, each re-lift re-arming the nudge
+        # ladder (review find, 2026-09-08; pre-fix: no endEv, the re-assert stands, two lift rows). The
+        # clock is journaled as read, fraction and all: floored to the second it disowned an assert
+        # triggered in the read's own second, which stood and was re-lifted (pre-fix: int(now), 500)
+        why = "workers still building the pieces; merges when they report"
+        self._transcript([])
+        self._seed("agents", why=why)
+        self._tick({"state": "", "bgTasks": []}, now=500.5)
+        self.assertIsNone(self._stamp(), "fixture: lifted — the wait can never end")
+        self.assertEqual(self._lifts()[-1].get("endEv"), 500.5,
+                         "the registry read, as read, is what the lift ruled through")
+        # the lagging closer: a segment triggered inside (anchor, lift) re-asserts the same wait
+        s = km.jd.load_goals(self.PSID)
+        km.jd.apply_close(s, km.jd.open_menu(s), {"done": {}, "block": {},
+                                                  "awaiting": {1: {"why": why, "kind": "agents"}}}, t=STAMP + 50)
+        self.assertIsNone(s["nodes"][self.gid].get("awaitingWhy"),
+                          "a segment inside (anchor, lift) predates the registry read: the writer yields")
+        km.jd.save_goals(self.PSID, s)
+        self._tick({"state": "", "bgTasks": []}, now=505.5)
+        self.assertEqual(len(self._lifts()), 1, "nothing stood, so nothing re-lifts: one row, no flap")
+        # …and a segment triggered AFTER the lift is a new wait: it stands
+        km.jd.apply_close(s, km.jd.open_menu(s), {"done": {}, "block": {},
+                                                  "awaiting": {1: {"why": why, "kind": "agents"}}}, t=600)
+        self.assertEqual(s["nodes"][self.gid].get("awaitingWhy"), why, "a later turn's ruling stands")
+
+    def test_g_a_dead_watchers_unspent_ceiling_is_not_a_return(self):
+        # a Monitor the pairing still shows running, absent from a PRESENT registry (dead), whose CLI
+        # spawn predates the stamp and whose ceiling lies AHEAD: nothing it can cite postdates the anchor.
+        # The "returned after the anchor" test and the horizon the lift journals read ONE conditioning
+        # (_return_ev); the older hand-kept copy still counted the unspent ceiling, so this lifted off a
+        # horizon (the spawn, 250) OLDER than the anchor it retracted (300): a lift citing evidence from
+        # before the wait began (review find, 2026-09-08). The ceiling passing is the event: it lifts then.
+        self._transcript([_monitor("t1", LAUNCH, timeout_ms=400_000)])      # ceiling 600
+        self._seed(None)
+        self._tick({"state": "", "bgTasks": []}, now=500)          # registry present and empty: t1 is dead
+        self.assertIsNotNone(self._stamp(), "nothing returned after the anchor yet: the stamp stands")
+        self.assertEqual(self._lifts(), [], "no lift, so no horizon older than the wait it would retract")
+        self._tick({"state": "", "bgTasks": []}, now=800)          # the ceiling passed: a recorded ending
+        self.assertIsNone(self._stamp(), "the spent ceiling is the return")
+        self.assertEqual(self._lifts()[-1].get("endEv"), 600, "…and the horizon is that ceiling")
+
+    def test_f_a_returned_watchers_unspent_ceiling_is_not_the_horizon(self):
+        # a Monitor keeps its recorded ceiling after it returns (the completion path sets endT and
+        # leaves `deadline`): a watcher that fired at 400 under a 600 ceiling journals 400 — the
+        # return — never the ceiling, and never the clock a min() floor falls to (pre-fold: 500)
+        self._transcript([_monitor("t1", LAUNCH, timeout_ms=400_000), _notification("t1", BACK)])
+        self._seed(None)
+        self._tick(now=500)
+        self.assertIsNone(self._stamp(), "fixture: the return lifted the stamp")
+        self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the return — not the ceiling, not the clock")
+
+    def test_e_the_peer_supersede_predicate_returns_the_reply_time(self):
+        nd = {"awaitingWhy": "w", "awaitingAt": STAMP,
+              "log": [{"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": "w", "at": STAMP}]}
+        self.assertEqual(km._peer_stamp_superseded(nd, (self.REPLY, {})), self.REPLY,
+                         "the superseding reply's time, not a bare True")
+        self.assertEqual(km._peer_stamp_superseded(nd, self.REPLY), self.REPLY, "a legacy scalar too")
+        self.assertEqual(km._peer_stamp_superseded(dict(nd, awaitingPeers=["p1"]), (0, {"p1": self.REPLY + 20})),
+                         self.REPLY + 20, "pair-aware: the awaited pair's own reply")
+        self.assertEqual(km._peer_stamp_superseded(nd, (STAMP - 10, {})), 0, "a reply before the write: not superseded")
+        self.assertEqual(km._peer_stamp_superseded(dict(nd, awaitingKind="job"), (self.REPLY, {})), 0,
+                         "peer-scoped: a job stamp stands through mail")
+
+
+class LiftHorizonGate(_HorizonBase):
+    """The sweep's own stand-down (the 2026-08-19 rule) mirrors the closer's: after a re-assert, a lift
+    fires only on a return NEWER than what the prior lift RULED ON — its journaled horizon — never newer
+    than that lift's filing. The diary: assert → a lift filed late (at T_ARR) for evidence up to T_EV →
+    the closer re-asserts after the filing. The watcher's return lands at T_X."""
+
+    T_EV, T_ARR, REASSERT_AT, NOW = 350, 420, 470, 500
+
+    def _diary(self, t_x, why="the re-armed watcher; reports when it lands", monitor=False, legacy=False):
+        self._transcript([_monitor("t1", LAUNCH, timeout_ms=400_000) if monitor else _launch("t1", LAUNCH),
+                          _notification("t1", t_x)])
+        self._write({"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": False,
+                     "blocked": False, "cleared": False, "trail": [], "t": BORN, "mt": BORN,
+                     "awaitingWhy": why, "awaitingAt": STAMP, "log": [
+                         {"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": why, "at": STAMP},
+                         {"ev_t": STAMP, "src": "romp", "kind": "awaiting", "lift": True,
+                          **({} if legacy else {"endEv": self.T_EV}), "at": self.T_ARR},
+                         {"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": why,
+                          "at": self.REASSERT_AT}]})
+
+    def test_a_a_return_past_the_lifts_horizon_lifts_even_though_it_predates_the_filing(self):
+        # T_EV < T_X < T_ARR: read by filing time, the return was "already ruled on" and the stamp
+        # stayed (main: the stamp is still standing); the lift's horizon says it never saw this return
+        self._diary(t_x=380)
+        self._tick(now=self.NOW)
+        self.assertIsNone(self._stamp(), "a return the prior lift never ruled on is new information — lift")
+        self.assertEqual(self._lifts()[-1].get("endEv"), 380, "…and the new lift journals that return")
+
+    def test_b_a_return_the_lift_already_ruled_on_stands_the_re_lift_down(self):
+        self._diary(t_x=340)
+        self._tick(now=self.NOW)
+        self.assertIsNotNone(self._stamp(), "every citable return predates the horizon — the flap, yielded")
+        self.assertEqual(len(self._lifts()), 1, "no second lift row")
+
+    def test_c_a_returned_watchers_unspent_ceiling_does_not_defeat_the_stand_down(self):
+        # the gate measures the same conditioned return evidence the lift journals: a watcher returned
+        # at 340 (before the 350 horizon) under a 600 ceiling cites 340, so the re-lift stands down.
+        # Folding the ceiling made every re-lift of a returned watcher look like new information
+        # (pre-fold: the stamp is lifted — the flap the 2026-08-19 rule exists to stop)
+        self._diary(t_x=340, monitor=True)
+        self._tick(now=self.NOW)
+        self.assertIsNotNone(self._stamp(), "a ceiling that never passed is not a return — yield")
+        self.assertEqual(len(self._lifts()), 1)
+
+    def test_b2_the_boundary_is_inclusive_a_return_at_the_horizon_is_the_one_already_cited(self):
+        # `<=`: a return AT the horizon is the very return the prior lift cited (its own end_ev is the
+        # newest return it cited); re-lifting off it is the flap. A `<` mutant lifts here.
+        self._diary(t_x=self.T_EV)
+        self._tick(now=self.NOW)
+        self.assertIsNotNone(self._stamp(), "equal evidence was ruled on — yield")
+        self.assertEqual(len(self._lifts()), 1)
+
+    def test_d_a_legacy_lift_row_keeps_the_arrival_compare_it_always_had(self):
+        # a lift filed before horizons were journaled (no endEv): its arrival is its horizon, the compare
+        # this stand-down made before 2026-09-07, so the upgrade changes nothing for it (review find,
+        # 2026-09-08). Read as its ev_t (the anchor) instead, every citable return looked new, and the
+        # re-assert was re-lifted once at the first pass after the upgrade, re-arming the nudge ladder
+        self._diary(t_x=380, legacy=True)                          # a T_EV horizon would admit 380; T_ARR does not
+        self._tick(now=self.NOW)
+        self.assertIsNotNone(self._stamp(), "a return before the legacy row's filing was ruled on: yield")
+        self.assertEqual(len(self._lifts()), 1, "no second lift row")
+        self._diary(t_x=430, legacy=True)                          # past the filing: new information, as ever
+        self._tick(now=self.NOW)
+        self.assertIsNone(self._stamp(), "a return past the legacy row's filing lifts, as before")
+
+    def test_e_a_fractional_ceiling_is_journaled_whole_so_the_stand_down_holds(self):
+        # a Monitor's recorded ceiling is t + timeout_ms/1000, fractional when timeout_ms is not a whole
+        # second. The lift journals the ceiling it cites; int()-truncated at the journal, the next pass
+        # measured 600.5 against 600, the inclusive stand-down never held, and the stamp was re-lifted on
+        # the same ceiling after every re-assert (review find, 2026-09-08; pre-fix: endEv 600, two lifts)
+        why = "the re-armed watcher; reports when it lands"
+        self._transcript([_monitor("t1", LAUNCH, timeout_ms=400_500)])      # ceiling 600.5, no notification
+        self._seed("task", why=why)
+        self._tick(now=800.5)                                      # past ceiling + grace: the watcher expired
+        self.assertIsNone(self._stamp(), "fixture: the spent ceiling lifted the stamp")
+        self.assertEqual(self._lifts()[-1].get("endEv"), 600.5, "the ceiling as recorded, fraction and all")
+        nd = self._node()                                          # the closer re-asserts after the filing
+        nd["log"].append({"ev_t": STAMP, "src": "closer", "kind": "awaiting", "why": why, "awaitKind": "task",
+                          "at": nd["log"][-1]["at"] + 1})
+        nd["awaitingWhy"], nd["awaitingAt"], nd["awaitingKind"] = why, STAMP, "task"
+        self._write(nd)
+        self._tick(now=805.5)
+        self.assertIsNotNone(self._stamp(), "the ceiling it cites is the one already ruled on: yield")
+        self.assertEqual(len(self._lifts()), 1, "no second lift row")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -1037,14 +1350,16 @@ class LiftGate(unittest.TestCase):
         km.jd.load_goals_shared = probed
         self.assertEqual((self._tick(), self.last_probes), (0, 1), "the next tick retries the read")
 
-    # ---- a load that FELL BACK is no better than one that raised ----
+    # ---- a read that FAULTED, or a load that FELL BACK, is no better than a ruling that raised ----
     def _read_fails_once(self, target):
         """Patch the two reads of `target` so each raises OSError ONCE (the EMFILE/EIO shape a busy kernel
         meets) and every later read is real: jd._disk_read, the shared loader's descriptor read (of the
-        store, or of the journal through _journal_read), which hands the read to load_goals; and
-        Path.read_text, load_goals' store read and _replay_overrides' journal read, which swallow the error
-        and answer an empty store / skip the journal, `_unread`-marked. Returns the counter of raised
-        reads: 2 when the probe met the failure through both loaders."""
+        store, or of the journal through _journal_read); and Path.read_text, load_goals' store read and
+        _replay_overrides' journal read. A STORE fault raises out of either loader (load_goals never answers
+        an empty store for a file it could not read, 2026-09-07) and the lift's boundary answers (None,
+        fault); a JOURNAL fault is handed from the shared loader to load_goals, whose replay skips the
+        journal, `_unread`-marked. Returns the counters of raised reads (`fired` in total, `disk` and
+        `text` apart)."""
         import errno
         real = Path.read_text
         real_disk = km.jd._disk_read
@@ -1065,21 +1380,26 @@ class LiftGate(unittest.TestCase):
         self.addCleanup(setattr, km.jd, "_disk_read", real_disk)
         return state
 
-    def test_a_swallowed_store_read_failure_is_not_cached_as_nothing_to_lift(self):
+    def test_a_faulting_store_read_is_not_cached_as_nothing_to_lift(self):
         import contextlib, io
         self._returned_dispatch()
         self._seed()                                     # stamped, its dispatch returned: a lift is due
+        km.jd._STORE_FAULTS.pop(SID, None)
         state = self._read_fails_once(km.jd.GOALDIR / (SID + ".json"))
         with contextlib.redirect_stderr(io.StringIO()):
-            # the shared read failed and handed the read to load_goals, whose read failed too and was
-            # swallowed: an empty store (one writer-style load, the fallback; no lift is due on it)
-            self.assertEqual((self._tick(), self.last_probes), (1, 1))
-        self.assertEqual(state["fired"], 2, "both loaders met the failure")
-        self.assertIsNotNone(self._stamp(), "tick 1 saw the fallback, not the stamp: no lift yet")
-        self.assertNotIn(SID, km._lift_seen, "a fallback answer is not the files' content: no entry")
+            # the probe's descriptor read faulted: the shared loader raises (no read is handed to load_goals
+            # for a file that exists and did not read), the boundary answers (None, fault), and phase 2 never
+            # runs: one probe, zero writer loads, nothing written
+            self.assertEqual((self._tick(), self.last_probes), (0, 1))
+        self.assertEqual((state["disk"], state["text"]), (1, 0),
+                         "the probe met the fault; load_goals was never reached, its read is still armed")
+        state["text"] = 1                                # disarm the never-met writer read: the checks below read the file
+        self.assertIsNotNone(self._stamp(), "tick 1 read no store: no lift yet, and no empty store was written")
+        self.assertNotIn(SID, km._lift_seen, "a fault is not the files' content: no entry")
         self.assertEqual((self._tick(), self.last_probes), (1, 1),
                          "the file reads fine now and is unchanged: probed anyway, the lift is due, one writer load")
         self.assertIsNone(self._stamp(), "…and the stamp lifts one cycle late, not never")
+        self.assertNotIn(SID, km.jd._STORE_FAULTS, "the successful read ended the fault episode")
 
     def test_a_swallowed_journal_read_failure_is_not_cached_as_nothing_to_lift(self):
         import contextlib, io
@@ -1217,12 +1537,12 @@ class InHarnessWaitLift(unittest.TestCase):
         for k, v in self.saved.items():
             setattr(km, k, v)
         km._pr_watches[:] = self._saved_watches
-        km.jd.STATE, km.jd.GOALDIR = self.saved_jd
-        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
-        try:
-            (km.jd._overrides_dir() / (self.PSID + ".jsonl")).unlink()
+        try:                                          # while STATE is still the tempdir — after the restore
+            (km.jd._overrides_dir() / (self.PSID + ".jsonl")).unlink()   # this resolves to the shared floor
         except OSError:
             pass
+        km.jd.STATE, km.jd.GOALDIR = self.saved_jd
+        km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.td.cleanup()
 
     def _transcript(self, recs):

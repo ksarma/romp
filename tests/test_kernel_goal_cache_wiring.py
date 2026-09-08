@@ -1,8 +1,9 @@
 """The kernel side of the shared read-only goal-store cache (performance plan P9 / C1).
 
 kernel/judge.py's load_goals_shared serves one deep-frozen parsed store per file version; this module pins
-WHICH kernel sites load through it (the pusher's read-only sites) and which deliberately do not (every
-writer, the probe-then-write tick jobs, and the two sites another branch owns), and drives the builders
+WHICH kernel sites load through it (the pusher's read-only sites), in which spelling (bare, or through the
+per-session fault boundary jd.load_goals_shared_or_fault that upstream #1019 brought, steer 1 of the 2026-09-08
+fold), and which deliberately do not (every writer, the probe-then-write tick jobs), and drives the builders
 over synthetic stores to show the cache in effect: each store parsed once per version across builds, the
 frozen guard reaching a wired site without taking the frame down, the compaction sweep's eviction, and
 one session's failed chat build no longer aborting the whole push. Synthetic fixtures only: placeholder
@@ -34,20 +35,34 @@ T0 = NOW - 3600
 
 # The pusher-side READ-ONLY sites, wired (kernel.py). Each reads nodes / status / seams / confirming / log
 # rows and hands nothing to rollup_status, record_verdict or save_goals (audited 2026-09-06; the deep
-# freeze would raise if one did).
-WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
-         "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2,
-         "_bg_placed_tops": 1,
-         "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
-#                                  snapshot (B5) stays as it is and serves the mid-pass builds
-# TWO-PHASE (performance plan 4, P16): one shared PROBE, one writer load taken only when the probe found
-# a lift due; the decision body (_lift_decisions) loads nothing and writes nothing. The auto-nudge walk
-# (performance round 5, 2026-09-08) has the same shape: its decision reads the shared view once, and its
-# three writer loads are the fire path's send-moment re-reads: the store _nudge_fire_list judges the due set
-# against, the redundancy gate's node read (the session's last report against each due goal), and the
-# pre-send status/confirming re-read that drops a card resolved or blocked at send; _wake_goal's one writer
-# load is the fresh read the lift or the check-in is filed on.
-TWO_PHASE = {"_lift_spent_awaiting": (1, 1), "_auto_nudge_session": (1, 3), "_wake_goal": (0, 1)}
+# freeze would raise if one did). Two spellings since upstream #1019 landed (steer 1 of the 2026-09-08
+# fold): a site where one session's read FAULT must be contained to that session (the builders and the
+# feed's live store read, which used to take every session down under the pusher's single outer try)
+# reads through jd.load_goals_shared_or_fault, the per-session boundary around the same shared cache
+# ((store, None) or (None, exc), one store-unreadable row per fault episode); a site already inside a
+# per-session catch of its own stays on the bare jd.load_goals_shared, which now raises on a fault
+# instead of falling back to an empty store.
+BOUNDARY = {"build_feed": 1,               # the peer-origin read; the main store read is _feed_goals_view's
+            "build_session": 2, "build_timeline": 2,
+            "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
+#                                     snapshot (B5) stays as it is and serves the mid-pass builds
+SHARED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
+          "_msg_sum_scan_session": 1, "_bg_placed_tops": 1}
+# TWO-PHASE (performance plan 4, P16): one shared PROBE (through the boundary: a fault forgets the gate so
+# the next tick retries), one writer load taken only when the probe found a lift due (jd.load_goals_or_fault,
+# the same boundary around the writer's loader); the decision body (_lift_decisions) loads nothing and
+# writes nothing.
+TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
+# The auto-nudge walk (performance round 5, 2026-09-08) has the same two-phase shape in the other
+# spelling: its decision reads the shared view once, through the boundary (a store that cannot be read
+# stands the session down for the tick: the fold's fault stand-down, tests/test_goal_store_fault_boundary),
+# and its three writer loads are the fire path's send-moment re-reads on the bare writer loader: the store
+# _nudge_fire_list judges the due set against, the redundancy gate's node read (the session's last report
+# against each due goal), and the pre-send status/confirming re-read that drops a card resolved or blocked
+# at send; _wake_goal's one writer load is the fresh read the lift or the check-in is filed on. The writer
+# re-reads stay bare (neither the round-5 walk nor the fold repointed them; they sit inside the tick's
+# per-session try/except), so this pin counts them as jd.load_goals(, unlike the lift's writer load above.
+WALK = {"_auto_nudge_session": (1, 3), "_wake_goal": (0, 1)}
 # Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
 # has a place to be named; the test over it passes vacuously while it is empty.
 UNWIRED = ()
@@ -55,28 +70,48 @@ UNWIRED = ()
 
 class WiringPins(unittest.TestCase):
     def test_the_read_only_pusher_sites_load_through_the_shared_cache(self):
-        for name, n in WIRED.items():
+        for name, n in BOUNDARY.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), n, "%s: shared loads, through the boundary" % name)
+            self.assertEqual(src.count("jd.load_goals_shared("), 0, "%s: no bare shared load beside the boundary" % name)
+            self.assertEqual(src.count("jd.load_goals(") + src.count("jd.load_goals_or_fault("), 0,
+                             "%s: no writer-style load left" % name)
+        for name, n in SHARED.items():
             src = inspect.getsource(getattr(km, name))
             self.assertEqual(src.count("jd.load_goals_shared("), n, "%s: shared loads" % name)
-            self.assertEqual(src.count("jd.load_goals("), 0, "%s: no writer-style load left" % name)
+            self.assertEqual(src.count("jd.load_goals(") + src.count("jd.load_goals_or_fault("), 0,
+                             "%s: no writer-style load left" % name)
 
     def test_the_writers_and_the_sibling_branchs_sites_stay_on_load_goals(self):
         for name in UNWIRED:
             src = inspect.getsource(getattr(km, name))
-            self.assertEqual(src.count("jd.load_goals_shared("), 0, "%s: not wired" % name)
-            self.assertGreaterEqual(src.count("jd.load_goals("), 1, "%s: still the writer's loader" % name)
+            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals_shared_or_fault("), 0,
+                             "%s: not wired" % name)
+            self.assertGreaterEqual(src.count("jd.load_goals(") + src.count("jd.load_goals_or_fault("), 1,
+                                    "%s: still the writer's loader" % name)
 
     def test_the_awaiting_lift_probes_the_shared_view_and_loads_the_writers_copy_once(self):
         for name, (shared, writer) in TWO_PHASE.items():
             src = inspect.getsource(getattr(km, name))
-            self.assertEqual(src.count("jd.load_goals_shared("), shared, "%s: the phase-1 probe" % name)
-            self.assertEqual(src.count("jd.load_goals("), writer, "%s: the phase-2 writer load" % name)
+            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), shared, "%s: the phase-1 probe" % name)
+            self.assertEqual(src.count("jd.load_goals_or_fault("), writer, "%s: the phase-2 writer load" % name)
+            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals("), 0,
+                             "%s: no bare load outside the boundary" % name)
+
+    def test_the_nudge_walk_probes_the_shared_view_once_and_re_reads_the_writers_copy_at_send(self):
+        for name, (shared, writer) in WALK.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), shared, "%s: the shared-view probe" % name)
+            self.assertEqual(src.count("jd.load_goals("), writer, "%s: the send-moment writer re-reads" % name)
+            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals_or_fault("), 0,
+                             "%s: no bare shared load, no boundary writer load" % name)
 
     def test_the_lifts_decision_body_loads_nothing_and_writes_nothing(self):
         # every rule of the lift is decided here, on whichever store the caller hands in (the shared view
         # in phase 1, the writer's copy in phase 2); the verdict gate is read through jd.may_apply only
         src = inspect.getsource(km._lift_decisions)
-        for needle in ("jd.load_goals(", "jd.load_goals_shared(", "record_verdict(", "save_goals(",
+        for needle in ("jd.load_goals(", "jd.load_goals_shared(", "jd.load_goals_or_fault(",
+                       "jd.load_goals_shared_or_fault(", "record_verdict(", "save_goals(",
                        "rollup_status(", "_drop_auto_nudge_rec(", "_lift_gate_key("):
             self.assertEqual(src.count(needle), 0, "_lift_decisions: %s" % needle)
         self.assertGreaterEqual(src.count("jd.may_apply("), 3, "the read-only gate, once per arm")

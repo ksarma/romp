@@ -373,7 +373,7 @@ class RejectedDotGit(unittest.TestCase):
     def test_the_toplevels_own_dot_git_directory_is_keyed_on_its_path_and_identity_never_its_mtime_through_a_symlink_too(self):
         # the evidence path is lexical (abspath), git's toplevel physical: through a symlinked cwd the two
         # spell the same `.git` differently, and a rule that kept the mtime there would re-fork on every
-        # index write (the refuters' caveat, 2026-09-06); an index write moves the directory's mtime. The
+        # index write (a review caveat, 2026-09-06); an index write moves the directory's mtime. The
         # inode and device ARE in the key — they never move for a live repository, and a symlink re-pointed
         # at another one stats a different directory (the re-point test in DeadOrReshapedTree)
         plain = _repo(self.root, "real", HTTPS_ORIGIN)
@@ -1025,7 +1025,7 @@ class FrameWiring(unittest.TestCase):
         self.assertIn('"selfHost": _self_host(),', feed, "the same name the feed frame carries")
         # …and the tabOrder frame, which every chat receives first of all: a dashboard whose kernel runs no
         # local session has no session frame to learn the name from (tests/test_kernel_tabs_first.py runs it)
-        self.assertEqual(km._tab_order_frame([], [])["selfHost"], km._self_host())
+        self.assertEqual(km._tab_order_frame([], [], [])["selfHost"], km._self_host())
 
     def test_the_feed_session_rows_carry_the_repo(self):
         src = inspect.getsource(km.build_feed)

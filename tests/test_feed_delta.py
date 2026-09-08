@@ -754,7 +754,8 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         # the Files pane (2026-09-03) is request/response, never a feed consumer: no deltas — the hold, plus
         # the stale opt-out (NO_STALE_CAP: no pushed view ever resyncs it, so its arm could only ever raise)
         self.assertIn('_shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP)', KSRC)
-        self.assertEqual(KSRC.count("_shim("), 7, "the definition and the six panes — a seventh caller must announce too")
+        self.assertEqual(KSRC.count("_shim("), 8, "the definition, the six panes and the _shim_core test helper (upstream "
+                         "c017b510, folded 2026-09-08) that slices the real shim for the node tests; another caller must announce too")
 
 
 class OutlineDeltaStream(unittest.TestCase):
@@ -1170,7 +1171,7 @@ class TupleSignatureDedupsTheFeed(unittest.TestCase):
         push = KSRC[KSRC.index("def _push(targets"):]
         push = push[:push.index("\ndef ")]
         self.assertIn("feed_sig = _feed_sig(feed_parts)", push)
-        self.assertIn("bars_sig = _bars_sig(bars_parts)", push)
+        self.assertIn("bars_sig = _parts_sig(bars_parts)", push)   # the bars ride upstream's generic split; _parts_sig is its name (upmerge4, R6)
         self.assertNotIn("_dedup_sig(feed", push, "no whole re-dump of the feed for its signature")
 
     def test_a_card_with_reordered_nested_keys_re_sends_once_then_dedups(self):

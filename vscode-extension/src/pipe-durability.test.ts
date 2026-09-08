@@ -29,6 +29,15 @@ test("reconnect flushes intent ops before the webview reload instead of wiping t
   assert.ok(open.indexOf("const keep") < open.indexOf("this.queue = [];"), "keep must be captured before the wipe");
 });
 
+test("a refusal that arrives while the webview reloads is held for its ready, never posted into the reload", () => {
+  // the reconnect branch replays intent and rebuilds the html in the same tick; the kernel's refusal of a
+  // replayed op (a remote-tag ADD right after a kernel restart: the home kernel's tunnel is not up yet,
+  // and an add never queues) lands between the two, on a page that is gone (review find, 2026-09-08).
+  // Held at the pipe, so every panel gets it; delivered on the pipe's own ready edge, not in a panel's onDown.
+  assert.match(SRC, /if \(!this\.passive && !this\.hold\.offer\(m, this\._webviewReady\)\) return;\s*\n\s*this\.onDown\(m\);/);
+  assert.match(SRC, /set webviewReady\(v: boolean\) \{\s*\n\s*this\._webviewReady = v;\s*\n\s*if \(v\) for \(const m of this\.hold\.release\(\)\) this\.onDown\(m\);/);
+});
+
 test("the first-ever connect still flushes everything queued before the pipe was up", () => {
   assert.match(SRC, /this\.everConnected = true;\s*\n\s*for \(const q of this\.queue\) ws\.send\(q\.s\);/);
 });
@@ -43,6 +52,7 @@ test("both webviews render the pipe-down banner with the held count", () => {
   // re-arm, 2026-08-18 — pinned in chat-delta-resync.test.ts) and marks unconfirmed sends lost
   // (send-pending.test.ts, 2026-09-06); the banner wiring is identical.
   for (const [name, src] of [["render.ts", RENDER], ["feed.ts", FEED]] as const) {
+    // the feed has no tab re-ask and no sends, so both down-edge groups are optional and its bare form still matches
     assert.match(src,
       /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) awaitingFull\.clear\(\); )?(?:if \(!m\.up\) markPendingLost\("connection"\); )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
       `${name} must handle pipeState`);

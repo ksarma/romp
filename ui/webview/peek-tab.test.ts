@@ -43,7 +43,9 @@ test("peek AUTO-CLOSE: activating any other tab drops it — same derivation, no
   const sites = RENDER.match(/assertPeekFor\(/g) || [];
   // 8 → 9 on 2026-09-05: the subagent viewer's PIN control re-derives its own tab (pinned → in the chat
   // lens → sheds the peek dress; unpinned → back to a peek) through the same derivation — no second
-  // peek mechanism (plans/subagent-transcripts.md; chatVisible() answers pinnedSubs for a viewer id)
+  // peek mechanism (plans/subagent-transcripts.md; chatVisible() answers pinnedSubs for a viewer id).
+  // 7 → 8 with the acknowledged views writes: holdViews, onViewsAck and onKernelCaps replace the
+  // single postViews site.
   assert.equal(sites.length, 9, "definition + 8 call sites: setActive, focus fast path, captureViews, holdViews, onViewsAck, onKernelCaps, the feed click echo (2026-08-24 — the instant ack derives the peek before the kernel frame), and the subagent viewer's pin toggle (2026-09-05)");
 });
 
@@ -105,5 +107,5 @@ test("the peek is a PEEK, not a view edit: the client never posts a views change
   assert.ok(focusBlock.length > 100, "found the focus handler");
   assert.doesNotMatch(focusBlock, /postViews|setTimelineViews|revealSession/);
   assert.match(RENDER, /function revealSession\(id: string\) \{ const r = revealIn\(effViews\(\), id\); postLens\(\{ active: r\.active, actives: r\.actives \}\); \}/,
-    "the reveal is a LENS write: its fields ride on the store's blob, never the pending copy (round 4 of the 2026-09-05 review)");
+    "the reveal is a LENS write: its fields ride on the store's blob, never the pending copy (the 2026-09-05 review)");
 });

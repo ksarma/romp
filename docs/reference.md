@@ -25,7 +25,7 @@ update` starts a session called "update".
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
-| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key source lives in a file (a key line, or a `ROMP_API_KEY_REF` 1Password reference), `<name>` (upstream's rewrite of `service.env` from a sibling profile) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
+| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key source lives in a file (a key line, a `ROMP_API_KEY_CMD` key command, or a `ROMP_API_KEY_REF` 1Password reference), `<name>` (upstream's rewrite of `service.env` from a sibling profile) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp spend-rebuild [--apply] [--by-session] [--allow-lower]` | Recount the spend ledger's token columns (`spend.json`) from the transcripts' per-call usage; dollars and turn counts untouched. A dry run by default; `--apply` writes and keeps a backup; a bucket whose recount is lower than recorded is kept unless `--allow-lower` (a transcript may be gone) |
 | `romp help` | The same list, from the terminal |
 
@@ -108,6 +108,7 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last `<n>` minutes (default 10) |
+| `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -115,20 +116,53 @@ These are for scripting and for agents rather than daily use:
 | `romp new --env NAME=VALUE <name>` | A per-session env var for the SDK session, repeatable; a re-run against a running `<name>` replaces the whole set — vars not re-named are dropped |
 | `romp new --no-env <name>` | Clear a running SDK session's per-session env (declares the empty set) |
 | `romp new --in <tag> <name>` | Put the new SDK or Codex session in `<tag>`, so its tab lands in that group (repeatable; a name that does not exist yet creates the tag). Applies to `<name>` if it already runs. The kernel echoes `tags` (the session's tags) and, per `--in`, the stored name it landed as (`tagsApplied`, beside `tagsRequested`): a name the store trimmed or clamped prints as "applied as"; a missing echo, or a tag the kernel refused, prints a warning |
-| `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits |
+| `romp new --no-inherit <name>` | Run inside a romp session, `romp new` sends that session's stable id (`ROMP_SID`) as the new session's `parent` (marked `parentAuto`), and the kernel copies the parent's tags onto the child; inside a comment thread, the parent is the session the thread belongs to. This flag withholds the parent, so the new session starts outside them. A kernel that never ran the calling session creates the session untagged and echoes `parentIgnored`, which the CLI reports in one line. Raw POST /new callers pass `parent` (a live name or a known sid; an unknown one is a 400 unless `parentAuto` is set) and `tags` (a list of names); opening a name that already runs never inherits; a name that is being registered by another request right now is a 409 whose `error` says which door holds it |
 | `romp tag [<name>] [--add <session>…] [--remove <session>…] [--color <hex>] [--rename <new>] [--delete] [--host <kernel>]` | Session tags. Bare, it lists them; with a name, it merges one tag (created on first use). A tagged session leaves the untagged view, and its tab sits in that tag's section of the strip. `--host` edits an attached kernel's tag |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches) — the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel — `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
 | `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
-| `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
+| `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
 | `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
 | `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
+
+Raw `POST` callers, anything that talks to the kernel's routes directly rather
+than through `romp`, follow one body contract, and the postal bus's own routes
+share it. The request carries the serve token (`X-Romp-Token`, or `?token=`)
+and is authorized before its body is read. The body is delimited by
+`Content-Length` alone: no `Transfer-Encoding` (411), the header once and a
+plain decimal (400 otherwise), and at most 1 MiB (413 beyond that, refused
+before a byte is read). A body that arrives short of its announced length is
+400, one that stalls for 30 seconds is 408, and every refusal closes the
+connection. The body is a JSON object; an array, string, number or `null` is a
+400 naming what arrived, echoed bounded and well formed. A flag field
+(`delete`, `on`, `mkdir`, `tracked`, and the like) is a JSON boolean: `true`
+and `false` apply, an absent field or an explicit `null` reads as the route's
+default, and anything else (the string `"false"`, `0`, `1`) is a 400 naming the
+field, with nothing acted on.
+
+Three routes exist for the Obsidian timeline panel, which has the state
+directory but no socket to the kernel: `POST /flag` (`{id, flag, value}`: one
+of the lane gear's toggles, `hideFromFeed`, `postalServiceOff` or `notify`,
+with a JSON boolean; here `value` is required, and an absent or `null` value is
+a 400, never a default, since a missing value must not read as "off"), `POST
+/views` (`{views, edited?, writeId?}`: the whole views blob, judged as the
+dashboards' write is and answered with the same `viewsAck` document, `ok`, the
+post-write `views` and `seq`, any `refused` tags and an `error` line), and
+`POST /order` (`{order: [sid, …]}`, merged into the saved order so lanes the
+drag did not carry keep their slots). Each lands through the setter its socket
+op uses; a store that cannot be read or written answers 200 with `ok:false` and
+the reason the dashboards see, and an unknown key or a wrong type is a 400
+naming it. The panel finds the kernel through the `serve-port` record the
+kernel writes beside `serve-token` in the state directory once its socket is
+bound; with no record, or nothing answering on it, the panel refuses the
+gesture and says the kernel is not running rather than writing a file the
+kernel cannot check.
 
 `--env` gives one session its own environment, so two sessions in the same
 directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
@@ -138,8 +172,9 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set — it
 clears them all. Keep real secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. Keys
-and credentials stay in the manager's environment, behind a credential command
-or a `ROMP_API_KEY_REF` reference, or in the `apiKeyHelper`, never in a file
+and credentials stay in the manager's environment, behind a key provider (a
+`ROMP_API_KEY_CMD` key command or a `ROMP_API_KEY_REF` reference) or a
+credential command, or in the `apiKeyHelper`, never in a file
 (see [API keys on disk: the file mode](#api-keys-on-disk-the-file-mode) and
 [Installing without keys on disk](#installing-without-keys-on-disk)).
 
@@ -317,7 +352,7 @@ romp mail agents                 # who is live, their branch and working-note
 romp mail working "<note>"       # publish what this session is working on
 romp mail sent                   # your sent messages, and whether each was read
 romp mail recall <to> [id]       # unsend a message the recipient has not read
-romp mail remote                 # connect this remote machine to your laptop's bus
+romp mail remote                 # legacy singleton scheme only (ROMP_POSTAL_PEERS=0): connect this remote machine to your laptop's bus; peer mode refuses
 ```
 
 ### Mail inside a session (MCP tools)
@@ -428,11 +463,11 @@ the control never silently disappears.
 An SDK session can bill either the machine's Claude login (subscription usage)
 or the API key the kernel holds — per session: the `ANTHROPIC_API_KEY=` line
 of `service.env` (a manager started from your shell may carry the key in its
-environment instead), a `ROMP_API_KEY_REF` 1Password reference in
-`service.env` resolved at runtime, or in command mode the one its credential
-command prints (see [API keys on disk: the file
-mode](#api-keys-on-disk-the-file-mode) and [Installing without keys on
-disk](#installing-without-keys-on-disk)).
+environment instead), a key provider named in `service.env` and run at use
+time (a `ROMP_API_KEY_CMD` key command, or a `ROMP_API_KEY_REF` 1Password
+reference), or in command mode the one its credential command prints (see
+[API keys on disk: the file mode](#api-keys-on-disk-the-file-mode) and
+[Installing without keys on disk](#installing-without-keys-on-disk)).
 
 The new-session picker's **Billing** row states the case whenever the backend
 toggle says SDK: segmented buttons when the selected host offers both choices,
@@ -451,11 +486,11 @@ defaults to the last pick made anywhere, and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
 existed. tmux sessions are not covered by the picker: their CLI lives in the
 tmux server's environment, which the kernel does not control. What Romp does
-do there, when a 1Password reference is configured, is keep the manager's
+do there, when a key provider is configured, is keep the manager's
 startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
 session falls to Claude Code's own auth (login or `apiKeyHelper`) rather than
-billing a key nobody chose; see [API keys from 1Password at
-runtime](#api-keys-from-1password-at-runtime).
+billing a key nobody chose; see [API keys from a secret manager at
+runtime](#api-keys-from-a-secret-manager-at-runtime).
 
 Each chat tab's hover tooltip carries the same fact as a `Billing` row —
 `API key`, or `Login (name@example.com)` — whenever the session's backend
@@ -483,6 +518,25 @@ before. One explicit gear **Billing** pick supersedes the declaration from then
 on: the remembered pick becomes the box's expectation and the env var goes
 inert (it described the unpicked design), so re-seeded spawns are judged
 against your pick, never against stale doctrine.
+
+The declaration is also checked once, when the kernel starts, against the
+key source a launch would select. Under `ROMP_EXPECTED_AUTH=login`, a selected
+API key source (a `ROMP_API_KEY_CMD=` line, a `ROMP_API_KEY_REF=` line, or an
+`ANTHROPIC_API_KEY=` line with a value in `service.env`; for a foreground
+manager, the same names exported in its environment) is a contradiction: that
+source is injected at launch for every session without an explicit Billing
+pick, so those sessions bill the key. One problem line in the Log panel says so
+before anything launches, naming the file or the environment and the variable
+but never a value; fix whichever side is wrong. A source that is selected but
+cannot be used (both provider lines in the file; a provider line removed while
+the marker beside the file still names it) is still a selection, and the line
+says so instead: those sessions will try the source and fail to launch rather
+than bill the login. Under `key`, a selected source agrees with the declaration
+and nothing is said. With no key source selected anywhere the launch looks,
+Romp injects nothing and Claude Code's own credential applies (see [API keys
+from a secret manager at runtime](#api-keys-from-a-secret-manager-at-runtime)),
+so nothing is said; nor with no declaration, nor once a Billing pick has made
+it inert. The per-init check above still confirms each landing.
 
 The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
 Fable 5) are drawn once, aggregated across every connected host's login as the
@@ -571,8 +625,9 @@ For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
 
 - `ROMP_DIR=<path>` where to clone; default `~/romp`.
-- `ROMP_REF=<tag|branch>` install a specific ref; default is the newest `v*`
-  release tag, falling back to `main` when none is published.
+- `ROMP_REF=<tag|branch>` install a specific ref; default is the newest
+  `vMAJOR.MINOR.PATCH` release tag (prerelease-suffixed tags are skipped),
+  falling back to `main` when none is published.
 - `ROMP_NO_PATH=1` leaves your shell rc alone.
 
 **File comments** (the viewer's Comments panel) have two prerequisites and one
@@ -676,7 +731,8 @@ is a no-op.
 With no `ROMP_CREDENTIAL_COMMAND` line (see [Installing without keys on
 disk](#installing-without-keys-on-disk)) the kernel is in **file mode**,
 upstream's behaviour: the key source is `service.env`, an `ANTHROPIC_API_KEY=`
-line or a `ROMP_API_KEY_REF` reference, read at every launch. A manager started
+line, a `ROMP_API_KEY_CMD` key command or a `ROMP_API_KEY_REF` reference, read
+at every launch. A manager started
 from your shell (`romp up --foreground`, or `romp up` on a machine with no
 login service) may instead inherit `ANTHROPIC_API_KEY` from that shell while
 the file names no source, so a shell startup file that loads keys from a
@@ -684,8 +740,8 @@ secrets manager into the environment covers anything such a kernel or its
 judges call directly, and nothing is written to disk. A supervised manager does
 not: it reads its key source from `service.env` only, and a key that reaches it
 any other way is ignored and said once in the kernel log (the rule is spelled
-out under [API keys from 1Password at
-runtime](#api-keys-from-1password-at-runtime)). The sessions' own key reaches
+out under [API keys from a secret manager at
+runtime](#api-keys-from-a-secret-manager-at-runtime)). The sessions' own key reaches
 Claude Code through its `apiKeyHelper` setting, never through the service file.
 
 The login service does not run that startup file, so the manager it starts
@@ -716,119 +772,192 @@ that can read the file has the key. This fork's tooling never writes that line
 (see [Switching which API key the sessions
 bill](#switching-which-api-key-the-sessions-bill-romp-keyswap)).
 
-The file may instead name where the key lives: a `ROMP_API_KEY_REF` 1Password
-reference, upstream's second source, described next. The kernel reads such a
-line in file mode the same way it reads a key line, at every launch. The
-reference is not a key, but the route needs 1Password's own service-account
-token in `service.env` for a headless service, which is a credential in a
-file; where that is the rule you are avoiding, use command mode instead (the
-next section).
+The file may instead name where the key lives: a **key provider**, upstream's
+second source, described next, which is a `ROMP_API_KEY_CMD` key command or a
+`ROMP_API_KEY_REF` 1Password reference. The kernel reads such a line in file
+mode the same way it reads a key line, at every launch. Neither is a key. A key
+command fetches its own credential, so nothing secret lands in `service.env`;
+the reference route needs 1Password's own service-account token in
+`service.env` for a headless service, which is a credential in a file. Where a
+credential in any file is the rule you are avoiding, use a key command, or
+command mode when the sessions need a whole set of credentials (see
+[Installing without keys on disk](#installing-without-keys-on-disk)), or hold
+no key in Romp at all (see [A key from a secret manager, with none held by
+Romp](#a-key-from-a-secret-manager-with-none-held-by-romp)).
 
-#### API keys from 1Password at runtime
+#### API keys from a secret manager at runtime
 
-To keep API key values out of Romp's configuration files, set a
-[1Password secret reference](https://www.1password.dev/cli/secret-references):
+To keep API key values out of Romp's configuration files, configure a **key
+provider**: something Romp runs at the moment a key is needed, which prints
+the key. Romp knows nothing about any particular secret manager; the
+recommended route is a key command, and a 1Password reference is a built-in
+shorthand for one.
+
+**Recommended: a key command (`ROMP_API_KEY_CMD`).** Any command line that
+prints the key on stdout and exits 0 — the same contract as Claude Code's
+`apiKeyHelper`, so a helper script you already have works as-is:
+
+    ROMP_API_KEY_CMD=~/.config/romp/fetch-api-key
+
+Romp runs it with `/bin/sh -c`, stdin from `/dev/null`, a 15-second timeout,
+and reads stdout: one line (a trailing newline is tolerated and stripped),
+non-empty, no NUL, at most 16 KiB. A non-zero exit, a timeout, an empty or
+multi-line output, or a command the shell cannot find (exit 127) fails the
+operation with a static "key command failed / timed out / not found"
+message. The command's stderr is discarded and never logged, since a secret
+manager's diagnostics can quote its own token.
+
+The command runs in a **minimal environment**, not a copy of the kernel's:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TERM`, the
+`XDG_*` names, and any `OP_*` credential names Romp claimed (below). Nothing
+of Romp's — the serve token, a startup `ANTHROPIC_API_KEY`, the
+`ROMP_API_KEY_CMD` line itself — reaches it. The script is therefore expected
+to fetch **its own credential** rather than have Romp carry one for it. The
+recommended shape, here for 1Password with a
+[service account](https://developer.1password.com/docs/service-accounts/)
+whose token sits in a `chmod 600` file of its own:
+
+    #!/bin/sh
+    # ~/.config/romp/fetch-api-key (chmod 700): print the API key, nothing else
+    OP_SERVICE_ACCOUNT_TOKEN="$(cat ~/.config/op/service-account-token)" \
+        exec op read --no-newline "op://vault/item/field"
+
+Any secret manager's CLI works the same way (`aws secretsmanager get-secret-value
+--query SecretString --output text`, `vault kv get -field=…`, `bw get
+password …`, `gcloud secrets versions access latest --secret=…`, `pass show
+…`): the command owns how it authenticates, Romp owns when it runs and what
+happens to the value. The command's identity on every Romp surface (the
+`romp keyswap` listing, the kernel log, `/keycycle`) is a fingerprint of the
+command line, never the line itself, which may name a vault or a path.
+
+**The 1Password shorthand (`ROMP_API_KEY_REF`).** A
+[1Password secret reference](https://www.1password.dev/cli/secret-references)
+is the built-in equivalent of a key command that runs
+[`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
+on the reference:
 
     ROMP_API_KEY_REF=op://vault/item/field
 
-`ROMP_API_KEY_REF` takes priority over a legacy `ANTHROPIC_API_KEY` in the
-same file. An empty or invalid reference is an error, not a request to use the
-legacy key. Remove competing plaintext assignments when migrating; on this
-fork you edit the line yourself, since `romp keyswap <name>` does not rewrite
-the file.
-
-Romp runs [`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
-for each Claude SDK session launch or reconnect, each API-key-billed judge
-call, and each direct model-catalog refresh. A paginated catalog refresh uses
-that credential for all its pages. An explicit `romp keyswap --cycle` resolves
-the key once per request to check which quiet sessions need a reconnect. When
-a retrieval fails, the judges do not retry it on every call: the failure holds
-for the rest of that judging pass and is retried when the next pass begins or
-the source changes, so an unreachable `op` costs one timeout per pass. Romp
-captures the value in memory and passes it to that operation. It does not write the resolved key
-to disk or cache it for later operations. A running Claude process retains
-the key it received at launch until it reconnects; this is not retrieval
-before every message in an existing session.
-
-The `op` executable must be on the **service's PATH**, and 1Password access
-must work for the OS user running the service. The service installer records
-PATH at install time; run `romp-service install` again after changing it.
-An interactive terminal sign-in does not by itself establish that a headless
-login service can read the same secret: a service has no desktop app to
-unlock. The supported unattended route is a
-[1Password service account](https://developer.1password.com/docs/service-accounts/):
-put its token in `service.env` beside the reference,
+Same runner, same timeout, same environment and validation as a key command
+(except that with `--no-newline` a trailing newline in the output is a
+malformed key). The reference is passed as one argument, never evaluated by
+a shell. The difference from the command route is where `op`'s own credential
+lives: with a reference, Romp expects the service-account token in
+`service.env` beside it,
 
     OP_SERVICE_ACCOUNT_TOKEN=ops_...
     ROMP_API_KEY_REF=op://vault/item/field
 
-and give the account read access to that one vault, and nothing else. When a
-reference is configured, Romp takes `op`'s own credential names
-(`OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out
-of its environment as its first act at startup, says which names it claimed in
-the kernel log, and hands them to the `op read` subprocess alone: no Claude
-session, judge call, or tmux launch inherits them, so an agent running `env`
-sees neither the API key nor the credential. The `op read` subprocess itself
-gets a minimal environment, not a copy of the kernel's: `PATH`, `HOME`, `USER`,
-`LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TERM`, the `XDG_*` names (op finds
-`~/.config/op` and the desktop app's socket through `HOME` and `XDG_*`), and
-the claimed `OP_*` names. Nothing of Romp's (the serve token, a startup
-`ANTHROPIC_API_KEY`, the reference variable) reaches it.
+and takes `op`'s credential names (`OP_SERVICE_ACCOUNT_TOKEN`,
+`OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out of its environment as its
+first act at startup, says which names it claimed in the kernel log, and hands
+them to the provider subprocess alone: no Claude session, judge call, or tmux
+launch inherits them, so an agent running `env` sees neither the API key nor
+the credential. Give the account read access to that one vault, and nothing
+else. Like the rest of `service.env`, the token line loads when the manager
+starts; changing it needs a manager restart, where the reference itself is
+read live. Do not put the token in a per-session environment (`romp new
+--env`), which is copied into per-session files. With a key command, none of
+that applies: the script reads its token itself and Romp never holds it.
 
-The tmux server needs the same care, because every pane inherits the
-**server's** globals, not the launching client's. Whenever Romp becomes the
-op consumer (at kernel start, or later when a reference line appears in
-`service.env` on a box that started without one, with no manager restart) it
-unsets the `OP_*` names **and** the manager's startup `ANTHROPIC_API_KEY`
-from the tmux server's global environment; the manager starts the server
-without them, and `romp new -t` scrubs them again before the pane exists
-(reading the reference from its own environment or from `service.env`'s
-line). A terminal session on a reference-governed box therefore never bills
-the key the manager started with: with no `ANTHROPIC_API_KEY` in its
-environment it falls to Claude Code's own auth (login or `apiKeyHelper`).
-Panes that already existed when the reference was selected keep the
-environment they launched with; end or relaunch them. A box with no reference
+Configure **one** provider: a `service.env` with both a `ROMP_API_KEY_CMD=` and
+a `ROMP_API_KEY_REF=` line is an error ("configure one of ROMP_API_KEY_CMD or
+ROMP_API_KEY_REF, not both"), not a precedence rule. A provider line takes
+priority over a legacy `ANTHROPIC_API_KEY` line in the same file, and an
+empty or invalid provider is an error, not a request to use the legacy key.
+Remove competing plaintext assignments when migrating; on this fork you edit
+the line yourself, since `romp keyswap <name>` does not rewrite the file.
+
+With no key source selected — the env file has no provider line and no
+`ANTHROPIC_API_KEY=` line with a value, and no provider was selected earlier
+(a removed provider stays an error until another source is configured; see
+below) — Romp injects nothing, and Claude Code's own credential resolution
+applies: its `apiKeyHelper`, which can fetch a key from any secrets manager,
+or its login. A session's API-key Billing pick then only takes effect once a
+source exists; until one does, the kernel says so once in its log. A provider
+or key line in `service.env` is for boxes where Romp should manage the key —
+swap it, fingerprint it, cycle sessions onto it. The two routes can coexist
+on one box only in the sense that Romp's source, when present, is what Romp's
+sessions launch on; a box that wants Claude Code's `apiKeyHelper` to decide
+keeps `service.env` free of any source.
+
+Romp runs the provider for each Claude SDK session launch or reconnect, each
+API-key-billed judge call, and each direct model-catalog refresh. A paginated
+catalog refresh uses that credential for all its pages. An explicit
+`romp keyswap --cycle` resolves the key once per request to check which quiet
+sessions need a reconnect. When a retrieval fails, the judges do not retry it
+on every call: the failure holds for the rest of that judging pass and is
+retried when the next pass begins or the source changes, so an unreachable
+provider costs one timeout per pass. Romp captures the value in memory and
+passes it to that operation. It does not write the resolved key to disk or
+cache it for later operations. A running Claude process retains the key it
+received at launch until it reconnects; this is not retrieval before every
+message in an existing session.
+
+The command (or `op`) must be on the **service's PATH**, and its secret
+manager access must work for the OS user running the service. The service
+installer records PATH at install time; run `romp-service install` again after
+changing it. An interactive terminal sign-in does not by itself establish that
+a headless login service can read the same secret: a service has no desktop
+app to unlock. For 1Password the supported unattended route is a service
+account, as above.
+
+The tmux server needs the same care as the kernel's children, because every
+pane inherits the **server's** globals, not the launching client's. Whenever
+Romp becomes the provider consumer (at kernel start, or later when a provider
+line appears in `service.env` on a box that started without one, with no
+manager restart) it unsets the `OP_*` names **and** the manager's startup
+`ANTHROPIC_API_KEY` from the tmux server's global environment; the manager
+starts the server without them, and `romp new -t` scrubs them again before
+the pane exists (reading the provider from its own environment or from
+`service.env`'s line). A terminal session on a provider-governed box therefore
+never bills the key the manager started with: with no `ANTHROPIC_API_KEY` in
+its environment it falls to Claude Code's own auth (login or `apiKeyHelper`).
+Panes that already existed when the provider was selected keep the
+environment they launched with; end or relaunch them. A box with no provider
 configured is untouched: static-key panes rely on inheriting the key, and an
 `apiKeyHelper` box's sessions need `op`'s environment.
 
 This keeps the token out of every agent's shell by default; it is
-inheritance hygiene, not isolation. The file stays readable to the same OS
-user (keep it `chmod 600`), and a same-user process can read the manager's
-original environment, which is why the account must see only the one vault.
-Like the rest of `service.env`, the token line loads when the manager starts;
-changing it needs a manager restart, where the reference itself is read live.
-Do not put the token in a per-session environment (`romp new --env`), which
-is copied into per-session files.
+inheritance hygiene, not isolation. The files stay readable to the same OS
+user (keep them `chmod 600`), and a same-user process can read the manager's
+original environment, which is why a service account must see only the one
+vault.
 
 A supervised manager (the systemd or launchd service) reads its key source
 from `service.env` **only**. A key that reaches the manager some other way, a
 systemd drop-in `Environment=` or a launchd plist entry, is ignored and said
-so once in the kernel log with its fingerprint; sessions without an explicit
-Billing pick then launch on the login. Move such a key into `service.env`, or
-replace it with a reference.
+so once in the kernel log with its fingerprint; sessions then launch with
+nothing of Romp's injected, whatever their Billing pick, so Claude Code's own
+credential (its `apiKeyHelper` or login) applies. Remove the line and rotate
+the value: a key in a unit or plist is a copy that outlives its rotation. Do
+not move it into `service.env`, which stays key-free (see [the file
+mode](#api-keys-on-disk-the-file-mode)) and may name a provider instead.
 
-For a foreground manager, the same reference can be supplied in its
+For a foreground manager, the same provider can be supplied in its
 environment:
 
+    ROMP_API_KEY_CMD=~/.config/romp/fetch-api-key romp up
     ROMP_API_KEY_REF=op://vault/item/field romp up
 
 The Billing picker, status displays, and `romp keyswap`'s listing inspect the
-configured source without running `op`. A configured reference therefore
-means "API key available to try", not "1Password access verified". If a
-selected source cannot resolve the key, the operation fails with a credential
-error. It does not use an ambient key, a previous resolved key, or a Claude
-login as a fallback. Choosing **Login** explicitly still uses Claude Code's
-supported login flow and does not resolve the API key source.
+configured source without running the provider. A configured provider
+therefore means "API key available to try", not "secret manager access
+verified". If a selected provider cannot resolve the key, the operation fails
+with a credential error. It does not use an ambient key, a previous resolved
+key, or a Claude login as a fallback. Choosing **Login** explicitly still uses
+Claude Code's supported login flow and does not run the provider.
 
 To migrate an existing service:
 
-1. Put the API key in 1Password and obtain its field's secret reference.
+1. Put the API key in your secret manager and write the command that prints
+   it (or, for 1Password, obtain the field's secret reference).
 2. Replace `ANTHROPIC_API_KEY=...` in `service.env` with
-   `ROMP_API_KEY_REF=op://vault/item/field`, and remove obsolete plaintext
-   copies.
+   `ROMP_API_KEY_CMD=<command>` (or `ROMP_API_KEY_REF=op://vault/item/field`),
+   and remove obsolete plaintext copies.
 3. Refresh the kernel once to load this version of Romp. Future source edits
    take effect without restarting the manager: the next session launch or
-   judge call reads the reference, and that first read also scrubs the tmux
+   judge call reads the provider, and that first read also scrubs the tmux
    server of `op`'s names and the retired `ANTHROPIC_API_KEY`.
 4. Reconnect existing key-billed SDK sessions with `romp keyswap --cycle-all`
    when they are quiet. Newly launched sessions and subsequent judge/model
@@ -836,30 +965,90 @@ To migrate an existing service:
    launched before the migration still carry the plaintext key they started
    with; end and relaunch them.
 
-Once a reference has been read from `service.env`, Romp remembers it on
-disk in the sibling file `service.env.source` (the word `op`, mode 600, never
-a reference or a key), so the memory survives kernel restarts: deleting the
-reference line and restarting does not make sessions fall to the login.
-Writing an `ANTHROPIC_API_KEY=` line removes the marker, so an intentional
-switch back to a static key is not an error. `romp keyswap` does not list the
-marker as a profile.
+Once a provider has been read from `service.env`, Romp remembers it on disk in
+the sibling file `service.env.source` (the word `command` or `op`, mode 600,
+never a command line, a reference or a key), so the memory survives kernel
+restarts: deleting the provider line and restarting does not make sessions
+fall to the login. Writing an `ANTHROPIC_API_KEY=` line removes the marker, so
+an intentional switch back to a static key is not an error. `romp keyswap`
+does not list the marker as a profile.
 
 Removing or emptying an explicit service-file key source cannot revive the
-key inherited when the kernel started. After removing a selected reference,
+key inherited when the kernel started. After removing a selected provider,
 API-key operations fail until a valid source is selected; choose **Login**
 explicitly to use that mode. Removing a static `ANTHROPIC_API_KEY=` line
 while the kernel runs is different: the file stays authoritative and
-sessions without an explicit Billing pick launch on the login, and the
-kernel log says so once, with the removed key's fingerprint and the file's
-path. Removing a source does not revoke a credential already held by a
+sessions launch with nothing of Romp's injected, whatever their Billing
+pick, so Claude Code's own credential (its `apiKeyHelper` or login) applies;
+the kernel log says so once, with the removed key's fingerprint and the
+file's path. Removing a source does not revoke a credential already held by a
 running Claude process; reconnect or end those sessions too. Rotate a
 previously exposed key with its issuer as appropriate.
 
+#### A key from a secret manager, with none held by Romp
+
+If your key lives in a secret manager and you would rather Romp not hold it,
+configure no key source in Romp and point Claude Code's
+[`apiKeyHelper`](https://code.claude.com/docs/en/settings-reference#apikeyhelper)
+at the secret manager instead. Romp passes a key to a session only when it has
+one itself, so with no source configured every session and every API-key-billed
+judge call uses Claude Code's own authentication. Romp cannot see that key: the
+Billing picker offers no API-key choice, a session's Billing row reads
+`Login (CLI reports API key)`, and `romp keyswap --cycle` skips every session
+as billing the login.
+
+1. Write a script that prints the key from your secret manager, and make it
+   executable. With 1Password, for example:
+
+        #!/bin/sh
+        exec op read --no-newline "op://<vault>/<item>/credential"
+
+    The helper runs inside each session's Claude Code process (and each judge
+    call), a child of the service, so the secret manager's CLI needs a
+    credential that works without a desktop app: for 1Password,
+    `OP_SERVICE_ACCOUNT_TOKEN=` in `service.env`, scoped to the one vault. With
+    no key provider configured Romp leaves that token in the sessions'
+    environment, where the helper needs it and where an agent's shell can read
+    it. Any secret manager whose CLI can print the key works the same way.
+
+2. Point Claude Code at the script in `~/.claude/settings.json`:
+
+        { "apiKeyHelper": "/path/to/anthropic-key.sh" }
+
+3. Leave `service.env` with no `ANTHROPIC_API_KEY`, no `ROMP_API_KEY_CMD`, no
+   `ROMP_API_KEY_REF` and no `ROMP_CREDENTIAL_COMMAND` line, and set
+   `ROMP_EXPECTED_AUTH=key` so the per-init auth check knows the key arrives
+   through the helper and stays quiet (see [Per-session
+   billing](#per-session-billing-login-vs-api-key)). If a key provider (a key
+   command or a 1Password reference) was ever read on this box, also remove the
+   `service.env.source` marker beside the file: with it in place the removed
+   provider stays an error rather than an absent source (see [API keys from a
+   secret manager at runtime](#api-keys-from-a-secret-manager-at-runtime)).
+4. Restart the service once.
+
+Rotating the key is then a change in the secret manager alone: Claude Code
+re-runs the helper on its own refresh interval
+(`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`), so running sessions pick up the new key
+with no Romp restart and no `romp keyswap`.
+
+The model-catalog refresh is the one call Romp makes itself rather than
+through a session. It reads only a key source Romp holds (or an
+`ANTHROPIC_AUTH_TOKEN` in the service's environment, which would also change
+what the sessions bill), so on a helper-only box it has no credential. Romp
+then serves its built-in list, or the last one it fetched and cached, and the
+kernel log says so at each refresh attempt (boot, and once per model id it does
+not know); the pickers still work, and Claude Code's own alias table still
+tracks each family's newest. Nothing else Romp does on such a box needs a key.
+
 ### Installing without keys on disk
 
-For installations that forbid a credential in any file, the kernel has a
-second key source, **command mode**: a command it runs, whose output it hands
-to each process it starts. One line in `service.env` selects it (a systemd
+For installations that forbid a credential in any file and whose sessions
+need more than one key, the kernel has a further key source, **command mode**:
+a command it runs, whose output, a set of credentials, it hands to each process
+it starts. A `ROMP_API_KEY_CMD` key command (above) covers the common case, one
+key fetched at use time; command mode is for a set: the sessions' key, the
+kernel's own direct-call key and other variables the sessions need, selected
+by name. One line in `service.env` selects it (a systemd
 drop-in works too; a line added to the unit or the plist by hand does not
 survive `romp-service install`, which rewrites both); with the line absent
 nothing about file mode changes.
@@ -1218,23 +1407,27 @@ children and other processes that outlive their shell.
 
 A message the kernel cannot handle does not end the session's CLI. The kernel
 handles each streamed message on its own: when a handler raises, it logs the
-exception type, the message's type and subtype, the exception's own text
-(uuid-shaped ids shortened to eight characters, clipped to 160 characters; it
-carries whatever the raising code put in it, never the message's content), what
-that message lost (an assistant or user message is also a transcript record, so
-the chat rebuilds it from disk — a compaction boundary is one too, while a model
-or mode change's confirmation line is not; a turn result still settles its turn,
-and the line says so only when the settle ran; a stream-only frame's content is
-gone until the next such frame), and a compact frame chain (file, line and
-function for at most the innermost eight frames, no locals, at most 600
-characters, dropping outer frames first so the failing frame is always named) to
-the kernel log and the dashboard's error center, then goes on to the next
-message. A failure while filing a turn result — its spend, its API-health note,
-its live-tail sweep — still settles the turn: the session reads waiting, its
-queue moves, and a reconnect that waited for the turn's end runs. A handler that
-fails on every message is one error-center entry with a repeat count; every
-repeat is still a kernel log line, and an entry the ring has since dropped
-re-enters with its full detail.
+exception type and the failing frame (file, line and function, first on the line
+so the error center's clipped row still shows it), the message's type and
+subtype, what that message lost (an assistant or user message is also a
+transcript record, so the chat rebuilds it from disk — a compaction boundary is
+one too, while a model or mode change's confirmation line is not; a turn result
+still settles its turn, and the line says so only when the settle ran; a
+stream-only frame's content is gone until the next such frame), the exception's
+own text (uuid-shaped ids shortened to eight characters, clipped to 160
+characters; it carries whatever the raising code put in it, never the message's
+content), and a compact frame chain (innermost first: file, line and function
+for at most the innermost eight frames, no locals, at most 600 characters,
+dropping outer frames first so the failing frame is always named) to the kernel
+log and the dashboard's error center, then goes on to the next message. A
+failure while filing a turn result — its spend, its API-health note, its
+live-tail sweep — still settles the turn: the session reads waiting, its queue
+moves, and a reconnect that waited for the turn's end runs; the spend accounting
+runs last among the result's bookkeeping, so its failure skips nothing else. A
+handler that fails on every message is one error-center entry, showing its first
+occurrence: the repeat count is kept on the kernel's problem ring (appended to
+the row's text, past what the error center displays), every repeat is a kernel
+log line, and an entry the ring has since dropped re-enters with its full detail.
 Before 2026-09-06 one such exception ended the receive loop, which closed the
 CLI in the middle of its work (the in-flight turn, its subagents, its background
 tasks) and resumed the session as after a crash. A fault of the stream itself,
@@ -1296,7 +1489,12 @@ the next manager restart. Four variables in the service environment
   largest process, it is the one killed, and the session is cut as after any CLI
   death. The kernel and the other sessions are untouched either way.
 - `ROMP_CLI_SCOPE_MEMORY_HIGH`: the soft limit (`MemoryHigh=`). Above it, the
-  scope is throttled and its memory reclaimed; nothing is killed.
+  scope is throttled and its memory reclaimed; the limit itself kills nothing.
+  A throttled scope does raise memory pressure, and on a machine where
+  `systemd-oomd` is set to act on the user manager's pressure (`systemctl show
+  user@$(id -u).service -p ManagedOOMMemoryPressure` prints `kill`) it can kill
+  the whole scope, `OOMPolicy=continue` notwithstanding; check that setting
+  before relying on the soft limit alone.
 - `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX`: the swap limit (`MemorySwapMax=`). Without
   it, a scope at `MemoryMax` pushes pages to swap instead of being killed, until
   the machine's swap is used up, and the swapping slows every other process. On
@@ -1329,8 +1527,10 @@ systemd refuses (a size past its range; `OOMPolicy=` on a scope before systemd
 253) and reports it the same way, quoting systemd.
 The wrapper checks the same rule on every launch and reports a value it refuses
 on stderr as `romp-cli-scope: ignored: …`, which the kernel logs as a problem
-naming the session; on a launch the kernel drove, an `ignored:` line naming a
-rule means the value reached the wrapper some other way.
+naming the session and counts in `/api-health` (`cliScope.limitsIgnored`, see
+[The API-health signal](#the-api-health-signal)); on a launch the kernel drove,
+an `ignored:` line naming a rule means the value reached the wrapper some other
+way.
 
 The rules are syntax, and two kinds of value that pass them can still be refused
 by the machine: a memory property this systemd does not take on a scope
@@ -1339,7 +1539,7 @@ write, because it is below the user manager's own `oom_score_adj` or because
 `/proc/self/oom_score_adj` cannot be opened for writing (a read-only `/proc` in
 a hardened container). Without a check at the kernel's start, each would be
 refused again on every launch, one `ignored:` line and one problem each, while
-the kernel's log and `/api-health` (the `cliScope` block, below) said the value
+the kernel's boot line and `/api-health` (the `cliScope` block) said the value
 was in force. So with the scopes on, the kernel runs the wrapper's own steps
 once at its start: it starts a probe scope carrying the memory properties, and
 has a throwaway child write the adjustment to its own `oom_score_adj`. A refusal
@@ -1359,10 +1559,11 @@ on each launch. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
-decided. (A bare failure is the fallback counted under `cliScope.fallbacks`.)
-The CLI then starts in its scope without the memory limits; the adjustment is
-still written. On a launch the kernel drove, an `ignored:` line quoting a
-systemd rejection means the machine changed under the running kernel.
+decided. (A bare failure is the fallback described above, counted under
+`cliScope.fallbacks`.) The CLI then starts in its scope without the memory
+limits; the adjustment is still written. On a launch the kernel drove, an
+`ignored:` line quoting a systemd rejection means the machine changed under the
+running kernel.
 
 Whenever a memory limit is set, the wrapper also sets `OOMPolicy=continue` on
 the scope. A scope's default is `stop`: when Linux's OOM killer kills one
@@ -1386,14 +1587,14 @@ probe that exits non-zero or does not answer (its scope fails to start, it does
 not finish, its command is killed or exits without a marker) is tried once more;
 one that exits 0 without printing a marker is not. When no try gives a verdict,
 that is a problem line too: it says what each try did (one try, or two) and
-quotes systemd's refusal, the exit status, or what was printed; the verdict
-stays `null`, and `cliScope.unsettled` names the check.
+quotes systemd's refusal, the exit status, or what was printed; and the check is
+left unsettled: the verdict stays `null`, and `cliScope.unsettled` names it.
 Whether the memory limits apply is then unknown until the next kernel start. To
 check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
 applies, and fails when the controller is not there.
 
-A suggested starting point for a shared 62 GB machine:
+A suggested starting point for a shared 64 GB machine:
 `ROMP_CLI_SCOPE_MEMORY_MAX=16G`, `ROMP_CLI_SCOPE_MEMORY_HIGH=12G`,
 `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0`, `ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500`. One
 session can still take a quarter of the machine, more than any ordinary tool
@@ -1543,16 +1744,18 @@ failed cycles nothing.
 
 **In file mode** (no `ROMP_CREDENTIAL_COMMAND`) upstream's `romp keyswap
 <name>` rewrites the key source line of `service.env` from a sibling profile
-(`service.env.<name>`, holding an `ANTHROPIC_API_KEY=` line or a
-`ROMP_API_KEY_REF=op://…` reference). This fork refuses the rewrite for either
-kind of profile: it does not write API keys to files, so the named swap exits 2
+(`service.env.<name>`, holding an `ANTHROPIC_API_KEY=` line, a
+`ROMP_API_KEY_CMD=` key command or a `ROMP_API_KEY_REF=op://…` reference). This
+fork refuses the rewrite for every kind of profile: it does not write API keys
+to files, and the key source line is yours to edit, so the named swap exits 2
 with that message, reads and writes nothing, and has no flag that lets it
 through. The bare command reports the key source the kernel holds (a key as a
-fingerprint, a reference as `1Password reference <fingerprint>`, never
-resolved), the file it reads, and `MISMATCH` when the kernel is not reading
-this file's key source, with the usual causes: the file is unreadable to the
-kernel, it has no key line and the kernel holds its startup key, the file
-names a reference the kernel has not read, or the kernel reads another
+fingerprint, a reference as `1Password reference <fingerprint>`, a key command
+as `key command <fingerprint>`, never run or resolved), the file it reads, and
+`MISMATCH` when the kernel is not reading this file's key source, with the
+usual causes: the file is unreadable to the kernel, it has no key line and the
+kernel holds its startup key, the file names a provider the kernel has not
+read, or the kernel reads another
 `service.env` (the same other-file cause as above, with the places to look,
 the remedy per place and the restart and reload commands); an invalid source
 line is reported as such and nothing is asked of the kernel. A cycle reads and
@@ -1561,10 +1764,11 @@ verify (`NOT DONE`), and carries the source fingerprint it read, so a source
 that changes during the request is a `FAILED` cycle rather than a reconnect
 onto the wrong key. A kernel older than the runtime sources answers with no
 source fingerprint, and the report says to `romp refresh` before cycling a
-reference. A reference's fingerprint is of the reference, not of the secret
-behind it, so the report cannot show a rotation behind an unchanged reference;
-a cycle can: it resolves the current key once for the request and reconnects
-each quiet session whose launch key differs, reference unchanged or not, and
+provider. A provider's fingerprint is of the command line or the reference,
+not of the secret behind it, so the report cannot show a rotation behind an
+unchanged provider; a cycle can: it resolves the current key once for the
+request and reconnects each quiet session whose launch key differs, provider
+unchanged or not, and
 the reconnect resolves the source again at the launch rather than reusing the
 cycle's value. Rotate the key
 at its source, then run `--cycle-all` for the key-billed sessions. In file
@@ -1625,6 +1829,478 @@ name it says only that a credential in the file contradicts the declared auth
 model. With no declaration nothing is said; that is upstream's ordinary
 file-key installation.
 
+## Kernel performance counters
+
+`GET /perf` returns one JSON document of counters the kernel keeps at all
+times: what its pusher, judge and HTTP threads have done since the process
+started. The route takes the serve token. The counters cost a lock and a few
+dictionary increments per event, so they stay on; nothing is formatted or
+serialized until a request reads them. `romp perf` takes two snapshots
+`--interval` seconds apart (default 10) and prints the difference as rates on
+one screen: pusher cycles and wakes per second, the cycles the minimum
+interval between cycle starts held and the watched-tab wakes exempt from it,
+cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
+judge threads and the rest of the process, builds served from cache against
+rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
+goal-store loads and writes per second, judge passes and their durations
+with the CPU each pass cost, the producer's wakes against the waits they
+ended, the chain memo's hits and misses, the evidence gate's runs against
+skips per judge tier, memory and thread count. `romp perf --json` prints one raw snapshot. If the
+kernel restarted between the two snapshots the counters have started over, so
+the command says so and exits non-zero instead of printing negative rates; a
+refused token is reported as such, not as a dead kernel.
+
+The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
+
+- `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
+  seconds since the process started, and whether the `romp-perf` log is on.
+- `process`: `rss_kb` (resident set size in KB: the current size on Linux, read
+  from `/proc`; the peak, `ru_maxrss`, on macOS, which has no `/proc`), `threads`,
+  `cpu_s`, `pid`, and the exact memory gauges:
+  `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
+  `/proc/self/status`; null with `source` "unavailable" where `/proc` is
+  absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
+  off as a current figure), `allocated_blocks` (the interpreter's live
+  allocations, `sys.getallocatedblocks`), `gc_gen2` (generation-2 collections
+  so far) and `malloc` with `arena`, `hblkhd`, `uordblks`, `fordblks` in bytes
+  (glibc's `mallinfo2`: the arena size, the bytes in mmap'd blocks, the bytes in
+  use and the free bytes the allocator holds; the malloc half of the heap only,
+  pymalloc's arenas being invisible to it; null where glibc 2.33 or newer is
+  absent). Two snapshots an hour apart answer where resident memory goes:
+  blocks flat while rss climbs points at the allocator, blocks climbing at an
+  object graph, a `caches` gauge climbing at that cache. `romp perf` prints
+  them on a `memory` line with the window's deltas beside the levels.
+- `caches`: one block per cache the kernel, the judge and the event model keep,
+  each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
+  lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
+  (the event model's incremental reader), `asm`, `asm_keylocks` and `trailing`
+  (the assembly cache, its per-key locks and the torn-tail memo), `judge_parse`,
+  `judge_recon` and `judge_chain` (the judge's per-session parse, reconciliation
+  and chain memos), `parse` (the kernel's parsed sessions), `built_chat` with
+  `entries` and `ms_bytes` (the cached chat payloads and their materialized
+  serializations), `judge_usage` with `rows`, `img` with `entries` and `bytes`
+  (the data-URL previews), `path_links`, `space_paths`, `session_stamp`,
+  `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
+  memos report their own occupancy under `memos`.
+- `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
+  cycle), `wakes_live` (the wakes that carried a session id: that session's
+  live tail changed), `wakes_event` and `wakes_backstop` (how the cycle came
+  to run: a wake arrived before it started, or none did and the 0.5 s backstop
+  ran it), `held` and `held_ms` (cycles the minimum interval between cycle
+  starts delayed, and the total delay), `exempt` (cycles that ran inside the
+  interval because a watched chat tab's live tail changed; a cycle released
+  early from a hold counts in both), `cycle_ms_sum`, `cycle_ms_max` (since
+  start), `cycle_ms_last`, `cycle_cpu_ms_sum` (the pusher thread's own CPU
+  time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
+  from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
+  the kernel): a cycle starts no sooner than that after the previous one
+  began unless the live tail of a chat tab a connected client is watching
+  changed (an SDK session's streamed text, an echo, a turn's end, the
+  session ending), which runs its cycle at once. A tmux session's mid-turn
+  output has no event: it refreshes on the backstop cycle, which runs at the
+  later of the previous cycle's end plus 0.5 s and its start plus the
+  interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's environment
+  overrides it; 0 removes the bound.
+- `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
+  inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
+  `push.*` stages count every push, including the one a connecting page gets,
+  so they can add up to more than `push`.
+- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`; `feed` also carries
+  `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
+  clear, a follow-up: the mutation is invisible to the signature and must not wait out the
+  rebuild interval).
+  `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
+  tab against rebuilds of a background tab; every tab, the watched one
+  included, is served while its complete per-session signature is unchanged
+  and rebuilds when a component moved), `bg_miss`, a map from each labelled component of the
+  chat-build signature (the kernel's `_CHAT_SIG_LABELS`: the transcript, the
+  states files, the goal store and its hold, the archive, episodes, sdk
+  registry and death marker, the task and user-todo stores, the pinned notes, the pending cut,
+  the working note, the needs-you bit, the live tail's revision, the liveness
+  row, the clock booleans, the backend's queue and brackets, the parked ops,
+  the limit hold, the retry state, the live task rows, the watches, the
+  awaiting-stamp view, the warm-anchor revision, the suspension count, the names digest, the flags
+  and bell files, the colormap, the account, cleared.jsonl, the host, the
+  cwd-derived rows, the CLAUDE.md chain, the forks, and the three build-time
+  dependencies `taskout`, `pathlink` and `postal`; plus `cold` for a tab with
+  no cached build and `nosig` for one whose signature could not be taken) to
+  the background rebuilds it caused, and `moved`, the builds left uncached
+  because their signature changed while they ran (the next cycle rebuilds and
+  caches). A rebuild with several moved components counts under each, so the
+  map's sum can exceed `bg_built`. `romp perf` prints the split and the
+  non-zero causes after the chat average.
+- `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
+  `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
+  was built and compared, then not sent.
+- `goals`: `loads`, `loads_shared`, `saves`, `writes` on the goal stores.
+  `loads` counts `load_goals` calls and `loads_shared` the `load_goals_shared`
+  calls the shared read-only cache answered, a hit or a version parsed there;
+  the calls it hands to `load_goals` count under `loads`, so the two together
+  are every store read. A save that would rewrite identical bytes is a save
+  without a write. `scans`, `scan_hits`,
+  `scan_parses` count the give-up scan behind the judge-failure notice: calls,
+  stores served from its per-store memo, and stores read and parsed (or
+  attempted) because they were new, changed, or failed to parse on the
+  previous call. `disk_hits`, `disk_misses` and `disk_seeds` count the memo
+  behind the no-op save check: the file's identity matched and it was not
+  parsed, it was read and parsed (or attempted), or the entry was filled from
+  the publish's own write. `absent_hits` and `absent_misses` count the memo
+  behind the two triage sweeps over stores no discovered session owns:
+  answered from the memo, or loaded and evaluated because the store, its
+  override journal or its archive changed or was new. `noop_hash_ms` is the
+  time `save_goals` spent serializing a held store for its no-op check (the
+  cost a conditional tail save would remove); `romp perf` prints it as a rate
+  on the `goals` line so that item can be judged from a measurement.
+  `unreadable_stores` is a gauge, not a counter: the goals files currently in
+  a read-failure episode (the file exists and did not read or parse on its
+  last read, so `load_goals` answers an empty fallback, every judge stage
+  stands down on the session and `save_goals` refuses to publish over it until
+  it reads). `romp perf` prints it on the `goals` line when it is not zero, and
+  the kernel warns the chat pane once per episode for a listed session.
+  `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
+  session's whole states file: the episode-boundary check consults it only for
+  a head the memoized episode log does not hold yet, so at steady state the
+  counter stays near zero. A steady non-zero rate has three causes: heads are
+  changing (`/clear` boundaries and first observations); a live session's
+  current leaf is a recorded resume fork, which is never appended to the
+  episode log and so reads its lineage every pass (benign; one read per such
+  session per pass); or the guard order in `_episode_boundary_check` regressed.
+  `romp perf` prints the rate on the `goals` line.
+- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
+  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
+  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  producer thread's own per-pass work is not included and shows under the
+  process line's "other"), `wakes` (every wake of the producer: the backends'
+  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
+  several, so this is an upper bound on the poke rate), `wakes_event` and
+  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
+  is the number of wakes a pass absorbed), `chain_memo` with `hit`, `miss`,
+  `populate`, `bypass`: the memo behind the write-moment chain check, which
+  asks before every planner mint whether the prompt sits on a rewound-away
+  branch. A hit served a memoized check, a miss built one, a populate stored
+  one (a build that failed is a miss with no populate), and a bypass built
+  without memoizing because an input file could not be stat'd. `tiers` holds
+  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
+  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
+  and archiver): `ran` (per-session stage
+  runs), `skipped` (runs the gate declined because nothing the tier reads had
+  changed), `stamped` (runs that ended complete and recorded what they
+  judged), `bypassed` (runs with no signature to record, or whose parse ran
+  under a cut that moved after the gate looked), `incomplete` (runs a
+  deferral or a failed call left unfinished; for the courier, scans that
+  produced pending rows, or whose link repair found the sender's tracker
+  completed or the sender outside the discover window, so the next pass scans
+  the session again; for the index tier, sessions that had a caption or an
+  archive to write this pass, or whose captions file, archive record or unit
+  cache exists and did not read, or whose unit-cache publish failed; the
+  read and publish failures each write one `judge-errors.jsonl` row per
+  failure episode, `captions-unreadable`, `session-archive-unreadable`,
+  `units-cache-unreadable` or `units-cache-write-failed`, beside the
+  `store-unreadable` row a goals file that does not read writes, and the
+  session runs again every pass until the file reads; an archive record that
+  reads but is not one is content, so the archiver rebuilds it, with the row
+  still written once), `due_clock` (runs a
+  background task's deadline made due), plus `stamps`, the number of
+  per-session records held. The index tier's signature is the session's
+  parse pair, captions file, archive record and unit cache, and no goal
+  store: its idle path reads none.
+  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
+  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
+  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
+  pass from a faster cadence.
+- `memos`: one block per memo the kernel keeps, each a flat map of counters.
+  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
+  only when its file changed: `hit` and `miss` (stores served from memory
+  against decoded, summed over passes), `fail` (file versions that did not
+  decode), `evict` (entries dropped for files gone from the directory), `punch`
+  (entries copied so a user gesture could be applied to them), `live` and
+  `snap` (the feed's store reads served live through the shared cache against
+  those served from the pass snapshot), and the gauges `entries` and `bytes`
+  (memoized files and their summed size). `lift_gate` is
+  the awaiting-lift job's per-session identity gate: `skip` and `load`
+  (session-cycles that took no store read against the ones that read it, a
+  probe on the shared read-only view), `shared` (probes the shared cache
+  answered), `writer` (session-ticks that loaded the writer's copy because a
+  lift was due) and `noop`
+  (writer loads whose fresh decision filed nothing, the store having moved
+  between the probe and the load), and the gauge `entries` (sessions
+  remembered). `bg_tops` is the placed-launch memo behind that lift and the
+  feed's background-task classification, keyed on the parse object and the
+  store object: `hit` and `miss` (calls answered from the per-version map
+  against looked up), `resolve` (launch ids looked up on a miss, placed or
+  not), `walk` and `walk_neg` (transcript walks, and the walks that left a
+  launch unresolved: an upper bound on what a negative walk cache would
+  save), `idx_build` (placement indexes built, one per store object asked, a
+  writer's private copy included) and the gauge `entries` (sessions holding a
+  map). `nudge_walk` is the auto-nudge walk's per-cycle cost (it runs
+  for every alive session every cycle, wake-only when the toggle is off):
+  `walked` and `gated` (session-cycles visited, and the ones a session gate
+  returned on), `loads` and `shared` (store reads taken for the decision, and
+  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
+  `plan_bypass` (the planner-placement gate served from its memo, computed and
+  memoized, or computed uncached over a non-shared store), `deleg_hit` and
+  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
+  wake-only dead-man filed), `evict` (entries dropped for sessions that left
+  the alive set), `stale` (entries released because the parse cache no longer
+  holds the pinned turns) and the gauge `entries`. `goals_shared`
+  is the shared read-only goal-store cache the pusher's read-only sites load
+  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
+  did not), `refuse` (a fill under a moving archive, served but not
+  published), `dup` (a concurrent fill of the same version published first),
+  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
+  loader or served as a fresh store), `evict` (entries dropped for files gone
+  from the directory), `fallback` (calls served by the writer's loader while
+  the cache is off), `poisoned` (write attempts on a shared view), and the
+  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
+  `off` (1 once a write attempt switched the cache off, until the kernel
+  restarts).
+  `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
+  `feed_cards_miss` (the per-card encode served from its memo against run),
+  `feed_body` and `bars_body` (whole frames serialized, at most once per build
+  each), `bars_sig_fallback` (bars builds that could not be keyed and took the
+  whole dump for their signature), and `default_str` (values no wire encoder
+  could serialize as JSON and shipped as `str()`, one per encode; the kernel's
+  stderr names each such type once).
+  `intr_marks` is the interrupt-marks memo, one entry per (session, parse
+  family) keyed on the parse object's identity and the machine-cut stamp:
+  `hit` and `miss` (reads served from memory against re-tallied), `evict`
+  (entries dropped for sessions that left the alive set, or the whole memo
+  cleared once it holds 512 entries), and the gauge `entries`.
+  `sessions_scope` is the pusher cycle's discover memo, one sweep per
+  (window, forks) key per cycle: `hit` and `miss` (session-row reads inside a
+  cycle served from the cycle's rows against swept) and `wide_hit` and
+  `wide_miss` (the wide walk taken for a live session idle longer than the
+  caption window); the memo lives for one cycle, so it has no occupancy gauge.
+  `captions` is the memo behind the captioner-store reader every timeline lane,
+  the feed's held card and the postal join read, keyed on the file's identity
+  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
+  from memory against read and parsed), `fail` (reads that failed after a
+  successful stat and were not memoized; the kernel's stderr names the file
+  once per episode), `evict` (entries dropped: a lane that left the timeline,
+  the 512-entry bound, or the pop of an entry whose file is now absent), and
+  the gauge `entries`. `states_overlay` is the states-log fold behind the
+  awaiting overlay: `hit` (the records were the cached ones), `append` (only
+  the appended rows were folded), `refold` (every row was folded: a rewrite, a
+  shrink, or the file's first fold), `fail` (a read that failed on a file that
+  exists; the fold answered no overlay, memoized nothing, and the kernel's
+  stderr names the file once per episode), `evict` (entries dropped for
+  sessions that left the alive set), and `entries`. `thread_reg` is the SDK
+  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
+  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
+  an absent file's entry.
+  `feed_segs` is the feed build's per-session memo of the values that are pure
+  functions of a session's parse and goal store (the seam maps, the tree shape
+  and each top goal's flattened tree), keyed on the parse object, the served
+  store's identity, the names registry, the working bit and the session row's
+  name and colour: `hit` and `miss` (sessions served from the memo against
+  recomputed and stored), `bypass_live` (a build whose parse was a live-merge
+  copy: computed for that build only), `bypass_degraded` (a walk that swallowed
+  an exception: computed, never stored), `bypass_unkeyed` (a store whose
+  identity does not stand for its content: a rewind hold, a failed gesture
+  replay, the shared cache switched off, no store file), `bypass_unscoped` (a
+  build outside a pusher cycle: read but never filled), `evict` (entries dropped
+  for sessions that left the alive set), and the gauge `entries`. `lanes` is the
+  per-lane segment memo in the timeline build: a lane's bars, segment ends,
+  last activity, compaction markers and judging marks, held while the lane's
+  parsed transcript, goal store and captions are the same objects as the
+  previous build's and its other inputs (live, the branch clip, the host's
+  suspensions, the archive file) are unchanged. One outcome per lane per bars
+  build (a full build, or the live-only first paint): `hit` (served), `miss`
+  (derived, and held unless the archive file could not be stat'ed),
+  `live_tail` (a live tail was merged, so the lane was derived and not held),
+  `complain_skip` (the parse or a stage failed, or a mark carries a time the
+  horizon cannot compare) and `unshared_skip` (a private store with content;
+  derived and not held); `evict` (entries dropped for lanes that left a full
+  build's lane set or past the 256-entry bound), the gauge `entries`, and
+  `segs_hit` and `segs_miss`, the segments served against derived, which
+  weight the hit rate by cost.
+  `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
+  a parsed transcript (the uuids and user texts the transcript already holds,
+  and the newest human turn's time), one entry per session keyed on the
+  parsed session object's identity, shared by the chat, feed and timeline
+  builds of one cycle: `hit` and `miss` (merges served from the memo against
+  derived) and the gauge `entries` (sessions held; the pusher drops a session
+  that is neither shown as a tab nor alive).
+  `chat_postal` is the chat fold's memo of a tab's sealed postal cards, keyed
+  on the values the cards embed from outside the transcript (the message log's
+  identity and, per card, its caption and its peer's name and colour): `gate`
+  (fold-gate checks that re-hydrated a tab's sealed cards because one of those
+  values moved, or because the entry was sealed outside the pusher's names
+  snapshot and had to be verified), `hit` (checks that verified the sealed
+  cards from their recorded values without hydrating), and `commit_new` (raw
+  postal events hydrated at fold commits: the events a folding build newly
+  seals, or every relevant event of the prefix a demoted build rebuilds, so a
+  demotion counts its rebuilt tail again; the sealed cards a folding build
+  reuses are not counted). Before this memo every judge pass re-hydrated every tab's
+  sealed cards, although a caption is the only judge-written value a card
+  carries.
+  `chat_ledger` is the chat build's memo of a session's goal-tree walk and
+  live roots (interim: the round-4 plan expects P4's complete chat signature
+  to remove most of the rebuilds it serves), keyed on the parsed transcript's
+  identity, the store's identity and seams, `cleared.jsonl`'s identity and
+  the warm-anchor table's per-session revision: `hit` and `miss`,
+  `bypass_live` (a build that merged live atoms: the last turn's segments
+  differ from the parse's), `bypass_hold` (an armed rewind hold filters a
+  store copy per build), `bypass_empty` (a store with no nodes), `evict`
+  (entries dropped for tabs no longer shown) and the gauge `entries`.
+  `chat_fold_tasks` is the per-turn memo of the transcript's task fold
+  (interim, the same reason). It serves repeated builds over one parse: a
+  live-merged build of an unchanged transcript scans its last turn only. A
+  build after a transcript write scans every turn again, since a parse mints
+  new atom lists. `hit` and `miss` count turns served from the memo against
+  turns scanned, plus the gauge `entries` (sessions held).
+- `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
+  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
+  `/remote/*/…` collapsed to one key each, for at most 256 keys; further keys
+  fold into `other`. A WebSocket upgrade is counted when it arrives and not
+  timed, since its handler runs for the life of the socket.
+
+`POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
+`romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
+The log prints one line per chat build and per frame sent or deduplicated. It
+goes where the manager's stderr goes: under systemd, `journalctl --user -u
+romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
+~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
+kernel's environment still turns it on at start.
+
+These counters describe the kernel process only. `tools/ui-bench.mjs` measures
+the browser's side: it replays a recorded or synthetic frame stream into a
+headless Chromium and reports per frame the shim's handler time, the time the
+bundle spent on the frame (the shim's handoff to it, whether made inside the
+socket handler or from a queued flush task) and the time until the main thread
+is free again, plus long animation frames, JavaScript heap, and DOM size, and
+with `--cpu-profile` the functions inside the bundles that took the time. See
+"Measuring dashboard pane performance" in `CONTRIBUTING.md`.
+
+## Browser-side performance telemetry
+
+The counters above say what the kernel spent. What the browser spent on the
+frames it received is measured in the panes themselves, by
+`ui/webview/perf-telemetry.ts`:
+
+- The feed, Outline, Waiting on you and chat bundles wrap their window
+  `message` handler, so each frame's synchronous handling time is recorded by
+  frame type: the frame's `type` string as it is (`feed`, `chatTail`, `session`,
+  `tabOrder`, `bars`, or any other type that is a short identifier: letters,
+  digits, `_ . : -`, at most 32 characters), a raw delta as `delta:<slot>`
+  (`delta:other` when the slot is not such an identifier), a shell message (a
+  `romp` field and no `type`) as `shell`, and `other` for a frame with neither,
+  a `type` that is not a short identifier, or any type past the 32 distinct
+  types a minute the pane tracks; frames the handler ignores count too. The
+  federation layer, which every kernel page loads, times its own prefixing,
+  delta application and merge of each frame as `fed:<type>`, nested outside the
+  pane's handler; each level records its own time, so `fed:feed` and `feed` add
+  up to the frame's cost.
+  The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
+  `bars`) to the pane's handler by direct call once the pane has registered it
+  (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
+  `fed:<type>` is that layer's own compute; it dispatches them on `window` only
+  when nothing registered, and every other frame still arrives as a `window`
+  `message` event. A `message` listener from another JavaScript world (a
+  browser extension's content script) that reads `event.data` receives a
+  structured clone of every frame dispatched on `window`, tens of milliseconds
+  for a multi-megabyte board; the direct call keeps the merged frames out of
+  its reach. See "A message listener from another world" in `CONTRIBUTING.md`
+  for the check that finds such a listener.
+  The timeline's listener is wrapped the same way on both hosts (the VS Code
+  bundle directly; the kernel page's inline boot through the `window.__rompPerf`
+  that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
+  `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
+  The Files pane installs nothing: no frames are pushed to it.
+- Per type and minute: count, summed and maximum handler time, the exact
+  number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
+  100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,
+  4096 and over) that is additive across minutes, so `romp perf client`
+  computes window percentiles from it.
+- Two `requestAnimationFrame` callbacks after the outermost handler it records
+  how long the main thread stayed busy with the work the handler queued (a
+  deferred render, layout, paint). A hidden document or a pane the shell has
+  set to `display:none` takes no sample, and a sample armed before such a hide
+  is cancelled (on `visibilitychange`, or on the `resize` that takes the
+  pane's viewport to zero).
+- A `PerformanceObserver` on `long-animation-frame` entries (Chrome 123+;
+  `longtask` where that is missing, with no attribution) records each frame
+  over 50 ms with its blocking time and the scripts the browser attributes it
+  to. The browser names the top-level callback it invoked, not the hottest
+  function, so a key is `<file>:<function>@<character position>`
+  (`feed.js:render@1200`, `feed.js:(anonymous)@48213`), and an inline page
+  script (the pane shim, whose socket callback runs for every frame) is
+  `page:<function>@<position>`. The release build keeps identifiers, which
+  keeps the function name in a key readable across rebuilds (the position
+  still moves with any edit to the bundle); whitespace and syntax are still
+  minified.
+- Once a minute the pane posts ONE `clientDiag` row on the socket it already
+  uses for breadcrumbs, only when something happened that minute (a frame
+  arrived or a long frame was observed); the kernel appends it to
+  `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
+  and its own clock. A frame whose whole synchronous handling ran 100 ms or
+  more also posts a `slowframe` row at once, carrying the long-frame
+  attribution when the browser reports one for that frame; at most five such
+  rows a minute per pane, the rest counted in the minute row.
+- The kernel rotates `client-diag.jsonl` once it reaches 8 MB: the file
+  becomes `client-diag.jsonl.1` (replacing the previous one) and a new file
+  starts, so at most two files, about 16 MB, are kept. A minute row is about
+  1 KB, so one open dashboard writes a few MB a day.
+
+Rows carry numbers and code identifiers only, never card text, session names,
+file paths or transcript content: an element id inside an invoker name is
+stripped (`DIV#tab-web.onclick` is recorded as `DIV.onclick`), an element
+source as `[src]`, and a script URL as its basename.
+
+The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
+
+- `{"t", "wid", "surface": "perf", "what": "minute", "data": {app, since,
+  span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
+  p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
+  inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
+  visible, hidden_pane, ua}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  `waiting`, `timeline`); `since` is the minute's start on the browser's clock
+  (epoch ms) and `span_ms` its length (shorter than a minute when the page was
+  hidden or closed); `hist` is the 14 bucket counts; `free` is null when no
+  sample was taken; `loaf.top` is the five largest keys by summed duration,
+  `inv` the last invoker seen for each (`WebSocket.onmessage`,
+  `Window.requestAnimationFrame`, `DIV.onclick`), `src` is `loaf`, `longtask`
+  or `none`; `slow` counts the slowframe rows sent and the slow frames past
+  the cap, with the worst of those; `heap_mb` is
+  `performance.memory.usedJSHeapSize` and is absent outside Chrome; `dom` is
+  the element count; `visible` is the document's visibility, `hidden_pane`
+  the zero-viewport test the pane shim uses for a pane the shell has set to
+  `display:none`; `ua` is `chrome-desktop`, `safari-ios` or `other`.
+- `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
+  dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
+  as received on the wire and `ms` its whole synchronous handling, the
+  federation layer included.
+
+`romp perf client [--minutes <n>] [--json]` reads the file and its `.1`
+predecessor (no kernel round trip, so it works with the kernel down) and folds
+the last `<n>` minutes (default 10) per dashboard id and pane into one screen:
+the pane's total handler milliseconds per minute, then each frame type sorted
+by its share, with frames per minute, milliseconds per minute, p50/p90/p99 as
+histogram bucket upper bounds over the whole window, the maximum, and the
+share of frames over 16.7 ms and at or over 100 ms; the worst minute's
+main-thread-free p90 (each minute row's p90 is over that minute's samples, and
+the screen shows the largest, so it is not a window percentile like the handler
+columns); long frames and blocking milliseconds per minute with the worst
+entry; the top attributed keys with their invokers; the worst minute (the one
+with the most handler time: its span from the minute's start to the row's
+arrival at the kernel, frame counts and long frames); heap and DOM at the last
+sample; and the five slowest slow frames in the window with their attribution,
+plus how many more there were. An absent file or one without perf rows is
+reported as no browser telemetry yet (the bundles predate it or no dashboard
+has loaded them: rebuild the bundles and reload the dashboard); perf rows all
+older than the window are reported with their age. `--json` prints the folded
+panes, with a per-minute array (`t`, `since`, `total_ms`, `loaf_n`,
+`blocking_ms`) so a spike is visible without re-reading the file.
+
+In DevTools, `window.__rompPerf.snapshot()` in a pane's frame is the minute
+in progress in the same shape, plus a derived `p90_le` per type, `active`
+(whether it will be sent), `observer` (`loaf`, `longtask`, `none`),
+`pending_slow` (slow frames waiting for their long-frame report) and
+`free_pending` (a main-thread sample armed). A page without `performance.now`
+(the node test stand-ins) gets no telemetry and an unwrapped handler; every
+other browser API is behind a feature check, and nothing in the module throws
+into the pane.
+
 ## The API-health signal
 
 `GET /api-health` returns one JSON document describing how the API is treating
@@ -1638,11 +2314,17 @@ policy (move traffic to another key, hold a batch).
 Events are bucketed by **auth-source label** and **model family**
 (`"<auth>|<family>"`, for example `key:0123456789ab|fable`), because rate
 limits are per model family per account: pooled, one family's storm disappears
-under another family's clean traffic. The auth label is a salted digest: the
-same key or login gives the same label within one install, and nothing about
-the key itself is in it. The salt lives at `STATE/api-health-salt`, minted once
-at 0600; an empty file switches to unsalted digests. `key:helper`, `key:env`
-and `key:managed` name sources whose material the kernel never holds.
+under another family's clean traffic. The auth label is a salted digest of the
+credential's identity: for a key the kernel injected, the fingerprint recorded
+at the session's launch (the same 12 hex the kernel log and `romp keyswap`
+print; the key itself is never read for this, so a 1Password-sourced key is not
+retrieved per session start); for a login, the account digest the usage bars
+stamp. The same key or login gives the same label within one install, and
+nothing about the key itself is in it. The salt lives at
+`STATE/api-health-salt`, minted once at 0600; an empty file makes the label
+that fingerprint or account digest itself, so a bucket can be matched to the
+log. `key:helper`, `key:env` and `key:managed` name sources whose material the
+kernel never holds.
 
 ### Top-level fields
 
@@ -1669,12 +2351,15 @@ and `key:managed` name sources whose material the kernel never holds.
   retrying); `retrying` (sessions inside a retry storm right now, the cheapest
   direct thrash indicator, independent of the ratio thresholds);
   `tmuxSessionsUncovered` (tmux-backed sessions, which have no SDK stream and are
-  outside the signal; `null` when the kernel could not enumerate them);
+  outside the signal; `null` when the kernel could not enumerate them; Codex-backed
+  sessions carry no Anthropic API traffic, are outside the signal too, and are
+  counted in neither field);
   `sidechainExcluded` (a constant `true`: subagent traffic is
   outside the signal on both sides of the ratio). A reader that sees `inTurn >
   0` and a `lastEventAt` minutes old should treat the signal as unknown rather
   than healthy.
-- `cliScope`: the per-session scopes (see "What survives a restart" and
+- `cliScope`: scope bookkeeping carried on this payload, not part of the API
+  signal itself: the per-session scopes (see "What survives a restart" and
   "Per-session memory limits").
   - `on`, true when the kernel chose at boot to run CLIs in scopes.
   - `fallbacks`, CLI launches since boot on which the scope wrapper's pre-flight
@@ -1992,473 +2677,51 @@ nothing), a `kernel restarted` divider is inserted, and it takes none of the
 six slots. A read that fails (a non-2xx, or no answer) shows one line saying
 so in place of the rows, never the previous numbers.
 
-## Kernel performance counters
-
-`GET /perf` returns one JSON document of counters the kernel keeps at all
-times: what its pusher, judge and HTTP threads have done since the process
-started. The route takes the serve token. The counters cost a lock and a few
-dictionary increments per event, so they stay on; nothing is formatted or
-serialized until a request reads them. `romp perf` takes two snapshots
-`--interval` seconds apart (default 10) and prints the difference as rates on
-one screen: pusher cycles and wakes per second, the cycles the minimum
-interval between cycle starts held and the watched-tab wakes exempt from it,
-cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
-judge threads and the rest of the process, builds served from cache against
-rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
-goal-store loads and writes per second, judge passes and their durations
-with the CPU each pass cost, the producer's wakes against the waits they
-ended, the chain memo's hits and misses, the evidence gate's runs against
-skips per judge tier, memory and thread count. `romp perf --json` prints one raw snapshot. If the
-kernel restarted between the two snapshots the counters have started over, so
-the command says so and exits non-zero instead of printing negative rates; a
-refused token is reported as such, not as a dead kernel.
-
-The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
-
-- `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
-  seconds since the process started, and whether the `romp-perf` log is on.
-- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`, and the exact memory gauges:
-  `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
-  `/proc/self/status`; null with `source` "unavailable" where `/proc` is
-  absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
-  off as a current figure), `allocated_blocks` (the interpreter's live
-  allocations, `sys.getallocatedblocks`), `gc_gen2` (generation-2 collections
-  so far) and `malloc` with `arena`, `hblkhd`, `uordblks`, `fordblks` in bytes
-  (glibc's `mallinfo2`: the arena size, the bytes in mmap'd blocks, the bytes in
-  use and the free bytes the allocator holds; the malloc half of the heap only,
-  pymalloc's arenas being invisible to it; null where glibc 2.33 or newer is
-  absent). Two snapshots an hour apart answer where resident memory goes:
-  blocks flat while rss climbs points at the allocator, blocks climbing at an
-  object graph, a `caches` gauge climbing at that cache. `romp perf` prints
-  them on a `memory` line with the window's deltas beside the levels.
-- `caches`: one block per cache the kernel, the judge and the event model keep,
-  each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
-  lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
-  (the event model's incremental reader), `asm`, `asm_keylocks` and `trailing`
-  (the assembly cache, its per-key locks and the torn-tail memo), `judge_parse`,
-  `judge_recon` and `judge_chain` (the judge's per-session parse, reconciliation
-  and chain memos), `parse` (the kernel's parsed sessions), `built_chat` with
-  `entries` and `ms_bytes` (the cached chat payloads and their materialized
-  serializations), `judge_usage` with `rows`, `img` with `entries` and `bytes`
-  (the data-URL previews), `path_links`, `space_paths`, `session_stamp`,
-  `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
-  memos report their own occupancy under `memos`.
-- `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
-  cycle), `wakes_live` (the wakes that carried a session id: that session's
-  live tail changed), `wakes_event` and `wakes_backstop` (how the cycle came
-  to run: a wake arrived before it started, or none did and the 0.5 s backstop
-  ran it), `held` and `held_ms` (cycles the minimum interval between cycle
-  starts delayed, and the total delay), `exempt` (cycles that ran inside the
-  interval because a watched chat tab's live tail changed; a cycle released
-  early from a hold counts in both), `cycle_ms_sum`, `cycle_ms_max` (since
-  start), `cycle_ms_last`, `cycle_cpu_ms_sum` (the pusher thread's own CPU
-  time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
-  from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
-  the kernel): a cycle starts no sooner than that after the previous one
-  began unless the live tail of a chat tab a connected client is watching
-  changed (an SDK session's streamed text, an echo, a turn's end, the
-  session ending), which runs its cycle at once. A tmux session's mid-turn
-  output has no event: it refreshes on the backstop cycle, which runs at the
-  later of the previous cycle's end plus 0.5 s and its start plus the
-  interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's environment
-  overrides it; 0 removes the bound.
-- `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
-  inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
-  `push.*` stages count every push, including the one a connecting page gets,
-  so they can add up to more than `push`.
-- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`; `feed` also carries
-  `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
-  clear, a follow-up: the mutation is invisible to the signature and must not wait out the
-  rebuild interval).
-  `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
-  tab against rebuilds of a background tab; every tab, the watched one
-  included, is served while its complete per-session signature is unchanged
-  and rebuilds when a component moved), `bg_miss`, a map from each labelled component of the
-  chat-build signature (the kernel's `_CHAT_SIG_LABELS`: the transcript, the
-  states files, the goal store and its hold, the archive, episodes, sdk
-  registry and death marker, the task and user-todo stores, the pinned notes, the pending cut,
-  the working note, the needs-you bit, the live tail's revision, the liveness
-  row, the clock booleans, the backend's queue and brackets, the parked ops,
-  the limit hold, the retry state, the live task rows, the watches, the
-  awaiting-stamp view, the warm-anchor revision, the suspension count, the names digest, the flags
-  and bell files, the colormap, the account, cleared.jsonl, the host, the
-  cwd-derived rows, the CLAUDE.md chain, the forks, and the three build-time
-  dependencies `taskout`, `pathlink` and `postal`; plus `cold` for a tab with
-  no cached build and `nosig` for one whose signature could not be taken) to
-  the background rebuilds it caused, and `moved`, the builds left uncached
-  because their signature changed while they ran (the next cycle rebuilds and
-  caches). A rebuild with several moved components counts under each, so the
-  map's sum can exceed `bg_built`. `romp perf` prints the split and the
-  non-zero causes after the chat average.
-- `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
-  `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
-  was built and compared, then not sent.
-- `goals`: `loads`, `loads_shared`, `saves`, `writes` on the goal stores.
-  `loads` counts `load_goals` calls and `loads_shared` the `load_goals_shared`
-  calls the shared read-only cache answered, a hit or a version parsed there;
-  the calls it hands to `load_goals` count under `loads`, so the two together
-  are every store read. A save that would rewrite identical bytes is a save
-  without a write. `scans`, `scan_hits`,
-  `scan_parses` count the give-up scan behind the judge-failure notice: calls,
-  stores served from its per-store memo, and stores read and parsed (or
-  attempted) because they were new, changed, or failed to parse on the
-  previous call. `disk_hits`, `disk_misses` and `disk_seeds` count the memo
-  behind the no-op save check: the file's identity matched and it was not
-  parsed, it was read and parsed (or attempted), or the entry was filled from
-  the publish's own write. `absent_hits` and `absent_misses` count the memo
-  behind the two triage sweeps over stores no discovered session owns:
-  answered from the memo, or loaded and evaluated because the store, its
-  override journal or its archive changed or was new. `noop_hash_ms` is the
-  time `save_goals` spent serializing a held store for its no-op check (the
-  cost a conditional tail save would remove); `romp perf` prints it as a rate
-  on the `goals` line so that item can be judged from a measurement.
-  `unreadable_stores` is a gauge, not a counter: the goals files currently in
-  a read-failure episode (the file exists and did not read or parse on its
-  last read, so `load_goals` answers an empty fallback, every judge stage
-  stands down on the session and `save_goals` refuses to publish over it until
-  it reads). `romp perf` prints it on the `goals` line when it is not zero, and
-  the kernel warns the chat pane once per episode for a listed session.
-  `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
-  session's whole states file: the episode-boundary check consults it only for
-  a head the memoized episode log does not hold yet, so at steady state the
-  counter stays near zero. A steady non-zero rate has three causes: heads are
-  changing (`/clear` boundaries and first observations); a live session's
-  current leaf is a recorded resume fork, which is never appended to the
-  episode log and so reads its lineage every pass (benign; one read per such
-  session per pass); or the guard order in `_episode_boundary_check` regressed.
-  `romp perf` prints the rate on the `goals` line.
-- `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
-  on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
-  producer thread's own per-pass work is not included and shows under the
-  process line's "other"), `wakes` (every wake of the producer: the backends'
-  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
-  several, so this is an upper bound on the poke rate), `wakes_event` and
-  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
-  is the number of wakes a pass absorbed), `chain_memo` with `hit`, `miss`,
-  `populate`, `bypass`: the memo behind the write-moment chain check, which
-  asks before every planner mint whether the prompt sits on a rewound-away
-  branch. A hit served a memoized check, a miss built one, a populate stored
-  one (a build that failed is a miss with no populate), and a bypass built
-  without memoizing because an input file could not be stat'd. `tiers` holds
-  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
-  and archiver): `ran` (per-session stage
-  runs), `skipped` (runs the gate declined because nothing the tier reads had
-  changed), `stamped` (runs that ended complete and recorded what they
-  judged), `bypassed` (runs with no signature to record, or whose parse ran
-  under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished; for the courier, scans that
-  produced pending rows, or whose link repair found the sender's tracker
-  completed or the sender outside the discover window, so the next pass scans
-  the session again; for the index tier, sessions that had a caption or an
-  archive to write this pass, or whose captions file, archive record or unit
-  cache exists and did not read, or whose unit-cache publish failed; the
-  read and publish failures each write one `judge-errors.jsonl` row per
-  failure episode, `captions-unreadable`, `session-archive-unreadable`,
-  `units-cache-unreadable` or `units-cache-write-failed`, beside the
-  `store-unreadable` row a goals file that does not read writes, and the
-  session runs again every pass until the file reads; an archive record that
-  reads but is not one is content, so the archiver rebuilds it, with the row
-  still written once), `due_clock` (runs a
-  background task's deadline made due), plus `stamps`, the number of
-  per-session records held. The index tier's signature is the session's
-  parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
-  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
-  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
-  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
-  pass from a faster cadence.
-- `memos`: one block per memo the kernel keeps, each a flat map of counters.
-  `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
-  only when its file changed: `hit` and `miss` (stores served from memory
-  against decoded, summed over passes), `fail` (file versions that did not
-  decode), `evict` (entries dropped for files gone from the directory), `punch`
-  (entries copied so a user gesture could be applied to them), `live` and
-  `snap` (the feed's store reads served live through the shared cache against
-  those served from the pass snapshot), and the gauges `entries` and `bytes`
-  (memoized files and their summed size). `lift_gate` is
-  the awaiting-lift job's per-session identity gate: `skip` and `load`
-  (session-cycles that took no store read against the ones that read it, a
-  probe on the shared read-only view), `shared` (probes the shared cache
-  answered), `writer` (session-ticks that loaded the writer's copy because a
-  lift was due) and `noop`
-  (writer loads whose fresh decision filed nothing, the store having moved
-  between the probe and the load), and the gauge `entries` (sessions
-  remembered). `bg_tops` is the placed-launch memo behind that lift and the
-  feed's background-task classification, keyed on the parse object and the
-  store object: `hit` and `miss` (calls answered from the per-version map
-  against looked up), `resolve` (launch ids looked up on a miss, placed or
-  not), `walk` and `walk_neg` (transcript walks, and the walks that left a
-  launch unresolved: an upper bound on what a negative walk cache would
-  save), `idx_build` (placement indexes built, one per store object asked, a
-  writer's private copy included) and the gauge `entries` (sessions holding a
-  map). `nudge_walk` is the auto-nudge walk's per-cycle cost (it runs
-  for every alive session every cycle, wake-only when the toggle is off):
-  `walked` and `gated` (session-cycles visited, and the ones a session gate
-  returned on), `loads` and `shared` (store reads taken for the decision, and
-  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
-  `plan_bypass` (the planner-placement gate served from its memo, computed and
-  memoized, or computed uncached over a non-shared store), `deleg_hit` and
-  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
-  wake-only dead-man filed), `evict` (entries dropped for sessions that left
-  the alive set), `stale` (entries released because the parse cache no longer
-  holds the pinned turns) and the gauge `entries`. `goals_shared`
-  is the shared read-only goal-store cache the pusher's read-only sites load
-  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
-  did not), `refuse` (a fill under a moving archive, served but not
-  published), `dup` (a concurrent fill of the same version published first),
-  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
-  loader or served as a fresh store), `evict` (entries dropped for files gone
-  from the directory), `fallback` (calls served by the writer's loader while
-  the cache is off), `poisoned` (write attempts on a shared view), and the
-  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
-  `off` (1 once a write attempt switched the cache off, until the kernel
-  restarts).
-  `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
-  `feed_cards_miss` (the per-card encode served from its memo against run),
-  `feed_body` and `bars_body` (whole frames serialized, at most once per build
-  each), `bars_sig_fallback` (bars builds that could not be keyed and took the
-  whole dump for their signature), and `default_str` (values no wire encoder
-  could serialize as JSON and shipped as `str()`, one per encode; the kernel's
-  stderr names each such type once).
-  `intr_marks` is the interrupt-marks memo, one entry per (session, parse
-  family) keyed on the parse object's identity and the machine-cut stamp:
-  `hit` and `miss` (reads served from memory against re-tallied), `evict`
-  (entries dropped for sessions that left the alive set, or the whole memo
-  cleared once it holds 512 entries), and the gauge `entries`.
-  `sessions_scope` is the pusher cycle's discover memo, one sweep per
-  (window, forks) key per cycle: `hit` and `miss` (session-row reads inside a
-  cycle served from the cycle's rows against swept) and `wide_hit` and
-  `wide_miss` (the wide walk taken for a live session idle longer than the
-  caption window); the memo lives for one cycle, so it has no occupancy gauge.
-  `captions` is the memo behind the captioner-store reader every timeline lane,
-  the feed's held card and the postal join read, keyed on the file's identity
-  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
-  from memory against read and parsed), `fail` (reads that failed after a
-  successful stat and were not memoized; the kernel's stderr names the file
-  once per episode), `evict` (entries dropped: a lane that left the timeline,
-  the 512-entry bound, or the pop of an entry whose file is now absent), and
-  the gauge `entries`. `states_overlay` is the states-log fold behind the
-  awaiting overlay: `hit` (the records were the cached ones), `append` (only
-  the appended rows were folded), `refold` (every row was folded: a rewrite, a
-  shrink, or the file's first fold), `fail` (a read that failed on a file that
-  exists; the fold answered no overlay, memoized nothing, and the kernel's
-  stderr names the file once per episode), `evict` (entries dropped for
-  sessions that left the alive set), and `entries`. `thread_reg` is the SDK
-  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
-  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
-  an absent file's entry.
-  `feed_segs` is the feed build's per-session memo of the values that are pure
-  functions of a session's parse and goal store (the seam maps, the tree shape
-  and each top goal's flattened tree), keyed on the parse object, the served
-  store's identity, the names registry, the working bit and the session row's
-  name and colour: `hit` and `miss` (sessions served from the memo against
-  recomputed and stored), `bypass_live` (a build whose parse was a live-merge
-  copy: computed for that build only), `bypass_degraded` (a walk that swallowed
-  an exception: computed, never stored), `bypass_unkeyed` (a store whose
-  identity does not stand for its content: a rewind hold, a failed gesture
-  replay, the shared cache switched off, no store file), `bypass_unscoped` (a
-  build outside a pusher cycle: read but never filled), `evict` (entries dropped
-  for sessions that left the alive set), and the gauge `entries`. `lanes` is the
-  per-lane segment memo in the timeline build: a lane's bars, segment ends,
-  last activity, compaction markers and judging marks, held while the lane's
-  parsed transcript, goal store and captions are the same objects as the
-  previous build's and its other inputs (live, the branch clip, the host's
-  suspensions, the archive file) are unchanged. One outcome per lane per bars
-  build (a full build, or the live-only first paint): `hit` (served), `miss`
-  (derived, and held unless the archive file could not be stat'ed),
-  `live_tail` (a live tail was merged, so the lane was derived and not held),
-  `complain_skip` (the parse or a stage failed, or a mark carries a time the
-  horizon cannot compare) and `unshared_skip` (a private store with content;
-  derived and not held); `evict` (entries dropped for lanes that left a full
-  build's lane set or past the 256-entry bound), the gauge `entries`, and
-  `segs_hit` and `segs_miss`, the segments served against derived, which
-  weight the hit rate by cost.
-  `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
-  a parsed transcript (the uuids and user texts the transcript already holds,
-  and the newest human turn's time), one entry per session keyed on the
-  parsed session object's identity, shared by the chat, feed and timeline
-  builds of one cycle: `hit` and `miss` (merges served from the memo against
-  derived) and the gauge `entries` (sessions held; the pusher drops a session
-  that is neither shown as a tab nor alive).
-  `chat_postal` is the chat fold's memo of a tab's sealed postal cards, keyed
-  on the values the cards embed from outside the transcript (the message log's
-  identity and, per card, its caption and its peer's name and colour): `gate`
-  (fold-gate checks that re-hydrated a tab's sealed cards because one of those
-  values moved, or because the entry was sealed outside the pusher's names
-  snapshot and had to be verified), `hit` (checks that verified the sealed
-  cards from their recorded values without hydrating), and `commit_new` (raw
-  postal events hydrated at fold commits: the events a folding build newly
-  seals, or every relevant event of the prefix a demoted build rebuilds, so a
-  demotion counts its rebuilt tail again; the sealed cards a folding build
-  reuses are not counted). Before this memo every judge pass re-hydrated every tab's
-  sealed cards, although a caption is the only judge-written value a card
-  carries.
-  `chat_ledger` is the chat build's memo of a session's goal-tree walk and
-  live roots (interim: the round-4 plan expects P4's complete chat signature
-  to remove most of the rebuilds it serves), keyed on the parsed transcript's
-  identity, the store's identity and seams, `cleared.jsonl`'s identity and
-  the warm-anchor table's per-session revision: `hit` and `miss`,
-  `bypass_live` (a build that merged live atoms: the last turn's segments
-  differ from the parse's), `bypass_hold` (an armed rewind hold filters a
-  store copy per build), `bypass_empty` (a store with no nodes), `evict`
-  (entries dropped for tabs no longer shown) and the gauge `entries`.
-  `chat_fold_tasks` is the per-turn memo of the transcript's task fold
-  (interim, the same reason). It serves repeated builds over one parse: a
-  live-merged build of an unchanged transcript scans its last turn only. A
-  build after a transcript write scans every turn again, since a parse mints
-  new atom lists. `hit` and `miss` count turns served from the memo against
-  turns scanned, plus the gauge `entries` (sessions held).
-- `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
-  OPTIONS, the query string removed and `/dist/*`, `/media/*` and
-  `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
-  fold into `other`. A WebSocket upgrade is counted when it arrives and not
-  timed, since its handler runs for the life of the socket.
-
-`POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
-`romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
-The log prints one line per chat build and per frame sent or deduplicated. It
-goes where the manager's stderr goes: under systemd, `journalctl --user -u
-romp-manager -f | grep romp-perf`; under launchd (macOS), `tail -f
-~/.local/state/romp/manager.log | grep romp-perf`. Setting `ROMP_PERF=1` in the
-kernel's environment still turns it on at start.
-
-These counters describe the kernel process only. `tools/ui-bench.mjs` measures
-the browser's side: it replays a recorded or synthetic frame stream into a
-headless Chromium and reports per-frame main-thread time, long animation
-frames, JavaScript heap, and DOM size, and with `--cpu-profile` the functions
-inside the bundles that took the time. See "Measuring dashboard pane
-performance" in `CONTRIBUTING.md`.
-
-## Browser-side performance telemetry
-
-The counters above say what the kernel spent. What the browser spent on the
-frames it received is measured in the panes themselves, by
-`ui/webview/perf-telemetry.ts`:
-
-- The feed, Outline, Waiting on you and chat bundles wrap their window
-  `message` handler, so each frame's synchronous handling time is recorded by
-  frame type (`feed`, `chatTail`, `session`, `tabOrder`, `bars`, a shell
-  message as `shell`, a raw delta as `delta:<slot>`, anything else as `other`;
-  frames the handler ignores count too). The federation layer, which every
-  kernel page loads, times its own prefixing, delta application and merge of
-  each frame as `fed:<type>`, nested outside the pane's handler; each level
-  records its own time, so `fed:feed` and `feed` add up to the frame's cost.
-  The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
-  `bars`) to the pane's handler by direct call once the pane has registered it
-  (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
-  `fed:<type>` is that layer's own compute; it dispatches them on `window` only
-  when nothing registered, and every other frame still arrives as a `window`
-  `message` event. A `message` listener from another JavaScript world (a
-  browser extension's content script) that reads `event.data` receives a
-  structured clone of every frame dispatched on `window`, tens of milliseconds
-  for a multi-megabyte board; the direct call keeps the merged frames out of
-  its reach. See "A message listener from another world" in `CONTRIBUTING.md`
-  for the check that finds such a listener.
-  The timeline's listener is wrapped the same way on both hosts (the VS Code
-  bundle directly; the kernel page's inline boot through the `window.__rompPerf`
-  that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
-  `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
-  The Files pane installs nothing: no frames are pushed to it.
-- Per type and minute: count, summed and maximum handler time, the exact
-  number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
-  100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,
-  4096 and over) that is additive across minutes, so `romp perf client`
-  computes window percentiles from it.
-- Two `requestAnimationFrame` callbacks after the outermost handler it records
-  how long the main thread stayed busy with the work the handler queued (a
-  deferred render, layout, paint). A hidden document or a pane the shell has
-  set to `display:none` takes no sample, and a sample armed before such a hide
-  is cancelled (on `visibilitychange`, or on the `resize` that takes the
-  pane's viewport to zero).
-- A `PerformanceObserver` on `long-animation-frame` entries (Chrome 123+;
-  `longtask` where that is missing, with no attribution) records each frame
-  over 50 ms with its blocking time and the scripts the browser attributes it
-  to. The browser names the top-level callback it invoked, not the hottest
-  function, so a key is `<file>:<function>@<character position>`
-  (`feed.js:render@1200`, `feed.js:(anonymous)@48213`), and an inline page
-  script (the pane shim, whose socket callback runs for every frame) is
-  `page:<function>@<position>`. The release build keeps identifiers so a key
-  means the same thing after a rebuild; whitespace and syntax are still
-  minified.
-- Once a minute the pane posts ONE `clientDiag` row on the socket it already
-  uses for breadcrumbs, only when something happened that minute (a frame
-  arrived or a long frame was observed); the kernel appends it to
-  `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
-  and its own clock. A frame whose whole synchronous handling ran 100 ms or
-  more also posts a `slowframe` row at once, carrying the long-frame
-  attribution when the browser reports one for that frame; at most five such
-  rows a minute per pane, the rest counted in the minute row.
-- The kernel rotates `client-diag.jsonl` once it reaches 8 MB: the file
-  becomes `client-diag.jsonl.1` (replacing the previous one) and a new file
-  starts, so at most two files, about 16 MB, are kept. A minute row is about
-  1 KB, so one open dashboard writes a few MB a day.
-
-Rows carry numbers and code identifiers only, never card text, session names,
-file paths or transcript content: an element id inside an invoker name is
-stripped (`DIV#tab-web.onclick` is recorded as `DIV.onclick`), an element
-source as `[src]`, and a script URL as its basename.
-
-The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
-
-- `{"t", "wid", "surface": "perf", "what": "minute", "data": {app, since,
-  span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
-  p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
-  inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua}}`. `app` is the pane (`chat`, `feed`, `fleet`,
-  `waiting`, `timeline`); `since` is the minute's start on the browser's clock
-  (epoch ms) and `span_ms` its length (shorter than a minute when the page was
-  hidden or closed); `hist` is the 14 bucket counts; `free` is null when no
-  sample was taken; `loaf.top` is the five largest keys by summed duration,
-  `inv` the last invoker seen for each (`WebSocket.onmessage`,
-  `Window.requestAnimationFrame`, `DIV.onclick`), `src` is `loaf`, `longtask`
-  or `none`; `slow` counts the slowframe rows sent and the slow frames past
-  the cap, with the worst of those; `heap_mb` is
-  `performance.memory.usedJSHeapSize` and is absent outside Chrome; `dom` is
-  the element count; `visible` is the document's visibility, `hidden_pane`
-  the zero-viewport test the pane shim uses for a pane the shell has set to
-  `display:none`; `ua` is `chrome-desktop`, `safari-ios` or `other`.
-- `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
-  dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
-  as received on the wire and `ms` its whole synchronous handling, the
-  federation layer included.
-
-`romp perf client [--minutes <n>] [--json]` reads the file and its `.1`
-predecessor (no kernel round trip, so it works with the kernel down) and folds
-the last `<n>` minutes (default 10) per dashboard id and pane into one screen:
-the pane's total handler milliseconds per minute, then each frame type sorted
-by its share, with frames per minute, milliseconds per minute, p50/p90/p99 as
-histogram bucket upper bounds over the whole window, the maximum, and the
-share of frames over 16.7 ms and at or over 100 ms; the worst minute's
-main-thread-free p90 (each minute row's p90 is over that minute's samples, and
-the screen shows the largest, so it is not a window percentile like the handler
-columns); long frames and blocking milliseconds per minute with the worst
-entry; the top attributed keys with their invokers; the worst minute (the one
-with the most handler time: its span from the minute's start to the row's
-arrival at the kernel, frame counts and long frames); heap and DOM at the last
-sample; and the five slowest slow frames in the window with their attribution,
-plus how many more there were. An absent file or one without perf rows is
-reported as no browser telemetry yet (the bundles predate it or no dashboard
-has loaded them: rebuild the bundles and reload the dashboard); perf rows all
-older than the window are reported with their age. `--json` prints the folded
-panes, with a per-minute array (`t`, `since`, `total_ms`, `loaf_n`,
-`blocking_ms`) so a spike is visible without re-reading the file.
-
-In DevTools, `window.__rompPerf.snapshot()` in a pane's frame is the minute
-in progress in the same shape, plus a derived `p90_le` per type, `active`
-(whether it will be sent), `observer` (`loaf`, `longtask`, `none`),
-`pending_slow` (slow frames waiting for their long-frame report) and
-`free_pending` (a main-thread sample armed). A page without `performance.now`
-(the node test stand-ins) gets no telemetry and an unwrapped handler; every
-other browser API is behind a feature check, and nothing in the module throws
-into the pane.
-
 ## Where things live
 
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+The self-updater's report, `update-report.json`, is read once, by the next
+kernel boot or by the running kernel's banner poll, and archived as
+`update-report-last.json`; `update.log` beside it has the updater's full
+output. An update that landed on disk but was not restarted into (no manager,
+or a manager that did not take the restart request or did not answer it within
+60 seconds) is filed in the Log with the step that runs it: `romp refresh` when
+a manager is there, `romp up` when none is. A boot that already runs the landed
+release says so instead of asking for another restart. A report that is not a
+JSON object is moved aside, never deleted, to
+`update-report.json.corrupt-<UTC stamp>` (the same `-1`, `-2` suffix rule) with
+one Log entry under the `refused` kind; one that cannot be moved stays where it
+is and is said once per fault.
+
+Three small files there hold settings you set by hand: `session-flags.json`
+(per-session flags, the postal isolation switch among them), `session-order.json`
+(the saved tab and lane order) and `notify-cards.json` (the bell overrides). A
+change to one of them is refused, never written over an empty, when the file
+exists but cannot be read; the refusal reaches the dashboard's error center
+under the `not saved` kind, with the reason, and the same change can be tried
+again. A file whose bytes cannot be parsed (a torn write) is moved aside, never
+deleted, to `<file>.corrupt-<UTC stamp>` in the same directory (a `-1`, `-2`
+suffix when two land in the same second), the store starts over empty, and an
+entry under the same kind says so. A file that cannot be read at all keeps
+showing its last-read values until it can. Nothing here needs a restart; the
+sidecars are yours to inspect or delete.
+
+Two small ledgers there, `auto-nudge.json` (the auto-nudge switch and its
+per-goal records) and `retry-suppressed.json` (the sessions whose auto-retry
+you stopped), are moved aside rather than overwritten when their bytes do not
+parse: the file is renamed `<name>.corrupt-<UTC stamp>` beside the original
+(`-1`, `-2`, ... when a second one lands in the same second), the dashboard's
+error center says so, and the ledger reads as a fresh install until you
+restore it from that file. Nothing is deleted. Any other read fault leaves the
+file untouched: the kernel serves the last copy it read, writes nothing to it,
+and says so once, until the file reads again. A write that fails (a full or
+read-only disk) is told to the gesture that asked, the gear's toast or the
+stop button's warning, and said once per fault episode in the error center;
+the automatic pass sends nothing whose record could not land, and the file
+keeps what it holds.
 
 Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
 whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart
@@ -2501,6 +2764,19 @@ reason, or `parent-gone: the manager exited; the kernel followed it`. A second
 SIGTERM during the drain is ignored; the first writes the row. The manager's
 log says `exited without a restart request (signal or crash); respawning` when
 a kernel exits that it did not ask to stop or restart.
+
+The two host registries there, `remotes.json` (attached and checked-in
+machines, each row with that machine's serve token) and `remotes-known.json`
+(machines remembered for re-attach, with the mail tier you set for each), are
+read at boot under the rule their doors apply: a checked-in row's host must be
+a machine name, an attached row's an ssh alias, a remembered row's either. A
+row that fails (one filed before the doors applied the rule) is set aside,
+never loaded and never written back: the rows are moved to
+`<file>.refused-<UTC stamp>` beside the original (`-1`, `-2` when a second one
+lands in the same second; the `remotes.json` sidecar is 0600, since its rows
+carry tokens), the file is rewritten without them, and one stderr line plus one
+Log entry under the `refused` kind names each host as a clipped repr, never the
+raw string.
 
 ## Switches
 

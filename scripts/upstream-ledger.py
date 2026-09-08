@@ -52,8 +52,9 @@ from pathlib import Path
 REQUIRED = ("title", "status", "where", "added")
 OPTIONAL = ("pr", "tier", "offered", "closed", "supersedes")
 KEYS = REQUIRED + OPTIONAL
-# `docs` is upstream's coming rename of tests-only, accepted ahead of the rename (scripts/batch.py
-# and the fork's .github/workflows/pr-tier.yml count the same labels); the fork's PRs keep tests-only.
+# `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; the old spelling stays
+# accepted there as an alias), so an entry may record either; scripts/batch.py and the fork's
+# .github/workflows/pr-tier.yml count the same labels.
 TIERS = ("fix", "tests-only", "docs", "feature", "major-feature")
 
 # The status vocabulary. `approved` is the maintainer's word: offer it. The four terminal statuses

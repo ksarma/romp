@@ -170,6 +170,7 @@ def _rebind_state(path):
     EPIDIR = STATE / "episodes"
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
     _CHAIN_MEMO.clear()     # the write-moment chain memo keys on paths under STATESDIR; a new root is a new world
+    _STORE_FAULTS.clear()   # unreadable-store episodes belong to the old root's files
     _episode_memo.clear()   # ...and so are the episode-log reads
     _head_memo.clear()      # transcript heads are immutable per path, but a rebind swaps the whole world of paths
     _namefp_memo.clear()    # names-entry content is memoized per SID against same-second mtimes — across a
@@ -938,7 +939,13 @@ def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
              session's walk for the pass at a FAILED call — _close_session; the note names the turns left
              behind and the shape of the menu that died), "unroll-heal" (a top left the rolled-up state
              with settle rows and no done in its diary; a romp reopen row ended that settled episode so
-             the node can be judged again — _heal_settle_without_done)
+             the node can be judged again — _heal_settle_without_done), "store-quarantined" (a goals store that
+             could not be parsed was moved aside to <file>.corrupt-<stamp> and the session started fresh),
+             "store-unreadable" (a goals store that cannot be READ — EACCES, EIO — filed once per fault
+             episode by load_goals_or_fault; inside a judge pass the raise instead reaches the pass
+             wrapper's "pass-crash" row), "store-unwritable" (a goals store that read but whose publish
+             then failed under a user gesture, the save path's own strict read or the write itself; filed
+             once per fault episode by save_goals_or_fault, and the gesture is answered on its socket)
       note   the evidence — reply tail, error message, exception name, or the give-up scope + re-arm
              event. Callers must pass it; an empty note means the caller has nothing at all to show.
       goal   the node id (or list of node ids) the judge was ruling on, when one exists — the feed's
@@ -1116,8 +1123,9 @@ def pass_watermark(tier, fsid):
 #              hit path, which is the whole of the idle read). NOT the store trio (decision 7 of the round-4
 #              plan, 2026-09-07): the hit path reads no store; the miss path reads it (the seams
 #              _ready_tasks applies) and then either publishes the cache, which moves its identity (one
-#              redundant run next pass, which hits and stamps), or stands down over a fallback view, which
-#              marks the run, so a stamp always stands for a decision the unit cache froze and a store change
+#              redundant run next pass, which hits and stamps), or stands down over a store that did not
+#              read (load_goals_or_fault's row) and marks the run, so a stamp always stands for a decision the
+#              unit cache froze and a store change
 #              alone cannot change what the ungated pass would read. The miss path also reads MESSAGES, the
 #              sdk reg (_sdk_owned) and the pass clock (`now`, through em.parse_session's synthesize_idle):
 #              the same cache freezes those at write time, so the stamp adds no clock dependence the ungated
@@ -1125,7 +1133,7 @@ def pass_watermark(tier, fsid):
 #              read only after a call that ran). A session is never stamped while a body found work for it
 #              (a pending caption task, an archive refresh due; counted before the budget and fairness caps,
 #              so a deferred session stays due), and a strict reader that failed on a file that exists
-#              (captions, archive, unit cache), a failed cache publish, a fallback store on the miss path or
+#              (captions, archive, unit cache), a failed cache publish, a store fault on the miss path or
 #              a crash in either body marks it incomplete; the bit is captured per session across the two
 #              bodies and the stamp is written at pass end (_run_index).
 # Not in any signature, on purpose: MESSAGES (the parse cache key excludes it too: a delivery appends to
@@ -1134,11 +1142,13 @@ def pass_watermark(tier, fsid):
 # parse tier); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
 # run incomplete); session-flags.json (_hidden_from_feed filters run_plan's, run_close's and run_unblock's
 # session lists, and the post-pool eviction drops a hidden sid's stamps, so an unmute costs one full run;
-# the other three runners do not filter on it). A store loaded with the `_unread` mark (the file or the
-# journal exists and did not read) marks the run incomplete wherever it happens (_mark_unread), so a run
-# judged from a fallback view never stamps under the identity of files it did not read; the same holds
-# for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states file, the stall
-# records): a read that fails on a file that exists marks the run incomplete and logs a row (_read_failed).
+# the other three runners do not filter on it). A store file that exists and does not read RAISES out of
+# load_goals (never a fallback store): _gated counts the run incomplete and the runner files the pass-crash
+# row, so a run never stamps under the identity of a store it did not read; a store loaded without its
+# override journal carries the `_unread` mark and marks the run incomplete where it happens (_mark_unread);
+# and the same holds for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states
+# file, the stall records): a read that fails on a file that exists marks the run incomplete and logs a row
+# (_read_failed).
 GATED_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill",   # run_triage's order,
                "index")                                 # then the index tier (run_index, beside run_triage)
 PARSE_TIERS = ("plan", "close", "unblock", "courier", "index")   # the tiers whose decision path reads the parse:
@@ -1190,8 +1200,10 @@ _UNREADABLE_LOCK = threading.Lock()
 def _read_failed(path_s, err, fsid, exc, note=None, mark=True):
     """A file the signature stat'd (or reads by value) could not be READ by the stage: mark the running
     stage incomplete and log one judge-errors row (`note` names the consequence when the default, written
-    for the side files, does not fit: a goals store's readers stand down rather than judge without it). An absent file is a real state (_ident's None, the
-    scans' FileNotFoundError) and is never this; every other failure (a permission bit, EMFILE, EIO, an
+    for the side files, does not fit: the cleared-card archive's readers stand down rather than archive or
+    restore without it). The live goal store is not read through this: a store file that does not read
+    raises out of load_goals, and load_goals_or_fault files its row. An absent file is a real state (_ident's
+    None, the scans' FileNotFoundError) and is never this; every other failure (a permission bit, EMFILE, EIO, an
     unparseable document) means the stage decided WITHOUT an input the signature says it saw, and a stamp
     would skip the session until that file moved, which a permission or descriptor failure never does
     (review finding, 2026-09-07; before the memos the same hole stood on main for the planner's and
@@ -1244,21 +1256,6 @@ def _write_ok(path_s):
     """A publish of `path_s` landed: the next failure is a new episode and logs again."""
     with _UNREADABLE_LOCK:
         _UNWRITABLE_LOGGED.discard(path_s)
-
-
-_STORE_UNREADABLE_NOTE = ("goals store unreadable: %r — every judge stage and the courier stand down on this session "
-                          "and nothing is published for it until the file reads; the kernel warns the app once per "
-                          "episode and GET /perf counts it (goals.unreadable_stores)")
-
-
-def unreadable_store_sids():
-    """The sids whose goals file is in a read-failure episode: load_goals or load_goals_shared found it
-    unreadable or unparseable and no read of it has succeeded since (_read_failed / _read_ok). The one
-    judge-errors row per episode carries no goal, so no card can hold it; the kernel's once-per-episode warn
-    to the app and the /perf gauge (goal_io_stats' `unreadable_stores`) read this instead."""
-    prefix = str(GOALDIR) + os.sep
-    with _UNREADABLE_LOCK:
-        return sorted(p[len(prefix):-5] for p in _UNREADABLE_LOGGED if p.startswith(prefix) and p.endswith(".json"))
 
 
 def _reg_spawned_at(fsid):
@@ -1628,12 +1625,47 @@ def _work_key():
 
 
 def _work_key_configured():
+    """Whether a key source is configured, for _judge_auth's default (an unpicked session bills the key when
+    one is configured). The same order as _key_source_unconfigured below, so the two predicates agree in
+    command mode (the 2026-09-08 fold, round 2): the command source's set FIRST when it carries the key (the
+    kernel's cached read, nothing retrieved), because the kernel's configured wire reads the FILE source's
+    descriptor, which on a command-mode box with no key line says "no source" while the launch injects the
+    set's key; an unpicked session's judge then billed the login beside a session billing the key, the
+    wrong-account failure _judge_auth exists to prevent."""
+    if _ENV_SET_FN is not None and _env_set().get("ANTHROPIC_API_KEY"):
+        return True
     if _WORK_KEY_CONFIGURED_FN is not None:
         return bool(_WORK_KEY_CONFIGURED_FN())
     # Compatibility for standalone callers wiring only the original callback.
     if _WORK_KEY_FN is not None:
         return bool(_work_key())
     return _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").configured
+
+
+def _key_source_unconfigured():
+    """True only when the selected key source is KNOWN to be unconfigured without retrieving anything: the
+    command source's set when it carries the key (kernel/envsource.py; the set is the kernel's cached read,
+    already merged into every child env by _judge_env, so consulting it here retrieves nothing new); else
+    the kernel's configured wire when it is up; a standalone caller wiring the key callback alone leaves the
+    verdict to the retrieval (as before); no wire at all reads the source descriptor. Never _work_key():
+    a resolve here would run outside the per-pass gate.
+
+    The set is consulted FIRST (the 2026-09-08 fold of upstream's no-source rule): the kernel's configured
+    wire reads the FILE source's descriptor, which on a command-mode box with no key line answers "no
+    source", and a key-billed call would then run keyless on the CLI's own credential with the set's key
+    ignored. A set carrying the key is a configured source, so the call takes the keyed path below and the
+    key reaches the child through the work-key wire alone (one door: _judge_env pops it from the overlay).
+    A set WITHOUT the key is not a source, the same verdict the backend gives it."""
+    if _ENV_SET_FN is not None and _env_set().get("ANTHROPIC_API_KEY"):
+        return False
+    if _WORK_KEY_CONFIGURED_FN is not None:
+        return not _WORK_KEY_CONFIGURED_FN()
+    if _WORK_KEY_FN is not None:
+        return False
+    return not _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").configured
+
+
+_UNKEYED_SAID = set()   # the key-billed-calls-run-on-the-CLI's-own-credential line: said once per process
 
 
 def _login_auth_env():
@@ -1930,6 +1962,22 @@ def _judge_env(tier, auth="login", model=None):
         # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
         env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key":
+        # No source configured at all (a supervised box whose env file carries no key line: the session's
+        # `key` pick outlived the line) is decided BEFORE any retrieval, so a retrieval FAILURE keeps its own
+        # gated path below. The child then runs on Claude Code's own credential — its apiKeyHelper or its
+        # login — the shape every judge had before #932's hard error, which logged err=auth on every pass
+        # and took a board down (the maintainer's direction, 2026-09-07: given no key, romp defers to
+        # Claude Code's default); said once per process. The login tokens ride along exactly as for a
+        # login call (the session half restores them the same way): before #932 the child simply
+        # inherited the manager's, and a box whose login lives in those tokens would otherwise hand the
+        # judge no credential at all and floor its cards with an auth-down mark.
+        if _key_source_unconfigured():
+            env.update(_login_auth_env())
+            if not _UNKEYED_SAID:
+                _UNKEYED_SAID.add(True)
+                sys.stderr.write("romp-judge: key-billed judge calls run on Claude Code's own credential — "
+                                 "romp holds no key source\n")
+            return env
         wk = _resolve_work_key_gated()               # resolve only at the call boundary — once per pass on failure
         if not wk:
             raise _keysrc.KeySourceError("No API key source is configured for this judge call")
@@ -1964,7 +2012,7 @@ def _resolve_work_key_gated():
         # would spawn `op` and wait out its own timeout. The first to arrive retrieves; the others wait for
         # its verdict — then raise the remembered failure, or retrieve for themselves (no value is shared).
         while _KEY_INFLIGHT[0] == key:
-            _KEY_GATE_CV.wait(timeout=_keysrc.OP_TIMEOUT + 1)
+            _KEY_GATE_CV.wait(timeout=_keysrc.KEY_CMD_TIMEOUT + 1)
         if _KEY_GATE["fp"] == fp and _KEY_GATE["gen"] == gen:
             raise _keysrc.KeySourceError(_KEY_GATE["note"] or "API credential retrieval failed earlier in this pass")
         first = _KEY_INFLIGHT[0] is None
@@ -3168,12 +3216,13 @@ def tasks_for(fsid, leaf, files, now):
     if hit is not None:
         return hit
     session = parsed_session(fsid, files, now)
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        # the goals file exists and did not read (load_goals logged the row and marked the stage): the seams
-        # _ready_tasks applies are the store's, so a task list built over the empty fallback is not the
-        # session's; stand down, as every stage does on this view, and memoize nothing, so the next pass
-        # reads the store again instead of serving a cache made without it until the transcript moves
+    store, fault = load_goals_or_fault(fsid)
+    if fault is not None:
+        # its row is filed (store-unreadable, once per episode): this session captions nothing this pass and
+        # the other sessions' captions proceed. The run is marked incomplete: the seams _ready_tasks applies
+        # are the store's, so a task list built without it is not the session's, and a stamp would skip the
+        # session until its files moved, which an EACCES or an EIO never makes them do (the index tier's gate)
+        _judge_ctx.stage_incomplete = True
         return []
     tasks = []
     for t in _ready_tasks(session, store):
@@ -3880,8 +3929,9 @@ def _goal_io_bump(key, n=1):
 def goal_io_stats():
     """A copy of the goal-store I/O counters: load_goals calls (`loads`), load_goals_shared calls the
     shared cache answered — a hit, or a version parsed there (`loads_shared`; the calls it hands to
-    load_goals — no store file, an unreadable journal, the cache off — count under `loads`, so loads +
-    loads_shared is every store read), save_goals calls (`saves`), and the saves that wrote a file
+    load_goals — no store file, an unreadable journal, bytes that do not parse (quarantined there), the cache
+    off — count under `loads`, so loads + loads_shared is every store read), save_goals calls (`saves`), and
+    the saves that wrote a file
     (`writes`; save_goals skips a byte-identical republish), the milliseconds save_goals spent serializing
     a held store for that no-op check (`noop_hash_ms`: the cost a conditional tail save would remove, so
     that item is judged from a measurement), plus two memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
@@ -3899,53 +3949,119 @@ def goal_io_stats():
     module; readers get a copy."""
     with _GOAL_IO_LOCK:
         out = dict(_GOAL_IO)
-    out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
+    out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the store-fault episodes standing now
     return out
 
 
-def _fresh_store(fsid, unread=None):
-    """The store a session has before its first publish (no file, or one that does not parse). Born at the
-    current identity version — only stores with history recorded under an OLDER derivation are ever sealed
-    (see _migrate_placements). Carries _baseRev 0: a writer that CREATES the file still trips the CAS.
-    `unread`: the reason for the transient `_unread` mark (see _mark_unread): "store" when the file EXISTS
-    and could not be read or parsed, so this store is a fallback, not the file's content, and save_goals
-    refuses to publish it. None for an absent file: the empty store IS its content, it is not marked, and a
-    first mint saves as ever."""
+def _quarantine_store(path, reason, st):
+    """Move an unparseable store file ASIDE (never delete it) so the evidence survives the fresh start
+    that follows. The sidecar keeps the original name plus `.corrupt-<utc stamp>`, so the `*.json` globs
+    that enumerate live stores (the kernel's compaction sweep and pre-pass feed snapshot, the propagate
+    sweep's sender walk) never pick it up; the kernel's store fingerprint scandirs the whole directory and
+    does see it, which is harmless (the store did change). Loud on both channels the repo uses: one stderr
+    line for the kernel log, one judge-errors row for `romp judges` and the feed's debug join. Bounded by
+    construction: the next read of the path is a plain ENOENT, so a quarantine fires once per corrupt
+    file, never once per pass.
+
+    No file lock (this codebase takes none), so the rename shares save_goals' vanishingly small window
+    with a concurrent writer that republishes the path between our read and our rename. `st` is the stat
+    the caller took BEFORE the read whose bytes failed: the file is re-stat'ed here and moved only while
+    it is still that very file (same inode, mtime and size). A different file at the path is a peer's
+    atomic publish since our read, and moving it would quarantine their VALID store and start the session
+    fresh over it; a path that vanished was already handled by a peer. Either way nothing of ours is left
+    to move: None, no row, and the caller reads what is there now (review find, 2026-09-08; the same
+    identity check the ledger quarantine wears)."""
+    try:
+        cur = path.stat()
+    except FileNotFoundError:
+        return None
+    if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    aside, n = path.with_name("%s.corrupt-%s" % (path.name, stamp)), 0
+    while aside.exists():                            # a second corrupt file in the same second
+        n += 1
+        aside = path.with_name("%s.corrupt-%s-%d" % (path.name, stamp, n))
+    try:
+        os.replace(path, aside)
+    except FileNotFoundError:
+        return None
+    note = "goals store %s could not be parsed (%s); moved aside to %s, the session starts fresh" % (
+        path, reason, aside.name)
+    sys.stderr.write("romp-judge: %s\n" % note)
+    _log_judge_error("romp", path.stem, "store-quarantined", note=note)
+    return aside
+
+
+def _read_store_json(path, *, quarantine=False, _tries=3):
+    """The parsed JSON object at `path`, or None when the file is ABSENT (a session with no store yet).
+
+    Every other failure is a fact about the file the caller must not paper over: a read FAULT (EIO,
+    EACCES, a directory where the file should be) RAISES, always. Unparseable content (a torn write,
+    bytes that are not UTF-8, JSON whose top level is not an object) is quarantined aside and read as
+    None when `quarantine` is set (load_goals: a fresh store is legitimate ONLY once the bad bytes are
+    preserved), and raises otherwise (the save path: a writer that cannot read the file it is about to
+    replace publishes nothing). Before this, all of those read as "no file" and the CAS in save_goals
+    then found base 0 == disk 0 and published an EMPTY store over the user's goals.
+
+    A raised fault is surfaced by whoever owns the pass: every judge pass wrapper files a `pass-crash`
+    judge-errors row for that session and moves on to the next, so the fault is logged once per pass
+    rather than once here AND once there.
+
+    The stat comes BEFORE the read, so the quarantine can tell whether the file it is about to move is
+    still the one whose bytes failed (see _quarantine_store); when it is not, a peer published meanwhile
+    and THEIR bytes get their own read, bounded by `_tries` (review find, 2026-09-08)."""
+    try:
+        st = path.stat()
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except UnicodeError as e:
+        bad, reason = e, "not UTF-8: %s" % e
+    else:
+        try:
+            value = json.loads(raw)
+        except ValueError as e:                      # json.JSONDecodeError is a ValueError
+            bad, reason = e, "invalid JSON: %s" % e
+        else:
+            if isinstance(value, dict):
+                return value
+            reason = "top-level JSON value is %s, not an object" % type(value).__name__
+            bad = ValueError("%s: %s" % (path, reason))
+    if not quarantine:
+        raise bad
+    if _quarantine_store(path, reason, st) is not None or _tries <= 1:
+        return None                                  # the bad bytes are preserved aside: a fresh store is legitimate
+    return _read_store_json(path, quarantine=True, _tries=_tries - 1)   # declined: the file changed under us
+
+
+def _fresh_store(fsid):
+    """The store a session has before its first publish: no file at the path (or the unparseable one that was
+    there was just moved aside by _read_store_json). Born at the current identity version: only stores with
+    history recorded under an OLDER derivation are ever sealed (see _migrate_placements). Carries _baseRev 0:
+    a writer that CREATES the file still trips the CAS. Never marked: the empty store IS what disk holds."""
     store = {"rompUuid": fsid, "seq": 0, "nodes": {}, "placements": {}, "status": {},
              "placementsV": PLACEMENTS_V}
     store["_baseRev"] = 0
-    if unread:
-        _mark_unread(store, unread)
     return store
 
 
 def _mark_unread(store, reason):
-    """The store is NOT what its files say (see load_goals): mark it with the reason, and mark the running
-    stage incomplete. `reason` is "store" (the goals file exists and did not read or parse: the store is an
-    empty fallback, and save_goals refuses to publish it over the file, see UnreadStoreError) or "journal"
-    (the file parsed; the override journal exists and did not read: the content is the file's, the user's
-    gestures are missing from the rollup until the journal reads, and a publish loses nothing durable because
-    the journal replays on every load, so save_goals allows it). Every reader tests the mark's truth; the
-    reason is for save_goals and the stages' stand-down (_fallback_store).
+    """The store is NOT what its files say: mark it with the reason, and mark the running stage incomplete.
+    `reason` is "journal" (the store file parsed; its override journal exists and did not read, so the user's
+    gestures are missing from the rollup until the journal reads; _replay_overrides sets it). A publish of
+    such a store loses nothing durable, because the journal replays on every load, so save_goals allows it
+    and pops the mark; readers that cache a load's answer by the files' identity (the kernel's awaiting-lift
+    gate, _absent_store_flags, load_goals_shared's fill) consult the mark and cache nothing. A store FILE
+    that cannot be read is not a mark: load_goals raises (load_goals_or_fault is the per-session boundary
+    that files the row), and unparseable bytes are quarantined aside before the fresh store is handed out.
     The evidence gate stamps a complete run under the identity of the files the stage read; a run judged
-    from a fallback view would stamp that identity without having read those files, and nothing on disk
-    need change before the next read succeeds (an EMFILE, an EIO), so the per-load judge-errors row and the
-    retry would become once per boot per tier. The mark keeps both (review finding, 2026-09-07). Thread-
-    local, so a loader on the pusher thread marks nothing a stage reads."""
+    without the journal's rows would stamp that identity without having read them, and nothing on disk
+    need change before the next read succeeds (an EMFILE, an EIO), so the row and the retry would become
+    once per boot per tier. The mark keeps both (review finding, 2026-09-07). Thread-local, so a loader on
+    the pusher thread marks nothing a stage reads."""
     store["_unread"] = reason
     _judge_ctx.stage_incomplete = True
-
-
-def _fallback_store(store):
-    """True when `store` loaded as a fallback for a goals file that exists and did not read or parse
-    (`_unread` == "store"). A stage that finds this stands down for the pass: nothing in the store is the
-    session's, so nothing can be decided from it, and save_goals would refuse the publish; standing down at
-    the load spares the model calls the planner or the courier would otherwise make over the empty view
-    (review of the P2 gate, 2026-09-07: the planner re-minted the whole tree into the fallback and published
-    it over the file). load_goals logged the row (store-unreadable) and marked the stage incomplete, so the
-    gate never stamps a stand-down and the session stays due until the file reads. A store whose JOURNAL did
-    not read is not this (see _mark_unread)."""
-    return store.get("_unread") == "store"
 
 
 def _finish_load(fsid, store, lines=None):
@@ -3969,64 +4085,140 @@ def load_goals(fsid):
     callers on the pusher thread take load_goals_shared instead (one parse per file version, shared).
 
     The session's goal store: the file parsed, the override journal replayed onto it, and two TRANSIENT
-    keys that are never serialized (save_goals pops both; _store_content leaves both out of the content
-    hash): `_baseRev`, the revision read, for save_goals' CAS; and `_unread`, set only when the store
-    returned is NOT a faithful view of disk — the store file exists but could not be read or parsed (this
-    function's fallback), or the journal exists but could not be read (_replay_overrides' OSError path). An
-    ABSENT store file is not marked: the fresh empty store IS what disk holds. Readers that cache a load's
-    answer by the files' identity consult the mark before caching: the kernel's awaiting-lift gate
-    (_lift_seen, keyed by _sid_inputs_fp), the absent-store predicate memo (_absent_store_flags), and
-    load_goals_shared's fill,
-    which never publishes a marked store as the files' content."""
+    keys that are never serialized (save_goals pops both; _store_content keeps both out of the content hash):
+    `_baseRev`, the revision read, for save_goals' CAS; and `_unread` ("journal"), set by _replay_overrides
+    when the journal exists and could not be read. A store file that cannot be read RAISES, never an empty
+    store (load_goals_or_fault is the per-session boundary that catches it; inside a judge pass the raise
+    reaches the runner's pass-crash row and _gated counts the run incomplete); an unparseable one is moved
+    aside by _read_store_json and the fresh store is the legitimate answer; an ABSENT file is the fresh
+    store, unmarked (empty IS its content)."""
     _goal_io_bump("loads")
-    path = GOALDIR / (fsid + ".json")
+    raw = _read_store_json(GOALDIR / (fsid + ".json"), quarantine=True)
+    if raw is None:
+        return _fresh_store(fsid)
+    return _finish_load(fsid, _guard_nodes(raw))
+
+
+_STORE_FAULTS = {}                       # fsid -> the fault text of its CURRENT unreadable episode (load_goals_or_fault)
+_STORE_FAULTS_LOCK = threading.Lock()
+
+
+def load_goals_or_fault(fsid):
+    """The per-session BOUNDARY for every hot path that reads a goal store: `(store, None)` on a read,
+    `(None, exc)` when the file cannot be read. load_goals itself stays strict (a read fault RAISES, never an
+    empty store); this is where that raise is caught, filed, and CONTAINED to the one session it is about.
+    Before it, the feed and timeline builders, the chat ledger, the kernel's ticks and sweeps and the index
+    tier all reached load_goals with no per-session catch, so one session's EACCES/EIO/directory-at-the-path
+    aborted the whole build or pass for EVERY session: the pusher logged one line and sent nothing to any
+    client, every cycle, for as long as the fault lasted. One session's fault must be loud for that session
+    and invisible to the others.
+
+    Loud ONCE PER FAULT EPISODE, on the surface every per-session failure already reaches (`romp judges`,
+    the feed's debug join): the first fault files a `store-unreadable` judge-errors row for the sid; an
+    identical repeat files nothing (a persistent fault would otherwise add a row per build); a fault with
+    DIFFERENT text is a new episode and files again; a successful read of that sid ENDS the episode (the
+    event, not a timer), so a later fault files afresh.
+
+    NEVER hands back an empty store: a caller that gets `(None, exc)` skips that session's goal-derived
+    work for this build or pass, and writes nothing."""
+    return _or_fault(fsid, load_goals)
+
+
+def load_goals_shared_or_fault(fsid):
+    """load_goals_or_fault for the pusher's read-only sites: the same boundary (one `store-unreadable` row per
+    fault episode, `(None, exc)` on a fault, never an empty store) around load_goals_shared, so the builders
+    that share one parsed store per file version keep the per-session containment. A read fault raises out
+    of load_goals_shared exactly as it does out of load_goals, and the cache keeps nothing for it."""
+    return _or_fault(fsid, load_goals_shared)
+
+
+def _or_fault(fsid, loader):
+    """load_goals_or_fault's boundary around any reader of `fsid`'s store: `loader(fsid)` is load_goals
+    itself there, load_goals_shared for the pusher's read-only sites, and a pass's shared per-store read
+    elsewhere (run_propagate's _peek, so a recipient read through the boundary is still the one read that
+    pass takes of the store). Same episode table, same `store-unreadable` row once per fault episode, same
+    `(store, None)` / `(None, exc)` answer."""
     try:
-        store = _guard_nodes(json.loads(path.read_text()))
-    except FileNotFoundError:
-        return _fresh_store(fsid)                      # no file: the empty store IS its content
-    except Exception as e:
-        # the file EXISTS and could not be read or parsed: a fallback, not the file's content, and marked
-        # so — a reader that caches "what the file holds" by its identity must not cache this answer (the
-        # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06), no
-        # writer publishes it (save_goals refuses), and one judge-errors row per failure episode says so
-        _read_failed(str(path), "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))
-        return _fresh_store(fsid, unread="store")
-    _read_ok(str(path))
-    return _finish_load(fsid, store)
+        store = loader(fsid)
+    except OSError as e:
+        _file_store_fault(fsid, e, "store-unreadable",
+                          "goals store cannot be read; this session's goal-derived work is skipped until it "
+                          "reads again")
+        return None, e
+    _end_store_fault(fsid)                           # a successful read ends the episode
+    return store, None
+
+
+def save_goals_or_fault(fsid, store):
+    """save_goals behind the same per-session boundary, for a USER GESTURE's write: None when the publish
+    landed (or was a no-op), the exception when it did not. The save path reads the file strictly
+    (_matches_disk, _disk_rev, _rebase_onto_disk: a fault or a corrupt file raises so nothing is published
+    over bytes we could not read), and the write itself can fail (a full disk, a directory gone read-only).
+    Either way the gesture's flag did not land and the caller answers the user; left to raise, an OSError
+    out of a WS gesture handler reached the receive loop's catch, which re-raises it to the outer handler,
+    where it is swallowed and the CLIENT DROPPED (`finally: client["alive"] = False`), so the dashboard
+    disconnected without a word (review find, 2026-09-08). Filed once per fault episode as
+    `store-unwritable`, on the same per-sid episode table as the load boundary (the same EACCES met at the
+    load and then at the save is one episode, not two rows); a successful publish ends the episode."""
+    try:
+        save_goals(fsid, store)
+    except (OSError, ValueError) as e:               # UnicodeError is a ValueError; a corrupt file at the save raises one
+        _file_store_fault(fsid, e, "store-unwritable",
+                          "goals store could not be published (the save's own read of the file, or the write "
+                          "itself, failed); the gesture that asked for it was refused and answered")
+        return e
+    _end_store_fault(fsid)
+    return None
+
+
+def _file_store_fault(fsid, e, kind, what):
+    """One judge-errors row per fault EPISODE for `fsid` (see load_goals_or_fault): the first fault with this
+    text files, an identical repeat files nothing, a different text is a new episode."""
+    text = "%s: %s" % (type(e).__name__, e)
+    with _STORE_FAULTS_LOCK:
+        repeat = _STORE_FAULTS.get(fsid) == text
+        _STORE_FAULTS[fsid] = text
+    if not repeat:
+        _log_judge_error("romp", fsid, kind, note="%s: %s" % (what, text))
+
+
+def _end_store_fault(fsid):
+    with _STORE_FAULTS_LOCK:
+        _STORE_FAULTS.pop(fsid, None)
+
+
+def unreadable_store_sids():
+    """The sids in a store-fault episode: load_goals_or_fault or save_goals_or_fault filed a fault for them
+    and no read or publish through the boundary has succeeded since (_file_store_fault / _end_store_fault).
+    The one judge-errors row per episode carries no goal, so no card can hold it; the kernel's once-per-
+    episode warn to the app and the /perf gauge (goal_io_stats' `unreadable_stores`) read this instead. A
+    fault a judge pass meets raises to the runner's pass-crash row and is listed here only once a boundary
+    read meets it (the feed and timeline builders read every live store each cycle, so a standing fault is
+    listed within one)."""
+    with _STORE_FAULTS_LOCK:
+        return sorted(_STORE_FAULTS)
 
 
 def _disk_rev(fsid):
-    """The revision the file holds NOW, from a fresh read: 0 when absent (a create's base), None when the file
-    exists and cannot be read or parsed (save_goals' CAS refuses rather than take that for a create: both
-    answered 0 until 2026-09-07, and a fallback store's base 0 matched the unparseable file). save_goals' CAS
-    compares its base against this, and the answer must be the file's, never the memo's: the memo's identity
-    can, in one rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check
-    can afford that (it skips a publish of content the file once held); the CAS cannot. Served from the memo,
-    it passed a writer with a stale base and let it write over the events published since (found in review
-    2026-09-06). Reads through _disk_read, so a test can count the read."""
+    """The revision the file holds NOW (0 only when ABSENT), from a fresh read. save_goals' CAS compares its
+    base against this, and the answer must be the file's, never the memo's: the memo's identity can, in one
+    rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check can afford
+    that (it skips a publish of content the file once held); the CAS cannot. Served from the memo, it passed
+    a writer with a stale base and let it write over the events published since (found in review
+    2026-09-06). A read fault or unparseable file RAISES, the rule every reader on the save path follows
+    (_read_store_json): read as 0 it matched a fresh store's base of 0, and save_goals then published that
+    empty store over a file it never managed to read. Reads through _disk_read, so a test can count the
+    read."""
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
         fd = os.open(path_s, os.O_RDONLY)
     except FileNotFoundError:
         return 0                                     # absent: a create's base
-    except OSError:
-        return None                                  # exists and cannot be opened: the CAS refuses (save_goals)
     try:
         data = _disk_read(fd, path_s)
-    except OSError:
-        return None
     finally:
         os.close(fd)
-    try:
-        doc = json.loads(data)
-    except Exception:
-        return None                                  # exists and does not parse
-    if not isinstance(doc, dict):
-        return None                                  # exists and is not a store document (a list, a null)
-    try:
-        return int(doc.get("rev") or 0)              # a store without a rev is an old one at 0, not a create
-    except (TypeError, ValueError):
-        return None
+    return int(_disk_parse(path_s, data).get("rev") or 0)   # a store without a rev is an old one at 0
 
 
 def _rebase_onto_disk(fsid, store):
@@ -4041,11 +4233,11 @@ def _rebase_onto_disk(fsid, store):
 
     Verdict identity is (ev_t, src, kind) — the same triple _replay_overrides dedups a re-recorded block
     on — so a replayed/duplicated event folds instead of doubling."""
-    try:
-        disk = _guard_nodes(json.loads((GOALDIR / (fsid + ".json")).read_text()))
-    except Exception:
-        return                                       # nothing readable to rebase onto → publish as-is
-    d_nodes, m_nodes = disk.get("nodes") or {}, store.get("nodes") or {}
+    raw = _read_store_json(GOALDIR / (fsid + ".json"))
+    if raw is None:
+        return                                       # no published store to rebase onto → publish as-is
+    disk = _guard_nodes(raw)                         # (a fault or unparseable file raises: never rebase
+    d_nodes, m_nodes = disk.get("nodes") or {}, store.get("nodes") or {}    #  past what we could not read)
     # MERGE TOMBSTONES (2026-08-13): presence-in-a-snapshot is not truth — a stale pre-merge writer
     # publishing across a grouper merge used to RESURRECT the merged-away node (its id absent from the
     # newer side, so the adopt-wholesale branch below re-minted it), and the twin then held a duplicate
@@ -4502,16 +4694,38 @@ def _disk_ident(fd):
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
+def _disk_parse(path_s, data):
+    """The store object in `data`, the bytes _disk_read returned for the file at `path_s`. Anything else
+    RAISES ValueError naming the file (not UTF-8, not JSON, a top-level value that is not an object): the
+    save path's readers never quarantine (that is load_goals' job, once the evidence is preserved) and never
+    answer a corrupt file with the absent-file value, so the publish that asked does not happen. The same
+    rule _read_store_json applies to the save path, for the descriptor readers."""
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except UnicodeError as e:
+        raise ValueError("%s: not UTF-8: %s" % (path_s, e)) from e
+    except ValueError as e:                          # json.JSONDecodeError is a ValueError
+        raise ValueError("%s: invalid JSON: %s" % (path_s, e)) from e
+    if not isinstance(value, dict):
+        raise ValueError("%s: top-level JSON value is %s, not an object" % (path_s, type(value).__name__))
+    return value
+
+
 def _disk_entry(fsid):
     """The published store's ((ino, mtime_ns, size), content hash): from the memo when the file's identity
-    still matches, else from one read and parse. None when the file is absent or unreadable; the entry is
-    dropped then, and the caller publishes as it always did."""
+    still matches, else from one read and parse. None only when the file is ABSENT (a create); a read fault
+    (the open, the stat or the read) raises the OSError and unparseable bytes raise ValueError, exactly as
+    _read_store_json does for the save path, and either DROPS the entry: nothing is remembered about a file
+    that could not be read, and the caller publishes nothing over it."""
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
         fd = os.open(path_s, os.O_RDONLY)
-    except OSError:
+    except FileNotFoundError:
         _disk_forget(path_s)
         return None
+    except OSError:
+        _disk_forget(path_s)
+        raise
     try:
         ident = _disk_ident(fd)
         with _DISK_CONTENT_LOCK:
@@ -4522,15 +4736,15 @@ def _disk_entry(fsid):
         data = _disk_read(fd, path_s)
     except OSError:
         _disk_forget(path_s)
-        return None
+        raise
     finally:
         os.close(fd)
     _goal_io_bump("disk_misses")
     try:
-        canon = _store_content(json.loads(data))
-    except Exception:
-        _disk_forget(path_s)                         # not a store: no fact to remember
-        return None
+        canon = _store_content(_disk_parse(path_s, data))
+    except (TypeError, ValueError):
+        _disk_forget(path_s)                         # not a store: no fact to remember, and no publish over it
+        raise
     ent = (ident, _content_hash(canon))
     with _DISK_CONTENT_LOCK:
         _DISK_CONTENT[path_s] = ent
@@ -4563,13 +4777,17 @@ def _disk_memo_evict_absent():
 
 def _matches_disk(fsid, store, mine=None):
     """True when publishing `store` would write back exactly what the file already holds (see save_goals).
-    Anything unreadable, absent or unserializable answers False, so the real write still happens and still
-    raises on its own terms — a no-op check must never swallow a publish it merely failed to understand.
-    `mine` is the store's own content hash when the caller already has it (save_goals reuses it to seed
-    the memo after its write)."""
+    An absent file answers False (a create), and an unserializable `store` answers False so the real write
+    still raises on its own terms — a no-op check must never swallow a publish it merely failed to
+    understand. A file that cannot be READ raises instead: answering False there let the publish go ahead
+    over the very bytes it failed to compare against. The disk side comes from _disk_entry: the memo while
+    the file's identity still matches (no read, so a fault the file develops meanwhile is not seen here,
+    and the answer is still safe: a match publishes nothing), else one read that raises as above. `mine` is
+    the store's own content hash when the caller already has it (save_goals reuses it to seed the memo
+    after its write)."""
     ent = _disk_entry(fsid)
     if ent is None:
-        return False                                 # no file yet (a create), or unreadable → publish
+        return False                                 # no file yet (a create) → publish
     if mine is None:
         mine = _own_hash(store)
     return mine is not None and ent[1] == mine
@@ -4619,8 +4837,7 @@ def _matches_disk(fsid, store, mine=None):
 # kernel's compaction sweep evicts absent paths (_shared_evict_absent). Two fills of one path race
 # harmlessly: the second checks under the lock for an entry with its exact keys and bytes and returns
 # that object, so concurrent readers of one file version receive one object.
-_SHARED = {}                                     # store path → (keys, store bytes, frozen store | _SHARED_BAD)
-_SHARED_BAD = object()                           # a file version that did not parse: served as the fresh store, parsed once
+_SHARED = {}                                     # store path → (keys, store bytes, frozen store)
 _SHARED_LOCK = threading.Lock()
 _SHARED_OFF = [False]                            # a write attempt on a shared object switches the cache off (see _shared_poison)
 _SHARED_STATS = {"hit": 0, "miss": 0, "compare_miss": 0, "refuse": 0, "dup": 0, "absent": 0, "corrupt": 0,
@@ -4632,11 +4849,16 @@ class FrozenStoreError(TypeError):
 
 
 class UnreadStoreError(RuntimeError):
-    """save_goals refused to publish over a goals file that exists and did not read or parse: the store in
-    hand loaded as a fallback for it (load_goals' `_unread` == "store"), or the CAS found the file unreadable
-    at publish time (_disk_rev None). The file is left as it is and a judge-errors row (unread-store-save) is
-    already written; callers tolerate the raise as they tolerate FrozenStoreError (the tick jobs' except
-    wrappers, _gated's incomplete count and the runner's pass-crash row)."""
+    """save_goal_archive refused to publish over a cleared-card archive that exists and did not read or parse:
+    the archive in hand loaded as a fallback for it (load_goal_archive's `_unread` == "archive"). The file is
+    left as it is and a judge-errors row (unread-store-save) is already written. judge.py's own archivers
+    (archive_goal_nodes) reach the raise, and their callers tolerate it as they tolerate FrozenStoreError (the
+    tick jobs' except wrappers, _gated's incomplete count and the runner's pass-crash row); the kernel's
+    compaction sweep and undo-clear read the mark before they would save and stand down without raising (the
+    undo skips that session and answers the gesture with what it could not restore). The live goal store has
+    no such mark: a store file that cannot be read RAISES out of load_goals and out of save_goals' own strict
+    readers (OSError, or ValueError for bytes that do not parse), and load_goals_or_fault / save_goals_or_fault
+    are the per-session boundary for those."""
 
 
 def _shared_bump(key, n=1):
@@ -4900,8 +5122,9 @@ def shared_store_stats():
     """The cache's counters plus its occupancy, for /perf (memos.goals_shared). hit: identity and bytes
     matched. miss: no entry, or its keys moved. compare_miss: identity matched and the bytes did not.
     refuse: a fill not published because the archive moved under it. dup: a fill discarded for a
-    concurrent fill's identical entry. absent: no store file. corrupt: a version that did not parse.
-    unreadable_journal: served uncached from load_goals. evict: entries dropped for gone files. fallback:
+    concurrent fill's identical entry. absent: no store file. corrupt: bytes that did not parse, handed to
+    load_goals for the quarantine (nothing cached). unreadable_journal: served uncached from load_goals.
+    evict: entries dropped for gone files. fallback:
     calls served by load_goals because the cache is off. poisoned: write attempts on a shared object (the
     first switched the cache off). Gauges: entries, bytes (the raw store bytes held for the compare), off."""
     with _SHARED_LOCK:
@@ -4926,12 +5149,14 @@ def load_goals_shared(fsid):
     save_goals (refused). A writer, and anything that calls rollup_status or record_verdict on the object,
     stays on load_goals.
 
-    No store file: load_goals' fresh store (private, mutable; nothing to share). Unreadable journal: not
-    memoized; load_goals' own result, so its judge-errors row keeps logging until the journal reads. A store
-    that does not parse: load_goals' fresh store, `_unread`-marked as load_goals marks it, with the failed
-    parse remembered under that version's identity and bytes so it runs once per version (a stderr line
-    each time it does). A store carrying `_unread` is never published: a fallback view is not the disk's
-    content."""
+    No store file: load_goals' fresh store (private, mutable; nothing to share). A store file that cannot be
+    read: the OSError RAISES, exactly as load_goals raises it, and nothing is cached for the path; the
+    pusher's builders call this through load_goals_shared_or_fault, the per-session boundary that files one
+    store-unreadable row per fault episode. Unreadable journal: not memoized; load_goals' own result, so its
+    judge-errors row keeps logging until the journal reads. Bytes that do not parse: handed to load_goals,
+    which moves the file aside (a stderr line and a store-quarantined row, once: the path then reads as
+    absent) and answers the legitimate fresh store; nothing is cached for it. A store carrying `_unread` is
+    never published: a view missing the journal's rows is not the files' content."""
     if _SHARED_OFF[0]:
         _shared_bump("fallback")
         return load_goals(fsid)
@@ -4939,16 +5164,19 @@ def load_goals_shared(fsid):
     jkey0, akey0 = _journal_key(fsid), _archive_key(fsid)   # BEFORE the store read: see the fill below
     try:
         fd = os.open(path_s, os.O_RDONLY)
-    except OSError:
+    except FileNotFoundError:
         _shared_forget(path_s)
         _shared_bump("absent")
-        return load_goals(fsid)
+        return load_goals(fsid)                      # the fresh store: private, nothing to share
+    except OSError:
+        _shared_forget(path_s)                       # a read FAULT raises, as load_goals' does (the caller's
+        raise                                        # boundary files it); nothing is cached for the path
     try:
         skey = _disk_ident(fd)
         data = _disk_read(fd, path_s)
     except OSError:
         _shared_forget(path_s)
-        return load_goals(fsid)
+        raise
     finally:
         os.close(fd)
     keys = (skey, jkey0, akey0)
@@ -4958,7 +5186,7 @@ def load_goals_shared(fsid):
         if ent[1] == data:
             _shared_bump("hit")
             _goal_io_bump("loads_shared")            # a store read the cache answered (see goal_io_stats)
-            return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread="store")
+            return ent[2]
         _shared_bump("compare_miss")                 # same identity, other bytes: the blind spot, closed here
     else:
         _shared_bump("miss")
@@ -4972,21 +5200,18 @@ def load_goals_shared(fsid):
         _shared_bump("unreadable_journal")
         _shared_forget(path_s)
         return load_goals(fsid)                      # uncached: its replay files history-unreadable every load
-    _goal_io_bump("loads_shared")                    # from here the read is answered here, not by load_goals
     try:
-        store = _guard_nodes(json.loads(data))
-    except Exception as e:
+        store = _guard_nodes(_disk_parse(path_s, data))
+    except ValueError:
         _shared_bump("corrupt")
-        sys.stderr.write("goals-shared: %s: %s: %s (served as an empty store until the file changes)\n"
-                         % (os.path.basename(path_s), type(e).__name__, e))
-        _read_failed(path_s, "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))   # the row, once per episode
-        with _SHARED_LOCK:
-            _SHARED[path_s] = ((skey, jkey, akey0), data, _SHARED_BAD)
-        return _fresh_store(fsid, unread="store")    # the file exists and is not this: marked, as load_goals marks it
-    _read_ok(path_s)
+        _shared_forget(path_s)
+        return load_goals(fsid)                      # load_goals moves the bytes aside (one stderr line, one
+                                                     # store-quarantined row) and answers the fresh store; the
+                                                     # path then reads as absent, so nothing is cached for it
+    _goal_io_bump("loads_shared")                    # from here the read is answered here, not by load_goals
     store = _finish_load(fsid, store, lines=lines)   # a malformed row raises, as in load_goals
     if store.get("_unread"):
-        # the replay marked the store a fallback (see load_goals): not the files' content, so not shared.
+        # the replay marked the store (its journal did not read): not the files' content, so not shared.
         # Unreachable while the journal's rows arrive as `lines` (the only marker left is the lines-is-None
         # OSError path, taken above through load_goals); kept so the invariant holds at the write moment
         _shared_bump("unreadable_journal")
@@ -4997,7 +5222,7 @@ def load_goals_shared(fsid):
     keys = (skey, jkey, akey1)
     with _SHARED_LOCK:
         cur = _SHARED.get(path_s)
-        if cur is not None and cur[0] == keys and cur[2] is not _SHARED_BAD and cur[1] == data:
+        if cur is not None and cur[0] == keys and cur[1] == data:
             _SHARED_STATS["dup"] += 1                # a concurrent fill of this version published first:
             return cur[2]                            # one object for every reader of it
         if akey1 != akey0:
@@ -5043,23 +5268,19 @@ def save_goals(fsid, store):
     The disk side of that check is memoized by file identity (_disk_entry), so a no-op save costs one
     serialization of our own store, not a parse of the file, and the write seeds the entry for the next check
     when no rebase changed what we wrote. The CAS below reads the file's revision from the file (_disk_rev),
-    never from the memo, so a real publish parses once, for the CAS.
+    never from the memo, so a real publish parses once, for the CAS. Both readers raise on a read fault or a
+    corrupt file, as _rebase_onto_disk does: nothing is published over bytes this save could not read. A
+    store whose file could not be read never reaches here (load_goals raises instead of answering a
+    fallback, and an unparseable file is quarantined aside before the fresh store is handed out, so a save
+    over it is a create).
 
     A store served by load_goals_shared (or a shallow copy of one, whose nodes map is still the shared one)
     is refused here, FIRST — before the no-op check, which would otherwise take a shared view for a
     writer's, and before any write that the frozen containers would turn into a cache-poisoning raise.
     The row makes the misuse visible through the except-Exception wrappers around every tick job.
 
-    A store that loaded as a FALLBACK for a goals file that exists and did not read or parse (`_unread` ==
-    "store", see load_goals) is refused next, with a row: its _baseRev is 0, _disk_rev answered 0 for the
-    unparseable file too, and the CAS took the publish for a create, so the grouper's and consolidator's
-    signature write, the planner's and closer's whole pass and the kernel's undo-clear restore each replaced
-    the file with the empty fallback (found by the P2 gate's build, confirmed pre-existing by its refuters,
-    2026-09-07). The CAS itself refuses when _disk_rev answers None (the file exists and cannot be read or
-    parsed at publish time): a writer that cannot read the revision it would write over cannot know what it
-    would erase, so it leaves the file and its own base as they were and raises the same UnreadStoreError. A
-    store whose journal did not read (`_unread` == "journal") still publishes: its content is the file's,
-    and the journal replays on every load (see _mark_unread). An absent file is neither: a first mint saves.
+    A store whose JOURNAL did not read (`_unread` == "journal", see _mark_unread) still publishes: its content
+    is the file's, and the journal replays on every load. An absent file is a create: a first mint saves.
     """
     if isinstance(store, FrozenDict) or isinstance(store.get("nodes"), FrozenDict):
         _log_judge_error("romp", fsid, "frozen-store-save",
@@ -5067,13 +5288,6 @@ def save_goals(fsid, store):
                               "loads its own copy with load_goals — nothing was published")
         raise FrozenStoreError("save_goals refuses a shared read-only store (load_goals_shared); load the "
                                "writer's copy with load_goals")
-    if store.get("_unread") == "store":
-        _log_judge_error("romp", fsid, "unread-store-save",
-                         note="the goals file exists and did not read or parse when this store was loaded, so the "
-                              "store is an empty fallback; publishing it would replace the file — nothing was "
-                              "published and the file is left as it is")
-        raise UnreadStoreError("save_goals refuses to publish a store that loaded as a fallback for a goals file "
-                               "that exists and did not read or parse; the file is left as it is")
     _goal_io_bump("saves")
     GOALDIR.mkdir(parents=True, exist_ok=True)
     _h0 = time.perf_counter()
@@ -5084,22 +5298,13 @@ def save_goals(fsid, store):
     if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
-    unread = store.pop("_unread", None)              # likewise transient (load_goals' fallback mark)
+    store.pop("_unread", None)                       # likewise transient (_replay_overrides' unread-journal mark)
     rebased = False
     if base is not None:
         disk = 0
         for _ in range(4):                           # a busy store settles in a pass or two
-            disk = _disk_rev(fsid)
-            if disk is None:                         # the file exists and cannot be read or parsed NOW: the
-                store["_baseRev"] = base             #   CAS cannot know what it would write over. Leave the
-                if unread is not None:               #   holder as it was and refuse (docstring)
-                    store["_unread"] = unread
-                _log_judge_error("romp", fsid, "unread-store-save",
-                                 note="the goals file exists and did not read or parse at publish time; the CAS "
-                                      "cannot tell what a publish would write over — nothing was published and "
-                                      "the file is left as it is")
-                raise UnreadStoreError("save_goals refuses to publish over a goals file that exists and cannot be "
-                                       "read or parsed at publish time; the file is left as it is")
+            disk = _disk_rev(fsid)                   # raises on a file that exists and does not read or parse:
+            #                                          nothing is published over bytes the CAS could not read
             if disk == base:
                 break                                # nobody published since we loaded → ours is current
             _rebase_onto_disk(fsid, store)           # fold their events in, then re-check
@@ -8889,13 +9094,22 @@ LOG_CAP = 64                             # per-node verdict-log bound (a node ra
 
 
 def record_verdict(store, nd, src, kind, ev_t=None, why=None, seg=None, msg=False, undo=False, lift=False,
-                   await_kind=None, await_peers=None):
+                   await_kind=None, await_peers=None, end_ev=None):
     """P3.1 DUAL-WRITE (the user 2026-07-06): the gate AND the recorder, fused into the one seam every
     verdict write goes through. Asks may_apply; when allowed, appends the event to the node's
     append-only verdict LOG and returns True — the caller then writes the flags exactly as before
     (flags stay AUTHORITATIVE until the P3.3 flip; the log is the shadow history the fold reads).
     Fusing gate+record means a future writer cannot pass the gate yet skip the history — one call does
     both. `ev_t` = EVIDENCE time (segment/turn/user-action moment); `at` = arrival, forensics only.
+    `end_ev` (2026-09-07) = the EVIDENCE HORIZON an ending ruled on: a lift's newest cited evidence (the
+    return that came back, the peer's reply, the last in-harness ending, the clock a "nothing through now"
+    ruling read) or the closer's done's audited turn end, journaled as `endEv`, so the gates that ask
+    "did an ending close this wait AFTER the evidence I hold?" compare evidence to evidence
+    (_wait_end_ev), never to the row's arrival: read as arrival, a lift filed late for old evidence
+    suppressed a fresh assert on evidence it never ruled on, and the card stayed down on new information.
+    Journaled AS GIVEN, never truncated (review find, 2026-09-08): the sweep's inclusive stand-down
+    compares the raw evidence it measured against this value, and int() of a fractional Monitor ceiling
+    (timeout_ms not a whole second) disowned the very ceiling the lift cited, so it re-lifted every pass.
 
     The migration window is CLOSED (2026-07-07): every store was swept by migrate_all_stores at kernel
     boot, so an unmigrated node here means the sweep missed one — surface it loudly (judge-errors.jsonl)
@@ -8915,6 +9129,7 @@ def record_verdict(store, nd, src, kind, ev_t=None, why=None, seg=None, msg=Fals
                     **({"msg": True} if msg else {}),  # a user message rides this reopen (chip derivation)
                     **({"undo": True} if undo else {}),   # an undo-restore reopen: not a "not done" assertion
                     **({"lift": True} if lift else {}),   # an `awaiting` row that ENDS the wait, not asserts it
+                    **({"endEv": end_ev} if end_ev else {}),        # …and the newest evidence it ruled on, as given
                     # what an `awaiting` assert waits ON (AWAIT_KINDS; "kind" is taken by the verdict kind).
                     # Absent = a kindless legacy stamp, which every rule treats exactly as before the enum.
                     **({"awaitKind": await_kind} if await_kind else {}),
@@ -8931,6 +9146,29 @@ def record_verdict(store, nd, src, kind, ev_t=None, why=None, seg=None, msg=Fals
     return True                                        # updated here, so callers keep NO mirror writes
     #                                                    (a FROZEN unmigrated node keeps its flags — deriving
     #                                                     from its partial log would wipe real legacy state)
+
+
+def _wait_end_ev(e):
+    """The EVIDENCE HORIZON of a diary row — the newest evidence time the writer of `e` ruled on, for the
+    gates that ask whether a row ended a wait AFTER the evidence they hold (apply_close's awaiting-assert
+    stand-down; the sweep's re-lift stand-down in kernel._lift_spent_awaiting). Fallback order, on purpose:
+      `endEv`: the horizon the writer journaled (record_verdict end_ev, 2026-09-07): a lift's newest cited
+                return / reply / ending, or the closer's done's audited turn end. Every lift writer a gate
+                reads journals one now (the rolled-up retirement in kernel._lift_spent_awaiting journals
+                none: no reader consults a rolled-up node's rows), and so does the closer's done;
+      `at`:    arrival, for a row that carries NO horizon: a lift or done filed before horizons were
+                journaled, or a done from a writer that passes none (the planner's, the user's, the
+                propagate link-back). That is exactly the compare these gates made before 2026-09-07, so the
+                upgrade changes nothing for those rows (review find, 2026-09-08). The alternative, reading
+                such a row's ev_t, which for a lift is the ANCHOR of the wait it retracted, could never
+                disown a re-assert, and admitted stale ones main suppressed: the sweep then re-lifted them on
+                the next pass, a card move on no new information, and each re-lift re-armed the nudge ladder;
+      `ev_t`:  the row's own evidence time, for a hand-written legacy row with no arrival at all.
+    For a row WITH a horizon, arrival is forensics (record_verdict's own rule), and reading it was the
+    2026-09-07 defect: a lift filed late for evidence up to T_ev read as having ruled on everything before
+    its arrival, so a fresh assert whose evidence lay between T_ev and that arrival was suppressed — the
+    card stayed down on new information."""
+    return e.get("endEv") or e.get("at") or e.get("ev_t") or 0
 
 
 def _block_since(nd):
@@ -9769,9 +10007,8 @@ def _plan_session(fsid, path, now):
     re-examinable — until the courier plants a real goal). Returns placements made."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return 0                                       # the file did not read: nothing to plan from (_fallback_store)
+    store = load_goals(fsid)                          # a store that does not read raises: _gated counts the run
+    #                                                   incomplete and the runner files the pass-crash row
     if _heal_quote_titles(store) + _heal_floor_titles(fsid, store) \
             + _heal_ticket_titles(store):              # + ticket-led titles (T146, the live-failure heal)
         save_goals(fsid, store)                       # own words; raw-head → the landed prompt caption), both
@@ -10421,10 +10658,8 @@ def fast_forward_placements(fsid, path=None, now=None):
         if not hit:
             return 0
         path = str(hit[1])
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return 0                                      # the file did not read: nothing to seal, and save_goals would refuse
-        #                                               (see _fallback_store; the kernel's un-mute keeps the mute, below)
+    store = load_goals(fsid)                          # a store that does not read raises to the caller's except
+    #                                                   wrapper (the kernel's un-mute keeps the mute, below)
     session = parsed_session(fsid, [path], now)
     placements = store["placements"]
     n = 0
@@ -10952,9 +11187,7 @@ def _group_session(fsid, path, now):
     forest — mainly to catch tops the COURIER planted (the planner already groups inline after each of its
     own placements). Event-gated via _group_store; a status re-roll follows a structural change."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return 0                                       # the file did not read: nothing to group (_fallback_store)
+    store = load_goals(fsid)                          # a store that does not read raises (_gated: incomplete)
     before = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
     relinks = _group_store(store, fsid, now)
     after = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
@@ -11058,9 +11291,7 @@ def _consolidate_session(fsid, path, now):
     follows a structural change so a freshly minted umbrella settles to `completed` and the moved children
     drop off the top-level status map (they become its sub-nodes)."""
     _judge_ctx.fsid = fsid
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return 0                                       # the file did not read: nothing to consolidate (_fallback_store)
+    store = load_goals(fsid)                          # a store that does not read raises (_gated: incomplete)
     before = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
     changed = _consolidate_store(store, fsid, now)
     after = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
@@ -11266,7 +11497,61 @@ _PEER_ASK_RE = re.compile(r"^\s*(?:QUESTION|ASK|Q)\b", re.I)   # legacy pre-`kin
 _PEER_ASK_CACHE = [None, ({}, {}, {})]   # (mtime_ns, size) , (last_any, last_ask, alias) — one scan per log change
 
 
+def _learn_alias(alias, o):
+    """Record one name→sid sighting from a row a REMOTE sender stamped: alias["<host>:<name>"] is the
+    time-ordered history [(t, sid), …] of who wore that name on that host (see _alias_at)."""
+    if o.get("from_host") and o.get("from") and o.get("from_id"):
+        try:
+            at = int(o.get("t") or 0)
+        except (TypeError, ValueError):
+            at = 0
+        alias.setdefault(str(o["from_host"]) + ":" + str(o["from"]), []).append((at, str(o["from_id"])))
+
+
+def _alias_settle(alias):
+    """Order each name's sightings by t and collapse CONSECUTIVE sightings of one sid into one entry, so
+    the history is per WEARER CHANGE, not per row (a chatty peer name otherwise carries thousands of
+    identical sightings that _alias_at walks for every legacy row). Result-identical: the sid in force
+    at any t is unchanged. Call once after the scan, before any _alias_at."""
+    for key, hist in alias.items():
+        hist.sort(key=lambda e: e[0])
+        kept = []
+        for e in hist:
+            if not kept or kept[-1][1] != e[1]:
+                kept.append(e)
+        alias[key] = kept
+
+
+def _alias_at(alias, key, t):
+    """The sid the cross-host name `key` ("<host>:<name>") resolved to AT time t: the most recent
+    sighting at or before t, else the earliest known (a message sent before the peer first spoke
+    still went to the session that then answered). None when the name was never seen. The map used
+    to be last-write-wins over the whole log (2026-09-08), so a name a NEW session reused re-keyed
+    every OLD message to the new sid: an answered question read unanswered (its reply sits under the
+    old sid), a stamp awaiting the old sid could never see its answer, and a stranger's coordinate
+    counted as the reply. Anchoring each row at its own send time keeps it keyed to the session it
+    really went to. `alias` must have been through _alias_settle (sorted, one entry per wearer change)."""
+    hist = alias.get(key)
+    if not hist:
+        return None
+    sid = hist[0][1]
+    for at, s in hist:
+        if at <= t:
+            sid = s
+        else:
+            break
+    return sid
+
+
 def _postal_ask_maps():
+    """(last_any, last_ask, alias) from the postal log, cached on (mtime, size). Per ordered pair
+    (from_id, to_id): last_any the latest t of ANY message, last_ask the latest t of a reply-expecting
+    ask (kind=question; a kindless legacy row by its QUESTION/ASK lead word).
+    A cross-host row (to_id "peer:<host>") keys on the recipient's STABLE id: `to_sid` when the row
+    carries it (relay rows since 2026-09-08), else the name alias AT the row's send time (_alias_at),
+    else the raw "peer:<host>:<name>". `alias` is the time-ordered name→sid history the re-key used;
+    consumers resolve a name through _alias_at with the time of the message they hold, never by a
+    bare lookup."""
     try:
         st = MESSAGES.stat()
         key = (st.st_mtime_ns, st.st_size)
@@ -11282,15 +11567,18 @@ def _postal_ask_maps():
             except Exception:
                 continue
             rows.append(o)
-            if o.get("from_host") and o.get("from") and o.get("from_id"):
-                alias[str(o["from_host"]) + ":" + str(o["from"])] = str(o["from_id"])
+            _learn_alias(alias, o)
+        _alias_settle(alias)
         for o in rows:
             f, t_, ts = o.get("from_id"), o.get("to_id"), o.get("t")
             if not (f and t_ and ts):
                 continue
-            if isinstance(t_, str) and t_.startswith("peer:") and o.get("toName"):
-                t_ = alias.get(str(o["toName"]), "peer:" + str(o["toName"]))
             ts = int(ts)
+            if isinstance(t_, str) and t_.startswith("peer:"):
+                if o.get("to_sid"):
+                    t_ = str(o["to_sid"])                # the id the send resolved — exact, rename-proof
+                elif o.get("toName"):
+                    t_ = _alias_at(alias, str(o["toName"]), ts) or "peer:" + str(o["toName"])
             last_any[(f, t_)] = max(last_any.get((f, t_), 0), ts)
             k = o.get("kind")
             is_ask = (k == "question") if k else bool(_PEER_ASK_RE.match(o.get("body") or ""))
@@ -11759,7 +12047,7 @@ def _menu_history_text(store, seg_by_id, menu, char_cap):
     return "\n\n".join(parts)
 
 
-def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
+def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None, t_end=None):
     """Apply the closer's turn-end verdicts over the touched open tops: COMPLETE each in verdicts["done"]
     (recording doneWhy, clearing any soft block), BLOCK each in verdicts["block"] (recording blockWhy =
     the question owed to the user), and STAMP each in verdicts["awaiting"] (the ⏳ annotation: waiting on
@@ -11778,7 +12066,16 @@ def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
     since-time and a long poll loop never chews through LOG_CAP. ONE exception rides that rule without
     breaking it: a same-why re-assert whose kind fills a KINDLESS stamp lands once, AT the original
     anchor (ev_t = the standing awaitingAt), so the classification catches up while the since-time, the
-    wake's patience, and the supersede ordering stay keyed to the first assertion."""
+    wake's patience, and the supersede ordering stay keyed to the first assertion.
+
+    `t_end` (2026-09-08) = the audited turn's last EVENT time, when the caller has it (_close_turn): the
+    closer's lift AND its done both ruled on the WHOLE turn, so that is the evidence horizon each journals
+    (record_verdict end_ev): their ev_t is the turn's trigger, the segment's START, and left as the
+    horizon it understated what the closer saw. The done carries it too (review find, 2026-09-08): the
+    awaiting-assert gate below consults done rows as endings, and a closer's done with no horizon read as
+    its arrival, later than the turn by the closer's own latency, so it silenced an assert from a turn
+    triggered in that gap. Absent (a caller without the turn) a row with no horizon reads its arrival, the
+    pre-2026-09-07 compare, unchanged."""
     done, block = verdicts.get("done", {}), verdicts.get("block", {})
     awaiting = verdicts.get("awaiting", {})
     newly = []
@@ -11813,7 +12110,7 @@ def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
                 # nomination for free. (Same posture as the peer-kind awaiting gate below: a claim
                 # whose ending event belongs to another writer is not this closer's to file.)
                 continue
-            if not record_verdict(store, nd, "closer", "done", ev, why=done[i] or None):
+            if not record_verdict(store, nd, "closer", "done", ev, why=done[i] or None, end_ev=t_end):
                 continue                              # the user's follow-up/move postdates this turn's evidence
             if ev is not None:                        # (the event materialized the flags + doneWhy)
                 nd["mt"] = ev
@@ -11839,12 +12136,18 @@ def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
                 # (a stand-down is not new information in either direction).
                 continue
             if any(e.get("kind") in ("awaiting", "done") and (e.get("lift") or e.get("kind") == "done")
-                   and (e.get("at") or e.get("ev_t") or 0) > (ev or 0) for e in nd.get("log") or []):
+                   and _wait_end_ev(e) > (ev or 0) for e in nd.get("log") or []):
                 # the wait this assert describes already ENDED in the diary AFTER this turn's evidence
                 # (2026-08-25 audit: a closer auditing the pre-merge segment re-asserted a watch whose
                 # lift AND whose goal's done were both already filed — the stamp then stood for hours
                 # with the job kind exempt from every mail retire). The writer's world is older than
                 # the diary: stand down; a REAL new wait re-asserts from the next pass's fresh evidence.
+                # "After" is evidence against evidence — the horizon the ending RULED ON (_wait_end_ev),
+                # never the row's arrival: a lift filed late for older evidence must not silence an
+                # assert on evidence it never saw (2026-09-07). Strict: an assert whose evidence EQUALS
+                # the horizon does not predate it, and stands. Done rows are endings here too: the
+                # closer's done journals the audited turn's end (t_end), and a done from a writer that
+                # journals no horizon reads its arrival, the compare it always had (review find, 2026-09-08).
                 continue
             if nd.get("awaitingWhy") != aw_why:
                 # a changed why is a real event → new row, new anchor (as ever)
@@ -11859,7 +12162,7 @@ def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
                 record_verdict(store, nd, "closer", "awaiting", nd.get("awaitingAt"),
                                why=aw_why, await_kind=aw_kind, await_peers=aw_peers)
         elif nd.get("awaitingWhy") and (touched is None or i <= touched):
-            record_verdict(store, nd, "closer", "awaiting", t, lift=True)
+            record_verdict(store, nd, "closer", "awaiting", t, lift=True, end_ev=t_end)
     return newly
 
 
@@ -12073,7 +12376,14 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
                                  note="a %s anchored to ev_t %s is shadowed by newer diary rows on "
                                       "%s — the writer stands down; the newer evidence's own turn "
                                       "carries the ruling" % (kind, ev, nd.get("id")))
-    newly = apply_close(store, menu, out, t=turn.get("t"), touched=n_touched, t_overrides=t_overrides)
+    # the horizon the closer's lift and done journal is the turn's last EVENT time (review find,
+    # 2026-09-08): turn["end"] stretches over a trailing idle atom to the NEXT state record (or, for the
+    # tail turn, to the parse clock), and a horizon at the clock is arrival by another name. Every atom's
+    # `t` is a recorded event (a transcript record, or the idle span's Stop transition), so the newest is
+    # the last thing the closer's transcript could have shown it.
+    t_end = max((a.get("t") or 0 for a in turn.get("atoms") or ()), default=0) or turn.get("end")
+    newly = apply_close(store, menu, out, t=turn.get("t"), touched=n_touched, t_overrides=t_overrides,
+                        t_end=t_end)
     # The reply LANDED → the closer considered every menu node (a verdict or a considered omission).
     # ONE look-stamp replaces the retired umbSig/starvedSig signatures (2026-08-13): the newest row
     # FILED in each node's top subtree as of this look, stamped BELOW apply_close so the reply's own
@@ -12239,9 +12549,7 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     LANDING retires the record. Returns the node ids newly completed."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return []                                      # the file did not read: nothing to close (_fallback_store)
+    store = load_goals(fsid)                          # a store that does not read raises (_gated: incomplete)
     seg_by_id = None                                  # built on the first turn the walk judges (below)
     swept = _closed_turns(store)
     sig = dict(store.get("closedSig") or {})
@@ -12736,9 +13044,8 @@ def _unblock_session(fsid, path, now):
     every fast judge write has; a user action clobbered inside even that window self-heals via the
     override journal replay on the next pass."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
-    scan = load_goals(fsid)                            # read-only scan; this copy is NOT saved
-    if _fallback_store(scan):
-        return []                                      # the file did not read: nothing to examine (_fallback_store)
+    scan = load_goals(fsid)                            # read-only scan; this copy is NOT saved (a store that does
+    #                                                    not read raises: _gated counts the run incomplete)
     cands = _blocked_sub_candidates(scan)
     if not cands:
         return []
@@ -12768,9 +13075,8 @@ def _unblock_session(fsid, path, now):
         return []                                      # call failed / paused (logged) → retry next pass
     lifts = _parse_unblock(raw, len(due))
     store = load_goals(fsid)                           # FRESH load: apply onto the current store, never the
-    nodes = store["nodes"]                             #   pre-call snapshot (a stale save clobbers writers)
-    if _fallback_store(store):
-        return []                                      # the file did not read after the call: nothing to apply onto
+    nodes = store["nodes"]                             #   pre-call snapshot (a stale save clobbers writers);
+    #                                                    a store that does not read after the call raises
     if lifts is None:
         _log_judge_error("unblocker", fsid, "parse", note="reply tail: %r" % raw[-160:],
                          goal=[nid for nid, _nd, _bt in due])
@@ -13842,9 +14148,7 @@ def _distill_session(fsid, path, now):
     blocked-on-you though its stored status is still 'working', so without this its card would carry no
     distiller line while you decide. Returns the number of goals (re)summarized."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
-    store = load_goals(fsid)
-    if _fallback_store(store):
-        return 0                                       # the file did not read: nothing to distill (_fallback_store)
+    store = load_goals(fsid)                          # a store that does not read raises (_gated: incomplete)
     status, nodes = store.get("status", {}), store.get("nodes", {})
     if _title_mirror_tops(store, fsid, path, now):     # T146 amendment: fresh mirror tops get their
         save_goals(fsid, store)                        # one-shot LLM title the same cycle (titledT-keyed)
@@ -14537,10 +14841,12 @@ def _absent_flags_evict(present):
 
 def _absent_store_flags(fsid, loaded=None, idents=None, views=None):
     """(open_handoff, owed_distill) for a store no discovered session owns, or None when the load
-    itself failed (the caller skips the store this pass, as the sweeps always did). Memoized on
-    _store_identity; a miss loads once and evaluates both predicates, so the two sweeps of one pass
-    share one load and an unchanged store costs three stats per sweep. A load that FELL BACK (the
-    store's `_unread` mark, see load_goals) is answered but not memoized. `loaded`/`idents`/`views`
+    itself raised (the caller skips the store this pass, as the sweeps always did; a store file that
+    cannot be read raises out of load_goals). Memoized on _store_identity; a miss loads once and
+    evaluates both predicates, so the two sweeps of one pass share one load and an unchanged store costs
+    three stats per sweep. Two answers are served but NOT memoized: a store loaded without its unreadable
+    override journal (the `_unread` mark, _replay_overrides), and one whose files moved between the
+    identity and the read (the identity is re-taken after the load and must match). `loaded`/`idents`/`views`
     are run_propagate's per-pass dicts: a store this pass already read — a writer object in `loaded`,
     or a frozen shared view in `views` (identity taken before the read in both cases; the writer
     object unmutated, since every dirty sender is saved and dropped before the sweep) — is evaluated
@@ -14569,13 +14875,20 @@ def _absent_store_flags(fsid, loaded=None, idents=None, views=None):
             idents[fsid] = key
     flags = (_open_handoff_flag(store), _owed_distill_flag(store))
     if store.get("_unread"):
-        # The object is NOT what its files say (load_goals: the store file exists but did not read or
-        # parse, so this is the fresh-empty fallback; _replay_overrides: the journal exists but did not
-        # read, so user gestures are missing). Answer this pass from it, as the sweeps always did, but
-        # never memoize: the identity describes files this object does not reflect, and nothing on
-        # disk need change before the next read succeeds (an EMFILE, an EIO), so an entry here would
-        # serve "nothing open, nothing owed" — or an un-resolved tracker — until the store's next
-        # write, which for a dead store may never come.
+        # The object is NOT what its files say: the store parsed but its override journal exists and did
+        # not read (_replay_overrides), so a tracker the user resolved still shows open. Answer this pass
+        # from it, as the sweeps always did, but never memoize: nothing on disk need change before the
+        # next read succeeds (an EMFILE, an EIO), so an entry here would serve the un-resolved tracker
+        # until the store's next write, which for a dead store may never come. (A store FILE that cannot
+        # be read raises out of load_goals and is answered None above; an unparseable one is quarantined
+        # aside by load_goals, and the identity check below sees the file go.)
+        return flags
+    if _store_identity(fsid) != key:
+        # The files moved under the read: a publish or a journal append landed between the identity and
+        # the read (the entry would pair the OLD identity with the NEW content and heal only at the next
+        # write), or load_goals moved an unparseable store aside and answered the legitimate fresh store
+        # (the key still names the corrupt file, which is gone). Answer this pass, memoize nothing; the
+        # next call takes the new identity and reads again.
         return flags
     with _ABSENT_FLAGS_LOCK:
         _ABSENT_FLAGS[path_s] = (key, flags)
@@ -15281,13 +15594,17 @@ def _handoff_backref(mid):
     return (hit[0], hit[1]) if hit is not None and not hit[2] else ("", "")
 
 
-def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tracked=False):
+def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tracked=False, to_sid=None):
     """Mint a precise '↪ delegated to <peer>' TRACKING node in the SENDER's own tree (the user 2026-06-22):
     the exact item B's completion checks off, so a PARTIAL handoff doesn't over-complete the sender's broader
     goal. Filed under the courier's linked goal (parent_id) if any, else top-level. Carries handoff:{peer,
     msgId} both as the run_propagate target and so the feed can badge it; a TRACKED report-back delegation
     (the user 2026-08-24) adds handoff.tracked — this node's card is the pair's PRIMARY, and the recipient's
-    planted goal is marked its satellite. Idempotent by msgId. Returns its id."""
+    planted goal is marked its satellite. `to_sid` (review find, 2026-09-08) is the recipient's STABLE id
+    when the sent row carried one (a cross-host relay row's `to_sid`): it rides as handoff.toSid beside the
+    display identity in handoff.peer ("<host>:<name>"), so run_propagate's remote arm keys the report-back
+    on the exact sid the send resolved, the same key the kernel's wait maps use for that row, instead of
+    re-deriving it from the name. Idempotent by msgId. Returns its id."""
     nodes = store["nodes"]
     for nid, nd in nodes.items():
         h = nd.get("handoff")
@@ -15295,6 +15612,9 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
             if tracked and not h.get("tracked"):
                 h["tracked"] = True                     # a replant that learned the flag (a crash between
                 #                                         the two store saves) upgrades in place; never down
+            if to_sid and not h.get("toSid"):
+                h["toSid"] = str(to_sid)                # same in-place upgrade for the exact key: a tracker
+                #                                         planted before the row's to_sid was read learns it
             return nid                                  # already planted for this message → idempotent
     if parent_id is not None and parent_id not in nodes:
         parent_id = None                                # linked goal vanished → file as a top, never orphan
@@ -15321,6 +15641,8 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
             #                                            fan-out contract, test_chain_rooted_minting)
     if tracked:
         handoff["tracked"] = True
+    if to_sid:
+        handoff["toSid"] = str(to_sid)
     nodes[nid] = GuardedNode({"id": nid, "text": label[:120], "parentId": parent_id,
                   "nodeComplete": False, "blocked": False, "cleared": False,
                   "trail": [], "t": t, "mt": t, "handoff": handoff, "log": []})
@@ -15668,9 +15990,10 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     Each dirty sender is PUBLISHED ONCE, after the recipient loop (the rebase unions per-node logs by (ev_t,
     src, kind), so one publish carrying several courier rows merges exactly as several publishes did), with
     the per-ref rollup already on the object. A saved object leaves `loaded` in a finally: save_goals
-    re-stamps `_baseRev` after a publish (2026-09-07), so the object could serve a second save, but a refused
-    publish (UnreadStoreError: the file did not read at publish time) leaves an object that is not the
-    file's content, and `idents` describes the pre-publish file; the next touch reads the published file,
+    re-stamps `_baseRev` after a publish (2026-09-07), so the object could serve a second save, but a failed
+    publish (the save path's strict readers raise on a file that does not read or parse at publish time;
+    the row is this pass's) leaves an object that is not the file's content, and `idents` describes the
+    pre-publish file; the next touch reads the published file,
     through the shared cache for a read and load_goals for a write. The absent-store sweep answers from
     _absent_store_flags, memoized across passes on file identity and evaluated on this pass's writer object
     or view when it holds one."""
@@ -15721,9 +16044,10 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         object that is not the file's content and `idents` describes the pre-publish file."""
         try:
             save_goals(sid, loaded[sid])
-        except UnreadStoreError:
-            pass                                    # refused and logged by save_goals (the file did not read at
-            #                                         publish time); the completions are re-derived next pass
+        except (OSError, ValueError) as e:          # the save path's strict readers, or the write itself, faulted
+            _log_judge_error("propagate", sid, "pass-crash", note="publish: %r" % e)   # (a corrupt file at the
+            #                                         save raises ValueError); nothing was published, the file is
+            #                                         as it was, and the completions are re-derived next pass
         finally:
             loaded.pop(sid, None)
             idents.pop(sid, None)
@@ -15737,7 +16061,11 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         # specimen sat open seven hours with its completion event already fired and recorded.
         # Read-only on this side: propagate writes SENDER stores only.
         rnodes = dict(_arch(fsid).get("nodes") or {})
-        rnodes.update(_peek(fsid).get("nodes") or {})   # a shared read: no parse when the cache holds this version
+        try:
+            rnodes.update(_peek(fsid).get("nodes") or {})   # a shared read: no parse when the cache holds this version
+        except Exception as e:                         # an unreadable store: this session's row, the next session's turn
+            _log_judge_error("propagate", fsid, "pass-crash", note="store: %r" % e)
+            continue
         for nid, nd in list(rnodes.items()):
             if not nd.get("nodeComplete"):
                 continue                                # B hasn't finished it yet
@@ -15747,11 +16075,16 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                      if isinstance(l, dict) and l.get("peer") and l.get("goalId")]
             for ref in refs:
                 a_sid, a_gid = ref["peer"], ref["goalId"]
-                v_node = (_peek(a_sid).get("nodes") or {}).get(a_gid)
-                if not v_node or v_node.get("nodeComplete"):
-                    continue                            # sender's tracking node gone or already done → idempotent
-                #                                         (decided on the view: every live ref, at steady state)
-                a_store = _get(a_sid)                   # the view says open: this pass's writer load of the sender
+                try:
+                    v_node = (_peek(a_sid).get("nodes") or {}).get(a_gid)
+                    if not v_node or v_node.get("nodeComplete"):
+                        continue                        # sender's tracking node gone or already done → idempotent
+                    #                                     (decided on the view: every live ref, at steady state)
+                    a_store = _get(a_sid)               # the view says open: this pass's writer load of the sender
+                except Exception as e:                 # the sender's store faulted (the view or the writer load):
+                    #                                     its tracker waits for the next pass
+                    _log_judge_error("propagate", fsid, "pass-crash", note="sender %s store: %r" % (a_sid[:8], e))
+                    continue
                 a_node = (a_store.get("nodes") or {}).get(a_gid)
                 if not a_node or a_node.get("nodeComplete"):
                     continue                            # re-checked on the writer's node: the view is a frozen
@@ -15795,8 +16128,14 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     # Granularity is per-PEER, not per-message — the log carries no reply→delegate join, so one
     # reply completes every outstanding cross-host handoff to that peer sent at/before it; coarse,
     # but forward-only and honest, where the alternative was a wait no event could ever end. Keys
-    # re-derive from the stored toName exactly as the wait maps do: the alias when the peer has
-    # spoken (it must have, to reply), else the raw relay key.
+    # derive exactly as the wait maps derive them for the same row (review find, 2026-09-08: the
+    # arm re-derived by name alone while the kernel's maps read the row's to_sid, so a handoff to a
+    # recreated same-named peer whose first mail here was its report-back lifted the stamp and
+    # left the tracker open forever): the row's own stable id when the plant carried it
+    # (handoff.toSid), else, a legacy row, the alias the stored toName resolved to AT the
+    # handoff's send time when the peer has spoken (it must have, to reply), else the raw relay
+    # key. Anchored so a name a later session reused cannot make that stranger's mail the
+    # report-back (2026-09-08).
     last_any, _la, alias = _postal_ask_maps()
     _rmemo = {}                                        # recipient sid -> merged nodes (per-pass, read-only)
 
@@ -15807,7 +16146,9 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         and this map must read as the snapshot it always was."""
         if peer_sid not in _rmemo:
             m = {k: dict(v) for k, v in (_arch(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)}
-            m.update({k: dict(v) for k, v in (_peek(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)})
+            live, fault = _or_fault(peer_sid, _peek)      # a faulting recipient joins to nothing this pass
+            m.update({k: dict(v) for k, v in ((live or {}).get("nodes") or {}).items()   # (forward-only: the
+                      if isinstance(v, dict)})                                           #  tracker stays open)
             _rmemo[peer_sid] = m
         for rd in _rmemo[peer_sid].values():
             if not isinstance(rd, dict):
@@ -15852,8 +16193,12 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
             reply = last_any.get((pk, fsid), 0)
         else:
             keys = {"peer:" + pk}
-            if alias.get(pk):
-                keys.add(alias[pk])
+            if h.get("toSid"):
+                keys.add(str(h["toSid"]))          # the sid the send resolved: exact, rename-proof
+            else:
+                asid = _alias_at(alias, pk, nd.get("t") or 0)   # legacy plant: the wearer at send time
+                if asid:
+                    keys.add(asid)
             reply = max((last_any.get((k, fsid), 0) for k in keys), default=0)
         if reply and reply >= (nd.get("t") or 0):
             return reply, dismissed, pk
@@ -15879,10 +16224,14 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         if _flags is not None and _flags[0]:
             _sw_senders.append(_f.stem)
     for fsid in _sw_senders:
-        if not any(_due_reply(nd, fsid) is not None for nd in (_peek(fsid).get("nodes") or {}).values()):
-            continue                                    # nothing due on the view: no writer load, no write
-        store = _get(fsid)                              # something is due: this pass's writer load, and the
-        changed = False                                 #   predicate re-derived on every node of it
+        try:
+            if not any(_due_reply(nd, fsid) is not None for nd in (_peek(fsid).get("nodes") or {}).values()):
+                continue                                # nothing due on the view: no writer load, no write
+            store = _get(fsid)                          # something is due: this pass's writer load, and the
+        except Exception as e:                          #   predicate re-derived on every node of it
+            _log_judge_error("propagate", fsid, "pass-crash", note="store: %r" % e)
+            continue
+        changed = False
         for nid, nd in list(store.get("nodes", {}).items()):
             due = _due_reply(nd, fsid)
             if due is None:
@@ -15915,15 +16264,19 @@ def _courier_scan(fsid, path, now):
     repair finding the sender's tracker complete, or the sender a local session outside the discover
     window (the two shapes in which a later pass could attach the link with none of this session's
     inputs moving; the mark sits in _attach_courier_link, which stamps every other shape); a repair that
-    raises (it did not run: the next pass retries it); a store that did not read (the session stands
-    down; load_goals marked the run). A parse or walk that raises propagates: _gated counts it incomplete
-    and the runner logs the pass-crash row and goes on to the next session.
+    raises (it did not run: the next pass retries it); a store that does not read (load_goals raises; the
+    scan files the pass-crash row itself, with the "store" note every pass wrapper uses, and marks the run).
+    A parse or walk that raises propagates: _gated counts it incomplete and the runner logs the pass-crash
+    row and goes on to the next session.
     The settle is NOT read here: run_courier reads it at its write sites, from the store being written
     (the scan used to read it for every session, every pass)."""
     session = parsed_session(fsid, [path], now)       # states-aware + cached, so _session_closed is correct
-    cstore = load_goals(fsid)
-    if _fallback_store(cstore):
-        return []                                      # its messages wait until the store reads (load_goals logged it)
+    try:
+        cstore = load_goals(fsid)
+    except Exception as e:                             # an unreadable store: this session's row (the pass wrappers'
+        _judge_ctx.stage_incomplete = True             #   "store" note), no stamp, and its messages wait until the
+        _log_judge_error("courier", fsid, "pass-crash", note="store: %r" % e)   # store reads; the next session's turn
+        return []
     rows = []
     placed_ids = cstore["placements"]
     floor = episode_floor(fsid)
@@ -16038,7 +16391,9 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     # judge, and the send ack already told the sender "they own it now". Declared-only on purpose:
     # a kindless legacy row is indistinguishable from a coordinate, and planting from a guess mints
     # noise. handoff.peer stores toName ("<host>:<name>") — the identity every display resolves
-    # (the quiet host: prefix) and the key run_propagate's remote arm re-derives pair keys from.
+    # (the quiet host: prefix) and the key run_propagate's remote arm re-derives pair keys from
+    # for a row without to_sid; a row that carries to_sid (relay rows since 2026-09-08) also
+    # plants it as handoff.toSid, the exact key that arm reads first (review find, 2026-09-08).
     # `tracked` never rides here: the relay drops the flag by design (a primary/satellite pair
     # cannot span kernels yet). Horizon-bounded like every courier retry, so old history is never
     # backfilled; idempotent by msgId, so one plant per message ever.
@@ -16051,22 +16406,27 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     xrows = [o for o in _postal_ledger()[1]
              if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON]
     for o in xrows:
-        sstore = load_goals(o["from_id"])
-        if _fallback_store(sstore):
-            continue                                   # the sender's file did not read: nothing to plant the tracker in
+        try:
+            sstore = load_goals(o["from_id"])
+        except Exception as e:
+            _log_judge_error("courier", o["from_id"], "pass-crash", note="sender store: %r" % e)
+            continue
         if any(isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == o["id"]
                for nd in sstore["nodes"].values()):
             continue
         head = " ".join(str(o.get("body") or "").split())[:120]
-        _plant_handoff_track(sstore, None, head, str(o["toName"]), str(o["toName"]), int(o["t"]), o["id"])
+        _plant_handoff_track(sstore, None, head, str(o["toName"]), str(o["toName"]), int(o["t"]), o["id"],
+                             to_sid=(str(o["to_sid"]) if o.get("to_sid") else None))   # the row's exact key rides along (review find, 2026-09-08)
         rollup_status(sstore, False)
         save_goals(o["from_id"], sstore)
         placed += 1
     pending.sort(key=lambda x: x[0])                  # global cross-session oldest-first
     for seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path in pending:
-        store = load_goals(fsid)
-        if _fallback_store(store):
-            continue                                   # the recipient's file did not read: the message stays pending
+        try:
+            store = load_goals(fsid)
+        except Exception as e:
+            _log_judge_error("courier", fsid, "pass-crash", note="store: %r" % e)
+            continue
         if _placed_key(store["placements"], seg_id):  # drift-safe: never re-plant a t-shifted duplicate
             continue
         if now - seg_t > COURIER_RETRY_HORIZON:
@@ -16102,9 +16462,11 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             save_goals(fsid, store)
             placed += 1
             continue
-        sender_store = load_goals(sender)
-        if _fallback_store(sender_store):
-            continue                                   # the sender's file did not read: nothing to plant the tracker in
+        try:
+            sender_store = load_goals(sender)
+        except Exception as e:                         # the message stays pending; retried next pass
+            _log_judge_error("courier", fsid, "pass-crash", note="sender %s store: %r" % (sender[:8], e))
+            continue
         # cap 40 for the LINK menu (the user 2026-08-24, the resurfaced-ask specimen): open_menu is
         # oldest-first, and a busy sender holds >20 open nodes — the default cap starved exactly the
         # candidates a dispatch usually serves (the fresh ask AND its older original), so the courier
@@ -16183,7 +16545,11 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # top — its work lives in that session's own view and transcript, and any needs-you
             # state still reaches the board through the hard-block floor/placeholder, which need no
             # goal node. Uncertainty quiets by design (the trace's docstring names the surface).
-            rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
+            try:
+                rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
+            except Exception as e:                     # a peer store on the root walk faulted: skip THIS message this
+                _log_judge_error("courier", fsid, "pass-crash", note="root walk: %r" % e)   # pass, never
+                continue                               # "unrooted" (that would mint a top the ask may already own)
             # WALKED-AT-RELAY ROOT (the user 2026-08-27, T126): a cross-host dispatch carries the
             # record the ORIGIN kernel walked at send time — the evidence (stores + transcripts)
             # lives on that machine's disk, so the local walk rightly refuses the hop, but at the

@@ -340,12 +340,19 @@ class LiveSpawnEnv(_Backend):
             ks.read_source = orig
         self.assertEqual(len(reads), 1, "two reads could return two different keys")
 
-    def test_an_empty_key_line_refuses_an_explicit_key_launch(self):
+    def test_an_empty_key_line_launches_an_explicit_key_pick_with_nothing_injected(self):
+        """Until 2026-09-07 this refused the launch (#932). The maintainer's direction since: given no
+        key, romp injects nothing and Claude Code's own credential resolution applies — its apiKeyHelper
+        or its login — so a box that never handed romp a key keeps launching, said once as a problem
+        row. A source that cannot be READ (the op marker, a garbled line) still refuses."""
         self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
-        # upstream (2026-09-05): a launch that selected the key with no key to inject is refused, not
-        # launched on the login with a log line, since the login would bill the wrong account
-        with self.assertRaisesRegex(ks.KeySourceError, "no API key source"):
-            self._launch_env(4)
+        env = self._launch_env(4)
+        self.assertNotIn("ANTHROPIC_API_KEY", env, "nothing injected: the CLI's own credential pays")
+        self._launch_env(5)
+        rows = [l for l in self.logged if "Claude Code's own credential" in l]
+        self.assertEqual(len(rows), 1, "one row per process")
+        self.assertIn(self.path, rows[0])
+        self.assertNotIn(OLD_KEY, "\n".join(self.logged))
 
     def test_the_live_key_reaches_the_has_a_key_bool_and_the_auth_default(self):
         self.assertEqual(self.be.default_auth({}), "key")
@@ -366,12 +373,18 @@ class StartupFallback(_Backend):
     BOOT = BOOT_KEY
 
     def test_removing_a_previously_selected_file_key_does_not_restore_the_startup_key(self):
+        """The file once carried the key, so it stays authoritative: with the line gone, an explicit key
+        pick launches with NOTHING injected (the maintainer's direction, 2026-09-07: given no key, romp
+        defers to Claude Code's default) — never the key the manager started with, the fallback this
+        rule exists to end. Until 2026-09-07 the launch refused instead (#932)."""
         with open(self.path, "w") as fh:                # genuinely no assignment, not an empty one
             fh.write("ROMP_PERF=1\n")
         ks._CACHE = ((), "")
         self.assertEqual(self.be.work_key, "")
-        with self.assertRaises(ks.KeySourceError):
-            self._launch_env(1)
+        env = self._launch_env(1)
+        self.assertNotIn("ANTHROPIC_API_KEY", env, "not the startup key — not anything")
+        self.assertNotIn(BOOT_KEY, repr(env))
+        self.assertTrue([l for l in self.logged if "Claude Code's own credential" in l])
 
     def test_an_empty_key_line_does_not_restore_the_startup_key(self):
         self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
@@ -468,7 +481,7 @@ class KeyLineGone(_Backend):
         self.assertEqual(said.count("is GONE"), 1, said)
         self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
         self.assertIn(self.path, said)
-        self.assertIn("launch on the login", said)
+        self.assertIn("nothing of romp's injected, whatever their Billing pick", said)
         self.assertNotIn(OLD_KEY, said, "fingerprints only")
         # the line coming back re-arms the notice: a second removal is a second event
         self.write_env(NEW_KEY)
@@ -1132,6 +1145,105 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 1)
         self.assertIn("source changed during the request", said)
         self.assertEqual(self.posted[-1][2]["expectedSourceFp"], source.fingerprint())
+
+
+    # -- upstream's key command profiles (ROMP_API_KEY_CMD, 2026-09-07): the generic provider, read by the
+    # key-source module the fork carries as upstream ships it, so a ROMP_API_KEY_CMD line in the live file is
+    # listed, fingerprinted and compared the way a reference is. The NAMED swap onto one is refused like
+    # every named swap in file mode (the user 2026-09-05), so upstream's swap case asserts the refusal, and
+    # the cycle and both-lines cases put the line in the live file themselves where upstream's swap put it. --
+    CMD = "fetch-synthetic-key --field api"
+
+    def test_a_key_command_profile_is_listed_by_fingerprint_and_never_run(self):
+        self.sibling("cmd", "ROMP_API_KEY_CMD=%s\n" % self.CMD)
+        before = open(self.path).read()
+        rc, said = self.run_cli()          # setUp's resolve() patch proves nothing ran
+        self.assertEqual(rc, 0)
+        self.assertIn("cmd", said)
+        self.assertIn("key command " + ks.KeySource("command", self.CMD).fingerprint(), said)
+        self.assertNotIn(self.CMD, said, "the command line may name a vault or a path; only its fingerprint shows")
+        self.assertEqual(open(self.path).read(), before)
+
+    def test_selecting_a_key_command_profile_by_name_is_refused_and_copies_nothing(self):
+        # upstream: test_selecting_a_key_command_profile_writes_the_command_line_and_arms_the_marker. Its
+        # swap copied the profile's command line and wrote the `.source` marker (no key reaches disk); the
+        # fork's refusal covers the named form as such, before the profile is read, so neither the command
+        # line nor the stale key beside it moves and no marker appears. The swap back onto a reference
+        # profile that upstream's case went on to check is refused the same way.
+        self.sibling("cmd", "ANTHROPIC_API_KEY=%s\nROMP_API_KEY_CMD=%s\n" % (NEW_KEY, self.CMD))
+        before = open(self.path).read()
+        mtime = os.stat(self.path).st_mtime_ns
+        rc, said, err = self.run_cli_with_stderr("cmd")
+        self.assertRefusedUntouched(before, rc, said, err, self.CMD, NEW_KEY)
+        self.assertEqual(os.stat(self.path).st_mtime_ns, mtime)
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("file", OLD_KEY))
+        self.assertEqual(sorted(os.listdir(self.d)), ["service.env", "service.env.cmd", "service.env.lowprio"],
+                         "no temp file and no `.source` marker: nothing was written")
+        ref = "op://test-vault/test-item/api-key"
+        self.sibling("vault", "ROMP_API_KEY_REF=%s\n" % ref)
+        rc, said, err = self.run_cli_with_stderr("vault")
+        self.assertRefusedUntouched(before, rc, said, err, ref, self.CMD)
+        self.assertFalse(os.path.exists(self.path + "." + ks.SOURCE_MARKER), "no marker follows a refused swap")
+
+    def test_a_key_command_profile_cycles_and_compares_configuration_not_values(self):
+        # upstream ran this as `cmd --cycle web,api` (swap, then cycle); here the command line is already the
+        # live file's line and the bare cycle compares it by sourceFp. keyFp says nothing about a command
+        # the kernel runs at use time, so the kernel reports none and the cycle still agrees.
+        source = ks.KeySource("command", self.CMD)
+        ks.write_source(source, self.path)
+        mtime = os.stat(self.path).st_mtime_ns
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "sourceFp": source.fingerprint(), "keyFp": "",
+            "rows": [{"session": "web", "status": "cycling"}, {"session": "api", "status": "current"}]}
+        rc, said = self.run_cli("--cycle", "web,api")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(ks.read_source(self.path), source)
+        self.assertEqual(os.stat(self.path).st_mtime_ns, mtime)
+        self.assertEqual([b for _, _, b in self.posted],
+                         [{"sessions": []}, {"sessions": ["web", "api"], "expectedSourceFp": source.fingerprint()}])
+        self.assertIn("key command matches", said)
+        self.assertIn("reconnecting now", said)
+        self.assertNotIn(self.CMD, json.dumps(self.posted) + said)
+        # --cycle-all on the same file, and a kernel on another source refuses
+        self.posted.clear()
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(self.posted[-1][2], {"all": True, "expectedSourceFp": source.fingerprint()})
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "sourceFp": ks.KeySource("op", "op://test-vault/test-item/api-key").fingerprint(), "rows": []}
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", said)
+
+    def test_a_file_with_both_provider_lines_is_refused_untouched(self):
+        # upstream: test_a_profile_with_both_provider_lines_is_refused_untouched. Upstream read the profile
+        # and refused it as invalid ("not both"); the fork refuses the name before reading, so the named
+        # form gets the fork's reason. The rule itself, two provider lines are an error and not a
+        # precedence, is checked where the fork does read them: the live file's report says the invalid
+        # configuration and exits 1 before any kernel is asked.
+        both = "ROMP_API_KEY_CMD=%s\nROMP_API_KEY_REF=op://test-vault/test-item/api-key\n" % self.CMD
+        self.sibling("both", both)
+        before = open(self.path).read()
+        rc, said, err = self.run_cli_with_stderr("both")
+        self.assertRefusedUntouched(before, rc, said, err, self.CMD)
+        self.assertNotIn("not both", err, "the profile is never read, so its fault is never diagnosed")
+        with open(self.path, "w") as fh:
+            fh.write(both)
+        ks._CACHE = ((), "")
+        before = open(self.path).read()
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1, said)
+        self.assertIn("configuration invalid", said)
+        self.assertIn(ks.BOTH_PROVIDERS_ERROR, said)
+        self.assertIn("(invalid key source)", said)
+        self.assertNotIn(self.CMD, said)
+        self.assertEqual(open(self.path).read(), before)
+        self.assertEqual(self.posted, [], "an invalid source is said before the kernel is asked")
+        rc, said = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1, said)
+        self.assertIn(ks.BOTH_PROVIDERS_ERROR, said)
+        self.assertEqual(self.posted, [])
 
 
 class KeyswapCliCommandMode(unittest.TestCase):
@@ -2038,12 +2150,13 @@ class NothingLeaksTheKey(_Backend):
                          "the one-claimer property: an ambient key bills every session")
 
     def test_the_problem_ring_the_dashboard_reads_never_carries_a_key(self):
-        self.write_env("", lines=["ROMP_PERF=1"])       # a key pick with no key: the loudest path
-        with self.assertRaises(ks.KeySourceError):
-            self._launch_env(1)
+        self.write_env("", lines=["ROMP_PERF=1"])       # a key pick with no key: the loudest path — since
+        self._launch_env(1)                             # 2026-09-07 a problem row, not a refusal
         self.write_env(NEW_KEY)
         self._launch_env(2)
-        for p in self.be.problems(50):
+        rows = self.be.problems(50)
+        self.assertTrue([p for p in rows if "Claude Code's own credential" in p["text"]], "the path was walked")
+        for p in rows:
             self.assertNotIn(NEW_KEY, p["text"])
             self.assertNotIn(OLD_KEY, p["text"])
 
