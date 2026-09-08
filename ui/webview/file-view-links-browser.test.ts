@@ -19,8 +19,9 @@ import { createRequire } from "node:module";
 import { makeAnchor } from "./anchor-map";
 import { DEAD_LINK_TITLE, HOST_PORT_TITLE, noSectionTitle } from "./file-view-links";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const SID = "11111111-2222-3333-4444-555555555555";
 const ROOT = "/tmp/TESTHOST/notes-api";

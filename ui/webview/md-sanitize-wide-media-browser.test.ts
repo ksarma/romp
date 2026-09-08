@@ -9,8 +9,15 @@
 // review round 1), and a direct child carries the prose measure like a direct-child
 // <img> (at 380px the bare 860px cap would itself overflow). Both rules sit at zero class specificity (:where) so
 // KaTeX's own `.katex svg { height: inherit }` still wins over its stretchy glyphs once math renders here (Slice 4);
-// the last step holds that cascade with the KaTeX sheet inlined where the built styles.css carries it. A 12-column
-// table is the control: its own overflow-x scroll is untouched. Skips LOUDLY without a playwright browser (CI
+// the last step holds that cascade with the KaTeX sheet inlined where the built styles.css carries it. A <video> is
+// the one of the three whose natural ratio can differ from its attributes: the browser maps `width="640"
+// height="360"` to `aspect-ratio: auto 640 / 360`, and `auto` defers to the media's own ratio once a poster or the
+// frames are there, so height: auto alone laid a 640 by 360 clip with a square poster out 640 by 640 in a pane that
+// shrank nothing, and the box jumped to the frames' shape at play (review round 2). mdBlock (file-view.ts) writes the
+// attributes' ratio as the video's inline aspect-ratio, so the box is the author's shape capped or not; the poster
+// fixtures below hold that, with a witness video (a poster and no height attribute) that tells the leg when the
+// poster has been decoded, since a video fires no event for it. A 12-column table is the control: its own overflow-x
+// scroll is untouched. Skips LOUDLY without a playwright browser (CI
 // installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST paths, a
 // placeholder sid.
 import { test } from "node:test";
@@ -19,8 +26,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 // the built styles.css carries katex.min.css inlined where the source @imports it (esbuild.js); the page here does the same
 const KATEX_CSS = fs.readFileSync(path.join(EXT, "node_modules", "katex", "dist", "katex.min.css"), "utf8");
@@ -30,7 +38,9 @@ assert.ok(STYLES.includes(".katex svg{"), "the KaTeX sheet is inlined in the tes
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const PATH = "/tmp/TESTHOST/notes-api/report.md";
-const RATIO = 40 / 1500;                                          // every sized fixture is 1500 by 40
+const RATIO = 40 / 1500;                                          // every wide fixture is 1500 by 40
+const POSTER_URL = "http://romp.test/media/square.svg";           // an absolute poster URL, as a note pointing at a host would carry
+const SQUARE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" fill="#c60"/></svg>';
 
 // the fixture note: a standalone <svg> block (a direct child of .fileview-md), the same nested in prose (marked puts a
 // one-line tag inside a <p>), a canvas and a video sized 1500 by 40, a KaTeX-shaped stretchy glyph, a wide table
@@ -45,7 +55,8 @@ const NOTE = [
   "",
   'Canvas: <canvas class="fx-canvas" width="1500" height="40"></canvas>',
   "",
-  'Video: <video class="fx-video" src="/nope.mp4" width="1500" height="40"></video>',
+  // the square poster on the wide video: shrunk to the column, the box must keep the attributes' 1500:40, not the poster's 1:1
+  'Video: <video class="fx-video" src="/nope.mp4" poster="' + POSTER_URL + '" width="1500" height="40"></video>',
   "",
   // sized by the author with a percentage width and an explicit height: the cap shrinks nothing, the height must stand
   'Banner: <svg class="fx-pct" width="100%" height="30" viewBox="0 0 100 30" preserveAspectRatio="none"><rect width="100" height="30" fill="#c60"/></svg>',
@@ -55,6 +66,18 @@ const NOTE = [
   'Wide video: <video class="fx-vidh" src="/nope.mp4" width="100%" height="120"></video>',
   "",
   'Tall video: <video class="fx-vidonly" src="/nope.mp4" height="120"></video>',
+  "",
+  // the author's shape on a video the cap does not touch: 640 by 360 with a square poster stays 640 by 360 (the
+  // browser's `aspect-ratio: auto 640 / 360` alone made it 640 by 640 once the poster was decoded); at 380px it
+  // shrinks to the column in that ratio
+  'Clip: <video class="fx-poster" src="/nope.mp4" poster="' + POSTER_URL + '" width="640" height="360"></video>',
+  "",
+  // a percentage width with a poster: no cap, no ratio to keep, the height attribute stands as it does without one
+  'Full-width clip: <video class="fx-pct-poster" src="/nope.mp4" poster="' + POSTER_URL + '" width="100%" height="120"></video>',
+  "",
+  // the witness: a poster and no height attribute, so its box follows the poster's ratio (200 by 100 before the poster
+  // is decoded, 200 by 200 after); the leg waits on it before measuring the poster fixtures
+  'Witness: <video class="fx-witness" src="/nope.mp4" poster="' + POSTER_URL + '" width="200"></video>',
   "",
   'Glyph: <span class="katex"><span class="hide-tail fx-tail"><svg class="fx-katex" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M0 0h400000v1080H0z"/></svg></span></span>',
   "",
@@ -101,18 +124,25 @@ async function inBrowser(t: any, body: (page: any, errors: string[]) => Promise<
       if (u.pathname === "/file" && u.searchParams.get("path") === PATH) {
         return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body: NOTE });
       }
+      if (u.href === POSTER_URL) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: SQUARE_SVG });
       return route.fulfill({ status: 404, body: "" });
     });
     await page.goto("http://romp.test/files");
     await page.evaluate(([p, sid]: [string, string]) => { window.postMessage({ romp: "viewFile", path: p, sid }, "*"); }, [PATH, SID] as [string, string]);
     await page.waitForSelector("#romp-fileview .fileview-body .fileview-md", { timeout: 10000 });
+    // the poster is decoded (no event tells; the witness's box turns square), then two frames so every poster video has laid out
+    await page.waitForFunction(() => {
+      const v = document.querySelector("#romp-fileview .fileview-md .fx-witness");
+      return !!v && Math.abs(v.getBoundingClientRect().height - v.getBoundingClientRect().width) < 1;
+    }, null, { timeout: 10000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
     await body(page, errors);
   } finally {
     await browser.close();
   }
 }
 
-type Box = { width: number; height: number; right: number; parent: string; present: boolean };
+type Box = { width: number; height: number; right: number; parent: string; present: boolean; parentWidth: number; aspect: string };
 type Facts = {
   contain: string;
   body: { scrollWidth: number; clientWidth: number; maxScrollLeft: number; right: number };
@@ -121,7 +151,9 @@ type Facts = {
 };
 const MEDIA = ["fx-block", "fx-nested", "fx-canvas", "fx-video"];
 // the author-sized shapes and the height each keeps: a percentage width the cap never shrinks, an explicit height
-const SIZED: Record<string, number> = { "fx-pct": 30, "fx-pct-sq": 40, "fx-vidh": 120, "fx-vidonly": 120 };
+const SIZED: Record<string, number> = { "fx-pct": 30, "fx-pct-sq": 40, "fx-vidh": 120, "fx-vidonly": 120, "fx-pct-poster": 120 };
+// the author-shaped video: its attributes' width, or the column when that is narrower, and always the attributes' 640:360
+const POSTER = { cls: "fx-poster", width: 640, ratio: 360 / 640 };
 
 // measured in the page: the body's sideways scroll range, each fixture's box against the body's edge, the table's own scroll
 function measure(): Facts {
@@ -130,11 +162,13 @@ function measure(): Facts {
   body.scrollLeft = 100000; const maxScrollLeft = body.scrollLeft; body.scrollLeft = 0;
   const br = body.getBoundingClientRect();
   const els: Record<string, Box> = {};
-  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly"]) {
+  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly", "fx-poster", "fx-pct-poster", "fx-witness"]) {
     const el = md.querySelector("." + cls) as HTMLElement | null;
-    if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false }; continue; }
+    if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false, parentWidth: 0, aspect: "" }; continue; }
     const r = el.getBoundingClientRect();
-    els[cls] = { width: r.width, height: r.height, right: r.right, parent: (el.parentElement as HTMLElement).className || (el.parentElement as HTMLElement).tagName.toLowerCase(), present: true };
+    const parent = el.parentElement as HTMLElement;
+    els[cls] = { width: r.width, height: r.height, right: r.right, parent: parent.className || parent.tagName.toLowerCase(), present: true,
+      parentWidth: parent.getBoundingClientRect().width, aspect: getComputedStyle(el).aspectRatio };
   }
   const table = md.querySelector("table") as HTMLElement;
   table.scrollLeft = 100000; const tMax = table.scrollLeft;
@@ -165,7 +199,21 @@ function check(f: Facts, at: string): void {
   }
   for (const cls of MEDIA) {
     const b = f.els[cls];
-    assert.ok(Math.abs(b.height - b.width * RATIO) <= 1, at + ": ." + cls + " keeps its 1500:40 ratio as it shrinks (height: auto, not a letterboxed 40px): " + b.width + " by " + b.height);
+    assert.ok(Math.abs(b.height - b.width * RATIO) <= 1, at + ": ." + cls + " keeps its 1500:40 ratio as it shrinks (height: auto, not a letterboxed 40px" + (cls === "fx-video" ? ", and not the square poster's 1:1" : "") + "): " + b.width + " by " + b.height);
+  }
+  // a pixel-sized video keeps the AUTHOR's shape whether the cap shrinks it or not: 640 wide where the column allows,
+  // the column's width where it does not, and the attributes' 640:360 either way, though its poster is square. The
+  // ratio is the viewer's inline declaration, not the browser's `auto 640 / 360`, which yields to the poster's ratio.
+  {
+    const b = f.els[POSTER.cls];
+    assert.ok(b.present && b.parent === "p", at + ": ." + POSTER.cls + " survives the sanitizer in its paragraph");
+    const want = Math.min(POSTER.width, b.parentWidth);
+    assert.ok(Math.abs(b.width - want) <= 0.5, at + ": ." + POSTER.cls + " is " + want + " wide (its width attribute, or the column when narrower): " + b.width);
+    assert.ok(Math.abs(b.height - b.width * POSTER.ratio) <= 1, at + ": ." + POSTER.cls + " keeps the author's 640:360, not the square poster's ratio: " + b.width + " by " + b.height);
+    assert.equal(b.aspect, "640 / 360", at + ": the box's aspect-ratio is the attributes' ratio itself, without `auto` (which defers to the poster)");
+    assert.ok(b.right <= f.body.right + 0.5, at + ": ." + POSTER.cls + " ends inside the body");
+    const w = f.els["fx-witness"];
+    assert.ok(w.present && Math.abs(w.height - w.width) <= 1 && Math.abs(w.width - 200) <= 0.5, at + ": the witness (no height attribute) follows the decoded poster's 1:1, so the poster was applied before this measure: " + w.width + " by " + w.height);
   }
   // an author's explicit height on a percentage-width element (or on an unloaded video with no width) stands: the cap
   // shrinks nothing there, so height: auto has no ratio to keep and would only discard the attribute

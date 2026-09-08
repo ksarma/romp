@@ -18,8 +18,9 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { chatBody, ATTACH_TITLE_WEB } from "../../vscode-extension/src/page-skeleton";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const STYLES = fs.readFileSync(path.join(UI, "styles.css"), "utf8");
 
@@ -69,12 +70,22 @@ function probeBundle(): string {
   return r.outputFiles[0].text;
 }
 // the chat page as the web dashboard serves it: the shared skeleton, the chat's sheet, a fake acquireVsCodeApi (the
-// kernel's shim's role), window.open recorded instead of opened, then the chat bundle and the probe
+// kernel's shim's role), window.open recorded instead of opened, then the chat bundle, a click recorder and the probe.
+// The recorder reads each click's own defaultPrevented flag as dispatch ends: following the link is the click's default
+// action, and the browser runs it exactly when that flag is still false, so the flag says whether the document WILL
+// navigate without waiting to see whether it did (an earlier draft slept 1.2 s per click on a bounded waitForURL and
+// spent 12 s of the leg on ten timeouts). Two listeners write it: one at the document's capture phase, registered
+// after render.js so it runs right after the delegate on the same node (the delegate stops propagation for a scheme
+// link, which stops other nodes' listeners, not a later one on the same node), and one at the window's bubble
+// phase, the last stop of a click the delegate let through; the later one to run has the final word.
 const CHAT_HTML = `<!DOCTYPE html><html lang=en><head><meta charset=utf-8><style>${STYLES}</style></head><body>
 ${chatBody(ATTACH_TITLE_WEB)}
 <script>window.__opens=[];window.open=function(u,t,f){window.__opens.push([u,t,f]);return null;};
 window.acquireVsCodeApi=function(){return{postMessage:function(){}}};</script>
-<script src=/dist/render.js></script><script src=/dist/probe.js></script></body></html>`;
+<script src=/dist/render.js></script>
+<script>(function(){window.__lastClick=null;function rec(e){window.__lastClick={prevented:e.defaultPrevented,tag:e.target&&e.target.tagName};}
+document.addEventListener("click",rec,true);window.addEventListener("click",rec);})();</script>
+<script src=/dist/probe.js></script></body></html>`;
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -120,18 +131,30 @@ async function show(page: any, html: string, throughMd: boolean): Promise<string
     return body.innerHTML;
   }, [html, throughMd] as [string, boolean]);
 }
-// one real click at the element's centre; what elementFromPoint names there, and whether the document left
-async function clickCentre(page: any, sel: string): Promise<{ hit: string | null; left: boolean; opens: unknown[] }> {
+// one real click at the element's centre; what elementFromPoint names there, whether the click's default action was
+// cancelled (the recorder above; null when no click reached the document, or when the page was gone by the time it
+// was read: an uncancelled navigation that committed first destroys the context, and `gone` carries that message),
+// and what the delegate opened. page.mouse.click resolves after the renderer has dispatched the click, so the flag
+// is final when it is read: no wait.
+async function clickCentre(page: any, sel: string): Promise<{ hit: string | null; prevented: boolean | null; opens: unknown[]; gone?: string }> {
   const box = await page.locator(sel).first().boundingBox();
-  if (!box) return { hit: null, left: false, opens: [] };
+  if (!box) return { hit: null, prevented: null, opens: [] };
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
-  const hit = await page.evaluate(([px, py]: [number, number]) => { const e = document.elementFromPoint(px, py); return e ? e.tagName : null; }, [x, y] as [number, number]);
+  const hit = await page.evaluate(([px, py]: [number, number]) => {
+    (window as any).__lastClick = null; (window as any).__opens.length = 0;
+    const e = document.elementFromPoint(px, py); return e ? e.tagName : null;
+  }, [x, y] as [number, number]);
   await page.mouse.click(x, y);
-  // a navigation the delegate failed to cancel commits asynchronously: give it a bounded moment to show
-  const left = await page.waitForURL((u: URL) => u.hostname === "example.invalid", { timeout: 1200 }).then(() => true, () => false);
-  const opens = left ? [] : await page.evaluate(() => (window as any).__opens);
-  return { hit, left, opens };
+  try {
+    const r = await page.evaluate(() => { const c = (window as any).__lastClick; return { prevented: c ? c.prevented as boolean : null, opens: (window as any).__opens as unknown[] }; });
+    return { hit, prevented: r.prevented, opens: r.opens };
+  } catch (e) {
+    return { hit, prevented: null, opens: [], gone: String((e as Error).message).split("\n")[0] };
+  }
 }
+// the tail of an assertion message about r.prevented: what a null means
+const why = (r: { prevented: boolean | null; gone?: string }): string =>
+  r.gone ? " (the page was gone: " + r.gone + ")" : r.prevented === null ? " (no click reached the document's listeners)" : "";
 
 test("the chat's link delegate: an image map's area and an SVG xlink:href anchor open like a plain link, and the chat document never leaves", { timeout: 90000 }, async (t) => {
   await inBrowser(t, async (page, errors, navs) => {
@@ -140,7 +163,7 @@ test("the chat's link delegate: an image map's area and an SVG xlink:href anchor
       await show(page, s.html, false);
       const r = await clickCentre(page, s.sel);
       assert.equal(r.hit, s.hit, s.name + ": precondition, the click lands on the element (elementFromPoint)");
-      assert.equal(r.left, false, s.name + ": the chat document did not navigate to the link");
+      assert.equal(r.prevented, true, s.name + ": the delegate cancelled the click's default action, so the chat document does not follow the link" + why(r));
       assert.deepEqual(r.opens, [[s.href, "_blank", "noopener,noreferrer"]], s.name + ": the delegate opened the link in the user's browser");
       assert.equal(page.url(), "http://romp.test/chat", s.name + ": the chat page is where it was");
     }
@@ -151,11 +174,14 @@ test("the chat's link delegate: an image map's area and an SVG xlink:href anchor
       if (m.dropped) assert.doesNotMatch(html, m.dropped, m.name + " in a message: the sanitizer drops the image map whole (map, area, usemap): " + html);
       const r = await clickCentre(page, m.sel);
       assert.equal(r.hit, m.hit, m.name + " in a message: precondition, the click lands on the element (elementFromPoint)");
-      assert.equal(r.left, false, m.name + " in a message: the chat document did not navigate; sanitized as " + html);
+      // a surviving link is cancelled by the delegate; the picture whose map is gone carries no link, so its click has
+      // no default action to cancel and none is (a click on a picture in a message stays the browser's)
+      assert.equal(r.prevented, m.opens === "link", m.name + " in a message: the click's default action was " + (m.opens === "link" ? "cancelled by the delegate, so the document does not follow the link" : "left alone: nothing to cancel") + "; sanitized as " + html + why(r));
       if (m.opens === "none") assert.deepEqual(r.opens, [], m.name + " in a message: the picture is inert, nothing opens");
       else assert.deepEqual(r.opens, [["https://example.invalid/xlink", "_blank", "noopener,noreferrer"]], m.name + " in a message: the link opened in the user's browser");
       assert.equal(page.url(), "http://romp.test/chat", m.name + " in a message: the chat page is where it was");
     }
+    // the belt: whatever the flag said, no main-frame navigation was seen over the whole leg
     assert.deepEqual(navs.filter((u) => !u.startsWith("http://romp.test/")), [], "the main frame never navigated off the dashboard");
     assert.deepEqual(errors, [], "no page errors");
   });
@@ -208,6 +234,7 @@ test("a footnote's back link and a link over the reply's own <a name> land again
     assert.ok(before.scrollTop > 0 && before.fn1! < 0, "the footnote mark is scrolled away above: " + JSON.stringify(before));
     let r = await clickCentre(page, ".fx-back");
     assert.equal(r.hit, "A", "the click lands on the back link");
+    assert.equal(r.prevented, true, "the delegate found the target and cancelled the click's default action" + why(r));
     let after = await state();
     assert.ok(after.scrollTop < before.scrollTop && after.fn1! >= -1 && after.fn1! < 40, "the transcript scrolled the footnote mark to its top: " + JSON.stringify(after));
     assert.equal(after.hash, "", "the default was cancelled: no #fn1 on the page's location");
@@ -216,6 +243,7 @@ test("a footnote's back link and a link over the reply's own <a name> land again
     // 2. from the bottom again, the link over the reply's own <a name>: the named anchor comes to the top
     await page.evaluate(() => { const c = document.getElementById("content") as HTMLElement; c.scrollTop = c.scrollHeight; });
     r = await clickCentre(page, ".fx-install");
+    assert.equal(r.prevented, true, "the delegate found the named anchor and cancelled the click's default action" + why(r));
     after = await state();
     assert.ok(after.install! >= -1 && after.install! < 40, "the named anchor is at the top: " + JSON.stringify(after));
     assert.equal(after.hash, "", "hash untouched");
@@ -224,6 +252,7 @@ test("a footnote's back link and a link over the reply's own <a name> land again
     await page.evaluate(() => { const c = document.getElementById("content") as HTMLElement; c.scrollTop = c.scrollHeight; });
     await page.evaluate(() => { (document.querySelector(".fx-dup") as HTMLElement).scrollIntoView({ block: "center" }); });
     r = await clickCentre(page, ".fx-dup");
+    assert.equal(r.prevented, true, "the delegate found the message's own element and cancelled the click's default action" + why(r));
     after = await state();
     assert.ok(after.dupHere! >= -1 && after.dupHere! < 40, "the newer message's own element is at the top: " + JSON.stringify(after));
     assert.ok(after.dupOlder! < after.dupHere!, "the older message's same-named element stayed above, unchosen");
@@ -233,11 +262,15 @@ test("a footnote's back link and a link over the reply's own <a name> land again
     const mid = await state();
     r = await clickCentre(page, ".fx-none");
     assert.equal(r.hit, "A", "the click lands on the link");
+    assert.equal(r.prevented, false, "left to the browser: the delegate did not cancel the click");
     after = await state();
     assert.equal(after.hash, "#nowhere", "left to the browser: its default action set the hash");
     assert.equal(after.scrollTop, mid.scrollTop, "and nothing scrolled");
+    // the same-document navigation as playwright sees it: keyed on the frame's URL event, not a sleep
+    await page.waitForURL("http://romp.test/chat#nowhere", { timeout: 5000 });
     assert.equal(page.url(), "http://romp.test/chat#nowhere", "the chat page is where it was, hash aside");
 
+    // the belt: whatever the flag said, no main-frame navigation was seen over the whole leg
     assert.deepEqual(navs.filter((u) => !u.startsWith("http://romp.test/")), [], "the main frame never navigated off the dashboard");
     assert.deepEqual(errors, [], "no page errors");
   });

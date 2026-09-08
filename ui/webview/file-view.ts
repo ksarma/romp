@@ -2403,6 +2403,9 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
   const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+  // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
+  // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
+  keepVideoShape(box);
   // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
   // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
   // document the browser knows nothing about). getAttribute, never the .src/.href property: the
@@ -2519,6 +2522,34 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     img.setAttribute("data-fv-src", src);
     img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
+}
+
+/** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets
+ *  (styles.css and feed.css, the .fileview-md media rules) cap an inline svg, canvas or video at the column and give a
+ *  PIXEL-sized one `height: auto`, so it shrinks in its own ratio rather than into a letterbox of its height attribute.
+ *  For an svg or a canvas that ratio is the attributes' by construction. For a video the browser maps the attributes to
+ *  `aspect-ratio: auto W / H`, and `auto` there means the media's natural ratio wins once it has one: the poster's while
+ *  the poster shows, the frames' once metadata loads. So a `<video width="640" height="360">` with a square poster laid
+ *  out 640 by 640 in a pane that shrank nothing, and its box jumped to 640 by 360 when it played (review of Slice 1,
+ *  round 2). The attributes' ratio is written as the element's aspect-ratio WITHOUT `auto`, so the box is the author's
+ *  shape whether the cap shrinks it or not, and the media sits letterboxed inside it as a video always has (its default
+ *  object-fit is contain). A percentage in either attribute is left alone, as the sheet's rule leaves a percentage
+ *  width: the cap never shrinks it and the height attribute stands. Runs on the sanitized DOM: the declaration is the
+ *  viewer's own, not an author's inline style, which the sanitizer reduces to its colours (md-sanitize.ts). */
+export function keepVideoShape(root: ParentNode): void {
+  root.querySelectorAll("video[width][height]").forEach((node) => {
+    const v = node as HTMLElement;
+    const w = pxDimension(v.getAttribute("width")), h = pxDimension(v.getAttribute("height"));
+    if (w > 0 && h > 0) v.style.aspectRatio = w + " / " + h;
+  });
+}
+
+/** An HTML dimension attribute as a length, by HTML's rules for parsing dimension values: leading whitespace, digits, an
+ *  optional fraction; a `%` right after the number makes it a percentage (0 here, as is anything that does not start
+ *  with a number). `640`, `640.5` and `640px` are lengths; `50%` is not. Mirrors the sheet's `[width]:not([width$="%"])`. */
+export function pxDimension(attr: string | null): number {
+  const m = /^[ \t\n\f\r]*(\d+(?:\.\d*)?)(%?)/.exec(attr || "");
+  return m && !m[2] ? Number(m[1]) : 0;
 }
 
 // ── a selection across a repaint (fireRenderedKeepingSelection): each end kept, and put back ──

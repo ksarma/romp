@@ -3896,7 +3896,13 @@ body.filebrowse-open { overflow: hidden; }
    height: auto keeps the element's own ratio (its viewBox, or its width and height) as the cap shrinks it, and applies
    ONLY to an element sized in pixels: on a percentage-width element the cap never shrinks anything, and height: auto
    there threw the author's explicit height away (a full-width `<svg width="100%" height="30" viewBox="0 0 100 30">`
-   grew to 258px, a `<video width="100%" height="120">` to Chromium's default 150px; review round 1). Both rules sit
+   grew to 258px, a `<video width="100%" height="120">` to Chromium's default 150px; review round 1). A video's ratio
+   is not its attributes' by construction, as an svg's and a canvas's are: the browser maps `width="640" height="360"`
+   to `aspect-ratio: auto 640 / 360`, and `auto` defers to the media's natural ratio once a poster or the frames are
+   there, so height: auto alone laid a 640 by 360 clip with a square poster out 640 by 640 in a pane that shrank
+   nothing, and the box jumped to the frames' shape at play (review round 2). mdBlock (file-view.ts, keepVideoShape)
+   writes the attributes' ratio as a pixel-sized video's inline aspect-ratio, so its box is the author's shape capped or
+   not, and this rule stays the one that lets it shrink. Both rules sit
    inside :where(), at zero class specificity, so KaTeX's `.katex svg { height: inherit; width: 100% }` (katex.min.css,
    which styles.css inlines and the feed sheet gains with Slice 4) still wins over its stretchy glyphs (`width="400em"`,
    pixel-like to the attribute test) once math renders in a note. The direct-child rule carries the prose measure for

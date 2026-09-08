@@ -15,8 +15,9 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { MD_FORBID_ATTR, MD_PURIFY } from "./md-sanitize";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 
 const TD_BG = "https://example.invalid/td.gif";

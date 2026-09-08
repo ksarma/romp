@@ -59,7 +59,7 @@ import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
 import { openUrlView } from "./file-view";                 // the URL mode of the same viewer (md-url-view.test.ts)
 import { isMarkdownUrl } from "./md-links";
-import { LINK_SEL, linkHref } from "./md-links";   // the link selector and href read the click delegate shares with the viewer's mdBlock
+import { LINK_SEL, browserTabClick, linkHref } from "./md-links";   // the link selector, the browser's-tab test and the href read the click delegate shares with the viewer's mdBlock
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
 import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
 import { pastedFilePath } from "./paste-path";
@@ -1304,6 +1304,9 @@ function preEl(text: string, scrollKey?: string): HTMLElement {
 // the markdown viewer's Slice 1). md-sanitize-chat-links-browser.test.ts clicks both.
 // LINK_SEL and linkHref (the href, else xlink:href) are md-links.ts's, the same two the viewer's mdBlock stamps
 // its links with, so a link the one handles the other handles too (md-sanitize-viewer-links.test.ts).
+// Cmd is the browser's tab modifier on macOS and Ctrl everywhere else (browserTabClick); the platform test is spelled as
+// file-comments.ts spells its own (the editor's save chord and its marks read the same one).
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
 document.addEventListener("click", (e) => {
   const a = (e.target as Element)?.closest?.(LINK_SEL) as HTMLElement | SVGElement | null;
   if (!a) return;
@@ -1321,7 +1324,7 @@ document.addEventListener("click", (e) => {
   // elsewhere (the 2026-09-07 review, round 4). An SVG anchor has no draggable property and reads as not draggable, which
   // is right: a press on SVG text selects it.
   if (!(a as HTMLElement).draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
-  const href = linkHref(a);
+  let href = linkHref(a);                          // as written; a scheme-less one is replaced below by the address the browser would follow
   if (href.startsWith("#")) {
     // An in-page anchor in a message (a footnote's back link, `[section](#install)` over the reply's own `<a name>`): the
     // sanitizer prefixes every author id and name user-content- (md-sanitize.ts, GitHub's rule) and leaves the href as
@@ -1330,9 +1333,14 @@ document.addEventListener("click", (e) => {
     // does: the target is looked up under the prefix or bare (userContentTarget), in the message's own rendered body
     // first (its note before a same-named element in an older message), then the whole document; found, it is scrolled
     // into view and the default action cancelled (the hash stays as it was: the target is not a page location). Not
-    // found, the click is left to the browser, as it was. A modified click asked for a tab and keeps the browser's. A
-    // link outside a message (the file viewer's own section links) is not this handler's: the viewer lands those itself.
-    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // found, the click is left to the browser, as it was. A click the browser answers with a tab or window of its own
+    // (Shift; Cmd on macOS, Ctrl elsewhere: browserTabClick, md-links.ts) keeps the browser's. Read by the platform's
+    // key, not "any modifier": Super-click on Linux and Windows is a plain click to the browser, so standing aside for
+    // Meta there handed it to the default lookup, which found nothing, and the click died where the base scrolled (the
+    // round-2 review); it is resolved like a plain click now. The `.md` rule below reads every modifier because THAT
+    // handler opens the tab itself. A link outside a message (the file viewer's own section links) is not this
+    // handler's: the viewer lands those itself.
+    if (browserTabClick(e, IS_MAC)) return;
     const msg = a.closest(".md");
     if (!msg) return;
     let frag = href.slice(1);
@@ -1343,7 +1351,27 @@ document.addEventListener("click", (e) => {
     target.scrollIntoView({ block: "start" });
     return;
   }
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // relative: leave alone (a bare fragment was resolved above)
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+    // An href that names no scheme (a bare fragment was resolved above). The old rule left every one of these to the
+    // browser's default action as "relative", and DOMPurify keeps several that resolve to ANOTHER origin: protocol-relative
+    // `//host` and `/\host`, an `https:` behind a C0 control character (its trim removes JavaScript whitespace only, and its
+    // URI check strips controls for the test and writes the value back as written), and a tab or newline inside the scheme
+    // (`ht&#10;tps:`). A click on any of them navigated the chat document itself, in the same frame, to that origin, and a
+    // plain relative link to a same-origin page: every pane gone until a reload either way, and a page there free to imitate
+    // the dashboard (the round-2 review of plans/markdown-viewer.md Slice 1; pre-existing on main). So the href is read the
+    // way the default action reads it: the browser's own URL parser, against this document, which is what drops the control
+    // and the whitespace and gives `//host` the page's scheme. Resolved to a web URL, it opens below as an absolute one does,
+    // at the RESOLVED address (the tab; the viewer for a same-origin .md). Not a web URL, it stays the browser's: under VS
+    // Code the page's own scheme is the webview's, so every relative href resolves there and names nothing a host could
+    // open (the webview drops it), and an href the parser rejects goes nowhere in the browser either. An empty href
+    // (`[x]()`) resolves to this very page, which the default action would reload; it opens nothing instead.
+    // md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle.
+    if (!href) { e.preventDefault(); return; }
+    let url: URL | null = null;
+    try { url = new URL(href, document.baseURI); } catch { url = null; }
+    if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return;
+    href = url.href;
+  }
   e.preventDefault();
   e.stopPropagation();
   if (location.protocol === "http:" || location.protocol === "https:") {

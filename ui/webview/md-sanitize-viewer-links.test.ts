@@ -10,7 +10,9 @@
 // stamps target and rel with setAttribute. Executed here: linkHref. Pinned at the source (file-view.ts has no jsdom
 // harness, as every viewer test notes): the selector in both of mdBlock's passes, the attribute writes, the xlink
 // normalisation before the doc gate, and the chat delegate keying on the same selector. The clicks themselves run in
-// headless Chromium: md-sanitize-viewer-links-browser.test.ts.
+// headless Chromium: md-sanitize-viewer-links-browser.test.ts, a file document (whose stamps are linkMarkdownAnchors',
+// file-view-links.ts) and a URL document (mdBlock's own stamps, with no delegate in front: the property write there
+// navigates the page in the same frame, and that leg says so).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

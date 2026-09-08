@@ -47,6 +47,17 @@ type MathToken = Tokens.Generic & { text: string; display: boolean };
 export const MATH_INLINE_CLASS = "md-math-inline";
 export const MATH_DISPLAY_CLASS = "md-math-display";
 
+/** The longest formula the fill renders, in characters of TeX. katex.render runs synchronously on the page's main thread,
+ *  and its cost climbs faster than the input once a formula passes about 20,000 characters (headless Chromium, KaTeX
+ *  0.18.1, measured 2026-09-08 in the Slice 1 review: a flat sum of 20,000 characters took 0.23 s, 24,000 took 0.8 s,
+ *  50,000 took 1 to 6 s, 100,000 took 6 to 17 s, and 1,000,000 had not finished after 270 s; a 60x60 numeric matrix is
+ *  about 20,000 characters and took 40 ms), while marked and the sanitizer cost a few milliseconds per 100,000. KaTeX has
+ *  no option for it (maxSize caps the sizes TeX asks for, maxExpand the macro expansion), neither tokenizer below bounds
+ *  a formula, and a hand-written placeholder reaches the fill through no tokenizer at all, so a reply or a note carrying
+ *  one enormous formula froze the chat page, every session tab in it, for as long as the render took. Over the cap the
+ *  formula is shown as its source (showSource below), the belt a residual KaTeX throw takes. */
+export const MATH_TEX_MAX_CHARS = 20000;
+
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
 const AFTER_CLOSE = "[\\s.,;:!?)\\]}\"'*_~\\-、。，；：！？）】」]";
@@ -114,29 +125,45 @@ export const mathInline: TokenizerAndRendererExtension = {
   },
 };
 
+/** The belt under the fill: the TeX as text in a code element where the placeholder stood, its `title` saying why it is
+ *  not a formula, so a formula can never blank a message and the reader still sees what was written. A block placeholder
+ *  (the div a display paragraph of its own becomes) turns into a code block; a span, display mode or not, into a code
+ *  span, so the paragraph it sits in survives the serialization to innerHTML (a <pre> inside a <p> splits the paragraph
+ *  when the HTML is parsed again). */
+function showSource(el: HTMLElement, tex: string, why: string): void {
+  const doc = el.ownerDocument;
+  const code = doc.createElement("code");
+  code.textContent = tex;
+  let shown: HTMLElement = code;
+  if (el.tagName === "DIV") { shown = doc.createElement("pre"); shown.appendChild(code); }
+  shown.setAttribute("title", why);
+  el.replaceWith(shown);
+}
+
 /** Render KaTeX into every math placeholder under `root`, the SANITIZED DOM (sanitizeMd's body), and
  *  unwrap each so the rendered `.katex` (or `.katex-display`) root stands where the placeholder stood,
  *  exactly where marked's own KaTeX output used to: the comment highlights' closest(".katex") pairing
- *  and the anchor map see the shape they always did. throwOnError: false renders bad TeX as
+ *  and the anchor map see the shape they always did. A formula longer than MATH_TEX_MAX_CHARS is never
+ *  handed to KaTeX and is shown as its source (showSource). throwOnError: false renders bad TeX as
  *  visibly-flagged source instead of throwing; the catch is a belt for the residual throws (an internal
- *  error), falling back to the TeX as a code span so a formula can never blank a message. A second run
- *  over the same root is a no-op: no placeholder survives the first. Plain and exported: chat-md.ts
- *  registers it as sanitizeMd's post-pass, and the tests call it directly. */
+ *  error), showing the source the same way, so a formula can never blank a message. A second run over
+ *  the same root is a no-op: no placeholder survives the first. Plain and exported: chat-md.ts registers
+ *  it as sanitizeMd's post-pass, and the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
   root.querySelectorAll("." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS).forEach((node) => {
     const el = node as HTMLElement;
     const display = el.classList.contains(MATH_DISPLAY_CLASS);
     const tex = el.textContent || "";
     if (!tex.trim()) { el.replaceWith(...Array.from(el.childNodes)); return; }
+    if (tex.length > MATH_TEX_MAX_CHARS) {
+      showSource(el, tex, "Not rendered: " + tex.length + " characters of TeX; the limit is " + MATH_TEX_MAX_CHARS + ".");
+      return;
+    }
     try {
       katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false });
       el.replaceWith(...Array.from(el.childNodes));
     } catch {
-      const doc = el.ownerDocument;
-      const code = doc.createElement("code");
-      code.textContent = tex;
-      if (display) { const pre = doc.createElement("pre"); pre.appendChild(code); el.replaceWith(pre); }
-      else el.replaceWith(code);
+      showSource(el, tex, "Not rendered: this formula could not be laid out.");
     }
   });
 }

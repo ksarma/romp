@@ -15,8 +15,9 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { chatBody, ATTACH_TITLE_WEB } from "../../vscode-extension/src/page-skeleton";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 // the built styles.css carries katex.min.css inlined where the source @imports it (esbuild.js); the pages here do the same
 const KATEX_CSS = fs.readFileSync(path.join(EXT, "node_modules", "katex", "dist", "katex.min.css"), "utf8");

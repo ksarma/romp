@@ -312,8 +312,16 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
   assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void =\n\s*\(path, sid, line, frag\) => \{ openFileView\(path, sid, \{ line, frag \}\); \};/);
   assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 0, "no fv-open delegate in the local viewer: the body's one click listener reads every link (file-view-links.test.ts pins it)");
   assert.ok(OPEN_FN.indexOf('body.addEventListener("click"') > 0 && OPEN_FN.indexOf('body.addEventListener("click"') < OPEN_FN.indexOf("const fetchFile = "), "installed in the open itself, before any bytes can land");
-  // the chat's document-level delegate ignores a scheme-less href (and a path link's href comes off), so the click reaches the body listener
-  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
+  // the chat's document-level delegate keys on LINK_SEL, an element that CARRIES an href, and a path link's href comes off
+  // (linkMarkdownAnchors), so its click is never the delegate's and reaches the body listener. A scheme-less href the delegate
+  // does see is no longer left to the browser's default action: it is resolved against the page the way that action would
+  // resolve it and opened by the delegate, so a `//host` or a control character before `https:` in a message cannot navigate
+  // the chat document (md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle)
+  assert.match(HANDLER, /closest\?\.\(LINK_SEL\) as HTMLElement \| SVGElement \| null;\n\s*if \(!a\) return;/);
+  assert.match(MOD, /a\.removeAttribute\("href"\);\s*\/\/ the browser must not follow it/, "the path link carries no href for either listener to follow");
+  assert.doesNotMatch(HANDLER, /\/i\.test\(href\)\) return;/, "no scheme-less href is handed to the default action any more");
+  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!href\) \{ e\.preventDefault\(\); return; \}\n\s*let url: URL \| null = null;\n\s*try \{ url = new URL\(href, document\.baseURI\); \} catch \{ url = null; \}\n\s*if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*href = url\.href;\n\s*\}/,
+    "an empty href opens nothing; every other scheme-less href is the browser's own parse against the document, opened when it is a web URL and left to the browser otherwise (VS Code's webview scheme, a parse failure)");
 });
 
 // ── 6. in-document fragments: heading ids, and `#links` that land instead of spawning a tab ──

@@ -145,3 +145,18 @@ export const XLINK_NS = "http://www.w3.org/1999/xlink";
 export function linkHref(a: { getAttribute(name: string): string | null; getAttributeNS(ns: string | null, name: string): string | null }): string {
   return a.getAttribute("href") ?? a.getAttributeNS(XLINK_NS, "href") ?? "";
 }
+
+// ── which click is the browser's ───────────────────────────────────────────────────────────────────
+
+/** Does the BROWSER answer this click with a tab or window of its own, on the platform the page runs on? Its
+ *  disposition rule (Chromium's NavigationPolicyFromEventModifiers; measured in review on Linux): Shift is a new
+ *  window everywhere; the new-tab modifier is Cmd on macOS and Ctrl everywhere else, and the OTHER key is no gesture
+ *  at all (Ctrl-click on a Mac is the context menu; Super-click on Linux and Windows is a plain click to the browser).
+ *  A handler that stands aside for a gesture the browser will honour must read the platform's key, not "any
+ *  modifier": the chat's `#` resolver (render.ts) stood aside for Meta on Linux, the browser ran its default lookup on
+ *  the bare fragment the sanitizer had prefixed, and the click died where the base scrolled (the round-2 review of
+ *  plans/markdown-viewer.md Slice 1). Alt is accepted and not read: Chromium's Alt-click is a download, no tab. `mac` is passed in,
+ *  never read here, so a node test drives both platforms and the module stays DOM-free. */
+export function browserTabClick(e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean): boolean {
+  return !!e.shiftKey || (mac ? !!e.metaKey : !!e.ctrlKey);
+}

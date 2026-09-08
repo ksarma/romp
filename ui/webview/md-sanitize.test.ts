@@ -106,6 +106,7 @@ test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.
     "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM");
   assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "the input post-pass, then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
+  assert.match(SAN, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/, "the registry is a module array of passes over the sanitized body, empty until a grammar module registers one");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));
   assert.deepEqual(importers, ["md-sanitize.ts"]);
   assert.match(read("render.ts"), /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);

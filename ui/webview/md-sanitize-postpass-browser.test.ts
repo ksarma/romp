@@ -10,12 +10,16 @@
 //   • A checkbox an author writes by hand (not marked's `- [x]`) is forced `disabled`, and a real click leaves it
 //     unchecked: the fixture the files browser leg renders has only marked's task items, which arrive disabled
 //     already, so that leg passed with the forcing branch deleted.
+//   • One enormous formula cannot freeze the page. katex.render is synchronous on the main thread and its cost climbs
+//     faster than the input past about 20,000 characters (a 100k-character sum took 6 to 17 s, 1M had not finished after
+//     270 s), and no tokenizer bounds a formula, so the fill stops at MATH_TEX_MAX_CHARS and shows the TeX as source.
 // Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { MATH_TEX_MAX_CHARS } from "./math";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
@@ -238,6 +242,49 @@ test("a checkbox an author writes by hand is forced disabled: a real click leave
     await page.mouse.click(boxes[3].x, boxes[3].y);
     const after = await page.evaluate(() => Array.from(document.querySelectorAll("#out input")).map((i) => (i as HTMLInputElement).checked));
     assert.deepEqual(after, [true, false, false, true], "no checkbox toggled under a real click");
+    assert.deepEqual(errors, [], "no pageerror");
+  });
+});
+
+test("a formula longer than MATH_TEX_MAX_CHARS is shown as its TeX source, so one enormous formula cannot freeze the page", { timeout: 60000 }, async (t) => {
+  // The real pipeline over the three ways a formula reaches the fill: a $$ paragraph of its own (a block placeholder), an
+  // inline $..$ (a span in the paragraph) and an author's hand-written placeholder, which no tokenizer sees. At the cap
+  // KaTeX still renders; one character over, the source stands where the formula would have, as a code block for a
+  // block placeholder and a code span in a paragraph, the TeX intact and the title saying why. The 200k-character case
+  // is the freeze itself: before the cap it took about 20 s here, so the bound below is loose by orders of magnitude.
+  await inBrowser(t, async (page, errors) => {
+    const flat = (n: number) => "x+".repeat(Math.ceil(n / 2)).slice(0, n);
+    const atCap = flat(MATH_TEX_MAX_CHARS), over = flat(MATH_TEX_MAX_CHARS + 1), big = flat(200000);
+    const facts = await page.evaluate(([atCap, over, big]: [string, string, string]) => {
+      const w = window as any;
+      const out = document.getElementById("out") as HTMLElement;
+      const run = (src: string): number => { const t0 = performance.now(); out.innerHTML = w.__mdPipe(src); return Math.round(performance.now() - t0); };
+      const count = () => ({ katex: out.querySelectorAll(".katex").length, placeholders: out.querySelectorAll(".md-math-inline, .md-math-display").length, pre: out.querySelectorAll("pre").length, code: out.querySelectorAll("code").length });
+      // 1. exactly at the cap: rendered
+      run("Text\n\n$$\n" + atCap + "\n$$\n\nmore");
+      const at = { ...count(), display: out.querySelectorAll(".katex-display").length };
+      // 2. one over, a display paragraph of its own: a code block at block level, the TeX intact
+      run("Text\n\n$$\n" + over + "\n$$\n\nmore");
+      const pre = out.querySelector("pre");
+      const block = { ...count(), codeInPre: pre?.firstElementChild?.tagName ?? null, text: pre?.textContent === over, title: pre?.getAttribute("title") ?? null, parentId: pre?.parentElement?.id ?? null };
+      // 3. one over, inline in a sentence: a code span in the paragraph, the prose around it intact
+      run("Total $" + over + "$ done.");
+      const code = out.querySelector("p > code");
+      const p = out.querySelector("p");
+      const inline = { ...count(), text: code?.textContent === over, title: code?.getAttribute("title") ?? null, prose: (p?.textContent || "").startsWith("Total ") && (p?.textContent || "").endsWith(" done.") };
+      // 4. an author's hand-written placeholder, ten times the cap: the same code span, in milliseconds
+      const ms = run('<p>see <span class="md-math-inline">' + big + "</span> here</p>");
+      const hand = { ...count(), text: out.querySelector("p > code")?.textContent === big, ms };
+      return { at, block, inline, hand };
+    }, [atCap, over, big]);
+    assert.deepEqual(facts.at, { katex: 1, placeholders: 0, pre: 0, code: 0, display: 1 }, "at the cap the formula renders: " + JSON.stringify(facts.at));
+    const why = new RegExp("^Not rendered: " + (MATH_TEX_MAX_CHARS + 1) + " characters of TeX; the limit is " + MATH_TEX_MAX_CHARS + "\\.$");
+    assert.deepEqual({ ...facts.block, title: null }, { katex: 0, placeholders: 0, pre: 1, code: 1, codeInPre: "CODE", text: true, title: null, parentId: "out" }, "one over, block: a code block where the formula stood, its TeX intact: " + JSON.stringify({ ...facts.block, text: undefined }));
+    assert.match(facts.block.title || "", why, "the block's title says why");
+    assert.deepEqual({ ...facts.inline, title: null }, { katex: 0, placeholders: 0, pre: 0, code: 1, text: true, title: null, prose: true }, "one over, inline: a code span in the paragraph, the sentence intact: " + JSON.stringify({ ...facts.inline, text: undefined }));
+    assert.match(facts.inline.title || "", why, "the span's title says why");
+    assert.deepEqual({ ...facts.hand, ms: 0 }, { katex: 0, placeholders: 0, pre: 0, code: 1, text: true, ms: 0 }, "a hand-written placeholder over the cap is the same code span: " + JSON.stringify(facts.hand));
+    assert.ok(facts.hand.ms < 5000, "200k characters of TeX cost milliseconds, not the seconds KaTeX would take: " + facts.hand.ms + " ms");
     assert.deepEqual(errors, [], "no pageerror");
   });
 });

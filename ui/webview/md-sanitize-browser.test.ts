@@ -19,8 +19,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 
-const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
+// resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
+const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const STYLES = fs.readFileSync(path.join(UI, "styles.css"), "utf8");
 const PANE = fs.readFileSync(path.join(UI, "files-pane.css"), "utf8");
@@ -123,6 +124,24 @@ async function inBrowser(t: any, body: (page: any, errors: string[], seen: Seen)
     await browser.close();
   }
 }
+
+// The legs of this family (md-sanitize*-browser and the file-view-links leg they run beside) resolve playwright and esbuild
+// from the extension's package.json, never from the bundle's own path: npm test writes the bundle under
+// vscode-extension/out-tests, where a walk-up finds node_modules, but the single-file recipe writes it under TMPDIR, where
+// nothing is above it, and a require created from the bundle's own filename then reports playwright missing while it is
+// installed, so the leg skips with a false diagnosis (review round 2, 2026-09-08: seven legs skipped that way while two
+// ran). Node-side: no browser. The forbidden form is matched by pattern so this file's own text does not trip it.
+test("every md-sanitize browser leg resolves its runtime requires from the extension, not from the bundle's path", () => {
+  const legs = fs.readdirSync(UI).filter((n) => /^md-sanitize.*-browser\.test\.ts$/.test(n) || n === "file-view-links-browser.test.ts").sort();
+  assert.ok(legs.includes("md-sanitize-browser.test.ts"), "the family was found under ui/webview: " + legs.join(", "));
+  const fromBundlePath = /createRequire\(\s*__filename\s*\)/;
+  const fromExtension = 'createRequire(path.join(EXT, "package.json"))';
+  for (const leg of legs) {
+    const src = fs.readFileSync(path.join(UI, leg), "utf8");
+    assert.ok(!fromBundlePath.test(src), leg + ": the require is created from the bundle's own path, so the leg skips when it is bundled outside vscode-extension");
+    assert.ok(src.includes(fromExtension), leg + ": resolve playwright and esbuild through the extension's package.json");
+  }
+});
 
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 const near = (a: number, b: number, msg: string, tol = 1) => assert.ok(Math.abs(a - b) <= tol, msg + ": " + a + " vs " + b);

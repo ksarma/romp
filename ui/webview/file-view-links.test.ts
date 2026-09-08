@@ -809,8 +809,8 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   const openerAt = RENDER.indexOf('document.addEventListener("click", (e) => {\n  const a = (e.target as Element)?.closest?.(LINK_SEL)');
   assert.ok(openerAt > 0, "the chat's opener, keyed on LINK_SEL");
   const opener = RENDER.slice(openerAt, RENDER.indexOf("}, true);", openerAt));
-  assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(a as HTMLElement\)\.draggable && selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*const href = linkHref\(a\);/,
-    "the chat's opener: the panel's mark first, then, for a non-draggable anchor only, the selection open inside it (the click that ends a drag-select: cancelled, never opened; a chat anchor is draggable and a selection left around it by a triple-click is not a drag on it, round 4), then the href");
+  assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(a as HTMLElement\)\.draggable && selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*let href = linkHref\(a\);/,
+    "the chat's opener: the panel's mark first, then, for a non-draggable anchor only, the selection open inside it (the click that ends a drag-select: cancelled, never opened; a chat anchor is draggable and a selection left around it by a triple-click is not a drag on it, round 4), then the href (a `let`: a scheme-less one is replaced by the address the browser would follow, md-sanitize-chat-schemeless-browser.test.ts)");
   assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);
   assert.match(VIEW, /import \{ selectionOpenIn \} from "\.\/path-links";/);
   assert.doesNotMatch(d, /getSelection|isCollapsed/, "no second spelling of the selection test in the delegate");

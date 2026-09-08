@@ -123,7 +123,7 @@ built departs from the text above, and why:
    own chrome (`#fileview-save-err`) all land on the author's element under its prefix, which is never the chrome's
    id at all; `data-frag` and the `Go to` title keep the fragment as typed. Before the fold, #347's browser leg
    dressed those three links dead (fragmentTarget compared the bare spelling). The chat resolves a message's own
-   `#` links with the same lookup (item 10). One cost, GitHub's too: an inline SVG's `fill="url(#g)"` no longer
+   `#` links with the same lookup (item 9). One cost, GitHub's too: an inline SVG's `fill="url(#g)"` no longer
    finds its `<linearGradient id="g">`, since the id is prefixed and the reference is not.
 3. *A wider forbidden list.* The text names style, form, button, select, textarea. The build forbids every
    form-associated element (form, button, select, option, optgroup, textarea, fieldset, legend, label, datalist,
@@ -177,7 +177,15 @@ built departs from the text above, and why:
    not ending in `%`) takes `height: auto` so it keeps its ratio as the cap shrinks it; a percentage-width element
    the cap never shrinks keeps the author's explicit height (round 1's unconditional `height: auto` grew a
    full-width `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to
-   Chromium's default 150, the review's recheck). Both rules are written inside `:where()` at zero class
+   Chromium's default 150, the review's recheck). A video's ratio is not its attributes' by construction, as an
+   svg's and a canvas's are: the browser maps `width="640" height="360"` to `aspect-ratio: auto 640 / 360`, and
+   `auto` defers to the media's natural ratio once a poster or the frames are there, so `height: auto` alone laid a
+   640 by 360 clip with a square poster out 640 by 640 in a pane that shrank nothing, and the box jumped to the
+   frames' shape at play (review round 2). `mdBlock` now writes the attributes' ratio as a pixel-sized video's inline
+   `aspect-ratio` (`keepVideoShape`, file-view.ts; a percentage in either attribute is left alone, as the sheet's rule
+   leaves a percentage width), so the box is the author's shape capped or not, and the sheet's rule stays the one that
+   lets it shrink; md-sanitize-wide-media-browser.test.ts holds it with a square-poster fixture at 640x360 and the same
+   poster on the capped 1500x40 video. Both rules are written inside `:where()` at zero class
    specificity, so KaTeX's own `.katex svg` rule wins once math renders in a note (its stretchy glyphs carry
    `width="400em"`, pixel-like to the attribute test), and the direct-child measure rule covers them too. A
    no-viewBox svg wider than the column is cropped rather than scrolled to, the one case where the base's sideways
@@ -185,8 +193,11 @@ built departs from the text above, and why:
    md-sanitize-wide-media-browser.test.ts lays the fixtures, the two author-sized shapes included, out at 900 and
    380px.
 6. *The submit backstop* is one `submit` listener calling `preventDefault` on `.fileview-body`, in `openFileView`
-   and in `openUrlView`, installed once per open beside the click delegate. The sanitizer never lets a form
-   through, so the browser leg exercises the listener by inserting a real form after render.
+   and in `openUrlView`, installed once per open on the stable body before any render, so it survives every
+   Rendered and Raw swap. In `openFileView` it sits with the body's one plain click listener (the #347 fold replaced
+   that open's `fv-open` delegate with the listener that reads a file document's links); in `openUrlView` it sits
+   beside the `fv-anchor` delegate, which that viewer keeps. The sanitizer never lets a form through, so the browser
+   leg exercises the listener by inserting a real form after render.
 7. *KaTeX renders after the sanitizer* (review round 1). The chat's math extensions (math.ts) emitted KaTeX's
    markup into marked's output, and KaTeX carries every piece of vertical layout in inline `style` (a strut's
    height, a vlist row's top, a radical's padding), so through the colour-only rule a fraction came back on one
@@ -196,7 +207,14 @@ built departs from the text above, and why:
    runs, and `renderMathPlaceholders` (math.ts, a plain exported function) renders KaTeX into each placeholder on
    the sanitized DOM with `katex.render(tex, el, { displayMode, throwOnError: false, output: "html", trust: false })`
    and unwraps it, so the `.katex` root stands where marked's output used to stand and KaTeX's styles never meet
-   DOMPurify. The fill is a POST-PASS `sanitizeMd` itself runs: md-sanitize.ts keeps a small registry
+   DOMPurify. A formula longer than `MATH_TEX_MAX_CHARS` (20,000 characters of TeX) is never handed to KaTeX and is
+   shown as its source, a code block for a display paragraph of its own and a code span in a paragraph, with a `title`
+   saying why; the belt a residual KaTeX throw takes has the same shape. The value is the knee measured in review
+   round 2: `katex.render` is synchronous on the main thread and took 0.23 s at 20,000 characters, 0.8 s at 24,000, 6
+   to 17 s at 100,000, and had not finished 1,000,000 after 270 s, while KaTeX has no option that bounds its input and
+   no tokenizer bounds a formula, so one enormous formula in a reply or a note froze the chat page and every session
+   tab in it (md-sanitize-postpass-browser.test.ts runs the cap for real). The fill is a POST-PASS `sanitizeMd` itself
+   runs: md-sanitize.ts keeps a small registry
    (`registerMdPostPass`, idempotent per function), and chat-md.ts, the module that defines the math grammar,
    registers `renderMathPlaceholders` at load, so every `sanitizeMd` call in a bundle that carries the grammar
    renders math and a bundle without it (files.js, feed.js) has neither the grammar nor the fill nor KaTeX. Round
@@ -221,29 +239,46 @@ built departs from the text above, and why:
    because its `xlink:href` was copied to `href` first: an SVG `<a href="sibling.md">` becomes the same path link a
    relative `<a>` becomes and opens the sibling in the viewer. Image maps are dropped (item 3); `area[href]` stays
    in `LINK_SEL` as a second guard.
-10. *In-page anchors in a chat reply* (between review rounds 1 and 2). A reply's own `<sup id="fn1">` and
+9. *In-page anchors in a chat reply* (between review rounds 1 and 2). A reply's own `<sup id="fn1">` and
    `<a href="#fn1">`, or `[install](#install)` over its `<a name="install">`, scrolled the transcript on main
    through the browser's default fragment lookup; with the id and name prefixed and the href left as written,
    that lookup found nothing and the click died. render.ts's capture-phase link delegate now resolves a `#` href
    inside a message body (`.md`) the way GitHub's page script does: `userContentTarget` over the message's own body
    first (its footnote before a same-named element in an older message), then over the document; found, the target
    is scrolled into view (`block: "start"`) and the default cancelled, so the hash stays as it was; not found, the
-   click is left to the browser as before. A modified click keeps the browser's tab, and a link outside a message
-   body (the viewer's own section links, which the viewer lands itself) is not this branch's. The scheme test that
-   follows is unchanged, so every relative href is still left alone.
-11. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
+   click is left to the browser as before. A click the browser answers with a tab or window of its own (Shift; Cmd on
+   macOS, Ctrl elsewhere: `browserTabClick`, md-links.ts) keeps the browser's, read by the platform's key, because
+   Super-click on Linux and Windows is a plain click to the browser, and standing aside for Meta there left the default
+   lookup to find nothing (review round 2); it is resolved like a plain click now. A link outside a message body (the
+   viewer's own section links, which the viewer lands itself) is not this branch's.
+   The scheme test that follows no longer hands a scheme-less href to the browser's default action (review round 2;
+   pre-existing on main). DOMPurify keeps several hrefs that fail that test and still resolve to another origin:
+   protocol-relative `//host` and `/\host`, an `https:` behind a C0 control character (its trim removes JavaScript
+   whitespace only, and its URI check strips controls for the test and writes the value back as written) and a tab or
+   newline inside the scheme (`ht&#10;tps:`); a click on any of them navigated the chat document itself, in the same
+   frame, to that origin, and a plain relative link did the same to a same-origin page. The delegate now resolves such
+   an href the way the default action would, `new URL(href, document.baseURI)` (the browser's own parser drops the
+   control and the whitespace and gives `//host` the page's scheme), and opens the RESOLVED address as it opens an
+   absolute one: a tab, or the viewer for a same-origin `.md`; an empty href (`[x]()`, which the default action would
+   reload the page for) is inert; a non-web result (VS Code's webview scheme, where every relative href resolves) or a
+   parse failure stays the browser's, as before. md-sanitize-chat-schemeless-browser.test.ts clicks each shape over
+   the real bundle.
+10. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
    pins, the guide's paragraph), `md-sanitize-guide.test.ts` (the guide's `<style>` clause) and
    `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over the real files bundle, with an
    author's `data-*` fixture and a whole-leg log of main-frame navigations and off-host requests). On the base
    commit the browser leg times out waiting for `.fileview-md`: the fixture's `<style>` block hides the viewer,
-   the audit's defect reproduced. Review round 1 added `md-sanitize-math.test.ts` and `render-math.test.ts`
-   (node: the placeholder contract, the katex.render options, the render.ts wiring),
+   the audit's defect reproduced. Review round 1 rewrote `render-math.test.ts` (node: the placeholder contract, the
+   katex.render options, the render.ts wiring; review round 2 folded `md-sanitize-math.test.ts`, a near-copy, into it,
+   leaving the sanitizer's registry and loop pinned once in `md-sanitize.test.ts`),
    `md-sanitize-postpass-browser.test.ts` (a fraction, a superscript, a radical and a display sum measured after
    the post-pass; an author's style beside them keeps only colour; hand-written placeholders under trust: false;
    the forced-disabled checkbox clicked), `md-sanitize-katex-browser.test.ts` (the rendered `.katex` is
    byte-identical to katex.render's own output; the userMd path; idempotence),
    `md-sanitize-viewer-links.test.ts` and `-browser.test.ts` (LINK_SEL in mdBlock; an SVG anchor's absolute,
-   fragment and relative hrefs clicked in the viewer, and a dropped image map's inert picture),
+   fragment and relative hrefs clicked in a file document, whose stamps are linkMarkdownAnchors', and in a URL document
+   opened with no delegate in front, where mdBlock's own setAttribute stamps decide between a new tab and a same-frame
+   navigation; a dropped image map's inert picture; a tab awaited on the context's page event, never a sleep),
    `md-sanitize-chat-links-browser.test.ts` (the same shapes clicked in the chat; a footnote's back link, a link
    over the reply's own `<a name>`, a same-named target in an older message and a fragment with no target),
    `md-sanitize-background-browser.test.ts` (no `background=` survives and no request leaves the host) and
@@ -254,7 +289,18 @@ built departs from the text above, and why:
    literal text, and files.js carries neither the grammar nor KaTeX), the registry's idempotence executed in
    `md-sanitize-katex-browser.test.ts`, `userContentTarget` executed in `chat-link-open.test.ts`, and #347's
    `file-view-links.test.ts` and `-browser.test.ts` asserting the prefixed shapes (an author's id equal to a chrome
-   id renders prefixed and is never the scroll target).
+   id renders prefixed and is never the scroll target). Review round 2: `md-sanitize-chat-schemeless-browser.test.ts`
+   (each scheme-less shape clicked over the real chat bundle, the resolved address opened and the document kept),
+   `md-sanitize-chat-modified-click-browser.test.ts` (Shift and the platform's tab key give the browser's tab; Super
+   off macOS scrolls) with `browserTabClick` executed in `md-links.test.ts`, the formula cap in
+   `md-sanitize-postpass-browser.test.ts` (at the cap KaTeX renders; one over, the source as a code block or a code
+   span with its title; 200,000 characters in milliseconds) and its source pin in `render-math.test.ts`, the
+   square-poster video fixtures in `md-sanitize-wide-media-browser.test.ts`, `md-sanitize-chat-links-browser.test.ts`
+   keyed on each click's own `defaultPrevented` flag in place of ten bounded waits (13.9 s to about 2 s),
+   `md-sanitize-browser.test.ts`'s pin that every leg of the family resolves playwright and esbuild through the
+   extension's package.json (a bundle written outside vscode-extension used to skip with a false diagnosis), and
+   `file-view.test.ts`'s new-tab pin scoped to `mdBlock` and `linkMarkdownAnchors` (a whole-file match stayed green
+   with the stamps deleted).
 
 ### Slice 2: layout follows the pane, reader keeps their place
 

@@ -7,15 +7,19 @@
 // contract: which text becomes a formula, which stays prose, and what the placeholder carries.
 // That KaTeX's layout survives the sanitizer is executed in headless Chromium over the real
 // modules: md-sanitize-postpass-browser.test.ts measures a fraction, a superscript, a radical
-// and a display sum, and md-sanitize-katex-browser.test.ts checks the rendered markup is
-// KaTeX's own byte for byte; the render.ts wiring is source-pinned below.
+// and a display sum, md-sanitize-katex-browser.test.ts checks the rendered markup is KaTeX's
+// own byte for byte, and md-sanitize-viewer-math-browser.test.ts opens a note with math in the
+// chat page's viewer. The wiring (math.ts, chat-md.ts, render.ts) is source-pinned below. This
+// is the ONE node file for the math contract: review round 2 folded md-sanitize-math.test.ts, a
+// near-copy with three of these pins repeated, into it. The sanitizer's own shape (the registry
+// and the loop that runs the passes) is md-sanitize.test.ts's.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
 import katex from "katex";
-import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS } from "./math";
+import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS } from "./math";
 
 const m = new Marked({ gfm: true, extensions: [mathBlock, mathInline] });
 const html = (src: string) => m.parse(src) as string;
@@ -68,6 +72,19 @@ test("the TeX is text: markup inside a formula is escaped, never emitted as HTML
   assert.ok(out.includes("&lt;img src=x onerror=1&gt;"));
   assert.equal(mathPlaceholder("a<b", false, false), '<span class="md-math-inline">a&lt;b</span>');
   assert.equal(mathPlaceholder("x", true, true), '<div class="md-math-display">x</div>');
+  assert.equal(mathPlaceholder("x", true, false), '<span class="md-math-display">x</span>', "display math inside a paragraph is a span: the placeholder stays in the flow it came from");
+});
+
+test("marked's output holds no KaTeX markup, no inline style and no svg: nothing for the colour-only rule to strip", () => {
+  // The complement of the executed test below (KaTeX's own output is inline styles and svg): none of it is
+  // in what marked emits, so the sanitizer meets an element with text and nothing to strip.
+  for (const src of ["$\\frac{a}{b}$", "$$\\sum_{i=0}^{n} i^2$$", "$\\sqrt{d}$", "$x^2$", "\\[\\int_0^1 f\\]"]) {
+    const out = html(src);
+    assert.ok(hasMath(out), "placeholder expected for " + src + ": " + out);
+    assert.doesNotMatch(out, /class="katex/, "no KaTeX markup before the sanitizer: " + out);
+    assert.doesNotMatch(out, /style=/, "no inline style before the sanitizer: " + out);
+    assert.doesNotMatch(out, /<svg/, "no svg before the sanitizer: " + out);
+  }
 });
 
 test("invalid TeX renders as flagged output under the options the post-pass uses, never a throw", () => {
@@ -144,7 +161,8 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
-  assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false \}\);/, "the one katex call, html-only and untrusted");
+  assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false \}\);\n\s*el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/,
+    "the one katex call, html-only and untrusted, and the placeholder unwrapped right after it: the .katex root stands where marked's output used to");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
   const grammar = UI("chat-md.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
@@ -163,8 +181,33 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   const userFn = render.match(/function userMd\(src: string\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(userFn, "userMd() must exist");
   assert.match(userFn, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/, "userMd(): the same order");
-  const san = UI("md-sanitize.ts");
-  assert.match(san, /for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "sanitizeMd runs every registered pass on the sanitized body before handing it back");
+  // The last link, that sanitizeMd runs every registered pass on the sanitized body before handing it back,
+  // is the sanitizer's own contract and is pinned once, in md-sanitize.test.ts (the registry and the loop).
+});
+
+test("no source still claims KaTeX's output passes the sanitizer: the pre-placeholder comments are gone", () => {
+  // Before the placeholder, math.ts and chat-md.ts explained that KaTeX's html-only output passed md()'s
+  // DOMPurify profile untouched. It never did under the colour-only style rule, and a comment that says so
+  // again would send the next reader back to rendering inside marked.
+  assert.doesNotMatch(UI("chat-md.ts"), /passes through unchanged/);
+  assert.doesNotMatch(UI("math.ts"), /passes md\(\)'s DOMPurify html profile untouched/);
+  assert.match(UI("md-sanitize.ts"), /What does NOT pass through here: KaTeX/);
+});
+
+test("a formula longer than MATH_TEX_MAX_CHARS is shown as source before katex.render is reached", () => {
+  // katex.render is synchronous on the main thread and superlinear in a flat formula's length (0.23 s at 20,000
+  // characters, 0.8 s at 24,000, 6 to 17 s at 100,000, measured 2026-09-08; md-sanitize-postpass-browser.test.ts runs
+  // the cap for real), and KaTeX has no option that bounds its input, so the fill checks the length itself, ahead of
+  // the one katex.render call, and takes the belt a throw takes. The value is the knee of those measurements, not a
+  // guess: change it with new numbers.
+  assert.equal(MATH_TEX_MAX_CHARS, 20000);
+  const math = UI("math.ts");
+  const fill = math.slice(math.indexOf("export function renderMathPlaceholders("));
+  const cap = fill.indexOf("if (tex.length > MATH_TEX_MAX_CHARS) {");
+  const render = fill.indexOf("katex.render(");
+  assert.ok(cap > 0 && cap < render, "the length check stands ahead of the one katex.render call");
+  assert.match(fill.slice(cap, render), /showSource\(el, tex, "Not rendered: "/, "an over-long formula is shown as source, its title saying why");
+  assert.match(fill.slice(render), /catch \{\n\s*showSource\(el, tex, "Not rendered: /, "the residual-throw belt is the same helper");
 });
 
 test("executed: why the order matters: KaTeX's own output is inline styles and svg", () => {
