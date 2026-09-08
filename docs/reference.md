@@ -1976,7 +1976,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the working note, the needs-you bit, the live tail's revision, the liveness
   row, the clock booleans, the backend's queue and brackets, the parked ops,
   the limit hold, the retry state, the live task rows, the watches, the
-  awaiting-stamp view, the warm-anchor revision, the suspension count, the names revision, the flags
+  awaiting-stamp view, the warm-anchor revision, the suspension count, the names digest, the flags
   and bell files, the colormap, the account, cleared.jsonl, the host, the
   cwd-derived rows, the CLAUDE.md chain, the forks, and the three build-time
   dependencies `taskout`, `pathlink` and `postal`; plus `cold` for a tab with
