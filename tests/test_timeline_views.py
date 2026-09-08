@@ -268,6 +268,7 @@ class TimelineViews(unittest.TestCase):
         self.assertIn('return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
                       '            "views": _views_client(), "live":', src, "tabOrder frames carry it beside the kernel's own name")
         self.assertIn('_frame = _tab_order_frame(_o, _tabs, _tm)', src, "the connect-time tabOrder carries it")
+        self.assertIn('client["send"](json.dumps(_frame))', src, "and is the frame the connect push sends")
 
     def test_web_boot_exposes_the_set_views_hook(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

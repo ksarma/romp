@@ -47,6 +47,7 @@ class TabsFirst(unittest.TestCase):
         text = open(KPATH).read()
         self.assertEqual(text.count('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, tmux))'), 2)
         self.assertEqual(text.count("frame = _tab_order_frame(tab_order, tab_meta, tmux)"), 1)
+        # the connect-time frame is bound to a name first: the caps frame reads its views seq (_views_seq_of)
         self.assertEqual(text.count("_frame = _tab_order_frame(_o, _tabs, _tm)"), 1)
         self.assertEqual(text.count('{"type": "tabOrder"'), 1, "the literal lives in _tab_order_frame alone")
         self.assertIn("_tab_order_frame(tab_order, tab_meta, tmux)", inspect.getsource(km._push_session_now))
@@ -56,12 +57,14 @@ class TabsFirst(unittest.TestCase):
         text = open(KPATH).read()
         self.assertIn('_frame = _tab_order_frame(_o, _tabs, _tm)', text,
                       "the WS 'ready' connect push also carries name+color tabs, in the frame's one spelling")
+        self.assertIn('client["send"](json.dumps(_frame))', text,
+                      "and that frame is the one sent (it is bound to a name so the caps frame can read its views seq)")
         # the SAME fields as the pusher's tab_meta, emoji included: this is the first frame a fresh connection
         # paints its strip from, and it shipped without the emoji while the other three builders carried it, so
         # every tab opened with a bare name until the next push (review, 2026-09-07; tests/test_session_emoji.py
         # runs the handler and counts the four builders)
-        self.assertIn('_tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
-                      '                          "emoji": _name_emoji(s["sid"])} for s in _alive]', text)
+        self.assertRegex(text, r'_tabs = \[\{"id": s\["sid"\], "name": s\.get\("name", ""\), "color": _name_color\(s\["sid"\]\),\s*'
+                              r'"emoji": _name_emoji\(s\["sid"\]\)\} for s in _alive\]')
         self.assertNotIn('"color": _name_color(s["sid"])} for s in _alive]', text, "no emoji-less builder remains")
 
     def test_name_color_shape_matches_the_client_color_type(self):
