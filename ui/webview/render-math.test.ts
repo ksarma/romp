@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
 import katex from "katex";
-import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS } from "./math";
+import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, macroBounds, maxExpandFor } from "./math";
 
 const m = new Marked({ gfm: true, extensions: [mathBlock, mathInline] });
 const html = (src: string) => m.parse(src) as string;
@@ -28,8 +28,9 @@ const unescape = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").re
 /** Every placeholder in marked's output, in order: its tag, its mode and the TeX it carries. */
 const formulas = (out: string) => Array.from(out.matchAll(PLACEHOLDER)).map((x) => ({ tag: x[1], display: x[2] === MATH_DISPLAY_CLASS, tex: unescape(x[3]) }));
 const hasMath = (s: string) => formulas(s).length > 0;
-// the options renderMathPlaceholders hands katex.render (pinned against math.ts below)
-const KATEX = { throwOnError: false, output: "html", trust: false } as const;
+// the options renderMathPlaceholders hands katex.render (pinned against math.ts below); maxExpand is computed per formula
+// there (maxExpandFor), so the fixed part is spread and a call adds it for the formula at hand
+const KATEX = { throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM } as const;
 
 // --- becomes a formula: marked emits the placeholder, KaTeX does not run here ---
 
@@ -161,8 +162,8 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
-  assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false \}\);\n\s*el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/,
-    "the one katex call, html-only and untrusted, and the placeholder unwrapped right after it: the .katex root stands where marked's output used to");
+  assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor\(tex\) \}\);\n\s*el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/,
+    "the one katex call, html-only and untrusted, under KaTeX's two bounds (a size cap, a per-formula expansion count), and the placeholder unwrapped right after it: the .katex root stands where marked's output used to");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
   const grammar = UI("chat-md.ts");
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
@@ -207,7 +208,90 @@ test("a formula longer than MATH_TEX_MAX_CHARS is shown as source before katex.r
   const render = fill.indexOf("katex.render(");
   assert.ok(cap > 0 && cap < render, "the length check stands ahead of the one katex.render call");
   assert.match(fill.slice(cap, render), /showSource\(el, tex, "Not rendered: "/, "an over-long formula is shown as source, its title saying why");
-  assert.match(fill.slice(render), /catch \{\n\s*showSource\(el, tex, "Not rendered: /, "the residual-throw belt is the same helper");
+  assert.match(fill.slice(render), /catch \(e\) \{\n\s*if \(!reported\) \{ reported = true; console\.error\("math: [^\n]*\n\s*showSource\(el, tex, "Not rendered: /,
+    "the residual-throw belt is the same helper, and says so on the console once per call (the fail-loudly rule: a swallowed throw hides the breakage)");
+});
+
+test("the fill's bounds stand ahead of the one katex.render call, in order: the formula's length, the call's total, a macro that repeats an argument; then KaTeX's own two", () => {
+  // Review round 3. The length cap bounds one formula; a message of twenty formulas just under it blocked the page for
+  // 8 to 15 s, so the call keeps a running total of the TeX it has rendered (its own local: one sanitizeMd call, so one
+  // message or one note) and shows a formula that would pass MATH_TEX_BUDGET_CHARS as source, a shorter one still
+  // rendering while it fits. KaTeX expands macro bodies before layout and its maxExpand counts expansions, not their
+  // size, so a 1,409-character `\def\a{<1,000>}` and 200 uses was 200,000 characters of formula and 20 s: maxExpand is
+  // computed per formula from the longest body it defines (maxExpandFor), and a body that repeats an argument, the one
+  // amplification an expansion count cannot bound, takes the source fallback before KaTeX is reached. maxSize stops
+  // `\rule{5000em}{5000em}` from laying a 78,650 px square in the transcript. The values, with their measurements, are
+  // math.ts's comments; the postpass browser leg runs each bound for real.
+  assert.equal(MATH_TEX_BUDGET_CHARS, 100000, "five formulas at the cap; a long paper's mathematics is 15,000 to 30,000 characters");
+  assert.equal(MATH_MAX_SIZE_EM, 50, "about the chat column");
+  assert.equal(MATH_EXPANSION_BUDGET_CHARS, MATH_TEX_MAX_CHARS, "the expanded bodies of one formula are bounded by the same knee as its written length");
+  const math = UI("math.ts");
+  const fill = math.slice(math.indexOf("export function renderMathPlaceholders("));
+  const cap = fill.indexOf("if (tex.length > MATH_TEX_MAX_CHARS) {");
+  const budget = fill.indexOf("if (rendered + tex.length > MATH_TEX_BUDGET_CHARS) {");
+  const repeat = fill.indexOf("if (macroBounds(tex).argRepeat) {");
+  const spend = fill.indexOf("rendered += tex.length;");
+  const render = fill.indexOf("katex.render(");
+  assert.ok(cap > 0 && cap < budget && budget < repeat && repeat < spend && spend < render, "length cap, then the running total, then the argument-repeat rule, then the total is charged, then the one katex.render call: " + JSON.stringify({ cap, budget, repeat, spend, render }));
+  assert.match(fill, /let rendered = 0;/, "the meter is the call's own local: one sanitizeMd call, one message or note");
+  assert.match(fill.slice(budget, repeat), /showSource\(el, tex, "Not rendered: the formulas above already total " \+ rendered \+ " characters of TeX; the limit for one message or note is " \+ MATH_TEX_BUDGET_CHARS \+ "\."\);/, "over the total: the source, the title saying what was rendered and the limit");
+  assert.match(fill.slice(repeat, spend), /showSource\(el, tex, "Not rendered: a macro in this formula repeats one of its arguments/, "an argument repeated: the source, the title saying why");
+  assert.match(math, /code\.className = MATH_SOURCE_CLASS;/, "the fallback's code element wears the class the sheets dress (showSource)");
+  assert.equal(MATH_SOURCE_CLASS, "md-math-src");
+  // the sheets: one rule, byte-equal (fileview-parity.test.ts holds the equality), tokens only, dressing the fallback as
+  // unrendered source: the dim tier and a dotted underline in place of the code tone
+  for (const sheet of ["styles.css", "feed.css"]) {
+    const css = UI(sheet);
+    const at = css.indexOf(".md code.md-math-src, .fileview-md code.md-math-src {");
+    assert.ok(at > 0, sheet + " dresses the fallback");
+    const rule = css.slice(at, css.indexOf("}", at) + 1);
+    assert.match(rule, /color: var\(--dim\); text-decoration: underline dotted; text-decoration-color: var\(--dim\);/, sheet + ": the dim tier, a dotted underline");
+    assert.doesNotMatch(rule, /#[0-9a-fA-F]{3,8}\b/, sheet + ": no colour literal in the rule");
+  }
+  // render.ts's highlighter leaves the fallback alone (auto-detection over 20,000 characters of TeX cost 250 ms and dressed
+  // it in a guessed grammar's tokens); it spells the class rather than importing it, since render.ts imports nothing from math.ts
+  const render_ = UI("render.ts");
+  const hl = render_.slice(render_.indexOf("function highlight(container: HTMLElement"), render_.indexOf("function copyText("));
+  assert.match(hl, new RegExp('if \\(code\\.classList\\.contains\\("' + MATH_SOURCE_CLASS + '"\\)\\) \\{ const host = code\\.parentElement; if \\(host && host\\.tagName === "PRE"\\) addCopyBtn\\(host as HTMLElement, raw\\); return; \\}'),
+    "the highlighter skips the fallback (its Copy button kept) before any tokenizing");
+  assert.ok(hl.indexOf('classList.contains("' + MATH_SOURCE_CLASS + '")') < hl.indexOf("highlightHtml("), "the exemption stands ahead of the tokenizer");
+});
+
+test("executed: macroBounds reads a formula's macro bodies the way KaTeX will expand them, and maxExpandFor bounds the expansion by the longest", () => {
+  const long = "x+".repeat(500);                                  // a 1,000-character body
+  assert.deepEqual(macroBounds("\\frac{a}{b} + \\sqrt{x}"), { maxBody: 0, argRepeat: false }, "no macro defined: nothing to bound");
+  assert.equal(maxExpandFor("\\frac{a}{b}"), 1000, "KaTeX's default when no macro is defined (its built-ins have bodies of a few tokens)");
+  assert.deepEqual(macroBounds("\\def\\a{" + long + "}" + "\\a".repeat(200)), { maxBody: 1000, argRepeat: false }, "\\def: the body's length");
+  assert.equal(maxExpandFor("\\def\\a{" + long + "}" + "\\a".repeat(200)), 20, "20,000 / 1,000: twenty expansions of that body at most");
+  assert.deepEqual(macroBounds("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), { maxBody: 11, argRepeat: false }, "\\newcommand: the first group is the name, the second (after [n]) the body; one use of #1 is no repeat");
+  assert.equal(maxExpandFor("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), 1000, "a short body leaves KaTeX's default in place");
+  assert.deepEqual(macroBounds("\\newcommand\\R{\\mathbb{R}}"), { maxBody: 10, argRepeat: false }, "\\newcommand with an unbraced name");
+  assert.deepEqual(macroBounds("\\def\\a#1{#1#1}\\a{\\a{\\a{x}}}"), { maxBody: 4, argRepeat: true }, "#1 twice in a body: the argument is copied at each use");
+  assert.deepEqual(macroBounds("\\newcommand{\\pair}[2]{(#1, #2, #1)}"), { maxBody: 12, argRepeat: true }, "a repeat of any one parameter counts");
+  assert.deepEqual(macroBounds("\\newcommand{\\f}[2]{#1 + #2}"), { maxBody: 7, argRepeat: false }, "two different parameters once each: no repeat");
+  assert.equal(macroBounds("\\expandafter\\def\\csname a\\endcsname{" + long + "}").maxBody, 1000, "a name KaTeX builds: the group after the command is read wherever it starts");
+  assert.equal(macroBounds("\\def\\a{" + long + "}\\def\\b{\\a\\a\\a}\\b\\b").maxBody, 1000, "a chain: the longest body counts, every use of \\b costs \\a's expansions too");
+  assert.equal(macroBounds("\\global\\def\\a{xy}\\long\\def\\b{xyz}").maxBody, 3, "\\global and \\long in front: the \\def still reads");
+  for (const cmd of ["gdef", "edef", "xdef", "renewcommand", "providecommand", "DeclareMathOperator"]) assert.equal(macroBounds("\\" + cmd + "\\a{xyz}").maxBody, 3, "\\" + cmd + " defines a body");
+  assert.deepEqual(macroBounds("\\deficit{xyz} \\let\\b\\a"), { maxBody: 0, argRepeat: false }, "a word that starts with def is not \\def; \\let adds no body (the one it aliases is counted where it is defined)");
+  assert.equal(macroBounds("\\def\\a{\\{x\\}}").maxBody, 5, "escaped braces are not braces: the body is the five characters between the real ones");
+  assert.equal(macroBounds("\\def\\a{" + long).maxBody, 1000, "an unclosed body (KaTeX rejects the formula) counts to the end of the text");
+  // executed against KaTeX itself: the 200-use bomb stops at once with KaTeX's own visible error under the computed maxExpand,
+  // where the default let it run for 20 s; an ordinary formula with a short macro and a hundred built-in macros still renders
+  const bomb = "\\def\\a{" + long + "}" + "\\a".repeat(200) + "x";
+  const t0 = performance.now();
+  const stopped = katex.renderToString(bomb, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(bomb) });
+  const ms = performance.now() - t0;
+  assert.ok(stopped.includes("katex-error") && stopped.includes("Too many expansions"), "the bomb is KaTeX's own error, the source shown in place: " + stopped.slice(0, 200));
+  assert.ok(ms < 1000, "and it stops well under a second: " + Math.round(ms) + " ms");
+  const ordinary = "\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x} + " + "\\boxed{y}\\,".repeat(100);
+  const fine = katex.renderToString(ordinary, { ...KATEX, displayMode: true, maxExpand: maxExpandFor(ordinary) });
+  assert.ok(!fine.includes("katex-error"), "a short macro and a hundred built-in macros render under the default count: " + fine.slice(0, 200));
+  // maxSize, executed: the rule KaTeX's own option docs name is capped at the column; without the option it is 5,000 em
+  const capped = katex.renderToString("\\rule{5000em}{5000em}", { ...KATEX, displayMode: false });
+  assert.ok(capped.includes("border-right-width:50em") && capped.includes("border-top-width:50em"), "maxSize caps a user size at MATH_MAX_SIZE_EM: " + capped);
+  const uncapped = katex.renderToString("\\rule{5000em}{5000em}", { ...KATEX, displayMode: false, maxSize: Infinity });
+  assert.ok(uncapped.includes("border-right-width:5000em"), "control: KaTeX's default is no cap at all");
 });
 
 test("executed: why the order matters: KaTeX's own output is inline styles and svg", () => {

@@ -100,7 +100,7 @@ const MARKED: StatusLike = { ...emptyStatus(APP), storeMtimeNs: "2",
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\nimport { selectionOpenIn } from "./path-links";\nimport { isMarkdownUrl, LINK_SEL, linkHref } from "./md-links";\nimport { userContentTarget } from "./md-sanitize";\nimport { openUrlView } from "./file-view";\n(window as any).__rompProbe = { panelMark, selectionOpenIn, isMarkdownUrl, openUrlView, LINK_SEL, linkHref, userContentTarget };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
+    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\nimport { selectionOpenIn } from "./path-links";\nimport { isMarkdownUrl, LINK_SEL, linkHref, browserTabClick } from "./md-links";\nimport { userContentTarget } from "./md-sanitize";\nimport { openUrlView } from "./file-view";\n(window as any).__rompProbe = { panelMark, selectionOpenIn, isMarkdownUrl, openUrlView, LINK_SEL, linkHref, userContentTarget, browserTabClick };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -118,11 +118,31 @@ function hostScript(kind: "chat" | "feed"): string {
     const start = RENDER.indexOf(head);
     const end = RENDER.indexOf("}, true);", start) + "}, true);".length;
     assert.ok(start > 0 && end > start, "render.ts's document-level anchor opener");
-    // …with what the opener names from the bundle: the panel's registry, the selection test, and the same-origin .md route (md-links.ts
-    // isMarkdownUrl, the real one; file-view.ts openUrlView, the real viewer) — the fixture's URLs are example.invalid, so none takes it
+    // …with what the opener names from the bundle: the panel's registry, the selection test, the same-origin .md route (md-links.ts
+    // isMarkdownUrl, the real one; file-view.ts openUrlView, the real viewer; the fixture's URLs are example.invalid, so none takes it),
+    // the `#` branch's target lookup and its browser's-tab test (md-sanitize.ts userContentTarget, md-links.ts browserTabClick), and
+    // the platform read that test is handed, lifted from render.ts as the line it is (chat-link-open.test.ts pins its spelling)
+    const isMac = /^const IS_MAC = .*;$/m.exec(RENDER);
+    assert.ok(isMac, "render.ts's IS_MAC, the platform read the opener's `#` branch hands browserTabClick");
     ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\nconst selectionOpenIn = (window as any).__rompProbe.selectionOpenIn as (el: Node) => boolean;\n"
       + "const isMarkdownUrl = (window as any).__rompProbe.isMarkdownUrl as (href: string, origin: string) => boolean;\nconst openUrlView = (window as any).__rompProbe.openUrlView as (href: string) => void;\n"
-      + "const LINK_SEL = (window as any).__rompProbe.LINK_SEL as string;\nconst linkHref = (window as any).__rompProbe.linkHref as (a: Element) => string;\nconst userContentTarget = (window as any).__rompProbe.userContentTarget as (root: ParentNode, id: string) => Element | undefined;\n" + RENDER.slice(start, end);
+      + "const LINK_SEL = (window as any).__rompProbe.LINK_SEL as string;\nconst linkHref = (window as any).__rompProbe.linkHref as (a: Element) => string;\nconst userContentTarget = (window as any).__rompProbe.userContentTarget as (root: ParentNode, id: string) => Element | undefined;\n"
+      + "const browserTabClick = (window as any).__rompProbe.browserTabClick as (e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean) => boolean;\n" + isMac![0] + "\n";
+    // Every name the lifted opener uses that render.ts imports from a sibling module or declares at its top level must be one
+    // of the consts above: a missing one throws a ReferenceError at the first click that reaches its branch, and the leg then
+    // reads a page error where the viewer did nothing wrong (round 2 added browserTabClick and IS_MAC to the `#` branch and
+    // the prelude defined neither, so the chat-host test could click no section link; the round-3 review). Read over the lift
+    // with its comments and string literals removed, the lift's own locals set aside, and a property read (`.name`) not counted.
+    const lifted = RENDER.slice(start, end);
+    const code = lifted.replace(/\/\*[\s\S]*?\*\/|\/\/.*$|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gm, (m) => (m[0] === "/" ? "" : '""'));
+    const locals = new Set(Array.from(code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g), (m) => m[1]));
+    const named = new Set<string>();
+    for (const m of RENDER.matchAll(/^import \{([^}]*)\} from "\.\/[^"]+";/gm)) for (const part of m[1].split(",")) { const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim(); if (name) named.add(name); }
+    for (const m of RENDER.matchAll(/^const ([A-Za-z_$][\w$]*)/gm)) named.add(m[1]);
+    const declared = new Set(Array.from(ts.matchAll(/^const ([A-Za-z_$][\w$]*)/gm), (m) => m[1]));
+    const free = Array.from(named).filter((n) => !locals.has(n) && !declared.has(n) && new RegExp("(?<![.\\w$])" + n.replace(/\$/g, "\\$") + "\\b").test(code));
+    assert.deepEqual(free, [], "render.ts's opener names these and the prelude defines none of them: export each from the bundle's __rompProbe (bundle() above) and define it here, or the lifted handler throws where a click reaches it");
+    ts += lifted;
     // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it) with
     // render.ts's own openpath handler, lifted from its source: it opens the todo card's and the Reply modal's path links
     // and, since the viewer's links carry the same data-act and the viewer lets a plain click go on to the document,
@@ -660,7 +680,7 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
   });
 });
 
-test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a drag inside the URL anchor selects and opens none, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window", async (t) => {
+test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a drag inside the URL anchor selects and opens none, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window; a section link, plain or Ctrl-clicked, is the viewer's scroll under the opener's `#` branch and no tab, and a query alone is one tab", async (t) => {
   await inBrowser(t, "chat", async (h) => {
     const { page, served, open, status, settle, base, openCards } = h;
     // The chat's OWN anchor (draggable, as every anchor with an href is), first in its paragraph: a triple-click on the prose
@@ -718,6 +738,27 @@ test("in a browser, under the chat's own document-level opener and its body dele
     assert.equal(await windowClicks(), w0 + 1, "the plain click went on to the window: the viewer does not stop it");
     await open(GUIDE);
     await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
+    // The viewer's section links under the chat's opener: its `#` branch runs first, at the capture phase, and reads the
+    // browser's tab gesture (browserTabClick, IS_MAC) and the message-body scope before the viewer's own delegate lands the
+    // section. A plain click and the browser's gesture both reach it, so a name the lifted handler uses that the prelude
+    // left undefined throws here and is read at once (round 2 added browserTabClick and IS_MAC to that branch and the
+    // prelude defined neither, so this leg could click no section link; the round-3 review).
+    const url0 = page.url();
+    const topInBody = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("user-content-top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await topInBody(), false, "the anchor is below the fold to begin with");
+    const tabsFrag = h.newPages(), wFrag = await windowClicks();
+    await page.locator("#romp-fileview .fileview-md a.fv-frag", { hasText: "go" }).click(); await settle();
+    assert.deepEqual(h.errors, [], "the lifted opener ran its section-link branch: every name it uses is one the prelude defines");
+    assert.equal(await topInBody(), true, "the viewer landed the section"); assert.equal(page.url(), url0, "no hash on the chat's document"); assert.equal(h.newPages(), tabsFrag, "and no tab");
+    assert.equal(await base(), "guide.md"); assert.equal(await windowClicks(), wFrag + 1, "the plain click went on to the window: the opener's `#` branch is a message's, and it stops nothing for the viewer's link");
+    await page.evaluate(() => { document.querySelector("#romp-fileview .fileview-body")!.scrollTop = 0; }); await settle();
+    assert.equal(await topInBody(), false, "scrolled back up");
+    await page.locator("#romp-fileview .fileview-md a.fv-frag", { hasText: "go" }).click({ modifiers: ["Control"] }); await settle();
+    assert.deepEqual(h.errors, [], "the browser's tab gesture reached the opener's browserTabClick and IS_MAC");
+    assert.equal(await topInBody(), true, "a Ctrl-click on a section link is this document's scroll too (a section of the shown file has no tab of its own)"); assert.equal(h.newPages(), tabsFrag, "and no tab"); assert.equal(page.url(), url0);
+    // a query alone (`[q](?foo=1)`, the scheme-less shape): one tab at the resolved address, the chat's document where it was
+    const qTab = await nextTab(h, () => page.locator("#romp-fileview .fileview-md a", { hasText: "q" }).click());
+    assert.equal(new URL(qTab).search, "?foo=1", "the query rides the tab"); assert.equal(page.url(), url0, "the chat's document did not navigate"); assert.equal(await base(), "guide.md");
     await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
     assert.deepEqual(served[served.length - 1], { path: APP, sid: SID });

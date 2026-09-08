@@ -3,7 +3,11 @@
 // this pins the one claim it can get wrong in a way no browser test catches: a <style> block's contents go
 // with the element (DOMPurify's default FORBID_CONTENTS), while a form's, a control's and a <dialog>'s text
 // stays as prose (KEEP_CONTENT). The paragraph once said "their text stays as prose" of all three (review,
-// 2026-09-07), promising text the Rendered view never shows.
+// 2026-09-07), promising text the Rendered view never shows. The second claim pinned here is the link clause:
+// the paragraph once said a link in the file opens in a new tab whatever element carries it (review round 3,
+// 2026-09-08), while in a file document only a web address opens a tab; a relative target, an SVG anchor's
+// included, is dressed as a path link by linkMarkdownAnchors and opens the sibling in the viewer, and a section
+// link scrolls (the Links paragraph above it says as much, and md-sanitize-viewer-links-browser.test.ts proves it).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -33,4 +37,14 @@ test("the guide does not say a <style> block's text stays as prose; it says that
   assert.equal(prose.length, 1, "one clause says whose text stays as prose");
   assert.match(prose[0], /\bform\b/, "a form's text stays (KEEP_CONTENT)");
   assert.match(prose[0], /`<dialog>`/, "a <dialog>'s text stays (KEEP_CONTENT)");
+});
+
+test("the guide does not say a link in a file opens a new tab whatever element carries it; the target decides", () => {
+  const clauses = htmlParagraphClauses();
+  const svg = clauses.filter((c) => /inline SVG/.test(c));
+  assert.equal(svg.length, 1, "one clause covers a link drawn inside an inline SVG");
+  assert.doesNotMatch(svg[0], /opens in a new tab whatever element/, "a file document's relative SVG anchor opens the sibling in the viewer and a section link scrolls; only a web address opens a tab");
+  assert.match(svg[0], /web address opens a tab/, "the tab is a web address's");
+  assert.match(svg[0], /file target opens the file in the viewer/, "a file target opens the file in place, as the Links paragraph says");
+  assert.match(svg[0], /section link scrolls/, "a section link scrolls, no tab");
 });

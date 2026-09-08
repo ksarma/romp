@@ -9,10 +9,13 @@
 // (LINK_SEL, md-links.ts) and one href reader (linkHref) serve mdBlock and the chat's click delegate, and the viewer
 // stamps target and rel with setAttribute. Executed here: linkHref. Pinned at the source (file-view.ts has no jsdom
 // harness, as every viewer test notes): the selector in both of mdBlock's passes, the attribute writes, the xlink
-// normalisation before the doc gate, and the chat delegate keying on the same selector. The clicks themselves run in
+// normalisation before the doc gate (the XLink spelling copied to a plain href and then REMOVED: a stamp that takes
+// `href` off a path link or a dead link must leave the browser nothing to follow, and it follows xlink:href when href
+// is absent; round 3 of the review), and the chat delegate keying on the same selector. The clicks themselves run in
 // headless Chromium: md-sanitize-viewer-links-browser.test.ts, a file document (whose stamps are linkMarkdownAnchors',
-// file-view-links.ts) and a URL document (mdBlock's own stamps, with no delegate in front: the property write there
-// navigates the page in the same frame, and that leg says so).
+// file-view-links.ts), a URL document (mdBlock's own stamps, with no delegate in front: the property write there
+// navigates the page in the same frame, and that leg says so) and the same file document in the chat page's viewer,
+// under the chat's delegate.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -75,13 +78,41 @@ test("target and rel are written with setAttribute: the `target` property is rea
   assert.match(MD_FN, /SVGAnimatedString/, "the reason is written down beside the write");
 });
 
-test("an SVG anchor's xlink:href is copied to a plain href before either pass, so the delegates and the browser read one attribute", () => {
-  const norm = MD_FN.indexOf('querySelectorAll("a[*|href]:not([href])")');
+test("an SVG anchor's xlink:href is moved to a plain href before either pass (copied when the anchor has none, then removed), so the delegates and the browser read one attribute", () => {
+  const norm = MD_FN.indexOf('querySelectorAll("a[*|href]").forEach((a) => {');
   const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');   // mdBlock's first doc gate (fork PR #347 split the two kinds)
   const sanitize = MD_FN.indexOf("sanitizeMd(");
   assert.ok(norm > -1, "the normalisation pass exists");
   assert.ok(sanitize < norm && norm < docGate, "after the sanitize (the attribute must survive DOMPurify first), before the doc gate (both passes see it)");
-  assert.match(MD_FN, /querySelectorAll\("a\[\*\|href\]:not\(\[href\]\)"\)\.forEach\(\(a\) => \{ a\.setAttribute\("href", linkHref\(a\)\); \}\);/);
+  assert.match(VIEW, /import \{[^}]*\bXLINK_NS\b[^}]*\} from "\.\/md-links";/, "the namespace is the shared constant, not a second spelling");
+  // the copy only when no href is present (an author's href beside the xlink wins, as in the browser), then the removal on every
+  // anchor that carried the XLink spelling: linkMarkdownAnchors takes `href` off a path link and a dead link, and the browser
+  // follows xlink:href when href is absent, so an xlink:href left in place navigated the Files document from a dead SVG link
+  // and let the chat's delegate (a[*|href]) open a path link's relative target as a URL document (round 3 of the review)
+  assert.match(MD_FN, /querySelectorAll\("a\[\*\|href\]"\)\.forEach\(\(a\) => \{\n\s*const xl = a\.getAttributeNS\(XLINK_NS, "href"\);\n\s*if \(xl === null\) return;[^\n]*\n\s*if \(!a\.hasAttribute\("href"\)\) a\.setAttribute\("href", xl\);\n\s*a\.removeAttributeNS\(XLINK_NS, "href"\);\n\s*\}\);/,
+    "copy when absent, then remove the XLink spelling, on one pass");
+  assert.doesNotMatch(MD_FN, /a\[\*\|href\]:not\(\[href\]\)/, "the copy-only pass is gone: it left xlink:href for the browser to follow once href came off");
+  // a stand-in element runs the pass's logic as written: an xlink-only anchor gains href and loses xlink; one with both keeps its
+  // own href and loses xlink; an href-only anchor is untouched
+  const pass = MD_FN.slice(norm + 'querySelectorAll("a[*|href]").forEach('.length);
+  const fnSrc = pass.slice(0, pass.indexOf("\n  });") + "\n  }".length);
+  const fn = new Function("XLINK_NS", "return " + fnSrc)(XLINK_NS) as (a: unknown) => void;
+  const el = (attrs: Record<string, string | undefined>) => {
+    const own = { ...attrs };
+    return {
+      own,
+      getAttributeNS: (ns: string | null, n: string) => (ns === XLINK_NS && n === "href" ? own["xlink:href"] ?? null : null),
+      hasAttribute: (n: string) => own[n] !== undefined,
+      setAttribute: (n: string, v: string) => { own[n] = v; },
+      removeAttributeNS: (ns: string | null, n: string) => { if (ns === XLINK_NS && n === "href") delete own["xlink:href"]; },
+    };
+  };
+  const only = el({ "xlink:href": "sibling.md" }); fn(only);
+  assert.deepEqual(only.own, { href: "sibling.md" }, "xlink-only: the href copied, the XLink spelling gone");
+  const both = el({ href: "a.md", "xlink:href": "b.md" }); fn(both);
+  assert.deepEqual(both.own, { href: "a.md" }, "both present: the author's href wins (the browser's rule), the XLink spelling gone");
+  const plain = el({ href: "c.md" }); fn(plain);
+  assert.deepEqual(plain.own, { href: "c.md" }, "href alone: untouched");
 });
 
 test("the chat's click delegate keys on the SAME selector, whether it imports LINK_SEL or spells it locally", () => {

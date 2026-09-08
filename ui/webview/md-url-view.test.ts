@@ -280,7 +280,7 @@ test("mdBlock takes the document's location and rewrites relative img/src and a/
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
   // the helpers arrive from the pure module
-  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, linkHref \} from "\.\/md-links";/);
+  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref \} from "\.\/md-links";/);
 });
 
 test("local file mode: a relative image is the sibling over the kernel's /file route (fileUrl, never hand-built)", () => {
@@ -320,8 +320,13 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
   assert.match(HANDLER, /closest\?\.\(LINK_SEL\) as HTMLElement \| SVGElement \| null;\n\s*if \(!a\) return;/);
   assert.match(MOD, /a\.removeAttribute\("href"\);\s*\/\/ the browser must not follow it/, "the path link carries no href for either listener to follow");
   assert.doesNotMatch(HANDLER, /\/i\.test\(href\)\) return;/, "no scheme-less href is handed to the default action any more");
-  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!href\) \{ e\.preventDefault\(\); return; \}\n\s*let url: URL \| null = null;\n\s*try \{ url = new URL\(href, document\.baseURI\); \} catch \{ url = null; \}\n\s*if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*href = url\.href;\n\s*\}/,
-    "an empty href opens nothing; every other scheme-less href is the browser's own parse against the document, opened when it is a web URL and left to the browser otherwise (VS Code's webview scheme, a parse failure)");
+  // A MESSAGE's scheme-less href only (`if (!msg) return;` first, the `.md` body the `#` branch reads too): the page's own
+  // `<a href="/file?..." download>` controls (the viewer's Download button, the file browser's download row, the lightbox's
+  // control) are scheme-less anchors the browser's download UI answers, and the branch as first written turned each into
+  // window.open, a popup where the download was (review round 3; chat-link-open.test.ts pins the scope, the schemeless
+  // browser leg presses each control). A message's own same-origin download link keeps the browser's download the same way.
+  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!msg\) return;\n\s*if \(!href\) \{ e\.preventDefault\(\); return; \}\n\s*let url: URL \| null = null;\n\s*try \{ url = new URL\(href, document\.baseURI\); \} catch \{ url = null; \}\n\s*if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*if \(a\.hasAttribute\("download"\) && url\.origin === location\.origin\) return;\n\s*href = url\.href;\n\s*\}/,
+    "a message's link only; an empty href opens nothing; a same-origin download link is the browser's; every other scheme-less href is the browser's own parse against the document, opened when it is a web URL and left to the browser otherwise (VS Code's webview scheme, a parse failure)");
 });
 
 // ── 6. in-document fragments: heading ids, and `#links` that land instead of spawning a tab ──

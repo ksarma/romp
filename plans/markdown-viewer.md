@@ -205,16 +205,45 @@ built departs from the text above, and why:
    passes KaTeX" stayed green. The extensions now emit an inert placeholder (a span under `md-math-inline`; a span,
    or a div for a display paragraph of its own, under `md-math-display`; the TeX as escaped text), `sanitizeMd`
    runs, and `renderMathPlaceholders` (math.ts, a plain exported function) renders KaTeX into each placeholder on
-   the sanitized DOM with `katex.render(tex, el, { displayMode, throwOnError: false, output: "html", trust: false })`
-   and unwraps it, so the `.katex` root stands where marked's output used to stand and KaTeX's styles never meet
-   DOMPurify. A formula longer than `MATH_TEX_MAX_CHARS` (20,000 characters of TeX) is never handed to KaTeX and is
-   shown as its source, a code block for a display paragraph of its own and a code span in a paragraph, with a `title`
-   saying why; the belt a residual KaTeX throw takes has the same shape. The value is the knee measured in review
-   round 2: `katex.render` is synchronous on the main thread and took 0.23 s at 20,000 characters, 0.8 s at 24,000, 6
-   to 17 s at 100,000, and had not finished 1,000,000 after 270 s, while KaTeX has no option that bounds its input and
-   no tokenizer bounds a formula, so one enormous formula in a reply or a note froze the chat page and every session
-   tab in it (md-sanitize-postpass-browser.test.ts runs the cap for real). The fill is a POST-PASS `sanitizeMd` itself
-   runs: md-sanitize.ts keeps a small registry
+   the sanitized DOM with `katex.render(tex, el, { displayMode, throwOnError: false, output: "html", trust: false,
+   maxSize: MATH_MAX_SIZE_EM, maxExpand: maxExpandFor(tex) })` and unwraps it, so the `.katex` root stands where
+   marked's output used to stand and KaTeX's styles never meet DOMPurify. A formula longer than `MATH_TEX_MAX_CHARS`
+   (20,000 characters of TeX) is never handed to KaTeX and is shown as its source, a code block for a display paragraph
+   of its own and a code span in a paragraph, with a `title` saying why; the belt a residual KaTeX throw takes has the
+   same shape, and says so on the console once per call. The value is the knee measured in review round 2:
+   `katex.render` is synchronous on the main thread and took 0.23 s at 20,000 characters, 0.8 s at 24,000, 6 to 17 s at
+   100,000, and had not finished 1,000,000 after 270 s, while KaTeX has no option that bounds its input and no
+   tokenizer bounds a formula, so one enormous formula in a reply or a note froze the chat page and every session tab in
+   it (md-sanitize-postpass-browser.test.ts runs the cap for real). Review round 3 added the bounds the length cap
+   left open, each measured over the real pipeline. KaTeX expands `\def` and `\newcommand` bodies before layout and its
+   `maxExpand` counts expansions, not their size, so `\def\a{<1,000 characters>}` and 200 uses of `\a`, 1,409
+   characters as written, was 200,000 of formula and 20 s of freeze (a nested chain of 1,077 characters 22 s), and no
+   fixed value closes it: the default 1,000 allows 1,000 uses of a body under the cap, and a value low enough to matter
+   breaks ordinary formulas, whose `\,`, `\dots` and `\boxed` are macros that count (100 `\boxed` fail at 50). math.ts
+   computes it per formula (`maxExpandFor`: `MATH_EXPANSION_BUDGET_CHARS`, the cap's 20,000, divided by the longest
+   macro body the formula defines, KaTeX's default when it defines none), since each expansion pushes at most that
+   body, so the expanded formula is at most two caps' worth (0.9 s for 40,000 flat characters in node); a body that
+   uses one of its parameters more than once (`\def\a#1{#1#1}`, 512 copies of the argument nine levels deep) is the
+   one amplification no count bounds and is shown as source before KaTeX sees it (`macroBounds`, which reads the
+   group after a defining command wherever it starts, so `\csname` is no way round it). The cap was per formula, and a
+   message of twenty formulas just under it handed KaTeX 400,000 characters and blocked the page for 8 to 15 s (the
+   render, then the layout of 1,200,000 elements): `MATH_TEX_BUDGET_CHARS` (100,000, five caps, several hundred
+   ordinary display equations, more than a long paper's mathematics) is a running total per `renderMathPlaceholders`
+   call, one message or one note, past which a formula is shown as source with the total in its title while a shorter
+   one that still fits renders. `maxSize` (`MATH_MAX_SIZE_EM`, 50, about the chat column) caps the sizes a formula asks
+   for: KaTeX's default is Infinity, and `\rule{5000em}{5000em}` laid a 78,650 px square in the transcript, `a\kern{50000em}b`
+   a line 786,520 px wide beyond the page's `overflow-x: hidden`; ordinary layout never nears it and renders byte for
+   byte as before (md-sanitize-katex-browser.test.ts holds the identity with the option in place). The source fallback
+   was indistinguishable from a code span the author wrote (every computed property equal; the title is the one
+   marker, and a phone has no hover): its code element now wears `md-math-src` (`MATH_SOURCE_CLASS`) and one rule,
+   byte-equal in styles.css and feed.css and pinned by fileview-parity.test.ts, dresses it in the dim tier with a
+   dotted underline, tokens only; render.ts's highlighter leaves the element alone (auto-detection over 20,000
+   characters of TeX cost 250 ms and coloured it as a guessed grammar). The registry's loop stays as it was, with no
+   per-pass isolation: both refuters of that finding showed a per-pass try/catch fails OPEN for the kind of pass a later
+   slice may add (a gate that rewrites off-host figure sources and throws midway would hand back a half-rewritten body
+   that looks fine while the rest fetches), where today a throw falls to the whole-message source view, visible and
+   closed; per-element resilience is each pass's own contract, as the math fill's per-formula belt is. The fill is a
+   POST-PASS `sanitizeMd` itself runs: md-sanitize.ts keeps a small registry
    (`registerMdPostPass`, idempotent per function), and chat-md.ts, the module that defines the math grammar,
    registers `renderMathPlaceholders` at load, so every `sanitizeMd` call in a bundle that carries the grammar
    renders math and a bundle without it (files.js, feed.js) has neither the grammar nor the fill nor KaTeX. Round
@@ -237,8 +266,13 @@ built departs from the text above, and why:
    URL document (resolution against the URL; the fv-anchor stamp and the new-tab stamps), and a file document's
    links are dressed by `linkMarkdownAnchors` (file-view-links.ts), whose walk over `a` reaches the SVG anchor too
    because its `xlink:href` was copied to `href` first: an SVG `<a href="sibling.md">` becomes the same path link a
-   relative `<a>` becomes and opens the sibling in the viewer. Image maps are dropped (item 3); `area[href]` stays
-   in `LINK_SEL` as a second guard.
+   relative `<a>` becomes and opens the sibling in the viewer. The XLink attribute is REMOVED after the copy (review
+   round 3): `linkMarkdownAnchors` takes `href` off a path link and a dead link, and the browser follows `xlink:href`
+   when `href` is absent, so a copy that left it in place navigated the Files document in the same frame from a dead
+   SVG link (`<a xlink:href="127.0.0.1:3000">`) and let the chat's delegate, which matches `a[*|href]`, open a path
+   link's `sibling.md` as a URL document resolved against the chat page instead of the sibling file. An `href` the
+   author wrote beside the xlink wins, as in the browser. Image maps are dropped (item 3); `area[href]` stays in
+   `LINK_SEL` as a second guard.
 9. *In-page anchors in a chat reply* (between review rounds 1 and 2). A reply's own `<sup id="fn1">` and
    `<a href="#fn1">`, or `[install](#install)` over its `<a name="install">`, scrolled the transcript on main
    through the browser's default fragment lookup; with the id and name prefixed and the href left as written,
@@ -262,7 +296,18 @@ built departs from the text above, and why:
    absolute one: a tab, or the viewer for a same-origin `.md`; an empty href (`[x]()`, which the default action would
    reload the page for) is inert; a non-web result (VS Code's webview scheme, where every relative href resolves) or a
    parse failure stays the browser's, as before. md-sanitize-chat-schemeless-browser.test.ts clicks each shape over
-   the real bundle.
+   the real bundle. Both branches read a MESSAGE's link only (review round 3): the body scope (`.md`, or null for an
+   anchor carrying the page's `data-act`, the body delegate's) is read once ahead of them, and an anchor outside a
+   message body is the browser's. The delegate is document-wide, and the page itself builds scheme-less anchors,
+   `<a href="/file?..." download>`, for its three download controls (the lightbox's control, preview.ts; the viewer's
+   Download button and the file browser's download row, a transient anchor each button clicks): the arm as first
+   written resolved those too and handed them to `window.open`, a popup where the download was, nothing at all under
+   a popup blocker, and the lightbox's picture opened in a tab and was never saved, where main let the browser's
+   anchor download run. A message's own same-origin download link (DOMPurify keeps `download`) is the browser's too,
+   since the browser honours a same-origin download attribute whatever the response says and never moves the frame
+   for it; a download link to another origin, whose attribute the browser ignores and would navigate for, opens as
+   any other link. The schemeless leg presses each real control in the render bundle (the download awaited as the
+   page's own event) and clicks both message shapes; chat-link-open.test.ts and md-url-view.test.ts pin the scope.
 10. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
    pins, the guide's paragraph), `md-sanitize-guide.test.ts` (the guide's `<style>` clause) and
    `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over the real files bundle, with an
@@ -300,7 +345,31 @@ built departs from the text above, and why:
    `md-sanitize-browser.test.ts`'s pin that every leg of the family resolves playwright and esbuild through the
    extension's package.json (a bundle written outside vscode-extension used to skip with a false diagnosis), and
    `file-view.test.ts`'s new-tab pin scoped to `mdBlock` and `linkMarkdownAnchors` (a whole-file match stayed green
-   with the stamps deleted).
+   with the stamps deleted). Review round 3: `md-sanitize-viewer-links-browser.test.ts` gains the SVG anchors whose
+   stamps take the href off, spelled `xlink:href` (a relative `sibling.md`, a host with a port), clicked in the Files
+   page (the dead one navigated the document in the same frame before) and in a third leg over the real chat bundle
+   with the file document opened through `openFileView` (the relative one opened a URL document against the chat page
+   before; the dead one went to `window.open`), with no `xlink:href` left on any anchor in any leg, and
+   `md-sanitize-viewer-links.test.ts` runs the pass's own source over stand-in anchors (xlink only, both, href only);
+   `md-sanitize-chat-schemeless-browser.test.ts` gains a second leg pressing the page's three download controls (the
+   real lightbox, viewer and file browser openers in the render bundle; the browser's download event awaited, no
+   `window.open`, the anchor's click uncancelled) and clicking a message's same-origin and cross-origin download
+   links, with `chat-link-open.test.ts` and `md-url-view.test.ts` pinning the arm's message-only scope and the
+   download rule; `md-sanitize-postpass-browser.test.ts` gains the macro bomb and the nested chain (stopped in about
+   0.3 s for both where they took 20 s), the argument-repeating macro shown as source, `\rule{5000em}{5000em}` and
+   `a\kern{50000em}b` measured under the cap, twenty near-cap formulas rendering five and showing fifteen as source
+   within a bound with a short formula after them still rendering, and the fallback's computed dress beside an
+   author's code span in both shapes; `md-sanitize-katex-browser.test.ts` holds the byte-identity for a capped
+   `\rule` against katex.render with the option, and its difference from the uncapped call; `render-math.test.ts`
+   executes `macroBounds` and `maxExpandFor` over the definer forms (`\def`, `\gdef`, `\edef`, `\xdef`,
+   `\newcommand` braced and unbraced, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\global` and
+   `\long` prefixes, `\csname`, escaped braces, an unclosed body, `\let` and `\deficit` as non-definers), the bomb's
+   error and an ordinary formula's render under the computed count, the `\rule` cap through renderToString, and pins
+   the order of the fill's bounds, the constants, the class, the sheets' rule and the highlighter's exemption;
+   `file-view-links-browser.test.ts`'s chat-host prelude defines `browserTabClick` and `IS_MAC` (lifted from
+   render.ts), a guard lists any name the lifted opener uses that the prelude lacks, and the chat-host test clicks a
+   section link plain and Ctrl-clicked and a query-only link; `md-sanitize-guide.test.ts` pins the guide's link
+   clause (the target decides, not the element); `render.ts`'s nav-chord handler reads `IS_MAC` (one platform test).
 
 ### Slice 2: layout follows the pane, reader keeps their place
 

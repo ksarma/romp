@@ -96,7 +96,13 @@ test("a `#` href in a message is resolved under the user-content- prefix, in the
   assert.match(RENDER, /^const IS_MAC = typeof navigator !== "undefined" && \/Mac\|iP\(\?:hone\|ad\|od\)\/\.test\(navigator\.platform \|\| ""\);$/m, "the platform read is the one the editor's save chord and the track decorations use");
   assert.match(branch, /if \(browserTabClick\(e, IS_MAC\)\) return;/, "a click the browser answers with a tab or window keeps the browser's; Super-click on Linux and Windows is a plain click to the browser and is resolved (the round-2 review; md-sanitize-chat-modified-click-browser.test.ts clicks each key)");
   assert.doesNotMatch(branch, /e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey/, "no any-modifier read in the fragment branch: Meta off macOS is not a tab gesture");
-  assert.match(branch, /const msg = a\.closest\("\.md"\);\n\s*if \(!msg\) return;/, "a link outside a message body (the file viewer's own section links) is not this handler's");
+  // the message-body scope is read ONCE, ahead of both branches (the `#` resolver and the scheme-less arm below share it): the
+  // `.md` body the anchor stands in, or null for an anchor the page built or one carrying the page's data-act (the body
+  // delegate's, actions.ts; the sanitizer keeps no data-* attribute, so no author anchor has one)
+  assert.match(HANDLER, /let href = linkHref\(a\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const msg = a\.hasAttribute\("data-act"\) \? null : a\.closest\("\.md"\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(href\.startsWith\("#"\)\) \{/,
+    "the body scope is read right after the href and before the fragment branch, and a data-act anchor is never a message's");
+  assert.match(branch, /if \(browserTabClick\(e, IS_MAC\)\) return;\n\s*if \(!msg\) return;/, "a link outside a message body (the file viewer's own section links) is not this handler's");
+  assert.doesNotMatch(branch, /closest\(/, "the fragment branch reads the scope computed above, not one of its own");
   assert.match(branch, /let frag = href\.slice\(1\);\n\s*try \{ frag = decodeURIComponent\(frag\); \} catch \{[^}]*\}/, "the fragment is decoded, a malformed escape kept as written (the viewer's scrollToFragment rule)");
   assert.match(branch, /const target = frag \? userContentTarget\(msg, frag\) \|\| userContentTarget\(document, frag\) : undefined;/, "the message's own body first, then the whole document");
   assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n\s*target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "found: scrolled to and the default cancelled; not found: left to the browser");
@@ -109,9 +115,20 @@ test("a `#` href in a message is resolved under the user-content- prefix, in the
   // md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle.
   assert.doesNotMatch(HANDLER, /\/i\.test\(href\)\) return;/, "no scheme-less href is left to the default action any more");
   const schemeless = HANDLER.slice(HANDLER.indexOf("/^[a-z][a-z0-9+.-]*:/i.test(href)) {"), HANDLER.indexOf("e.preventDefault();\n  e.stopPropagation();"));
-  assert.match(schemeless, /if \(!href\) \{ e\.preventDefault\(\); return; \}/, "an empty href is made inert");
+  // The arm reads a MESSAGE's link only (review round 3). The delegate is document-wide, and the page itself builds scheme-less
+  // anchors: `<a href="/file?..." download>` for the lightbox's download control (preview.ts), the viewer's Download button and
+  // the file browser's download row (file-view.ts and file-browse.ts startDownload, a transient anchor clicked in the button's
+  // handler). The arm as first written resolved those too and handed them to window.open: a popup where the download was,
+  // nothing at all under a popup blocker, the lightbox's picture opened in a tab and never saved, where main let the browser's
+  // anchor download run. The body test is the first line of the arm, before the href is even parsed. A message's own
+  // same-origin download link (DOMPurify keeps `download`) is the browser's too: it honours a same-origin download attribute
+  // whatever the response says, so the default action saves the file and never moves the frame; a download link to ANOTHER
+  // origin, whose attribute the browser ignores and would navigate for, opens as any other link. The schemeless browser leg
+  // presses each control over the real bundle and clicks both message shapes.
+  assert.match(schemeless, /\{\n(?:\s*\/\/[^\n]*\n)*\s*if \(!msg\) return;\n\s*if \(!href\) \{ e\.preventDefault\(\); return; \}/, "a message's link only, then an empty href is made inert");
   assert.match(schemeless, /new URL\(href, document\.baseURI\)/, "resolved against the document, by the browser's own parser");
-  assert.match(schemeless, /if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*href = url\.href;/, "a web URL is opened at the resolved address; anything else stays the browser's");
+  assert.match(schemeless, /if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;\n\s*if \(a\.hasAttribute\("download"\) && url\.origin === location\.origin\) return;\n\s*href = url\.href;/,
+    "a web URL is opened at the resolved address, a same-origin download link is left to the browser's download, anything else stays the browser's");
 });
 
 test("userContentTarget: an id under the prefix or bare, then an <a name> under either, in document order; nothing otherwise", () => {

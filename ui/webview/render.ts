@@ -1165,6 +1165,11 @@ function highlight(container: HTMLElement, lineNos = true) {
   container.querySelectorAll("pre code").forEach((node) => {
     const code = node as HTMLElement;
     const raw = code.textContent || "";   // capture BEFORE we rewrite innerHTML: line-wrapping drops the \n joins, so the on-screen markup's textContent is NOT copy-safe
+    // The math fill's source fallback (math.ts MATH_SOURCE_CLASS: a formula shown as its TeX because it passed a bound) is
+    // not code: it keeps the Copy button and nothing else. Auto-detection over 20,000 characters of TeX cost 250 ms and
+    // dressed the fallback in the tokens of whichever grammar it guessed, where the sheet dresses it as unrendered source
+    // (review round 3). Spelled here, not imported: render.ts imports nothing from math.ts (render-math.test.ts pins both).
+    if (code.classList.contains("md-math-src")) { const host = code.parentElement; if (host && host.tagName === "PRE") addCopyBtn(host as HTMLElement, raw); return; }
     const lang = (code.className.match(/language-([\w-]+)/) || [])[1];
     try {
       code.innerHTML = highlightHtml(hljs, lang, raw);   // by (language, source): a fence re-rendered by a tail, a tab switch or a scroll-back tokenizes once (highlight-cache.ts)
@@ -1325,6 +1330,18 @@ document.addEventListener("click", (e) => {
   // is right: a press on SVG text selects it.
   if (!(a as HTMLElement).draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
   let href = linkHref(a);                          // as written; a scheme-less one is replaced below by the address the browser would follow
+  // The rendered body the anchor sits in (`.md`: every markdown body the chat renders, a reply, a user bubble, a notice, a
+  // report), or null for an anchor the page built itself. The two branches below read a MESSAGE's link the way its author's
+  // HTML has to be read; an anchor the page built asks for the browser's default action and gets it: the lightbox's download
+  // control (preview.ts), the transient `<a download>` the viewer's and the file browser's Download controls click
+  // (file-view.ts, file-browse.ts startDownload), each a scheme-less `/file?...` the browser's own download UI answers. The
+  // scheme-less branch as first written read those too, and an anchor download became window.open: a popup where the
+  // download was, nothing at all under a popup blocker, and the lightbox's picture opened in a tab and was never saved (the
+  // round-3 review of plans/markdown-viewer.md Slice 1). No page-built anchor stands in a message's body, and no author anchor
+  // carries the page's data-act (the sanitizer keeps no data-* attribute), so the body test tells them apart, and an anchor
+  // that does carry a data-act is the page's whatever body it stands in (its action is the body delegate's, actions.ts).
+  // md-sanitize-chat-schemeless-browser.test.ts presses each control over the real bundle; chat-link-open.test.ts pins the test.
+  const msg = a.hasAttribute("data-act") ? null : a.closest(".md");
   if (href.startsWith("#")) {
     // An in-page anchor in a message (a footnote's back link, `[section](#install)` over the reply's own `<a name>`): the
     // sanitizer prefixes every author id and name user-content- (md-sanitize.ts, GitHub's rule) and leaves the href as
@@ -1341,7 +1358,6 @@ document.addEventListener("click", (e) => {
     // handler opens the tab itself. A link outside a message (the file viewer's own section links) is not this
     // handler's: the viewer lands those itself.
     if (browserTabClick(e, IS_MAC)) return;
-    const msg = a.closest(".md");
     if (!msg) return;
     let frag = href.slice(1);
     try { frag = decodeURIComponent(frag); } catch { /* a malformed escape: the spelling as written */ }
@@ -1365,11 +1381,17 @@ document.addEventListener("click", (e) => {
     // Code the page's own scheme is the webview's, so every relative href resolves there and names nothing a host could
     // open (the webview drops it), and an href the parser rejects goes nowhere in the browser either. An empty href
     // (`[x]()`) resolves to this very page, which the default action would reload; it opens nothing instead.
-    // md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle.
+    // md-sanitize-chat-schemeless-browser.test.ts clicks each shape over the real bundle. A message's link only (above): an
+    // anchor the page built is the browser's. So is a message's own download link to THIS origin (`<a href="/file?...&download=1"
+    // download>`, which DOMPurify keeps): the browser honours a same-origin download attribute whatever the response says, so
+    // its default action saves the file and never moves the frame, as it did on main; a download link to another origin,
+    // where the browser ignores the attribute and would navigate, opens below like any other.
+    if (!msg) return;
     if (!href) { e.preventDefault(); return; }
     let url: URL | null = null;
     try { url = new URL(href, document.baseURI); } catch { url = null; }
     if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return;
+    if (a.hasAttribute("download") && url.origin === location.origin) return;
     href = url.href;
   }
   e.preventDefault();
@@ -6893,12 +6915,11 @@ window.addEventListener("keydown", (e) => {
   if (!e.ctrlKey && !e.metaKey) return;                 // both defaults carry Ctrl; a rebind may use Meta
   const ch = chordOf(e);
   if (!ch || !ch.includes("+")) return;
-  const mac = /Mac|iP(hone|ad|od)/.test(navigator.platform || "");
   const ov = loadOverrides();
-  if (ch === effectiveChord("chat.navBack", DEFAULT_CHORDS["chat.navBack"], ov, mac)) {
+  if (ch === effectiveChord("chat.navBack", DEFAULT_CHORDS["chat.navBack"], ov, IS_MAC)) {   // the module's one platform read
     e.preventDefault(); e.stopPropagation();
     navHist.go(-1);
-  } else if (ch === effectiveChord("chat.navForward", DEFAULT_CHORDS["chat.navForward"], ov, mac)) {
+  } else if (ch === effectiveChord("chat.navForward", DEFAULT_CHORDS["chat.navForward"], ov, IS_MAC)) {
     e.preventDefault(); e.stopPropagation();
     navHist.go(1);
   }

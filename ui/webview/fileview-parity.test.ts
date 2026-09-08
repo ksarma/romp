@@ -29,6 +29,7 @@ const RULES = [
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",
   ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only
   ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {",
+  ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

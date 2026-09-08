@@ -54,8 +54,9 @@ test("the chat grammar rides along: ~~double~~ strikes, a lone ~ stays literal",
 });
 
 test("the chat grammar rides along: $x$ still becomes math, and a price stays a price", () => {
-  // math.ts emits an inert placeholder carrying the TeX; render.ts's userMd() renders KaTeX into it after the
-  // sanitizer (renderMathPlaceholders), so marked's own output holds the placeholder, never KaTeX's markup
+  // math.ts emits an inert placeholder carrying the TeX; KaTeX is rendered into it after the sanitizer, by
+  // renderMathPlaceholders as a sanitizeMd post-pass this module registers at load (render.ts's userMd() calls
+  // sanitizeMd and nothing of its own), so marked's own output holds the placeholder, never KaTeX's markup
   const out = userMdHtml("Euler: $e^{i\\pi}+1=0$\nnext line");
   assert.ok(out.includes('<span class="md-math-inline">e^{i\\pi}+1=0</span>'), "inline math becomes the placeholder: " + out);
   assert.match(out, /<br>\s*next line/, "…and the newline after it is still kept");

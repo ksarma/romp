@@ -1635,6 +1635,16 @@ a.fileview-gh-note { border-style: dashed; }
   font-family: var(--mono, ui-monospace, monospace); font-size: calc(12px * var(--fv-scale, 1)); line-height: 1.5;
   color: var(--code-fg, #e1c08d); white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* The math fill's source fallback (math.ts showSource, MATH_SOURCE_CLASS): a formula shown as its TeX because it passed a
+   bound (one formula's length, one message's total, a macro that repeats an argument) or KaTeX could not lay it out. Dressed
+   as unrendered source, not as a code span the author wrote: the dim tier in place of the code tone and a dotted underline,
+   so the reader sees at a glance that this is a formula that did not render (the title says why; a phone has no hover to
+   read it with). One rule for the code span and the code block, in the chat's .md and the viewer's .fileview-md, at a
+   specificity above both sheets' code rules; the highlighter (render.ts) leaves the element alone. Byte-equal in feed.css
+   (fileview-parity.test.ts). */
+.md code.md-math-src, .fileview-md code.md-math-src {
+  color: var(--dim); text-decoration: underline dotted; text-decoration-color: var(--dim); text-underline-offset: 0.15em;
+}
 .fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg, rgba(255, 255, 255, 0.03)); }

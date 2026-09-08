@@ -31,7 +31,7 @@ import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pu
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
 import { delegate } from "./actions";
-import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, linkHref } from "./md-links";
+import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -2414,10 +2414,22 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // and an inline SVG <a>, spelled `href` or SVG 1.1's `xlink:href`, both navigate on a click, and DOMPurify's html
   // and svg profiles keep both; the passes below used to run over `a[href]`, which reached only the first (`[href]`
   // matches the null-namespace attribute alone), so an SVG <a xlink:href> in a note took the pane's document to its
-  // URL, in the same frame (review of Slice 1, 2026-09-07). The XLink spelling is copied to a plain `href` first: the
-  // browser follows `href` when both are present, and every reader below (linkMarkdownAnchors, the fv-anchor stamp,
-  // the body's click listener) reads `href`, so from here on every link is read one way.
-  box.querySelectorAll("a[*|href]:not([href])").forEach((a) => { a.setAttribute("href", linkHref(a)); });
+  // URL, in the same frame (review of Slice 1, 2026-09-07). The XLink spelling is MOVED to a plain `href`: copied when
+  // the anchor has no `href` of its own (an `href` the author wrote beside it wins, as it does in the browser), then
+  // removed, so the SVG anchor carries one attribute and every reader below (linkMarkdownAnchors, the fv-anchor stamp,
+  // the body's click listener) and the browser read the same one. The removal matters as much as the copy: a stamp
+  // that takes `href` off the anchor (a path link, a dead link) relies on an anchor with no href being nothing the
+  // browser follows and nothing LINK_SEL matches, and the browser follows `xlink:href` when `href` is absent. A copy
+  // that left the XLink attribute in place navigated the Files document in the same frame from a dead SVG link, and
+  // let the chat's delegate (render.ts, `a[*|href]`) open a path link's `sibling.md` as a URL document resolved against
+  // the chat page instead of the sibling file (round 3 of the review; md-sanitize-viewer-links-browser.test.ts clicks
+  // both shapes in both pages).
+  box.querySelectorAll("a[*|href]").forEach((a) => {
+    const xl = a.getAttributeNS(XLINK_NS, "href");
+    if (xl === null) return;                            // an HTML anchor, or an SVG one spelled `href` alone
+    if (!a.hasAttribute("href")) a.setAttribute("href", xl);
+    a.removeAttributeNS(XLINK_NS, "href");
+  });
   if (doc && doc.kind === "url") {
     box.querySelectorAll("img[src]").forEach((node) => {
       const img = node as HTMLImageElement;
