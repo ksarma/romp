@@ -125,6 +125,7 @@ class _Base(unittest.TestCase):
         self.gid = SID + ":g1"
 
     def tearDown(self):
+        journal = jd._overrides_dir() / (SID + ".jsonl")     # under the test's STATE, resolved before it is restored
         for k, v in self.saved.items():
             setattr(km, k, v)
         for k, v in self.saved_jd.items():
@@ -136,7 +137,7 @@ class _Base(unittest.TestCase):
         jd._PARSE_CACHE.pop(SID, None)
         jd._SHARED_OFF[0] = self.shared_off_before
         try:
-            (jd._overrides_dir() / (SID + ".jsonl")).unlink()
+            journal.unlink()
         except OSError:
             pass
         self.td.cleanup()
