@@ -79,11 +79,27 @@ export function unsentCount(u: Unsent | null | undefined): number {
 export function actionLabel(s: Status | null): string {
   if (!s) return "Comments";
   if (!s.store) return s.trackedBy ? "Comments · tracked" : "Comments";
-  const open = s.store.comments.filter((c) => !c.resolved).length;
-  const n = s.hunks.length;
+  const { comments: open, changes: n } = cardCounts(s);
   const d = detachedChanges(s.store).length;
   return "Comments · " + open + (n ? " · " + plural(n, "change", "changes") : "")
     + (d ? " · " + plural(d, "detached change", "detached changes") : "");
+}
+
+/** The two counts the action-row label and the panel header's filter (All · Comments N · Changes M) share, so the glance
+ *  and the control never disagree (the filter follow-on, 2026-09-07): the open comments — unresolved, whether on a
+ *  passage, the file, a region or a change — and the pending changes (the hunks; a detached change is neither pending
+ *  nor counted here, the label names those apart). */
+export function cardCounts(s: Status | null): { comments: number; changes: number } {
+  if (!s || !s.store) return { comments: 0, changes: 0 };
+  return { comments: s.store.comments.filter((c) => !c.resolved).length, changes: (s.hunks || []).length };
+}
+
+/** Whether the panel offers its filter: the file has a card to filter — a comment (resolved or not), a pending change,
+ *  or a detached one. With nothing in the list a control over it is noise (ui/CLAUDE.md, progressive disclosure), and
+ *  the kept choice governs nothing until there is. */
+export function filterOffered(s: Status | null): boolean {
+  if (!s || !s.store) return false;
+  return s.store.comments.length > 0 || (s.hunks || []).length > 0 || detachedChanges(s.store).length > 0;
 }
 
 // ── the send parts (C2) ────────────────────────────────────────────────────────────────────────────

@@ -41,7 +41,9 @@ const noteAt = slice2.indexOf(LABEL);
 assert.ok(noteAt >= 0, 'the note is in the Slice 2 section');
 const builtAt = slice2.indexOf(' Built: ', noteAt);
 assert.ok(builtAt > noteAt, 'the note turns to what was built');
-const built = slice2.slice(builtAt);
+// …to the next follow-on note under Slice 2 (the todo-file follow-on's, then the filter follow-on's, in date order since main merged both branches), or the section's end
+const builtEnd = (() => { const m = / The [a-z-]+ follow-on \(20\d\d-\d\d-\d\d\)/.exec(slice2.slice(builtAt)); return m ? builtAt + m.index : slice2.length; })();
+const built = slice2.slice(builtAt, builtEnd);
 const testsAt = built.lastIndexOf(' Tests: ');
 assert.ok(testsAt > 0, 'the Built account ends with the modules that pin it');
 const noteTests = built.slice(testsAt);
@@ -89,7 +91,7 @@ test('the two tiers are stated with their floor and their reason, both sheets ca
   assert.ok(built.includes('only then do the collapsed sections give, in proportion, scrolling too. The sections add up to the panel, always.'));
   for (const [name, css] of sheets) {
     assert.ok(/\.fc-margin > \.fc-sec-send, \.fc-margin > \.fc-sec-log \{ flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 12px; \}/.test(css), name + ': Send and the Log shrink and scroll inside themselves, grown or not');
-    assert.ok(/\.fc-margin > \.fc-composer, \.fc-margin > \.fc-sec-head:has\(\.fc-head > :nth-child\(n\+2\)\),\s*\.fc-margin > \.fc-sec-send:has\(> :not\(\.fc-foot, \.fc-send\), \.fc-foot > :nth-child\(n\+2\), \.fc-send > :nth-child\(n\+2\):not\(\.fc-note\)\),\s*\.fc-margin > \.fc-sec-log:has\(\.fc-log > :nth-child\(n\+2\)\) \{ flex-shrink: 1000000; min-height: min\(15%, 2\.4em\); \}/.test(css), name + ': the grown tier — the composer, and each other section while it holds more than its controls — gives first, to the floor');
+    assert.ok(/\.fc-margin > \.fc-composer, \.fc-margin > \.fc-sec-head:has\(\.fc-head > :nth-child\(n\+2\):not\(\.fc-filter\)\),\s*\.fc-margin > \.fc-sec-send:has\(> :not\(\.fc-foot, \.fc-send\), \.fc-foot > :nth-child\(n\+2\), \.fc-send > :nth-child\(n\+2\):not\(\.fc-note\)\),\s*\.fc-margin > \.fc-sec-log:has\(\.fc-log > :nth-child\(n\+2\)\) \{ flex-shrink: 1000000; min-height: min\(15%, 2\.4em\); \}/.test(css), name + ': the grown tier — the composer, and each other section while it holds more than its controls — gives first, to the floor');
     assert.ok(!/\.fc-sec-send:has\(\.fc-confirm\), \.fc-margin > \.fc-sec-log:has\(\.fc-log-row\)/.test(css), name + ': the first round\'s rule keyed on the confirm and the rows is gone');
     assert.ok(/\.fc-margin > \.fc-sec-cards \{ flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; \}/.test(css), name + ': the track keeps its basis and floor');
     assert.ok(/\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/.test(css), name + ': the panel still clips');

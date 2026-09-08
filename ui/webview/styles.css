@@ -4014,6 +4014,14 @@ body.filebrowse-open { overflow: hidden; }
   display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
 .fc-card:hover { border-color: var(--accent); }
 .fc-card.open { cursor: default; }
+/* the kind cue (the filter follow-on, 2026-09-07): a card's head names its kind in a word before the author's chip, styled
+   like .fc-note (--dim, 0.86em), and the card's left edge is coloured by kind, a 3px border in the accent for a comment (a
+   region is one) and in --text-muted for a change (renderCard / renderChangeCard set data-cue) — so the two read apart at a
+   glance in a long list. A detached card keeps its dashed edge (below): the :not() leaves that rule the edge. The change
+   edge holds under the hover rule above, which paints every side the accent. */
+.fc-kind { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
+.fc-card[data-cue="comment"]:not(.fc-card-detached) { border-left: 3px solid var(--accent); }
+.fc-card[data-cue="change"]:not(.fc-card-detached) { border-left: 3px solid var(--text-muted); }
 .fc-card-detached { opacity: 0.85; border-left: 3px dashed var(--text-faint); }
 .fc-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fc-ref { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4078,8 +4086,9 @@ body.filebrowse-open { overflow: hidden; }
    confirm, a refusal row under the foot, a fold row, the tooling warning — still pushed Send and the Log toggle off the
    bottom (the 2026-09-07 review, twice). So every section but the track can shrink, and scrolls inside itself when it
    does, in two tiers. The sections holding what grew give first: the composer while it shows, and the head, the Send
-   section and the Log while they hold anything beyond their controls (the head's button row; Accept all · Reject all
-   and the Send button with its caption; the Log toggle). Their flex-shrink is a million times the others', so the
+   section and the Log while they hold anything beyond their controls (the head's button row and the filter's row under
+   it, All · Comments · Changes, a control row too and not growth; Accept all · Reject all and the Send button with its
+   caption; the Log toggle). Their flex-shrink is a million times the others', so the
    collapsed sections keep their size to within a layout unit, and they stop at a floor of one control row (15% of a
    panel too short for that: four grown sections and the track's 30% still fit). Only then do the collapsed sections
    give, in proportion, scrolling too. The track's basis is 0 with a floor of 30%: it takes the free space when the rest
@@ -4093,7 +4102,7 @@ body.filebrowse-open { overflow: hidden; }
    with it, down to the sheet's three-row floor, so a twelve-row box rendered short of its own inline height and a drag
    was overridden by the layout (found when the composer follow-on met the margin layout, 2026-09-08). */
 .fc-margin > .fc-composer > * { flex-shrink: 0; }
-.fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2)),
+.fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2):not(.fc-filter)),
 .fc-margin > .fc-sec-send:has(> :not(.fc-foot, .fc-send), .fc-foot > :nth-child(n+2), .fc-send > :nth-child(n+2):not(.fc-note)),
 .fc-margin > .fc-sec-log:has(.fc-log > :nth-child(n+2)) { flex-shrink: 1000000; min-height: min(15%, 2.4em); }
 .fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }

@@ -361,7 +361,15 @@ the file in both views: an insertion is tinted, a deletion is struck at its poin
 substitution shows both, the struck old text before the tinted new text. **Show changes
 inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
 the file reads as it is and the cards alone show the changes. The setting is kept for every
-file you open. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
+appear under those two toggles and choose what the panel lists; Comments and Changes show
+their counts. **Comments** lists only the comments, including comments on changes, and hides
+the change marks in the file; **Changes** lists only the changes, each with the comments made
+on it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+choice is kept like the marks setting and changes only what is shown: **Send to session**
+still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
+**Region**, before the author's chip, and its left edge is colored by kind, the accent for a
+comment and a muted tone for a change, so the two are told apart at a glance. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
 text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it

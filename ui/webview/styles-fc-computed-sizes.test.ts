@@ -139,6 +139,8 @@ const TIMES: Record<string, string> = {
 };
 const LEAVES: Record<string, string> = {
   ...TIMES,
+  "card head kind": HEAD + " > span.fc-kind",   // the kind cue (the filter follow-on, 2026-09-07): .fc-note's size, beside .fc-ref's
+
   "card head chip": HEAD + " > span.fc-chip",
   "card head ref": HEAD + " > span.fc-ref",
   "card head tag": HEAD + " > span.fc-tag",
@@ -159,7 +161,7 @@ const LEAVES: Record<string, string> = {
 test("the chains above are the panel's real DOM: the builders in file-comments.ts", () => {
   assert.match(SRC, /sections = \{ head: el\("div", "fc-sec-head"\), cards: el\("div", "fc-sec-cards"\), send: el\("div", "fc-sec-send"\), log: el\("div", "fc-sec-log"\) \};/);
   for (const [tag, cls] of [["div", "fc-panel"], ["div", "fc-cards"], ["div", "fc-card"], ["div", "fc-card-head"], ["div", "fc-replies"],
-    ["div", "fc-reply"], ["div", "fc-meta"], ["div", "fc-preview"], ["div", "fc-body"], ["span", "fc-ref"], ["span", "fc-tag"],
+    ["div", "fc-reply"], ["div", "fc-meta"], ["div", "fc-preview"], ["div", "fc-body"], ["span", "fc-ref"], ["span", "fc-tag"], ["span", "fc-kind"],
     ["div", "fc-log"], ["div", "fc-log-row"], ["div", "fc-empty"], ["div", "fc-note"], ["div", "fc-send"], ["div", "fc-confirm"],
     ["ul", "fc-list"], ["li"], ["span", "fc-list-desc"], ["div", "fc-opts"], ["label", "fc-opt"], ["pre", "fc-msg"]]) {
     assert.match(SRC, new RegExp('el\\("' + tag + '"' + (cls ? ', "' + cls + '[" ]' : "\\)")), tag + (cls ? "." + cls : ""));
