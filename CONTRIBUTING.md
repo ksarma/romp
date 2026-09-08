@@ -54,9 +54,15 @@ node tools/ui-bench.mjs --record feed --seconds 90 --out /tmp/romp-perf/frames-f
 node tools/ui-bench.mjs --replay feed --frames /tmp/romp-perf/frames-feed.jsonl --json /tmp/romp-perf/live.json
 ```
 
-A replay reports, per frame type, the bytes, the synchronous handler time, and
-the time until the main thread is free again (to the second
-`requestAnimationFrame` after the message) as p50, p90, and max; then the
+A replay reports, per frame type, the bytes, the synchronous socket-handler
+time, the dispatch time (the shim's handoff of the frame to the bundle,
+`window.__rompFed.inbound`, where the bundle's own work runs; depending on the
+kernel's shim that call happens inside the socket handler or from a queued
+flush task, and the report says which ran, how many frames a newer whole-state
+frame replaced in the queue before the handoff, and the flush tasks), and the
+time until the main thread is free again (to the second
+`requestAnimationFrame` after the message's handler or after its handoff,
+whichever lands later) as p50, p90, and max; then the
 long-animation-frame entries with script attribution, the JavaScript heap
 after a forced garbage collection, the DOM size, and every console error. The
 long-animation-frame attribution names each task's entry point (the message
@@ -68,7 +74,8 @@ DevTools loads (Performance panel), and prints the functions with the most self
 and total time as `bundle.js:function:line` with the source position from the
 dist's `.map` files (a `--production` dist is minified and has none; the report
 says so), overall and inside the first content frame and the largest
-frame of each type; for the hottest functions it also names the lines that hold
+frame of each type (a frame's window is its handler span joined with its
+dispatch span); for the hottest functions it also names the lines that hold
 the time (a forced synchronous layout, for instance, shows up as one line of
 one function owning most of its self time). The end-of-run layout, style,
 script and task counters are cumulative since navigation, so they include page
@@ -88,7 +95,7 @@ sweeps it. A Node front server answers the page's WebSocket and proxies
 everything else to the subprocess. The default is no CPU throttling,
 a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
 pools three runs. `--fast` sends the frames back-to-back instead of at their
-recorded pacing; settle times then overlap, handler times do not.
+recorded pacing; settle times then overlap, handler and dispatch times do not.
 
 A recording holds real session data. `--record` connects to the running kernel
 as one more pane (the same URL and capabilities, the token as the page's

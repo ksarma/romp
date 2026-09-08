@@ -2505,10 +2505,12 @@ kernel's environment still turns it on at start.
 
 These counters describe the kernel process only. `tools/ui-bench.mjs` measures
 the browser's side: it replays a recorded or synthetic frame stream into a
-headless Chromium and reports per-frame main-thread time, long animation
-frames, JavaScript heap, and DOM size, and with `--cpu-profile` the functions
-inside the bundles that took the time. See "Measuring dashboard pane
-performance" in `CONTRIBUTING.md`.
+headless Chromium and reports per frame the shim's handler time, the time the
+bundle spent on the frame (the shim's handoff to it, whether made inside the
+socket handler or from a queued flush task) and the time until the main thread
+is free again, plus long animation frames, JavaScript heap, and DOM size, and
+with `--cpu-profile` the functions inside the bundles that took the time. See
+"Measuring dashboard pane performance" in `CONTRIBUTING.md`.
 
 ## Browser-side performance telemetry
 
