@@ -1,15 +1,17 @@
 ---
 title: Browser P1: federation hands its merged frames (`feed`, `tabOrder`, `data`, `bars`) to a pane's handler by direct call through an `onFrame` subscriber registry (`window.__rompFed.onFrame`) instead of dispatching a MessageEvent on window, which a browser extension's content script was structured-cloning on every delivery
-status: offered
+status: merged
 where: fork PR #265 (`fed-direct`, merged 2026-09-07 in batch #277): `ui/webview/federation.ts` (`onFrame`, `emit`), `ui/webview/frame-listener.ts` (new import-free helper), the feed, Outline, Waiting and chat pane bundles and `timeline-main.ts`, `kernel/kernel.py` (`_TIMELINE_BOOT` registers the same way), `CONTRIBUTING.md` (the detection check), `docs/reference.md`; tests `ui/webview/federation-direct-delivery.test.ts` (new), `ui/webview/perf-telemetry.test.ts`, three re-anchored pins, `tests/test_kernel_timeline_split.py`
 added: 2026-09-07
 pr: 265
 tier: fix
 offered: their PR #1061
-closed:
+closed: 2026-09-08
 ---
 Blink hands a `message` listener in the page's own JavaScript world the event's data object itself, but a listener in another world (a browser extension's content script) that reads `event.data` receives a structured clone of the whole object, made synchronously inside `window.dispatchEvent`; upstream's federation re-emits the merged feed as a MessageEvent on window, so each 6.7 MB frame is cloned once per dispatch for a reader that discards it. The browser telemetry showed it as 15 to 90 ms per delta in every feed-consuming pane while the pane's own handler stayed fast; a headless bench has no such listener and cannot show the cost. `emit()` calls the registered handlers over a snapshot of the list and dispatches on window only when nothing registered, so a pane bundle from before the registry keeps working; a throwing handler is reported (`reportError`, or `console.error` without it) and the rest still run. A frame arrives exactly once, on the same call stack, so the `fed:<type>` and `<type>` perf brackets nest as before. A Chromium probe with an isolated-world reader over a 6.7 MB feed frame: `fed:feed` 61.3 ms and +9.6 MB heap per frame before, 0.15 ms and no growth after. Small frames (`usage`, `settingsSync`, `dirListing`, `fileGitLink`, `openKeys`, the shell's `romp:` posts) stay on window; a new frame type that grows large should go through the registry. The CONTRIBUTING section gives the detection step: a timed dispatch of a 150k-object MessageEvent reads under a millisecond with same-world listeners only and tens of milliseconds with a foreign reader.
 
 Port notes: the helper installs the perf-wrapped handler from the browser telemetry entry (`romp-perf-client`, fork #219), so offer that first or make the wrap a plain call; the Waiting pane hunks are fork-only (`waiting.ts` is absent from `upstream/main`). Browser P2, P4, P5 and P6 (`browser-round2-cuts`, #271) are stacked on this.
 
 OFFERED 2026-09-08: offered upstream inside bundle PR #1061 (Panes: direct frame delivery, and chat and feed renders that repaint only what changed; label fix; branch browser-frames-offer; head ac851384; a draft while the branch is rebased onto the moved upstream tip) with `feed-pane-incremental-render` and the shim's lane identity (P4) and the chat render cuts (P6) of `browser-round2-cuts`; its hidden-pane hold (P2) was dropped at the rebase as covered by upstream's #1016.
+
+MERGED 2026-09-08: merged upstream as their PR #1061 (merge 1ce42920, 2026-09-08T20:41Z) after the maintainer's own review commit.
