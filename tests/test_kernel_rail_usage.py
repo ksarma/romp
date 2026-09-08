@@ -43,12 +43,12 @@ class RailUsage(unittest.TestCase):
         self.assertIn("romp==='usage'", self.html, "the shell listens for the timeline's usage post")
         for win in ("fiveHour", "sevenDay"):
             self.assertIn(win, self.html, "renders both rate-limit windows")
-        # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage, read here as seg.color)
+        # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage_limits, read here as seg.color)
         self.assertIn("seg.color", self.html, "the used bar is colored by the selected colormap")
         self.assertIn("seg.tone", self.html, "and the yatharth themes pick the tone shipped beside it (PR #763)")
-        self.assertIn('"color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap())))', inspect.getsource(km._usage),
+        self.assertIn('"color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap())))', inspect.getsource(km._usage_limits),
                       "classic seg.color stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
-        self.assertIn("cm.context_rgb(pct)", inspect.getsource(km._usage),
+        self.assertIn("cm.context_rgb(pct)", inspect.getsource(km._usage_limits),
                       "the yatharth tone (seg.tone) rides beside the classic color")
         # ONE shared hover PANEL for BOTH windows (the user 2026-06-26): it reproduces the used/elapsed bars
         # that used to sit under the timeline, with the reset countdown, and NO explanatory prose.
@@ -142,7 +142,7 @@ class RailUsage(unittest.TestCase):
         import inspect
         self.assertIn("['fable',7*86400,'Fable 5']", self.html, "the rail renders a Fable 5 bar (its ONE display name — the user 2026-08-09)")
         self.assertIn("['fiveHour','sevenDay','fable'].filter", self.html, "the tooltip covers it")
-        self.assertIn('"fable": fable', inspect.getsource(km._usage), "_usage serves the fable window")
+        self.assertIn('"fable": fable', inspect.getsource(km._usage_limits), "_usage_limits serves the fable window")
         tv = (pathlib.Path(BIN).parent / "ui" / "romp-timeline-view.js").read_text()
         self.assertIn("mkUsageBar('fable', 'Fable 5', 7 * 86400)", tv)
         self.assertIn("apply('fable', usage.fable, 'Fable 5 (7d)')", tv)

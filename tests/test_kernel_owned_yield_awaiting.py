@@ -55,7 +55,7 @@ class OwnedYieldAwaiting(unittest.TestCase):
         Path(self.path).write_text("")
         self.saved = {k: getattr(km, k) for k in ("_bg_live_norm", "_bg_placed_tops", "_tmux_sessions")}
         # one live background task, attributed by the judge to TOP's subtree
-        km._bg_live_norm = lambda sid, path: [{"tid": "t1", "desc": DESC, "t": DISPATCH, "type": ""}]
+        km._bg_live_norm = lambda sid, path, live=None: [{"tid": "t1", "desc": DESC, "t": DISPATCH, "type": ""}]
         km._bg_placed_tops = lambda sid, path, tids: {"t1": TOP}
         km._tmux_sessions = lambda: {SID: {"state": "waiting", "since": DISPATCH, "model": "",
                                            "effort": "", "context": None, "compactPct": None,
@@ -99,7 +99,7 @@ class OwnedYieldAwaiting(unittest.TestCase):
 
     def test_no_live_task_no_why(self):
         self._store()
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         self.assertIsNone(km._owned_yield_why(SID, self.path))
 
     def test_an_unattributable_launch_never_masks_a_block(self):

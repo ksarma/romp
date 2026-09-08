@@ -189,7 +189,7 @@ test("the queued turn + bubbles are styled (so the dot is actually visible)", ()
 // — and the queued bubbles say what they are waiting for instead of just sitting there.
 
 test("the kernel parks every drive op while the account can't serve one, and drains at the reset", () => {
-  assert.match(KERNEL, /def _limit_hold\(sid\):/);
+  assert.match(KERNEL, /def _limit_hold\(sid, usage=_USAGE_UNSET\):/);
   assert.match(KERNEL, /or _limit_hold\(sid\) is not None\)/, "the gate /model, /effort and /compact pass");
   // the send path needs its OWN arm, ahead of the forwards_sends handoff: an SDK backend takes a send even
   // mid-turn, so without this the message goes straight out and comes back an API error

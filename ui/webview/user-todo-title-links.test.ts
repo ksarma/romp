@@ -48,18 +48,23 @@ class TextNode {
 }
 class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
 class Elm {
-  className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
+  className = ""; title = ""; id = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
   childNodes: (Elm | TextNode)[] = [];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
   classes = new Set<string>();
   classList = { add: (c: string) => { this.classes.add(c); }, remove: (c: string) => { this.classes.delete(c); }, contains: (c: string) => this.classes.has(c) };
   get offsetWidth(): number { return 0; }
+  // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  attrs: Record<string, string> = {};
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   constructor(public tagName: string) {}
   set textContent(s: string) { const t = new TextNode(s); t.parentElement = this; this.childNodes = [t]; }
   get textContent(): string { return this.childNodes.map((c) => (c instanceof TextNode ? c.data : c.textContent)).join(""); }
   appendChild(c: Elm | TextNode): Elm | TextNode { c.parentElement = this; this.childNodes.push(c); return c; }
   matchesOne(sel: string): boolean {
     if (sel.startsWith(".")) return this.className.split(/\s+/).includes(sel.slice(1));
+    if (sel.startsWith("#")) return this.id === sel.slice(1);
     const attr = sel.match(/^\[data-([\w-]+)\]$/);
     if (attr) return this.dataset[attr[1].replace(/-(\w)/g, (_, c: string) => c.toUpperCase())] !== undefined;
     return this.tagName === sel;
@@ -309,7 +314,7 @@ test("the chat's todo card: a link in the line or the detail opens through the B
   assert.deepEqual(opened[4], ["docs/design.md", ACTIVE]);
 });
 
-test("the transcript's per-span binder stops the click before the body delegate: a bound span opens ONCE, a delegated span once", async () => {
+test("the transcript's per-span binder stops the click before the body delegate: a bound span opens ONCE, a delegated span in the todo card or the Reply modal once, and a delegated span anywhere else (the file viewer's) not at all through this delegate", async () => {
   const { delegate } = await import("./actions");
   const opened: ChatOpened[] = [];
   const { openpath, bindPathLink } = chatHost(opened, null);
@@ -322,10 +327,23 @@ test("the transcript's per-span binder stops the click before the body delegate:
   dispatch(p.spans[0]);
   assert.deepEqual(opened, [["docs/design.md", SID]], "opened once: the binder's stopPropagation kept the delegate out");
   assert.ok(!p.spans[0].classList.contains("romp-acted"), "the delegate never ran");
-  const q = await line("see docs/other.md", "p"); bubble.appendChild(q);   // the delegated form, dispatched the same way
+  // the delegated form, dispatched the same way, in each host the delegate serves
+  const card = new Elm("div"); card.className = "todo-card"; body.appendChild(card);
+  const q = await line("see docs/other.md", "p"); card.appendChild(q);
   dispatch(q.spans[0]);
   assert.deepEqual(opened, [["docs/design.md", SID], ["docs/other.md", SID]]);
   assert.ok(q.spans[0].classList.contains("romp-acted"));
+  const modal = new Elm("div"); modal.className = "picker-overlay confirm-overlay"; modal.id = "ut-reply-prompt"; body.appendChild(modal);
+  const m = await line("see docs/modal.md", "ut-reply-quote"); modal.appendChild(m);
+  dispatch(m.spans[0]);
+  assert.deepEqual(opened[2], ["docs/modal.md", SID], "the Reply modal's quoted line");
+  // a delegated span outside both hosts: the file viewer's links wear the same data-act and open from the viewer's own
+  // listener, and the click goes on to the body (the viewer no longer stops it); the delegate must not open the file again
+  const viewer = new Elm("div"); viewer.className = "fileview-wrap"; viewer.id = "romp-fileview"; body.appendChild(viewer);
+  const v = await line("see docs/viewer.md", "p"); viewer.appendChild(v);
+  dispatch(v.spans[0]);
+  assert.equal(opened.length, 3, "no fourth open: the host check refused the viewer's span");
+  assert.ok(v.spans[0].classList.contains("romp-acted"), "the delegate ran (the click reached the body) and declined");
 });
 
 // ── parity at source: every site that links the detail links the line, on both hosts
@@ -344,7 +362,9 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
-  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => openLinkedPath\(elx, ev as MouseEvent\),\n/, "the body delegate opens a path link, with the click's gesture");
+  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},\n/, "the body delegate opens a path link in the todo card or the Reply modal, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
+  assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");
+  assert.match(RENDER, /overlay\.id = "ut-reply-prompt";/, "the modal's id, as the handler names it");
   const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));
   assert.match(card, /txt\.textContent = t\.text;\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);/);
   assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);

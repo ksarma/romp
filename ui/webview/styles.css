@@ -3621,7 +3621,12 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
   display: flex; align-items: center; justify-content: center; }
 .fileview { width: 95%; height: 95%; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg, #1e1e1e); border: 1px solid var(--box-border); border-radius: var(--radius-modal);
-  box-shadow: var(--shadow-modal); }
+  box-shadow: var(--shadow-modal); container-type: inline-size; }
+/* container-type: the viewer's card is the query container the comments panel's narrow fold (`@container (max-width:
+   680px)` in the file-comments block) resolves against. A container query styles the DESCENDANTS of a container, never
+   the container itself, and .fileview-main — the row the fold stacks — is the container it declares: with no container
+   above it the stacking rule never applied, and a narrow column got the fold's aside rules alone (45% of the ROW, a top
+   border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). */
 body.fileview-open { overflow: hidden; }
 .fileview-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -3819,6 +3824,21 @@ body.filebrowse-open { overflow: hidden; }
   color: var(--dim); opacity: 0.55; user-select: none;
 }
 .fileview-wrap .fv-ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Links inside a shown file (file-view-links.ts): a URL opens a new tab, a path opens in the viewer. Light by
+   design (the user 2026-09-07): the token keeps the colour the highlight gave it, under a faint dotted underline
+   that turns solid on hover; nothing else in the view changes. A Markdown link whose target is a file keeps the
+   link ink the other Markdown links wear. Neither is draggable (-webkit-user-drag: none, with draggable=false on the
+   anchor) and both are selectable (user-select: text; Chromium starts no selection inside a link without it), so a
+   press-drag that starts on a link selects the text under it, as on plain text, instead of starting the browser's link
+   drag; the click that ends such a drag finds the selection open, and the viewer's delegate and the chat's opener both
+   yield to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
+.fileview-body .file-uri-link, .fileview-body .fv-url { color: inherit; cursor: pointer; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; -webkit-user-drag: none; user-select: text; }
+.fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover { text-decoration: underline; text-decoration-color: currentColor; }
+.fileview-md a.file-uri-link { color: var(--link); text-decoration: none; }
+.fileview-md a.file-uri-link:hover { text-decoration: underline; }
+/* A Markdown link with no target the viewer can follow (the sanitizer removed it; a section this document does not
+   have): dead, and it says so, since the title holds the reason (file-view-links.ts DEAD_LINK_CLASS). */
+.fileview-md a.fv-dead { color: inherit; opacity: 0.7; text-decoration: underline dotted; cursor: help; }
 
 /* ── text size and measure (the user 2026-09-07: the rendered markdown had to be zoomable, and a table did not
    follow the Files pane's width) ── The A− / A+ buttons and Ctrl/Cmd + wheel over the body (file-view.ts) set
@@ -3926,12 +3946,21 @@ body.filebrowse-open { overflow: hidden; }
 .fc-composer { display: flex; flex-direction: column; gap: 6px; }
 .fc-composer[hidden] { display: none; }
 .fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.fc-composer-ref[hidden] { display: none; }   /* hidden inside a card, where the comment itself is the reference (placeComposer) */
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
-.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; padding: 5px 8px; border-radius: 6px;
-  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg); }
+/* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
+   (autosizeComposer), which caps it at twelve rows — COMPOSER_MAX_ROWS of the box's computed line-height plus its
+   padding (file-comments.ts) — after which it scrolls; the person may drag it taller or shorter (resize: vertical),
+   past the cap too. The sheet declares only the floor and the row height: a max-height here clamped the drag along
+   with the autosize, since both write the same inline height (the 2026-09-07 review). One row is 1.4em of the box's
+   own size; the 12px are its padding and border (box-sizing: border-box), so the floor is exactly COMPOSER_ROWS rows. */
+.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; line-height: 1.4; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg);
+  resize: vertical; overflow-y: auto; min-height: calc(3 * 1.4em + 12px); }
 .fc-input:focus { outline: none; border-color: var(--accent); }
 .fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.fc-hint { margin-right: auto; }   /* the chord hint at the composer row's left; Save and Cancel keep the right */
 .fc-cards { display: flex; flex-direction: column; gap: 8px; }
 .fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
 .fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);
@@ -3954,6 +3983,14 @@ body.filebrowse-open { overflow: hidden; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
+   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
+   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
+.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
+/* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
+   turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
+   reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
+.fc-composer-in { border-radius: 6px; padding: 5px 8px; background: var(--accent-wash); border-left: 3px solid var(--accent); }
 .fc-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .fc-sec { background: none; border: 0; padding: 2px 0; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer; text-align: left; }
 .fc-sec:hover { color: var(--accent); }
@@ -3974,6 +4011,59 @@ body.filebrowse-open { overflow: hidden; }
 .fc-log-row { display: flex; gap: 8px; align-items: baseline; }
 .fc-log-row > :not(.fc-time) { font-size: 0.86em; }
 .fc-log-row .fc-time { margin-left: 0; }
+/* the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that comments
+   might move with the window when possible, each trying to stay centered near its place in the text; the build put each
+   card level with its passage instead, and the plan's margin-layout note under Slice 2 records both). Beside the body the
+   aside wears `fc-margin` (file-comments.ts placeCards): the head and the composer stay put at the top, Accept all ·
+   Reject all (moved out of the list), Send and the Log at the bottom, and the cards section between them is the one
+   scroller — its scroll locked to the body's, its own bar hidden since the body's is the control for both — with every
+   card absolutely positioned at the top the pass computed (card-layout.ts). The overflow moves from the aside to that
+   track; the panel's padding moves onto the fixed parts. A card pushed down from its mark by the card above draws a
+   dashed leader up the gutter to its mark's height (--fc-push, set per card). The paragraph titles are hidden: a card's
+   place beside its paragraph says it. Off (the narrow fold, edit mode) nothing here applies and the list above is the
+   layout. */
+.fc-panel.fc-margin { overflow: hidden; padding: 0; gap: 0; }
+/* The sections must add up to the panel, always. The panel clips (a panel that scrolled would carry the track away from
+   the body and every card off its mark), so a control past its bottom edge is out of reach — and a Tab onto one scrolls
+   the clipped panel anyway: the head goes under the top edge and every card sits above its mark by that amount until
+   the next pass. The first cut let only the track yield, down to its floor, then the Send section while its confirm was
+   up and the Log while it had rows; every other growth — the composer, the Track file/folder choice, the Reject all
+   confirm, a refusal row under the foot, a fold row, the tooling warning — still pushed Send and the Log toggle off the
+   bottom (the 2026-09-07 review, twice). So every section but the track can shrink, and scrolls inside itself when it
+   does, in two tiers. The sections holding what grew give first: the composer while it shows, and the head, the Send
+   section and the Log while they hold anything beyond their controls (the head's button row; Accept all · Reject all
+   and the Send button with its caption; the Log toggle). Their flex-shrink is a million times the others', so the
+   collapsed sections keep their size to within a layout unit, and they stop at a floor of one control row (15% of a
+   panel too short for that: four grown sections and the track's 30% still fit). Only then do the collapsed sections
+   give, in proportion, scrolling too. The track's basis is 0 with a floor of 30%: it takes the free space when the rest
+   is short and keeps about two cards when it is tall. The Log toggle sticks to the top of its scroller so the fold is in
+   reach while the rows scroll. */
+.fc-margin > .fc-sec-head, .fc-margin > .fc-composer { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 10px 12px 0; }
+.fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 12px; }
+.fc-margin > .fc-sec-log { padding-bottom: 10px; }
+/* The composer section scrolls inside itself when it shrinks; its children keep their height. The box is the height the
+   autosize or the person's drag gave it (file-comments.ts autosizeComposer): as flex items of the section they shrank
+   with it, down to the sheet's three-row floor, so a twelve-row box rendered short of its own inline height and a drag
+   was overridden by the layout (found when the composer follow-on met the margin layout, 2026-09-08). */
+.fc-margin > .fc-composer > * { flex-shrink: 0; }
+.fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2)),
+.fc-margin > .fc-sec-send:has(> :not(.fc-foot, .fc-send), .fc-foot > :nth-child(n+2), .fc-send > :nth-child(n+2):not(.fc-note)),
+.fc-margin > .fc-sec-log:has(.fc-log > :nth-child(n+2)) { flex-shrink: 1000000; min-height: min(15%, 2.4em); }
+.fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }
+.fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
+.fc-margin .fc-log > .fc-sec { position: sticky; top: 0; background: var(--bg); }
+/* The footer begins under a rule whichever row comes first — the foot (Accept all · Reject all), a fold, the empty note, a
+   loader — so the rule stands on the Send section's own top edge, and the Send box drops its own when nothing stands
+   before it. The first review's rule stood on the foot alone: a footer of rows with no pending change (a comments-only
+   file with a resolved comment) began flush under the track's clipped cards and drew its one rule under the fold, above
+   Send (the review's consolidation, 2026-09-07). */
+.fc-margin > .fc-sec-send { padding-top: 8px; border-top: 1px solid var(--card-border); }
+.fc-margin .fc-sec-send > .fc-send:first-child { padding-top: 0; border-top: 0; }
+.fc-margin .fc-cards { display: block; position: relative; }
+.fc-margin .fc-cards > * { position: absolute; left: 12px; right: 12px; box-sizing: border-box; }
+.fc-margin .fc-cards > .fc-group { display: none; }
+.fc-margin .fc-card[data-pushed]::before { content: ""; position: absolute; left: -7px; top: calc(-1 * var(--fc-push, 0px)); height: var(--fc-push, 0px);
+  border-left: 1px dashed var(--text-faint); }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
    wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet

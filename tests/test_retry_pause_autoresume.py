@@ -248,19 +248,19 @@ class _KernelClock:
 
 class _PauseFixture(unittest.TestCase):
     """The pusher's pause jobs over real synthetic transcripts: _alive_sessions and the live map are the
-    module's own, _usage is the patched report, every frame goes to self.sent."""
+    module's own, _usage_limits is the patched report, every frame goes to self.sent."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.dir = Path(self.td.name)
-        self._orig = (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
+        self._orig = (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage_limits,
                       km._send_to_app, km.Sessions.__dict__["backend_for"], km._auth_key_present, km.time)
         self.clock = _KernelClock()
         km.time = self.clock
         km.jd.STATE = self.dir
         km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
         km.jd.rearm_failed_summaries = lambda now, **k: 0
-        km._usage = lambda: {"limited": {"fiveHour": True}}    # the login account's window is at 100%
+        km._usage_limits = lambda: {"limited": {"fiveHour": True}}    # the login account's window is at 100%
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         km.Sessions.backend_for = staticmethod(lambda sid: object())
@@ -274,7 +274,7 @@ class _PauseFixture(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: list(self.roster)
 
     def tearDown(self):
-        (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
+        (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage_limits,
          km._send_to_app, km.Sessions.backend_for, km._auth_key_present, km.time) = self._orig
         km._APIH_LAST[0] = None
         km._api_err_cache.clear()
@@ -347,7 +347,7 @@ class LimitPauseLift(_PauseFixture):
             self._append(web_path, _out_line(now + i), now + i)
             states.append(self._cycle(int(now) + i, live))
         self.assertEqual(states, ["paused"] * 3)
-        km._usage = lambda: {"limited": None}                  # the reset passed: the report no longer names a window
+        km._usage_limits = lambda: {"limited": None}                  # the reset passed: the report no longer names a window
         for i in range(3, 8):
             self._append(web_path, _out_line(now + i), now + i)
             states.append(self._cycle(int(now) + i, live))
@@ -370,7 +370,7 @@ class LimitPauseLift(_PauseFixture):
             states.append(self._cycle(int(now) + i, live))
         self.assertEqual(states, ["paused"] * 8, "served output under a limited report is not the lift")
         self.assertEqual(self._states(), ["paused"], "one frame across eight output records")
-        km._usage = lambda: {"limited": {}}                    # the refreshed report reads under 100%
+        km._usage_limits = lambda: {"limited": {}}                    # the refreshed report reads under 100%
         self.assertEqual(self._cycle(int(now) + 8, live), "ok")
         self.assertFalse(km._retry_paused_on())
         self.assertEqual(self._states(), ["paused", "ok"])
@@ -390,7 +390,7 @@ class LimitPauseLift(_PauseFixture):
         km._auto_resume_retry(int(now), live)
         self.assertTrue(km._retry_paused_on(), "a prompt is not the API's answer, and the report still reads limited")
         self._append(path, _out_line(floor + 5), floor + 5)    # the login account served a request
-        km._usage = lambda: {"limited": {}}                    # and its usage report caught up
+        km._usage_limits = lambda: {"limited": {}}                    # and its usage report caught up
         self.assertEqual(self._cycle(int(now) + 1, live), "ok")
         self.assertFalse(km._retry_paused_on())
         self.assertEqual(self._states(), ["paused", "ok"], "each side of the lift sent once")
@@ -403,24 +403,24 @@ class LimitPauseLift(_PauseFixture):
 
         def boom():
             raise RuntimeError("no report")
-        km._usage = boom
+        km._usage_limits = boom
         km._pusher_wake.clear()                                # the engage above woke the pusher; the check below must not
         km._auto_resume_retry(int(now), live)
         self.assertTrue(km._retry_paused_on(), "no reading: no change, as the engage side would not engage")
         self.assertFalse(km._pusher_wake.is_set())
 
     def test_the_engage_and_the_lift_read_the_same_filter(self):
-        km._usage = lambda: {"limited": {"fable": True}}
+        km._usage_limits = lambda: {"limited": {"fable": True}}
         self.assertEqual(km._account_limited(), [], "fable is model-scoped: never an account limit")
-        km._usage = lambda: {"limited": {"fiveHour": False, "sevenDay": True, "fable": True}}
+        km._usage_limits = lambda: {"limited": {"fiveHour": False, "sevenDay": True, "fable": True}}
         self.assertEqual(km._account_limited(), ["sevenDay"])
-        km._usage = lambda: None
+        km._usage_limits = lambda: None
         self.assertEqual(km._account_limited(), [], "no report at all (a pure API-key host) reads as not limited")
         src = inspect.getsource(km._auto_pause_on_limit) + inspect.getsource(km._auto_resume_retry)
         self.assertEqual(src.count("_account_limited()"), 2, "both edges call the one filter")
 
     def test_a_manual_pause_keeps_lifting_on_any_fresh_transcript(self):
-        km._usage = lambda: {"limited": {}}
+        km._usage_limits = lambda: {"limited": {}}
         now = time.time()
         path, row = self._session(SID_KEY, "web", "key", _out_line(now - 60))
         km._set_retry_paused(True)
@@ -448,7 +448,7 @@ class SpendPauseLift(_PauseFixture):
 
     def setUp(self):
         super().setUp()
-        km._usage = lambda: {"limited": None}                  # no usage window is involved
+        km._usage_limits = lambda: {"limited": None}                  # no usage window is involved
         self.now = time.time()
         # the probe's two sessions: 'web' bills the key and sits on the cap; 'api' bills the login and streams
         self.web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 120), _err_line(self.now - 90, SPEND_TEXT))
@@ -618,10 +618,10 @@ class SpendPauseStandDown(SpendPauseLift):
         self._append(tests, _out_line(floor + 1), floor + 1)
         self.assertEqual(self._cycle(int(self.now) + 1, self.live), "degraded")            # the spend lift
         lifted = self._file()["liftedAt"]
-        km._usage = lambda: {"limited": {"fiveHour": True}}
+        km._usage_limits = lambda: {"limited": {"fiveHour": True}}
         self.assertEqual(self._cycle(int(self.now) + 2, self.live), "paused")              # the login window
         self.assertEqual((km._retry_pause_reason(), self._file()["liftedAt"]), ("limit", lifted))
-        km._usage = lambda: {"limited": None}
+        km._usage_limits = lambda: {"limited": None}
         states = [self._cycle(int(self.now) + 3 + i, self.live) for i in range(3)]
         self.assertEqual(states, ["degraded"] * 3, "the limit lifts; the stale spend record engages nothing")
         self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
@@ -630,14 +630,14 @@ class SpendPauseStandDown(SpendPauseLift):
     def test_a_limit_lift_rules_on_no_spend_record(self):
         # the login window is at 100% first; 'web' hits its cap during that pause; the report clears. The limit
         # lift's evidence is the report, which says nothing about the cap, so the cap engages its own pause.
-        km._usage = lambda: {"limited": {"fiveHour": True}}
+        km._usage_limits = lambda: {"limited": {"fiveHour": True}}
         web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 120))    # not capped yet
         self.assertEqual(self._cycle(int(self.now), self.live), "paused")
         self.assertEqual(km._retry_pause_reason(), "limit")
         floor = km._retry_pause_ts()
         self._append(web, _err_line(floor + 1, SPEND_TEXT), floor + 1)
         self.assertEqual(self._cycle(int(self.now) + 1, self.live), "paused")
-        km._usage = lambda: {"limited": None}
+        km._usage_limits = lambda: {"limited": None}
         self.assertEqual(self._cycle(int(self.now) + 2, self.live), "degraded", "the limit lifts")
         self.assertEqual(self._file(), {"paused": False}, "a limit lift records no spend ruling")
         self.assertEqual(self._cycle(int(self.now) + 3, self.live), "paused", "the cap, never ruled on, pauses")
@@ -707,7 +707,7 @@ class PauseWriteSeq(_PauseFixture):
 
     def test_seq_is_an_event_counter_not_a_clock(self):
         self.roster = []
-        km._usage = lambda: {"limited": None}
+        km._usage_limits = lambda: {"limited": None}
         f1 = km._api_health_frame(10, {})
         f2 = km._api_health_frame(99_999, {})
         self.assertEqual(json.dumps(f1, sort_keys=True), json.dumps(f2, sort_keys=True))

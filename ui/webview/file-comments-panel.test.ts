@@ -52,7 +52,7 @@ class T extends N {
     return tail;
   }
 }
-type Ev = { type: string; target: N; currentTarget: N | null; key?: string; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
+type Ev = { type: string; target: N; currentTarget: N | null; key?: string; ctrlKey?: boolean; metaKey?: boolean; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
 function parseSelector(sel: string): Compound[] {
@@ -143,9 +143,9 @@ class E extends N {
   addEventListener(type: string, fn: (ev: Ev) => void): void { (this.listeners.get(type) || this.listeners.set(type, []).get(type)!).push(fn); }
   removeEventListener(type: string, fn: (ev: Ev) => void): void { const l = this.listeners.get(type); if (l) l.splice(l.indexOf(fn), 1); }
   /** Dispatch with bubbling: every ancestor's listeners run until one stops propagation. */
-  dispatch(type: string, init: { key?: string } = {}): Ev {
+  dispatch(type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}): Ev {
     let stopped = false;
-    const ev: Ev = { type, target: this, currentTarget: null, key: init.key, defaultPrevented: false,
+    const ev: Ev = { type, target: this, currentTarget: null, key: init.key, ctrlKey: init.ctrlKey, metaKey: init.metaKey, defaultPrevented: false,
       preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; } };
     for (let n: N | null = this; n && !stopped; n = n.parentNode) {
       if (!(n instanceof E)) continue;
@@ -261,7 +261,7 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => (src === undefined ? null : src),
     mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => editingNow, setTrackedEdit: (t) => { tracked.push(t); },
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => editingNow, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,
@@ -299,10 +299,10 @@ test("a status refusal is not a wait and not a moved fence: the cards say what f
   assert.ok(h.q(".fc-sec-head .fc-err")!.textContent.includes(CORRUPT), "the head's row names the reason");
   // Comment on this file, a note, Enter: the panel re-asks status ONCE and sends no verb with an empty fence
   h.click('[data-act="fcfile"]');
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Add a summary at the top.";
   const before = h.posted.length;
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.posted.length, before + 1, "one re-ask");
   assert.equal(h.last().verb, "status");
@@ -314,7 +314,7 @@ test("a status refusal is not a wait and not a moved fence: the cards say what f
   assert.equal(input.value, "Add a summary at the top.", "the note stays");
   assert.equal(h.q(".fc-cards")!.textContent, "The comments could not be read, so none can be shown or written.", "still not a wait");
   // the person mends the sidecar and presses Enter again: the re-ask succeeds and the comment carries the real fence
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "status");
   await h.ok();
@@ -336,9 +336,9 @@ test("a status still in flight is waited for, not fenced blind: the cards wear t
   assert.ok(cards.querySelector(".fc-load"), "no refusal yet: the wait wears the romp loader (ui/CLAUDE.md)");
   assert.equal(cards.querySelector(".fc-empty"), null, "…and no line claims a read that nothing is making");
   h.click('[data-act="fcfile"]');
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Lead with the numbers.";
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "status");
   await h.ok({ store: null, storeMtimeNs: null });
@@ -455,9 +455,9 @@ test("a click on a rendered picture offers Comment; the anchor is the embed's so
   assert.equal(imgs[0].style.outline, "2px solid var(--accent)");
   assert.equal(imgs[1].classList.contains("fc-presel"), false);
   assert.ok(h.body.contains(imgs[0]), "framed, never wrapped or removed");
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Use the p99 chart instead.";
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");

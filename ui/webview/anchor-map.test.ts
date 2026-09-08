@@ -246,7 +246,9 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   assert.match(VIEW, /const lines = html\.split\("\\n"\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/);
   assert.match(VIEW, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
   assert.match(VIEW, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
-  assert.match(VIEW, /const dirty = marked\.parse\(text\) as string;/);
+  // the viewer's parse carries its link-target hook (file-view-links.ts viewerWalkTokens) as a PER-CALL option: the tokens are
+  // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render
+  assert.match(VIEW, /const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/);   // the file kind's alone since the 2026-09-07 fold: a URL document takes marked's defaults
   const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map never reconfigures marked");
@@ -474,7 +476,7 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   const anchor = makeAnchor(source, r.range);
   assert.deepEqual(locateComment(source, anchor, r.range.start), { state: "located", range: r.range });
   assert.deepEqual(locateComment(source, anchor), { state: "located", range: { start: first, end: first + needle.length } }, "without the hint the engine takes the earliest tie");
-  // the session inserted two lines above the passage between the selection and Enter
+  // the session inserted two lines above the passage between the selection and the save
   const inserted = "# reviewed\r\n# twice\r\n";
   const edited = source.slice(0, source.indexOf("def put_note")) + inserted + source.slice(source.indexOf("def put_note"));
   const loc = locateComment(edited, anchor, r.range.start);

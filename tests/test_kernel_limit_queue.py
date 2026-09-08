@@ -12,7 +12,7 @@ order, delivered the moment the account can serve again. The limit is on the ACC
 and /effort are exactly as un-servable as a message and hold their place in the sequence.
 
 RELEASE is read from the event, never a timer romp invents:
-- a rate window carries the API's own resetsAt, and _usage().limited goes false the moment that stamp
+- a rate window carries the API's own resetsAt, and _usage_limits()["limited"] goes false the moment that stamp
   passes, so the queue drains on the next producer pass;
 - a spend cap has no readable reset, so the hold rides the retry-pause the spend-cap detector engages and
   lifts when that lifts.

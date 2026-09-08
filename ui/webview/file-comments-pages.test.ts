@@ -66,7 +66,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -114,7 +114,7 @@ class E extends N {
     });
   }
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -337,7 +337,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     pdfPages: () => pages as unknown as HTMLElement[],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: noop, scrollToOffset: noop, reload: noop,
     ...over,
@@ -369,7 +369,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     repaint: () => { for (const cb of rendered) cb(); },
     overlays: () => main.querySelectorAll(".fileview-pdf-page .fc-overlay"),
     head: () => main.querySelector('.fc-card[data-id="' + ID + '"] .fc-card-head')!,
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -464,7 +464,7 @@ test("a pending region drawn on page 2 survives the pages being redrawn: the com
   assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.16, 0.10, 0.33, 0.15 of page 2");
   assert.equal(drawn[drawn.length - 1][0], fresh[1].querySelector("canvas"), "the composer's crop is cut from the NEW page 2 canvas");
   assert.equal(h.input().value, "Crop the header.", "the words typed so far stay");
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.deepEqual(h.last().args, { note: "Crop the header.", target: { kind: "pdf", region: R2, page: 2 } }, "the wire target and the mark agree on the page");

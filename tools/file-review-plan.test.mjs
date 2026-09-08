@@ -228,12 +228,74 @@ test('the Tests section names Slice 3\'s host modules and this pin, and they exi
   assert.ok(tests.includes('`tools/file-review-plan.test.mjs`'));
 });
 
+// ── the margin-layout follow-on (2026-09-07): the Slice 2 note, the UX bullet, the sheets ────
+
+const slice2 = section('### Slice 2: the session\'s changes as accept/reject cards and inline marks', '### Slice 3: region comments on images');
+const surface = section('### The surface, in its Slice 2 state', '### Commenting from either view, and in every format');
+const styles = read('ui', 'webview', 'styles.css');
+const feed = read('ui', 'webview', 'feed.css');
+const guide = read('docs', 'guide.md');
+
+test('the margin-layout note stands beside the Slice 2 build note and names what was asked and what was built', () => {
+  assert.ok(slice2.includes('The margin-layout follow-on (2026-09-07), panel side.'), 'the note, in the Slice 2 section');
+  // The ask as the user made it, hedges kept, then the build's reading of it: the review-round-1 rewording
+  // (tools/file-review-plan-attribution.test.mjs holds the two apart; this pin says the note carries both).
+  assert.ok(slice2.includes('asked whether comments could move with the window when possible, each trying to stay centered near the place in the text it was left as the reader scrolls, at least for markdown'), 'what the user asked for');
+  assert.ok(slice2.includes('The layout is the build\'s reading of that ask: comment cards that follow the text'), 'what was built, named as the build\'s reading');
+  assert.ok(slice2.includes('laid out as margin-aligned cards the way document editors lay out comments'));
+  // the layout model, as the note states it, is the code's
+  assert.ok(slice2.includes('a track whose scroll is locked to the body\'s'));
+  assert.ok(/body\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("body"\)\);/.test(panel), 'the lock: the body\'s scroll event');
+  assert.ok(/track\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("track"\)\);/.test(panel), '…and the track\'s');
+  assert.ok(slice2.includes('each takes the larger of it and the previous card\'s bottom plus the gap'));
+  assert.ok(slice2.includes('The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies (`placeCards`)'));
+  const layout = read('ui', 'webview', 'card-layout.ts');
+  assert.ok(/export function layoutCards\(items: LayoutItem\[\], gap: number = CARD_GAP\): Layout/.test(layout), 'the module exports the rule');
+  assert.ok(/Math\.max\(it\.desired as number, floor\)/.test(layout), 'the push-down rule is the larger of desired and the floor');
+  assert.ok(/import \{ layoutCards, CARD_GAP, type LayoutItem, type PlacedItem \} from "\.\/card-layout";/.test(panel), 'the panel imports it');
+  assert.ok(/placeCards\(fromRender: boolean\): void \{/.test(panel));
+  assert.ok(slice2.includes('one pass per frame, and never on scroll'));
+  assert.ok(!/"scroll", \(\) => this\.(scheduleLayout|placeCards)/.test(panel), 'no pass on scroll');
+  assert.ok(slice2.includes('the loose group at the top of the track, in the list\'s order'));
+  assert.ok(slice2.includes('Accept all · Reject all (moved out of the list)'));
+  assert.ok(/this\.sections\.send\.insertBefore\(foot, this\.sections\.send\.firstChild\);/.test(panel), 'the foot moves to the footer');
+});
+
+test('the note\'s fold statement is the sheets\': the row\'s computed flex-direction is read, and the viewer\'s card is the query container', () => {
+  assert.ok(slice2.includes('the fold is read off the row\'s computed flex-direction, since the sheet\'s container query owns it'));
+  assert.ok(/getComputedStyle\(row\)\.flexDirection !== "column"/.test(panel));
+  assert.ok(slice2.includes('`.fileview-main` is the container it declares, a container query styles a container\'s descendants and never the container itself'));
+  assert.ok(slice2.includes('The viewer\'s card (`.fileview`) now declares the container the fold resolves against.'));
+  for (const [name, css] of [['styles.css', styles], ['feed.css', feed]]) {
+    const at = css.indexOf('\n.fileview {');
+    assert.ok(at >= 0, name + ' has the card rule');
+    const rule = css.slice(at, css.indexOf('}', at) + 1);
+    assert.ok(rule.includes('container-type: inline-size;'), name + ': the card is the container');
+    assert.ok(/\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/.test(css), name + ': the row stays a container for the aside\'s own fold rules');
+    assert.ok(/@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/.test(css), name + ': the fold stacks the row');
+    assert.ok(/\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/.test(css), name + ': the margin layout\'s root rule');
+    // basis 0 with a 30% floor since the footer fix (styles-fc-margin-footer.test.ts pins the chat sheet's geometry;
+    // this pins that both sheets carry the same rule)
+    assert.ok(/\.fc-margin > \.fc-sec-cards \{ flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; \}/.test(css), name + ': the track is the scroller');
+  }
+});
+
+test('the UX bullet on progressive disclosure carries the margin clause, the guide says the same, and the Tests section names the three modules', () => {
+  assert.ok(surface.includes('beside the body each card sits level with the passage it is about and scrolls with the text, so the margin itself is the glance (the margin-layout follow-on, under Slice 2)'));
+  const files = guide.slice(guide.indexOf('### Files')).replace(/\s+/g, ' ');
+  assert.ok(files.includes('opens a panel beside the file, where each card sits level with the passage it is about and scrolls with the text; when the column is narrow the panel drops below the file and lists the cards instead.'));
+  assert.ok(tests.includes('`ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and `file-comments-margin-browser.test.ts` (the margin-layout follow-on, 2026-09-07)'));
+  for (const f of ['card-layout.test.ts', 'file-comments-margin.test.ts', 'file-comments-margin-browser.test.ts']) {
+    assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', f)), `${f} exists`);
+  }
+});
+
 // ── the todo-file follow-on (2026-09-07): the plan's record against the model, the panel and the pane ──
 // The Getting into it bullet and the note beside Slice 2's build record describe the structured todo→file path
 // and the confirm's two controls; the sources named here do what they say, so a change to one side without the
 // other fails here (the pattern of the Slice 3 pins above).
 const gettingIn = section('### Getting into it', '## Build slices');
-const slice2 = section("### Slice 2: the session's changes as accept/reject cards and inline marks", '### Slice 3: region comments on images');
+// `slice2` is the margin-layout block's above: the same section, read once
 const waiting = read('ui', 'webview', 'waiting.ts');
 
 test('Getting into it states the structured path: the record\'s file, the chip, the status\'s todos, one send answers one todo', () => {

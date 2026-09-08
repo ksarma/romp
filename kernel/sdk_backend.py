@@ -7872,10 +7872,11 @@ class SdkBackend:
         # so a locked site may call a helper that locks. The class attribute below is the default
         # for __new__-built test doubles.
         self._live_lock = threading.RLock()
-        self._live_rev: dict[str, int] = {}       # sid -> count of changes to its live tail (add/edit/drop) —
-        #                                           the exact "the live tail moved" event the kernel's active-tab
-        #                                           cache keys on (2026-09-03); bumped by _touch_live at every
-        #                                           mutation site, never read as a value beyond equality
+        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
+        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
+        #                                           — the chat-build signature's live component (2026-09-03; the
+        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
+        #                                           never read as a value beyond equality
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
@@ -10408,6 +10409,7 @@ class SdkBackend:
                 for k, a in list(live.items()):
                     if a.get("_echo_text") == text:
                         live.pop(k, None)                  # one echo per canceled message
+                        self._touch_live(sid)
                         break
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
@@ -10639,6 +10641,9 @@ class SdkBackend:
                 elif seen:
                     a["_landed"] = True                    # the verdict, for prune_live and the next boot
                     landed.add(a["_echo_text"])
+        if landed:
+            with self._live_lock:                          # the flag writes above changed stashed atoms
+                self._touch_live(sid)
         if redeliver:
             # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
             # own queue: there the in-memory _pending is authoritative and its very next
@@ -10696,7 +10701,6 @@ class SdkBackend:
             if a["_echo_text"] in landed:
                 continue                                   # landed, un-pruned → the next build's prune_live
             a["dropped"] = True
-            self._touch_live(sid)
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
             if a.get("_todo"):
@@ -10705,6 +10709,9 @@ class SdkBackend:
                 # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
                 # echo at kernel death is COMMON and means delivered, not lost.
                 self._todo_lost(sid, a["_todo"], a["_echo_text"])
+        if any(a.get("dropped") for a in newly):           # `newly` held no dropped echo before this loop
+            with self._live_lock:
+                self._touch_live(sid)
         self._persist_echoes(sid)
         self._wake_push()
 
@@ -10782,9 +10789,9 @@ class SdkBackend:
                     continue
                 if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
                     live.pop(k, None)
-                    self._touch_live(sid)
                     if not live and self._live.get(sid) is live:
                         self._live.pop(sid, None)
+                    self._touch_live(sid)
                     hit = a
                     break
         if hit is None:
@@ -12211,7 +12218,7 @@ class SdkBackend:
             d = self._live.setdefault(sess.sid, {})
             d[atom["uuid"]] = atom
             vanished = _evict_live_overflow(d)   # safety cap if no client ever drains/prunes — never an echo
-            self._touch_live(sess.sid)
+            self._touch_live(sess.sid)           # the add and any eviction, one revision
         if vanished:
             self._note_live_tail_race("_evict_live_overflow")
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
@@ -12248,15 +12255,25 @@ class SdkBackend:
         threading.Thread(target=run, name="sdk-push-session", daemon=True).start()
 
     def _touch_live(self, sid: str) -> None:
-        """Record that `sid`'s live tail changed (see _live_rev)."""
-        revs = getattr(self, "_live_rev", None)          # a bare __new__ backend (tests drive prune_live on one)
-        if revs is None:                                 # has no counters yet: mint them rather than raise
+        """Record that `sid`'s live tail changed: advance its revision (`_live_rev[sid]`), the integer the
+        kernel's chat-build signature folds for the tail (Sessions.live_rev; 2026-09-03, the complete
+        per-session key since round-4 plan P4, 2026-09-07): a tab whose in-memory tail changed rebuilds
+        because this moved, and one whose tail did not is served from its cache without anyone hashing
+        the atoms. Called with `_live_lock` HELD, AFTER the change it records: the write first, then the
+        revision, so a reader that took the revision before its read and stored it misses on its next
+        check (the _node_anchor_rev ordering); the other order could pair a new revision with the old
+        atoms and never heal. Every site that adds, replaces, pops or flags an atom in `_live` calls this
+        — _stash_live, _forward (its eviction included), unqueue, dismiss_echo, prune_live,
+        retire_live_work, and the two flag writes _mark_dropped_echoes makes outside the lock (it takes
+        the lock for the bump); tests/test_live_tail_rev.py pins the set. Only a CHANGE bumps, once per
+        call: a prune that retired nothing leaves the revision where it was, since the chat build itself
+        prunes on every merge and a bump per call would make every build's own signature move under it.
+        A bare __new__ backend (tests drive prune_live on one) has no counters yet: mint them rather
+        than raise."""
+        revs = getattr(self, "_live_rev", None)
+        if revs is None:
             revs = self._live_rev = {}
         revs[sid] = revs.get(sid, 0) + 1
-
-    def live_rev(self, sid: str) -> int:
-        """How many times `sid`'s live tail has changed this process — equality means nothing moved."""
-        return getattr(self, "_live_rev", {}).get(sid, 0)
 
     def live_atoms(self, sid: str) -> list:
         """The session's in-memory live-tail atoms (newest last), for build_session to merge ahead of disk."""
@@ -12264,6 +12281,13 @@ class SdkBackend:
             d = self._live.get(sid)
             vals = list(d.values()) if d else []
         return sorted(vals, key=lambda a: a.get("t", 0))
+
+    def live_rev(self, sid: str) -> int:
+        """The sid's live-tail revision (see _touch_live): 0 until the tail first changes, then one more
+        per change — equality means nothing moved. Read under the live-tail lock, like the atoms it
+        counts. The kernel's chat-build signature reads it (Sessions.live_rev)."""
+        with self._live_lock:
+            return (getattr(self, "_live_rev", None) or {}).get(sid, 0)
 
     def prune_live(self, sid: str, tx_uuids, tx_user_texts=(), human_floor: int = 0) -> None:
         """Drop live atoms the transcript has now caught up on — by uuid (assistant/tool/user from the
@@ -12321,6 +12345,7 @@ class SdkBackend:
             return key in text_t and float(text_t[key] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         vanished = 0
+        popped = False
         with self._live_lock:
             d = self._live.get(sid)
             if not d:
@@ -12338,9 +12363,11 @@ class SdkBackend:
                     if d.pop(k, None) is None:
                         vanished += 1
                     else:
-                        self._touch_live(sid)
+                        popped = True
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
+            if popped:
+                self._touch_live(sid)      # a change only: a prune that retired nothing is not one
         if vanished:
             self._note_live_tail_race("prune_live")
         if echo_removed:
@@ -12395,11 +12422,14 @@ class SdkBackend:
                     except Exception:
                         self._log("orphan-reply persist failed: %s" % traceback.format_exc())
         with self._live_lock:
+            popped = False
             for k, _a in work:
                 if d.pop(k, None) is not None:
-                    self._touch_live(sid)
+                    popped = True
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
+            if popped:
+                self._touch_live(sid)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,

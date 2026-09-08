@@ -36,11 +36,16 @@ T0 = NOW - 3600
 # rows and hands nothing to rollup_status, record_verdict or save_goals (audited 2026-09-06; the deep
 # freeze would raise if one did).
 WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
-         "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2}
-# NOT wired, on purpose. _lift_spent_awaiting and _bg_placed_tops belong to a sibling change (branch
-# perf2-lift, the probe-then-write two-phase read); _feed_goals' live path is the feed's main store read
-# and stays on the writer's loader until the B5 snapshot memo is replaced (its own change).
-UNWIRED = ("_lift_spent_awaiting", "_bg_placed_tops", "_feed_goals")
+         "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2,
+         "_bg_placed_tops": 1,
+         "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
+#                                  snapshot (B5) stays as it is and serves the mid-pass builds
+# TWO-PHASE (performance plan 4, P16): one shared PROBE, one writer load taken only when the probe found
+# a lift due; the decision body (_lift_decisions) loads nothing and writes nothing.
+TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
+# Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
+# has a place to be named; the test over it passes vacuously while it is empty.
+UNWIRED = ()
 
 
 class WiringPins(unittest.TestCase):
@@ -56,6 +61,31 @@ class WiringPins(unittest.TestCase):
             self.assertEqual(src.count("jd.load_goals_shared("), 0, "%s: not wired" % name)
             self.assertGreaterEqual(src.count("jd.load_goals("), 1, "%s: still the writer's loader" % name)
 
+    def test_the_awaiting_lift_probes_the_shared_view_and_loads_the_writers_copy_once(self):
+        for name, (shared, writer) in TWO_PHASE.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared("), shared, "%s: the phase-1 probe" % name)
+            self.assertEqual(src.count("jd.load_goals("), writer, "%s: the phase-2 writer load" % name)
+
+    def test_the_lifts_decision_body_loads_nothing_and_writes_nothing(self):
+        # every rule of the lift is decided here, on whichever store the caller hands in (the shared view
+        # in phase 1, the writer's copy in phase 2); the verdict gate is read through jd.may_apply only
+        src = inspect.getsource(km._lift_decisions)
+        for needle in ("jd.load_goals(", "jd.load_goals_shared(", "record_verdict(", "save_goals(",
+                       "rollup_status(", "_drop_auto_nudge_rec(", "_lift_gate_key("):
+            self.assertEqual(src.count(needle), 0, "_lift_decisions: %s" % needle)
+        self.assertGreaterEqual(src.count("jd.may_apply("), 3, "the read-only gate, once per arm")
+
+    def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
+        # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
+        # read can describe a version the read did not see); the gate's three stats are not taken here.
+        # The one presence check (os.path.exists on the store file, an absent store answering nothing
+        # without a parse or a load) is not a key and is allowed.
+        src = inspect.getsource(km._bg_placed_tops)
+        self.assertEqual(src.count("_lift_gate_key("), 0)
+        self.assertEqual(src.count(".stat()"), 0)
+        self.assertEqual(src.count("os.stat("), 0)
+
     def test_the_compaction_sweep_evicts_the_caches_absent_paths(self):
         src = inspect.getsource(km._compact_goal_stores)
         self.assertIn("jd._disk_memo_evict_absent()", src)
@@ -64,6 +94,7 @@ class WiringPins(unittest.TestCase):
     def test_perf_reports_the_cache_beside_the_snapshot_memo(self):
         src = inspect.getsource(km._PerfStats.snapshot)
         self.assertIn('("goals_shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
+        self.assertIn('("bg_tops", _bg_tops_report)', src, "…and the placed-launch memo beside it")
 
 
 class SharedViewInBuilds(unittest.TestCase):
@@ -71,7 +102,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
         jd._rebind_state(Path(self.td.name))         # clears the cache and lifts any earlier off switch
-        self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging")}
+        self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging_marks")}
         for i, sid in enumerate(SIDS):
             s = {"rompUuid": sid, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {},
                  "placements": {}, "status": {}}
@@ -117,7 +148,7 @@ class SharedViewInBuilds(unittest.TestCase):
     def test_the_store_a_wired_site_works_on_is_the_frozen_shared_view(self):
         seen, raised = [], []
 
-        def spy(sid, caps, goals, t0, out, seg_ends=None):
+        def spy(sid, caps, goals, seg_ends=None):          # the per-lane marks derivation (the lane memo's miss path)
             seen.append(goals)
             for attempt in (lambda: goals["status"].__setitem__("x", "y"),
                             lambda: goals["nodes"][sid + ":g1"]["log"].append({"kind": "done"}),
@@ -126,8 +157,9 @@ class SharedViewInBuilds(unittest.TestCase):
                     attempt()
                 except jd.FrozenStoreError:
                     raised.append(1)
-            return self.saved["_derive_judging"](sid, caps, goals, t0, out, seg_ends)
-        km._derive_judging = spy
+            return self.saved["_derive_judging_marks"](sid, caps, goals, seg_ends)
+        km._derive_judging_marks = spy
+        km._lanes_memo.clear()                            # every lane derives (a held lane would not reach the spy)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             tl = km.build_timeline(NOW, {}, with_bars=True)
@@ -151,7 +183,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.assertEqual(jd.load_goals(SIDS[1])["nodes"][SIDS[1] + ":g1"]["text"], "Goal 1",
                          "a write on a fallback store reached no file")
         # the board keeps rendering: the next build's loads take load_goals (private, mutable) and succeed
-        km._derive_judging = self.saved["_derive_judging"]
+        km._derive_judging_marks = self.saved["_derive_judging_marks"]
         km.build_timeline(NOW, {}, with_bars=True)
         self.assertEqual(self._delta("fallback"), 2 * len(SIDS) - 1)
 

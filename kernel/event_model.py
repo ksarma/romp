@@ -564,15 +564,20 @@ def _scan_jsonl_bytes(data, base_offset):
     return records, base_offset + end + 1
 
 
-def _read_jsonl_incremental(path):
+def _read_jsonl_incremental(path, on_fail=None):
     """The parsed records of `path` (a list, NOT a generator), served append-incrementally per the cache
-    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl."""
+    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl. `on_fail`,
+    when given, is called with the exception for a stat, open or read that failed on a file that EXISTS (any
+    OSError but FileNotFoundError): an absent file is a state and answers [] quietly, an unreadable one is a
+    failure the caller may count and log (fold_records passes it through as on("fail"), 2026-09-07)."""
     path = str(path)
     try:
         st = os.stat(path)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         hit = _JSONL_CACHE.get(path)
@@ -596,9 +601,11 @@ def _read_jsonl_incremental(path):
             tail_from = max(0, offset - _JSONL_TAIL_GUARD)
             fh.seek(tail_from)
             tail = fh.read(offset - tail_from)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         _JSONL_CACHE.pop(path, None)
@@ -608,7 +615,7 @@ def _read_jsonl_incremental(path):
     return records
 
 
-def fold_records(cache, path, init, step):
+def fold_records(cache, path, init, step, on=None):
     """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
     the states/transcript readers re-read their whole file behind an (mtime,size) key that every append
     invalidates — O(file) per push for every working session. _read_jsonl_incremental already serves the
@@ -620,10 +627,25 @@ def fold_records(cache, path, init, step):
     cached state is deep-copied before folding onto it, so a state a caller was handed never changes
     under it). Returns the state; [] records (a missing or unreadable file) fold to init().
 
+    `on`, when given, is called once per call with which path the fold took: "hit" (the records are the
+    cached ones; nothing stepped), "append" (only the records past the cached prefix stepped), "refold"
+    (every record stepped: a rewrite, a shrink, or the first fold of this file) or "fail" (the file exists
+    and its stat, open or read raised: the answer is init(), the cache entry for the path is dropped and
+    nothing is memoized, so the next call reads again; an ABSENT file is not a failure and folds to init()
+    through the normal path). A caller's /perf counters ride it (kernel `_states_awaiting_overlay`,
+    2026-09-07); the fold itself keeps no counters, since one cache dict serves many readers and the
+    kernel's counters are locked per reader.
+
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
     key = str(path)
-    recs = _read_jsonl_incremental(path)
+    failed = []
+    recs = _read_jsonl_incremental(path, on_fail=failed.append)
+    if failed:
+        cache.pop(key, None)                              # a failed read is never memoized: the next call reads again
+        if on is not None:
+            on("fail")
+        return init()
     ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
     if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
         recs = _read_jsonl_incremental(path)              # past our records before we look at its tail, and a newer tail
@@ -634,19 +656,23 @@ def fold_records(cache, path, init, step):
     if hit is not None:
         n0, last0, state0 = hit
         if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            if on is not None:
+                on("hit")
             return _fold_eof_fragment(key, ent, state0, step)   # unchanged records; a newline-less tail may still sit past them
         if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
-            state, start = copy.deepcopy(state0), n0
+            state, start, kind = copy.deepcopy(state0), n0, "append"
         else:
-            state, start = init(), 0
+            state, start, kind = init(), 0, "refold"
     else:
-        state, start = init(), 0
+        state, start, kind = init(), 0, "refold"
     for r in recs[start:]:
         if isinstance(r, dict):
             state = step(state, r)
     if len(cache) > 256:                                  # bounded by the session count; never unbounded
         cache.clear()
     cache[key] = (len(recs), recs[-1] if recs else None, state)
+    if on is not None:
+        on(kind)
     return _fold_eof_fragment(key, ent, state, step)
 
 
@@ -674,6 +700,23 @@ _TRAILING_CACHE_MAX = 256
 _TRAILING_LOCK = threading.Lock()   # the memo is shared by the pusher, the handler threads and the judge pools: the
 #                                     LRU pop/reinsert/evict are several dict ops, not one (an unlocked evict raised
 #                                     KeyError under two inserters at the cap, reproduced 2026-09-04)
+
+
+def cache_gauges():
+    """Exact occupancy of the parse-layer caches for the kernel's /perf `caches` block (perf round 4,
+    M1-lite, 2026-09-07): jsonl {entries, file_bytes (the cached files' sizes, summed), records (the parsed
+    records held, summed)}, asm {entries}, asm_keylocks {entries} (never pruned, so this is the number of
+    distinct assembly keys ever seen), trailing {entries}. Every figure is a len() or a sum of len()s under
+    the cache's own lock; nothing is estimated."""
+    with _JSONL_CACHE_LOCK:
+        ents = list(_JSONL_CACHE.values())
+    jsonl = {"entries": len(ents), "file_bytes": sum(int(e[1]) for e in ents), "records": sum(len(e[4]) for e in ents)}
+    with _ASM_LOCK:
+        asm = {"entries": len(_ASM_CACHE)}
+        keylocks = {"entries": len(_ASM_KEYLOCKS)}
+    with _TRAILING_LOCK:
+        trailing = {"entries": len(_TRAILING_CACHE)}
+    return {"jsonl": jsonl, "asm": asm, "asm_keylocks": keylocks, "trailing": trailing}
 
 
 def _trailing_record(path, ent):

@@ -26,10 +26,11 @@ const row = (p: string, sid: string | null, name = "web", t = 1): RecentFile =>
 test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the feed's", () => {
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
-  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}\);/);
+  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}, \{/);
+  // …and the third argument is the pane's opener for a link inside the shown file (file-view-links.test.ts pins its shape)
   assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
     "the browser opens here too, owing the shell no restore (browse-route.test.ts pins the contract)");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const guard = "if (onRelay) { onRelay(m); return; }";
   // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
@@ -85,8 +86,8 @@ test("the relay guard, executed: onRelay takes the message and short-circuits th
 test("the session chip resolves from what the relay carried, cached per sid, else the kernel's stub", () => {
   assert.match(SRC, /setFileViewIdentity\(\(id\) => identities\.get\(id\) \?\? hostStub\(id\)\);/);
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId })") >= 0
-    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId })"),
+  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId, line, frag })") >= 0
+    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId, line, frag })"),
     "the cache is filled BEFORE the open, so the title bar's chip resolves on the first paint");
   assert.match(openFn, /if \(sid && identity\) identities\.set\(sid, identity\);/);
   assert.doesNotMatch(SRC, /sessionsMeta|tabMeta|sessions\.get/, "the pane has no session list of its own");
@@ -94,7 +95,7 @@ test("the session chip resolves from what the relay carried, cached per sid, els
 
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
+  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
   assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\) \}\);/);
   assert.match(SRC, /let recent: RecentFile\[\] = parseRecent\(readStore\(\)\);/, "persisted per browser");
   assert.match(SRC, /"No file open"/);
