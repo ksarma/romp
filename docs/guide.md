@@ -928,7 +928,7 @@ Red **paused** means auto-retry and the judges are stopped, and says why: a
 usage limit, the monthly spend cap, or that you stopped them. Hover for the same
 reading with the waiting sessions listed, and the history under it: the API's
 state over the last 1, 5 and 15 minutes (attempts, the 429 and 5xx shares,
-give-ups, sessions retrying) and the most recent state changes with how long
+give-ups, sessions that retried) and the most recent state changes with how long
 each held. A kernel restart shows as its own line there, because the counts
 start over with the kernel. Click the cell, or press Enter on it,
 for the detail: each waiting session (click one to open that session), a button

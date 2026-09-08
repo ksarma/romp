@@ -28,15 +28,22 @@ test("the history is read from the designed route when the hover or the detail o
   assert.ok(KERNEL.includes("fetch('/usage/fleet',{cache:'no-store'})"));
   assert.match(KERNEL, /if not origin:\n\s+return True/, "_origin_ok accepts an absent Origin");
   // the show, the open and a frame on an open card each read; nothing else does
-  assert.ok(JS.includes("tip.classList.remove('ru-modal');tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}"),
+  assert.ok(JS.includes("tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}"),
     "show drops the last answer and reads: a hover never paints an earlier hover's numbers while its own read is in flight");
   assert.ok(HIST.includes("function load(fresh){var n=++histSeq;if(fresh)HIST=null;"));
-  assert.ok(JS.includes("window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}load();}"), "open reads");
+  // a pin reads only when the tip was hidden: the hover's read, landed or in flight, is the same document (review
+  // round 1: a click after the pointer's mouseenter cost two reads and dropped the first answer)
+  assert.ok(JS.includes("var was=tip.style.display==='block';"));
+  assert.ok(JS.includes("window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}if(!was)load();}"), "open reads when nothing was showing");
+  // a pointer arriving on a tip that focus already shows re-anchors it and does not re-read
+  assert.ok(JS.includes("if(tip.style.display==='block'){if(typeof ev.clientX==='number')lastX=ev.clientX;anchor();return;}show(ev);});"));
   assert.ok(JS.includes("if(tip.style.display!=='block')return;   // an open detail re-renders from the new frame, nothing else does\nload();"), "a frame on an open card re-reads");
 });
 
 test("no timers: the show is the event, the newest read wins, and the answer is painted through the held gate", () => {
   assert.ok(!JS.includes("setTimeout") && !JS.includes("setInterval"), "no timer anywhere in the cell's script");
+  // the window-focus mark is set by the window's own focus event and cleared on the next animation frame, an event
+  assert.ok(JS.includes("window.addEventListener('focus',function(){winFocus=true;requestAnimationFrame(function(){winFocus=false;});});"));
   assert.equal(HIST.split("if(n!==histSeq)return;").length - 1, 2, "both arms of the read drop an answer a newer read superseded");
   assert.equal(HIST.split("if(tip.style.display!=='block')return;if(held){dirty=true;return;}render();").length - 1, 2,
     "the answer repaints an open card only, and never under a held pointer (the frame's own gate)");
@@ -48,7 +55,11 @@ test("a failed read is one loud line in place of the rows: never stale numbers, 
   assert.ok(HIST.includes("HIST={error:String((e&&e.message)||e)};"));
   assert.ok(HIST.includes("if(HIST.error)return h+'<div class=\"ah-line ah-err\">Could not read the API history: '+esc(HIST.error)+'</div></div>';"),
     "the line stands where the rows would, and the function returns before any row");
-  assert.ok(KERNEL.includes(".ah-err{color:#e5484d}"), "the API-error red, a status color");
+  // a status red that reads at AA on the tip in both themes (review round 1: #e5484d is 4.3:1 on the dark tip and
+  // 3.9:1 on the white one, under the 4.5:1 floor for 11 px text); the light value is the light theme's --err
+  assert.ok(KERNEL.includes(".ah-err{color:#ef6b6f}"), "a status red, never the accent");
+  assert.ok(KERNEL.includes("body.theme-light .ah-err{color:#B02A1C}"));
+  assert.match(KERNEL, /body\.theme-light\s*\{[^}]*--accent:#C2410C/, "and not the light accent");
   assert.ok(HIST.includes("if(!HIST)return h+'<div class=\"rl-dots ah-wait\"><i></i><i></i><i></i></div></div>';"), "before the first answer: the loader's dots");
   assert.ok(KERNEL.includes(".rl-dots i{width:7px;height:7px;border-radius:50%;background:#9cd2ff;animation:rl-bnc"), "the boot splash's dots, in the accent");
 });
@@ -58,14 +69,22 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
   assert.ok(HIST.includes("'<span class=ru-tip-reset>as of '+hms(HIST.asOf)+'</span>'"), "the payload's asOf, so a pinned card's numbers carry their read time");
   // the head: the signal's state word with the dot in its color, since when, and the bucket's reason under it
   assert.ok(HIST.includes("'<div class=\"ru-tip-row ah-head\"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'"));
-  assert.ok(HIST.includes("'<span class=ah-since>since '+hmd(b.stateSince)+'</span>'"));
+  // since: the bucket's stateSince, or bootAt for a bucket the boot seeded (its why is the boot's reason), the stamp
+  // the tail's divider and its pre-boot holds use, so head and tail name one time for that state
+  assert.ok(HIST.includes("var since=b?((b.why===RESTART_WHY&&typeof d.bootAt==='number')?d.bootAt:b.stateSince):0;"));
+  assert.ok(HIST.includes("(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')"));
   assert.ok(HIST.includes("if(b&&b.why)h+='<div class=\"ah-line ru-tip-reset\">'+esc(b.why)+'</div>';"), "the reason in the small annotation grammar, no new font size");
   // the windows come from the config in force, labelled in minutes, the incomplete one saying how long the kernel is up
   assert.ok(HIST.includes("((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});"));
   assert.ok(HIST.includes("var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);"));
-  assert.ok(HIST.includes("pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retrying'"),
-    "attempts, the 429 and 5xx shares, give-ups, sessions retrying; the rest stays in romp api-health");
-  assert.ok(HIST.includes("'no attempts'"), "a window with nothing in it says so");
+  // the figures are the window's totals, in the window's tense: 'retried', never 'retrying' (the live set is the
+  // Sessions waiting list above); a connection-level failure has no status and sits outside `requests`, so the row
+  // is quiet only when every count is zero, and names its no-status attempts when there are any
+  assert.ok(HIST.includes("if(!c||!(c.requests||c.noStatus||c.gaveUp||c.sessionsRetrying))v='no attempts';"), "a window with nothing in it says so");
+  assert.ok(HIST.includes("v=c.requests?(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(c.noStatus?' · '+c.noStatus+' without a status':'')):(pl(c.noStatus,'attempt')+' without a status');"),
+    "attempts, the 429 and 5xx shares over them, the no-status count beside them or alone; the rest stays in romp api-health");
+  assert.ok(HIST.includes("v+=' · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retried';}"));
+  assert.ok(!HIST.includes("' retrying'"), "no present-tense label on a windowed count");
   assert.ok(HIST.includes("'<div class=\"ru-tip-row ah-hrow\"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>'"), "the spend row's classes");
   // the no-bucket case says so in place of the rows
   assert.ok(HIST.includes("if(!b)h+='<div class=ah-line>No API traffic seen'+(typeof d.bootAt==='number'?' since the kernel started at '+hmd(d.bootAt):' yet')+'.</div>';"));
@@ -76,8 +95,12 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
 test("the tail: six rows newest first, each state's hold, and a restart never hidden", () => {
   assert.ok(JS.includes("var HIST_ROWS=6;"));
   assert.ok(HIST.includes(".sort(function(a,b){return b.t-a.t;})"), "newest first: the spend hover's shortest-window-first order");
-  assert.ok(HIST.includes("for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;break;}"), "a state holds until the SAME bucket's next change");
-  assert.ok(HIST.includes("+dur(end-r.t)+(end===now?' so far':'')+"), "the current state is 'so far'");
+  assert.ok(HIST.includes("var end=now,cur=true;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;cur=false;break;}"), "a state holds until the SAME bucket's next change");
+  // 'so far' is a flag, never end===now: the transition the hover's own read files carries that read's asOf
+  assert.ok(HIST.includes("+dur(end-r.t)+(cur?' so far':'')+"), "the current state is 'so far'");
+  assert.ok(!HIST.includes("end===now"));
+  // every bucket comes back unknown at a restart: a hold from before the boot ends at the boot, never later
+  assert.ok(HIST.includes("if(pre&&end>boot){end=boot;cur=false;}"));
   // the boot's own row is matched on the kernel's reason, byte for byte
   const why = BACKEND.match(/API_HEALTH_RESTART_WHY = "([^"]+)"/);
   assert.ok(why, "the backend names the boot's reason once");
@@ -86,9 +109,12 @@ test("the tail: six rows newest first, each state's hold, and a restart never hi
   assert.ok(HIST.includes("(restart?' · kernel restarted':'')"));
   // and where the tail crosses this kernel's bootAt with no such row (the bucket was already unknown at the
   // previous stop, so the boot filed nothing) a divider is inserted
-  assert.ok(HIST.includes("if(!crossed&&typeof boot==='number'&&r.t<boot){crossed=true;"));
-  assert.ok(HIST.includes("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';"));
+  assert.ok(HIST.includes("pre=hasBoot&&r.t<boot;"));
+  assert.ok(HIST.includes("if(!crossed&&pre){crossed=true;"));
+  assert.ok(HIST.includes("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}"),
+    "the divider takes no slot: the cap counts transitions (review round 1: it used to count the divider, so a tail across a restart showed five)");
   assert.ok(HIST.includes("prevRestart=restart;shown++;}"));
+  assert.equal(HIST.split("shown++").length - 1, 1, "shown counts transition rows only");
   // a bucket is named only when there are several; two of one family are told apart by their auth label
   assert.ok(HIST.includes("var word=(multi?bname(d,r.bucket)+' ':'')+r.to"));
   assert.ok(HIST.includes("return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}"));
@@ -96,8 +122,16 @@ test("the tail: six rows newest first, each state's hold, and a restart never hi
 });
 
 test("accessibility: focus shows the hover, blur hides it, the cell is described by the tip, and the close does not re-pop it", () => {
-  assert.ok(JS.includes("el.addEventListener('focus',function(){if(skipFocus||pinned||tip.style.display==='block')return;show(null);});"));
+  // a focus the browser re-dispatches because the window regained focus is skipped (winFocus, the window's own event)
+  assert.ok(JS.includes("el.addEventListener('focus',function(){if(skipFocus||winFocus||pinned||tip.style.display==='block')return;show(null);});"));
   assert.ok(JS.includes("el.addEventListener('blur',function(){if(!pinned)hide();});"));
+  // Escape on the focused cell dismisses the hover in place; the pinned dialog's Escape is _LANDING_ESC_JS's
+  assert.ok(JS.includes("if(ev.key==='Escape'){if(!pinned&&tip.style.display==='block'){ev.preventDefault();hide();}return;}"));
+  // the role follows the mode: the shown tip is a tooltip, only the pinned card is the modal dialog
+  assert.ok(JS.includes("tip.setAttribute('role','tooltip');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;"), "created as a tooltip");
+  assert.ok(JS.includes("tip.classList.remove('ru-modal');tip.setAttribute('role','tooltip');tip.removeAttribute('aria-modal');"), "show: tooltip");
+  assert.ok(JS.includes("tip.setAttribute('role','dialog');tip.setAttribute('aria-modal','true');el.removeAttribute('aria-describedby');"), "open: dialog, and the cell is no longer described by it");
+  assert.equal(JS.split("'aria-modal'").length - 1, 2, "set by open, removed by show, nowhere else");
   assert.ok(JS.includes("function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}"));
   assert.ok(JS.includes("el.addEventListener('mouseleave',function(){if(!pinned)hide();});"));
   assert.ok(JS.includes("skipFocus=true;try{(fb&&fb.focus?fb:el).focus();}catch(e){}skipFocus=false;}"),
@@ -109,8 +143,14 @@ test("accessibility: focus shows the hover, blur hides it, the cell is described
 test("the head dot wears status hexes, never the accent; the row and divider styles are quiet", () => {
   assert.ok(KERNEL.includes(".ah-dot[data-state=thrashing]{background:#e5484d;opacity:1}.ah-dot[data-state=recovering]{background:#e67e22;opacity:.7}"));
   for (const rule of KERNEL.match(/[^{}]*\.ah-dot[^{}]*\{[^}]*\}/g) || []) assert.ok(!rule.includes("var(--accent)"), rule);
+  // the light theme's quiet dot (the ok fix's #5D574E) covers the head's healthy and unknown too (review round 1)
+  assert.ok(KERNEL.includes("body.theme-light .ah-dot[data-state=healthy],body.theme-light .ah-dot[data-state=unknown]{background:#5D574E}"));
   assert.ok(KERNEL.includes(".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}"));
-  assert.ok(KERNEL.includes(".ah-hname{margin-top:6px}.ah-err{color:#e5484d}.ah-wait{margin:5px 0 2px}"));
+  assert.ok(KERNEL.includes(".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}"));
+  // the hover measures after a reset and is capped to the room above the rail; the pinned card clears the cap
+  assert.ok(JS.includes("tip.style.left='0px';tip.style.top='0px';tip.style.maxHeight=Math.max(0,r.top-14)+'px';\nvar w=tip.offsetWidth,h=tip.offsetHeight;"));
+  assert.ok(JS.includes("tip.style.left='';tip.style.top='';tip.style.maxHeight='';"));
+  assert.ok(KERNEL.includes("#ah-tip{overflow:hidden;box-sizing:border-box}"), "the hover clips at the cap, which is the box's own height; .ru-modal's overflow-y:auto outranks it on the pinned card");
   assert.ok(!HIST.includes("font-size"), "no new font size: the reason and as-of reuse .ru-tip-reset");
 });
 

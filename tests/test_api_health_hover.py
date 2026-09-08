@@ -14,6 +14,7 @@ the route with no Origin header, which is what a same-origin GET fetch sends; th
 history and _api_health_push still sends nothing on an unchanged world, a route read in between included.
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
+import inspect
 import io
 import json
 import os
@@ -178,12 +179,10 @@ class Payload(unittest.TestCase):
         self.assertEqual(len(snap["transitions"]), n, "already unknown: the boot files no row")
         # so the section cannot key the boundary on a row; it keys it on the payload's bootAt, which the route
         # stamps from the kernel's own boot identity
-        self.assertIn("if(!crossed&&typeof boot==='number'&&r.t<boot){crossed=true;", HIST)
+        self.assertIn("if(!crossed&&pre){crossed=true;", HIST)
         self.assertIn("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\">", HIST)
         self.assertIn("<span class=ah-hword>kernel restarted</span>", HIST)
-        route = km.Handler.do_GET.__code__
-        self.assertIn('out["bootAt"] = int(_STARTED)', __import__("inspect").getsource(km.Handler.do_GET))
-        self.assertIs(route is not None, True)
+        self.assertIn('out["bootAt"] = int(_STARTED)', inspect.getsource(km.Handler.do_GET))
 
 
 class Route(unittest.TestCase):

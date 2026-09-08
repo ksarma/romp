@@ -45537,7 +45537,7 @@ _LANDING_APIH_JS = """
 (function(){var el=document.getElementById('rail-api');if(!el)return;
 var txt=el.querySelector('.ah-text');
 var tip=document.createElement('div');tip.id='ah-tip';tip.style.display='none';
-tip.setAttribute('role','dialog');tip.setAttribute('aria-label','API health');tip.setAttribute('aria-modal','true');tip.tabIndex=-1;document.body.appendChild(tip);
+tip.setAttribute('role','tooltip');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;document.body.appendChild(tip);
 var back=document.getElementById('ru-back');
 if(!back){back=document.createElement('div');back.id='ru-back';document.body.appendChild(back);}
 // LAST: the newest frame. pinned: the detail is the modal. held / dirty: a PRIMARY pointer is down over the detail
@@ -45549,8 +45549,12 @@ if(!back){back=document.createElement('div');back.id='ru-back';document.body.app
 var LAST=null,pinned=false,held=false,dirty=false,pending=null,pendSeq=null,hint='',lastX=null,focusBack=null;
 // HIST: the last /api-health answer, {error} for a failed read, null before the first; histSeq keys the paint to the
 // newest read so an older answer landing last is dropped. skipFocus: the dialog's close refocuses the cell, and that
-// focus event must not pop the hover. No timer anywhere: the show is the event.
-var HIST=null,histSeq=0,skipFocus=false;
+// focus event must not pop the hover. winFocus: the window just regained focus, and the browser re-dispatches focus
+// on the active element in that same task (the cell keeps focus after Escape by design), which is not the user
+// reaching for the cell; the window's own focus event sets the mark and the next animation frame clears it (an
+// event, not a timer), so a focus that arrives later still shows. No timer anywhere: the show is the event.
+var HIST=null,histSeq=0,skipFocus=false,winFocus=false;
+window.addEventListener('focus',function(){winFocus=true;requestAnimationFrame(function(){winFocus=false;});});
 var RESTART_WHY='kernel restarted: the event ring is empty';   // sdk_backend.API_HEALTH_RESTART_WHY: the row the boot files
 var HIST_ROWS=6;
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
@@ -45600,22 +45604,33 @@ function bname(d,key){var b=(d.buckets||{})[key]||{},fam=b.family||key.split('|'
 Object.keys(d.buckets||{}).forEach(function(k){if(k!==key&&((d.buckets[k]||{}).family||'')===fam)dup=true;});
 return dup?fam+' · '+(b.auth||key.split('|')[0]):fam;}
 // one window row in the spend hover's grammar: the label (with its caveat when the window outreaches the kernel's
-// uptime, the way the rolling month says 'complete since'), then the figures
+// uptime, the way the rolling month says 'complete since'), then the figures. The figures are the window's totals,
+// said in the window's tense ('retried', never 'retrying': the live set is the Sessions waiting list above).
+// `requests` counts attempts WITH a status and the shares are over it; a connection-level failure has none
+// (`noStatus`, outside that sum), so a window is quiet only when every count is zero, and its no-status attempts
+// are named when there are any (an offline window used to read 'no attempts' and hide its give-ups).
 function winRow(w,c,up){var lab=(w%60===0?(w/60)+' min':w+' s');if(c&&c.complete===false&&typeof up==='number')lab+=' · kernel up '+dur(up);
-var v=(!c||!c.requests)?'no attempts':(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retrying');
+var v;if(!c||!(c.requests||c.noStatus||c.gaveUp||c.sessionsRetrying))v='no attempts';
+else{v=c.requests?(pl(c.requests,'attempt')+' · '+pct(c.rate429)+' 429 · '+pct(c.rate5xx)+' 5xx'+(c.noStatus?' · '+c.noStatus+' without a status':'')):(pl(c.noStatus,'attempt')+' without a status');
+v+=' · '+(c.gaveUp||0)+' gave up · '+pl(c.sessionsRetrying,'session')+' retried';}
 return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span><span class=ru-tip-v>'+esc(v)+'</span></div>';}
 // the newest HIST_ROWS transitions, newest first: the time, the state entered (with its bucket when there are
-// several), and how long it held (until the same bucket's next transition; 'so far' for the current one). A row the
-// boot filed says so; where the tail crosses this kernel's bootAt and the newer row is not such a row (the bucket
-// was already unknown at shutdown, so the boot filed nothing), a divider names the restart. Never hidden.
+// several), and how long it held (until the same bucket's next transition; 'so far' for the current one, a flag and
+// never a stamp comparison: the transition the hover's own read files carries that read's asOf as its time, and the
+// state it closed must not read 'so far' beside it). A row the boot filed says so; where the tail crosses this
+// kernel's bootAt and the newer row is not such a row (the bucket was already unknown at shutdown, so the boot
+// filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Every bucket comes
+// back unknown at a restart, so a hold from before the boot ends at the boot and is never 'so far'; the head's
+// since for a bucket the boot seeded is that same bootAt (histHTML), so head and tail name one time. Never hidden.
 function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
-var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,out='',crossed=false,prevRestart=false,shown=0;
-for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY;
-if(!crossed&&typeof boot==='number'&&r.t<boot){crossed=true;
-if(!prevRestart){out+='<div class="ru-tip-row ah-hrow ah-boot"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';shown++;if(shown>=HIST_ROWS)break;}}
-var end=now;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;break;}
+var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,hasBoot=typeof boot==='number',out='',crossed=false,prevRestart=false,shown=0;
+for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY,pre=hasBoot&&r.t<boot;
+if(!crossed&&pre){crossed=true;
+if(!prevRestart){out+='<div class="ru-tip-row ah-hrow ah-boot"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}
+var end=now,cur=true;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;cur=false;break;}
+if(pre&&end>boot){end=boot;cur=false;}
 var word=(multi?bname(d,r.bucket)+' ':'')+r.to+(restart?' · kernel restarted':'');
-out+='<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+hmd(r.t)+'</span><span class=ah-hword>'+esc(word)+'</span><span class=ru-tip-v>'+dur(end-r.t)+(end===now?' so far':'')+'</span></div>';
+out+='<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+hmd(r.t)+'</span><span class=ah-hword>'+esc(word)+'</span><span class=ru-tip-v>'+dur(end-r.t)+(cur?' so far':'')+'</span></div>';
 prevRestart=restart;shown++;}
 return out;}
 function histHTML(){var h='<div class="ru-tip-win ah-hist"><div class=ru-tip-name><span>History</span>'
@@ -45623,9 +45638,12 @@ function histHTML(){var h='<div class="ru-tip-win ah-hist"><div class=ru-tip-nam
 if(!HIST)return h+'<div class="rl-dots ah-wait"><i></i><i></i><i></i></div></div>';
 if(HIST.error)return h+'<div class="ah-line ah-err">Could not read the API history: '+esc(HIST.error)+'</div></div>';
 var d=HIST,ov=d.overall||{},key=ov.worstBucket,b=key?(d.buckets||{})[key]:null,nb=Object.keys(d.buckets||{}).length,st=ov.state||'unknown';
+// a bucket the boot seeded (its why is the boot's reason) is unknown since the boot: said with bootAt, the stamp
+// the tail's divider and its pre-boot holds use, so the head and the tail name one time for that state
+var since=b?((b.why===RESTART_WHY&&typeof d.bootAt==='number')?d.bootAt:b.stateSince):0;
 h+='<div class="ru-tip-row ah-head"><i class=ah-dot data-state='+esc(st)+'></i><span class=ah-word>'+esc(st)+'</span>'
 +((nb>1&&b)?'<span class=ah-hsub>'+esc(bname(d,key))+' · worst of '+nb+' buckets</span>':'')
-+((b&&b.stateSince)?'<span class=ah-since>since '+hmd(b.stateSince)+'</span>':'')+'</div>';
++(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')+'</div>';
 if(b&&b.why)h+='<div class="ah-line ru-tip-reset">'+esc(b.why)+'</div>';
 if(!b)h+='<div class=ah-line>No API traffic seen'+(typeof d.bootAt==='number'?' since the kernel started at '+hmd(d.bootAt):' yet')+'.</div>';
 else ((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});
@@ -45648,11 +45666,18 @@ if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 tmux session is
 +', so a retry in progress there shows only when it fails or recovers.</div>';
 if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span><span class=ah-link role=button tabindex=0 data-act=log>Log</span></div>';
 return h;}
-// The hover anchors above the rail, centered on the cursor, exactly as the usage tip's showTip does; a re-render
-// re-anchors from the same x, since new rows change the height and the tip hangs ABOVE the rail.
+// The hover anchors above the rail, centered on the cursor, as the usage tip's showTip does; a re-render re-anchors
+// from the same x, since new rows change the height and the tip hangs ABOVE the rail. Measured AFTER a reset: a
+// fixed element's shrink-to-fit width is taken against where it last sat, so a tip measured at its old left came
+// out narrower than its rows and sat flush with the viewport's edge (review round 1: 830 px wide, a wrapped row and
+// no margin). The height is capped to the room above the rail (6 px margin, 8 px gap; #ah-tip clips), so a short
+// window clips the section's oldest rows instead of clamping the top to 6 and spilling over the rail and the cell
+// (1200x330 in the probe); open() clears the cap, and the pinned card keeps .ru-modal's own scroll pane.
 function anchor(){var r=el.getBoundingClientRect();var x=(typeof lastX==='number')?lastX:(r.left+r.width/2);
-tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
-tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
+tip.style.left='0px';tip.style.top='0px';tip.style.maxHeight=Math.max(0,r.top-14)+'px';
+var w=tip.offsetWidth,h=tip.offsetHeight;
+tip.style.left=Math.max(6,Math.min(window.innerWidth-w-6,x-w/2))+'px';
+tip.style.top=Math.max(6,r.top-h-8)+'px';}
 // A re-render replaces the card's nodes, so a focused control would fall to the page body and the next Tab would
 // leave the dialog: the same control (by act and sid) takes focus again in the new markup, else the card does.
 function focusKey(n){return (n&&n.getAttribute)?(n.getAttribute('data-act')||'')+'|'+(n.getAttribute('data-sid')||''):'';}
@@ -45660,8 +45685,11 @@ function render(){if(!LAST)return;var a=document.activeElement,key=(pinned&&a&&a
 tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();
 if(key!==null){var n=null,all=tip.querySelectorAll('[data-act]');for(var i=0;i<all.length;i++)if(focusKey(all[i])===key){n=all[i];break;}
 try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}}}
+// The shown, unpinned tip is a TOOLTIP (the role, the cell described by it, no aria-modal): a keyboard user who Tabs
+// onto the cell must not meet a modal dialog their focus sits outside of. open() makes it the dialog.
 function show(ev){if(!LAST)return;lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;
-tip.classList.remove('ru-modal');tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}
+tip.classList.remove('ru-modal');tip.setAttribute('role','tooltip');tip.removeAttribute('aria-modal');
+tip.style.display='block';el.setAttribute('aria-describedby','ah-tip');load(true);render();}
 function hide(){tip.style.display='none';el.removeAttribute('aria-describedby');}
 function close(){hide();tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
 window.__rompApiClose=null;if(back.onclick===close)back.onclick=null;
@@ -45671,20 +45699,31 @@ var fb=focusBack;focusBack=null;skipFocus=true;try{(fb&&fb.focus?fb:el).focus();
 // A click PINS the detail as a centered modal over the dimmed dashboard (the usage modal's own backdrop and
 // pattern); Escape lands via _LANDING_ESC_JS (shell AND pane documents), the backdrop tap closes too. An open
 // usage modal is closed FIRST, explicitly: the two share #ru-back, and its one handler must belong to one modal.
-// Focus moves into the detail and comes back to the cell (or wherever it was) on close.
+// Focus moves into the detail and comes back to the cell (or wherever it was) on close. A pin reads only when the
+// tip was hidden: a hover's read, landed or in flight, is this same document, so a click after the pointer's
+// mouseenter (or a tap after its compat mouseenter) costs one read and keeps its answer (review round 1).
 function open(){if(!LAST)return;try{window.__rompUsageClose&&window.__rompUsageClose();}catch(e){}
-focusBack=document.activeElement;pinned=true;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';
+var was=tip.style.display==='block';
+focusBack=document.activeElement;pinned=true;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.maxHeight='';
+tip.setAttribute('role','dialog');tip.setAttribute('aria-modal','true');el.removeAttribute('aria-describedby');
 tip.style.display='block';render();back.classList.add('on');
-window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}load();}
+window.__rompApiClose=close;back.onclick=close;try{tip.focus();}catch(e){}if(!was)load();}
 // The listeners sit on the STABLE #rail-api cell; __rompApiHealth writes its children, never the cell.
-el.addEventListener('mouseenter',function(ev){if(!pinned)show(ev);});
+// a pointer arriving on a tip that focus already shows re-anchors it from the pointer and keeps its rows: the
+// document did not change, so no re-read and no flash to the loader's dots (review round 1)
+el.addEventListener('mouseenter',function(ev){if(pinned)return;
+if(tip.style.display==='block'){if(typeof ev.clientX==='number')lastX=ev.clientX;anchor();return;}show(ev);});
 el.addEventListener('mouseleave',function(){if(!pinned)hide();});
 // keyboard focus shows the hover as the pointer does (the tooltip pattern) and blur hides it; a pinned detail is
-// unmoved, and a hover the pointer already opened is left where it anchored
-el.addEventListener('focus',function(){if(skipFocus||pinned||tip.style.display==='block')return;show(null);});
+// unmoved, a hover the pointer already opened is left where it anchored, and a focus the browser re-dispatches
+// because the window regained focus (winFocus) is not the user reaching for the cell
+el.addEventListener('focus',function(){if(skipFocus||winFocus||pinned||tip.style.display==='block')return;show(null);});
 el.addEventListener('blur',function(){if(!pinned)hide();});
 el.addEventListener('click',function(){if(pinned)close();else open();});
-el.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else open();}});
+// Escape on the focused cell dismisses the hover that focus showed, without moving focus (content shown on focus
+// must be dismissible in place); the pinned dialog's Escape lands via _LANDING_ESC_JS, inert while no modal is on
+el.addEventListener('keydown',function(ev){if(ev.key==='Escape'){if(!pinned&&tip.style.display==='block'){ev.preventDefault();hide();}return;}
+if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else open();}});
 // Click-safe across a frame (ui/CLAUDE.md): a frame that lands while a pointer is DOWN over the detail is painted
 // on release, never under the press, so the pressed button survives to its click. A PRIMARY release inside the
 // detail is followed by the click, so the flush waits for it (a swap between mouseup and click would detach the
@@ -47687,13 +47726,17 @@ def _landing():
             # so no pointer and no hover wash; the pinned detail takes focus as a dialog without a ring on the card
             ".ah-hint{margin-top:4px;opacity:.75;max-width:340px}"
             # the History section (the user 2026-09-08): the signal's state dot in status hexes (never the accent),
-            # the transition rows' state word, the restart divider in italics, a failed read in the API-error red,
-            # and the loader's dots (.rl-dots, _LOADER_CSS) while the first answer is in flight
+            # the transition rows' state word, the restart divider in italics, a failed read in a red that reads
+            # (#ef6b6f, about 5.5:1 on the tip: the API-error red #e5484d is 4.3:1 there, under the 4.5:1 text floor,
+            # review round 1), and the loader's dots (.rl-dots, _LOADER_CSS) while the first answer is in flight.
+            # The hover clips at the height anchor() caps it to (the room above the rail): border-box, so the
+            # cap is the box the user sees and not the content plus 18 px of padding and border; .ru-modal's own
+            # overflow-y:auto outranks the clip on the pinned card, which scrolls as before.
             ".ah-dot[data-state=thrashing]{background:#e5484d;opacity:1}.ah-dot[data-state=recovering]{background:#e67e22;opacity:.7}"
             ".ah-hword{opacity:.8}.ah-hsub{opacity:.55}.ah-boot .ah-hword{font-style:italic;opacity:.6}"
-            ".ah-hname{margin-top:6px}.ah-err{color:#e5484d}.ah-wait{margin:5px 0 2px}"
+            ".ah-hname{margin-top:6px}.ah-err{color:#ef6b6f}.ah-wait{margin:5px 0 2px}"
             ".ah-row.ah-ro{cursor:default}.ah-row.ah-ro:hover{background:transparent}"
-            "#ah-tip:focus{outline:none}"
+            "#ah-tip:focus{outline:none}#ah-tip{overflow:hidden;box-sizing:border-box}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
             # over an "elapsed" bar (slate) with the % + reset countdown, and nothing else (no prose).
@@ -48013,7 +48056,13 @@ def _landing():
             # Scoped to the ok state (review round 2): a bare `body.theme-light .ah-dot` (0,2,1) outranked the
             # detail's `.ah-dot[data-state=…]` state rules (0,2,0), so the card's headline dot lost its amber
             # and red in the light theme while the rail's id-scoped dot kept them
-            "body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok]{background:#5D574E}"
+            # and the History head's dot for the signal's quiet states (healthy, unknown) is the same glyph: the base
+            # gray fell to about 1.6:1 on the white tip too (review round 1 of the hover history)
+            "body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok],"
+            "body.theme-light .ah-dot[data-state=healthy],body.theme-light .ah-dot[data-state=unknown]{background:#5D574E}"
+            # the failure line in the light theme's error-text red (styles.css --err #B02A1C, about 6.6:1 on white;
+            # the dark line's #ef6b6f is 3.0:1 there)
+            "body.theme-light .ah-err{color:#B02A1C}"
             "body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}"
             "body.theme-light .ah-word{color:#1F1E1D}"
             "body.theme-light .ah-btn{background:#F1EAE2;border-color:rgba(0,0,0,0.12);color:#1F1E1D}"

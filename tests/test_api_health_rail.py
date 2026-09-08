@@ -546,11 +546,13 @@ class Detail(unittest.TestCase):
 
     def test_the_hover_re_anchors_after_a_re_render(self):
         self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();", self.JS)
-        self.assertIn("tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}", self.JS)
+        # measured after a reset (left 0, the cap), then placed: the hover history's review round 1
+        self.assertIn("var w=tip.offsetWidth,h=tip.offsetHeight;\ntip.style.left=Math.max(6,Math.min(window.innerWidth-w-6,x-w/2))+'px';\ntip.style.top=Math.max(6,r.top-h-8)+'px';}", self.JS)
         self.assertIn("lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;", self.JS)
 
     def test_the_cell_is_a_keyboard_button_and_the_detail_takes_and_returns_focus(self):
-        self.assertIn("el.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' ')", self.JS)
+        self.assertIn("el.addEventListener('keydown',function(ev){if(ev.key==='Escape')", self.JS)
+        self.assertIn("if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else open();}});", self.JS)
         self.assertIn("el.setAttribute('aria-label','API '+m.text)", self.JS)
         self.assertIn("tip.setAttribute('role','dialog')", self.JS)
         self.assertIn("focusBack=document.activeElement;", self.JS)
