@@ -90,6 +90,10 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('if (unsure) this.unsureCopies.add(card.id);'), 'remembered for the card');
   assert.ok(panel.includes('const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");'), 'the context state\'s class');
   assert.ok(panel.includes('if (unsure) m.classList.add("fc-hl-context");'), 'a guessed copy wears the same dashed ring');
+  // ...and the sheets say so where they define the ring (both, byte-equal in the panel block: file-comments.test.ts)
+  for (const sheet of ['styles.css', 'feed.css']) {
+    assert.ok(read('ui', 'webview', sheet).replace(/\s+/g, ' ').includes('wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts copyUnsure: the passage recurs and the stored position names none of the copies)'), `${sheet} names the guessed copy as a wearer of fc-hl-context`);
+  }
   assert.ok(panel.includes('const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";'), 'the mark says it is not confirmed');
   // the title branches on whether a position is stored, on the same test as the card's words (the third review: the
   // title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none)

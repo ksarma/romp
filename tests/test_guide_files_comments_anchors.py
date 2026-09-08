@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The guide's commenting paragraph promises that a comment on text which occurs more than once stays on
-the occurrence you chose (the anchors follow-on, 2026-09-07), and the ADR's Consequences name the two
-additive sidecar fields that make it so, `target` and `anchorAt`.
+the occurrence you chose (the anchors follow-on, 2026-09-07), says what the panel shows when the file has
+changed around that occurrence and it can no longer tell which copy was meant (a dashed highlight and a
+"passage recurs" tag: the copy shown is a guess; the review's fourth painted state), and the ADR's
+Consequences name the two additive sidecar fields that make it so, `target` and `anchorAt`.
 
 This module pins the prose and proves the promise by behaviour: the real host's `uniqueAnchor` and the
 vendored engine's `locateAnchor` run under node on a synthetic text, the way tests/test_file_comments_e2e.py
@@ -83,6 +85,12 @@ class GuideAnchors(unittest.TestCase):
     def test_the_guide_says_a_comment_on_repeated_text_stays_where_it_was_put(self):
         guide = _flat(_read("docs", "guide.md"))
         self.assertIn("a comment on text that occurs more than once stays on the occurrence you chose", guide)
+        # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text)
+        self.assertIn("When the file has changed around that occurrence and the panel can no longer tell which copy the "
+                      "comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy "
+                      "shown is a guess, and the card says so.", guide)
+        panel = _read("ui", "webview", "file-comments.ts")
+        self.assertIn('el("span", "fc-tag", "passage recurs")', panel, "the tag the guide names is the one the panel adds")
 
     def test_the_adr_names_both_additive_fields(self):
         adr = _flat(_read("docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"))
