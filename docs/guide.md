@@ -100,9 +100,9 @@ caret move away and back, do not reopen it. In the sent message, a name that mat
 session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
-step, and the chat places it at the time you sent it, above the steps that were already
-running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
-note says when the session took it (to the minute), with a link that jumps to it.
+step. In the chat the message sits below everything that had already happened when you
+sent it, and it stays there: the steps the session runs in the meantime appear below it,
+and when the session takes the message, it lands in that same place.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
