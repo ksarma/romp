@@ -9,13 +9,16 @@
 // and two browser legs (headless Chromium, skipped loudly without one): the sheets over a static page, laying out a
 // wide table, a long code line, an unbreakable string and a bare picture at two pane widths and two sizes, and the
 // real module bundled into a page (the bar's geometry with a kernel-answered row, the fixed readout slot, the dimmed
-// end, the kept focus, the selection guard). Synthetic fixtures only: the notes-api world, placeholder ids.
+// end, the kept focus, the selection guard), and the page's own inlining of a note holding `</script>` (scriptLiteral,
+// the shared leg page's escape; the Slice 2 review, round 3: a bare JSON.stringify here would let such a note end the
+// harness script before the fetch stub). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import type { FileViewActionCtx } from "./file-view";
+import { scriptLiteral } from "./real-viewer-leg";
 
 const requireCjs = createRequire(__filename);
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -589,12 +592,12 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.equal(paints, at, "at the end of the table nothing changed, so nothing fired (no move without new information)");
   // the panel's side of the contract: its onRendered hides the floating Comment button (placed by a passage that has
   // moved) and re-runs the paint pass that wraps the highlights around the text again
-  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
+  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
   assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
-  assert.equal((VIEW.match(/if \(textShowing\(\)\) fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the step and the width's frame");
+  assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
@@ -699,7 +702,7 @@ test("both sheets: the measure sits on the prose blocks at zero specificity and 
     assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {")), ["max-width: min(100%, calc(860px * var(--fv-scale, 1)))"], name + ": a picture that is a block of the page, wrapped by the figure layer or not, takes the measure AND the column, like an image paragraph; so does a standalone svg, canvas or video block (an uncapped one is clipped under the md box's contain: layout)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
-    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks; a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
+    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
       name + ": a table is a block as wide as its content up to the column, scrolling inside beyond it, whole words kept");
@@ -708,7 +711,7 @@ test("both sheets: the measure sits on the prose blocks at zero specificity and 
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
+  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
     assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly (the viewer mounts in both documents)");
   }
   const block = (css: string) => css.slice(css.indexOf("/* ── text size and measure"), css.indexOf("/* Rendered markdown ("));
@@ -926,7 +929,14 @@ const SNIPPET_MD = "# Notes\n\ndef main():\n    return 1\n\nDone.\n";
 // a short markdown file for the Rendered view's hard break: a paragraph of two lines around a <br> (two trailing spaces)
 const BREAK = ROOT + "/docs/break.md";
 const BREAK_MD = "# Notes\n\nfirst line  \nsecond line of prose here\n\nDone.\n";
+// a note holding a script element and `</script>` in a code span: an HTML tokenizer ends script data at the first
+// `</script` whatever the JavaScript around it, so the file table is inlined with `<` as `\u003c` (scriptLiteral, as the
+// shared leg page does; file-view-leg-page-browser.test.ts pins the shared page's escape)
+const SCRIPTED = ROOT + "/docs/scripted.md";
+const SCRIPTED_MD = "# Report\n\nA paragraph before the script.\n\n<script>alert(1)</script>\n\n`</script>` inside a code span, and `<!--` before it.\n\nAfter the script.\n";
 const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${SVG(1600)})\n\n<div align="center"><img src="${SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
+/** The file table the page inlines (scriptLiteral: `<` as `\u003c`, so SCRIPTED's `</script>` cannot end the script). */
+const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD };
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
@@ -937,7 +947,7 @@ const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n
  *  the selection stands in. */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${JSON.stringify({ [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD })};
+window.__docs = ${scriptLiteral(DOCS)};
 window.fetch = async function (url) {
   url = String(url);
   if (url.indexOf("/version") === 0) return new Response(JSON.stringify({ fileEditing: true }), { headers: { "Content-Type": "application/json" } });
@@ -999,6 +1009,41 @@ async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: num
 const SEL = { down: 'button[aria-label="Smaller text"]', up: 'button[aria-label="Larger text"]', reset: ".fileview-size-reset", root: ".fileview" };
 const rectOf = (page: any, sel: string) => page.evaluate((s: string) => { const r = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; }, sel);
 const sizeOf = (page: any) => page.evaluate((s: string) => (document.querySelector(s) as HTMLElement).dataset.fvText, SEL.root);
+
+test("the real-module page inlines its file table with `<` escaped: two script elements whatever the notes hold, the table parsing back to the same texts (a bare JSON.stringify let a note's `</script>` end the harness script before the fetch stub)", () => {
+  const count = (s: string, re: RegExp) => (s.match(re) || []).length;
+  const bundle = bundleViewer();
+  for (const mode of ["chat", "feed", "pane"] as const) {
+    const html = REAL_PAGE(mode);
+    // the bundle's own text is subtracted: esbuild output may hold the strings
+    assert.equal(count(html, /<script[\s>]/g) - count(bundle, /<script[\s>]/g), 2, mode + ": two script elements open");
+    assert.equal(count(html, /<\/script/g) - count(bundle, /<\/script/g), 2, mode + ": and two close, the note's own `</script>` escaped");
+    const m = /\nwindow\.__docs = (.*);\nwindow\.fetch = /.exec(html);
+    assert.ok(m, mode + ": the table is inlined on its line");
+    assert.ok(!/<|-->/.test(m![1]), mode + ": no `<` or `-->` in the literal");
+    assert.deepEqual(JSON.parse(m![1]), DOCS, mode + ": the literal reads back as the table");
+  }
+});
+
+test("in a browser, the real module: a note holding a script element and `</script>` in a code span opens through the page's fetch stub, the sanitizer dropping the script", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReal(browser, "chat", 900, undefined, false, { path: SCRIPTED, raw: false });
+    const seen = await page.evaluate(([p, text]: [string, string]) => ({
+      stubbed: String(window.fetch).indexOf("__docs") >= 0,
+      table: (window as any).__docs[p] === text,
+      first: (document.querySelector(".fileview-md p") as HTMLElement).textContent,
+      scripts: document.querySelectorAll(".fileview-md script").length,
+      paints: (window as any).__paints as number,
+    }), [SCRIPTED, SCRIPTED_MD]);
+    assert.equal(seen.stubbed, true, "the fetch stub survived the inlined table");
+    assert.equal(seen.table, true, "the note in the table, byte for byte");
+    assert.equal(seen.first, "A paragraph before the script.", "the note's own first paragraph, not the harness page");
+    assert.equal(seen.scripts, 0, "no script element under the rendered note");
+    assert.ok(seen.paints >= 1, "the seam painted");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
 
 test("in a browser, the real module: a bare <img> line, an image paragraph and a centred figure fit the column at 380 and 640px, at 100% and 200%, wrapped by the figure layer or not; wide, the pictures and the code blocks keep the measure", async (t) => {
   await inBrowser(t, async (browser) => {

@@ -185,7 +185,7 @@ const PLAIN_BUTTONS: Record<string, string> = {
 // …and the ones INSIDE it, which used to compound
 const DRESSED_BUTTONS: Record<string, string> = {
   "viewer refusal Download": BODY + " > div.fileview-err > button.fileview-btn.fileview-err-dl",
-  "editor conflict Reload file": BODY + " > div.fileview-err > button.fileview-btn.fileview-err-dl",
+  "editor conflict Reload file": ROOT + " > div.fileview-err > button.fileview-btn.fileview-err-dl",   // the notice bar: a child of the card above the body row (Slice 2 of plans/markdown-viewer.md)
   "head / track / poll error Reload": HEAD + ERR + " > button.fileview-btn",
   "head / track / poll error ✕": HEAD + ERR + " > button.fileview-btn.fc-x",
   "composer error ✕": COMPOSER + " > div" + ERR + " > button.fileview-btn.fc-x",
@@ -217,7 +217,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   // the dressed buttons: the refusal's Download and the editor's Reload file, both .fileview-btn.fileview-err-dl in a .fileview-err
   assert.match(VIEW, /const why = el\("div", "fileview-err"\);[\s\S]*?const offer = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?why\.appendChild\(offer\);\n\s*\}\n\s*body\.replaceChildren\(why\);/);
   assert.match(VIEW, /const bar2 = noteBar\(err\);[\s\S]*?const re = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?bar2\.appendChild\(re\);/);
-  assert.match(VIEW, /const bar2 = el\("div", "fileview-err"\);\n\s*bar2\.id = "fileview-save-err";\n\s*bar2\.textContent = msg;\n\s*body\.prepend\(bar2\);/);
+  assert.match(VIEW, /const bar2 = el\("div", "fileview-err"\);\n\s*bar2\.id = "fileview-save-err";\n\s*bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);/, "the notice bar mounts above the body row");
   // the panel: .fc-panel.fileview-aside > (.fc-sec-head > .fc-head | .fc-composer | .fc-sec-cards > .fc-cards > .fc-card | .fc-sec-send > .fc-send)
   assert.match(PANEL, /this\.root = el\("div", "fc-panel"\);\n\s*this\.ctx\.aside\(this\.root\);/);
   assert.match(PANEL, /sections = \{ head: el\("div", "fc-sec-head"\), cards: el\("div", "fc-sec-cards"\), send: el\("div", "fc-sec-send"\), log: el\("div", "fc-sec-log"\) \};/);

@@ -3754,9 +3754,10 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
   box-shadow: var(--shadow-modal); container-type: inline-size; }
 /* container-type: the viewer's card is the query container the comments panel's narrow fold (`@container (max-width:
    680px)` in the file-comments block) resolves against. A container query styles the DESCENDANTS of a container, never
-   the container itself, and .fileview-main — the row the fold stacks — is the container it declares: with no container
+   the container itself, and .fileview-main, the row the fold stacks, was the container it declared: with no container
    above it the stacking rule never applied, and a narrow column got the fold's aside rules alone (45% of the ROW, a top
-   border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). */
+   border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). The row's own declaration,
+   redundant once the card had one, went with Slice 2 of plans/markdown-viewer.md (file-view-fold-browser.test.ts). */
 body.fileview-open { overflow: hidden; }
 .fileview-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -3910,6 +3911,10 @@ body.filebrowse-open { overflow: hidden; }
 /* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
    cap; not a text file; not found) over the path it was asked for. Never a blank pane. */
 .fileview-err { padding: 18px 14px; font-size: 0.86em; color: var(--warn); }
+/* the viewer's notice bar (file-view.ts noteBar, #fileview-save-err) is a child of the card between the title bar and the
+   body row, so it shows at any scroll position and outlives a swap of the body's children (plans/markdown-viewer.md
+   Slice 2); the card is a column flex box, and the bar keeps its own height in it */
+.fileview > .fileview-err { flex: 0 0 auto; }
 .fileview-err-hint { margin-top: 6px; color: var(--dim); font-size: 0.92em;
   font-family: var(--mono, ui-monospace, monospace); word-break: break-all; }
 /* the way out of a refusal: when the file exists but cannot render (413/415), the kernel's words are
@@ -4068,14 +4073,19 @@ body.filebrowse-open { overflow: hidden; }
    there, so height: auto alone laid a 640 by 360 clip with a square poster out 640 by 640 in a pane that shrank
    nothing, and the box jumped to the frames' shape at play (review round 2). mdBlock (file-view.ts, keepVideoShape)
    writes the attributes' ratio as a pixel-sized video's inline aspect-ratio, so its box is the author's shape capped or
-   not, and this rule stays the one that lets it shrink. Both rules sit
+   not, and this rule stays the one that lets it shrink. A pixel-sized <img> takes the same height: auto (Slice 2 of
+   plans/markdown-viewer.md): `<img width="900" height="300">` was 344 by 300 in a 380px pane and 860 by 300 under the
+   measure, the height attribute holding while the cap took the width, so every picture wider than the measure was
+   squashed at every pane width; with it the box follows the picture's own ratio (the bytes' once loaded, the
+   attributes' before), as an attribute-less picture always did, while `<img width="100%" height="30">` keeps its 30 and
+   a height-only badge keeps its size, for the reason the guard exists. Both rules sit
    inside :where(), at zero class specificity, so KaTeX's `.katex svg { height: inherit; width: 100% }` (katex.min.css,
    which styles.css inlines and the feed sheet gains with Slice 4) still wins over its stretchy glyphs (`width="400em"`,
    pixel-like to the attribute test) once math renders in a note. The direct-child rule carries the prose measure for
    these as it does for <img>: the bare 860px cap would itself overflow a narrow pane. Byte-equal in both sheets
    (fileview-parity.test.ts); laid out in md-sanitize-wide-media-browser.test.ts. */
 :where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video { max-width: 100%; }
-:where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) { height: auto; }
+:where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) { height: auto; }
 .fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
 /* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
    heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
@@ -4086,12 +4096,15 @@ body.filebrowse-open { overflow: hidden; }
 
 /* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts) ── the viewer's ASIDE: the body row
    holds the body and the panel side by side, and folds the panel below the body when the column is narrower
-   than two readable columns (a container query on the row — the feed's stacking idiom; the Files pane column
+   than two readable columns (a container query, the feed's stacking idiom, resolved against the viewer's card,
+   `.fileview`, the container declared above; the row itself declared one too until Slice 2 of
+   plans/markdown-viewer.md, redundant since a query styles a container's descendants and never the container,
+   and file-view-fold-browser.test.ts lays the fold out without it; the Files pane column
    is often that narrow, the chat modal seldom). `.fileview-body` stays the plain overflow block the editor's
    height: 100% relies on; only the row around it is new. Colours through tokens only; every size is one the
    viewer already wears (buttons 0.82em, body text 0.86em, chips 0.72em, tags 0.66em). Mirrored byte-equal
    in feed.css — the viewer mounts there too (fileview-parity.test.ts / file-comments.test.ts). */
-.fileview-main { flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; }
+.fileview-main { flex: 1 1 auto; min-height: 0; display: flex; }
 .fileview-aside { flex: 0 0 340px; min-height: 0; overflow: auto; border-left: 1px solid var(--card-border); }
 @container (max-width: 680px) {
   .fileview-main { flex-direction: column; }

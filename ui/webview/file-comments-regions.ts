@@ -268,10 +268,13 @@ export class RegionLayer {
   private natural(): Size { return naturalSizeOf(this.img); }
   /** How the picture is fitted into its element: the COMPUTED `object-fit`, read rather than assumed. The media
    *  body's `.fileview-img` has `contain` (a letterbox when the aspects differ); a figure in rendered markdown has
-   *  no rule, so CSS's initial `fill` stretches it over a `width`/`height` pair the author wrote (the sanitizer keeps
-   *  both), and a letterbox computed for THAT figure put the overlay over the middle of the element while the picture
-   *  filled all of it. A PDF page's canvas has no rule either: `fill`, the element itself. A document with no computed
-   *  style to read (a stand-in) reads as `fill`, the initial value. */
+   *  no rule, so CSS's initial `fill` stretches it over whatever box the sheet gives it: a pixel `width`/`height` pair
+   *  the author wrote (the sanitizer keeps both) lays out at the picture's own ratio since Slice 2 of
+   *  plans/markdown-viewer.md (`height: auto` on a pixel-sized picture), while a height-only or percentage-width pair
+   *  keeps the author's height and the picture is stretched over it; a letterbox computed for such a figure put the
+   *  overlay over the middle of the element while the picture filled all of it. A PDF page's canvas has no rule
+   *  either: `fill`, the element itself. A document with no computed style to read (a stand-in) reads as `fill`, the
+   *  initial value. */
   private fit(): string {
     const w = typeof window !== "undefined" ? window : null;
     if (!w || typeof w.getComputedStyle !== "function") return "fill";

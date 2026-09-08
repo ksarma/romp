@@ -384,7 +384,13 @@ const saveRefused = async (reqId: number, code: string, error: string) => {
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId, verb: "save", code, error } }));
   await settle();
 };
-const errBar = (body: El) => body.querySelector(".fileview-err");
+// the viewer's notice bar (file-view.ts noteBar, #fileview-save-err) is a child of the card before .fileview-main since
+// Slice 2 of plans/markdown-viewer.md, so it is read from the card: the card's first .fileview-err is the bar when one is
+// up, else a pane inside the body (a fetch failure's), the set the body-scoped read used to answer
+const cardOf = (body: El) => body.parentNode!.parentNode as El;
+const errBar = (body: El) => cardOf(body).querySelector(".fileview-err");
+/** The bar stands right above the body row (the read view, or the editor, stands untouched under it). */
+const aboveRow = (body: El) => { const main = body.parentNode!, box = cardOf(body), bar = errBar(body); return !!bar && box.childNodes.indexOf(bar) === box.childNodes.indexOf(main) - 1; };
 const fileGets = () => fetches.filter((f) => f.startsWith("GET /file")).length;
 /** Opens the aside through the real Comments button (its refresh asks status) and answers that ask with `s`. */
 async function openAside(o: Open, s: Status): Promise<El> {
@@ -494,7 +500,7 @@ test("Cancel during a tracked save, then Edit again before the ack: the ack says
   assert.equal(fileGets(), gets, "no read while the editor holds the truth");
   const bar = errBar(body)!;
   assert.ok(bar, "the ack is the event: the viewer says the file moved under this editor");
-  assert.equal(body.childNodes[0], bar, "above the editor host…");
+  assert.ok(aboveRow(body), "above the body row the editor host holds…");
   assert.ok(body.querySelector(".fileview-cm"), "…which still holds the body");
   assert.equal(bar.childNodes[0].textContent, MOVED_AT_ACK);
   assert.doesNotMatch(bar.textContent, /—/, "no dashes in the words");

@@ -315,11 +315,18 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
     await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
+    // Still the one fetch: a text-size step repaints from the text on hand (setTextSize reads the place, restyles, seats;
+    // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
+    // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and
+    // the assertion below could not say whether it arrived during the size steps or at the click. The viewer has no path
+    // to it (reload is the panel's, on an mtime this fixture never moves; the pane's Recent rows are hidden while the
+    // viewer is up), and 12 re-runs under the same load passed, so it is read as the environment's, not the viewer's.
+    assert.deepEqual(served, [{ path: APP, sid: SID }], "one fetch so far, the file itself: the size steps fetched nothing");
 
     // ── a path link opens the file it names, with the viewer's session, and the pane records it as recent ─
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[1], { path: CONFIG, sid: SID }, "the resolved path, the session the file belongs to");
+    assert.deepEqual(served[1], { path: CONFIG, sid: SID }, "the click's open is the next fetch: the resolved path, the session the file belongs to (every fetch so far: " + JSON.stringify(served) + ")");
     const recent = await page.evaluate(() => JSON.parse(localStorage.getItem("romp:files-recent") || "[]").map((r: { path: string }) => r.path));
     assert.ok(recent.includes(CONFIG), "opened through the pane's own open: the Recent list has it");
 
@@ -488,14 +495,16 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     const topAfter = await page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("user-content-top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
     assert.equal(topAfter, true, "scrolled to the anchor"); assert.equal(page.url(), url0);
     // a colliding id: the viewer's own chrome wears ids too (its notice bar is #fileview-save-err). A stand-in for the bar
-    // sits above the rendered document, as the bar does, and the section link still scrolls to the AUTHOR's element, the
-    // rendered document's own element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2). Two
-    // guards now: the lookup's scope (.fileview-md), and the sanitizer's prefix, under which the author's element is
-    // user-content-fileview-save-err and never the chrome's id at all (the stand-in is the viewer's own, never sanitized)
+    // sits where the bar does, above the body row (a child of the card before .fileview-main since Slice 2 of
+    // plans/markdown-viewer.md), and the section link still scrolls to the AUTHOR's element, the rendered document's own
+    // element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2). Two guards now: the lookup's
+    // scope (.fileview-md), and the sanitizer's prefix, under which the author's element is user-content-fileview-save-err
+    // and never the chrome's id at all (the stand-in is the viewer's own, never sanitized)
     await page.evaluate(() => {
       const d = document.createElement("div"); d.id = "fileview-save-err"; d.className = "fileview-err"; d.textContent = "a notice";
       const body = document.querySelector("#romp-fileview .fileview-body")!;
-      body.prepend(d);
+      const main = document.querySelector("#romp-fileview .fileview-main")!;
+      main.parentElement!.insertBefore(d, main);
       for (const e of [body, body.querySelector(".fileview-md")!]) e.scrollTop = 0;
     });
     const inView = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md p#user-content-fileview-save-err")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
@@ -504,7 +513,7 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     await h.settle();
     assert.equal(await inView(), true, "scrolled to the author's element, not to the viewer's own element of that id");
     assert.equal(page.url(), url0);
-    await page.evaluate(() => document.querySelector("#romp-fileview .fileview-body > #fileview-save-err")!.remove());
+    await page.evaluate(() => document.querySelector("#romp-fileview .fileview > #fileview-save-err")!.remove());
     // the named anchor: a click scrolls to it (the heading under it comes into view), and the page's location stays
     await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
     const installIn = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = Array.from(document.querySelectorAll("#romp-fileview .fileview-md h2")).find((h) => h.textContent === "Install")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
