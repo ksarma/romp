@@ -29,7 +29,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   APPS, DELTA_SEP, REPO, STRIPPED_ENV, WHOLE_STATE_TYPES, aggregateProfile, assertTmpPath, barsKeys, benchRoot, browserAvailability, buildReport, classifyFrame,
-  compareReports, dispatchExpectation, dispatchType, frameKey, launchBrowser, loadFrames, matchDispatches, mergeAggregates, mergeWindows, percentile, rankProfile,
+  compareReports, dispatchExpectation, dispatchType, frameKey, frameSettle, launchBrowser, loadFrames, matchDispatches, mergeAggregates, mergeWindows, percentile, rankProfile,
   recordFrames, refineAlignment, renderCompare, renderProfile, renderReport, replay, sourceLocator, startPageServer, streamSummary, stripProfileQueries, summarize,
   sweepDeadRuns, synthesizeFrames, writeFrames,
 } from "../tools/ui-bench.mjs";
@@ -268,17 +268,22 @@ test("dispatchType: keepalives and the restart notice never reach the bundle, a 
   assert.deepEqual([...WHOLE_STATE_TYPES].sort(), ["bars", "data", "feed", "globalRetryPaused", "tabOrder", "working"], "the shim's WHOLE set");
 });
 
+// The three tests below feed dispatch records WITHOUT n (the handler ordinal the page records), so they
+// exercise the clock fallback; the order rule has its own test after them.
 test("matchDispatches: the inline shim (each handoff inside its own frame's handler) matches every non-keepalive frame to itself", () => {
-  const sent = [{ type: "ka" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }, { type: "feedDelta" }];
+  const sent = [{ type: "ka" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }, { type: "feedDelta" }, { type: "working" }];
   const recs = sent.map((_s, i) => ({ t0: 100 + i * 10 }));
-  const dispatches = [{ t0: 110.2, dur: 5, type: "feed", inHandler: true }, { t0: 120.1, dur: 1, type: "feedDelta", inHandler: true }, { t0: 140.1, dur: 1, type: "feedDelta", inHandler: true }];
+  // the last handoff's start reads the same clock value as its handler's start (the page clock is coarsened to 0.1 ms)
+  const dispatches = [{ t0: 110.2, dur: 5, type: "feed", inHandler: true }, { t0: 120.1, dur: 1, type: "feedDelta", inHandler: true }, { t0: 140.1, dur: 1, type: "feedDelta", inHandler: true },
+    { t0: 150, dur: 0.1, type: "working", inHandler: true }];
   const m = matchDispatches(sent, recs, dispatches);
-  assert.deepEqual(m.counts, { dispatched: 3, coalesced: 0, unmatched: 0 });
-  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null }, "a keepalive is never handed over");
-  assert.deepEqual(m.perFrame[1], { dispatchT0: 110.2, dispatchMs: 5, coalesced: false, dispatchInline: true });
-  assert.deepEqual(m.perFrame[2], { dispatchT0: 120.1, dispatchMs: 1, coalesced: false, dispatchInline: true });
+  assert.deepEqual(m.counts, { dispatched: 4, coalesced: 0, unmatched: 0 });
+  assert.deepEqual(m.perFrame[5], { dispatchT0: 150, dispatchMs: 0.1, coalesced: false, dispatchInline: true, dispatchSettleAt: null }, "a handler start equal to the handoff's start is a candidate (<=, not <)");
+  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null, dispatchSettleAt: null }, "a keepalive is never handed over");
+  assert.deepEqual(m.perFrame[1], { dispatchT0: 110.2, dispatchMs: 5, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 120.1, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
   assert.equal(m.perFrame[3].dispatchMs, null);
-  assert.deepEqual(m.perFrame[4], { dispatchT0: 140.1, dispatchMs: 1, coalesced: false, dispatchInline: true });
+  assert.deepEqual(m.perFrame[4], { dispatchT0: 140.1, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
   const noFlag = matchDispatches(sent, recs, dispatches.map(({ inHandler, ...d }) => d));
   assert.equal(noFlag.perFrame[1].dispatchInline, null, "without the page's handler-depth record the flag is unknown, not guessed");
 });
@@ -291,10 +296,10 @@ test("matchDispatches: the deferred shim (every handoff after the burst, in queu
   const dispatches = [{ t0: 200, dur: 2, type: "feedDelta", inHandler: false }, { t0: 203, dur: 30, type: "feed", inHandler: false }, { t0: 234, dur: 1, type: "feedDelta", inHandler: false }];
   const m = matchDispatches(sent, recs, dispatches);
   assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 0 });
-  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: true, dispatchInline: null }, "the older feed never reached the bundle");
-  assert.deepEqual(m.perFrame[1], { dispatchT0: 200, dispatchMs: 2, coalesced: false, dispatchInline: false });
-  assert.deepEqual(m.perFrame[2], { dispatchT0: 203, dispatchMs: 30, coalesced: false, dispatchInline: false });
-  assert.deepEqual(m.perFrame[3], { dispatchT0: 234, dispatchMs: 1, coalesced: false, dispatchInline: false });
+  assert.deepEqual(m.perFrame[0], { dispatchT0: null, dispatchMs: null, coalesced: true, dispatchInline: null, dispatchSettleAt: null }, "the older feed never reached the bundle");
+  assert.deepEqual(m.perFrame[1], { dispatchT0: 200, dispatchMs: 2, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 203, dispatchMs: 30, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
+  assert.deepEqual(m.perFrame[3], { dispatchT0: 234, dispatchMs: 1, coalesced: false, dispatchInline: false, dispatchSettleAt: null });
   assert.equal(m.perFrame[4].dispatchMs, null);
 });
 
@@ -304,10 +309,10 @@ test("matchDispatches: a view delta matches the dispatch of its slot, a frame re
   const dispatches = [{ t0: 100.5, dur: 1, type: "data", inHandler: true }, { t0: 125, dur: 4, type: "bars", inHandler: false }, { t0: 131, dur: 3, type: "bars", inHandler: false }, { t0: 140, dur: 1, type: "session", inHandler: false }];
   const m = matchDispatches(sent, recs, dispatches);
   assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 1 });
-  assert.deepEqual(m.perFrame[0], { dispatchT0: 100.5, dispatchMs: 1, coalesced: false, dispatchInline: true });
+  assert.deepEqual(m.perFrame[0], { dispatchT0: 100.5, dispatchMs: 1, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
   assert.equal(m.perFrame[1].coalesced, true, "the full bars frame was replaced by the first delta's reassembled message before the flush");
-  assert.deepEqual(m.perFrame[2], { dispatchT0: 125, dispatchMs: 4, coalesced: false, dispatchInline: false }, "the delta received before that flush is the one handed over");
-  assert.deepEqual(m.perFrame[3], { dispatchT0: 131, dispatchMs: 3, coalesced: false, dispatchInline: false }, "the delta received after it started waits for the next flush");
+  assert.deepEqual(m.perFrame[2], { dispatchT0: 125, dispatchMs: 4, coalesced: false, dispatchInline: false, dispatchSettleAt: null }, "the delta received before that flush is the one handed over");
+  assert.deepEqual(m.perFrame[3], { dispatchT0: 131, dispatchMs: 3, coalesced: false, dispatchInline: false, dispatchSettleAt: null }, "the delta received after it started waits for the next flush");
   assert.deepEqual(matchDispatches(sent, [], dispatches).counts, { dispatched: 0, coalesced: 0, unmatched: 4 }, "without page records nothing can match");
   assert.deepEqual(matchDispatches(sent, recs, []).counts, { dispatched: 0, coalesced: 0, unmatched: 0 });
 });
@@ -316,6 +321,106 @@ test("dispatchExpectation: chained types by their frame count, whole-state types
   assert.deepEqual(dispatchExpectation([{ type: "ka" }, { type: "feed" }, { type: "feedDelta" }, { type: "feed" }, { type: "feedDelta" }, { type: "delta:bars" }, { type: "bars" }, { type: "restarting" }]),
     { chained: { feedDelta: 2 }, wholeLast: { feed: 3, bars: 6 } });
   assert.deepEqual(dispatchExpectation([{ type: "ka" }]), { chained: {}, wholeLast: {} });
+});
+
+test("matchDispatches keys candidacy on the handler order the page recorded (n), so same-type frames whose clock reads coincide are each matched to their own handoff; the clock is the fallback for records without n", () => {
+  // The page clock (performance.now(), not cross-origin isolated) is coarsened to 0.1 ms, so a handler that starts
+  // within a tick of a same-type handoff reads the same value; the order rule does not read the clock at all.
+  // The inline shim: two `working` frames handled back to back, each handed over inside its own handler, every read 100.0.
+  const inline = matchDispatches([{ type: "working" }, { type: "working" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 0, type: "working", inHandler: true, n: 1, settleAt: null }, { t0: 100, dur: 0, type: "working", inHandler: true, n: 2, settleAt: null }]);
+  assert.deepEqual(inline.counts, { dispatched: 2, coalesced: 0, unmatched: 0 }, "nothing coalesces on the inline shim, which has no queue");
+  assert.deepEqual(inline.perFrame[0], { dispatchT0: 100, dispatchMs: 0, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  assert.deepEqual(inline.perFrame[1], { dispatchT0: 100, dispatchMs: 0, coalesced: false, dispatchInline: true, dispatchSettleAt: null });
+  // The deferred shim: frame 0's flush task hands it over at 100.1 and frame 1's handler starts in the same tick.
+  const deferred = matchDispatches([{ type: "tabOrder" }, { type: "tabOrder" }], [{ t0: 100 }, { t0: 100.1 }],
+    [{ t0: 100.1, dur: 0, type: "tabOrder", inHandler: false, n: 1, settleAt: 130 }, { t0: 100.2, dur: 0, type: "tabOrder", inHandler: false, n: 2, settleAt: 131 }]);
+  assert.deepEqual(deferred.counts, { dispatched: 2, coalesced: 0, unmatched: 0 });
+  assert.deepEqual(deferred.perFrame[0], { dispatchT0: 100.1, dispatchMs: 0, coalesced: false, dispatchInline: false, dispatchSettleAt: 130 }, "the handoff's settle stamp rides along");
+  assert.deepEqual(deferred.perFrame[1], { dispatchT0: 100.2, dispatchMs: 0, coalesced: false, dispatchInline: false, dispatchSettleAt: 131 });
+  // The same records without n fall back to the clock, which cannot tell the two frames apart: the later frame takes
+  // the first handoff, the earlier one is called coalesced and the second handoff finds no candidate.
+  const byClock = matchDispatches([{ type: "working" }, { type: "working" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 0, type: "working", inHandler: true }, { t0: 100, dur: 0, type: "working", inHandler: true }]);
+  assert.deepEqual(byClock.counts, { dispatched: 1, coalesced: 1, unmatched: 1 });
+  // With n the order decides even when the clock says otherwise: a frame whose handler started after the flush began
+  // (index >= n) is not a candidate for that flush's handoff, whatever its t0 reads.
+  const later = matchDispatches([{ type: "feed" }, { type: "feed" }], [{ t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 30, type: "feed", inHandler: false, n: 1 }, { t0: 140, dur: 30, type: "feed", inHandler: false, n: 2 }]);
+  assert.deepEqual(later.counts, { dispatched: 2, coalesced: 0, unmatched: 0 });
+  assert.equal(later.perFrame[0].dispatchT0, 100);
+  assert.equal(later.perFrame[1].dispatchT0, 140);
+  // The deferred FIFO and whole-state coalescing under the order rule: one flush after all five handlers (n 5).
+  const sent = [{ type: "feed" }, { type: "feedDelta" }, { type: "feed" }, { type: "feedDelta" }, { type: "ka" }];
+  const m = matchDispatches(sent, sent.map((_s, i) => ({ t0: 100 + i })),
+    [{ t0: 200, dur: 2, type: "feedDelta", inHandler: false, n: 5 }, { t0: 203, dur: 30, type: "feed", inHandler: false, n: 5 }, { t0: 234, dur: 1, type: "feedDelta", inHandler: false, n: 5 }]);
+  assert.deepEqual(m.counts, { dispatched: 3, coalesced: 1, unmatched: 0 });
+  assert.equal(m.perFrame[0].coalesced, true, "the older feed was replaced in the queue");
+  assert.deepEqual([m.perFrame[1].dispatchT0, m.perFrame[2].dispatchT0, m.perFrame[3].dispatchT0], [200, 203, 234]);
+  // A whole-state handoff from a flush that began after three handlers (n 3): frames 0 and 1 are its candidates, the
+  // newer one is handed over; frame 3 arrived later and waits for the next flush (n 4). Every clock value equal.
+  const bars = matchDispatches([{ type: "bars" }, { type: "delta:bars" }, { type: "ka" }, { type: "delta:bars" }], [{ t0: 100 }, { t0: 100 }, { t0: 100 }, { t0: 100 }],
+    [{ t0: 100, dur: 4, type: "bars", inHandler: false, n: 3 }, { t0: 100, dur: 3, type: "bars", inHandler: false, n: 4 }]);
+  assert.deepEqual(bars.counts, { dispatched: 2, coalesced: 1, unmatched: 0 });
+  assert.equal(bars.perFrame[0].coalesced, true);
+  assert.equal(bars.perFrame[1].dispatchMs, 4);
+  assert.equal(bars.perFrame[3].dispatchMs, 3);
+  // A dispatch recorded before any handler started (n 0) has no candidate.
+  assert.deepEqual(matchDispatches([{ type: "feed" }], [{ t0: 100 }], [{ t0: 50, dur: 1, type: "feed", inHandler: false, n: 0 }]).counts, { dispatched: 0, coalesced: 0, unmatched: 1 });
+});
+
+test("frameSettle: a frame's settle is the later of the handler's stamp and its handoff's stamp, both from the handler's start; a handler stamp that never landed stays missing", () => {
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: null }), 20, "the inline shim stamps no handoff settle: the handler's stamp alone");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: 150 }), 50, "the deferred shim in a burst: the handler's stamp landed before the frame's own handoff, the handoff's stamp is the settle");
+  assert.equal(frameSettle({ t0: 100, settle: 60 }, { dispatchSettleAt: 150 }), 60, "a paced replay: the handler's stamp landed after the handoff's");
+  assert.equal(frameSettle({ t0: 100, settle: -1 }, { dispatchSettleAt: 150 }), -1, "a handler stamp that never landed is reported missing, not replaced");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, undefined), 20, "a frame that was not matched (a keepalive, a coalesced frame)");
+  assert.equal(frameSettle({ t0: 100, settle: 20 }, { dispatchSettleAt: -1 }), 20, "a handoff stamp that has not landed changes nothing");
+});
+
+test("profileWindows picks, per type, the largest frame that was handed to the bundle over a larger one the shim replaced in its queue, and a coalesced pick says so in its row", () => {
+  const cf = (functionName, url) => ({ functionName, url, lineNumber: 1, columnNumber: 0 });
+  const nodes = [{ id: 1, callFrame: cf("(root)", ""), children: [2, 5] }, { id: 2, callFrame: cf("rompBenchOnPort", "ui-bench-instrument.js"), children: [3] },
+    { id: 3, callFrame: cf("rompBenchDispatch", "ui-bench-instrument.js"), children: [4] }, { id: 4, callFrame: cf("render", "http://127.0.0.1:1/dist/timeline.js") }, { id: 5, callFrame: cf("(program)", "") }];
+  // The deferred shim under a back-to-back timeline replay: the first skeleton (data) and the single full bars frame
+  // were replaced in the queue before the first flush; a later skeleton and one reassembled delta were handed over.
+  const row = (i, type, bytes, extra) => ({ ...pf(i, type, bytes, 0.4, 5), t0: 100 + i, ...extra });
+  const frames = [
+    row(0, "data", 8200, { coalesced: true }),
+    row(1, "bars", 9000, { coalesced: true }),
+    row(2, "data", 8100, { dispatchT0: 130, dispatchMs: 15, dispatchInline: false }),
+    row(3, "delta:bars", 400, { dispatchT0: 146, dispatchMs: 40, dispatchInline: false }),
+    row(4, "delta:bars", 500, { coalesced: true }),
+    { ...pf(5, "ka", 30, 0.1, 5), t0: 200 },
+  ];
+  const truth = 20;
+  const times = [];
+  for (let x = 146.2; x < 186; x += 0.5) times.push({ x, n: 4 });   // 80 render samples inside the delta's dispatch span
+  for (let x = 186.2; x < 190; x += 0.5) times.push({ x, n: 5 });
+  const us = times.map((s) => Math.round((s.x - truth) * 1000));
+  const profile = { nodes, startTime: 0, endTime: us[us.length - 1] + 500, samples: times.map((s) => s.n), timeDeltas: us.map((u, i) => u - (i ? us[i - 1] : 0)) };
+  const run = { ...fakeRun({ perFrame: frames, dispatch: { hook: true, unmatched: 0, flushTasks: 2, flushMs: 55 } }), profiling: { p0: truth + 0.8, alignMs: 1, profile } };
+  const r = buildReport({ app: "timeline", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [run] });
+  const cp = r.cpuProfile;
+  const byLabel = Object.fromEntries(cp.windows.map((w) => [w.label, w]));
+  assert.deepEqual(Object.keys(byLabel), ["first content frame", "largest data", "largest bars", "largest delta:bars"]);
+  assert.equal(byLabel["first content frame"].index, 0, "the first content frame is the first frame whatever became of it");
+  assert.equal(byLabel["first content frame"].coalesced, true);
+  assert.equal(byLabel["first content frame"].dispatchMs, null);
+  assert.equal(byLabel["largest data"].index, 2, "the handed-over skeleton, though the replaced one was larger");
+  assert.equal(byLabel["largest data"].coalesced, false);
+  assert.equal(byLabel["largest data"].dispatchMs, 15);
+  assert.equal(byLabel["largest bars"].index, 1, "no bars frame reached the bundle, so the largest of the type stands");
+  assert.equal(byLabel["largest bars"].coalesced, true);
+  assert.equal(byLabel["largest delta:bars"].index, 3, "the handed-over delta over the larger replaced one");
+  assert.equal(byLabel["largest delta:bars"].samples, 80);
+  assert.equal(byLabel["largest delta:bars"].coalesced, false);
+  const text = renderProfile(cp);
+  assert.match(text, /window: first content frame \(coalesced: replaced in the shim's queue before the handoff, so the window holds the shim's parse only\) \(data, 8\.0 KB, frame 0\): handler 0\.4 ms, dispatch -, 0\.4 ms of window, 0 samples/);
+  assert.match(text, /window: largest bars \(coalesced: replaced in the shim's queue before the handoff, so the window holds the shim's parse only\) \(bars, 8\.8 KB, frame 1\)/);
+  assert.match(text, /window: largest data \(data, 7\.9 KB, frame 2\): handler 0\.4 ms, dispatch 15\.0 ms/);
+  assert.match(text, /window: largest delta:bars \(delta:bars, 400 B, frame 3\): handler 0\.4 ms, dispatch 40\.0 ms, 40\.4 ms of window, 80 samples/);
+  assert.doesNotMatch(text, /largest data \(coalesced/);
 });
 
 test("buildReport carries the dispatch times beside the handler times, says which shim shape ran, and renderReport prints them", () => {
@@ -1207,6 +1312,16 @@ for (const app of ["feed", "timeline"]) {
         assert.equal(report.dispatch.unmatched, 0, "every inbound call matched a frame the replay sent");
         assert.equal(report.dispatch.inline + report.dispatch.deferred, Object.values(report.types).reduce((a, s) => a + s.dispatched, 0), "every handoff is counted as inline or deferred");
         assert.ok(report.dispatch.inline + report.dispatch.deferred > 0);
+        // The inline/deferred split and the flush counter come from the page-side instrument (R.depth and the MessagePort
+        // wrapper), which only this test runs; the two relations below hold on both shims and fail when either breaks.
+        assert.ok(report.dispatch.inline === 0 || report.dispatch.deferred === 0, `one shim shape ran: every handoff inside the socket handler or every one from a flush task (${report.dispatch.inline} inline, ${report.dispatch.deferred} deferred)`);
+        assert.equal(report.dispatch.deferred > 0, report.dispatch.flushTasks > 0, `deferred handoffs come from flush tasks, and flush tasks exist only when handoffs were deferred (${report.dispatch.deferred} deferred, ${report.dispatch.flushTasks} flush tasks)`);
+        // A frame's settle is stamped two animation frames after the later of its handler and its handoff, so it lands after
+        // the frame's own handoff on both shims (the rows are rounded to 0.1 ms; 0.2 covers the rounding of three values).
+        for (const f of report.perFrame) {
+          if (f.dispatchT0 == null) continue;
+          assert.ok(f.t0 + f.settleMs + 0.2 >= f.dispatchT0 + f.dispatchMs, `frame ${f.i} (${f.type}): the settle stamp lands after the frame's own handoff (handler at ${f.t0}, settle ${f.settleMs} ms, handoff ${f.dispatchT0} to ${Math.round((f.dispatchT0 + f.dispatchMs) * 10) / 10})`);
+        }
         for (const type of expected) {
           const s = report.types[type];
           if (dispatchType(type) == null) { assert.equal(s.dispatched, 0, `${type}: never handed to the bundle`); assert.equal(s.coalesced, 0); continue; }

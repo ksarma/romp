@@ -706,10 +706,14 @@ export async function startFront({ pagePort }) {
 // onmessage, so on that shim the handler window holds the shim's parse only; the dispatch records hold the
 // bundle's work on both shims. MessagePort.prototype's onmessage setter is wrapped the same way as
 // WebSocket's so each flush task is counted and timed (R.flushes); the wrapper times the call and passes
-// everything through. The settle stamp stays two animation frames after the HANDLER: the flush task is a
-// posted message, which runs before the next rendering opportunity, so the stamp still lands after the
-// render on the deferred shim. Long animation frames are observed with script attribution; longtask is
-// the fallback.
+// everything through. Each dispatch record also carries n, the number of socket handlers started so far;
+// the matching in node keys on that order, not on the clock (performance.now() is coarsened to 0.1 ms in a
+// page that is not cross-origin isolated, so two consecutive reads can be equal). The settle stamp is queued
+// two animation frames after the HANDLER, and on the deferred shim two animation frames after each handoff
+// as well (settleAt on the dispatch record): a burst replayed back-to-back fills more than one FLUSH_MS
+// slice, the flush yields to a rendering opportunity between slices, and the handler's stamp then lands
+// before the frame's own handoff, so a frame's settle is the later of the two stamps. Long animation frames
+// are observed with script attribution; longtask is the fallback.
 const INIT_SCRIPT = `
 (() => {
   const R = window.__rompBench = { recs: [], loaf: [], loafKind: null, n: 0, depth: 0, addListenerMessages: 0, dispatches: [], flushes: [], dispatchHook: false, dispatchHookError: null };
@@ -749,7 +753,15 @@ const INIT_SCRIPT = `
       const t0 = performance.now();
       const inHandler = R.depth > 0;
       try { return inner.call(this, h, m); }
-      finally { R.dispatches.push({ t0, dur: performance.now() - t0, type: m && typeof m.type === "string" ? m.type : null, inHandler }); }
+      finally {
+        // n: socket handlers started so far (inside handler i it is i + 1; in a flush task every frame with
+        // index < n was received before the task began). settleAt: from a flush task, the page time of the
+        // second animation frame after this handoff, -1 until it lands; inside a handler the handler's own
+        // stamp covers the handoff, so none is queued.
+        const d = { t0, dur: performance.now() - t0, type: m && typeof m.type === "string" ? m.type : null, inHandler, n: R.n, settleAt: inHandler ? null : -1 };
+        R.dispatches.push(d);
+        if (!inHandler) requestAnimationFrame(() => requestAnimationFrame(() => { d.settleAt = performance.now(); }));
+      }
     };
     wrapped.rompBenchDispatch = true;
     try { obj.inbound = wrapped; R.dispatchHook = true; }
@@ -919,17 +931,18 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   // wait until every frame that reaches the bundle has been handed over. The condition is exact, not a
   // pause (dispatchExpectation): a chained type is handed over once per frame, so its dispatch count reaches
   // its frame count; a whole-state type's LAST frame cannot be replaced by a newer one, so a dispatch of its
-  // type at or after that frame's receipt is its handoff. Bounded and logged rather than fatal: a view delta
+  // type recorded once that frame's handler had started (the record's n above the frame's index) is its
+  // handoff. Bounded and logged rather than fatal: a view delta
   // the shim could not apply (it answers needSlot) is never handed over, and the report shows the shortfall.
   if (await page.evaluate(() => window.__rompBench.dispatchHook)) {
     await waitFor(() => page.evaluate((e) => {
       const R = window.__rompBench;
       for (const [type, n] of Object.entries(e.chained)) if (R.dispatches.filter((d) => d.type === type).length < n) return false;
-      for (const [type, idx] of Object.entries(e.wholeLast)) { const r = R.recs[idx]; if (!r || !R.dispatches.some((d) => d.type === type && d.t0 >= r.t0)) return false; }
+      for (const [type, idx] of Object.entries(e.wholeLast)) { const i = Number(idx); if (!R.recs[i] || !R.dispatches.some((d) => d.type === type && d.n > i)) return false; }
       return true;
     }, dispatchExpectation(sent)), 10_000, "the shim to hand every frame to the bundle").catch((e) => log(`ui-bench: ${e.message}`));
   }
-  await waitFor(async () => page.evaluate(() => window.__rompBench.recs.every((r) => r.settle >= 0)), 10_000, "every frame's settle stamp").catch((e) => log(`ui-bench: ${e.message}`));
+  await waitFor(async () => page.evaluate(() => { const R = window.__rompBench; return R.recs.every((r) => r.settle >= 0) && R.dispatches.every((d) => d.settleAt !== -1); }), 10_000, "every frame's settle stamp").catch((e) => log(`ui-bench: ${e.message}`));
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
   if (profiling) {
     profiling.profile = (await cdp.send("Profiler.stop")).profile;
@@ -946,7 +959,7 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   const match = matchDispatches(sent, data.recs, data.dispatches || []);
   const perFrame = sent.map((s, i) => {
     const r = data.recs[i];
-    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? r.settle : null, t0: r ? r.t0 : null, lenMatch: r ? r.len === frames[i].data.length : false,
+    return { i, type: s.type, bytes: s.bytes, at: s.at, handlerMs: r ? r.handler : null, settleMs: r ? frameSettle(r, match.perFrame[i]) : null, t0: r ? r.t0 : null, lenMatch: r ? r.len === frames[i].data.length : false,
       ...match.perFrame[i] };
   });
   const misaligned = perFrame.filter((f) => f.handlerMs != null && !f.lenMatch).length;
@@ -981,29 +994,39 @@ export function dispatchType(type) {
 }
 
 /** Match the frames a replay sent to the inbound calls the page recorded. `sent[i].type` is the node side's
- *  classifyFrame, `recs[i].t0` the page time the frame's socket handler started, `dispatches` the page's
- *  {t0, dur, type, inHandler} records in call order. Returns per frame {dispatchT0, dispatchMs, coalesced,
- *  dispatchInline} (the times null when the frame was not handed over; dispatchInline null when the page
- *  did not record whether a socket handler was on the stack) and the counts {dispatched, coalesced,
- *  unmatched}.
+ *  classifyFrame, `recs[i].t0` the page time the frame's socket handler started (handler i is frame i: the
+ *  replay checks every record's length against its frame), `dispatches` the page's {t0, dur, type,
+ *  inHandler, n, settleAt} records in call order. Returns per frame {dispatchT0, dispatchMs, coalesced,
+ *  dispatchInline, dispatchSettleAt} (the times null when the frame was not handed over; dispatchInline null
+ *  when the page did not record whether a socket handler was on the stack; dispatchSettleAt the page time
+ *  of the second animation frame after the handoff, null when the page stamped none) and the counts
+ *  {dispatched, coalesced, unmatched}.
  *
- *  Walking the dispatches in order, a dispatch of type T at time d0 can match an unmatched frame whose
- *  dispatch type is T and whose handler started at or before d0 (the handler's START: on the inline shim the
- *  dispatch runs inside the handler, before its end). For a whole-state type the LATEST such frame is the
- *  one handed over and every earlier one was replaced in the queue (coalesced); for a chained type the
+ *  Walking the dispatches in order, a dispatch can match an unmatched frame of its type whose handler had
+ *  started when the dispatch was recorded. Which frames those are is decided by event order, not by the
+ *  clock: the record's n is the number of socket handlers that had started, so the candidates are the
+ *  frames with index < n. For a record without n the fallback compares the clock, handler start <= dispatch
+ *  start (the handler's START: on the inline shim the dispatch runs inside the handler, before its end).
+ *  The clock rule is not exact: performance.now() is coarsened to 0.1 ms in a page that is not cross-origin
+ *  isolated, and a handler that starts within that tick of a same-type dispatch reads the same value, so
+ *  the fallback can hand the dispatch to the later frame. For a whole-state type the LATEST candidate is
+ *  the one handed over and every earlier one was replaced in the queue (coalesced); for a chained type the
  *  earliest is (the queue is a FIFO). A dispatch with no candidate is unmatched.
  *
- *  Why this is exact: a flush task runs to completion, and no socket handler runs while it does, so at any
- *  dispatch every frame with t0 <= d0 was queued before that flush began, and the queue holds at most one
- *  whole-state frame per type, the newest. On the inline shim every dispatch runs inside its own frame's
- *  handler, so the only candidate with t0 <= d0 is the frame itself. Handlers run in wire order, so a type's
- *  candidates are a prefix of its frames in wire order.
+ *  Why the order is exact: handlers run in wire order, each to completion, and a flush task runs to
+ *  completion with no socket handler in between, so when a flush task records n the frames with index < n
+ *  are exactly the ones queued before it began, and the queue holds at most one whole-state frame per type,
+ *  the newest. On the inline shim the dispatch runs inside handler n - 1, and every earlier frame of its
+ *  type was matched by its own dispatch, so the only candidate is the frame itself. A type's candidates are
+ *  always a prefix of its unmatched frames in wire order.
  *
- *  Limitation: a view delta the shim could not apply (it asks for a full slot instead, needSlot) is never
- *  handed over, and would take the match of the next same-type dispatch, which a later delta earned; the
- *  replay test asserts no needSlot was sent, so the streams it runs never reach this. */
+ *  Limitation: a view delta the shim could not apply (it asks for the full slot instead, needSlot) is never
+ *  handed over. Both delta slots (bars, feed) are whole-state types, so the next same-type dispatch marks
+ *  the refused frame coalesced and `coalesced` over-counts by one; for a chained type the refused frame
+ *  would take the match of the next same-type dispatch, which belongs to a later frame. The replay test
+ *  asserts no needSlot was sent, so the streams it runs never reach this. */
 export function matchDispatches(sent, recs, dispatches) {
-  const perFrame = sent.map(() => ({ dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null }));
+  const perFrame = sent.map(() => ({ dispatchT0: null, dispatchMs: null, coalesced: false, dispatchInline: null, dispatchSettleAt: null }));
   const pending = new Map();   // dispatch type -> indices of that type's frames not yet matched, in wire order
   sent.forEach((s, i) => {
     const T = dispatchType(s.type);
@@ -1016,16 +1039,32 @@ export function matchDispatches(sent, recs, dispatches) {
   for (const d of dispatches || []) {
     const list = d && d.type != null ? pending.get(d.type) : undefined;
     let k = 0;
-    if (list) while (k < list.length && recs[list[k]].t0 <= d.t0) k++;
+    if (list) {
+      const byOrder = typeof d.n === "number";
+      while (k < list.length && (byOrder ? list[k] < d.n : recs[list[k]].t0 <= d.t0)) k++;
+    }
     if (!k) { unmatched++; continue; }
     const whole = WHOLE_STATE_TYPES.has(d.type);
     const taken = list.splice(0, whole ? k : 1);
     const pick = whole ? taken[taken.length - 1] : taken[0];
     for (const i of taken) if (i !== pick) { perFrame[i].coalesced = true; coalesced++; }
-    perFrame[pick] = { dispatchT0: d.t0, dispatchMs: d.dur, coalesced: false, dispatchInline: typeof d.inHandler === "boolean" ? d.inHandler : null };
+    perFrame[pick] = { dispatchT0: d.t0, dispatchMs: d.dur, coalesced: false, dispatchInline: typeof d.inHandler === "boolean" ? d.inHandler : null,
+      dispatchSettleAt: typeof d.settleAt === "number" && d.settleAt >= 0 ? d.settleAt : null };
     dispatched++;
   }
   return { perFrame, counts: { dispatched, coalesced, unmatched } };
+}
+
+/** A frame's settle, from its handler's start: the later of the handler's stamp (rec.settle, two animation
+ *  frames after the handler returned) and its handoff's (m.dispatchSettleAt, two animation frames after the
+ *  handoff returned; the deferred shim stamps one, the inline shim none). On the deferred shim a burst fills
+ *  more than one flush slice and the handler's stamp can land before the frame's own handoff; the later
+ *  stamp is when the main thread was free after this frame's work. A handler stamp that never landed (-1)
+ *  stays missing: the handoff's stamp was queued after it and proves nothing about it. */
+export function frameSettle(rec, m) {
+  const at = m && typeof m.dispatchSettleAt === "number" && m.dispatchSettleAt >= 0 ? m.dispatchSettleAt : null;
+  if (at == null || rec.t0 == null || !(rec.settle >= 0)) return rec.settle;
+  return Math.max(rec.settle, at - rec.t0);
 }
 
 /** What a drained dispatch queue looks like for a sent stream, for the replay's wait: per chained type the
@@ -1407,16 +1446,23 @@ export function rankProfile(agg, top, locate = null) {
 }
 const HOT_FUNCTIONS = 5;   // the top self-time functions whose lines are shown
 
-/** The frames worth their own window: the first content frame and the largest frame of every type
- *  except keepalives. A frame's window is its handler span (t0 to t0 + handler) joined with its dispatch
- *  span (the bundle's inbound call: inside the handler span on the inline shim, after it on the deferred
- *  shim), the part of a frame's cost the JavaScript sampler can see; style, layout and paint after it are
- *  not JavaScript. */
+/** The frames worth their own window: the first content frame and, per type except keepalives, the largest
+ *  frame that was handed to the bundle (the largest of the type when none was: a frame the shim replaced in
+ *  its queue has only its parse span to show, so it is picked only when no frame of its type reached the
+ *  bundle). A frame's window is its handler span (t0 to t0 + handler) joined with its dispatch span (the
+ *  bundle's inbound call: inside the handler span on the inline shim, after it on the deferred shim), the
+ *  part of a frame's cost the JavaScript sampler can see; style, layout and paint after it are not
+ *  JavaScript. */
 function profileWindows(perFrame, firstIdx) {
   const picks = [];
   if (firstIdx >= 0 && perFrame[firstIdx]) picks.push({ label: "first content frame", f: perFrame[firstIdx] });
   const largest = new Map();
-  for (const f of perFrame) { if (f.type === "ka") continue; const cur = largest.get(f.type); if (!cur || f.bytes > cur.bytes) largest.set(f.type, f); }
+  const handed = (f) => (f.dispatchT0 != null ? 1 : 0);
+  for (const f of perFrame) {
+    if (f.type === "ka") continue;
+    const cur = largest.get(f.type);
+    if (!cur || handed(f) > handed(cur) || (handed(f) === handed(cur) && f.bytes > cur.bytes)) largest.set(f.type, f);
+  }
   for (const [type, f] of largest) if (!picks.some((p) => p.f.i === f.i)) picks.push({ label: `largest ${type}`, f });
   return picks;
 }
@@ -1451,7 +1497,7 @@ function profileReport(runs, firstIdx, files, sourceMapDir) {
       aggs.push(mergeAggregates((spans.length ? spans : [raw[0]]).map(([a, b]) => aggregateProfile(profile, [toUs(a), toUs(b)]))));
     }
     if (!aggs.length) continue;
-    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, handlerMs: round1(f.handlerMs), dispatchMs: round1(f.dispatchMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
+    windows.push({ label, index: f.i, type: f.type, bytes: f.bytes, coalesced: !!f.coalesced, handlerMs: round1(f.handlerMs), dispatchMs: round1(f.dispatchMs), ...rankProfile(mergeAggregates(aggs), TOP_WINDOW, locate) });
   }
   const insides = aligned.map(({ al }) => al.inside).filter((x) => x != null);
   // The bundles the profile names (served from /dist/): the source-position claim rests on their maps
@@ -1515,7 +1561,7 @@ export function renderProfile(cp) {
   out.push(`  top ${cp.topTotal.length} by total time`, `  ${head}`);
   for (const f of cp.topTotal) out.push(`  ${fmtFn(f)}`);
   for (const w of cp.windows || []) {
-    out.push("", `  window: ${w.label} (${w.type}, ${fmtBytes(w.bytes)}, frame ${w.index}): handler ${fmtMs(w.handlerMs)} ms, dispatch ${w.dispatchMs == null ? "-" : fmtMs(w.dispatchMs) + " ms"}, ${fmtMs(w.durationMs)} ms of window, ${w.samples} samples, ${fmtMs(w.sampledMs)} ms sampled; bookkeeping: ${fmtMeta(w.meta)}`);
+    out.push("", `  window: ${w.label}${w.coalesced ? " (coalesced: replaced in the shim's queue before the handoff, so the window holds the shim's parse only)" : ""} (${w.type}, ${fmtBytes(w.bytes)}, frame ${w.index}): handler ${fmtMs(w.handlerMs)} ms, dispatch ${w.dispatchMs == null ? "-" : fmtMs(w.dispatchMs) + " ms"}, ${fmtMs(w.durationMs)} ms of window, ${w.samples} samples, ${fmtMs(w.sampledMs)} ms sampled; bookkeeping: ${fmtMeta(w.meta)}`);
     out.push(`    top ${w.topSelf.length} by self time`, `    ${head}`);
     for (const f of w.topSelf) out.push(`    ${fmtFn(f)}`);
     out.push(`    top ${w.topTotal.length} by total time`, `    ${head}`);
@@ -1564,7 +1610,7 @@ export function renderReport(r) {
   for (const e of r.console.pageErrors.slice(0, 10)) out.push(`  uncaught: ${e.slice(0, 300)}`);
   for (const e of r.console.failedResources.slice(0, 10)) out.push(`  failed resource: ${e}`);
   out.push(`messages the pane sent: ${Object.entries(r.clientMessages).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}${Object.keys(r.clientDiag || {}).length ? ` (clientDiag: ${Object.entries(r.clientDiag).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}`);
-  if (r.fast) out.push("note: back-to-back replay; a frame's settle time includes the frames received after it before the next rendered frame, so settle percentiles overlap while handler and dispatch times do not.");
+  if (r.fast) out.push("note: back-to-back replay; a frame's settle time includes the frames received after it before the next rendered frame (on the deferred shim, the flush slices up to the one that handed the frame over), so settle percentiles overlap while handler and dispatch times do not.");
   if (r.cpuProfile) out.push("", renderProfile(r.cpuProfile));
   return out.join("\n");
 }

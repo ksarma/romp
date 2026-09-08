@@ -61,7 +61,8 @@ kernel's shim that call happens inside the socket handler or from a queued
 flush task, and the report says which ran, how many frames a newer whole-state
 frame replaced in the queue before the handoff, and the flush tasks), and the
 time until the main thread is free again (to the second
-`requestAnimationFrame` after the message) as p50, p90, and max; then the
+`requestAnimationFrame` after the message's handler or after its handoff,
+whichever lands later) as p50, p90, and max; then the
 long-animation-frame entries with script attribution, the JavaScript heap
 after a forced garbage collection, the DOM size, and every console error. The
 long-animation-frame attribution names each task's entry point (the message
@@ -94,7 +95,7 @@ sweeps it. A Node front server answers the page's WebSocket and proxies
 everything else to the subprocess. The default is no CPU throttling,
 a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
 pools three runs. `--fast` sends the frames back-to-back instead of at their
-recorded pacing; settle times then overlap, handler times do not.
+recorded pacing; settle times then overlap, handler and dispatch times do not.
 
 A recording holds real session data. `--record` connects to the running kernel
 as one more pane (the same URL and capabilities, the token as the page's
