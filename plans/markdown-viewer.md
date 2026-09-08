@@ -131,6 +131,11 @@ built departs from the text above, and why:
    allowed for marked's task checkbox, and a post-pass in `sanitizeMd` removes every input that is not a checkbox
    and forces `disabled` on a checkbox that lacks it, so no control in a note is live. A forbidden element's text
    stays as prose (DOMPurify's KEEP_CONTENT); a `<style>` block's text goes with it (DEFAULT_FORBID_CONTENTS).
+   For the Comments panel a block-level `<style>` is then an html block with no rendered node, and the anchor map
+   (not touched by this slice) treats it as it treats a `<script>` block or an HTML comment on main: a Rendered
+   selection spanning the paragraphs around it maps, the highlight covers the visible words only, and the quote
+   the composer shows before Save carries the block's source between them; on main the kept `<style>` element
+   refused such a selection (found in the merge review, 2026-09-08).
    Two attributes are forbidden outright. `background` (added in review): `<td background=URL>` makes the browser
    fetch the URL the moment the note renders, with no click and no gate, and decision 8's `img[src]` gate would
    never see it; DOMPurify's html list keeps the attribute, GitHub's allowlist does not. `bgcolor` fetches nothing
@@ -234,7 +239,10 @@ built departs from the text above, and why:
    one that still fits renders. `maxSize` (`MATH_MAX_SIZE_EM`, 50, about the chat column) caps the sizes a formula asks
    for: KaTeX's default is Infinity, and `\rule{5000em}{5000em}` laid a 78,650 px square in the transcript, `a\kern{50000em}b`
    a line 786,520 px wide beyond the page's `overflow-x: hidden`; ordinary layout never nears it and renders byte for
-   byte as before (md-sanitize-katex-browser.test.ts holds the identity with the option in place). The source fallback
+   byte as it does without the option (md-sanitize-katex-browser.test.ts holds the identity, against katex.render's
+   own output: the fill's markup is the DOM path's, which sets `class=""` on a classless span and serializes styles
+   with a space after each colon, so it differs from main's renderToString markup in those bytes alone, with every
+   rect and every text the same, and nothing reads the bytes; found in the merge review, 2026-09-08). The source fallback
    was indistinguishable from a code span the author wrote (every computed property equal; the title is the one
    marker, and a phone has no hover): its code element now wears `md-math-src` (`MATH_SOURCE_CLASS`) and one rule,
    byte-equal in styles.css and feed.css and pinned by fileview-parity.test.ts, dresses it in the dim tier with a
@@ -252,7 +260,11 @@ built departs from the text above, and why:
    same marked singleton inside the chat page, showed a note's formulas as bare TeX where main rendered KaTeX (the
    recheck's probe; md-sanitize-viewer-math-browser.test.ts opens such a note in both bundles). An author who
    hand-writes the placeholder gets only what KaTeX renders from TeX under `trust: false` (no \href, \htmlStyle,
-   \includegraphics, \htmlClass). The colour-only rule is unchanged and no class name is special-cased; the svg
+   \includegraphics, \htmlClass). In a bundle that carries the grammar (the chat page's viewer, today) that paragraph's
+   rendered text then differs from its source, so the anchor map refuses it with the Raw view offered, never
+   mis-anchored, as it refuses a paragraph carrying `$x^2$` there already (the Medium defect Slice 5's math holes take
+   up); the Files page, with no grammar, maps it as main did (found in the merge review, 2026-09-08). The colour-only
+   rule is unchanged and no class name is special-cased; the svg
    profile now serves a note's own inline SVG, not KaTeX. Slice 4 imports the grammar module into the files and
    feed bundles (decision 1) and the fill comes with it; `mdBlock` calls nothing.
 8. *Every link element* (review round 1). DOMPurify's html profile kept `<map>` and `<area>`, and its svg
@@ -337,8 +349,10 @@ built departs from the text above, and why:
    `file-view-links.test.ts` and `-browser.test.ts` asserting the prefixed shapes (an author's id equal to a chrome
    id renders prefixed and is never the scroll target). Review round 2: `md-sanitize-chat-schemeless-browser.test.ts`
    (each scheme-less shape clicked over the real chat bundle, the resolved address opened and the document kept),
-   `md-sanitize-chat-modified-click-browser.test.ts` (Shift and the platform's tab key give the browser's tab; Super
-   off macOS scrolls) with `browserTabClick` executed in `md-links.test.ts`, the formula cap in
+   `md-sanitize-chat-modified-click-browser.test.ts` (Shift and the platform's tab key are left to the browser, read
+   as the click's own uncancelled `defaultPrevented` flag rather than the tab Chromium opens, which came late or never
+   under the full suite's load; Super off macOS scrolls) with `browserTabClick` executed in `md-links.test.ts`, the
+   formula cap in
    `md-sanitize-postpass-browser.test.ts` (at the cap KaTeX renders; one over, the source as a code block or a code
    span with its title; 200,000 characters in milliseconds) and its source pin in `render-math.test.ts`, the
    square-poster video fixtures in `md-sanitize-wide-media-browser.test.ts`, `md-sanitize-chat-links-browser.test.ts`
@@ -371,6 +385,14 @@ built departs from the text above, and why:
    render.ts), a guard lists any name the lifted opener uses that the prelude lacks, and the chat-host test clicks a
    section link plain and Ctrl-clicked and a query-only link; `md-sanitize-guide.test.ts` pins the guide's link
    clause (the target decides, not the element); `render.ts`'s nav-chord handler reads `IS_MAC` (one platform test).
+   Review round 5, the merge of main's comments PRs (2026-09-08): `md-sanitize-anchor-map-browser.test.ts` (the real
+   sanitizer and the real anchor map in headless Chromium, adopted as `mdBlock` adopts: a mid-line `<style>` or
+   `<script>` loses its text and the Rendered mapping refuses the paragraph as a rendered-text mismatch with the Raw
+   view and the exact range offered, never mis-anchored; a mid-line `<textarea>` keeps its text and maps, as does a
+   plain paragraph; a node subtest pins that the difference is DOMPurify's FORBID_CONTENTS, not the profile), the
+   modified-click leg's record-based rewrite (its round-2 entry above says what it reads), `anchor-map.test.ts`'s
+   header naming the one text the sanitizer drops, and the regions legs' docstrings saying their styled figures pin
+   the layer's contract rather than what a note renders as under decision 6.
 
 ### Slice 2: layout follows the pane, reader keeps their place
 
@@ -424,7 +446,15 @@ hints with the last located start; strip cell delimiters from a table quote; off
 `selectionchange`. Acceptance: selections after the wrapper and details containers map; the `total =
 a * b * 2` comment paints in Rendered; the math paragraph maps around the formula; a Raw comment
 across two cells paints; a keyboard selection offers Comment. Tests: anchor-map and file-comments
-fixtures.
+fixtures. One more for the flattened walk, found in Slice 1's merge review (2026-09-08) and identical on main:
+the resync across an html block (`runFits`, anchor-map.ts) accepts the first end from which the next block lines
+up by whitespace-stripped text alone, so when a node the block rendered carries exactly the next paragraph's text
+(a kept `<div>Go</div>`, or a `Go` hoisted out of a dropped `<form>`) the block takes no node, its own rendered
+text maps to that paragraph's source offsets, and the blocks after it pair one node early: a later paragraph whose
+text recurs maps to the wrong occurrence's offsets, the rest refuse. A tag test on a mapped block (`tagOf` already
+names its element) closes the kept-element and hoisted-text shapes; an html `<p>` carrying the next paragraph's
+text needs the run confirmed past it. Acceptance: the text-alike html node is refused and each paragraph after it
+maps to its own offsets.
 
 ### Slice 6: reaching a section without scrolling
 

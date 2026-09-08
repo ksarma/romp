@@ -75,7 +75,8 @@ export const MATH_TEX_BUDGET_CHARS = 100000;
  *  `\rule{5000em}{5000em}` in a reply laid a 78,650 px square in the transcript, `a\kern{50000em}b` a line 786,520 px
  *  wide that the page's overflow-x: hidden put beyond reach. 50 em is about the chat column (some 55 em at the chat's
  *  font size), so a rule or a space as wide as the column still renders and nothing reshapes the transcript; ordinary
- *  layout (a fraction, a radical, a matrix with a `\\[1em]` row gap) never nears it and renders byte for byte as before. */
+ *  layout (a fraction, a radical, a matrix with a `\\[1em]` row gap) never nears it and renders byte for byte as it does
+ *  without the option (md-sanitize-katex-browser.test.ts holds that identity against katex.render's own output). */
 export const MATH_MAX_SIZE_EM = 50;
 
 /** The most characters of macro bodies one formula may expand to (review round 3). The cap above measures the TeX as
@@ -248,7 +249,16 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
 /** Render KaTeX into every math placeholder under `root`, the SANITIZED DOM (sanitizeMd's body), and
  *  unwrap each so the rendered `.katex` (or `.katex-display`) root stands where the placeholder stood,
  *  exactly where marked's own KaTeX output used to: the comment highlights' closest(".katex") pairing
- *  and the anchor map see the shape they always did. Three bounds stand ahead of the one katex.render
+ *  and the anchor map see the shape they always did. The markup is katex.render's, not KaTeX's string
+ *  renderer's, which main used: the DOM builder sets class="" on a classless span and the browser serializes
+ *  its styles with a space after each colon, so the bytes differ from main's while every rect and every
+ *  text is the same, and nothing reads the bytes (the highlights pair on the .katex root, the anchor map
+ *  on text; md-sanitize-katex-browser.test.ts takes the DOM path as the reference and says why). The
+ *  selector reaches a placeholder an author typed by hand as well (no class name is special-cased; plan
+ *  item 7), so in a bundle that carries the grammar such a paragraph's rendered text no longer equals
+ *  its source and the anchor map refuses it with the Raw view offered, as it refuses a paragraph with
+ *  `$x^2$` there today (Slice 5's math holes are where math meets the map); a bundle without the grammar
+ *  has no fill and maps it as main did. Three bounds stand ahead of the one katex.render
  *  call, each shown as the source with its reason (showSource): a formula longer than MATH_TEX_MAX_CHARS;
  *  a formula that would take the call's rendered total past MATH_TEX_BUDGET_CHARS (the running total is
  *  this call's, so it is one message's or one note's; a shorter formula after it still renders while it

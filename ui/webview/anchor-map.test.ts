@@ -1,8 +1,11 @@
 // anchor-map.ts driven behaviorally over the viewer's two DOM shapes, rebuilt here exactly as
 // file-view.ts builds them (its Raw rows and marked configuration are replicated and pinned to the
 // source, the repo's convention) and parsed into a small DOM stand-in — there is no jsdom in this tree.
-// DOMPurify is not applied: it needs a window, and it never alters text nodes, which is all the mapping
-// reads. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/.
+// DOMPurify is not applied: it needs a window, and the mapping reads only text nodes, which the sanitizer
+// keeps as they are with one exception: an element in its FORBID_CONTENTS set (script always, style since
+// md-sanitize.ts forbade the tag) goes with its text, so a paragraph carrying one mid-line maps here and is
+// refused in the viewer as a rendered-text mismatch; md-sanitize-anchor-map-browser.test.ts pins that shape
+// over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

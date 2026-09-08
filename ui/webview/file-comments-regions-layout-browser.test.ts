@@ -57,10 +57,16 @@ type Scene = Record<string, Box>;
 const FIGURES = ["plot", "logo", "centered", "half", "badge", "capped", "halfcap", "spaced", "right"];
 const BOXES = [...FIGURES, "p-plot", "p-logo", "p-centered", "p-half", "p-badge", "p-capped", "p-halfcap", "p-spaced", "p-right", "after"];
 
-/** The README: a full-width plot, a right-aligned logo with prose beside it, a centered block figure, a centered
- *  half-width one, a badge on a text line; then the capped figures the review's fourth round found mis-laid — a
- *  width="100%" plot centered under a pixel max-width, a half-width one likewise, one with a percentage top margin,
- *  and a right-aligned one (margin-left: auto) — and a paragraph after them all. Every picture is 300×150. */
+/** The figures, set as written (innerHTML, no sanitizer): a full-width plot, a right-aligned logo with prose beside it,
+ *  a centered block figure, a centered half-width one, a badge on a text line; then the capped figures the review's
+ *  fourth round found mis-laid (a width="100%" plot centered under a pixel max-width, a half-width one likewise, one
+ *  with a percentage top margin, and a right-aligned one, margin-left: auto), and a paragraph after them all. Every
+ *  picture is 300×150. The plot, the logo and the badge are the shapes a note's own markup reaches the layer with: the
+ *  viewer sanitizes a note's HTML before adopting it (md-sanitize.ts; plans/markdown-viewer.md Slice 1, decision 6),
+ *  and an author's inline `style` keeps only its colour declarations there, so a note's `display:block;margin:0 auto`
+ *  or `max-width:300px` never reaches the DOM and such a figure lays out left at its natural width, as on GitHub. The
+ *  styled figures pin the layer's own contract, a style attribute on the picture whatever wrote it (the layer reads the
+ *  DOM, not the note); they are not what a README renders as today. */
 async function mount(page: any): Promise<void> {
   await page.evaluate(async () => {
     const md = document.getElementById("md")!;
@@ -158,7 +164,7 @@ async function inBrowser(t: any, body: (page: any) => Promise<void>): Promise<vo
   } finally { await browser.close(); }
 }
 
-test("in a browser, wrapping every figure of a README leaves the page as the browser laid it out, the overlay is each picture, and dispose restores the pictures' own style; a bare wrapper (the control) reflows it", async (t) => {
+test("in a browser, wrapping every figure on the page leaves it as the browser laid it out, the overlay is each picture, and dispose restores the pictures' own style; a bare wrapper (the control) reflows it", async (t) => {
   await inBrowser(t, async (page) => {
     const before = await measure(page);
     // the scene is the one the finding describes
