@@ -8,8 +8,11 @@
 // them however the file was reached: one candidate is the checkbox (checked, the todo's text on one line), several are a
 // radio group — Answer: the first selected, the others, none — so one send answers one todo (decision 28); the pick goes
 // out as `todoId`; and after a send the list follows the next status, which no longer carries the settled todo. The
-// page's own memory of what it stamped (answeredTodos) covers the moment between the send and that status, and a send
-// the kernel could not stamp leaves the todo offered, as before. The pure half (todoChoices, todoChoiceLabel) runs
+// page's own memory of what it stamped (answeredTodos) covers the moment between the send and that status ONLY: a
+// status issued after the send's reply that still lists the todo is the kernel's word that it is open (a parked send
+// stamps at its drain; a recalled answer reopens it) and releases the memory, so the todo is offered again — before
+// that release a reopened todo stayed hidden from every confirm on the page until a reload (the review, 2026-09-07).
+// A send the kernel could not stamp leaves the todo offered, as before. The pure half (todoChoices, todoChoiceLabel) runs
 // directly; what the stand-in cannot show is pinned at source. Synthetic fixtures only: the notes-api world, placeholder
 // ids.
 import { test } from "node:test";
@@ -437,19 +440,36 @@ test("the todo the file was opened from leads the group with the status's words;
   k.dispose();
 });
 
-test("the page remembers what it stamped: a status still listing an answered todo offers nothing for it; a send the kernel could not stamp leaves the todo offered", async () => {
+test("after a stamped send, the refresh is the kernel's word: while it is out Send reads Sending… and the confirm is closed; a refresh that still lists the answered todo releases the page's memory of it, and the todo is offered again", async () => {
   const A = todo("f1"), B = todo("f2");
   const h = await opened({}, [A, B]);
   h.click('[data-act="fcsend"]');
   h.click('[data-act="fcsendgo"]'); await tick();
   assert.equal(h.last().todoId, A.id, "the first selected by default");
-  await h.sent();
-  await h.ok({ todos: [A, B] });         // a status read before the stamp landed still lists A
+  await h.sent();                          // no warning: stamped, so the latch — and the refresh goes out
+  assert.equal(h.last().verb, "status", "the send's refresh is out");
+  // the moment before that status: the send is not over until its refresh lands, so nothing can be built from the
+  // showing status (read before the send, listing A) — the page's memory of A is consulted by no confirm here
+  const b = h.q('[data-act="fcsend"]')!;
+  assert.equal(b.textContent, "Sending…"); assert.equal(b.disabled, true);
+  assert.equal(h.q(".fc-confirm"), null, "the confirm closed with the send");
+  // the refresh answers and still lists A. Issued after the send's reply, it read the store after the kernel stamped
+  // or parked, so A is OPEN — a parked send stamps at its drain; a recalled answer reopens (kernel _reopen_user_todo)
+  // — and the memory is released: A is offered again, in the kernel's order, as Waiting on you shows it
+  await h.ok({ todos: [A, B] });
   h.click('[data-act="fcsend"]');
-  const cb = h.q('input[data-opt="todo"]')!;
-  assert.ok(cb, "A is remembered as answered: B alone, as the checkbox");
-  assert.equal(optLabel(cb).textContent, "answer the todo: " + B.text);
-  // B's send is warned (nothing stamped): B stays offered
+  const radios = h.qa('input[data-opt="todopick"]');
+  assert.deepEqual(values(radios), [A.id, B.id, ""], "A is offered again: the status is the kernel's word, the memory was for the moment before it");
+  assert.deepEqual(checks(radios), [true, false, false], "a fresh group: the first selected");
+  // and the release holds: a later status listing A keeps offering it
+  h.saved[0]({ mtimeNs: "1757145600000000001", logged: true });   // the viewer's save re-asks status (onSaved)
+  await tick();
+  assert.equal(h.last().verb, "status");
+  await h.ok({ todos: [A, B] });
+  assert.deepEqual(values(h.qa('input[data-opt="todopick"]')), [A.id, B.id, ""]);
+  // B's send is warned (nothing stamped): B stays offered, as before
+  const rs = h.qa('input[data-opt="todopick"]');
+  rs[0].checked = false; rs[1].checked = true; rs[1].dispatch("change");
   h.click('[data-act="fcsendgo"]'); await tick();
   assert.equal(h.last().todoId, B.id);
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: h.last().reqId, queued: false, warning: "the message went, but nothing was marked: user todos are turned off on this machine" } }));
@@ -457,7 +477,86 @@ test("the page remembers what it stamped: a status still listing an answered tod
   await h.ok({ todos: [A, B] });
   assert.match(h.q(".fc-err-warn")!.textContent, /nothing was marked/);
   h.click('[data-act="fcsend"]');
-  assert.equal(optLabel(h.q('input[data-opt="todo"]')!).textContent, "answer the todo: " + B.text, "not stamped: still offered");
+  assert.deepEqual(values(h.qa('input[data-opt="todopick"]')), [A.id, B.id, ""], "not stamped: both still offered");
+  h.dispose();
+});
+
+test("a parked send: the kernel stamps at the drain, so the refresh still lists the todo and it stays offered; the status after the drain omits it", async () => {
+  const A = todo("f3"), B = todo("f4");
+  const h = await opened({}, [A, B]);
+  h.click('[data-act="fcsend"]');
+  h.click('[data-act="fcsendgo"]'); await tick();
+  assert.equal(h.last().todoId, A.id);
+  await h.sent(true);                      // queued: true, no warning — todoStamped reads true, but the kernel has stamped nothing yet
+  assert.match(h.q(".fc-sent")?.textContent || h.unit.textContent, /Queued/);
+  await h.ok({ todos: [A, B] });           // the refresh: A is open until the drain
+  h.click('[data-act="fcsend"]');
+  assert.deepEqual(values(h.qa('input[data-opt="todopick"]')), [A.id, B.id, ""], "parked, not stamped: A is offered, as Waiting on you shows it");
+  // the drain stamps A: the next status omits it, and the list follows the kernel
+  h.saved[0]({ mtimeNs: "1757145600000000001", logged: true });
+  await tick();
+  await h.ok({ todos: [B] });
+  const cb = h.q('input[data-opt="todo"]')!;
+  assert.ok(cb, "B alone, as the checkbox");
+  assert.equal(optLabel(cb).textContent, "answer the todo: " + B.text);
+  assert.equal(h.q('input[data-opt="todopick"]'), null);
+  h.dispose();
+});
+
+test("the release is keyed on request order, not arrival: a status asked BEFORE the send's reply that lands after the refresh (its clocks prove it newer, so it is applied) still lists the stamped todo from a read before the stamp, and releases nothing; a status asked after does", async () => {
+  const A = todo("f5"), B = todo("f6");
+  const h = await opened({}, [A, B]);
+  h.click('[data-act="fcsend"]');
+  h.click('[data-act="fcsendgo"]'); await tick();
+  const send = h.last();
+  assert.equal(send.type, "fileCommentsSend"); assert.equal(send.todoId, A.id);
+  // a status asked while the send is out (the viewer's save re-asks): issued before the reply, so its run may read
+  // the todo store before the stamp
+  h.saved[0]({ mtimeNs: "1757145600000000001", logged: true });
+  await tick();
+  const early = h.last();
+  assert.equal(early.verb, "status"); assert.ok(early.reqId > send.reqId);
+  // the send's reply lands: the latch, then the refresh (asked after the reply)
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: send.reqId, queued: false } }));
+  await tick(); await tick();
+  const late = h.last();
+  assert.equal(late.verb, "status"); assert.ok(late.reqId > early.reqId, "the refresh is a later ask");
+  // the refresh answers first, without A: the kernel stamped it. Nothing to release; the send is over
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: late.reqId, ...status({ todos: [B] }) } }));
+  await tick(); await tick();
+  h.click('[data-act="fcsend"]');
+  assert.equal(optLabel(h.q('input[data-opt="todo"]')!).textContent, "answer the todo: " + B.text, "B alone");
+  // now the early ask lands, listing A — a read from before the stamp — with a store clock past the refresh's, so
+  // applyStatus applies it (suspect, yet provably newer). It predates the reply, so it cannot vouch for A: A stays
+  // remembered, and the confirm does not flap A back for the moment until the next poll
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: early.reqId, ...status({ todos: [A, B], storeMtimeNs: "1757145600000000009" }) } }));
+  await tick(); await tick();
+  assert.ok(h.q(".fc-confirm"), "the confirm is still open");
+  assert.equal(optLabel(h.q('input[data-opt="todo"]')!).textContent, "answer the todo: " + B.text, "a status asked before the reply releases nothing: B alone");
+  assert.equal(h.q('input[data-opt="todopick"]'), null);
+  // a status asked now that lists A is the kernel's word after the stamp: released
+  h.saved[0]({ mtimeNs: "1757145600000000001", logged: true });
+  await tick();
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: h.last().reqId, ...status({ todos: [A, B], storeMtimeNs: "1757145600000000010" }) } }));
+  await tick(); await tick();
+  assert.deepEqual(values(h.qa('input[data-opt="todopick"]')), [A.id, B.id, ""], "released by a status asked after the reply");
+  h.dispose();
+});
+
+test("the memory keeps for good the todo the file was opened from whose file is another file: no status of this viewer lists it, so nothing releases it (decision 28)", async () => {
+  const X = todo("f7");
+  const h = await opened({ todoId: X.id }, []);   // opened from X; X names another file, so the status never lists it
+  h.click('[data-act="fcsend"]');
+  assert.equal(optLabel(h.q('input[data-opt="todo"]')!).textContent, "answer the todo this file was opened from");
+  h.click('[data-act="fcsendgo"]'); await tick();
+  assert.equal(h.last().todoId, X.id);
+  await h.sent(); await h.ok({ todos: [] });
+  h.click('[data-act="fcsend"]');
+  assert.equal(h.q('input[data-opt="todo"]'), null, "answered: no checkbox after the refresh");
+  h.saved[0]({ mtimeNs: "1757145600000000001", logged: true });
+  await tick();
+  await h.ok({ todos: [] });
+  assert.equal(h.q('input[data-opt="todo"]'), null, "…nor after any later status: none lists X, none releases it");
   h.dispose();
 });
 
@@ -525,6 +624,11 @@ test("source pins: the Status field, the radio group's option, the change handle
   assert.match(SRC, /const todoId = this\.chosenTodoId\(s\);/, "the send asks the one chooser");
   assert.match(SRC, /if \(todoId\) msg\.todoId = todoId;/);
   assert.match(SRC, /if \(todoId && reply\.todoStamped\) answeredTodos\.add\(todoId\);/, "the latch is the stamp, not the attempt");
+  assert.match(SRC, /if \(todoId && reply\.todoStamped\) answeredAt\.set\(todoId, reqSeq\);/, "…clocked by the request counter, so a status asked after the reply is told from one asked before it");
+  assert.match(SRC, /const answeredAt = new Map<string, number>\(\);/);
+  const apply = SRC.slice(SRC.indexOf("  applyStatus(s: Reply): boolean {"), SRC.indexOf("  private syncBytes(s: Status): void {"));
+  assert.ok(apply.indexOf("if (this.status && suspect && !provablyNewer(s, this.status)) return false;") < apply.indexOf("this.releaseAnswered(s);"), "only an APPLIED status releases the memory");
+  assert.match(apply, /if \(at !== undefined && at < s\.reqId\) \{ answeredTodos\.delete\(id\); answeredAt\.delete\(id\); \}/, "released when the ask is past the latch: the kernel's word that the todo is open");
   assert.doesNotMatch(SRC, /todoAnswered/, "the per-viewer flag is gone: answeredTodos is the one memory, for every candidate alike");
   assert.match(SRC, /todoChoices\(this\.ctx\.todoId, s, \(id\) => answeredTodos\.has\(id\)\)/);
   // the radio's focus is re-found by option AND value after a re-render, so the picked radio keeps the keyboard

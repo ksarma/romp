@@ -216,12 +216,23 @@ const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
-// (which re-opens with the same todoId), or the Reply modal's other link all find it; so does a status that
-// still lists the todo (the todo-file follow-on: the kernel lists the open todos naming the file, and stops
-// once the todo is settled — this set covers the moment between the send and that status). Another device or
-// document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
-// stamped) stays the backstop there.
+// (which re-opens with the same todoId), or the Reply modal's other link all find it. The todo-file follow-on
+// made the kernel list the open todos naming the file on every status, and stop once the todo is settled — so
+// for a LISTED todo this set covers the moment between the send and the next status only: a status ISSUED after
+// the send's reply landed that still lists the todo is the kernel's word that the todo is open (CLAUDE.md, the
+// authoritative source) — a parked send stamps only when it drains, not when it is accepted, and a recalled or
+// lost answer reopens the todo (kernel _reopen_user_todo) — and applyStatus releases the memory for it, so the
+// confirm offers it again as Waiting on you shows it. Before that release a todo the kernel had reopened stayed
+// hidden from every confirm on the page until a reload (the review, 2026-09-07). The release is keyed on the
+// request counter, not the clock: `answeredAt` holds reqSeq as it stood at the latch, and a status whose reqId
+// is past it was issued after the reply (markOverlapped has already flagged every status still out at that
+// moment, so an earlier ask that lands later is dropped or, when its clocks prove it newer, applied WITHOUT
+// releasing: it may have read the store before the stamp). What the set keeps for good is the todo the file
+// was opened from whose `file` is another file: no status of this viewer lists it, and decision 28 wants later
+// sends to show no box for it. Another device or document has no view of this set; the kernel's own settled
+// check (plan: the reply warns, nothing is stamped) stays the backstop there.
 const answeredTodos = new Set<string>();
+const answeredAt = new Map<string, number>();
 
 // ── image embeds: the source text behind a rendered <img> ─────────────────────────────────────────
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
@@ -1071,6 +1082,7 @@ class Panel {
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
+    this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
@@ -1085,6 +1097,20 @@ class Panel {
     this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
+   *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
+   *  it replies, so a todo it still lists is open (a parked send, stamped at its drain; a recalled answer, reopened).
+   *  A status issued before the reply (its reqId at or under the latch's) releases nothing: it may have read the
+   *  store before the stamp. Only an APPLIED status releases — a dropped one is not what the confirm is built from. */
+  private releaseAnswered(s: Reply): void {
+    if (!Array.isArray(s.todos)) return;
+    for (const t of s.todos) {
+      const id = t && typeof t === "object" ? t.id : undefined;
+      if (typeof id !== "string" || !id) continue;
+      const at = answeredAt.get(id);
+      if (at !== undefined && at < s.reqId) { answeredTodos.delete(id); answeredAt.delete(id); }
+    }
   }
   /** Bring the view's bytes to the text a status describes: its hunks and anchors are offsets into the file the
    *  host read, so when the file mtime the status carries is not the view's, the view is asked to re-fetch and the
@@ -2518,6 +2544,7 @@ class Panel {
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
       if (todoId && reply.todoStamped) answeredTodos.add(todoId);
+      if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });

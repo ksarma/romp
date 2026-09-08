@@ -1017,7 +1017,11 @@ whole text on hover and in the row's fold) and several as one radio group, Answe
 one send still answers one todo (decision 28); `chosenTodoId` is what `doSend` puts in `todoId`. After
 a send the list follows the next status, which no longer carries the settled todo; the page's memory of
 what it stamped covers the moment before that status, and a send the kernel could not stamp leaves the
-todo offered, as before. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
+todo offered, as before. A status asked after the send's reply that still lists the todo is the kernel's
+word that it is open (a parked send stamps at its drain; a recalled or lost answer reopens the todo) and
+releases the memory, so the todo is offered again — the review found a reopened todo hidden from every
+confirm on the page until a reload; only the todo the file was opened from whose `file` is another file,
+which no status of that viewer lists, stays answered for good. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
 (`fileChip`: openPathLink's span restyled, so the list delegate's and the modal's `openpath` open it
 with the same `viewFile` message: path, sid, identity, todoId); the detail's linkified paths stay. The
 chat's todo card and its Reply modal show the same chip (render.ts `todoFileChip`; the `.ut-file` pill in styles.css,

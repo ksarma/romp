@@ -417,7 +417,7 @@ test("an answer holds across the count too: the box checked again is the default
   k.dispose();
 });
 
-test("a pick that left the list while two or more are still offered falls to the first, as a fresh confirm would: answered by the send before (the status's word, or the page's memory), or settled elsewhere under an open confirm", async () => {
+test("a pick that left the list while two or more are still offered falls to the first, as a fresh confirm would: answered by the send before (the status's word), or settled elsewhere under an open confirm; a pick the refresh still lists holds", async () => {
   const A = todo("rd1"), B = todo("rd2"), C = todo("rd3");
   const h = await opened({}, [A, B, C]);
   h.click('[data-act="fcsend"]');
@@ -432,7 +432,9 @@ test("a pick that left the list while two or more are still offered falls to the
   assert.equal((await sendNow(h)).todoId, A.id, "the send carries the first");
   await h.sent(); await h.ok({ todos: [C] });
   h.dispose();
-  // the page's own memory drops the pick the same way: a status read before the stamp landed still lists it
+  // the page's own memory drops no pick the kernel still lists: the refresh is asked after the send's reply, so a
+  // todo on it is open (a parked send, or a reopened one) and the memory is released for it (file-comments-todo-choices
+  // .test.ts) — the pick holds, since it never left the list
   const D = todo("rd4"), E2 = todo("rd5"), F = todo("rd6");
   const g = await opened({}, [D, E2, F]);
   g.click('[data-act="fcsend"]');
@@ -442,8 +444,8 @@ test("a pick that left the list while two or more are still offered falls to the
   await g.sent(); await g.ok({ todos: [D, E2, F] });
   g.click('[data-act="fcsend"]');
   rs = g.qa('input[data-opt="todopick"]');
-  assert.deepEqual(values(rs), [D.id, E2.id, ""], "F is remembered as answered");
-  assert.deepEqual(checks(rs), [true, false, false]);
+  assert.deepEqual(values(rs), [D.id, E2.id, F.id, ""], "F is listed by a status asked after the send: open, so offered");
+  assert.deepEqual(checks(rs), [false, false, true, false], "the pick holds: F never left the list");
   g.dispose();
   // settled elsewhere while the confirm is open: the same fallback, the confirm still up
   const P = todo("rd7"), Q = todo("rd8"), R = todo("rd9");
