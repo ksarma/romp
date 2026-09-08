@@ -1,12 +1,12 @@
 ---
 title: `tests/romp.bats` leaks 6 temp dirs per run: `bin/romp`'s detached picker-check on the resume path double-forks the REAL postal service, which mints a `serve-token` under the fixture home after teardown's `rm -rf`; the suite's curl mock also flakes on SIGPIPE
-status: offered
+status: merged
 where: leak fix: fork PR #233 (branch `tmpleak`, merged 2026-09-06 as `54bd3106`), commit `e98c8c79` (the detached call honours `ROMP_POSTAL_BIN` like the mail and refresh paths, and romp.bats stands in for the service). Their #944's exit-time sweep cannot catch it (the write happens in a detached process after cleanup). SIGPIPE flake: the curl mock's stdin drain, fork main `3190e9d6` (2026-09-04, the `romp new --in` commit; not `835a0a4a`, the Codex-spawn `--env` refusal, which only reuses `_stub_curl`); upstream's romp.bats has no drain
 added: 2026-09-06
 pr: 233
 tier: fix
 offered: their PR #999
-closed:
+closed: 2026-09-08
 ---
 `tests-only`; its own port now that fork PR #233 has landed — not a fold into their #944
 
@@ -17,3 +17,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier tests-only —
 OFFERED 2026-09-07: offered upstream as their PR #999 (2026-09-07, label fix, head 08cac9fa); relabeled fix because the incoming docs tier is documentation only.
 
 2026-09-07: rebased onto upstream f3dc387a; head f043b17d.
+
+MERGED 2026-09-08: merged upstream as their PR #999 (merge e22f3387, merged 2026-09-08T03:14:34Z). GitHub records the merge of the stack's top, their PR #1005, as this PR's merge commit.

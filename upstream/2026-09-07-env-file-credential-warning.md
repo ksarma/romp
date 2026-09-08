@@ -15,3 +15,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature). Carv
 OFFERED 2026-09-07: offered upstream as their PR #1002 (2026-09-07, label feature, head 312a3d34).
 
 2026-09-07: rebased onto upstream f3dc387a; head 026923a5.
+
+2026-09-08: the maintainer rebased the branch onto upstream main after the fix-tier roots merged; head 01418b02.

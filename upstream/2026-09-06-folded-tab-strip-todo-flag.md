@@ -17,3 +17,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — de
 OFFERED 2026-09-07: offered upstream as their PR #997 (2026-09-07, label feature, head f1be7245); depends on their PR #1007, which must merge first; offered subset: the Show-when-folded pins and the header-as-label parts only; the folded-section user-todo flag and the feature flag are held back.
 
 2026-09-07: rebased onto upstream f3dc387a; head 9b43341e; a later review commit moved the head to 1a28b84b.
+
+2026-09-08: the maintainer rebased the branch onto upstream main after the fix-tier roots merged and pushed a review commit; head ee7006e7.

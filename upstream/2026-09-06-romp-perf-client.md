@@ -17,3 +17,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — pa
 OFFERED 2026-09-07: offered upstream as their PR #1009 (2026-09-07, label feature, head f9511d74); depends on their PR #1003, which must merge first.
 
 2026-09-07: rebased onto upstream f3dc387a; head 195265b9; a later review commit moved the head to 564000ec.
+
+2026-09-08: the maintainer rebased the branch onto upstream main after the fix-tier roots merged and pushed a review commit; head 78c973f0.

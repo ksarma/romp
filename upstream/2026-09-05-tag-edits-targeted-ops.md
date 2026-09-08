@@ -17,3 +17,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier fix — the fo
 OFFERED 2026-09-07: offered upstream as their PR #1001 (2026-09-07, label fix, head 698bb5f1).
 
 2026-09-07: rebased onto upstream f3dc387a; head 95133620.
+
+2026-09-08: the maintainer rebased the branch onto upstream main after the fix-tier roots merged; head 68dceefe.

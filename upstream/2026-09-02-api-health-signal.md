@@ -17,3 +17,5 @@ APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — ev
 OFFERED 2026-09-07: offered upstream as their PR #998 (2026-09-07, label feature, head 8c109cad); depends on their PR #1008, which must merge first.
 
 2026-09-07: rebased onto upstream f3dc387a; head df62680d; a later review commit moved the head to 01e9247b.
+
+2026-09-08: the maintainer rebased the branch onto upstream main after the fix-tier roots merged and pushed a review commit; head 38042172.
