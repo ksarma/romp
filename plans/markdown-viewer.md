@@ -480,6 +480,118 @@ Rendered/Raw round trip returns to the same scrollTop; a 3:1 picture with sized 
 survives body scroll. Tests: browser legs replacing the text assertion at
 `file-comments.test.ts:854`.
 
+**The Slice 2 build** (2026-09-08). Branch `mdviewer-s2`, stacked on `mdviewer-s1` (fork PR #390). The gap analysis
+behind it ran every criterion above in headless Chromium over the real viewer at the Slice 1 tip (81cf9a92); the
+numbers below are its and the build's. What earlier changes had already done, where the code as built departs from the
+text, and which test holds each rule:
+
+1. *Already done.* The fold held before this build: fork PR #375 put `container-type: inline-size` on `.fileview`, the
+   viewer's card, and at 380 and 640px `.fileview-main` computed `flex-direction: column` with the body the row's
+   whole width in the Files pane, the chat modal and the feed modal (pane 380: main, body and aside all 380; chat 380:
+   card 361, body 359). The bar's controls sat inside the card at 380px (and 320px) since fork PR #348 made the bar
+   wrap; file-view-text-size.test.ts asserts it at 380, 420, 480 and 600px in both modals. Neither needed code here.
+2. *The reader's place, kept in the file's own terms* (`ui/webview/reader-place.ts`; the text says "the top-visible
+   block's source offset", and that is what it is). Before every paint of a text view, readPlace records the source
+   span of the top-visible block (the first top-level block of the Rendered view whose box ends below the body's top
+   edge; the first Raw row that does) and how far its top edge sits from the body's top; after the paint, seatPlace
+   finds the block for that span in the new view, whichever view it is, and scrolls the body so it sits at the same
+   distance. The span comes from two thin reads over the anchor map's private block table (anchor-map.ts
+   renderedBlockSpan and renderedBlockAt; rawRowSpan beside the existing rawRowForOffset for the Raw view): a refused
+   block (a table, a code block, an HTML block) answers both, since the place needs an element to measure, not text to
+   quote, and renderedBlockAt takes the block whose start is the largest at or below the offset, so an offset inside a
+   paragraph, or one whose block was edited away, still lands. Across a reload the span is followed through the edit
+   first (followPassage, the composer's own follow): a block after the inserted text shifts by its length, one before
+   it keeps its offset, and one found whole elsewhere is followed there. A block the write rewrote is placed by the
+   block before it, followed the same way, and the block after that is seated, so a write that inserted twenty
+   paragraphs above and rewrote the paragraph under the reader's eye still lands on what replaced it (the leg's fourth
+   scene; the edit's own start, where a first cut landed, is the first inserted paragraph there); with that block gone
+   too the place is where the edit begins. The top block is found by a binary search over the blocks' bottoms with an
+   eight-box lookback for a floated figure that reaches below the paragraphs beside it, so a long document costs a
+   handful of box reads per scroll frame. renderBody reads the place against the text the body was PAINTED from
+   (`shownText`: a reload has put the new bytes in `text` before the swap), swaps, runs the seam's hooks, then seats,
+   the order the #348 selection keeper set (hooks first, then the restore), so the panel's paint pass has run before
+   the body moves and the margin lock hears one scroll event. The seam's reload and setMode, the Rendered and Raw
+   buttons and openUrlView's own renderBody all go through it. Numbers, the same at 380 and 900px: a reload inserting
+   twenty paragraphs above paragraph 40 kept it at the top (before: paragraph 28 at 900px, 29 at 380px), in the Raw
+   view too and with the aside open (the margin layout); the Rendered, Raw, Rendered round trip came back to paragraph
+   40 at the same height, pane 900 scrollTop 1918, 2854, 1918 (before: 1918, 2566, 2566 with paragraph 53 on top),
+   pane 380 5163, 5662, 5163 (before: paragraph 45), chat 900 2729, 2854, 2729 (before: paragraph 53).
+   file-view-place-browser.test.ts measures each over the real module and the real panel; file-view-place.test.ts runs
+   the pure parts (the search, the follow, the two table reads and the Raw span over the anchor-map suite's DOM
+   stand-in) and pins the order in file-view.ts.
+3. *The round trip returns to the passage, not the scrollTop.* The text asks for the same scrollTop; the Raw view is
+   the taller of the two (monospace rows, a row per blank line), so one scrollTop is two passages. The leg asserts the
+   passage at the same height, the Raw scrollTop larger than the Rendered one, and the Rendered scrollTop back on the
+   return (the numbers in item 2).
+4. *The width reflow and a text-size step keep the place too* (beyond the text, which names the swap alone). The
+   panel's toggle moved the reader through the width alone: at 900px closing the aside took the body from 560 to 900px
+   wide, the scrollHeight from 9138 to 4860, and with the scrollTop kept at 3541 the top block from paragraph 40 to
+   73; a pane drag does the same. The ResizeObserver repaint (file-view.ts) now seats the place after
+   fireRenderedKeepingSelection. It cannot read the place itself: the observer reports after the layout has changed,
+   so the place is read again off the body's scroll event, once per animation frame, and the repaint seats the place
+   read before the width moved. A scroll event under a body width the last read did not see is the reflow's own (the
+   browser clamping as the content got shorter), not the reader's, and is not read. A text-size step reads the place
+   before applyTextSize and seats after the hooks. The leg: paragraph 40 stays the top block as the aside opens (body
+   900 to 560), closes (back to 900, scrollTop 1918 again), the viewport goes to 600 and back, and after A+; a place
+   the reader scrolled to after one reflow is the one the next reflow keeps.
+5. *No `overflow-anchor: none`.* The text asks for it. The gap analysis showed the base behaviour was never
+   anchoring's doing: the swap removes the anchor node and Chromium keeps the numeric scrollTop with `auto` and `none`
+   alike (1918 to 1918 either way), and after a restore anchoring helps: a 200px growth above the kept block (a figure
+   landing late) left the block in place under `auto` (scrollTop 2471 to 2671, the block at the same height) and
+   pushed it down under `none` (the top block became paragraph 36 at 900px, 38 at 380px). The sheets declare nothing;
+   file-view-place.test.ts pins the absence.
+6. *A sized picture keeps its ratio.* `img` joined the pixel-sized media rule of Slice 1's build note 5:
+   `:where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) { height: auto; }`, byte-equal in both
+   sheets (fileview-parity.test.ts's head moved with it, file-view-text-size.test.ts's declaration pin too). Before,
+   `<img width="900" height="300">` laid out 344 by 300 in a 380px pane (ratio 1.15) and 860 by 300 under the measure
+   at 900 and 1200px (2.87), the height attribute holding while the cap took the width, so every picture wider than
+   the measure was squashed at every width; now 344 by 115 and 860 by 287. Not `height: auto` on `.fileview-md img`:
+   that grew `<img width="100%" height="30">` from 30 to 115 and 287px and a height-only badge from 300 by 100 to the
+   full column, the two guard cases the svg and video rule met in Slice 1. A picture whose attributes lie about its
+   bytes (300 by 300 declared over a 900 by 300 file) follows the bytes (300 by 100), as an attribute-less picture
+   does and as GitHub shows it. md-sanitize-wide-media-browser.test.ts lays the three picture shapes, the two guards
+   and the lying attributes out at 900 and 380px, after every picture has decoded.
+7. *The note bar above the body row.* noteBar prepended `#fileview-save-err` into `.fileview-body`, so it scrolled
+   away with the text (at scrollTop 400 it sat 400px above the body's top), went with every body.replaceChildren (a
+   view switch, a reload), and the "past the end" notice scrollToLine raises was never seen: the landing scrolled the
+   last row into view after the notice was prepended, leaving it 6732px above the body's top. The bar is now a child
+   of the card between the title bar and `.fileview-main` (`box.insertBefore(bar2, main)`; `.fileview > .fileview-err
+   { flex: 0 0 auto; }` in both sheets, in the parity list), in openFileView and, through the same noteBar, the
+   fallback editor's notice, which built its own bar before. It shows at any scroll position and outlives every swap;
+   the editor's entry and exit remove it themselves (enterEdit, exitEdit), which the body swap did for them before: a
+   refusal since lifted goes as the editor takes the body, and the edit's notices go with the editor, with the
+   comments-log warning raised again after the exit as before (noteLog). file-view-notebar-browser.test.ts drives the
+   past-the-end notice and the Edit refusal in the pane and the chat modal: above the row, in the card, on screen at
+   the landing and at scrollTop 400 and 1500, and still there after the Rendered and Raw swaps and a reload. The pins
+   that read the notice under the body moved to the card: styles-fileview-err-sizes, file-edit, file-view-seam,
+   file-view-edit-races, file-view-undo-landed and -ack, file-view-edit-events, file-view-tracked-edit,
+   file-view-links-browser (its stand-in bar mounts where the bar does), md-url-view.
+8. *The Comment float hides on the body's scroll.* file-comments.ts hideFloatOnScroll, installed in the panel's
+   constructor with the float's other listeners (a passive scroll listener on the viewer's body, removed at dispose),
+   not in installLayout, which runs for the margin layout alone. The margin lock's own write of the body's scrollTop
+   (a wheel over the cards track, mirrored) fires the same event and hides the float too: the passage has moved under
+   the reader just the same; the leg states it. The selection stands, and the next mouseup offers the button again.
+   file-comments-float-scroll-browser.test.ts, over the real panel, in the list layout (380px) and the margin layout
+   (900px), and the track's mirrored scroll. Two things the leg met in Chromium and works around, neither the
+   viewer's: a selection drag that starts on the body's top line autoscrolls the body, and a mousedown on selected
+   text starts a drag of that text, not a selection.
+9. *The container-type cleanup.* `.fileview-main` no longer declares `container-type: inline-size`, in both sheets:
+   the card declares it (item 1), and a query styles a container's descendants, never the container. The aside's rule
+   inside the query resolved against the row before and resolves against the card now; the row is the card less its
+   1px borders in the modals, so the two rules of the fold could disagree in a 2px band of card widths (681 and 682px:
+   the row not stacked, the aside at 45% of it) and now cannot. file-view-fold-browser.test.ts replaces the CSS-text
+   match at file-comments.test.ts:879 (the plan's :854): the Files pane and the chat modal at 380, 640 and 900px with
+   the real panel open, the row a column and the body and aside the row's whole width with the aside below at the two
+   narrow widths, two columns at 900, the card `inline-size` and the row `normal`. Before the cleanup the row's
+   `container-type` read `inline-size` and nothing else in the leg differed.
+10. *Tests and infrastructure.* The four new legs share one test-only page module, `ui/webview/real-viewer-leg.ts`
+    (the viewer bundled from the tree, a fetch answering the file route from an editable table, a poster answering the
+    panel's status ask so the real aside opens on a click, a probe action counting the seam's paints), instead of four
+    copies of the same eighty lines; ROMP_LEG_UI points it at another ui/webview, which is how each leg was run over a
+    copy of the base commit's sources and shown red there (place 4 of 4 scenes, note bar 2 of 2, float 2 of 2, fold on
+    the row's container-type). The legs await frames and paint counts, never a timer. docs/guide.md's Files section
+    gained the sentences for each rule.
+
 ### Slice 3: a document type scale
 
 A GitHub heading scale, h5 and h6 dimmed at 1em, h1 and h2 ruled; a `--font-doc` token (decision 3);
