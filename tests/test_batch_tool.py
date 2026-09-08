@@ -2036,3 +2036,16 @@ class PrTierWorkflow(unittest.TestCase):
         text = self.WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("Fork divergence", text)
         self.assertIn("scripts/batch.py", text)
+
+    def test_the_tier_policy_job_is_gated_to_the_upstream_repository_and_the_header_says_so(self):
+        """The fork's copy of .github/workflows/tier-policy.yml, upstream's second check, carries a
+        job-level `if:` that runs the Tier policy job only on the upstream repository: on the fork the
+        job evaluates nothing and posts no Tier policy verdict, so a batch PR with no tier label is not
+        marked failing. The guard is the fork's one change to upstream's file, and this pin exists so a
+        future fold that takes upstream's workflow whole fails here instead of silently dropping it."""
+        text = (ROOT / ".github" / "workflows" / "tier-policy.yml").read_text(encoding="utf-8")
+        self.assertIn("\njobs:", text, "the jobs block is what this test slices")
+        head, jobs = text.split("\njobs:", 1)
+        self.assertRegex(jobs, r"\n    if: github\.repository == 'romp-on/romp'")
+        self.assertIn("Fork divergence", head)
+        self.assertIn("scripts/batch.py", head)
