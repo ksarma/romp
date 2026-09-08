@@ -326,7 +326,21 @@ to every file you open here. Prose keeps a readable line length that grows with 
 text size, and code blocks keep that width and wrap long lines. A table is as wide as
 its columns need, up to the width of the pane, and scrolls inside its own box beyond
 that; a table inside a quote or a list item stays within the prose width. Pictures
-shrink to fit, so resizing the pane never leaves the page wider than the pane.
+shrink to fit, so resizing the pane never leaves the page wider than the pane, and a
+picture sized in pixels by its `width` and `height` attributes keeps its shape as it
+shrinks; one whose width is a percentage keeps the height it names.
+
+**Your place in the file.** The passage at the top of the view stays where it is when
+the file is read again after a session writes it, when you switch between Rendered and
+Raw, when the pane is resized or the Comments panel opens or closes, and when the text
+size changes. When the viewer cannot tell which passage is at the top, as with an HTML
+block that wraps the markdown after it, it leaves the view where the browser puts it, and
+the passage at the top might change. A notice from the viewer (a line past the end of the
+file, an edit the viewer refuses) sits above the file's text, wherever you have scrolled
+to, and stays through a switch of view and a reload until the next notice replaces it or
+you open the editor. A notice raised while you edit (a save that failed) goes when you
+leave the editor; a warning about the comments log stays when the save that raised it
+closes the editor.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under the
 rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's
@@ -347,7 +361,8 @@ section link scrolls to it. An image map (`<map>`, `usemap`) is dropped, as on G
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
 when the column is narrow the panel drops below the file and lists the cards instead. Select a
-passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the comment
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection (it
+hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the

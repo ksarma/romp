@@ -189,7 +189,7 @@ test('on the Raw fixture, the host places the moved offset on the selected copy 
   assert.ok(host.includes(`"the text moved after the region was drawn, so the region's position"`) && host.includes(`'reload and draw the region again'`), 'a region on an embedded figure: drawn, so draw it again');
   // the panel: the follow runs from a repaint and shifts a passage after the edit's span by the edit's length;
   // Save sends the pair's start; a refusal keeps the note where it was typed
-  assert.ok(panel.includes('ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });'), 'the follow runs when the body is repainted');
+  assert.ok(panel.includes('ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });'), 'the follow runs when the body is repainted');
   assert.ok(/const f = followPassage\(c\.text, c\.range, src\);\s*\n\s*if \(f\.state === "moved"\) \{ c\.range = f\.range; c\.text = src; c\.tied = false; \}/.test(panel), 'retargetComposer moves the pair with its copy');
   const follow = fn(panel, 'followPassage');
   assert.ok(follow.includes('if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }'), 'a passage after the edit shifts by its length, exactly');

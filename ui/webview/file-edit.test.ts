@@ -51,7 +51,8 @@ test("no exit path can silently eat an edited buffer", () => {
 });
 
 test("a conflict keeps the buffer, says why, and Reload asks before discarding", () => {
-  assert.match(VIEW, /body\.prepend\(bar2\);/, "the error bar sits ABOVE the textarea — the buffer survives");
+  assert.match(VIEW, /box\.insertBefore\(bar2, main\);/, "the error bar sits ABOVE the body row that holds the textarea (a child of the card since Slice 2 of plans/markdown-viewer.md), so the buffer survives");
+  assert.doesNotMatch(VIEW, /body\.prepend\(bar2\);/, "never inside the body, where a swap of its children took it");
   assert.match(VIEW, /if \(\/changed on disk\/\.test\(err\)\) \{/);
   assert.match(VIEW, /dirty = false;\s*\/\/ confirmed once — the replace guard must not ask twice/);
 });

@@ -797,6 +797,11 @@ test("the floating Comment button rides the seam's selection hook — before the
   assert.match(SRC, /ctx\.onSelection\(\(sel\) => this\.onSelection\(sel\)\);/);
   assert.match(SRC, /if \(!this\.open \|\| this\.ctx\.mode\(\) === "media" \|\| !sel\.rangeCount\) return;/, "with the panel open, on a text view");
   assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) this\.float\.addEventListener\(ev, \(e\) => e\.preventDefault\(\)\);/, "the click must not collapse the selection it is about");
+  // the float goes when the passage moves from under it, on the body's scroll and on a figure's load (a picture landing
+  // inside the viewport above the passage moves it with no scroll event; the Slice 2 review, round 3): one listener, one
+  // comparison. file-view-place.test.ts pins the comparison; file-view-float-anchoring-browser.test.ts measures both scenes
+  assert.match(SRC, /ctx\.body\(\)\.addEventListener\("load", this\.hideFloatOnScroll, true\);\n\s*ctx\.body\(\)\.addEventListener\("scroll", this\.hideFloatOnScroll, \{ passive: true \}\);/, "the load listener beside the scroll listener (capture: load does not bubble)");
+  assert.match(SRC, /this\.ctx\.body\(\)\.removeEventListener\("load", this\.hideFloatOnScroll, true\);\n\s*this\.ctx\.body\(\)\.removeEventListener\("scroll", this\.hideFloatOnScroll\);/, "both removed at dispose");
   assert.match(SRC, /const res = this\.ctx\.mode\(\) === "rendered" \? mapRenderedSelection\(sel, root, src\) : mapRawSelection\(sel, root, src\);/);
   assert.match(SRC, /else this\.composer = \{ kind: "comment", range: null, quote: null, refusal: \{ \.\.\.res, selText \} \};/, "a refusal opens the composer anyway, note intact");
   const raw = SRC.split("switchToRaw(): void {")[1].split("\n  }\n")[0];
@@ -876,8 +881,9 @@ test("the sheets: the panel block is byte-equal in styles.css and feed.css, toke
   // The byte-equal check above holds the feed page to this too.
   assert.match(body, /\n\.fc-log-row \{ display: flex; gap: 8px; align-items: baseline; \}\n\.fc-log-row > :not\(\.fc-time\) \{ font-size: 0\.86em; \}\n/);
   assert.match(body, /\.fc-time \{[^}]*font-size: 0\.72em;/, "the one time size, card heads and Log rows alike");
-  assert.match(body, /\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/);
-  assert.match(body, /@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/, "the narrow fold: the aside drops below the body");
+  // the narrow fold (the aside below a pane-wide body at 380 and 640px, resolved against the card's container) is laid out
+  // in headless Chromium over the real viewer with the real panel open: file-view-fold-browser.test.ts (Slice 2 of
+  // plans/markdown-viewer.md replaced the CSS-text match that stood here)
   assert.match(body, /\.fc-hl \{ background: color-mix\(in srgb, var\(--warn\) 14%, transparent\); box-shadow: inset 0 0 0 1\.5px/, "a ring, not a fill a diff colour would occlude");
   assert.match(body, /\.fc-toggle\[data-on="1"\] \{ background: var\(--accent\); color: var\(--accent-fg\); border-color: var\(--accent\); \}/);
   // the body stays the plain overflow block the editor's height: 100% relies on

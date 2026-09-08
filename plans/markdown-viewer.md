@@ -480,6 +480,334 @@ Rendered/Raw round trip returns to the same scrollTop; a 3:1 picture with sized 
 survives body scroll. Tests: browser legs replacing the text assertion at
 `file-comments.test.ts:854`.
 
+**The Slice 2 build** (2026-09-08). Branch `mdviewer-s2`, stacked on `mdviewer-s1` (fork PR #390). The gap analysis
+behind it ran every criterion above in headless Chromium over the real viewer at the Slice 1 tip (81cf9a92); the
+numbers below are its and the build's. What earlier changes had already done, where the code as built departs from the
+text, and which test holds each rule:
+
+1. *Already done.* The fold held before this build: fork PR #375 put `container-type: inline-size` on `.fileview`, the
+   viewer's card, and at 380 and 640px `.fileview-main` computed `flex-direction: column` with the body the row's
+   whole width in the Files pane, the chat modal and the feed modal (pane 380: main, body and aside all 380; chat 380:
+   card 361, body 359). The bar's controls sat inside the card at 380px (and 320px) since fork PR #348 made the bar
+   wrap; file-view-text-size.test.ts asserts it at 380, 420, 480 and 600px in both modals. Neither needed code here.
+2. *The reader's place, kept in the file's own terms* (`ui/webview/reader-place.ts`; the text says "the top-visible
+   block's source offset", and that is what it is). Before every paint of a text view readPlace records the
+   top-visible BLOCK, one of the top-level blocks the lexer finds in the file (anchor-map.ts sourceBlockSpans, the
+   same placement the rendered index pairs elements by, so both views name the same blocks; renderedBlockIndex and
+   renderedBlockElements read the Rendered side), and after the paint seatPlace finds the block in the new view and
+   scrolls the body so it sits where the block sat. The place is the block's source span, how far its top edge sits
+   from the body's top, its box's height, whether the body stood at its very top, the spans of the blocks on either
+   side and, when the reader is partway into a block that shows lines, the line at the edge. The rules, each with
+   the test that holds it:
+   - *Reading the top block.* In Rendered the first top-level element whose box ends below the body's top edge,
+     read to its block (an html block of sibling tags is one block, its boxes together); in Raw the block holding
+     the first row that does, or the block after a blank row between two blocks (a blank row inside a fenced code
+     block is the code block's). A binary search over the boxes' bottoms finds it, so a long document costs a
+     handful of box reads per scroll frame; a box with no layout (a `<div hidden>` the sanitizer keeps) is read
+     around rather than taken for one above the edge, and a floated figure that reaches below the paragraphs beside
+     it is passed over for the first of those paragraphs ending below the edge, the one the reader is reading (kept
+     instead, the figure is one row in Raw and moves as the paragraphs beside it grow). An html block of comments
+     alone renders no element and is read past, its comments found by a left-to-right scan: an anchored regex there
+     doubled its time per comment (144 s at thirty, on every Rendered paint) and read a line with a comment at each
+     end as blank though the words between them render, so every block after it paired one element early
+     (file-view-place-comment-blocks.test.ts). The anchor map's cache checks every child of the root by identity,
+     since the Comments panel's regions layer wraps a top-level picture in a span while the panel is open.
+     file-view-place-blocks-browser.test.ts and file-view-place-blocks.test.ts hold the rest; the float rule over the
+     real viewer, file-view-place-float-browser.test.ts (the paragraph beside a floated figure kept across the
+     switch).
+   - *Seating the block.* A block that started below the edge keeps its distance. One the reader was partway into
+     keeps the depth as a fraction of the block's height when the block's text is unchanged or the view changed
+     (line 50 of a 120-line code block stays at the edge across the switch; 400px into a 600px figure, one row in
+     Raw, comes back 400px into it), and in pixels when the write changed the block's text (30px into a paragraph
+     the session appended a sentence to stays 30px in; a block now shorter by any amount moves down by the loss, to
+     the edge at most, so as much of it shows below the edge as showed before). A body at its very top stays at its
+     very top: the views pad 14 and 10px, and the round trip drifted from scrollTop 0 to 4.
+     file-view-place-blocks-browser.test.ts; the pure part, seatedTop, in file-view-place-blocks.test.ts.
+   - *The line at the edge.* When the reader is partway into a block that shows lines (any block in Raw; in Rendered
+     a markdown code block, fenced or indented, whose code element shows the block's lines one for one) the line at
+     the edge is kept as well, as its own source span (the Raw row's, or the code line the browser's hit test finds
+     at the edge) and the top of its first character (the point the seat puts back, so a read and a seat under one
+     layout move nothing; measured at the hit itself, a wrapped code line the reader was partway into shifted by
+     its wrapped rows on the first pane drag, the first character from -20.4 to -2.1px), and followed through the
+     edit when it stands, so line 50 stays line 50 across the switch and after lines inserted above it inside the
+     block or deleted below it. A line the write rewrote, or one whose text recurs so that no copy is its own, is
+     no line to follow, and the block's depth rule applies: lines 48 to 52 rewritten as two put line 47 at the
+     edge, the block moved down by the three rows it lost (the Slice 2 review, over 5c0c737c, whose rule walked to
+     the line after the nearest standing predecessor and seated the replacement's first line: it seated the edit's
+     first line 44 rows up when every line between was a copy, since a rewritten line's neighbours inside the edit
+     cannot place it exactly). An html block's `<pre>` is not a code block here: its lines and the block's are one
+     off (the block's first line is the tag), and it keeps the depth rule, within a line (5c0c737c seated line 11
+     for line 10). Without the rule the block's top edge held and line 45 stood at the edge after
+     five lines inserted above line 50, and the Rendered, Raw, Rendered round trip on line 50 came back within
+     three lines; it is exact now. file-view-place-edits-browser.test.ts; file-view-place-html-browser.test.ts (the
+     `<pre>`, the wrapped line); the pure part in file-view-place-blocks.test.ts (a rewritten row, a block whose
+     lines recur).
+   - *Following the block through a reload.* The span is followed through the edit first (followPassage, the
+     composer's own follow): a block after the inserted text shifts by its length, one before it keeps its offset,
+     and one found whole elsewhere is followed there. A block the write rewrote is placed by the block before it,
+     followed the same way, and the block after that is seated, so a write that inserted twenty paragraphs above
+     and rewrote the paragraph under the reader's eye still lands on what replaced it (the leg's fourth scene; the
+     edit's own start, where a first cut landed, is the first inserted paragraph there); with that block rewritten
+     too, the block after it places the kept block (a session rewriting two paragraphs and adding a preamble); with
+     both neighbours gone as well, the nearest block before it that stands (the old block table walked outward,
+     eight anchor searches per side inside the edit, blocks outside it free), else the nearest after (without the
+     walk, paragraphs 39 to 41 deleted with twenty inserted above fell to the top of the document); only with no
+     block standing on either side is the place where the edit begins. file-view-place.test.ts and
+     file-view-place-blocks.test.ts (followPlace), file-view-place-browser.test.ts and
+     file-view-place-edits-browser.test.ts (the scenes).
+   - *A block deleted under the eye* (nothing but whitespace left between the standing neighbours) seats the block
+     after it as a replacement of no height: at the edge when the deleted block reached below it, at its old
+     distance otherwise. Without the rule the successor sat 30px above the edge, the reader's depth into a block
+     that was gone. file-view-place-blocks.test.ts and file-view-place-edits-browser.test.ts.
+   - *What the place refuses.* Where the reading is unreliable readPlace answers null and seatPlace seats nothing, so
+     the viewer leaves the body's scrollTop alone, as it did before the slice, rather than seating a guess; where the
+     body then lands is the browser's own (its scroll anchoring re-finds an anchor in the new content when it can:
+     pane 900, a swap with the reader at 1969 landed at 2617 with no write of the viewer's; under `overflow-anchor:
+     none` the number stands). One cause, in reading the Rendered view (the Raw rows pair with nothing and are read as
+     they stand): every block but an html block renders as one element, an html block of sibling tags as several, and
+     the anchor map's pairing across one is a resync on the blocks after it, which the map as it stands gets wrong two
+     ways, both Slice 5's flattened walk to take up (the plan's High defect, an unclosed HTML wrapper swallowing later
+     blocks). A block paired to several elements, and an html block paired to one, is trusted only when its own
+     source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text, whitespace
+     apart: the parser the sanitizer read the block with, so entities, inline tags and line breaks decode alike on
+     both sides (one form excepted, refusal (4) below) and nothing is decoded by hand; any other block's one element
+     is trusted without a parse, and an html block is told from the rest by marked's lexer over its own text, the
+     lexer the block table comes from, asked only for a block that opens with `<`, so a paragraph pays no lex and one
+     opening with an inline tag or an autolink is trusted as its own element. (5c0c737c decoded the source itself and
+     looked for the element's text in it: the decoder threw a RangeError on an entity past U+10FFFF, inside the Raw
+     click and the text-size step, so the view stayed and the size was stored unpainted, and it knew six entity names,
+     so a caption hanging on `&mdash;`, a badge over a tagline or a tag holding `<b>` read as swallowed and the switch
+     left the numeric scrollTop, paragraph 28 on top both ways.) Refused, from whichever element is at the edge: (1) a
+     wrapper the browser nests the following markdown into (`<details>` with a blank line after its summary, a centred
+     `<div>`), paired to every element after it, from a swallowed paragraph, the wrapper itself, a picture or a rule
+     in the run (read as the wrapper's block, a Raw switch from paragraph 80 landed on `<summary>`, 3500px up, and
+     from a picture 100px in, 1750px up), and a wrapper whose closing tag is the document's last block, or is missing,
+     paired to its one element, itself, holding every paragraph after it (the Slice 2 review over 66368710, which
+     trusted any one element: a Raw switch from a nested paragraph 60 landed on the `<div align="center">` row with
+     the passage 1395px below the viewport and came back 42px off, and paragraph 60's Raw row switched to Rendered
+     borrowed the wrapper's box and landed on paragraph 43), refused from the wrapper and from a nested paragraph, in
+     both directions; and a Raw row of the wrapper's own switched to Rendered seats nothing (5c0c737c seated the whole
+     run, paragraph 74 at scrollTop 3585 for 360); (2) two html blocks a blank line apart (`<p>Alpha</p>` over
+     `<p>Beta</p>`, a README's centred heading over its tagline), which the map pairs as nothing and both, from either
+     element (5c0c737c read the second as its block and put the Raw view one row off); (3) an html block, one tag or
+     several, holding a tag the sanitizer removes when the removal changes the block's text (a `<script>` or `<style>`
+     inside a tag goes with its text) or its element count (a `<style>`, an `<iframe>` or a form control between two
+     `<p>`s), so the block's source parses to other elements or other text than the sanitizer kept (pane 900,
+     `<div>Caption text <script>alert(1)</script> after.</div>` after paragraph 40: no write, the browser's landing on
+     paragraph 36 at -51, back +201.5 for -2.5; a `<label>` inside a tag, its text kept, or an `<iframe>` inside one,
+     no text, is trusted: Raw on the tag's own row, back -2.5); (4) a hex character reference with no digits (`&#x;`,
+     `&#X;`), which Chromium decodes to U+FFFD when its fast-path parser reads a short string of simple tags (the
+     block's source alone, as DOMParser sees it) and keeps as the literal when its full parser reads it, which the
+     sanitizer's whole-document parse is whenever the note holds a heading, a code block, emphasis or a picture, so
+     the two sides disagree on that one form in nearly every note (the same numbers as (3); `&mdash;` in the same
+     shape seats); every other entity form, valid or not, decodes alike on both sides. (3) and (4) are malformed
+     input, measured by the review's probe over the real viewer and recorded here rather than pinned; the body's
+     landing is the browser's own. The edits leg lands after the wrapper both ways (its first scene can be tightened
+     to exact once the map pairs the wrapper to its own element); file-view-place-html-browser.test.ts pins (1) and
+     (2) as no scrollTop written by the viewer across the switch (a setter trap on the body), and the accepted shapes
+     (inline tags, a line break, the README pair, named entities, an entity with no semicolon or past U+10FFFF) as the
+     tag's own Raw row and the return to the tag; file-view-place-wrapper-end-browser.test.ts pins the centred div
+     closed last, the same div never closed and `<details open>` closed at the end as no scrollTop written either way,
+     and the one-tag html block, the paragraph opening with an inline tag and the one opening with an autolink as
+     their own Raw row and the return within 1.5px; file-view-place-blocks.test.ts the same over the stand-in, its
+     DOMParser built on the same parser, and codeOf's html `<pre>` exclusion (null; a fenced block skip 1, an indented
+     block skip 0).
+   - *Where it runs.* renderBody reads the place against the text the body was PAINTED from (`shownText`: a reload
+     has put the new bytes in `text` before the swap), swaps, runs the seam's hooks, then seats, the order the #348
+     selection keeper set (hooks first, then the restore), so the panel's paint pass has run before the body moves
+     and the margin lock hears one scroll event. The seam's reload and setMode, the Rendered and Raw buttons and
+     openUrlView's own renderBody all go through it, and so does the SVG Source view's paint: the highlighted XML
+     is a text view, so it reads, swaps, runs the hooks, records the XML as the text painted and seats, and the
+     media paint after it records no text (the Slice 2 review, over 5c0c737c: a reload under the Source view left the
+     numeric scrollTop over forty new rows, row 173 at the edge for row 200, and the Comments panel's close moved
+     the top row by a row). file-view-place.test.ts pins the order in file-view.ts, file-view-place-svg-source.test.ts
+     the Source view's; md-url-view.test.ts pins it in openUrlView's renderBody, the seat between the paint and the
+     fragment landing; file-view-place-svg-source-browser.test.ts measures the Source view's reload and toggle.
+   - *What a paint costs.* The seat reads the anchor map's block table, so every paint of a text view builds the
+     rendered index for the new root, panel or no panel; at 5,000 paragraphs (a 1.2 MB note) a fresh root cost 147 ms
+     (the lex 48, the walk over the tokens about 70, the pairing of blocks to elements about 22) and the Raw rows 35,
+     so the Rendered click reached its frame about 155 ms after the base's, at pane 900 and 380 alike (the Raw click
+     within noise; the scroll frames unchanged, the per-frame read being a cache hit). The source half of the index
+     (the normalized text, the placed tokens, the block table and each block's walk) is kept for the last source
+     (anchor-map.ts sourceTable, one entry keyed on the text), so a fresh root over unchanged text (a view switch, a
+     reload of the same bytes) pays the pairing alone, 22 ms, and the Rendered click reaches its frame 20 to 40 ms
+     after the base's (pane 900: base 574 to 586 ms, before the cache 730 to 744, after it 594 to 602; pane 380: 577
+     to 586, 722 to 748, 622 to 626; medians of seven clicks, interleaved runs), and a reload of the same bytes under
+     Rendered paints within 30 ms of the base's (565 and 558 ms for 561 and 532; before the cache 679 to 726; the Raw
+     reload's 35 ms row check stands, being the rows' own). The first paint of new text (an open, a reload after a
+     write) still lexes and walks it, once: 93 ms for the root over a 43 ms block table, where the table and the index
+     each lexed before. The walk waits for the first Rendered root, so a Raw view (any non-markdown file, whose text
+     the block table lexes as markdown once) pays the lex alone, as before.
+     file-view-place-source-cache.test.ts counts one Lexer.lex across the block table and three roots over one source
+     (four before the cache) and pins the pairing as each root's own: a root whose text mismatches the file refuses
+     its block and a fresh root over the same source maps it still.
+   - *Numbers.* The same at 380 and 900px: a reload inserting twenty paragraphs above paragraph 40 kept it at the
+     top (before: paragraph 28 at 900px, 29 at 380px), in the Raw view too and with the aside open (the margin
+     layout); the Rendered, Raw, Rendered round trip came back to paragraph 40 at the same height, pane 900
+     scrollTop 1918, 2854, 1918 (before: 1918, 2566, 2566 with paragraph 53 on top), pane 380 5163, 5662, 5163
+     (before: paragraph 45), chat 900 2729, 2854, 2729 (before: paragraph 53). file-view-place-browser.test.ts
+     measures each over the real module and the real panel; file-view-place.test.ts runs the pure parts (the
+     search, the follow, the block table's reads and the Raw span over the anchor-map suite's DOM stand-in).
+
+3. *The round trip returns to the passage, not the scrollTop.* The text asks for the same scrollTop; the Raw view is
+   the taller of the two (monospace rows, a row per blank line), so one scrollTop is two passages. The leg asserts the
+   passage at the same height, the Raw scrollTop larger than the Rendered one, and the Rendered scrollTop back on the
+   return (the numbers in item 2).
+4. *The width reflow and a text-size step keep the place too* (beyond the text, which names the swap alone). The
+   panel's toggle moved the reader through the width alone: at 900px closing the aside took the body from 560 to 900px
+   wide, the scrollHeight from 9138 to 4860, and with the scrollTop kept at 3541 the top block from paragraph 40 to
+   73; a pane drag does the same. The ResizeObserver repaint (file-view.ts) now seats the place after
+   fireRenderedKeepingSelection. It cannot read the place itself: the observer reports after the layout has changed,
+   so the place is read again off the body's scroll event, once per animation frame, and the repaint seats the place
+   read before the width moved. A scroll event under a body width the last read did not see is the browser's own,
+   its anchoring adjustment or its clamp, and is skipped: read as the place, it already stands in the new layout, so
+   the repaint's seat moved nothing and the depth into the top block held in pixels on the aside's open, while the
+   close, whose padding write suppresses the anchoring, applied the fraction, so each toggle halved the depth and a
+   picture the reader was two thirds into went wholly above the edge (the Slice 2 review); skipped, the repaint seats
+   the pre-reflow place and the fraction holds both ways and across a pane drag. One scroll in that window is made on
+   purpose and must not be undone: the panel's reveal mounts the aside and centers the mark in one task, and the
+   repaint used to seat the pre-click place over it. The viewer sees that width change made: the seam's aside hook,
+   the one place a toggle changes the width, reads the body's scrollTop after the mount (the new width laid out, the
+   browser's adjustment in it) and keeps the number; a scroll under the new width reporting that number is the
+   adjustment the hook saw and is skipped, one reporting another number is the reveal's or the reader's and is read,
+   unless it is the clamp (the body at its end, reached from above it, which nothing does on purpose). Under a width
+   change no hook saw (a pane drag, the window resized) nothing scrolls on purpose in the same task, and every scroll
+   before the repaint is skipped. An earlier rule told the anchoring by a signature, the kept block's top edge within
+   a pixel of where it stood, which holds for a paragraph, a picture or a code block and not for a table, a list or a
+   blockquote, where the browser anchors on a row, an item or an inner paragraph and the content above it inside the
+   block rewraps: a 40-row table walked two rows up per toggle (0.4, 0.35, 0.298, 0.243 of its height), a 40-item
+   list 0.4 to 0.422, a 12-paragraph blockquote 0.4 to 0.412, and a drag held the table's pixels (0.35 at 600px)
+   where a paragraph held the fraction. The hook's number is exact whatever the browser anchored on, at one layout
+   per toggle, which the panel's own measurements force in the same task anyway. A text-size step reads the place
+   before applyTextSize and seats after the hooks. file-view-place-reveal-browser.test.ts drives the reveal (pane
+   900, chat 1000), a width change no hook saw (a script's scroll to paragraph 70 as the page narrows: paragraph 40,
+   the place read before, is seated) and the clamp on the aside's close. file-view-place-browser.test.ts: paragraph
+   40 stays the top block as the aside opens (body 900 to 560), closes (back to 900, scrollTop 1918 again), the
+   viewport goes to 600 and back, and after A+; a place the reader scrolled to after one reflow is the one the next
+   reflow keeps; a reader 80px into paragraph 44 keeps the fraction across three toggles, a viewport drag both ways
+   (600, 900, 600, 900) and two thirds into a sized picture (the fifth scene; red before the fix at the first open,
+   -39.7 against -79.7); and 0.4 into the table, the list and the blockquote across three toggles and a drag (the
+   sixth scene; red before this rule at the first open, 0.35 of the table's height).
+
+5. *No `overflow-anchor: none`.* The text asks for it. The gap analysis showed the base behaviour was never
+   anchoring's doing: the swap removes the anchor node and Chromium keeps the numeric scrollTop with `auto` and `none`
+   alike (1918 to 1918 either way), and after a restore anchoring helps: a 200px growth above the kept block (a figure
+   landing late) left the block in place under `auto` (scrollTop 2471 to 2671, the block at the same height) and
+   pushed it down under `none` (the top block became paragraph 36 at 900px, 38 at 380px). Not every swap: where the
+   anchoring can re-find an anchor in the new content it moves the body with it (the Slice 2 review, over 5c0c737c: a
+   swap the viewer left alone with the reader 3px into an html block, 1969 to 2617, no write of the viewer's, the
+   number standing under `none`), which is why the refusals of item 2 are pinned as no write, not as a number. The
+   sheets declare nothing; file-view-place.test.ts pins the absence.
+6. *A sized picture keeps its ratio.* `img` joined the pixel-sized media rule of Slice 1's build note 5:
+   `:where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) { height: auto; }`, byte-equal in both
+   sheets (fileview-parity.test.ts's head moved with it, file-view-text-size.test.ts's declaration pin too). Before,
+   `<img width="900" height="300">` laid out 344 by 300 in a 380px pane (ratio 1.15) and 860 by 300 under the measure
+   at 900 and 1200px (2.87), the height attribute holding while the cap took the width, so every picture wider than
+   the measure was squashed at every width; now 344 by 115 and 860 by 287. Not `height: auto` on `.fileview-md img`:
+   that grew `<img width="100%" height="30">` from 30 to 115 and 287px and a height-only badge from 300 by 100 to the
+   full column, the two guard cases the svg and video rule met in Slice 1. A picture whose attributes lie about its
+   bytes (300 by 300 declared over a 900 by 300 file) follows the bytes (300 by 100), as an attribute-less picture
+   does and as GitHub shows it. md-sanitize-wide-media-browser.test.ts lays the three picture shapes, the two guards
+   and the lying attributes out at 900 and 380px, after every picture has decoded.
+   file-comments-regions-browser.test.ts carries the rule too and lays the README shape (600 by 400 at the picture's
+   ratio) and a height-only picture the guard leaves stretched (600 by 800) out with the region layer over them, the
+   overlay the element in both (it had pinned the 600 by 800 element for the README shape, which the sheet no longer
+   produces).
+7. *The note bar above the body row.* noteBar prepended `#fileview-save-err` into `.fileview-body`, so it scrolled
+   away with the text (at scrollTop 400 it sat 400px above the body's top), went with every body.replaceChildren (a
+   view switch, a reload), and the "past the end" notice scrollToLine raises was never seen: the landing scrolled the
+   last row into view after the notice was prepended, leaving it 6732px above the body's top. The bar is now a child
+   of the card between the title bar and `.fileview-main` (`box.insertBefore(bar2, main)`; `.fileview > .fileview-err
+   { flex: 0 0 auto; }` in both sheets, in the parity list), in openFileView and, through the same noteBar, the
+   fallback editor's notice, which built its own bar before. It shows at any scroll position and outlives every swap;
+   the editor's entry and exit remove it themselves (enterEdit, exitEdit), which the body swap did for them before: a
+   refusal since lifted goes as the editor takes the body, and the edit's notices go with the editor, with the
+   comments-log warning raised again after the exit as before (noteLog). file-view-notebar-browser.test.ts drives both
+   notices in the pane and in the chat modal: the past-the-end notice above the row, in the card and on screen at the
+   landing and at scrollTop 400, still there after the Rendered and Raw swaps; the Edit refusal above the row at
+   scrollTop 1500 with the body unmoved, a second notice replacing the first, and still there after a reload. The pins
+   that read the notice under the body moved to the card: styles-fileview-err-sizes, file-edit, file-view-seam,
+   file-view-edit-races, file-view-undo-landed and -ack, file-view-edit-events, file-view-tracked-edit,
+   file-view-links-browser (its stand-in bar mounts where the bar does).
+8. *The Comment float hides on the body's scroll.* file-comments.ts hideFloatOnScroll, installed in the panel's
+   constructor with the float's other listeners (a passive scroll listener on the viewer's body, removed at dispose),
+   not among installLayout's scroll listeners: those feed the margin lock's mirrorScroll, which returns early unless
+   the aside is open in the margin layout, and the float must hide in every layout (installLayout itself runs from the
+   same constructor for every layout). The margin lock's own write of the body's scrollTop (a wheel over the cards
+   track, mirrored) fires the same event and hides the float too: the passage has moved under the reader just the
+   same; the leg states it. The selection stands, and the next mouseup offers the button again. One body scroll moves
+   nothing on screen: when an unsized figure above the viewport lands its bytes, Chromium's anchoring grows scrollTop
+   by its height so the text stays put and fires a scroll event for the write; the Slice 2 review found the float
+   hidden on it, the selection within a pixel of where it was, so the listener now compares the subject's rect
+   (the live selection's last range, or the picture's box) with the one the button was offered beside (showFloat
+   records floatAt; hideFloat clears it with the float) and keeps the float while the passage sits within a pixel of
+   it. The same figure landing inside the viewport, above the passage, moves the passage down by its height with no
+   scroll event at all (anchoring adjusts for growth above its anchor node alone), so the listener runs on a figure's
+   load too, heard on the body in the capture phase since load does not bubble, and the same comparison hides the
+   float (the Slice 2 review, over 5c0c737c: the button stood some 300px above the passage it was offered beside,
+   pane 335px and chat 304px, and a click on it commented on text the reader could not see under it; not a regression,
+   the base does the same). file-view-float-anchoring-browser.test.ts holds the picture's request until the float is
+   up and then releases it: the first scene with the picture above the viewport (pane 900 at paragraphs 3 and 30, chat
+   900; red over ebdc57b5), the second with it inside the viewport above the selection (pane and chat 900; red over
+   5c0c737c); file-comments.test.ts pins the listener beside the scroll one and its removal.
+   file-comments-float-scroll-browser.test.ts, over the real panel, in the list layout (380px) and the margin layout
+   (900px), and the track's mirrored scroll. Two things the leg met in Chromium and works around, neither the
+   viewer's: a selection drag that starts on the body's top line autoscrolls the body, and a mousedown on selected
+   text starts a drag of that text, not a selection.
+9. *The container-type cleanup.* `.fileview-main` no longer declares `container-type: inline-size`, in both sheets:
+   the card declares it (item 1), and a query styles a container's descendants, never the container. The aside's rule
+   inside the query resolved against the row before and resolves against the card now, and it reads the same number
+   either way: a size query measures its container's CONTENT box, and the row is exactly that box (the card's 1px
+   borders in the modals lie outside it, neither the card nor the row has padding, and the pane strips the border), so
+   the fold's two rules always flipped together, in the chat and feed modals between viewports 717 and 718 (card
+   681.14 then 682.09px wide, row 679.14 then 680.09, the query `max-width: 680px`). The declaration was redundant,
+   not a defect, and its removal changes no layout number. An earlier draft of this note named a 2px band of card
+   widths (681 and 682px) where the row stayed unstacked while the aside took 45% of it; the review's probe over the
+   base commit's sources with the real panel open (chat and feed at 380, 640, 700, 714 to 720 and 900px; the pane at
+   380, 640, 679 to 683 and 900) found the two rules agreeing in every cell, on the base tree and on this one, so
+   there was no such band. Which box the aside's rule read was the only thing the cleanup changed.
+   file-view-fold-browser.test.ts replaces the CSS-text match at file-comments.test.ts:879 (the plan's :854): the
+   Files pane and the chat modal at 380, 640 and 900px with the real panel open, the row a column and the body and
+   aside the row's whole width with the aside below at the two narrow widths, two columns at 900, the card
+   `inline-size` and the row `normal`. Before the cleanup the row's `container-type` read `inline-size` and nothing
+   else in the leg differed.
+10. *Tests and infrastructure.* The thirteen legs (file-view-place-browser, file-view-notebar-browser,
+    file-comments-float-scroll-browser, file-view-fold-browser, and the review's file-view-place-blocks-browser,
+    file-view-place-reveal-browser, file-view-place-edits-browser, file-view-float-anchoring-browser,
+    file-view-leg-page-browser, file-view-place-float-browser, file-view-place-html-browser,
+    file-view-place-svg-source-browser and file-view-place-wrapper-end-browser) share one test-only page module,
+    `ui/webview/real-viewer-leg.ts` (the viewer bundled from the tree, a fetch answering the file route from an
+    editable table, an .svg served as an image with the kernel's Content-Type, a poster answering the panel's status
+    ask so the real aside opens on a click, a probe action counting the seam's paints), instead of thirteen copies of
+    the same eighty lines; a leg runs over another tree from that tree's vscode-extension (the cwd names the tree, as
+    for every browser leg), which is how each leg was run over a copy of the base commit's sources and shown red there
+    (place 4 of 4 scenes, note bar 2 of 2, float 2 of 2, fold on the row's container-type; the review's blocks leg 6
+    of 7 and reveal leg 1 of 2 over the same copy: its two green scenes, the scrollTop 0 round trip and the reveal
+    left centered by the width reflow's repaint, pin regressions of the build's own mechanism that the review fixed,
+    not defects of the base, which keeps the numeric scrollTop, so 0 stays 0, and has no reflow seat to undo the
+    reveal; over the build's own tree, 63a8c4e4, the legs are 0 of 7 and 0 of 2; the review's later legs over the
+    tree after its first fixes, ebdc57b5: edits 0 of 4, float anchoring 0 of 1, the place leg's fifth scene red at
+    the first open, the leg page 0 of 2; over the tree after its second fixes, 5c0c737c: the html leg 0 of 6, the
+    SVG Source leg 0 of 2, the float anchoring leg's second scene, the place leg's sixth scene and the reveal leg's
+    second test red, and the floated-figure leg 0 of 1 over that tree with topVisibleIndex's pass-over removed,
+    where the Raw switch lands on the `<img` row at scrollTop 338 for 464 and a reload drops the passage 40px; over
+    the base the same leg's Raw assertion is red too, the numeric scrollTop showing paragraph 4 in the pane and the
+    `<img` row in the chat; over the tree after its third fixes, 66368710: the wrapper-end leg 1 of 3, the Raw switch
+    from the nested paragraph writing scrollTop 2934.6 on the div closed last and the reverse switch 2073, the
+    controls green; and the html leg's wrapped-line scene, which since the fourth round runs its two pane drags twice,
+    with the browser's scroll anchoring on and then off, is red over the base on the anchoring-off pass alone, the
+    character at -2502 for -20.4 with no write, since with anchoring on Chromium holds the character within 0.2px and
+    the seat's delta falls under its half-pixel threshold, so that pass pins the point the seat computes and the other
+    the seat's presence). The page writes
+    every value it inlines into its script with `<` as `\u003c` (scriptLiteral), since an HTML tokenizer ends script
+    data at the first `</script` whatever the JavaScript around it: a fixture holding one cut the harness script off
+    before the fetch stub, and the viewer fetched the harness page itself as the note
+    (file-view-leg-page-browser.test.ts, 2 tests). No environment variable redirects the tree: one did, and a value
+    left in a shell would have run the legs over another tree than the rest of the suite with nothing in the output
+    saying so (file-view-leg-tree.test.ts pins its absence). The legs await frames and paint counts, never a timer.
+    docs/guide.md's Files section gained the sentences for each rule.
+
+
 ### Slice 3: a document type scale
 
 A GitHub heading scale, h5 and h6 dimmed at 1em, h1 and h2 ruled; a `--font-doc` token (decision 3);

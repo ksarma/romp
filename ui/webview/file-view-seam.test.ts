@@ -405,7 +405,13 @@ const saveRefused = async (reqId: number, code: string, error: string) => {
 };
 const fileSaved = (reqId: number, extra: Record<string, unknown>) =>
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileSaved", reqId, path: REPORT, mtimeNs: "1757145600000000009", ...extra } }));
-const errBar = (body: El) => body.querySelector(".fileview-err");
+// the viewer's notice bar (file-view.ts noteBar, #fileview-save-err) is a child of the card before .fileview-main since
+// Slice 2 of plans/markdown-viewer.md, so it is read from the card: the card's first .fileview-err is the bar when one is
+// up, else a pane inside the body (a fetch failure's), the set the body-scoped read used to answer
+const cardOf = (body: El) => body.parentNode!.parentNode as El;
+const errBar = (body: El) => cardOf(body).querySelector(".fileview-err");
+/** The bar stands right above the body row (the read view, or the editor, stands untouched under it). */
+const aboveRow = (body: El) => { const main = body.parentNode!, box = cardOf(body), bar = errBar(body); return !!bar && box.childNodes.indexOf(bar) === box.childNodes.indexOf(main) - 1; };
 
 test("the discard ask on both hosts: on the web a confirm asks about the editor's buffer, then about an action's draft registered through guardClose, and a no keeps everything; in the VS Code webview, where confirm shows nothing, nothing is asked, the thing is kept, the notice bar says so and what clears it, and every exit (Cancel, close, a replace-open) is vetoed the same way", async (t) => {
   const o = await open(REPORT, t);
@@ -771,7 +777,7 @@ test("setEditBlocked through the seam: Edit refuses in words, in place, and open
   b.edit.click();
   await settle();
   const bar = errBar(body);
-  assert.ok(bar, "the refusal is a note bar in the body");
+  assert.ok(bar, "the refusal is the viewer's notice bar");
   assert.equal(bar!.textContent, reason);
   assert.equal(bar!.id, "fileview-save-err", "one notice at a time — the save-error slot");
   assert.equal(b.save.hidden, true, "no edit mode");
@@ -804,7 +810,7 @@ test("fileSaved: onSaved hears mtimeNs and logged; a reply carrying logWarning p
   const bar = errBar(body);
   assert.ok(bar, "the comments-log warning is shown — a silent Log without its entry is the failure mode this closes");
   assert.equal(bar!.textContent, WARN, "the kernel's own words, unreworded");
-  assert.equal(body.childNodes[0], bar, "above the body, where a save failure would sit");
+  assert.ok(aboveRow(body), "above the body row, where a save failure would sit");
   assert.ok(body.querySelector("code.hljs"), "…and the saved bytes are painted under it: the save landed");
   // a read-back failure (logged: true, still a warning) is shown the same way
   await enterEdit(o);
@@ -832,10 +838,10 @@ test("in-flight typing: a fileSaved with logWarning keeps edit mode and the newe
   assert.equal(ed.destroyed, 0, "the editor and its newer keystrokes survive the ack");
   assert.equal(ctx.text(), v2 + "typed while saving", "text() is the BUFFER while the editor is up (Slice 5), newer keystrokes included");
   assert.equal(ctx.editing(), true);
-  assert.equal(body.childNodes.length, 2, "the note bar and the editor host, nothing else");
-  assert.equal((body.childNodes[0] as El).className, "fileview-err");
-  assert.equal(body.childNodes[0].textContent, WARN);
-  assert.equal((body.childNodes[1] as El).className, "fileview-cm");
+  assert.equal(body.childNodes.length, 1, "the editor host, nothing else, in the body");
+  assert.ok(aboveRow(body), "the note bar above the body row");
+  assert.equal(errBar(body)!.textContent, WARN);
+  assert.equal((body.childNodes[0] as El).className, "fileview-cm");
 });
 
 test("onSelection fires on mouseup inside the body ahead of the quote-chip gate; reload re-fetches; onClose drains on a replace-open and on close; post rides the pane's poster", async (t) => {
@@ -1110,7 +1116,7 @@ test("a store-moved refusal: the panel re-reads status and retries once when the
   assert.equal(b.save.hidden, false); assert.equal(b.save.disabled, false); assert.equal(b.save.textContent, "Save", "re-armed");
   assert.equal(ed.destroyed, 0, "the buffer survives");
   assert.equal(ed.buf, v2);
-  assert.equal(body.childNodes[1], body.querySelector(".fileview-cm"), "the editor host is still the body, under the bar");
+  assert.equal(body.childNodes[0], body.querySelector(".fileview-cm"), "the editor host is still the body, under the bar"); assert.ok(aboveRow(body), "the bar above the row");
   // Reload: asks (dirty), then re-opens the same file fresh — the buffer goes only on that click
   let asked = 0;
   win.confirm = () => { asked++; return false; };
@@ -1171,7 +1177,7 @@ test("an older editor bundle (a mount that ignores `track`): Edit refuses with t
   b.edit.click();
   await settle();
   const bar = errBar(body);
-  assert.ok(bar, "the refusal is in the body");
+  assert.ok(bar, "the refusal is in the viewer's notice bar");
   assert.equal(bar!.textContent, "2 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 2 changes first; the session's own track-edit still works.");
   assert.equal(b.save.hidden, true, "no edit mode");
   assert.equal(ed.mounted, 1); assert.equal(ed.destroyed, 1, "the untracked editor the bundle built was torn down at once");
