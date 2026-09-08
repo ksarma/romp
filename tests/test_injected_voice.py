@@ -879,19 +879,35 @@ class PinnedNoteToolDescriptionsKeepTheVeil(unittest.TestCase):
             canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES}
             results["pin: pinned"] = pm._mcp_call("pin_note", {"text": "Read docs/plan.md before replying"})[0]
             results["pin: no text"] = pm._mcp_call("pin_note", {"text": "  "})[0]
+            results["pin: too long"] = pm._mcp_call("pin_note", {"text": "x" * 301})[0]
+            results["pin: detail too long"] = pm._mcp_call("pin_note", {"text": "x", "detail": "y" * 4001})[0]
+            canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES,
+                             "dropped": [{"id": "pn-00000000", "text": "the first note"}]}
+            results["pin: made room"] = pm._mcp_call("pin_note", {"text": "the ninth"})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["pin: couldn't pin"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
             results["unpin: unreachable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
             results["unpin: no id"] = pm._mcp_call("unpin_note", {})[0]
-            canned["res"] = {"ok": True, "notes": []}
+            canned["res"] = {"ok": True, "state": "unpinned", "notes": []}
             results["unpin: unpinned"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
-            canned["res"] = {"ok": False, "error": "no pinned note of yours with that id", "notes": self.NOTES[:1]}
+            canned["res"] = {"ok": False, "state": "unknown", "error": "no pinned note of yours with that id", "notes": self.NOTES[:1]}
             results["unpin: nothing changed"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": False, "error": "already unpinned", "notes": []}
+            results["unpin: already"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": True, "error": "already unpinned", "notes": []}
+            results["unpin: already, dropped"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["unpin: unreadable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "error": "no pinned note of yours with that id", "notes": []}
+            results["unpin: older kernel"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
         finally:
             pm._kernel_post, pm._self_identity, pm._heartbeat = saved
         self.assertIn("Pinned (id pn-0badcafe)", results["pin: pinned"])
         self.assertIn("Unpinned", results["unpin: unpinned"])
         self.assertIn("Nothing changed", results["unpin: nothing changed"])
+        self.assertIn("Already unpinned", results["unpin: already"])
+        self.assertIn("came down", results["pin: made room"])
+        self.assertIn("not readable", results["unpin: unreadable"])
         self.assertIn("NOT see it", results["pin: couldn't pin"])
         for name, text in results.items():
             for word, why in ROMP_WORDS:

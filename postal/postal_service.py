@@ -3187,10 +3187,10 @@ MCP_TOOLS = [
     # session, which is where the person reads it. Not governed by the user-todos switch: a pinned
     # note asks nothing of the person, it only tells them what to read first.
     {"name": "pin_note",
-     "description": "Pin a short note above this conversation for the person you work for: what they should see first whenever they open it (where things stand, a warning, a summary). Give one short line; add detail only if the line can't carry it. Returns an id and what is pinned now. Unpin it (unpin_note) when it no longer applies. At most eight stay pinned; past that the oldest goes.",
+     "description": "Pin a short note above this conversation for the person you work for: what they should see first whenever they open it (where things stand, a warning, a summary). Give one short line (at most 300 characters); add detail (at most 4000) only if the line can't carry it. Returns an id and what is pinned now. Unpin it (unpin_note) when it no longer applies. At most eight stay pinned; past that the oldest goes, and the answer names it.",
      "inputSchema": {"type": "object",
-                     "properties": {"text": {"type": "string", "description": "one short line; a file path or a pull-request number in it becomes a link the person can open"},
-                                    "detail": {"type": "string", "description": "optional longer text, read when the person opens the note; paths and pull-request numbers link the same way"}},
+                     "properties": {"text": {"type": "string", "description": "one short line, at most 300 characters; a file path or a pull-request number in it becomes a link the person can open"},
+                                    "detail": {"type": "string", "description": "optional longer text, at most 4000 characters, read when the person opens the note; paths and pull-request numbers link the same way"}},
                      "required": ["text"]}},
     {"name": "unpin_note",
      "description": "Take down a note you pinned above this conversation (by id) once it no longer applies, so the person you work for is not reading a stale one.",
@@ -3217,10 +3217,19 @@ USER_TODOS_OFF_WITHDRAW = ("User todos are turned off on this machine, so there 
                            "Nothing changed.")
 
 
+# The kernel's bounds on one note (kernel PINNED_TEXT_MAX / PINNED_DETAIL_MAX; a test pins the two copies
+# equal): checked here first so an over-long pin gets a plain answer naming the bound, not the kernel's
+# 400 folded into "couldn't pin that" and a retry of the same text.
+PIN_TEXT_MAX = 300
+PIN_DETAIL_MAX = 4000
+
+
 def _pinned_notes_words(notes):
     """The 'pinned now' account both pinned-note tools end with: the kernel's list after the change,
     oldest first, one line per note with its id, so the agent can see what the person sees and unpin by
-    id without asking. A kernel that sent no list (an older one) gets no account, never an invented one."""
+    id without asking. A note's text keeps its newlines in the store; here each note is ONE line, so a
+    run of whitespace reads as one space. A kernel that sent no list (an older one) gets no account,
+    never an invented one."""
     if not isinstance(notes, list):
         return ""
     if not notes:
@@ -3228,7 +3237,20 @@ def _pinned_notes_words(notes):
     lines = ["Pinned now (%d):" % len(notes)]
     for n in notes:
         if isinstance(n, dict):
-            lines.append("- %s: %s" % (n.get("id") or "?", str(n.get("text") or "").strip()))
+            lines.append("- %s: %s" % (n.get("id") or "?", " ".join(str(n.get("text") or "").split())))
+    return "\n".join(lines)
+
+
+def _pinned_dropped_words(dropped):
+    """The notes a pin evicted (the kernel's `dropped`, usually empty): named, one line each, so the
+    agent hears which note the person no longer sees instead of diffing its own memory of ids. "" when
+    nothing was dropped or an older kernel sent no list."""
+    if not isinstance(dropped, list) or not dropped:
+        return ""
+    lines = ["To stay within eight, the oldest came down:"]
+    for n in dropped:
+        if isinstance(n, dict):
+            lines.append("- %s: %s" % (n.get("id") or "?", " ".join(str(n.get("text") or "").split())))
     return "\n".join(lines)
 
 
@@ -3400,20 +3422,30 @@ def _mcp_call(name, args):
         if not mid:
             return "Not inside a romp session.", True
         text = str(args.get("text") or "").strip()
+        detail = str(args.get("detail") or "").strip()
         if not text:
             return "Need 'text': one short line the person you work for should see first.", True
-        res = _kernel_post("/pinnote", {"id": mid, "text": text,
-                                        "detail": str(args.get("detail") or "").strip()})
+        if len(text) > PIN_TEXT_MAX:
+            return ("Too long: the line takes at most %d characters and this one is %d. Shorten it; the rest "
+                    "can go in 'detail'. Nothing was pinned." % (PIN_TEXT_MAX, len(text))), True
+        if len(detail) > PIN_DETAIL_MAX:
+            return ("Too long: 'detail' takes at most %d characters and this one is %d. Shorten it. Nothing "
+                    "was pinned." % (PIN_DETAIL_MAX, len(detail))), True
+        res = _kernel_post("/pinnote", {"id": mid, "text": text, "detail": detail})
         nid = res.get("noteId") if isinstance(res, dict) else None
         if not nid:
             # LOUD, never a silent drop: a note the agent believes is up, and is not, misleads twice
             return ("Couldn't pin that. The person you work for will NOT see it. Say it in your next "
                     "reply instead, or try again shortly."), True
-        return ("Pinned (id %s). The person you work for sees it above this conversation. Unpin it "
-                "(unpin_note) when it no longer applies.\n%s" % (nid, _pinned_notes_words(res.get("notes")))), False
+        words = ("Pinned (id %s). The person you work for sees it above this conversation. Unpin it "
+                 "(unpin_note) when it no longer applies.\n%s" % (nid, _pinned_notes_words(res.get("notes"))))
+        gone = _pinned_dropped_words(res.get("dropped"))
+        return (words + "\n" + gone if gone else words), False
     if name == "unpin_note":
-        # Take a pinned note down, by id. An id that is not this session's own, unknown, or already
-        # unpinned is a LOUD, plain answer, never a silent success.
+        # Take a pinned note down, by id. The kernel's account (`state`, the withdraw shape) decides the
+        # words: a note of this session's that was already taken down (by the person, or by an earlier
+        # call) is a PLAIN answer, not an error (the #325 lesson: an error there sent agents retrying a
+        # met need); an id that was never this session's, and a store that cannot be read, are LOUD.
         if not mid:
             return "Not inside a romp session.", True
         nid = str(args.get("id") or "").strip()
@@ -3422,10 +3454,21 @@ def _mcp_call(name, args):
         res = _kernel_post("/unpinnote", {"id": mid, "noteId": nid})
         if not isinstance(res, dict):
             return "Couldn't unpin '%s'; it is still up. Try again shortly." % nid, True
-        if not res.get("ok"):
-            return ("Nothing changed: no note of yours is pinned under the id '%s' (already unpinned, or "
-                    "not this session's).\n%s" % (nid, _pinned_notes_words(res.get("notes")))), True
-        return "Unpinned '%s'.\n%s" % (nid, _pinned_notes_words(res.get("notes"))), False
+        listed = _pinned_notes_words(res.get("notes"))
+        if res.get("ok"):
+            return "Unpinned '%s'.\n%s" % (nid, listed), False
+        state = res.get("state")
+        if state == "already":
+            how = ("it made room for a newer pin" if res.get("dropped") else "it was taken down") + _when_words(res.get("at"))
+            return "Already unpinned: '%s' %s. Nothing changed.\n%s" % (nid, how, listed), False
+        if state == "unreadable":
+            return ("Couldn't unpin '%s': %s. If it is up, it is still up."
+                    % (nid, res.get("error") or "the pinned notes could not be read")), True
+        if state == "unknown":
+            return "No note '%s' of yours is pinned. Nothing changed.\n%s" % (nid, listed), True
+        # a kernel that predates the account answers ok:false alone: the old one-size answer
+        return ("Nothing changed: no note of yours is pinned under the id '%s' (already unpinned, or "
+                "not this session's).\n%s" % (nid, listed)), True
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True

@@ -1,15 +1,19 @@
 // Pinned notes (the user 2026-09-08): a session pins short notes above its own transcript for the
 // person it works for; the strip between the tab bar and the transcript shows them. The strip's
 // builder (pinned-notes.ts) is EXECUTED here against a small DOM stand-in (the pr-links.test.ts
-// convention): order, the three-row fold, the detail fold, the linkers, the escaping and the unpin
-// control; the wiring into render.ts, the two page skeletons, the kernel's frames and the styles are
-// pinned at the source, the way the other webview tests pin the chat renderer.
+// convention): order, the three-row fold, the detail fold (with a long line's full text), the linkers,
+// the escaping and the unpin control, plus the armed Unpin's event-driven disarm (armUnpin) and the
+// unpin latch (latchedNotes) against stand-ins; the wiring into render.ts, the two page skeletons, the
+// kernel's frames and the styles are pinned at the source, the way the other webview tests pin the chat
+// renderer. The strip's height cap and the one-line rows are measured in a real browser by
+// pinned-notes-browser.test.ts; here the sheet's rules are pinned as text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, PINNED_VISIBLE, PINNED_ACT,
-  PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED, type PinnedNote, type PinnedFoldState, type PinnedLinkers } from "./pinned-notes";
+import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedFoldText, armUnpin, latchUnpinAt, latchedNotes,
+  PINNED_VISIBLE, PINNED_LINE_CHARS, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED,
+  type PinnedNote, type PinnedFoldState, type PinnedLinkers, type UnpinLatch } from "./pinned-notes";
 import { linkifyPrRefs } from "./pr-links";
 
 const read = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
@@ -38,7 +42,12 @@ class E {
   style: Record<string, string> = {};
   dataset: Record<string, string | undefined> = {};
   attrs: Record<string, string> = {};
+  listeners: Record<string, Array<(ev: any) => void>> = {};
   constructor(public tagName: string) {}
+  addEventListener(type: string, fn: (ev: any) => void): void { (this.listeners[type] ||= []).push(fn); }
+  removeEventListener(type: string, fn: (ev: any) => void): void { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); }
+  fire(type: string, ev: any = {}): void { for (const f of [...(this.listeners[type] || [])]) f(ev); }
+  listening(): string[] { return Object.keys(this.listeners).filter((k) => this.listeners[k].length).sort(); }
   setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
   getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   get parentElement(): E | null { return this.parentNode; }
@@ -142,14 +151,22 @@ test("at most three rows show, the newest; the older fold behind one '+N more' r
   assert.equal(build(notes(3))!.all(".pn-rest").length, 0);
 });
 
-test("the detail folds behind a click on the row, with the user-todo row's hint; a bare row has neither", () => {
+test("the detail folds behind a click on the row or its hint BUTTON (the keyboard's way in), with the user-todo row's words; a bare row has neither", () => {
   const strip = build([note(0, { detail: "The api tests flake on the auth step" }), note(1)])!;
   const [withDetail, bare] = rowsOf(strip);
   const t = textOf(withDetail);
   assert.ok(t.classList.contains("pn-has-detail"));
   assert.equal(t.dataset.act, PINNED_ACT.toggle);
   assert.equal(t.dataset.nid, "pn-00000000");
-  assert.equal(t.all(".ut-more")[0].textContent, "▸ details", "the same hint vocabulary as a user-todo row");
+  assert.equal(t.all(".ut-more").length, 0, "the hint is not inside the text: a long line's ellipsis must not swallow it");
+  const more = withDetail.all(".ut-more")[0];
+  assert.equal(more.tagName, "BUTTON", "a real button: Enter and Space are its own click, and Tab reaches it");
+  assert.equal(more.attrs.type, "button");
+  assert.equal(more.dataset.act, PINNED_ACT.toggle);
+  assert.equal(more.dataset.nid, "pn-00000000");
+  assert.equal(more.attrs["aria-expanded"], "false");
+  assert.equal(more.textContent, "▸ details", "the same hint vocabulary as a user-todo row");
+  assert.deepEqual(withDetail.all(".pn-line")[0].elements().map((e) => e.className.split(" ")[0]), ["pn-text", "ut-more", "pn-unpin"], "text, hint, Unpin, in the line");
   const d = withDetail.all(".pn-detail")[0];
   assert.equal(d.textContent, "The api tests flake on the auth step");
   assert.ok(!d.classList.contains("open"), "folded by default: the one-line version first");
@@ -161,6 +178,27 @@ test("the detail folds behind a click on the row, with the user-todo row's hint;
   const again = rowsOf(build([note(0, { detail: "more" })], st)!)[0];
   assert.ok(again.all(".pn-detail")[0].classList.contains("open"));
   assert.equal(again.all(".ut-more")[0].textContent, "▾ details");
+  assert.equal(again.all(".ut-more")[0].attrs["aria-expanded"], "true");
+  // the delegate finds the row from either target and flips the hint's state with the fold
+  assert.match(DELEGATE, /const item = elx\.closest\("\.pn-item"\);\s*\n\s*item\?\.querySelector\("\.pn-detail"\)\?\.classList\.toggle\("open", open\);/);
+  assert.match(DELEGATE, /more\.setAttribute\("aria-expanded", open \? "true" : "false"\)/);
+});
+
+test("a row is one line: a long text (or one with a line break) is carried in full inside the fold, before any detail", () => {
+  assert.equal(PINNED_LINE_CHARS, 72);
+  const long = "The staging deploy is blocked on the schema migration: run docs/migrate.md step 3 first, then re-run the api suite";
+  assert.ok(long.length > PINNED_LINE_CHARS);
+  assert.equal(pinnedFoldText(note(0)), "", "a short bare note has no fold");
+  assert.equal(pinnedFoldText(note(0, { detail: " d " })), "d");
+  assert.equal(pinnedFoldText(note(0, { text: long })), long, "the full text");
+  assert.equal(pinnedFoldText(note(0, { text: long, detail: "and the detail" })), long + "\n\nand the detail", "the text first, then the detail");
+  assert.equal(pinnedFoldText(note(0, { text: "two\nlines" })), "two\nlines", "a line break the one-line row shows as a space");
+  const [row] = rowsOf(build([note(0, { text: long })])!);
+  assert.equal(textOf(row).textContent, long, "the line carries the text; the sheet cuts it, not the builder");
+  assert.equal(textOf(row).dataset.act, PINNED_ACT.toggle, "so the row folds open");
+  assert.equal(row.all(".ut-more").length, 1);
+  assert.equal(row.all(".pn-detail")[0].textContent, long);
+  assert.match(CSS, /\.pn-text \{ flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/, "one line, cut with an ellipsis");
 });
 
 test("paths and PR references link through the caller's linkers: the line pass on every row, the detail pass on every detail", () => {
@@ -196,19 +234,25 @@ test("every row has an Unpin control that is click-safe: declared by data-act, h
     assert.equal(b.dataset.sid, SID);
     assert.equal(b.textContent, PINNED_UNPIN_LABEL);
   }
-  assert.doesNotMatch(MODULE.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"), /addEventListener|onclick/,
-    "the builder hangs no listener (ui/CLAUDE.md)");
+  const builder = MODULE.slice(0, MODULE.indexOf("// ── the armed Unpin"));
+  assert.ok(builder.includes("export function buildPinnedNotes"), "the builder is the module's first part");
+  assert.doesNotMatch(builder.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"), /addEventListener|onclick/,
+    "the builder hangs no listener (ui/CLAUDE.md); armUnpin's are hung on a gesture and taken down by the disarm");
   // the delegate: installed ONCE on the host fetched by id, which survives every replaceChildren()
   assert.match(DELEGATE, /const host = document\.getElementById\("pinned-notes"\);\s*\n\s*if \(!host\) return;\s*\n\s*delegate\(host, \{/);
   assert.match(DELEGATE, /\[PINNED_ACT\.toggle\]: \(elx\) => \{/);
   assert.match(DELEGATE, /\[PINNED_ACT\.more\]: \(elx\) => \{/);
   assert.match(DELEGATE, /\[PINNED_ACT\.unpin\]: \(elx\) => \{/);
-  // arm, then confirm; the confirm posts the op and removes the row at once (the acknowledgement)
-  assert.match(DELEGATE, /elx\.classList\.add\("armed"\); elx\.textContent = PINNED_UNPIN_ARMED;/);
+  // arm through armUnpin (one armed control at a time), then confirm: the confirm retires the arm, posts
+  // the op, latches the removal and repaints from the latched list (no direct DOM surgery, no cleared key)
+  assert.match(DELEGATE, /pnDisarm\(\);\s*\/\/ one armed control at a time\s*\n\s*pnArmed = armUnpin\(elx, document, isCoarsePointer\(\)\);\s*\n\s*return;/);
   assert.equal(PINNED_UNPIN_ARMED, "Unpin?");
-  assert.match(DELEGATE, /vscodeApi\?\.postMessage\(\{ type: "unpinNote", id: sid, noteId: nid \}\)/);
-  assert.match(DELEGATE, /item\?\.remove\(\);/);
-  assert.match(DELEGATE, /pnPainted = "";/, "the next frame repaints the truth, whatever the kernel answered");
+  assert.match(DELEGATE, /pnDisarm\(\);\s*\n\s*vscodeApi\?\.postMessage\(\{ type: "unpinNote", id: sid, noteId: nid \}\)/);
+  assert.match(DELEGATE, /if \(s\) pnLatch = latchUnpinAt\(pnLatch, sid, s\.pinnedNotes \|\| \[\], nid\);/,
+    "armed against the list as the last frame carried it, never a filtered copy: a second unpin in the same cycle extends the latch");
+  assert.doesNotMatch(DELEGATE, /s\.pinnedNotes = /, "the session's list is the kernel's; the latch filters it at every paint");
+  assert.match(DELEGATE, /renderPinnedNotes\(true\);\s*\n\s*\},\s*\n\s*\}\);/, "the confirm ends in a forced repaint under the latch");
+  assert.doesNotMatch(DELEGATE, /pnPainted = ""|item\?\.remove\(\)|setTimeout/, "no cleared key, no optimistic DOM removal, no timer");
   // the op lands on the same store function as the postal tool's route: one code path
   assert.match(KERNEL, /"userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge"\)/);
   assert.match(KERNEL, /elif t == "unpinNote" and msg\.get\("noteId"\):[\s\S]{0,600}_unpin_note\(sid, str\(msg\["noteId"\]\)\)/);
@@ -231,6 +275,101 @@ test("the strip sits below the tab strip and above the transcript, on BOTH page 
   const block = CSS.slice(CSS.indexOf("#pinned-notes {"), CSS.indexOf(".pn-unpin.armed"));
   const sizes = new Set((block.match(/font-size: [0-9.]+em/g) || []).map((s) => s.slice(11)));
   for (const s of sizes) assert.ok(["0.86em", "0.72em"].includes(s), "an existing size: " + s);
+  // the cap (review round 1, 2026-09-08): a few rows, then the strip scrolls, so #content and the
+  // composer keep their room whatever a session pins; measured in pinned-notes-browser.test.ts
+  const host = block.slice(0, block.indexOf("}"));
+  assert.match(host, /max-height: min\(11em, 30vh\); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;/);
+});
+
+test("the row mark is a neutral pin mark, not the flag every other surface reserves for 'waiting on you'", () => {
+  const block = CSS.slice(CSS.indexOf("#pinned-notes {"), CSS.indexOf(".pn-unpin.armed"));
+  const m = /\.pn-line::before \{ content: "\\([0-9A-Fa-f]{4})";/.exec(block);
+  assert.ok(m, "the mark is a CSS escape on .pn-line::before");
+  const mark = String.fromCodePoint(parseInt(m![1], 16));
+  assert.equal(mark, "\u25AA", "a small square in the dim chrome color");
+  const flag = "\u2691";
+  assert.notEqual(mark, flag);
+  assert.doesNotMatch(block, /2691/, "no flag anywhere in the strip's rules");
+  // the flag IS the user-todo mark elsewhere (the tab glyph, the feed's label), which is why the strip must not wear it
+  assert.ok(RENDER.includes(flag), "the flag glyph is in use for the user-todo tab mark");
+  assert.match(RENDER, /waiting on you/);
+});
+
+test("armUnpin: the arm ends on an event (a press elsewhere, a blur, the pointer leaving), never a timer; a press on the control keeps it", () => {
+  const docStandIn = () => {
+    const l: Record<string, Array<(ev: any) => void>> = {};
+    return {
+      addEventListener: (t: string, fn: (ev: any) => void) => { (l[t] ||= []).push(fn); },
+      removeEventListener: (t: string, fn: (ev: any) => void) => { l[t] = (l[t] || []).filter((f) => f !== fn); },
+      fire: (t: string, ev: any) => { for (const f of [...(l[t] || [])]) f(ev); },
+      listening: () => Object.keys(l).filter((k) => l[k].length).sort(),
+    };
+  };
+  const btn = () => { const b = new E("BUTTON"); b.textContent = PINNED_UNPIN_LABEL; return b; };
+  // coarse pointer (a phone): the next press anywhere else disarms and takes every listener down
+  let d = docStandIn(); let b = btn();
+  let disarm = armUnpin(b as unknown as HTMLElement, d, true);
+  assert.ok(b.classList.contains("armed")); assert.equal(b.textContent, PINNED_UNPIN_ARMED);
+  assert.deepEqual(d.listening(), ["pointerdown"]);
+  assert.deepEqual(b.listening(), ["blur"], "no pointerleave on a coarse pointer: there is no hover to leave");
+  d.fire("pointerdown", { target: b });                      // the confirming tap (or a scroll that started on the button)
+  assert.ok(b.classList.contains("armed"), "a press ON the control keeps the arm");
+  d.fire("pointerdown", { target: new E("DIV") });           // a tap on the transcript
+  assert.ok(!b.classList.contains("armed")); assert.equal(b.textContent, PINNED_UNPIN_LABEL);
+  assert.deepEqual(d.listening(), []); assert.deepEqual(b.listening(), [], "nothing lingers on the document or the control");
+  disarm();                                                  // idempotent
+  assert.equal(b.textContent, PINNED_UNPIN_LABEL);
+  // fine pointer: the pointer leaving disarms too
+  d = docStandIn(); b = btn();
+  disarm = armUnpin(b as unknown as HTMLElement, d, false);
+  assert.deepEqual(b.listening(), ["blur", "pointerleave"]);
+  b.fire("pointerleave", {});
+  assert.ok(!b.classList.contains("armed")); assert.deepEqual(d.listening(), []); assert.deepEqual(b.listening(), []);
+  // keyboard: Enter armed it and Tab moved on (blur)
+  d = docStandIn(); b = btn();
+  disarm = armUnpin(b as unknown as HTMLElement, d, false);
+  b.fire("blur", {});
+  assert.ok(!b.classList.contains("armed")); assert.deepEqual(d.listening(), []);
+  // the caller's disarm (a repaint drops the row) takes the listeners down as well
+  d = docStandIn(); b = btn();
+  disarm = armUnpin(b as unknown as HTMLElement, d, true);
+  disarm();
+  assert.deepEqual(d.listening(), []); assert.deepEqual(b.listening(), []); assert.equal(b.textContent, PINNED_UNPIN_LABEL);
+  assert.doesNotMatch(MODULE, /setTimeout|setInterval|Date\.now/, "events, not timers");
+  // render.ts disarms before every repaint, and the arm is the module's, not a hand-rolled one
+  assert.match(RENDER_FN, /pnDisarm\(\);\s*\/\/ the armed row, if any, is about to be replaced[^\n]*\n\s*const strip = /);
+  assert.match(RENDER, /function pnDisarm\(\): void \{ const f = pnArmed; pnArmed = null; if \(f\) f\(\); \}/);
+});
+
+test("the unpin latch: a frame still carrying the pre-unpin list is old news; any other list for the session is new information", () => {
+  const rows = notes(3);
+  const other = "22222222-3333-4444-5555-666666666666";
+  const latch: UnpinLatch = latchUnpinAt(null, SID, rows, "pn-00000001");
+  assert.deepEqual(latch, { sid: SID, key: pinnedNotesKey(SID, rows), nids: ["pn-00000001"] });
+  // the same list again (a cycle already in flight when the confirm landed): the row stays gone, the latch holds
+  let r = latchedNotes(latch, SID, rows.map((n) => ({ ...n })));
+  assert.deepEqual(r.notes.map((n) => n.id), ["pn-00000000", "pn-00000002"]);
+  assert.equal(r.latch, latch);
+  // the kernel's list after the unpin: new information, the latch has served
+  r = latchedNotes(latch, SID, [rows[0], rows[2]]);
+  assert.deepEqual(r.notes.map((n) => n.id), ["pn-00000000", "pn-00000002"]);
+  assert.equal(r.latch, null);
+  // a new pin arriving before the unpin landed is new information too (the strip shows what the kernel says)
+  r = latchedNotes(latch, SID, [...rows, note(3)]);
+  assert.equal(r.notes.length, 4); assert.equal(r.latch, null);
+  // another session's frame says nothing about this one
+  r = latchedNotes(latch, other, rows);
+  assert.equal(r.notes.length, 3); assert.equal(r.latch, latch);
+  // a second unpin against the same stale list extends the latch rather than forgetting the first
+  const two = latchUnpinAt(latch, SID, rows, "pn-00000002");
+  assert.deepEqual(two.nids, ["pn-00000001", "pn-00000002"]);
+  assert.deepEqual(latchedNotes(two, SID, rows).notes.map((n) => n.id), ["pn-00000000"]);
+  // against a different list it starts over
+  assert.deepEqual(latchUnpinAt(latch, SID, [rows[0]], "pn-00000000").nids, ["pn-00000000"]);
+  assert.deepEqual(latchedNotes(null, SID, rows), { notes: rows, latch: null });
+  // render.ts reads the frame's list through the latch, and computes the repaint key from what it shows
+  assert.match(RENDER_FN, /const seen = latchedNotes\(pnLatch, s \? s\.id : "", s && !s\.sub \? \(s\.pinnedNotes \|\| \[\]\) : \[\]\);/);
+  assert.match(RENDER_FN, /pnLatch = seen\.latch;\s*\n\s*const notes = seen\.notes;\s*\n\s*const key = pinnedNotesKey\(s \? s\.id : "", notes\);/);
 });
 
 test("the rows reach the strip through the chat frames the pane already reads, and the strip repaints only on new information", () => {
@@ -244,8 +383,15 @@ test("the rows reach the strip through the chat frames the pane already reads, a
   assert.match(KERNEL, /"pinnedNotes": _pinned_notes_for\(sid\),/);
   assert.match(KERNEL, /"pinnedNotes": m\.get\("pinnedNotes"\) or \[\]/);
   assert.match(KERNEL, /sig\.append\(_pinned_notes_fp\(sess\.get\("sid"\) or ""\)\)/);
-  // showActive swaps it in with the other boxes; update() repaints the active session's
+  // showActive swaps it in with the other boxes; update() repaints the active session's; upsert() too
+  // (a full frame on an existing tab, for a client that fell behind the tail)
   assert.match(RENDER, /renderLedger\(\);  \/\/ swap in the active session's digest box \(or hide if none\)\s*\n\s*renderPinnedNotes\(\);/);
+  const upsert = RENDER.slice(RENDER.indexOf("function upsert(msg: any"), RENDER.indexOf("function update(msg: any)"));
+  assert.match(upsert, /renderBgTasks\(\);\s*\n\s*renderPinnedNotes\(\);\s*\/\/ a full frame on an existing tab/);
+  const update = RENDER.slice(RENDER.indexOf("function update(msg: any)"), RENDER.indexOf("function ", RENDER.indexOf("function update(msg: any)") + 10));
+  assert.match(update, /if \(msg\.id === activeId\) \{\s*\n\s*appendActive\(\);\s*\n\s*renderLedger\(\);[^\n]*\n\s*renderPinnedNotes\(\);/);
+  // the chatTail merge: the userTodos comment stays with the userTodos line it explains
+  assert.match(tail, /the tab glyph \(next slice\) reads this field, not the event\n\s*if \("userTodos" in msg\) s\.userTodos = msg\.userTodos;\n\s*if \("pinnedNotes" in msg\) s\.pinnedNotes = msg\.pinnedNotes;/);
   // the gate: same rows, same key, no repaint; a pin, an unpin or a tab switch changes the key
   const rows = notes(2);
   assert.equal(pinnedNotesKey(SID, rows), pinnedNotesKey(SID, rows.map((n) => ({ ...n }))));

@@ -552,7 +552,7 @@ class Differential(_World):
 
     def test_a_pin_and_an_unpin_each_miss_under_pins_and_a_peers_pin_does_not(self):
         a = self.sig()
-        nid, _ = km._pin_note(SID, "staging is on port 8443")
+        nid, _, _ = km._pin_note(SID, "staging is on port 8443")
         b = self.sig()
         self.assertEqual(self.moved(a, b), ("pins",), "a pin writes no transcript line; the fold is the only way the tab hears of it")
         km._pin_note(PEER, "a peer's note")

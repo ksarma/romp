@@ -6,11 +6,16 @@ a summary). Kernel side, pinned here:
 - the store (pinned-notes.json under STATE): the minted id, persistence across a cache clear (a kernel
   restart reads the same file), sid-keying, oldest-first order, the per-session bound (PINNED_NOTES_MAX,
   the oldest dropped first), the store lock, the not-a-store guard;
-- unpin: the loud refusal of an unknown id, an already-unpinned id and ANOTHER SESSION's id (the store
-  is sid-keyed, so a session reaches only its own rows), and the key leaving the file with its last note;
-- the POST routes (/pinnote, /unpinnote): the serve token, the answers, the ack-fast contract (never a
-  synchronous push), the remote forward for a session an attached kernel owns and the 502 when that
-  forward lands nothing;
+- unpin's account: "unpinned" now, "already" (a note of its own taken down before, plainly, with when;
+  a note the bound dropped says so), "unknown" (an id never this session's: another session's, since the
+  store is sid-keyed, or one it never held: loud), "unreadable" (the store file is not a store: the fault
+  named, never "no note of yours"); the tombstone that makes "already" possible and its bound;
+- the bounds: a session id (_safe_id) at the store and the routes, since one row under any other key
+  reads the whole file as not-a-store for every session; the text and detail lengths; control characters
+  dropped; a non-object JSON body a 400;
+- the POST routes (/pinnote, /unpinnote): the serve token, the answers (the evicted notes named), the
+  ack-fast contract (never a synchronous push), the remote forward for a session an attached kernel owns
+  and the 502 when that forward lands nothing (the wording shared with /usertodo/withdraw);
 - the unpinNote drive op (the strip's own control) landing on the same _unpin_note;
 - the wire seams: build_session's `pinnedNotes` field carrying real rows, the chatTail frame, the
   chat-build-sig fold, and the chat page skeleton's strip position, mirrored in the extension's.
@@ -18,6 +23,8 @@ a summary). Kernel side, pinned here:
 PRIVATE synthetic sids (the goal-store fixture rule, generalized: rows minted under the shared
 placeholder can be reached by another module's fixtures); the notes-api demo world.
 """
+import ast
+import contextlib
 import inspect
 import io
 import json
@@ -41,6 +48,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"
 km = load_source("romp_kernel_pn", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
+pm = load_source("romp_postal_pn_bounds", os.path.join(BIN, "romp-postal-service"))   # its copy of the bounds
 
 SID = "8c8c8c8c-1111-4222-8333-944444444444"
 SID2 = "8d8d8d8d-1111-4222-8333-944444444444"
@@ -70,7 +78,7 @@ class _StoreSandbox(unittest.TestCase):
 
 class StoreRoundTrip(_StoreSandbox):
     def test_pin_mints_a_pn_id_and_persists_the_record(self):
-        nid, notes = km._pin_note(SID, "Waiting on CI for the login fix", "The api tests flake on the auth step")
+        nid, notes, _ = km._pin_note(SID, "Waiting on CI for the login fix", "The api tests flake on the auth step")
         self.assertRegex(nid, r"^pn-[0-9a-f]{8}$")
         self.assertEqual([n["id"] for n in notes], [nid], "the answer is the list after the pin")
         rec = self._file()[SID][0]
@@ -84,7 +92,7 @@ class StoreRoundTrip(_StoreSandbox):
         self.assertNotIn("detail", self._file()[SID][0])
 
     def test_the_notes_survive_a_cache_clear_the_way_a_restart_reads_them(self):
-        nid, _ = km._pin_note(SID, "Branch web-login is ready for review")
+        nid, _, _ = km._pin_note(SID, "Branch web-login is ready for review")
         km._pinned_notes_cache.clear()                       # a fresh kernel holds no cache
         self.assertEqual([n["id"] for n in km._pinned_notes_for(SID)], [nid])
 
@@ -101,20 +109,66 @@ class StoreRoundTrip(_StoreSandbox):
         self.assertEqual([n["id"] for n in km._pinned_notes_for(SID)], ["pn-aaaaaaaa", "pn-bbbbbbbb"])
 
     def test_ids_never_collide_within_a_session(self):
-        ids = {km._pin_note(SID, "note %d" % i)[0] for i in range(km.PINNED_NOTES_MAX)}
-        self.assertEqual(len(ids), km.PINNED_NOTES_MAX)
+        # the retry loop is DRIVEN: the id source is made to answer the taken id once more before a fresh
+        # one (a real 32-bit collision is too rare for the loop to be reached by chance)
+        draws = iter(["aaaaaaaa" + "0" * 24, "aaaaaaaa" + "1" * 24, "bbbbbbbb" + "0" * 24])
+        seen = []
+
+        class _Uuid:
+            def __init__(self):
+                self.hex = next(draws); seen.append(self.hex[:8])
+
+        real = km.uuid
+        km.uuid = type("U", (), {"uuid4": staticmethod(_Uuid)})
+        try:
+            first = km._pin_note(SID, "note 0")[0]
+            second = km._pin_note(SID, "note 1")[0]
+        finally:
+            km.uuid = real
+        self.assertEqual(first, "pn-aaaaaaaa")
+        self.assertEqual(second, "pn-bbbbbbbb", "the colliding draw was refused and the loop drew again")
+        self.assertEqual(seen, ["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"], "exactly one retry")
+        # a tombstone's id counts as taken too: a re-minted id would make "already unpinned" ambiguous
+        km._unpin_note(SID, "pn-bbbbbbbb")
+        draws = iter(["bbbbbbbb" + "0" * 24, "cccccccc" + "0" * 24])
+        km.uuid = type("U", (), {"uuid4": staticmethod(_Uuid)})
+        try:
+            self.assertEqual(km._pin_note(SID, "note 2")[0], "pn-cccccccc")
+        finally:
+            km.uuid = real
 
     def test_the_bound_drops_the_oldest_first(self):
         self.assertEqual(km.PINNED_NOTES_MAX, 8)
         # written by hand with distinct createdT so the order is not left to the clock's resolution
         (jd.STATE / km.PINNED_NOTES_FILE).write_text(json.dumps({SID: [
             {"id": "pn-%08d" % i, "text": "note %d" % i, "createdT": NOW + i} for i in range(8)]}))
-        nid, notes = km._pin_note(SID, "the ninth")
+        nid, notes, dropped = km._pin_note(SID, "the ninth")
         self.assertEqual(len(notes), 8, "never more than the bound")
         self.assertEqual(notes[-1]["id"], nid, "the new note is last (newest last)")
         self.assertNotIn("pn-00000000", [n["id"] for n in notes], "the oldest made room")
         self.assertEqual(notes[0]["id"], "pn-00000001")
-        self.assertEqual(len(self._file()[SID]), 8, "the file holds the bounded list too")
+        self.assertEqual([(d["id"], d["text"]) for d in dropped], [("pn-00000000", "note 0")],
+                         "the eviction is REPORTED, never silent: the caller names the note that went")
+        live = [t for t in self._file()[SID] if not t.get("unpinnedT")]
+        self.assertEqual(len(live), 8, "the file holds the bounded list too")
+        tomb = [t for t in self._file()[SID] if t.get("unpinnedT")]
+        self.assertEqual([(t["id"], t["dropped"]) for t in tomb], [("pn-00000000", True)], "the dropped note leaves a tombstone marked so")
+        acct = km._unpin_note(SID, "pn-00000000")
+        self.assertEqual((acct["ok"], acct["state"], acct["dropped"]), (False, "already", True), "a later unpin of it is told what became of it")
+
+    def test_a_pin_needs_a_session_id_so_one_bad_key_cannot_poison_the_store(self):
+        # the reader's not-a-store guard requires EVERY top-level key to be a safe id: one row under a
+        # session NAME or a path would make the whole file read as empty for every session and refuse
+        # every later write (review round 1, 2026-09-08)
+        km._pin_note(SID, "web: staging is on port 8443")
+        for bad in ("my session", "web/api", "../x", "", "x" * 129):
+            with self.subTest(sid=bad):
+                with self.assertRaises(ValueError):
+                    km._pin_note(bad, "hello")
+        km._pinned_notes_cache.clear()
+        self.assertEqual([n["text"] for n in km._pinned_notes_for(SID)], ["web: staging is on port 8443"], "the store is intact")
+        km._pin_note(SID, "another")                                   # and still writable
+        self.assertEqual(len(km._pinned_notes_for(SID)), 2)
 
     def test_the_helper_that_ships_the_rows_never_reads_the_clock(self):
         # the payload dedups by serialized content (the firstSeen lesson): a per-build value here
@@ -132,37 +186,68 @@ class StoreRoundTrip(_StoreSandbox):
 
 class Unpin(_StoreSandbox):
     def test_unpin_removes_the_note_and_answers_the_rest(self):
-        a, _ = km._pin_note(SID, "first")
-        b, _ = km._pin_note(SID, "second")
+        a, _, _ = km._pin_note(SID, "first")
+        b, _, _ = km._pin_note(SID, "second")
         acct = km._unpin_note(SID, a)
-        self.assertTrue(acct["ok"])
+        self.assertEqual((acct["ok"], acct["state"]), (True, "unpinned"))
         self.assertEqual([n["id"] for n in acct["notes"]], [b])
         self.assertEqual([n["id"] for n in km._pinned_notes_for(SID)], [b])
 
     def test_unknown_id_is_refused_loudly_never_a_silent_success(self):
         km._pin_note(SID, "one")
         acct = km._unpin_note(SID, "pn-deadbeef")
-        self.assertFalse(acct["ok"])
+        self.assertEqual((acct["ok"], acct["state"]), (False, "unknown"))
         self.assertTrue(acct.get("error"))
         self.assertEqual(len(acct["notes"]), 1, "the list still rides the refusal, so the caller can see it")
 
-    def test_a_second_unpin_of_the_same_id_is_refused(self):
-        nid, _ = km._pin_note(SID, "one")
+    def test_a_second_unpin_of_the_same_id_is_already_with_when_not_a_refusal(self):
+        # the #325 shape: the person clicked Unpin on the strip, then the session tidies up with
+        # unpin_note. The state it wanted holds, so the answer is plain, not an error the agent retries.
+        nid, _, _ = km._pin_note(SID, "one")
         self.assertTrue(km._unpin_note(SID, nid)["ok"])
-        self.assertFalse(km._unpin_note(SID, nid)["ok"])
+        again = km._unpin_note(SID, nid)
+        self.assertEqual((again["ok"], again["state"], again["dropped"]), (False, "already", False))
+        self.assertIsInstance(again["at"], int)
+        self.assertEqual(again["notes"], [])
+        tomb = self._file()[SID]
+        self.assertEqual([(t["id"], "text" in t) for t in tomb], [(nid, False)], "the tombstone is the id and the time, not the text")
+        self.assertEqual(km._pinned_notes_for(SID), [], "a tombstone is no row")
 
-    def test_another_sessions_id_is_refused_and_that_note_stands(self):
-        theirs, _ = km._pin_note(SID2, "api: do not merge before the schema lands")
+    def test_tombstones_are_bounded_per_session(self):
+        for i in range(km.PINNED_TOMBSTONES_MAX + 3):
+            nid, _, _ = km._pin_note(SID, "note %d" % i)
+            km._unpin_note(SID, nid)
+        tomb = [t for t in self._file()[SID] if t.get("unpinnedT")]
+        self.assertEqual(len(tomb), km.PINNED_TOMBSTONES_MAX)
+        self.assertEqual(km._unpin_note(SID, nid)["state"], "already", "the newest unpins are the ones remembered")
+
+    def test_another_sessions_id_is_unknown_here_and_that_note_stands(self):
+        theirs, _, _ = km._pin_note(SID2, "api: do not merge before the schema lands")
         km._pin_note(SID, "web: mine")
         acct = km._unpin_note(SID, theirs)
-        self.assertFalse(acct["ok"], "the store is sid-keyed: a session reaches only its own rows")
+        self.assertEqual((acct["ok"], acct["state"]), (False, "unknown"), "the store is sid-keyed: a session reaches only its own rows")
         self.assertEqual([n["id"] for n in km._pinned_notes_for(SID2)], [theirs], "the other session's note stands")
 
-    def test_the_last_unpin_drops_the_sessions_key(self):
-        nid, _ = km._pin_note(SID, "only one")
+    def test_the_last_unpin_leaves_only_the_tombstone_under_the_key(self):
+        nid, _, _ = km._pin_note(SID, "only one")
         km._unpin_note(SID, nid)
-        self.assertNotIn(SID, self._file())
+        self.assertEqual([t["id"] for t in self._file()[SID]], [nid])
         self.assertEqual(km._pinned_notes_for(SID), [])
+        self.assertEqual(km._pinned_notes_fp(SID), json.dumps(self._file()[SID], sort_keys=True), "the fold moves with the write")
+
+    def test_unpin_against_an_unreadable_store_names_the_fault_not_no_note_of_yours(self):
+        # the store reads as EMPTY once loudly; an unpin over that read must not conclude the note
+        # never existed (review round 1, 2026-09-08: fail loudly, never a wrong plain answer)
+        p = jd.STATE / km.PINNED_NOTES_FILE
+        p.write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            acct = km._unpin_note(SID, "pn-deadbeef")
+        self.assertEqual((acct["ok"], acct["state"], acct["notes"]), (False, "unreadable", []))
+        self.assertIn("not readable", acct["error"])
+        self.assertIn(str(p), acct["error"], "the fault names the file")
+        self.assertEqual(p.read_text(), "{not json", "nothing written")
+        p.unlink()                                                   # fixed (removed): the plain answers return
+        self.assertEqual(km._unpin_note(SID, "pn-deadbeef")["state"], "unknown")
 
 
 class StoreGuards(_StoreSandbox):
@@ -176,7 +261,7 @@ class StoreGuards(_StoreSandbox):
 
         km._write_pinned_notes = guarded
         try:
-            nid, _ = km._pin_note(SID, "one")
+            nid, _, _ = km._pin_note(SID, "one")
             km._unpin_note(SID, nid)
         finally:
             km._write_pinned_notes = real_write
@@ -243,8 +328,10 @@ def _serve_post(path, body, headers=None):
     return captured.get("status"), h.wfile.getvalue()
 
 
-class Routes(_StoreSandbox):
-    """POST /pinnote and /unpinnote: the kernel legs the postal tools stand on."""
+class _RouteLab(_StoreSandbox):
+    """The route harness (no tests of its own): the pusher stubs and the POST helper that Routes and
+    RemoteForward share. RemoteForward is NOT a Routes subclass: it would inherit the seven local-path
+    tests and run them again under the remote stubs, a misleading count (review round 1, 2026-09-08)."""
 
     def setUp(self):
         super().setUp()
@@ -268,6 +355,10 @@ class Routes(_StoreSandbox):
         except ValueError:
             return code, {}
 
+
+class Routes(_RouteLab):
+    """POST /pinnote and /unpinnote: the kernel legs the postal tools stand on."""
+
     def test_both_routes_require_the_serve_token(self):
         self.assertEqual(self._post("/pinnote", {"id": SID, "text": "x"}, token=False)[0], 403)
         self.assertEqual(self._post("/unpinnote", {"id": SID, "noteId": "pn-deadbeef"}, token=False)[0], 403)
@@ -287,8 +378,61 @@ class Routes(_StoreSandbox):
         self.assertEqual(self._post("/pinnote", {"id": SID})[0], 400)
         self.assertEqual(self._post("/pinnote", {"text": "no sid"})[0], 400)
         self.assertEqual(self._post("/pinnote", {"id": SID, "text": "   "})[0], 400)
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "\x00\x00"})[0], 400, "nothing but control characters is a blank")
         code, _ = _serve_post("/pinnote", b"not json", {"X-Romp-Token": km.TOKEN})
         self.assertEqual(code, 400)
+
+    def test_a_non_object_json_body_is_a_400_on_both_routes_never_a_traceback(self):
+        for raw in (b'"abc"', b"[1, 2]", b"7", b"true"):
+            for path in ("/pinnote", "/unpinnote"):
+                with self.subTest(path=path, body=raw):
+                    code, out = _serve_post(path, raw, {"X-Romp-Token": km.TOKEN})
+                    self.assertEqual(code, 400)
+                    self.assertNotIn(b"Traceback", out)
+
+    def test_pin_refuses_an_id_that_is_not_a_session_id_and_the_store_stays_whole(self):
+        # one accepted row under a non-session key (a session NAME, a path) made the reader flag the
+        # whole file as not-a-store: every session's strip blank, every later pin a 500 (review round 1)
+        self._post("/pinnote", {"id": SID, "text": "web: staging is on port 8443"})
+        for bad in ("my session", "web/api", "../x"):
+            with self.subTest(sid=bad):
+                code, out = self._post("/pinnote", {"id": bad, "text": "hello"})
+                self.assertEqual(code, 400)
+                self.assertIn("session id", out["error"])
+                self.assertEqual(self._post("/unpinnote", {"id": bad, "noteId": "pn-deadbeef"})[0], 400)
+        km._pinned_notes_cache.clear()
+        self.assertEqual([n["text"] for n in km._pinned_notes_for(SID)], ["web: staging is on port 8443"])
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "another"})[0], 200, "still writable")
+
+    def test_text_and_detail_are_bounded_and_cleaned_of_control_characters(self):
+        self.assertEqual((km.PINNED_TEXT_MAX, km.PINNED_DETAIL_MAX), (300, 4000))
+        self.assertEqual((pm.PIN_TEXT_MAX, pm.PIN_DETAIL_MAX), (km.PINNED_TEXT_MAX, km.PINNED_DETAIL_MAX),
+                         "the postal tool refuses with the kernel's numbers")
+        code, out = self._post("/pinnote", {"id": SID, "text": "x" * 301})
+        self.assertEqual(code, 400)
+        self.assertIn("300", out["error"])
+        code, out = self._post("/pinnote", {"id": SID, "text": "fine", "detail": "y" * 4001})
+        self.assertEqual(code, 400)
+        self.assertIn("4000", out["error"])
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "x" * 300, "detail": "y" * 4000})[0], 200, "the bound itself is allowed")
+        code, res = self._post("/pinnote", {"id": SID, "text": " line1\nline2\ttab\x00nul\x1b[31mred ",
+                                            "detail": "d\x07\n keep"})
+        self.assertEqual(code, 200)
+        rec = km._pinned_notes_for(SID)[-1]
+        self.assertEqual(rec["text"], "line1\nline2\ttabnul[31mred", "control characters dropped; newline and tab kept; ends trimmed")
+        self.assertEqual(rec["detail"], "d\n keep")
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "\x1b\x07"})[0], 400, "control characters alone clean to nothing")
+        self.assertEqual(km._pinned_note_clean(None), "")
+
+    def test_a_ninth_pin_names_the_note_it_dropped(self):
+        for i in range(8):
+            self._post("/pinnote", {"id": SID, "text": "note %d" % i})
+        code, res = self._post("/pinnote", {"id": SID, "text": "note 8"})
+        self.assertEqual(code, 200)
+        self.assertEqual([d["text"] for d in res["dropped"]], ["note 0"])
+        self.assertEqual(len(res["notes"]), 8)
+        code, res = self._post("/pinnote", {"id": SID2, "text": "first here"})
+        self.assertEqual(res["dropped"], [], "the key is always there: nothing dropped is an empty list")
 
     def test_unpin_removes_and_answers_the_rest(self):
         _, a = self._post("/pinnote", {"id": SID, "text": "first"})
@@ -301,12 +445,43 @@ class Routes(_StoreSandbox):
     def test_unpin_of_an_unknown_or_foreign_id_answers_ok_false_with_the_reason(self):
         code, out = self._post("/unpinnote", {"id": SID, "noteId": "pn-deadbeef"})
         self.assertEqual(code, 200)
-        self.assertFalse(out["ok"], "a loud, plain answer, never a silent success")
+        self.assertEqual((out["ok"], out["state"]), (False, "unknown"), "a loud, plain answer, never a silent success")
         self.assertTrue(out.get("error"))
         _, theirs = self._post("/pinnote", {"id": SID2, "text": "api: theirs"})
         _, out2 = self._post("/unpinnote", {"id": SID, "noteId": theirs["noteId"]})
-        self.assertFalse(out2["ok"], "another session's id is not this session's to take down")
+        self.assertEqual((out2["ok"], out2["state"]), (False, "unknown"), "another session's id is not this session's to take down")
         self.assertEqual(len(km._pinned_notes_for(SID2)), 1)
+
+    def test_unpin_of_an_already_unpinned_note_carries_the_already_account(self):
+        _, res = self._post("/pinnote", {"id": SID, "text": "one"})
+        self._post("/unpinnote", {"id": SID, "noteId": res["noteId"]})
+        code, out = self._post("/unpinnote", {"id": SID, "noteId": res["noteId"]})
+        self.assertEqual(code, 200)
+        self.assertEqual((out["ok"], out["state"], out["dropped"]), (False, "already", False))
+        self.assertIsInstance(out["at"], int)
+
+    def test_unpin_against_an_unreadable_store_answers_the_fault(self):
+        (jd.STATE / km.PINNED_NOTES_FILE).write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, out = self._post("/unpinnote", {"id": SID, "noteId": "pn-deadbeef"})
+        self.assertEqual(code, 200)
+        self.assertEqual((out["ok"], out["state"]), (False, "unreadable"))
+        self.assertIn("not readable", out["error"])
+        self.assertEqual(self.pushed_soon, [], "nothing changed, so no wake")
+
+    def test_the_withdraw_route_shares_the_no_answer_wording(self):
+        # one code path for the four-way "why the remote gave no answer" line (review round 1,
+        # 2026-09-08); test_user_todos pins the withdraw route's own 502 behaviour, unchanged
+        src = inspect.getsource(km.Handler.do_POST)
+        for route in ("/usertodo/withdraw", "/pinnote", "/unpinnote"):
+            self.assertIn('_remote_no_answer_why(r, st, "%s")' % route, src)
+        self.assertNotIn('why = "the tunnel to %s is not answering', src, "no inline copy of the wording remains")
+        r = {"host": "TESTHOST"}
+        self.assertEqual(km._remote_no_answer_why(r, 0, "/usertodo/withdraw"), "the tunnel to TESTHOST is not answering (re-dialing)")
+        self.assertEqual(km._remote_no_answer_why(r, 404, "/usertodo/withdraw"),
+                         "the kernel on TESTHOST predates /usertodo/withdraw: update romp there and restart it")
+        self.assertEqual(km._remote_no_answer_why(r, 500, "/pinnote"), "the kernel on TESTHOST answered HTTP 500")
+        self.assertEqual(km._remote_no_answer_why(r, 200, "/pinnote"), "the kernel on TESTHOST answered a body that is not JSON")
 
     def test_unpin_refuses_a_bodyless_ask(self):
         self.assertEqual(self._post("/unpinnote", {"id": SID})[0], 400)
@@ -325,7 +500,7 @@ class Routes(_StoreSandbox):
         self.assertEqual(len(self.pushed_soon), 2, "a refused unpin changed nothing, so no wake")
 
 
-class RemoteForward(Routes):
+class RemoteForward(_RouteLab):
     """A session an attached kernel owns: the routes forward over its tunnel the way /usertodo/withdraw
     does, and a forward that lands nothing is a 502 saying why, never a 200 the tool would echo back."""
 
@@ -346,16 +521,23 @@ class RemoteForward(Routes):
     def test_pin_for_a_remote_session_is_forwarded_and_written_nowhere_locally(self):
         code, res = self._post("/pinnote", {"id": RSID, "text": "remote note", "detail": "d"})
         self.assertEqual(code, 200)
-        self.assertEqual(res, {"ok": True, "noteId": "pn-0badcafe", "notes": self.answer[1]["notes"]})
+        self.assertEqual(res, {"ok": True, "noteId": "pn-0badcafe", "notes": self.answer[1]["notes"], "dropped": []})
         self.assertEqual(self.calls, [("/pinnote", {"id": RSID, "text": "remote note", "detail": "d"})])
         self.assertEqual(km._pinned_notes(), {}, "the owning kernel holds the store")
+        # the remote's evictions ride through
+        self.answer = (200, {"ok": True, "noteId": "pn-0badcafe", "notes": [], "dropped": [{"id": "pn-00000000", "text": "old"}]})
+        code, res = self._post("/pinnote", {"id": RSID, "text": "remote note"})
+        self.assertEqual(res["dropped"], [{"id": "pn-00000000", "text": "old"}])
 
     def test_unpin_for_a_remote_session_is_forwarded_with_its_account(self):
-        self.answer = (200, {"ok": False, "error": "no pinned note of yours with that id", "notes": []})
+        self.answer = (200, {"ok": False, "state": "already", "at": NOW, "dropped": False, "error": "already unpinned", "notes": []})
         code, res = self._post("/unpinnote", {"id": RSID, "noteId": "pn-deadbeef"})
         self.assertEqual(code, 200)
-        self.assertEqual(res, {"ok": False, "error": "no pinned note of yours with that id", "notes": []})
+        self.assertEqual(res, {"ok": False, "state": "already", "at": NOW, "dropped": False, "error": "already unpinned", "notes": []})
         self.assertEqual(self.calls, [("/unpinnote", {"id": RSID, "noteId": "pn-deadbeef"})])
+        # a remote kernel that predates the account answers ok alone: nothing is invented
+        self.answer = (200, {"ok": False})
+        self.assertEqual(self._post("/unpinnote", {"id": RSID, "noteId": "pn-deadbeef"})[1], {"ok": False, "notes": []})
 
     def test_a_dead_tunnel_or_an_older_remote_is_a_502_that_names_the_cause(self):
         saved = km.sys.stderr
@@ -393,17 +575,36 @@ class DriveOp(_StoreSandbox):
         super().tearDown()
 
     def test_unpin_is_an_id_op(self):
-        self.assertIn('"unpinNote"', inspect.getsource(km._drive))
+        # membership in the ID_OPS tuple itself (a source substring would be satisfied by the elif alone)
+        tree = ast.parse(inspect.getsource(km._drive).lstrip())
+        ops = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "ID_OPS" for t in node.targets):
+                ops = ast.literal_eval(node.value)
+        self.assertIsNotNone(ops, "ID_OPS is a literal tuple in _drive")
+        self.assertIn("unpinNote", ops)
 
     def test_unpin_removes_the_note_quietly(self):
-        nid, _ = km._pin_note(SID, "one")
+        nid, _, _ = km._pin_note(SID, "one")
         self.assertTrue(km._drive({"type": "unpinNote", "id": SID, "noteId": nid}, self.client))
         self.assertEqual(km._pinned_notes_for(SID), [])
         self.assertEqual(self.sent, [], "a clean unpin raises no warning")
 
     def test_unpin_of_a_gone_id_warns_loudly(self):
+        nid, _, _ = km._pin_note(SID, "one")
+        km._drive({"type": "unpinNote", "id": SID, "noteId": nid}, self.client)
+        km._drive({"type": "unpinNote", "id": SID, "noteId": nid}, self.client)      # a second click on a removed row
+        self.assertEqual([(m["type"], m["text"]) for m in self.sent], [("warn", "That note was already unpinned.")])
         km._drive({"type": "unpinNote", "id": SID, "noteId": "pn-deadbeef"}, self.client)
-        self.assertEqual([m["type"] for m in self.sent], ["warn"])
+        self.assertEqual(self.sent[-1]["text"], "No such note is pinned on this session.")
+
+    def test_unpin_against_an_unreadable_store_warns_with_the_fault(self):
+        (jd.STATE / km.PINNED_NOTES_FILE).write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "unpinNote", "id": SID, "noteId": "pn-deadbeef"}, self.client)
+        self.assertEqual(self.sent[-1]["type"], "warn")
+        self.assertIn("not readable", self.sent[-1]["text"])
+        self.assertNotIn("already", self.sent[-1]["text"])
 
 
 class WireSeams(unittest.TestCase):
@@ -476,8 +677,8 @@ class BuildSessionSeam(unittest.TestCase):
         self.assertEqual(km.build_session(SID, NOW)["pinnedNotes"], [])
 
     def test_pinned_notes_ride_the_field_oldest_first(self):
-        a, _ = km._pin_note(SID, "Read docs/plan.md first", "the plan's second section is the current one")
-        b, _ = km._pin_note(SID, "Waiting on CI for #12")
+        a, _, _ = km._pin_note(SID, "Read docs/plan.md first", "the plan's second section is the current one")
+        b, _, _ = km._pin_note(SID, "Waiting on CI for #12")
         payload = km.build_session(SID, NOW)
         self.assertEqual([n["id"] for n in payload["pinnedNotes"]], [a, b])
         self.assertEqual(payload["pinnedNotes"][0]["detail"], "the plan's second section is the current one")

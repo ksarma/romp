@@ -68,14 +68,20 @@ link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a p
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
 a strip between the tab bar and the transcript, oldest first, and the strip takes no space while a
-session has none. A row with a *details* hint has more text behind it; click the row to read it.
-When more than three notes are pinned, the older ones fold behind a *+N more* row. A file path or
-a pull request number in a note links the way it does in a user todo. Each row has an **Unpin**
-control (click it twice); a session unpins its own notes with `unpin_note`. At most eight notes
-stay pinned per session; a ninth drops the oldest. The notes live in `pinned-notes.json` under
-Romp's state directory, keyed by session, so they survive a kernel restart and reappear when a
-session is revived. There is no switch: the two tools are always offered, since a pinned note asks
-nothing of you.
+session has none. Each row is one line; a longer text ends in an ellipsis and its full text is
+behind the row's *details* hint, as is any detail the session added. Click the row or the hint to
+read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
+pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
+scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request
+number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
+twice; a tap elsewhere, or leaving the control, takes the first click back); a session unpins its
+own notes with `unpin_note`, and unpinning a note that is already down is a plain answer, not an
+error. A note's line takes at most 300 characters and its detail 4000; control characters other
+than a newline or a tab are dropped. At most eight notes stay pinned per session; a ninth drops the
+oldest, and the session is told which. The notes live in `pinned-notes.json` under Romp's state
+directory, keyed by session, so they survive a kernel restart and reappear when a session is
+revived. There is no switch: the two tools are always offered, since a pinned note asks nothing of
+you.
 
 These are for scripting and for agents rather than daily use:
 
@@ -306,8 +312,8 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `list_agents()` | The live sessions, each with its branch and working-note |
 | `set_working(text)` | Publish what you hold so peers steer clear |
 | `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
-| `pin_note(text, detail?)` | Pin a short note above the session's own transcript for you (where things stand, a warning, a summary); returns its id and what is pinned now |
-| `unpin_note(id)` | Take a pinned note down |
+| `pin_note(text, detail?)` | Pin a short note above the session's own transcript for you (where things stand, a warning, a summary); the line takes at most 300 characters and the detail 4000; returns its id, what is pinned now, and any note the eight-per-session bound dropped |
+| `unpin_note(id)` | Take a pinned note down; one already down is a plain answer, not an error |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 

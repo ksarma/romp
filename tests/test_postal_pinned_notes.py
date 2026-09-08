@@ -11,8 +11,12 @@ Pinned here:
 - pin posts to /pinnote AS THE CALLING SESSION (postal resolves identity from the CLI process env,
   so a subagent's pin lands on its parent session, as documented);
 - pin echoes the kernel-minted id, the unpin contract, and the list pinned now, in the same breath;
-- every failure is LOUD: no session identity, no text, an unreachable kernel, an id that is unknown,
-  already unpinned, or another session's; never a silent success.
+- the bounds are checked before the POST (a plain answer naming the bound, never the kernel's 400
+  folded into "couldn't pin that"), and the notes a pin evicted are named;
+- every failure is LOUD: no session identity, no text, an unreachable kernel, an id that is unknown or
+  another session's, a store that could not be read; never a silent success. A note of this session's
+  that was ALREADY taken down (the person unpinned it from the strip) is a plain answer, not an error:
+  the state the agent wanted holds (the #325 lesson).
 
 The veil on the DESCRIPTIONS and the result texts (no romp machinery named) is scanned by
 test_injected_voice.py. SYNTHETIC fixtures only.
@@ -54,10 +58,16 @@ class ToolSurface(unittest.TestCase):
         for name in ("pin_note", "unpin_note"):
             self.assertIn("person you work for", self._tool(name)["description"])
 
-    def test_pin_teaches_unpinning_and_the_bound_at_pin_time(self):
+    def test_pin_teaches_unpinning_and_the_bounds_at_pin_time(self):
         d = self._tool("pin_note")["description"]
         self.assertIn("unpin_note", d)
         self.assertIn("eight", d)
+        self.assertIn("300", d)
+        self.assertIn("4000", d)
+        props = self._tool("pin_note")["inputSchema"]["properties"]
+        self.assertIn("300", props["text"]["description"])
+        self.assertIn("4000", props["detail"]["description"])
+        self.assertEqual((pm.PIN_TEXT_MAX, pm.PIN_DETAIL_MAX), (300, 4000))
 
     def test_offered_whatever_the_user_todos_switch_says(self):
         pm.USER_TODOS_SWITCH.unlink(missing_ok=True)          # the switch is OFF by default
@@ -102,6 +112,31 @@ class Dispatch(unittest.TestCase):
         self.assertTrue(err)
         self.assertEqual(self.posts, [])
 
+    def test_an_over_long_pin_is_refused_plainly_before_any_post(self):
+        out, err = pm._mcp_call("pin_note", {"text": "x" * 301})
+        self.assertTrue(err)
+        self.assertIn("300", out)
+        self.assertIn("301", out, "says how long it was")
+        self.assertIn("Nothing was pinned", out)
+        out, err = pm._mcp_call("pin_note", {"text": "fine", "detail": "y" * 4001})
+        self.assertTrue(err)
+        self.assertIn("4000", out)
+        self.assertEqual(self.posts, [])
+        out, err = pm._mcp_call("pin_note", {"text": "x" * 300, "detail": "y" * 4000})
+        self.assertFalse(err, "the bound itself is allowed")
+        self.assertEqual(len(self.posts), 1)
+
+    def test_a_pin_that_evicted_a_note_names_it(self):
+        self.canned = {"ok": True, "noteId": "pn-0badcafe", "notes": NOTES,
+                       "dropped": [{"id": "pn-00000000", "text": "the first\nnote", "createdT": 1781100000}]}
+        out, err = pm._mcp_call("pin_note", {"text": "the ninth"})
+        self.assertFalse(err)
+        self.assertIn("the oldest came down", out)
+        self.assertIn("- pn-00000000: the first note", out, "named, one line")
+        self.canned = {"ok": True, "noteId": "pn-0badcafe", "notes": NOTES, "dropped": []}
+        out, err = pm._mcp_call("pin_note", {"text": "the second"})
+        self.assertNotIn("came down", out, "nothing dropped, nothing said")
+
     def test_pin_outside_a_session_is_refused(self):
         pm._self_identity = lambda: ("", "api")
         out, err = pm._mcp_call("pin_note", {"text": "Waiting on CI"})
@@ -130,12 +165,43 @@ class Dispatch(unittest.TestCase):
         self.assertIn("Pinned now: nothing.", out)
 
     def test_unpin_of_an_unknown_or_foreign_id_is_loud(self):
-        self.canned = {"ok": False, "error": "no pinned note of yours with that id", "notes": NOTES[:1]}
+        self.canned = {"ok": False, "state": "unknown", "error": "no pinned note of yours with that id", "notes": NOTES[:1]}
         out, err = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})
         self.assertTrue(err, "a loud, plain answer, never a silent success")
         self.assertIn("Nothing changed", out)
         self.assertIn("pn-deadbeef", out)
         self.assertIn("Pinned now (1)", out, "what IS pinned rides the refusal")
+
+    def test_unpin_of_an_already_unpinned_note_is_plain_and_not_an_error(self):
+        # the person clicked Unpin on the strip; the session tidies up later. The state it wanted
+        # holds, so this is no error to retry or report (the #325 lesson, review round 1 2026-09-08).
+        self.canned = {"ok": False, "state": "already", "at": 1781200000, "dropped": False, "error": "already unpinned", "notes": NOTES[1:]}
+        out, err = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})
+        self.assertFalse(err)
+        self.assertIn("Already unpinned", out)
+        self.assertIn("taken down", out)
+        self.assertIn(" at ", out, "says when")
+        self.assertIn("Nothing changed", out)
+        self.assertIn("Pinned now (1)", out)
+        self.canned = {"ok": False, "state": "already", "at": 1781200000, "dropped": True, "error": "already unpinned", "notes": []}
+        out, err = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})
+        self.assertFalse(err)
+        self.assertIn("made room for a newer pin", out, "a note the bound dropped says so")
+
+    def test_unpin_against_an_unreadable_store_names_the_fault(self):
+        self.canned = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+        out, err = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})
+        self.assertTrue(err)
+        self.assertIn("Couldn't unpin", out)
+        self.assertIn("not readable", out)
+        self.assertNotIn("Already", out)
+        self.assertNotIn("No note", out)
+
+    def test_an_older_kernel_without_the_account_gets_the_one_size_answer(self):
+        self.canned = {"ok": False, "error": "no pinned note of yours with that id", "notes": []}
+        out, err = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})
+        self.assertTrue(err)
+        self.assertIn("already unpinned, or", out)
 
     def test_unpin_with_an_unreachable_kernel_says_it_is_still_up(self):
         self.canned = None
@@ -162,6 +228,16 @@ class ListWords(unittest.TestCase):
                          "- pn-0badcafe: Read docs/plan.md before replying")
         self.assertEqual(pm._pinned_notes_words([]), "Pinned now: nothing.")
         self.assertEqual(pm._pinned_notes_words(None), "", "no list, no account")
+
+    def test_a_note_with_line_breaks_is_still_one_line_in_the_list(self):
+        self.assertEqual(pm._pinned_notes_words([{"id": "pn-9f2c1a34", "text": "line1\nline2\t  tab"}]),
+                         "Pinned now (1):\n- pn-9f2c1a34: line1 line2 tab")
+
+    def test_the_dropped_account(self):
+        self.assertEqual(pm._pinned_dropped_words([{"id": "pn-00000000", "text": "old"}]),
+                         "To stay within eight, the oldest came down:\n- pn-00000000: old")
+        self.assertEqual(pm._pinned_dropped_words([]), "")
+        self.assertEqual(pm._pinned_dropped_words(None), "")
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
-import { buildPinnedNotes, pinnedNotesKey, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED, type PinnedNote, type PinnedFoldState } from "./pinned-notes";
+import { buildPinnedNotes, pinnedNotesKey, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
 import { awaitWord, awaitBreakdown, groupRows, GROUP_TITLE, workingFor, type AwaitRow } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
@@ -11760,22 +11760,31 @@ function toggleLedgerCollapsed() {
 // skeletons): the notes the active session pinned for the person it works for, built by pinned-notes.ts
 // from the session payload's `pinnedNotes` field. Hidden, taking no space, while the session has none.
 // Repaints ONLY when pinnedNotesKey changes (a pin, an unpin, a tab switch): the frame that carries the
-// rows is the event, and a frame carrying the same rows is not one, so an open fold or an armed Unpin
-// survives every push in between. The fold states persist across repaints (keyed by note id / session
-// id, the openFolds idiom); the three controls are delegated to the stable host (below, installed once).
-// A path in a note's text or detail links like one on a user-todo row (linkTodoLinePaths /
-// linkTodoDetailPaths, the same session resolving relative paths), and a `#123` links to the session's
-// PR (linkifyPrRefs): the one pair of linkers, no second code path.
+// rows is the event, and a frame carrying the same rows is not one, so an open fold survives every push
+// in between. An armed Unpin does NOT survive a repaint: the row it sat on is gone, so the arm and its
+// listeners go with it (pnDisarm, before the paint). After a confirmed Unpin the latch (latchedNotes)
+// keeps a frame built before the unpin landed from painting the row back for one cycle. The fold states
+// persist across repaints (keyed by note id / session id, the openFolds idiom); the three controls are
+// delegated to the stable host (below, installed once). A path in a note's text or detail links like one
+// on a user-todo row (linkTodoLinePaths / linkTodoDetailPaths, the same session resolving relative
+// paths), and a `#123` links to the session's PR (linkifyPrRefs): the one pair of linkers, no second
+// code path.
 const pnFolds: PinnedFoldState = { openDetails: new Set(), moreOpen: new Set() };
 let pnPainted = "";   // pinnedNotesKey of what the strip shows; "" forces the next call to paint
+let pnLatch: UnpinLatch | null = null;   // the unpin(s) the kernel has not confirmed yet (latchUnpinAt)
+let pnArmed: (() => void) | null = null;  // the disarm of the one armed Unpin (armUnpin), if any
+function pnDisarm(): void { const f = pnArmed; pnArmed = null; if (f) f(); }
 function renderPinnedNotes(force = false): void {
   const host = document.getElementById("pinned-notes");
   if (!host) return;
   const s = activeId && !snapView ? sessions.get(activeId) : null;   // a section snapshot shows no transcript, so no strip
-  const notes = s && !s.sub ? (s.pinnedNotes || []) : [];            // a subagent viewer has no notes of its own
+  const seen = latchedNotes(pnLatch, s ? s.id : "", s && !s.sub ? (s.pinnedNotes || []) : []);   // a subagent viewer has no notes of its own
+  pnLatch = seen.latch;
+  const notes = seen.notes;
   const key = pinnedNotesKey(s ? s.id : "", notes);
   if (!force && key === pnPainted) return;
   pnPainted = key;
+  pnDisarm();   // the armed row, if any, is about to be replaced: its arm and listeners go with it
   const strip = s && notes.length ? buildPinnedNotes(document, s.id, notes, pnFolds, {
     line: (n) => { linkTodoLinePaths(n, s.id); linkifyPrRefs(n, prRepoFor(s.id)); },
     detail: (n) => { linkTodoDetailPaths(n, s.id); linkifyPrRefs(n, prRepoFor(s.id)); },
@@ -14643,8 +14652,8 @@ function chatTail(msg: any) {
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
   // session frames kept it stale — the tab glyph (next slice) reads this field, not the event
-  if ("pinnedNotes" in msg) s.pinnedNotes = msg.pinnedNotes;   // the same seam for the pinned-notes strip (2026-09-08)
   if ("userTodos" in msg) s.userTodos = msg.userTodos;
+  if ("pinnedNotes" in msg) s.pinnedNotes = msg.pinnedNotes;   // the same seam for the pinned-notes strip (2026-09-08)
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   scheduleRenderTabs();   // once per animation frame however many tails a cycle lands (2026-09-04)
   if (msg.id === activeId) {
@@ -17196,16 +17205,19 @@ setupSettings();
   const host = document.getElementById("pinned-notes");
   if (!host) return;
   delegate(host, {
-    // the row's text: fold / unfold its detail. The state keys by note id (pnFolds) so the next repaint
-    // paints the same fold; the body appearing and the hint flipping ARE the acknowledgement, local.
+    // the row's text, or its "details" button (the keyboard's way in): fold / unfold the row's detail.
+    // The state keys by note id (pnFolds) so the next repaint paints the same fold; the body appearing
+    // and the hint flipping ARE the acknowledgement, local.
     [PINNED_ACT.toggle]: (elx) => {
       const nid = elx.dataset.nid; if (!nid) return;
       const open = !pnFolds.openDetails.has(nid);
       if (open) pnFolds.openDetails.add(nid); else pnFolds.openDetails.delete(nid);
-      elx.closest(".pn-item")?.querySelector(".pn-detail")?.classList.toggle("open", open);
-      const more = elx.querySelector<HTMLElement>("." + UT_HINT_CLASS);
-      if (more) applyUtHint(more, utHintFor(open));
-      elx.title = utHintFor(open).title;
+      const item = elx.closest(".pn-item");
+      item?.querySelector(".pn-detail")?.classList.toggle("open", open);
+      const more = item?.querySelector<HTMLElement>("." + UT_HINT_CLASS);
+      if (more) { applyUtHint(more, utHintFor(open)); more.setAttribute("aria-expanded", open ? "true" : "false"); }
+      const txt = item?.querySelector<HTMLElement>(".pn-text");
+      if (txt) txt.title = utHintFor(open).title;
     },
     // the "+N more" fold over the older rows: keyed by session id; a forced repaint flips the label
     // and shows the rows (the todo card's completed-fold idiom)
@@ -17214,26 +17226,26 @@ setupSettings();
       if (pnFolds.moreOpen.has(sid)) pnFolds.moreOpen.delete(sid); else pnFolds.moreOpen.add(sid);
       renderPinnedNotes(true);
     },
-    // Unpin arms then confirms in place (the utdismiss idiom, without the coarse-pointer one-shot: the
-    // strip repaints only on new information, so an arm left behind on touch simply waits for the
-    // confirming tap or the next pin/unpin). Optimistic removal, then the kernel's unpinNote op, which
-    // lands on the same _unpin_note the postal tool's route uses; a refused unpin warns, and the
-    // next frame repaints the truth because the painted key is cleared here.
+    // Unpin arms then confirms in place (the utdismiss idiom). The arm ends on an event (armUnpin: the
+    // next press elsewhere, a blur, the pointer leaving; and a repaint of the strip, pnDisarm), never
+    // a timer, so a tap left behind on a phone cannot unpin in one step minutes later. The confirm
+    // posts the kernel's unpinNote op (the same _unpin_note the postal tool's route lands on) and
+    // repaints the strip without the row under the latch (latchUnpinAt): a frame still carrying the
+    // pre-unpin list is old news, and the kernel's next list is what releases it. A refused unpin
+    // warns from the kernel.
     [PINNED_ACT.unpin]: (elx) => {
       const nid = elx.dataset.nid, sid = elx.dataset.sid || activeId;
       if (!nid || !sid) return;
       if (!elx.classList.contains("armed")) {
-        elx.classList.add("armed"); elx.textContent = PINNED_UNPIN_ARMED;
-        if (!isCoarsePointer())
-          elx.addEventListener("pointerleave", () => { elx.classList.remove("armed"); elx.textContent = PINNED_UNPIN_LABEL; }, { once: true });
+        pnDisarm();                                       // one armed control at a time
+        pnArmed = armUnpin(elx, document, isCoarsePointer());
         return;
       }
+      pnDisarm();
       vscodeApi?.postMessage({ type: "unpinNote", id: sid, noteId: nid });
-      const item = elx.closest(".pn-item");
-      const strip = item?.closest(".pn-strip");
-      item?.remove();
-      pnPainted = "";                                   // whatever the kernel answers, the next frame paints it
-      if (strip && !strip.querySelector(".pn-item")) { const h = document.getElementById("pinned-notes"); if (h) { h.replaceChildren(); h.style.display = "none"; } }
+      const s = sessions.get(sid);
+      if (s) pnLatch = latchUnpinAt(pnLatch, sid, s.pinnedNotes || [], nid);   // against the list as the last frame carried it
+      renderPinnedNotes(true);
     },
   });
 })();
