@@ -3679,7 +3679,7 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
   box-shadow: var(--shadow-modal); container-type: inline-size; }
 /* container-type: the viewer's card is the query container the comments panel's narrow fold (`@container (max-width:
    680px)` in the file-comments block) resolves against. A container query styles the DESCENDANTS of a container, never
-   the container itself, and .fileview-main — the row the fold stacks — was the container it declared: with no container
+   the container itself, and .fileview-main, the row the fold stacks, was the container it declared: with no container
    above it the stacking rule never applied, and a narrow column got the fold's aside rules alone (45% of the ROW, a top
    border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). The row's own declaration,
    redundant once the card had one, went with Slice 2 of plans/markdown-viewer.md (file-view-fold-browser.test.ts). */

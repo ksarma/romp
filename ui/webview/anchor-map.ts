@@ -170,15 +170,22 @@ function refuse(reason: string, extra?: Partial<MapRefusal>): MapRefusal {
 // source character, so an (row, column) pair is a source offset with no further lookup.
 
 type RawRow = { el: DElement; text: string; srcStart: number };
-type RawIndex = { source: string; shape: Shape; rows: RawRow[]; rowStart: number[]; total: number };
+type RawIndex = { source: string; shape: Shape; rows: RawRow[]; els: DElement[]; rowOf: Map<DElement, number>; rowStart: number[]; total: number };
 
-/** What a cached analysis was built over: the same source and the same children of the root. The viewer
- *  swaps a body's children wholesale on re-render, so a cache keyed on the root alone would go stale. */
-type Shape = { source: string; count: number; first: DNode | null; last: DNode | null };
-const shapeOf = (root: DNode, source: string): Shape => ({
-  source, count: root.childNodes.length, first: root.childNodes[0] || null, last: root.childNodes[root.childNodes.length - 1] || null,
-});
-const sameShape = (a: Shape, b: Shape): boolean => a.source === b.source && a.count === b.count && a.first === b.first && a.last === b.last;
+/** What a cached analysis was built over: the same source and the same children of the root, every child by
+ *  identity. The viewer swaps a body's children wholesale on re-render, so a cache keyed on the root alone would go
+ *  stale; and a check on the children's count and first and last alone went stale too: the Comments panel's regions
+ *  layer wraps a top-level picture in a span of its own while the panel is open (file-comments-regions.ts), which
+ *  changes none of the three, so the rendered table kept pairing the picture, by then a grandchild, and its wrapper
+ *  stood for no block (the Slice 2 review: a reader partway into the figure was thrown to the document's top on a
+ *  view switch). A hit costs one pointer compare per child. */
+type Shape = { source: string; children: DNode[] };
+const shapeOf = (root: DNode, source: string): Shape => ({ source, children: Array.from(root.childNodes) });
+const sameShape = (a: Shape, root: DNode, source: string): boolean => {
+  if (a.source !== source || a.children.length !== root.childNodes.length) return false;
+  for (let i = 0; i < a.children.length; i++) if (a.children[i] !== root.childNodes[i]) return false;
+  return true;
+};
 
 const isRow = (el: DElement): boolean => hasClass(el, "fv-cl");
 
@@ -195,9 +202,9 @@ function collectRows(root: DNode, out: DElement[] = []): DElement[] {
 const rawCache = new WeakMap<object, RawIndex>();
 
 function rawIndex(codeRoot: DElement, source: string): RawIndex | { error: string } {
-  const shape = shapeOf(codeRoot, source);
   const hit = rawCache.get(codeRoot);
-  if (hit && sameShape(hit.shape, shape)) return hit;
+  if (hit && sameShape(hit.shape, codeRoot, source)) return hit;
+  const shape = shapeOf(codeRoot, source);
   const rows: RawRow[] = [];
   const rowStart: number[] = [];
   let pos = 0, total = 0;
@@ -219,7 +226,9 @@ function rawIndex(codeRoot: DElement, source: string): RawIndex | { error: strin
     else if (pos !== source.length) return { error: `row ${r + 1} is not followed by a line ending in the file text` };
   }
   if (pos !== source.length) return { error: `the rows end ${source.length - pos} characters before the file text does` };
-  const idx: RawIndex = { source, shape, rows, rowStart, total };
+  const rowOf = new Map<DElement, number>();
+  for (let r = 0; r < rows.length; r++) rowOf.set(rows[r].el, r);
+  const idx: RawIndex = { source, shape, rows, els, rowOf, rowStart, total };
   rawCache.set(codeRoot, idx);
   return idx;
 }
@@ -299,8 +308,18 @@ export function rawRowForOffset(codeRoot: Element, source: string, offset: numbe
 export function rawRowSpan(codeRoot: Element, source: string, row: Element): SourceRange | null {
   const idx = rawIndex(codeRoot as unknown as DElement, source);
   if ("error" in idx) return null;
-  const r = idx.rows.find((x) => x.el === (row as unknown as DElement));
-  return r ? { start: r.srcStart, end: r.srcStart + r.text.length } : null;
+  const i = idx.rowOf.get(row as unknown as DElement);
+  if (i === undefined) return null;
+  const r = idx.rows[i];
+  return { start: r.srcStart, end: r.srcStart + r.text.length };
+}
+
+/** The Raw rows of the view in order, the verified row map's own array (read, never written), so a read once per
+ *  scroll frame (reader-place.ts) queries the DOM for the rows once per paint, not once per frame. null when the rows
+ *  do not match the source. */
+export function rawRows(codeRoot: Element, source: string): Element[] | null {
+  const idx = rawIndex(codeRoot as unknown as DElement, source);
+  return "error" in idx ? null : (idx.els as unknown as Element[]);
 }
 
 // ── mark elements ──────────────────────────────────────────────────────────────────────────────────
@@ -667,8 +686,12 @@ type Block = {
   refused: string | null;
   dom: DNode[];
   isHtml: boolean;
+  /** an html block of comments alone: it renders no node, so the pairing gives it none and reads past it (before this,
+   *  an html block right before one lost its nodes to it: the resync accepted the comment block at once) */
+  blank: boolean;
   tag: string | null;   // the element the token renders to, for resyncing past an html block
 };
+const COMMENTS_ONLY = /^(?:\s*<!--[\s\S]*?-->)*\s*$/;
 type RenderedIndex = {
   source: string; shape: Shape; N: string; nStart: Int32Array | null;
   blocks: Block[];
@@ -692,13 +715,18 @@ function tagOf(t: Token): string | null {
   }
 }
 
-function analyzeRendered(root: DElement, source: string): RenderedIndex {
-  const { N, nStart } = normalizeSource(source);
-  const blocks: Block[] = [];
+/** A top-level token laid over N: where it starts and ends, where its text ends (the raw's trailing line feeds
+ *  excluded), and, from the first token whose raw could not be found at the position the walk assigned it, the
+ *  reason, which every token from there on carries (the walk stops advancing). */
+type Placed = { t: Token; startN: number; endN: number; textEndN: number; broken: string | null };
+/** marked's top-level tokens placed over N, in order, `space` tokens dropped: a reference definition between two
+ *  tokens is stepped over (never a token), else the walk resyncs on the next raw and leaves the gap unmapped. The one
+ *  placement the rendered index and the source block table (sourceBlockSpans) share, so their blocks correspond. */
+function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
   let tokens: Token[] = [];
   let lexError: string | null = null;
   try { tokens = Lexer.lex(N); } catch (e) { lexError = String((e as Error).message || e); }
-  // ── place the top-level tokens over N
+  const placed: Placed[] = [];
   let pos = 0;
   let broken: string | null = lexError;
   for (const t of tokens) {
@@ -716,17 +744,27 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       }
     }
     if (t.type === "space") { if (broken === null) pos += t.raw.length; continue; }
+    let textEndN = pos + t.raw.length;
+    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
+    placed.push({ t, startN: pos, endN: pos + t.raw.length, textEndN, broken });
+    if (broken === null) pos += t.raw.length;
+  }
+  return { placed, lexError };
+}
+
+function analyzeRendered(root: DElement, source: string): RenderedIndex {
+  const { N, nStart } = normalizeSource(source);
+  const blocks: Block[] = [];
+  const { placed, lexError } = placeTokens(N);
+  for (const { t, startN, endN, textEndN, broken } of placed) {
     const em = new Emitter();
     let refused: string | null = broken;
     if (refused === null) {
-      try { walkBlocks([t], View.identity(N, 0), em, pos); }
+      try { walkBlocks([t], View.identity(N, 0), em, startN); }
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
-    let textEndN = pos + t.raw.length;
-    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
-    blocks.push({ startN: pos, endN: pos + t.raw.length, textEndN, chars: em.chars, pos: em.pos, holes: em.holes,
-                  refused, dom: [], isHtml: t.type === "html", tag: tagOf(t) });
-    if (broken === null) pos += t.raw.length;
+    const isHtml = t.type === "html";
+    blocks.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, dom: [], isHtml, blank: isHtml && COMMENTS_ONLY.test(t.raw), tag: tagOf(t) });
   }
   if (lexError !== null) blocks.length = 0;
   // ── the DOM's top-level nodes and their text
@@ -744,7 +782,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   for (const n of content) nodeText.set(n, stripWs(isText(n) ? n.data : textOf(n)));
   if (lexError !== null) {
     blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
-                  dom: content.slice(), isHtml: false, tag: null });
+                  dom: content.slice(), isHtml: false, blank: false, tag: null });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
   //    pairing is 1:1 except across an html block, whose node count is unknown (zero for a comment, several
@@ -759,7 +797,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const runFits = (b: number, k: number): boolean => {
     for (; b < blocks.length; b++, k++) {
       const blk = blocks[b];
-      if (blk.isHtml) return true;                       // the next html block resyncs on its own
+      if (blk.isHtml) { if (blk.blank) { k--; continue; } return true; }   // a comment block has no node; the next html block resyncs on its own
       if (k >= content.length) return blk.refused !== null && blk.chars.length === 0 ? true : false;
       if (!fits(blk, content[k])) return false;
       if (blk.refused === null && blk.chars.length > 0) return true;   // a mapped block with text confirms the run
@@ -772,10 +810,12 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     if (lexError !== null) { for (const n of blk.dom) nodeBlock.set(n, b); break; }
     if (blk.isHtml) {
       blk.refused = blk.refused || "an HTML block";
-      let jj = content.length;
-      for (let k = j; k <= content.length; k++) if (runFits(b + 1, k)) { jj = k; break; }
-      blk.dom = content.slice(j, jj);
-      j = jj;
+      if (!blk.blank) {
+        let jj = content.length;
+        for (let k = j; k <= content.length; k++) if (runFits(b + 1, k)) { jj = k; break; }
+        blk.dom = content.slice(j, jj);
+        j = jj;
+      }
     } else if (blk.refused !== null) {
       if (j < content.length) blk.dom = [content[j++]];
     } else if (blk.chars.length === 0) {
@@ -794,47 +834,53 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
 const renderedCache = new WeakMap<object, RenderedIndex>();
 function renderedIndex(root: DElement, source: string): RenderedIndex {
   const hit = renderedCache.get(root);
-  if (hit && sameShape(hit.shape, shapeOf(root, source))) return hit;
+  if (hit && sameShape(hit.shape, root, source)) return hit;
   const idx = analyzeRendered(root, source);
   renderedCache.set(root, idx);
   return idx;
 }
 
 // ── the block table, for the reader's place (reader-place.ts) ─────────────────────────────────────────
-// Two thin reads over the private table: which source span a top-level rendered node stands for, and which
-// rendered node stands at a source offset. A REFUSED block answers both (its node is paired by tag, and the
-// reader's place needs an element to measure, not text to quote), where renderedSpot, built for a point inside
-// the prose, answers null for one. A node with text the pairing could not place (whitespace between blocks, a
-// node an html block's resync left over) answers null, and the caller reads the next node.
+// Three reads over the private table: the top-level blocks of a source as spans (sourceBlockSpans), which block a
+// top-level rendered node stands for (renderedBlockIndex), and which elements a block renders as
+// (renderedBlockElements). A REFUSED block answers all three (its node is paired by tag, and the reader's place
+// needs an element to measure, not text to quote), where renderedSpot, built for a point inside the prose, answers
+// null for one. A node the pairing could not place (whitespace between blocks, a node an html block's resync left
+// over) is no block's, and the caller reads the next node.
 
-/** The source span of the top-level block that renders `node` (a child of `renderedRoot`): its first character
- *  and the end of its raw text (the blank lines a token swallows after it excluded). null when `node` is not a
- *  block's element. */
-export function renderedBlockSpan(renderedRoot: Element, source: string, node: Node): SourceRange | null {
-  const idx = renderedIndex(renderedRoot as unknown as DElement, source);
-  const b = idx.nodeBlock.get(node as unknown as DNode);
-  if (b === undefined) return null;
-  const blk = idx.blocks[b];
-  return { start: nOf(idx, blk.startN), end: nOf(idx, blk.textEndN) };
+/** The top-level blocks of `source` in order, each its source span (first character to the end of its text, the blank
+ *  lines a token swallows after it excluded), from the same placement the rendered index pairs elements by, so block b
+ *  here is block b there (renderedBlockIndex, renderedBlockElements). Markdown the lexer could not parse is one block
+ *  over the whole text. For the reader's place (reader-place.ts): the blocks of the Raw view, which its rows alone do
+ *  not show (a blank row between two paragraphs belongs to neither, one inside a fenced code block to the code block).
+ *  The last source's table is kept: the viewer reads the same text once per scroll frame. */
+let spansCache: { source: string; spans: SourceRange[] } | null = null;
+export function sourceBlockSpans(source: string): SourceRange[] {
+  if (spansCache && spansCache.source === source) return spansCache.spans;
+  const { N, nStart } = normalizeSource(source);
+  const { placed, lexError } = placeTokens(N);
+  const idx = { nStart };
+  const spans: SourceRange[] = lexError !== null
+    ? [{ start: 0, end: source.length }]
+    : placed.map((p) => ({ start: nOf(idx, p.startN), end: nOf(idx, p.textEndN) }));
+  spansCache = { source, spans };
+  return spans;
 }
 
-/** The first element of the block whose start is the largest at or below `offset`: the block holding the offset,
- *  or, when the text there was edited away, the one now standing at or before its place. A block with no element
- *  of its own (a comment, a dropped `<style>`) is passed over for the one before it. null when no block starts at
- *  or before the offset, or none of those has an element. */
-export function renderedBlockAt(renderedRoot: Element, source: string, offset: number): Element | null {
+/** The index, into sourceBlockSpans(source), of the top-level block that renders `node`, a child of `renderedRoot`;
+ *  -1 when `node` is no block's (whitespace between blocks, a node an html block's resync left over). */
+export function renderedBlockIndex(renderedRoot: Element, source: string, node: Node): number {
   const idx = renderedIndex(renderedRoot as unknown as DElement, source);
-  let lo = 0, hi = idx.blocks.length - 1;
-  if (hi < 0 || nOf(idx, idx.blocks[0].startN) > offset) return null;
-  while (lo < hi) {   // the last block starting at or before the offset (blocks are in source order)
-    const mid = (lo + hi + 1) >> 1;
-    if (nOf(idx, idx.blocks[mid].startN) <= offset) lo = mid; else hi = mid - 1;
-  }
-  for (let b = lo; b >= 0; b--) {
-    const node = idx.blocks[b].dom.find((n) => isElement(n));
-    if (node) return node as unknown as Element;
-  }
-  return null;
+  const b = idx.nodeBlock.get(node as unknown as DNode);
+  return b === undefined ? -1 : b;
+}
+
+/** The elements block `b` renders as, in order: one for most blocks, several for an html block of sibling tags, none
+ *  for a comment or a block the sanitizer dropped. */
+export function renderedBlockElements(renderedRoot: Element, source: string, b: number): Element[] {
+  const idx = renderedIndex(renderedRoot as unknown as DElement, source);
+  const blk = idx.blocks[b];
+  return blk ? (blk.dom.filter((n) => isElement(n)) as unknown as Element[]) : [];
 }
 
 /** The top-level node holding global index g, and the index within it. */

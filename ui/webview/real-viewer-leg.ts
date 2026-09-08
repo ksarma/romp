@@ -5,20 +5,23 @@
 // body.fileview-pane), with a fetch that answers the kernel's file route from a table the test edits (so a reload can
 // bring different bytes under a new mtime) and a poster that answers the panel's status ask the way the kernel would,
 // so the real aside opens on a click. A probe action stashes the seam (window.__seam) and counts its paints, the way
-// file-view-text-size.test.ts's page does. Four legs measure over it (file-view-place-browser, file-view-notebar-browser,
-// file-comments-float-scroll-browser, file-view-fold-browser); this module exists so they do not carry four copies of the
-// same page. Test-only: no webview bundle imports it. playwright and esbuild are resolved from the extension's own
-// package.json, so a single-file run (infra: the bundle written under TMPDIR) finds them too. ROMP_LEG_UI names another
-// ui/webview to bundle and read the sheets from (a copy of the base commit's, say), so a leg can be run over the tree
-// before a change to show it red there. Synthetic values only: an invented report, /repo/notes-api paths, the
-// placeholder sid.
+// file-view-text-size.test.ts's page does. Six legs measure over it (file-view-place-browser, file-view-notebar-browser,
+// file-comments-float-scroll-browser, file-view-fold-browser, and the Slice 2 review's file-view-place-blocks-browser
+// and file-view-place-reveal-browser); this module exists so they do not carry six copies of the same page. Test-only:
+// no webview bundle imports it. playwright and esbuild are resolved from the extension's own package.json, so a
+// single-file run (infra: the bundle written under TMPDIR) finds them too. The tree under test is the
+// cwd's, ../ui/webview from the vscode-extension npm test runs in, as for every browser leg; to run a leg over another
+// tree (a copy of the base commit's, say, to show it red there) run it from that tree's vscode-extension. No environment
+// variable redirects the tree: one did, and a value left in a shell would have run these legs over another tree than the
+// rest of the suite with nothing in the output saying so (file-view-leg-tree.test.ts pins this). Synthetic values only:
+// an invented report, /repo/notes-api paths, the placeholder sid.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 
 export const EXT = process.cwd();                                       // npm test runs in vscode-extension
 export const requireCjs = createRequire(path.join(EXT, "package.json"));
-export const UI = process.env.ROMP_LEG_UI || path.resolve(EXT, "..", "ui", "webview");
+export const UI = path.resolve(EXT, "..", "ui", "webview");             // the cwd's tree; no environment variable (header)
 const web = (f: string) => fs.readFileSync(path.join(UI, f), "utf8").replace('@import "katex/dist/katex.min.css";', "");
 
 export const ROOT = "/repo/notes-api";

@@ -65,32 +65,36 @@ test("in a browser, the real module: a line past the end raises a notice that is
   });
 });
 
-test("in a browser, the real module: the Edit refusal is a notice above the body row at any scroll position; a second notice replaces the first; a reload keeps it", { timeout: 120000 }, async (t) => {
+test("in a browser, the real module: the Edit refusal is a notice above the body row at any scroll position; a second notice replaces the first; a reload keeps it; pane and chat", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    const { page, errors } = await openViewer(browser, "pane", 700, 600);
-    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 1500; });
-    await frames(page, 2);
-    await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 2 changes are pending in this file."); });
-    await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
-    await frames(page, 2);
-    let b: Bar = await page.evaluate(readBar);
-    assert.ok(b.present, "the refusal is up");
-    assert.equal(b.text, "Edit is off here while 2 changes are pending in this file.");
-    assert.ok(b.aboveRow && b.inCard && b.inViewport, "above the row, in the card, on screen, with the body scrolled to 1500");
-    assert.equal(b.bodyScrollTop, 1500, "the body did not move for it");
-    await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 3 changes are pending in this file."); });
-    await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
-    await frames(page, 2);
-    b = await page.evaluate(readBar);
-    assert.equal(b.text, "Edit is off here while 3 changes are pending in this file.", "one notice at a time: the newer replaced the older");
-    assert.equal(await page.evaluate(() => document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length), 1, "exactly one bar in the card");
-    const paints: number = await page.evaluate(() => (window as any).__paints);
-    await page.evaluate(() => { (window as any).__seam.reload(); });
-    await page.waitForFunction((k: number) => (window as any).__paints >= k, paints + 1, { timeout: 10000 });
-    await frames(page, 2);
-    b = await page.evaluate(readBar);
-    assert.ok(b.present && b.inViewport, "a reload swaps the body's children and the notice stays");
-    assert.deepEqual(errors, [], "no script error");
-    await page.close();
+    for (const mode of ["pane", "chat"] as const) {
+      const { page, errors } = await openViewer(browser, mode, 700, 600);
+      await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 1500; });
+      await frames(page, 2);
+      await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 2 changes are pending in this file."); });
+      await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+      await frames(page, 2);
+      let b: Bar = await page.evaluate(readBar);
+      assert.ok(b.present, mode + ": the refusal is up");
+      assert.equal(b.text, "Edit is off here while 2 changes are pending in this file.", mode + ": in the seam's words");
+      assert.equal(b.parent, "fileview", mode + ": a child of the card, not of the body");
+      assert.equal(b.before, "fileview-main", mode + ": right above the body row");
+      assert.ok(b.aboveRow && b.inCard && b.inViewport, mode + ": above the row, in the card, on screen, with the body scrolled to 1500");
+      assert.equal(b.bodyScrollTop, 1500, mode + ": the body did not move for it");
+      await page.evaluate(() => { (window as any).__seam.setEditBlocked("Edit is off here while 3 changes are pending in this file."); });
+      await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+      await frames(page, 2);
+      b = await page.evaluate(readBar);
+      assert.equal(b.text, "Edit is off here while 3 changes are pending in this file.", mode + ": one notice at a time: the newer replaced the older");
+      assert.equal(await page.evaluate(() => document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length), 1, mode + ": exactly one bar in the card");
+      const paints: number = await page.evaluate(() => (window as any).__paints);
+      await page.evaluate(() => { (window as any).__seam.reload(); });
+      await page.waitForFunction((k: number) => (window as any).__paints >= k, paints + 1, { timeout: 10000 });
+      await frames(page, 2);
+      b = await page.evaluate(readBar);
+      assert.ok(b.present && b.inViewport && b.aboveRow, mode + ": a reload swaps the body's children and the notice stays above the row");
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
+    }
   });
 });

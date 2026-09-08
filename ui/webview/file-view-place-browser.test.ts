@@ -8,9 +8,12 @@
 // and reads the top-visible block again: the same paragraph, within a pixel of the same height, whatever the scrollTop.
 // The place is the file's own: a block's source span, followed through the edit, so a reload lands on the same block
 // and a view switch on the same passage (the Raw row of the block's first line, or the block holding the row). A block
-// the write rewrote resolves to the block now standing where the edit begins. The URL viewer's Rendered/Raw switch shares
-// the helper. Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright browser (CI installs
-// none), as the other browser legs do. Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
+// the write rewrote is placed by the block before it, followed the same way, so the reader lands on what replaced it
+// (the fourth scene: with twenty paragraphs inserted above, the block standing where the edit begins would be the first
+// inserted one); only with that block gone too does the place fall to where the edit begins. The URL viewer's
+// Rendered/Raw switch shares the helper. Legs await frames and paint counts, never a timer. Skips LOUDLY without a
+// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented report,
+// /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, topBlock, putAtTop, LONG, LONG2, rewritten, REPORT, MT2, ORIGIN } from "./real-viewer-leg";

@@ -303,14 +303,18 @@ text size, and code blocks keep that width and wrap long lines. A table is as wi
 its columns need, up to the width of the pane, and scrolls inside its own box beyond
 that; a table inside a quote or a list item stays within the prose width. Pictures
 shrink to fit, so resizing the pane never leaves the page wider than the pane, and a
-picture sized by its `width` and `height` attributes keeps its shape as it shrinks.
+picture sized in pixels by its `width` and `height` attributes keeps its shape as it
+shrinks; one whose width is a percentage keeps the height it names.
 
 **Your place in the file.** The passage at the top of the view stays where it is when
 the file is read again after a session writes it, when you switch between Rendered and
 Raw, when the pane is resized or the Comments panel opens or closes, and when the text
 size changes. A notice from the viewer (a line past the end of the file, an edit the
-viewer refuses) sits above the file's text, where it stays until the next notice
-replaces it, wherever you have scrolled to.
+viewer refuses) sits above the file's text, wherever you have scrolled to, and stays
+through a switch of view and a reload until the next notice replaces it or you open the
+editor. A notice raised while you edit (a save that failed) goes when you leave the
+editor; a warning about the comments log stays when the save that raised it closes the
+editor.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under the
 rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's

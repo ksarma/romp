@@ -1099,18 +1099,29 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // `text` before renderBody swaps the old view out. `place` is the reader's place under the layout last painted, read
   // again after every seat and, off the body's scroll event, once per frame as the reader moves; the width reflow
   // seats from it, since by the time the observer reports, the layout has changed and the old top block cannot be read.
-  // A scroll under a body width the last read did not see is the reflow's own (the browser clamping as the content got
-  // shorter), not the reader's, and is not read: the repaint seats the place read before it and then reads anew.
+  // A scroll under a body width the last read did not see, before that repaint, is one of three things: the browser's
+  // anchoring keeping its anchor node through the reflow (it reads as the same block, so reading it is harmless); the
+  // browser clamping the body as the content got shorter (it reads as a LATER block, the wrong place); or a scroll made
+  // on purpose in the same task as the width change, which is new information the repaint must not undo: the panel's
+  // reveal (file-comments.ts fcopen: a click on a highlight with the panel closed mounts the aside and centers the mark
+  // in one task) used to be scrolled back to the pre-click place one frame later, the text jumping twice and a mark low
+  // in the viewport pushed off the screen with its card (the Slice 2 review). Only the clamp is skipped, by its
+  // signature: it lands the body at its end coming from above it, and nothing scrolls UP to the end on purpose, since
+  // the position it came from is one only a shrink of the content leaves behind. Every other scroll is read, and the
+  // repaint's seat then holds what it finds. file-view-place-reveal-browser.test.ts drives the reveal, the generic form
+  // (any scroll plus a width change in one task) and the clamp.
   let shownText: string | null = null;
   let place: Place | null = null;
   let placeWidth = -1;
+  let placeScrollTop = -1;
   const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
-  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; } };
+  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; } };
   const seat = (kept: Place | null) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); notePlace(); };
+  const clamped = (): boolean => body.scrollTop < placeScrollTop && body.scrollTop >= body.scrollHeight - body.clientHeight - 1;
   let placeFrame = 0;
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
-    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth) notePlace(); };
+    const read = () => { placeFrame = 0; if (body.clientWidth === placeWidth || !clamped()) notePlace(); };
     if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
   }, { passive: true });
   ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
