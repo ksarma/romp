@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """run_propagate reads through the shared read-only store cache and loads a writer only for the
 sender it is about to write; _drain_undiscovered and run_propagate's absent-store sweep answer their
-two predicates from a memo keyed on file identity (2026-09-06, the judge-pass performance batch, item
-J4: every store read at most once per pass; 2026-09-07, round 4 item PROP: the reads moved to
-load_goals_shared). Before J4 every pass loaded each recipient, loaded the sender again per ref BEFORE
-checking whether its tracker was already done (it was, for every live ref), loaded every sender a
-third time in the sender loop, and both triage sweeps parsed every ABSENT store to evaluate one
-predicate each — about 168 of 455 loads per pass. After J4 the one load per sid was still a parse
-(about 2 ms per store per pass) that decided, for every live ref, not to write. Pinned here:
+two predicates from a memo keyed on file identity (2026-09-06: every store read at most once per pass;
+2026-09-07: the reads moved to load_goals_shared). Before: every pass loaded each recipient, loaded the
+sender again per ref BEFORE checking whether its tracker was already done (it was, for every live ref),
+loaded every sender a third time in the sender loop, and both triage sweeps parsed every ABSENT store to
+evaluate one predicate each, about 168 of 455 loads per pass on the kernel where this was measured.
+With one load per sid, that load was still a parse (about 2 ms per store per pass) that decided, for
+every live ref, not to write. Pinned here:
 
 - every read that decides whether to write is one load_goals_shared per distinct sid per pass (the
   recipient scan, the per-ref done check, _ref_goal, the sender loop's tracker walk): zero plain
@@ -19,7 +19,9 @@ predicate each — about 168 of 455 loads per pass. After J4 the one load per si
 - one publish per dirty sender (rev advances by exactly one for two refs) carrying the rollup over
   every verdict it holds, the CAS discipline intact under a kernel-side write between two refs, a
   failed publish leaving the file untouched for the retry, and an absent sender's publish settled (or
-  not) by _presumed_closed; a store this pass published is read again through the shared cache;
+  not) by _presumed_closed; a store this pass published is read again through the shared cache; a
+  raise mid-loop publishes the senders already reached and re-raises, and one sender's failed publish
+  does not stop the others (the first failure is the pass's error, raised once the rest are out);
 - a recipient whose goals file does not parse is quarantined aside by load_goals (upstream #1019, the
   2026-09-08 fold) and both loaders then answer the legitimate fresh store, once (`corrupt` advances by
   one for the shared loader's hand-off, the path then reads as absent), its refs skipped;
@@ -63,8 +65,9 @@ RECIP = "a4a4a4a4-0002-4000-8000-000000000002"    # discovered, name "api"
 DEAD = "a4a4a4a4-0003-4000-8000-000000000003"     # absent: no discover entry
 DEAD2 = "a4a4a4a4-0004-4000-8000-000000000004"
 DEAD3 = "a4a4a4a4-0005-4000-8000-000000000005"
-MID = "msg-j4-0001"
-MID2 = "msg-j4-0002"
+SENDER2 = "a4a4a4a4-0006-4000-8000-000000000006"  # a second sender, discovered on demand (name "tests")
+MID = "msg-propagate-0001"
+MID2 = "msg-propagate-0002"
 T = 1_787_600_000
 
 
@@ -297,11 +300,11 @@ class LoadOncePerPass(World):
         #                                                                     diary-derived: a clear event, not a literal
         self._publish(SENDER, {t["id"]: t for t in (_tracker(SENDER, 1, RECIP, MID),
                                                     _tracker(SENDER, 2, RECIP, MID2),
-                                                    _tracker(SENDER, 3, RECIP, "msg-j4-0003", quiet=True),
-                                                    _tracker(SENDER, 4, "otherbox:api", "msg-j4-0004"))})
+                                                    _tracker(SENDER, 3, RECIP, "msg-propagate-0003", quiet=True),
+                                                    _tracker(SENDER, 4, "otherbox:api", "msg-propagate-0004"))})
         g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
         self._publish(RECIP, {g5["id"]: g5, g6["id"]: g6})
-        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, "msg-j4-0005", quiet=True)]})
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, "msg-propagate-0005", quiet=True)]})
         self._reply(RECIP, SENDER, T + 500)
         self._reply("peer:otherbox:api", SENDER, T + 600)
         self._reply(RECIP, DEAD, T + 500)
@@ -398,6 +401,62 @@ class LoadOncePerPass(World):
         self.assertEqual(_rev(SENDER), r0 + 1)
         log = jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["log"]
         self.assertEqual([e["kind"] for e in log if e.get("src") == "courier"], ["done"])
+
+    def _two_senders_one_recipient(self):
+        """SENDER and SENDER2 each delegated one step to RECIP, which completed both; RECIP's g5 (SENDER's ref)
+        is reached before g6 (SENDER2's) in the recipient loop. Returns the two senders' revisions."""
+        self.sessions.append((SENDER2, "/dev/null", None, "tests"))
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
+        self._publish(SENDER2, {t["id"]: t for t in [_tracker(SENDER2, 1, RECIP, MID2)]})
+        g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
+        g6 = _complete(RECIP, 6, origin={"peer": SENDER2, "goalId": SENDER2 + ":t1", "msgId": MID2})
+        self._publish(RECIP, {g5["id"]: g5, g6["id"]: g6})
+        return _rev(SENDER), _rev(SENDER2)
+
+    def test_a_raise_mid_loop_publishes_the_verdicts_already_reached_and_re_raises(self):
+        # The deferred single publish must not turn one ref's trip into the loss of every verdict the pass
+        # recorded before it (review find, 2026-09-08; the per-ref save it replaced had persisted each as it
+        # was reached): the senders reached before the raise are published, the error is re-raised, and the
+        # sender whose ref raised (its object half-applied) is left for the next pass to re-derive.
+        r1, r2 = self._two_senders_one_recipient()
+        orig = jd._presumed_closed
+
+        def tripping(sid, now):
+            if sid == SENDER2:
+                raise RuntimeError("synthetic: the second sender's rollup input trips")
+            return orig(sid, now)
+        jd._presumed_closed = tripping
+        try:
+            with self.assertRaises(RuntimeError):
+                jd.run_propagate(now=T + 900)
+        finally:
+            jd._presumed_closed = orig
+        self.assertEqual(_rev(SENDER), r1 + 1, "the verdict reached before the raise is on disk")
+        self.assertTrue(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"])
+        self.assertEqual(_rev(SENDER2), r2, "the sender whose ref raised is not published: half-applied is no verdict")
+        self.assertFalse(jd.load_goals(SENDER2)["nodes"][SENDER2 + ":t1"]["nodeComplete"])
+        self.assertEqual(jd.run_propagate(now=T + 901), 1, "the next pass re-derives the one left, and only it")
+        self.assertEqual((_rev(SENDER), _rev(SENDER2)), (r1 + 1, r2 + 1))
+
+    def test_one_senders_failed_publish_does_not_stop_the_other_senders(self):
+        # Every dirty sender is published whatever happened to the one before it; the first failed publish is
+        # the pass's error, raised once the rest are out (review find, 2026-09-08).
+        r1, r2 = self._two_senders_one_recipient()
+        orig_save = jd.save_goals
+
+        def failing(fsid, store):
+            if fsid == SENDER:
+                raise RuntimeError("disk full")
+            return orig_save(fsid, store)
+        jd.save_goals = failing
+        try:
+            with self.assertRaises(RuntimeError):
+                jd.run_propagate(now=T + 900)
+        finally:
+            jd.save_goals = orig_save
+        self.assertEqual(_rev(SENDER), r1, "the failed publish left its file untouched")
+        self.assertEqual(_rev(SENDER2), r2 + 1, "the other sender's publish still landed")
+        self.assertTrue(jd.load_goals(SENDER2)["nodes"][SENDER2 + ":t1"]["nodeComplete"])
 
     def test_a_kernel_side_write_between_two_refs_survives_the_single_publish(self):
         # The CAS discipline under the deferred publish: the nudge tick blocks a third node and
@@ -500,6 +559,98 @@ class LoadOncePerPass(World):
         self.assertTrue(got["nodes"][DEAD + ":t1"]["nodeComplete"])
         self.assertEqual(got["status"][DEAD + ":t1"], "completed", "the bus knows no such live session: settled")
         self.assertNotIn(DEAD + ":t1", got.get("confirming") or [])
+
+    def test_a_dismissed_recipients_lookup_reuses_the_passes_store_and_archive_reads(self):
+        # The sender loop's dismissed-recipient lookup (_ref_goal) reads the recipient's store and archive
+        # through the pass's own dicts: the recipient scan already read both, so the lookup costs no load.
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})   # linked, not quiet
+        rn = {"id": RECIP + ":g5", "text": "Verify the staged refs", "parentId": None, "nodeComplete": False,
+              "blocked": False, "cleared": True, "trail": [], "t": T, "mt": T, "log": [],
+              "origin": {"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID}}
+        jd.save_goals(RECIP, _store(RECIP, {rn["id"]: rn}))     # the dismissed shape: cleared, not complete; a
+        #                                                          plain dict (GuardedNode refuses `cleared`), no rollup
+        self._reply(RECIP, SENDER, T + 500)
+        arch, orig_arch = Counter(), jd.load_goal_archive
+
+        def arch_spy(fsid):
+            arch[fsid] += 1
+            return orig_arch(fsid)
+        jd.load_goal_archive = arch_spy
+        try:
+            n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
+        finally:
+            jd.load_goal_archive = orig_arch
+        self.assertEqual(n, 1)
+        self.assertTrue(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"],
+                        "the dismissed recipient's reply ended the tracker")
+        # the fork's read/write split: the recipient is only ever a view, and the sender's one plain
+        # load is the writer load its due tracker earns; the lookup itself costs no read of either kind
+        self.assertEqual(dict(shared), {SENDER: 1, RECIP: 1}, "the lookup reused the recipient scan's shared read")
+        self.assertEqual(dict(counts), {SENDER: 1}, "one writer load, for the sender written; the recipient is never loaded")
+        self.assertEqual(dict(arch), {SENDER: 1, RECIP: 1}, "...and its archive read")
+
+    def test_a_recipient_node_the_sender_loop_completes_still_reads_as_dismissed_to_a_later_sender(self):
+        # _ref_goal's map is a SNAPSHOT (shallow copies of the recipient's nodes at first use), not a live
+        # view of the shared object the sender loop mutates. A synthetic shape isolates it: api's node g1 is
+        # both a dismissed recipient goal for tests' tracker AND a quiet tracker of its own onto a third
+        # peer. web's sender turn builds the map (g1 dismissed), api's turn completes g1 on the shared
+        # object, tests' turn must still read the dismissal, or its tracker never ends.
+        self.sessions = [(SENDER, "/dev/null", None, "web"), (RECIP, "/dev/null", None, "api"),
+                         (DEAD2, "/dev/null", None, "tests")]
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
+        g1 = {"id": RECIP + ":g1", "text": "the delegated work", "parentId": None, "nodeComplete": False,
+              "blocked": False, "cleared": True, "trail": [], "t": T, "mt": T, "log": [],
+              "origin": {"peer": DEAD2, "goalId": DEAD2 + ":t1", "msgId": MID2},
+              "handoff": {"peer": DEAD3, "msgId": "msg-propagate-0003", "quiet": True}}
+        jd.save_goals(RECIP, _store(RECIP, {g1["id"]: g1}))
+        self._publish(DEAD2, {t["id"]: t for t in [_tracker(DEAD2, 1, RECIP, MID2)]})
+        self._reply(DEAD3, RECIP, T + 500, mid="r-onward")
+        self._reply(RECIP, DEAD2, T + 500, mid="r-back")
+        n = jd.run_propagate(now=T + 900)
+        self.assertTrue(jd.load_goals(RECIP)["nodes"][RECIP + ":g1"]["nodeComplete"], "api's onward handoff ended")
+        t1 = jd.load_goals(DEAD2)["nodes"][DEAD2 + ":t1"]
+        self.assertTrue(t1["nodeComplete"], "tests' tracker ended on the reply: the map still said dismissed")
+        self.assertIn("dismissed", t1.get("doneWhy") or "")
+        self.assertEqual(n, 2)
+        self.assertFalse(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"],
+                         "web's live linked recipient (no node joins MID) still defers to the back-link")
+
+    def test_a_back_link_completion_on_an_absent_sender_is_settled_when_the_bus_knows_no_such_session(self):
+        # The recipient loop's per-ref rollup runs with _presumed_closed (once per sender per pass): a dead
+        # sender's back-link completion is SETTLED once the bus knows no live session by that sid, and left
+        # confirming while closedness cannot be determined. The tracker is the store's focus (lastNode), so
+        # only a closed session settles it.
+        def _focused(sid, k, mid):
+            t = _tracker(sid, k, RECIP, mid)
+            st = jd.load_goals(sid) if (jd.GOALDIR / (sid + ".json")).exists() else _store(sid, {})
+            st["nodes"][t["id"]] = t
+            st["lastNode"] = t["id"]
+            jd.rollup_status(st, False)
+            jd.save_goals(sid, st)
+        _focused(DEAD, 1, MID)
+        _focused(DEAD2, 1, MID2)
+        g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
+        g6 = _complete(RECIP, 6, origin={"peer": DEAD2, "goalId": DEAD2 + ":t1", "msgId": MID2})
+        self._publish(RECIP, {g5["id"]: g5, g6["id"]: g6})
+        self.assertEqual(jd.run_propagate(now=T + 900), 2)
+        for sid in (DEAD, DEAD2):
+            got = jd.load_goals(sid)
+            self.assertTrue(got["nodes"][sid + ":t1"]["nodeComplete"])
+            self.assertEqual(got["status"][sid + ":t1"], "working", "no mirror: not determinable, not settled")
+            self.assertIn(sid + ":t1", got.get("confirming") or [])
+        (jd.STATE / "remote-sids").write_text("")          # the bus has spoken: no live session anywhere by the sid
+        mid7 = "msg-propagate-0007"
+        _focused(DEAD, 2, mid7)
+        g7 = _complete(RECIP, 7, origin={"peer": DEAD, "goalId": DEAD + ":t2", "msgId": mid7})
+        st = jd.load_goals(RECIP)
+        st["nodes"][g7["id"]] = g7
+        jd.rollup_status(st, False)
+        jd.save_goals(RECIP, st)
+        self.assertEqual(jd.run_propagate(now=T + 901), 1)
+        got = jd.load_goals(DEAD)
+        self.assertTrue(got["nodes"][DEAD + ":t2"]["nodeComplete"])
+        self.assertEqual(got["status"][DEAD + ":t2"], "completed", "rolled up with the settled closedness")
+        self.assertNotIn(DEAD + ":t2", got.get("confirming") or [])
 
 
 class AbsentStoreMemo(World):
@@ -755,6 +906,76 @@ class AbsentStoreMemo(World):
                              "the old root's entries are gone from the new root's glob")
         finally:
             jd.GOALDIR, jd.GOALARCHDIR = saved
+
+    # Each component of the identity is load-bearing on its own: the tests above change two at once
+    # (a publish is a new inode AND a new mtime, usually a new size), so a key missing one component
+    # still passes them. One test per component, isolating it with an in-place rewrite or os.utime,
+    # which no romp writer does.
+    def test_a_size_only_change_is_a_miss(self):
+        self._plain(DEAD2)
+        self.assertEqual(jd._absent_store_flags(DEAD2), (False, False))
+        p = jd.GOALDIR / (DEAD2 + ".json")
+        k0, st0 = jd._store_identity(DEAD2), os.stat(p)
+        t1 = _tracker(DEAD2, 1, RECIP, MID, quiet=True)
+        with open(p, "r+b") as f:                        # in place: the same inode
+            f.truncate()
+            f.write(json.dumps(_store(DEAD2, {t1["id"]: t1})).encode())
+        os.utime(p, ns=(st0.st_atime_ns, st0.st_mtime_ns))
+        st1 = os.stat(p)
+        self.assertEqual((st1.st_ino, st1.st_mtime_ns), (st0.st_ino, st0.st_mtime_ns), "same inode, same mtime_ns")
+        self.assertNotEqual(st1.st_size, st0.st_size, "only the size moved")
+        self.assertNotEqual(jd._store_identity(DEAD2), k0, "the key moved with it")
+        h, m, _w = self._io()
+        self.assertEqual(jd._absent_store_flags(DEAD2), (True, False), "a miss: the new bytes' open tracker")
+        self.assertEqual(self._io()[:2], (h, m + 1))
+
+    def test_an_mtime_only_change_is_a_miss(self):
+        self._publish(DEAD2, {t["id"]: t for t in [_tracker(DEAD2, 1, RECIP, MID, quiet=True)]})
+        self.assertEqual(jd._absent_store_flags(DEAD2), (True, False))
+        p = jd.GOALDIR / (DEAD2 + ".json")
+        k0, st0 = jd._store_identity(DEAD2), os.stat(p)
+        raw = p.read_bytes()
+        self.assertEqual(raw.count(b'"nodeComplete": false'), 1)
+        with open(p, "r+b") as f:
+            f.write(raw.replace(b'"nodeComplete": false', b'"nodeComplete": true '))   # the same byte length
+        os.utime(p, ns=(st0.st_atime_ns, st0.st_mtime_ns + 1_000_000_000))
+        st1 = os.stat(p)
+        self.assertEqual((st1.st_ino, st1.st_size), (st0.st_ino, st0.st_size), "same inode, same size")
+        self.assertNotEqual(st1.st_mtime_ns, st0.st_mtime_ns, "only the mtime moved")
+        self.assertNotEqual(jd._store_identity(DEAD2), k0, "the key moved with it")
+        h, m, _w = self._io()
+        self.assertFalse(jd._absent_store_flags(DEAD2)[0], "a miss: the tracker now reads complete")
+        self.assertEqual(self._io()[:2], (h, m + 1))
+
+    def test_an_inode_only_change_is_a_miss(self):
+        self._publish(DEAD2, {t["id"]: t for t in [_tracker(DEAD2, 1, RECIP, MID, quiet=True)]})
+        self.assertEqual(jd._absent_store_flags(DEAD2), (True, False))
+        p = jd.GOALDIR / (DEAD2 + ".json")
+        k0, st0 = jd._store_identity(DEAD2), os.stat(p)
+        raw = p.read_bytes()
+        tmp = jd.GOALDIR / (DEAD2 + ".json.tmp")
+        tmp.write_bytes(raw.replace(b'"nodeComplete": false', b'"nodeComplete": true '))   # the same byte length
+        os.utime(tmp, ns=(st0.st_atime_ns, st0.st_mtime_ns))
+        os.rename(tmp, p)                                # a publish whose clock did not move
+        st1 = os.stat(p)
+        self.assertEqual((st1.st_mtime_ns, st1.st_size), (st0.st_mtime_ns, st0.st_size), "same mtime_ns, same size")
+        self.assertNotEqual(st1.st_ino, st0.st_ino, "only the inode moved")
+        self.assertNotEqual(jd._store_identity(DEAD2), k0, "the key moved with it")
+        h, m, _w = self._io()
+        self.assertFalse(jd._absent_store_flags(DEAD2)[0], "a miss: the tracker now reads complete")
+        self.assertEqual(self._io()[:2], (h, m + 1))
+
+    def test_run_propagates_sweep_evicts_a_vanished_store(self):
+        # run_propagate's own sweep evicts too, not only _drain_undiscovered's
+        self._plain(DEAD)
+        self._plain(DEAD2)
+        jd.run_propagate(now=T + 900)
+        p_dead = str(jd.GOALDIR / (DEAD + ".json"))
+        self.assertIn(p_dead, jd._ABSENT_FLAGS)
+        (jd.GOALDIR / (DEAD + ".json")).unlink()
+        jd.run_propagate(now=T + 901)
+        self.assertNotIn(p_dead, jd._ABSENT_FLAGS, "gone from run_propagate's glob: evicted by its sweep")
+        self.assertIn(str(jd.GOALDIR / (DEAD2 + ".json")), jd._ABSENT_FLAGS)
 
     def test_a_same_size_in_place_rewrite_with_the_mtime_put_back_is_the_documented_exception(self):
         # No romp writer does this: every publish is a tmp+rename (new inode, new mtime) and the

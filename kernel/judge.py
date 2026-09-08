@@ -171,6 +171,7 @@ def _rebind_state(path):
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
     _CHAIN_MEMO.clear()     # the write-moment chain memo keys on paths under STATESDIR; a new root is a new world
     _STORE_FAULTS.clear()   # unreadable-store episodes belong to the old root's files
+    _CHAIN_MEMO.clear()     # the write-moment chain memo keys on paths under STATESDIR; a new root is a new world
     _episode_memo.clear()   # ...and so are the episode-log reads
     _head_memo.clear()      # transcript heads are immutable per path, but a rebind swaps the whole world of paths
     _namefp_memo.clear()    # names-entry content is memoized per SID against same-second mtimes — across a
@@ -447,7 +448,12 @@ JUDGE_FAIL_CAP = 3                       # the same rule for every other retryin
 #                                          consolidator / courier; the
 #                                          planner (PLAN_PARSE_RETRIES) and distiller/briefer (DISTILL_FAIL_CAP)
 #                                          already had their own.
-PLACEMENTS_V = 11                        # placements-identity schema version (plan P2, the user 2026-07-06).
+PLACEMENTS_V = 12                        # placements-identity schema version (plan P2, the user 2026-07-06).
+#                                          v12 (2026-09-08, T252d): an ABSORBED atom (a mid-turn send the CLI
+#                                          spliced in) is placed at its LANDING time, not its send time, so
+#                                          every absorbed segment whose landing differs from its send changes
+#                                          its id's t. Same seal: dormant sessions must not replay the moved
+#                                          atoms as new goals.
 #                                          v2 (2026-07-09): a 07-07/07-08 change to segment-text derivation
 #                                          stepped the text hash without this bump — dormant segments' old-hash
 #                                          placements stopped matching, and every restart/touch replayed them as
@@ -2787,35 +2793,39 @@ def _fileset_key(files):
 
 _PARSE_CACHE = {}          # fsid -> (fileset_key, parsed_session)
 
-# ── the write-moment chain memo (perf plan B1, 2026-09-06) ──
+# ── the write-moment chain memo ──
 # _rewound_away builds a FRESH FileAdapter on every call by design (the pass frame pins a stale
 # world; the guard must read the live one), and it is called at every mint site of every planner
-# pass — 97.5% of them from _plan_session's per-pass stand-down. On the live kernel that walk was
-# 11.5% of all interpreter time, and nearly every call re-derived the same answer from unchanged
-# files. This memo keeps one entry per session, keyed on the exact inputs the adapter reads: the
-# candidate paths, their (mtime, size) with the states file's, the lineage closure the states'
-# resume links add (with the from-files' (mtime, size) too), and the pending cut. A rewind always
-# moves one of them (a branch-take appends to the leaf, a resume fork writes a states row, a bare
-# rollback arms the cut), so the invariant of "a writer whose evidence predates the diary stands
-# down" holds exactly: same inputs, same verdict. The key is computed BEFORE the build reads
-# anything, so a file that changes mid-build is caught by the next call's stat (an extra miss),
-# never served stale (a stat taken after the read could match a future call whose content the
-# build never saw). A build that raises is never memoized, and a key that hits OSError bypasses the
-# memo for that call. The entry holds the base key and the cut separately so the on-disk slot
-# (cut-independent) survives a cut arming or clearing and reconcile_rewound_goals shares it.
+# pass, most of them from _plan_session's per-pass stand-down. On a kernel running a few dozen
+# sessions a CPU profile put that walk at 11.5% of interpreter time, the largest single item, and
+# nearly every call re-derived the same answer from unchanged files. This memo keeps one entry per
+# session, keyed on the exact inputs the adapter reads: the candidate paths, their (mtime, size)
+# with the states file's, the lineage closure the states' resume links add (with the from-files'
+# (mtime, size) too), and the pending cut. A rewind always moves one of them (a branch-take appends
+# to the leaf, a resume fork writes a states row, a bare rollback arms the cut), so the invariant
+# of "a writer whose evidence predates the diary stands down" holds exactly: same inputs, same
+# verdict. The key is computed BEFORE the build reads anything, so a file that changes mid-build is
+# caught by the next call's stat (an extra miss), never served stale (a stat taken after the read
+# could match a future call whose content the build never saw). A build that raises is never
+# memoized, and a key that hits OSError bypasses the memo for that call. The entry holds the base
+# key and the cut separately so the on-disk slot (cut-independent) survives a cut arming or
+# clearing and reconcile_rewound_goals shares it. The build runs outside _CHAIN_LOCK: two threads
+# that miss together both build (wasted work, never a wrong answer; the later populate replaces
+# the earlier one).
 _CHAIN_MEMO = {}           # fsid -> {"base": key, "cut": cut the "mem" slot was built under or None,
 #                            "mem": five-way dict under that cut or None, "disk": the same with no cut
 #                            or None}; dict order = LRU, hits reinsert; evicts the oldest-used one at
-#                            the cap, never clear-at-cap (the _ASM_CACHE shape)
+#                            the cap, never clear-at-cap (the same LRU shape as em._ASM_CACHE)
 _CHAIN_MEMO_MAX = 256
 _CHAIN_LOCK = threading.Lock()     # the judge tiers' worker pools and the kernel's tick jobs all call in
-_CHAIN_STATS = {"hit": 0, "miss": 0, "populate": 0, "bypass": 0}   # read by GET /perf; see D4 of the plan
+_CHAIN_STATS = {"hit": 0, "miss": 0, "populate": 0, "bypass": 0}   # read through chain_memo_stats()
 
 
 def chain_memo_stats():
-    """The write-moment chain memo's counters for GET /perf: hit (served from the memo), miss (key
-    computed, no usable entry, built and memoized), populate (entries written), bypass (the key
-    itself hit OSError: built fresh, not memoized)."""
+    """The write-moment chain memo's counters, snapshotted under the lock: hit (served from the
+    memo), miss (key computed, no usable entry, built and memoized), populate (entries written),
+    bypass (the key itself hit OSError: built fresh, not memoized). The kernel's GET /perf reports
+    the dict as memos.chain."""
     with _CHAIN_LOCK:
         return dict(_CHAIN_STATS)
 
@@ -2889,7 +2899,10 @@ def _chain_key(path, cands, states):
     moves when a from-file joins or vanishes. The candidate tuple repeats what `fk`'s length and
     entries already say, and the from-file stats cover a rewrite of files the CLI never writes
     again after their fork; both are kept because a stat costs nothing and the key must not depend
-    on that reasoning staying true."""
+    on that reasoning staying true. The key covers exactly what em.chain_membership reads today
+    (_load_states -> resume_fork_links -> _lineage_closure -> the candidate files, and the cut the
+    caller keys separately); if chain_membership ever reads another input, the key must grow with
+    it or the memo serves stale verdicts."""
     fk = _fileset_key(list(cands) + ([states] if states else []))
     links = em.resume_fork_links(em._load_states(states))
     closure = em._lineage_closure(Path(path), cands, links)
@@ -3203,7 +3216,8 @@ def tasks_for(fsid, leaf, files, now):
     # was a silent miss.
     try:
         o = json.loads(cf.read_text())
-        hit = o["tasks"] if (o.get("key") == key and o.get("v") == 5) else None   # v5 = absorbed SDK-injection atoms carry real text (2026-07-06); older caches regenerate
+        hit = o["tasks"] if (o.get("key") == key and o.get("v") == 6) else None   # v6 = absorbed atoms placed at their landing time, so their seg ids moved (T252d, 2026-09-08);
+        #                                                                            v5 = absorbed SDK-injection atoms carry real text (2026-07-06); older caches regenerate
     except (FileNotFoundError, NotADirectoryError):   # absent, as _ident reads it: a plain miss
         hit = None
     except Exception as e:
@@ -3252,7 +3266,7 @@ def tasks_for(fsid, leaf, files, now):
     try:
         PCACHE.mkdir(parents=True, exist_ok=True)
         tmp = cf.with_suffix(".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"key": key, "v": 5, "tasks": tasks}))
+        tmp.write_text(json.dumps({"key": key, "v": 6, "tasks": tasks}))
         tmp.rename(cf)
     except Exception as e:
         # the decision stands for this pass (the tasks are returned) but the next pass cannot read it back:
@@ -3912,8 +3926,12 @@ def _guard_nodes(store):
 
 # ── goal-store I/O counters (the kernel's GET /perf reads them through goal_io_stats) ─────────────
 # How often the stores are read and written is the first question when the kernel is busy: every
-# judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
-# added a pass over every session. Plain counters, one lock, no formatting on the path.
+# judge stage and the nudge tick load stores through load_goals, so the load rate says whether a change
+# added a writer-side pass over every session. The pusher's read-only sites (the feed, chat and timeline
+# builds) read through load_goals_shared, whose hits and misses shared_store_stats reports (GET /perf
+# memos.shared), so a pass added THERE shows as shared misses (review find, 2026-09-08); this module also
+# counts every call the cache answered under `loads_shared`, so loads + loads_shared is every store read
+# (goal_io_stats). Plain counters, one lock, no formatting on the path.
 _GOAL_IO = {"loads": 0, "loads_shared": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
             "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0,
             "noop_hash_ms": 0.0,    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
@@ -4203,9 +4221,9 @@ def _disk_rev(fsid):
     """The revision the file holds NOW (0 only when ABSENT), from a fresh read. save_goals' CAS compares its
     base against this, and the answer must be the file's, never the memo's: the memo's identity can, in one
     rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check can afford
-    that (it skips a publish of content the file once held); the CAS cannot. Served from the memo, it passed
-    a writer with a stale base and let it write over the events published since (found in review
-    2026-09-06). A read fault or unparseable file RAISES, the rule every reader on the save path follows
+    that (it skips a publish of content the file once held); the CAS cannot. An earlier draft served it from
+    the memo, and in that interleaving a writer with a stale base passed the CAS and wrote over the events
+    published since. A read fault or unparseable file RAISES, the rule every reader on the save path follows
     (_read_store_json): read as 0 it matched a fresh store's base of 0, and save_goals then published that
     empty store over a file it never managed to read. Reads through _disk_read, so a test can count the
     read."""
@@ -4436,8 +4454,13 @@ def _replay_overrides(fsid, store, lines=None):
     log gains exactly one user event no matter how many loads replay the journal. A journaled node the
     store lacks is skipped (resolve/followup/move: it was cleared and compacted to the archive, which
     kept its flags). An unreadable journal logs a loud judge-errors row instead of silently skipping;
-    the store is still returned. Entries are rare (one manual click each), so the journal is never
-    pruned — replay is a few dict lookups.
+    the store is still returned, MARKED: `store["_unread"] = "journal"`, a transient key beside `_baseRev`
+    (save_goals pops it; _store_content keeps it out of the content hash) that says the store returned is
+    not the files' content. A reader that caches a load's answer by the files' identity consults the mark
+    before caching (the kernel's awaiting-lift gate today); a store FILE that cannot be read never reaches
+    here (load_goals raises), and an unparseable one is quarantined aside and legitimately fresh, so this
+    is the one load that answers with less than the files hold. Entries are rare (one manual click each),
+    so the journal is never pruned — replay is a few dict lookups.
 
     The SUPERSEDE guard on the event ops: a STRICTLY-LATER user event means a newer gesture outranks
     the entry — replaying past it would undo what the user did next (e.g. re-complete a card they
@@ -4609,7 +4632,7 @@ def _replay_overrides(fsid, store, lines=None):
 
 
 _NONCONTENT_KEYS = ("rev", "_baseRev", "_unread")   # the revision counter + the transient CAS base and
-#                                                      fallback mark (load_goals): not store CONTENT
+#                                                      unread-journal mark (_replay_overrides): not store CONTENT
 
 
 def _store_content(store):
@@ -4638,7 +4661,7 @@ def _own_hash(store):
 # save_goals asks "does the file already hold exactly this content?" on every save, and most saves are
 # no-ops (a pass ends with a rollup + save whether or not it placed anything). Before this the check
 # re-read and re-parsed the file and serialized BOTH sides with sort_keys on every save, then the CAS
-# parsed the file again for its revision: about 3% of the kernel's interpreter time on the judge
+# parsed the file again for its revision: a few percent of the interpreter time on a busy kernel's judge
 # threads, about 20 ms per save of the largest store.
 #
 # The memo maps a store's PATH to ((st_ino, st_mtime_ns, st_size), sha1 of the canonical disk content).
@@ -4658,14 +4681,18 @@ def _own_hash(store):
 # keep the size because it keeps the in-memory node's text and only unions logs. The memo therefore
 # serves the NO-OP CHECK ONLY. A false match there skips a publish whose content the file already held
 # once and every later publisher rebased over, so nothing of ours is lost. It holds no revision and the
-# CAS never reads it: until review (2026-09-06) _disk_rev was served from the entry too, and in that
-# interleaving a writer whose base equalled the stale revision passed the CAS without rebasing and wrote
-# over the events published since. The CAS reads the file (_disk_rev).
+# CAS never reads it: an earlier draft served _disk_rev from the entry too, and in that interleaving a
+# writer whose base equalled the stale revision passed the CAS without rebasing and wrote over the
+# events published since. The CAS reads the file (_disk_rev).
 #
 # Filled lazily (the first check after a foreign publish parses once) and by the publisher itself
 # (_disk_seed: the temp file's identity, which the rename keeps). Entries for absent files go at the
-# kernel's compaction sweep (_disk_memo_evict_absent); a stat or parse failure drops the entry and the
-# caller publishes as before.
+# kernel's compaction sweep (_disk_memo_evict_absent). An absent file drops the entry and the caller
+# publishes (a create); a read fault or unparseable bytes drop the entry and RAISE, the rule every reader on
+# the save path follows (_read_store_json), so nothing is published over bytes the check could not read. A
+# warm entry answers without a read, so a fault the file develops while its identity stands is not seen by
+# the no-op check; that answer is still safe (a match publishes nothing), and a real publish's CAS read
+# (_disk_rev) raises on it.
 _DISK_CONTENT = {}
 _DISK_CONTENT_LOCK = threading.Lock()
 
@@ -4686,14 +4713,6 @@ def _disk_read(fd, path_s):
         chunks.append(b)
 
 
-def _disk_ident(fd):
-    """The identity of an OPEN store, (inode, mtime_ns, size), from the descriptor: the identity of the file
-    whose bytes _disk_read returns, whatever is linked at the path by then. Its own seam so a test can land
-    a publish between the open and this stat."""
-    st = os.fstat(fd)
-    return (st.st_ino, st.st_mtime_ns, st.st_size)
-
-
 def _disk_parse(path_s, data):
     """The store object in `data`, the bytes _disk_read returned for the file at `path_s`. Anything else
     RAISES ValueError naming the file (not UTF-8, not JSON, a top-level value that is not an object): the
@@ -4709,6 +4728,14 @@ def _disk_parse(path_s, data):
     if not isinstance(value, dict):
         raise ValueError("%s: top-level JSON value is %s, not an object" % (path_s, type(value).__name__))
     return value
+
+
+def _disk_ident(fd):
+    """The identity of an OPEN store, (inode, mtime_ns, size), from the descriptor: the identity of the file
+    whose bytes _disk_read returns, whatever is linked at the path by then. Its own seam so a test can land
+    a publish between the open and this stat."""
+    st = os.fstat(fd)
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
 def _disk_entry(fsid):
@@ -4793,24 +4820,25 @@ def _matches_disk(fsid, store, mine=None):
     return mine is not None and ent[1] == mine
 
 
-# ── the shared read-only goal-store cache (2026-09-06, performance plan P9 / C1) ─────────────────────
-# The pusher thread loads a goal store at about ten read-only sites per cycle (the timeline's per-lane
-# load, the feed's peer-origin badge, the chat's seams and ledger tree, the stamp readers, the working-
-# note expiry), and every one of those loads parsed the file again: about 7% of the kernel's
-# interpreter time went to re-parsing stores that had not changed since the previous cycle.
-# load_goals_shared serves those sites ONE parsed object per file version; every writer stays on
-# load_goals (a private copy it may mutate and hand to save_goals).
+# ── the shared read-only goal-store cache (2026-09-06) ───────────────────────────────────────────────
+# The pusher thread loads a goal store at nine read-only sites per cycle (the timeline's per-lane load,
+# the feed's peer-origin badge, the chat's seams and ledger tree, the stamp readers, the working-note
+# expiry, the deferral sweep, the message-summary scan), and every one of those loads parsed the file
+# again: on a self-hosted 30-session deployment about 7% of the kernel's interpreter time went to
+# re-parsing stores that had not changed since the previous cycle. load_goals_shared serves those sites
+# ONE parsed object per file version; every writer stays on load_goals (a private copy it may mutate and
+# hand to save_goals).
 #
 # A hit is a proof about CONTENT, not identity. Each call opens the store, takes the file's identity
 # (inode, mtime_ns, size) from the descriptor, reads the bytes from the same descriptor and compares
-# them to the entry's (a memcmp, about 6% of a parse), so the coarse-timestamp blind spot the kernel's
-# B5 memo documents (an equal-size republish onto a recycled inode inside one clock tick reproduces
-# the stat key) cannot serve a stale parse here. The override journal is keyed on its (inode,
-# mtime_ns, size) alone: its only writers append (append_override / append_block / append_restore), so
-# an equal key is an equal content. The goals-archive is keyed the same way; it is read only when a
-# restore row replays, and its key has no byte compare, so the equal-size same-tick recycled-inode
-# case is the one blind spot left — it needs a restore row in the journal AND a kernel without
-# multigrain timestamps (Linux before 6.13).
+# them to the entry's (a memcmp, about 6% of a parse), so the coarse-timestamp blind spot the judge
+# pass's stat-keyed snapshot memo documents (kernel.py: an equal-size republish onto a recycled inode
+# inside one clock tick reproduces the stat key) cannot serve a stale parse here. The override journal
+# is keyed on its (inode, mtime_ns, size) alone: its only writers append (append_override / append_block
+# / append_restore), so an equal key is an equal content. The goals-archive is keyed the same way; it is
+# read only when a restore row replays, and its key has no byte compare, so the equal-size same-tick
+# recycled-inode case is the one blind spot left — it needs a restore row in the journal AND a kernel
+# without multigrain timestamps (Linux before 6.13).
 #
 # The entry is the view load_goals gives (same guard, same replay, same rollup, same _baseRev, so a
 # shallow copy handed to save_goals still meets the CAS), deep-frozen: the store, its nested maps
@@ -4820,8 +4848,8 @@ def _matches_disk(fsid, store, mine=None):
 # json.dumps the store, and a proxy or a tuple is neither. A write attempt is a bug in a reader, and it
 # is handled so the bug is loud and the board keeps rendering: the guard files a judge-errors row that
 # names the call site, switches the cache OFF for the process (every later load_goals_shared takes its
-# own load_goals) and raises, so the shared object is never corrupted and /perf (memos.goals_shared)
-# shows `off`. copy.copy / copy.deepcopy of a frozen container hand back plain, writable ones.
+# own load_goals) and raises, so the shared object is never corrupted and shared_store_stats reports
+# `off`. copy.copy / copy.deepcopy of a frozen container hand back plain, writable ones.
 #
 # Documented drift: record_verdict's `at` on a row the replay appends and a replay-triggered seam's `t`
 # are stamped at fill time and then shared, where every load_goals re-stamps them on each load. `at` is
@@ -4834,9 +4862,10 @@ def _matches_disk(fsid, store, mine=None):
 # Invalidation is exact by construction: a store publish is a rename to a new inode (save_goals), a
 # journal write an append, an archive publish a rename. save_goals also pops its path after the rename
 # (the writer's object is never the shared one), _rebind_state and migrate_all_stores clear, and the
-# kernel's compaction sweep evicts absent paths (_shared_evict_absent). Two fills of one path race
-# harmlessly: the second checks under the lock for an entry with its exact keys and bytes and returns
-# that object, so concurrent readers of one file version receive one object.
+# kernel's compaction sweep evicts absent paths (_shared_evict_absent) and the entries of stores no
+# discovered session owns (_shared_evict_unowned), so the cache is bounded by the live board. Two fills
+# of one path race harmlessly: the second checks under the lock for an entry with its exact keys and
+# bytes and returns that object, so concurrent readers of one file version receive one object.
 _SHARED = {}                                     # store path → (keys, store bytes, frozen store)
 _SHARED_LOCK = threading.Lock()
 _SHARED_OFF = [False]                            # a write attempt on a shared object switches the cache off (see _shared_poison)
@@ -5118,27 +5147,35 @@ def _shared_evict_absent():
     return len(gone)
 
 
+def _shared_evict_unowned(owned):
+    """Drop the entries of stores no session in `owned` (the discover set's sids) holds. The cache had no
+    cap: a store's view stayed resident for the process once read (review find, 2026-09-08). The kernel's
+    compaction sweep calls this beside _shared_evict_absent; a later read of an evicted store is a miss
+    that refills it."""
+    with _SHARED_LOCK:
+        gone = [k for k in _SHARED if os.path.basename(k)[:-5] not in owned]
+        for k in gone:
+            del _SHARED[k]
+        _SHARED_STATS["evict"] += len(gone)
+    return len(gone)
+
+
 def shared_store_stats():
-    """The cache's counters plus its occupancy, for /perf (memos.goals_shared). hit: identity and bytes
-    matched. miss: no entry, or its keys moved. compare_miss: identity matched and the bytes did not.
-    refuse: a fill not published because the archive moved under it. dup: a fill discarded for a
-    concurrent fill's identical entry. absent: no store file. corrupt: bytes that did not parse, handed to
-    load_goals for the quarantine (nothing cached). unreadable_journal: served uncached from load_goals.
-    evict: entries dropped for gone files. fallback:
-    calls served by load_goals because the cache is off. poisoned: write attempts on a shared object (the
-    first switched the cache off). Gauges: entries, bytes (the raw store bytes held for the compare), off."""
+    """The cache's counters plus its occupancy. hit: identity and bytes matched. miss: no entry, or its keys
+    moved. compare_miss: identity matched and the bytes did not. refuse: a fill not published because the
+    archive moved under it. dup: a fill discarded for a concurrent fill's identical entry. absent: no store
+    file. corrupt: bytes that did not parse, handed to load_goals (which moves them aside); nothing cached.
+    unreadable_journal: served uncached from load_goals. evict: entries dropped for gone files and for
+    stores no discovered session owns (the compaction sweep). fallback: calls served by load_goals because
+    the cache is off. poisoned: write attempts on a shared object (the first switched the cache off).
+    Gauges: entries, bytes (the raw store bytes held for the compare), off. The kernel's GET /perf reports
+    the dict as memos.shared."""
     with _SHARED_LOCK:
         out = dict(_SHARED_STATS)
         out["entries"] = len(_SHARED)
         out["bytes"] = sum(len(e[1]) for e in _SHARED.values())
         out["off"] = int(_SHARED_OFF[0])
     return out
-
-
-def store_key(fsid):
-    """The store file's identity (inode, mtime_ns, size) from a fresh stat, None when absent — the per-session
-    key a view signature can carry (plan P10). Independent of the cache: one stat, no entry consulted."""
-    return _file_key(str(GOALDIR / (fsid + ".json")))
 
 
 def load_goals_shared(fsid):
@@ -6294,47 +6331,32 @@ def _strip_top_mints(ops):
     return out
 
 
-def _seg_spliced(seg):
-    """True when this segment's TRIGGER is an ABSORBED atom — a prompt the CLI spliced into a
-    RUNNING turn (a queued_command attachment; em._absorbed_atom marks the synthesized atom
-    `absorbed`). The atoms after such a trigger are the interrupted turn's CONTINUING work: by
-    wall-clock they follow the enqueue, but they answer the turn's ORIGINAL ask — deterministically
-    indistinguishable from a reply to the splice. So work in this segment is never proof that the
-    spliced ask, or any listed goal, was answered (see _strip_unevidenced_dones)."""
-    trig = (seg or {}).get("trigger")
-    if not trig:
-        return False
-    return any(a.get("uuid") == trig and a.get("absorbed") for a in seg.get("atoms") or [])
-
-
 def _strip_unevidenced_dones(ops, seg, fsid, seg_id):
-    """Drop planner DONE ops a segment cannot EVIDENCE — two shapes of one rule (a done needs the
-    reply's own post-ask work as proof):
-      - SPLICED trigger (_seg_spliced): a capable planner, handed 'USER ASKED: …' plus the
-        interrupted turn's unrelated tail work, answers the question from its OWN knowledge and
-        files done with a confabulated summary — a queued question completed as a card 30 seconds
-        after it was typed, before the assistant's first post-splice token, off a turn that then
-        crashed without ever replying (the user 2026-07-29).
-      - WORKLESS segment (no assistant work at all): the workless FOLLOW-UP unit (the user
-        2026-08-08, the beacon g10 card) judges the user's reply so the msg-reopen latch gets its
-        verdict — the reply is real evidence of the user's INTENT (pivot / continuation / block),
-        never of completion. Same failure family as the API-error confabulation (the user
-        2026-07-25), whose mint-only prompt-run op filter already enforces this for plain asks.
-    Mint/sub/block still apply — placing the ask and filing the work are right — and the goal stays
-    OPEN, which is the truth; the turn-level closer keeps done authority once the turn actually
-    ends. Logged (judge-errors, kinds 'spliced-done' / 'workless-done'), never silent."""
+    """Drop planner DONE ops a segment cannot EVIDENCE (a done needs the reply's own post-ask work as
+    proof): a WORKLESS segment (no assistant work at all). The workless FOLLOW-UP unit (the user
+    2026-08-08, the beacon g10 card) judges the user's reply so the msg-reopen latch gets its verdict —
+    the reply is real evidence of the user's INTENT (pivot / continuation / block), never of
+    completion. Same failure family as the API-error confabulation (the user 2026-07-25), whose
+    mint-only prompt-run op filter already enforces this for plain asks.
+
+    Until T252d (2026-09-08) a second leg refused dones off a SPLICED trigger — an absorbed mid-turn
+    send sat at its SEND time, so its segment held the interrupted turn's continuing work, never
+    provably a reply (the user 2026-07-29: a queued question completed as a card 30 seconds after it
+    was typed, off a turn that crashed without ever replying). The absorbed atom now sits where the
+    model READ it, so the atoms after it ARE its reply, like any ask's; and the 2026-07-29 shape — the
+    turn dying before its first post-splice token — is exactly a workless segment, which this leg
+    still refuses. Mint/sub/block still apply — placing the ask and filing the work are right — and
+    the goal stays OPEN, which is the truth; the turn-level closer keeps done authority once the
+    turn actually ends. Logged (judge-errors, kind 'workless-done'), never silent."""
     if not ops:
         return ops
-    spliced = _seg_spliced(seg)
-    workless = not _has_asst_work((seg or {}).get("atoms") or [])
-    if not (spliced or workless):
+    if _has_asst_work((seg or {}).get("atoms") or []):
         return ops
     kept = [o for o in ops if o.get("do") != "done"]
     if len(kept) != len(ops):
-        kind, shape = (("spliced-done", "spliced-trigger") if spliced else ("workless-done", "workless"))
-        _log_judge_error("planner", fsid, kind, seg=seg_id,
-                         note="dropped %d done op(s): a %s segment cannot evidence an answer"
-                              % (len(ops) - len(kept), shape))
+        _log_judge_error("planner", fsid, "workless-done", seg=seg_id,
+                         note="dropped %d done op(s): a workless segment cannot evidence an answer"
+                              % (len(ops) - len(kept)))
     return kept
 
 
@@ -10171,9 +10193,9 @@ def _plan_session(fsid, path, now):
             hist = _goal_work_text(store, seg_by_id, target, GOAL_HISTORY_CHARS)
             ops = _parse_plan(plan_llm(text, _menu_text(store, sub), human=False,
                                        goal_history=hist, goal_num=1), len(sub)) or []
-            ops = _strip_unevidenced_dones(ops, seg_by_id.get(seg_id), fsid, seg_id)   # a peer message spliced
-            #                                           mid-turn can't evidence an answer any more than a
-            #                                           spliced human ask can — the fallback sub still files
+            ops = _strip_unevidenced_dones(ops, seg_by_id.get(seg_id), fsid, seg_id)   # a peer message whose
+            #                                           segment holds no assistant work can't evidence an
+            #                                           answer — the fallback sub still files
             # Full expressivity, ROOTED under G: a delegation gets the same sub/done/block a human-minted top
             # does (over G's subtree), and a top-level MINT is re-rooted as a sub under G (#1) so a handoff is
             # never a competing top. Skips drop; an empty/skip-only reply falls back to one sub under G.
@@ -10261,9 +10283,9 @@ def _plan_session(fsid, path, now):
                 ops = [{"do": "sub", "under": 1, "text": o.get("text"), "why": o.get("why")}
                        if o["do"] == "mint" else o for o in ops if o["do"] != "skip"]
                 ops = _restrict_retitle(ops, 1)          # goal_num=1 above → retitle is only valid on #1
-                ops = _strip_unevidenced_dones(ops, _tseg, fsid, seg_id)   # a nudge spliced mid-turn reads the
-                #                                           interrupted turn's work as its reply — resolve
-                #                                           nothing; the goal stays open and re-nudgeable
+                ops = _strip_unevidenced_dones(ops, _tseg, fsid, seg_id)   # a nudge no work followed can't be
+                #                                           resolved off nothing — the goal stays open
+                #                                           and re-nudgeable
                 if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, sub,
                                       place_key=_pkey, prompt_uuid=trig, quote=vq):
                     placed += 1
@@ -10298,8 +10320,8 @@ def _plan_session(fsid, path, now):
                                            goal_history=hist, goal_num=gi, followup=True,
                                            lifted_blocks=[(i, a) for i, (_n, a) in sorted(lifted_by_num.items())] or None),
                                   len(menu)) or []
-                ops = _strip_unevidenced_dones(ops, seg_by_id.get(seg_id), fsid, seg_id)   # a card reply spliced
-                #                                           mid-turn: strip BEFORE the pivot apply and before
+                ops = _strip_unevidenced_dones(ops, seg_by_id.get(seg_id), fsid, seg_id)   # a card reply no work
+                #                                           followed: strip BEFORE the pivot apply and before
                 #                                           the continuation lifts `res`, so a confabulated
                 #                                           done never re-completes the reopened target
                 if any(o["do"] == "mint" for o in ops):
@@ -11560,19 +11582,27 @@ def _postal_ask_maps():
     if _PEER_ASK_CACHE[0] == key:
         return _PEER_ASK_CACHE[1]
     last_any, last_ask, rows, alias = {}, {}, [], {}
+    ended = set()   # ids a terminal `bounced` row closed: mail that never reached anyone
     try:
         for line in MESSAGES.read_text(errors="replace").splitlines():
             try:
                 o = json.loads(line)
             except Exception:
                 continue
+            if not isinstance(o, dict):
+                continue
             rows.append(o)
             _learn_alias(alias, o)
+            if o.get("ev") == "bounced" and o.get("id"):
+                ended.add(str(o["id"]))
         _alias_settle(alias)
         for o in rows:
             f, t_, ts = o.get("from_id"), o.get("to_id"), o.get("t")
             if not (f and t_ and ts):
                 continue
+            if str(o.get("id") or "") in ended:
+                continue   # refused or destroyed: never reached the recipient, so neither an ask nor an
+                #            answer (review find, 2026-09-08): the kernel's _postal_wait_maps rule, mirrored
             ts = int(ts)
             if isinstance(t_, str) and t_.startswith("peer:"):
                 if o.get("to_sid"):
@@ -14598,9 +14628,9 @@ def judge_failure_scan():
     name the CAUSE (an account usage limit if one is maxed, else errors/timeouts). Returns {count, cause,
     ratelimited} or None when nothing is failing. Read-only.
 
-    Per-store memo (2026-09-06, perf plan B9): the kernel calls this from every timeline build and every
-    dashboard connect push once its goals-dir fingerprint moves, and one saved store made it parse EVERY
-    store again (13 MB live). Each store's failed count is memoized on the identity of the file it was
+    Per-store memo: the kernel calls this from every timeline build and every dashboard connect push once
+    its goals-dir fingerprint moves, and one saved store made it parse EVERY store again (megabytes of
+    JSON on a busy instance). Each store's failed count is memoized on the identity of the file it was
     counted from, (st_ino, st_mtime_ns, st_size) taken by fstat on the fd that is read, so a call stats
     every store and parses only the ones whose key changed. A store's failed count changes only when its
     file changes, so the key must change whenever the file does, and the inode number alone does not
@@ -14798,8 +14828,9 @@ def _store_identity(fsid):
     """The identity of every file load_goals(fsid) reads, taken by stat BEFORE any read: the store
     goals/<fsid>.json, its override journal and its goals-archive entry, each (ino, mtime_ns, size) or
     None when absent, behind the store's full path. Stat-then-read is the safe order: a publish landing
-    between the stat and the read pairs an OLD identity with NEW content, which is one extra miss next
-    pass; read-then-stat would pair the new identity with old content and never heal."""
+    between the stat and the read pairs an OLD identity with NEW content, which _absent_store_flags
+    catches by re-taking the identity after the read (and declines to memoize); read-then-stat would pair
+    the new identity with old content and never heal."""
     def _ident(p):
         try:
             st = os.stat(str(p))
@@ -15989,14 +16020,19 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
 
     Each dirty sender is PUBLISHED ONCE, after the recipient loop (the rebase unions per-node logs by (ev_t,
     src, kind), so one publish carrying several courier rows merges exactly as several publishes did), with
-    the per-ref rollup already on the object. A saved object leaves `loaded` in a finally: save_goals
+    the per-ref rollup already on the object. A raise mid-loop publishes the senders reached before it and
+    re-raises, the sender being applied dropped unpublished; a failed publish does not stop the others, and
+    the first is raised once the rest are out (review find, 2026-09-08: the per-ref save this replaced
+    persisted each verdict as it was reached). A saved object leaves `loaded` in a finally: save_goals
     re-stamps `_baseRev` after a publish (2026-09-07), so the object could serve a second save, but a failed
-    publish (the save path's strict readers raise on a file that does not read or parse at publish time;
-    the row is this pass's) leaves an object that is not the file's content, and `idents` describes the
-    pre-publish file; the next touch reads the published file,
-    through the shared cache for a read and load_goals for a write. The absent-store sweep answers from
-    _absent_store_flags, memoized across passes on file identity and evaluated on this pass's writer object
-    or view when it holds one."""
+    publish (the save path's strict readers raise on a file that does not read or parse at publish time)
+    leaves an object that is not the file's content, and `idents` describes the pre-publish file; the next
+    touch reads the published file, through the shared cache for a read and load_goals for a write. The
+    absent-store sweep answers from _absent_store_flags, memoized across passes on file identity and
+    evaluated on this pass's writer object or view when it holds one. The per-session catches stand around
+    the reads: a store that raises files its `pass-crash` row where it is reached (the recipient scan, a
+    ref's sender read, the sender loop) and is not kept, so the next touch retries the read; _ref_goal's
+    recipient read goes through the store-fault boundary (_or_fault) as before."""
     if now is None:
         now = int(time.time())
     n = 0
@@ -16041,84 +16077,110 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         """Save this pass's writer object once and forget it: the next touch reads the published file (the
         shared cache for a read, load_goals for a write). save_goals re-stamps `_baseRev` after a publish,
         so the object could serve a second save; it is dropped anyway because a refused publish leaves an
-        object that is not the file's content and `idents` describes the pre-publish file."""
+        object that is not the file's content and `idents` describes the pre-publish file. A publish that
+        raises (the save path's strict readers on a file that does not read or parse, or the write itself)
+        raises out of here; _publish_dirty publishes the other senders first."""
         try:
             save_goals(sid, loaded[sid])
-        except (OSError, ValueError) as e:          # the save path's strict readers, or the write itself, faulted
-            _log_judge_error("propagate", sid, "pass-crash", note="publish: %r" % e)   # (a corrupt file at the
-            #                                         save raises ValueError); nothing was published, the file is
-            #                                         as it was, and the completions are re-derived next pass
         finally:
             loaded.pop(sid, None)
             idents.pop(sid, None)
 
+    def _publish_dirty():
+        """One publish per dirty sender, every one of them whatever happened to the one before: the first
+        failed publish is the pass's error, raised once the rest are out (review find, 2026-09-08)."""
+        first = None
+        for a_sid in list(dirty):
+            try:
+                _publish(a_sid)
+            except Exception as e:
+                if first is None:
+                    first = e
+        if first is not None:
+            raise first
+
     closed = {}                                         # sender sid -> _presumed_closed, once per pass
     dirty = {}                                          # sender sids with verdicts to publish, in order
-    for fsid, path, anchor, name in sessions:
-        # live + ARCHIVE merged for the RECIPIENT-side scan (2026-08-26, the working-column audit):
-        # a recipient goal that completed and was then ARCHIVED (the user cleared the done card)
-        # vanished from the live-only scan, so the sender's tracker never checked off — a live
-        # specimen sat open seven hours with its completion event already fired and recorded.
-        # Read-only on this side: propagate writes SENDER stores only.
-        rnodes = dict(_arch(fsid).get("nodes") or {})
-        try:
-            rnodes.update(_peek(fsid).get("nodes") or {})   # a shared read: no parse when the cache holds this version
-        except Exception as e:                         # an unreadable store: this session's row, the next session's turn
-            _log_judge_error("propagate", fsid, "pass-crash", note="store: %r" % e)
-            continue
-        for nid, nd in list(rnodes.items()):
-            if not nd.get("nodeComplete"):
-                continue                                # B hasn't finished it yet
-            o = nd.get("origin")
-            refs = ([o] if (isinstance(o, dict) and o.get("peer") and o.get("goalId")) else [])
-            refs += [l for l in (nd.get("links") or [])
-                     if isinstance(l, dict) and l.get("peer") and l.get("goalId")]
-            for ref in refs:
-                a_sid, a_gid = ref["peer"], ref["goalId"]
-                try:
-                    v_node = (_peek(a_sid).get("nodes") or {}).get(a_gid)
-                    if not v_node or v_node.get("nodeComplete"):
-                        continue                        # sender's tracking node gone or already done → idempotent
-                    #                                     (decided on the view: every live ref, at steady state)
-                    a_store = _get(a_sid)               # the view says open: this pass's writer load of the sender
-                except Exception as e:                 # the sender's store faulted (the view or the writer load):
-                    #                                     its tracker waits for the next pass
-                    _log_judge_error("propagate", fsid, "pass-crash", note="sender %s store: %r" % (a_sid[:8], e))
-                    continue
-                a_node = (a_store.get("nodes") or {}).get(a_gid)
-                if not a_node or a_node.get("nodeComplete"):
-                    continue                            # re-checked on the writer's node: the view is a frozen
-                #                                         version, and a completion published between the two
-                #                                         reads must not be recorded twice
-                # Carry the RECIPIENT'S OWN RESOLUTION across (the user 2026-08-25, the re-asking
-                # umbrella): the bare "completed by <peer>" why gave the sender-side closer nothing
-                # to rule a delegated ask done WITH — the steps-finished nomination saw an ask whose
-                # only visible history was the dispatch, omitted, and the look-stamp sealed it while
-                # the auto-nudge re-asked a finished question seven times in 75 minutes. The
-                # recipient's doneWhy (else its summary head) IS the report-back's substance; capped
-                # like every quoted why.
-                why = "completed by %s (delegated)" % (name or fsid[:8])
-                sub = str(nd.get("doneWhy") or "").strip() \
-                    or (str(nd.get("summary") or "").strip().splitlines() or [""])[0]
-                if sub:
-                    why += ": " + sub[:220]
-                record_verdict(a_store, a_node, "courier", "done", now, why=why)
-                _mark_node_done(a_store, a_gid, why, now, src="courier")
-                if a_sid not in closed:
-                    closed[a_sid] = _presumed_closed(a_sid, now)
-                rollup_status(a_store, closed[a_sid])   # sender just had work close →
-                #                                        recompute its columns, SETTLING them when the
-                #                                        sender is determined dead (2026-08-28: a live
-                #                                        sender's own pass settles as before; a dead one
-                #                                        has no pass, so this write is its only settler).
-                #                                        Per ref, as before: a later recipient in this
-                #                                        loop reads the writer object through _peek, and
-                #                                        this keeps it exactly what the per-ref publish
-                #                                        used to leave.
-                dirty[a_sid] = True
-                n += 1
-    for a_sid in list(dirty):
-        _publish(a_sid)                                 # one publish per dirty sender
+    applying = None                                     # the sender whose object a ref's verdict is landing on
+    try:
+        for fsid, path, anchor, name in sessions:
+            # live + ARCHIVE merged for the RECIPIENT-side scan (2026-08-26, the working-column audit):
+            # a recipient goal that completed and was then ARCHIVED (the user cleared the done card)
+            # vanished from the live-only scan, so the sender's tracker never checked off — a live
+            # specimen sat open seven hours with its completion event already fired and recorded.
+            # Read-only on this side: propagate writes SENDER stores only.
+            rnodes = dict(_arch(fsid).get("nodes") or {})
+            try:
+                rnodes.update(_peek(fsid).get("nodes") or {})   # a shared read: no parse when the cache holds this version
+            except Exception as e:                         # an unreadable store: this session's row, the next session's turn
+                _log_judge_error("propagate", fsid, "pass-crash", note="store: %r" % e)
+                continue
+            for nid, nd in list(rnodes.items()):
+                if not nd.get("nodeComplete"):
+                    continue                                # B hasn't finished it yet
+                o = nd.get("origin")
+                refs = ([o] if (isinstance(o, dict) and o.get("peer") and o.get("goalId")) else [])
+                refs += [l for l in (nd.get("links") or [])
+                         if isinstance(l, dict) and l.get("peer") and l.get("goalId")]
+                for ref in refs:
+                    a_sid, a_gid = ref["peer"], ref["goalId"]
+                    try:
+                        v_node = (_peek(a_sid).get("nodes") or {}).get(a_gid)
+                        if not v_node or v_node.get("nodeComplete"):
+                            continue                        # sender's tracking node gone or already done → idempotent
+                        #                                     (decided on the view: every live ref, at steady state)
+                        a_store = _get(a_sid)               # the view says open: this pass's writer load of the sender
+                    except Exception as e:                 # the sender's store faulted (the view or the writer load):
+                        #                                     its tracker waits for the next pass
+                        _log_judge_error("propagate", fsid, "pass-crash", note="sender %s store: %r" % (a_sid[:8], e))
+                        continue
+                    a_node = (a_store.get("nodes") or {}).get(a_gid)
+                    if not a_node or a_node.get("nodeComplete"):
+                        continue                            # re-checked on the writer's node: the view is a frozen
+                    #                                         version, and a completion published between the two
+                    #                                         reads must not be recorded twice
+                    # Carry the RECIPIENT'S OWN RESOLUTION across (the user 2026-08-25, the re-asking
+                    # umbrella): the bare "completed by <peer>" why gave the sender-side closer nothing
+                    # to rule a delegated ask done WITH — the steps-finished nomination saw an ask whose
+                    # only visible history was the dispatch, omitted, and the look-stamp sealed it while
+                    # the auto-nudge re-asked a finished question seven times in 75 minutes. The
+                    # recipient's doneWhy (else its summary head) IS the report-back's substance; capped
+                    # like every quoted why.
+                    why = "completed by %s (delegated)" % (name or fsid[:8])
+                    sub = str(nd.get("doneWhy") or "").strip() \
+                        or (str(nd.get("summary") or "").strip().splitlines() or [""])[0]
+                    if sub:
+                        why += ": " + sub[:220]
+                    applying = a_sid                    # half-applied from here until dirty: see the except
+                    record_verdict(a_store, a_node, "courier", "done", now, why=why)
+                    _mark_node_done(a_store, a_gid, why, now, src="courier")
+                    if a_sid not in closed:
+                        closed[a_sid] = _presumed_closed(a_sid, now)
+                    rollup_status(a_store, closed[a_sid])   # sender just had work close →
+                    #                                        recompute its columns, SETTLING them when the
+                    #                                        sender is determined dead (2026-08-28: a live
+                    #                                        sender's own pass settles as before; a dead one
+                    #                                        has no pass, so this write is its only settler).
+                    #                                        Per ref, as before: a later recipient in this
+                    #                                        loop reads the writer object through _peek, and
+                    #                                        this keeps it exactly what the per-ref publish
+                    #                                        used to leave.
+                    dirty[a_sid] = True
+                    applying = None
+                    n += 1
+    except Exception:
+        # A raise mid-loop must not turn one ref's trip into the loss of every verdict the pass reached
+        # before it (review find, 2026-09-08; the per-ref save this single publish replaced persisted each
+        # as it was reached): the senders reached are published, then the error goes up. The sender whose
+        # ref raised is dropped unpublished, its object half-applied (a verdict recorded without its rollup
+        # is no verdict); the next pass re-derives it from the recipient's completion, forward-only.
+        if applying is not None:
+            dirty.pop(applying, None)
+            loaded.pop(applying, None)
+            idents.pop(applying, None)
+        _publish_dirty()                                # a publish that fails here raises with the loop's error chained
+        raise
+    _publish_dirty()                                    # one publish per dirty sender
     # REMOTE recipients (the user 2026-08-24): their goal stores live on another kernel, so the
     # origin back-link above can never fire for them. The local log still records the exact
     # report-back event: the recipient's REPLY mail — any kind — at/after the delegate's send, the
@@ -16146,9 +16208,9 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         and this map must read as the snapshot it always was."""
         if peer_sid not in _rmemo:
             m = {k: dict(v) for k, v in (_arch(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)}
-            live, fault = _or_fault(peer_sid, _peek)      # a faulting recipient joins to nothing this pass
+            live, fault = _or_fault(peer_sid, _peek)     # a faulting recipient joins to nothing this pass
             m.update({k: dict(v) for k, v in ((live or {}).get("nodes") or {}).items()   # (forward-only: the
-                      if isinstance(v, dict)})                                           #  tracker stays open)
+                      if isinstance(v, dict)})                                            #  tracker stays open)
             _rmemo[peer_sid] = m
         for rd in _rmemo[peer_sid].values():
             if not isinstance(rd, dict):

@@ -47,11 +47,14 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // the boxes are measured by getBoundingClientRect, which excludes margins — so no strip member
   // may carry a horizontal margin, or the virtual row holds more than the real one and the slot
   // hops in a band at every wrap boundary (the separator's 6px gutters were margin: a 12px drift)
-  assert.match(body, /\?\? t\.getBoundingClientRect\(\)\.width \}\)\);/);
-  const sep = CSS.match(/^\.tab-group-sep \{[^}]*\}/m)![0];
-  assert.doesNotMatch(sep, /margin/, "the separator's gutters are padding inside a 13px box, so its rect IS its footprint");
-  assert.match(sep, /box-sizing: border-box; width: 13px; padding: 8px 6px;/);
-  assert.match(sep, /background-clip: content-box;/, "…and the 1px line is the content box");
+  assert.match(body, /\?\? t\.getBoundingClientRect\(\)\.width,\s*\n\s*br: isBreak\(t\) \|\| isBreak\(before\(t\)\) \}\)\);/);
+  // T264: the untagged trail's boundary is a zero-height ROW BREAK (the visible 13px separator is gone) —
+  // not a box in the real layout, so it joins the virtual one as a zero-width row opener (w: 0, br), and
+  // a header after a break opens a row too; the simulation then wraps exactly where the strip does
+  const brk = CSS.match(/^\.tab-group-break \{[^}]*\}/m)![0];
+  assert.match(brk, /flex: 0 0 100%; height: 0; margin: 0; padding: 0;/, "the break spans the row and has no box of its own");
+  assert.match(body, /w: isBreak\(t\) \? 0 : /, "…so it measures 0 in the virtual layout, never its full-row rect");
+  assert.doesNotMatch(CSS, /^\.tab-group-sep \{/m, "no separator rule remains to give the boundary a width");
   const head = CSS.match(/^\.tab-group-head \{[^}]*\}/m)![0];
   assert.doesNotMatch(head, /margin/, "headers carry no horizontal margin either");
   assert.match(body, /dragSlotIndex\(boxes, dragGeom\.containerW, dragGeom\.gapX, dragGeom\.rowH,/);
@@ -79,12 +82,15 @@ test("the hover popover never survives a drag (defect 2, the user's recording)",
 
 test("drop commits through the SAME reorderTo — neighbor + side, hidden-view ids keep their places", () => {
   const body = between('tabs.addEventListener("drop"', "});");
-  assert.match(body, /if \(prev\?\.dataset\?\.id\) reorderTo\(draggedId, prev\.dataset\.id, true\);/);
-  assert.match(body, /else if \(next\?\.dataset\?\.id\) reorderTo\(draggedId, next\.dataset\.id, false\);/);
+  assert.match(body, /if \(prev\?\.dataset\?\.id\) \{ reorderTo\(draggedId, prev\.dataset\.id, true\); tabDragCommitted = true; \}/);
+  assert.match(body, /else if \(next\?\.dataset\?\.id\) \{ reorderTo\(draggedId, next\.dataset\.id, false\); tabDragCommitted = true; \}/,
+    "committed only when a reorder ran (T264b): no neighbour → dragend's cancel path FLIPs the copy home");
   // the neighbours are TABS (tab groups, 2026-09-04): a section header or separator beside the
   // dropped tab is skipped, so a drop at a section's edge still names the nearest tab and its side
-  assert.match(body, /const prev = tabBefore\(dragged\.previousElementSibling\);/);
-  assert.match(body, /const next = tabAfter\(dragged\.nextElementSibling\);/);
+  assert.match(body, /const prevIn = tabBefore\(dragged\.previousElementSibling\), nextIn = tabAfter\(dragged\.nextElementSibling\);/,
+    "the neighbours inside the dragged copy's own group first (T264b)");
+  assert.match(body, /const prev = prevIn \?\? \(nextIn \? null : walk\(dragged\.previousElementSibling, back, false\)\);/,
+    "…falling back across groups only when the group holds no other tab");
   // …and a drop changes no membership: a tab landing in another section re-sections on the next
   // render — the tab menu's "Move to" rows are the membership path (v1)
   assert.doesNotMatch(body, /editUnion|moveUnion|editTag/, "no tag write on a tab drop");

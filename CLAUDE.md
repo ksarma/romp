@@ -186,53 +186,60 @@ broad `git add` will sweep up your work). Conventions:
   and drift probes read the project's main and tags, and the release script is not
   ours to run (see the fork section above).
 - **Every PR carries exactly one tier label, and upstream ENFORCES the tier**
-  (maintainers' rule, 2026-09-06; the policy decided 2026-09-07). The project holds a PR
-  with two required checks: "Exactly one tier label" (`pr-tier`) goes red on a PR with
-  no tier label, or two, so an unlabeled offer never auto-merges there; "Tier policy"
-  then holds it until the tier's gate is met. The rules are a pure function
-  (`scripts/ci/tier_policy.py`, pinned by `tests/test_tier_policy.py`); the workflow
-  (`.github/workflows/tier-policy.yml`) only fetches PR data and posts the verdict. See
-  `docs/pr-tiers.md`. The fork's copy of the first check (`.github/workflows/pr-tier.yml`)
-  counts the same labels plus one of its own: a batch PR (`scripts/batch.py`,
-  `docs/batching.md`) carries `batch` alone and no tier, so adding a tier to a batch PR
-  turns the check red. Every other fork PR carries one tier label, and on the fork every
-  PR lands through a batch whatever its tier. The author picks the tier at filing time:
+  (maintainers' rule, 2026-09-06; the policy decided 2026-09-07 and reset by the
+  repository owner 2026-09-08: the gate depends on the tier and on the AUTHOR's role,
+  and no tier has a time-based path). The project holds a PR with two required checks:
+  "Exactly one tier label" (`pr-tier`) goes red on a PR with no tier label, or two, so
+  an unlabeled offer never auto-merges there; "Tier policy" then holds it until the
+  tier's gate is met. The rules are a pure function (`scripts/ci/tier_policy.py`,
+  pinned by `tests/test_tier_policy.py`); the workflow
+  (`.github/workflows/tier-policy.yml`) only fetches PR data and posts the verdict, and
+  the fork's copy of it runs only on the upstream repository. See `docs/pr-tiers.md`.
+  Roles are the author's collaborator permission upstream: admin is the repository
+  owner; write or maintain is a member; anyone else is a contributor (the check gates
+  members and contributors alike). The user's write access upstream (the fork section
+  above) makes an offer from a session a member's PR. The fork's copy of the first check
+  (`.github/workflows/pr-tier.yml`) counts the same labels plus one of its own: a batch
+  PR (`scripts/batch.py`, `docs/batching.md`) carries `batch` alone and no tier, so
+  adding a tier to a batch PR turns the check red. Every other fork PR carries one tier
+  label, and on the fork every PR lands through a batch whatever its tier. The author
+  picks the tier at filing time:
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
-    still accept the old spelling): no behavior change. On the fork that is tests, docs
-    and repo plumbing, landing through a batch like every PR. Upstream the tier means
-    documentation ONLY (files under `docs/` or `*.md` anywhere, never `.github/` or
-    `scripts/`) and merges on green; an offer that touches anything else takes another tier.
-  - `fix` (tier 1): a bug fix with a test that fails before it. Upstream it merges on the
-    other maintainer's approval, or after seven days with the head unchanged and no
-    changes requested (the clock is the unbroken chain of hourly Tier policy verdicts
-    the PR received on its current head, or the head's arrival on the PR if later, never
-    a commit date; a head with no verdict yet has not started its clock, and a sibling
-    PR's verdicts on the same sha lend nothing).
+    still accept the old spelling): documentation. On the fork that is tests, docs and
+    repo plumbing, landing through a batch like every PR. Upstream, to the check it is
+    the same tier as `fix`: merges on green for every author.
+  - `fix` (tier 1): a bug fix with a test that fails before it. Upstream it merges on
+    green for every author: the check requires no approval, and whichever maintainer
+    merges it is the whole requirement.
   - `feature` (tier 2): a self-contained new capability inside romp's existing model;
-    put the design points in the body. Upstream it merges on the other maintainer's
-    approval.
+    put the design points in the body. Upstream, by the repository owner (an admin) it
+    merges on green; by a member (write access) or a contributor it merges on the
+    owner's approval on the current head. No issue, no waiting period.
   - `major-feature` (tier 3): new functionality that changes what romp does or its
     contracts. Discussed first (an issue, or the PR as the RFC) and merged only on
-    agreement: upstream that is the other maintainer's approval AND a linked issue
-    (`#N` in the body) with a comment by someone other than the author, the opener alone
-    not counting. An offer at this tier is filed **without** `--auto` and the merge is
-    left to the maintainers.
-  "Approval" upstream is a standing APPROVED review by a maintainer other than the
-  author on the CURRENT head (standing = their latest approval, change request or
-  dismissal; comment-only reviews never change it; a dismissed approval never counts,
-  whoever dismissed it, and a dismissed change request clears only when the reviewer
-  dismissed it themselves, so the author cannot dismiss the peer's objection away to
-  reopen the seven-day path). GitHub forbids self-approval and the user's sessions act
-  under the user's account, so it structurally means the other maintainer. A renamed
-  file counts under both its paths. Any PR touching `.github/` or `scripts/ci/`, the
-  gate's own workflow and code, needs an approval regardless of tier (a PR's own
+    agreement: upstream that is, for every author, a linked issue (`#N` in the body)
+    with a comment by someone other than the author, the opener alone not counting; a
+    member's or a contributor's additionally needs the owner's approval on the current
+    head. An offer at this tier is filed **without** `--auto` and the merge is left to
+    the maintainers.
+  A standing change request by a maintainer (write, maintain or admin) other than the
+  author holds a PR of ANY tier upstream until that reviewer lifts it; an approval by
+  someone else does not. "Approval" upstream is a standing APPROVED review by an admin
+  other than the author on the CURRENT head (standing = their latest approval, change
+  request or dismissal; comment-only reviews never change it; a dismissed approval never
+  counts, whoever dismissed it, and a dismissed change request clears only when the
+  reviewer dismissed it themselves, so the author cannot dismiss the peer's objection
+  away to merge on green). A renamed file counts under both its paths. Any PR touching
+  `.github/` or `scripts/ci/`, the gate's own workflow and code, needs the owner's
+  approval regardless of tier when the author is not an admin (a PR's own
   `pull_request` workflow can post a same-named check run, so a human looks; the
-  residual and the CODEOWNERS rule that closes it are in `docs/pr-tiers.md`). None of
-  this changes what a session may do here: offering stays a PR from a fork branch, and
-  merging or approving upstream stays the user's per-PR call (the fork section above).
-  The line that matters is 2 vs 3: adds a capability inside the existing model, `feature`;
-  changes what romp is, `major-feature`, talk first. The ledger entry's `tier:` line
-  records the pick for an offer.
+  owner's own PRs are exempt; the residual and the CODEOWNERS rule that closes it are
+  in `docs/pr-tiers.md`). Those gates are the maintainers'; none of this changes what a
+  session may do here: offering stays a PR from a fork branch, and merging or approving
+  upstream stays the user's per-PR call (the fork section above). The line that matters
+  is 2 vs 3: adds a capability inside the existing model, `feature`; changes what romp
+  is, `major-feature`, talk first. The ledger entry's `tier:` line records the pick for
+  an offer.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.

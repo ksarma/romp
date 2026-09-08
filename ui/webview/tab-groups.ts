@@ -1,11 +1,11 @@
 // TAB GROUPS ARE TAGS (the user 2026-09-04). The chat tab strip renders one section per tag, in the
-// user's tag order, each tab under its HOME tag — the FIRST holder tag in tagOrder, the rule
-// revealIn already states ("a tagged session's home is its first holder tag"), so a tab's section
-// and its reveal agree. Sessions in no tag trail in an unlabeled section. No new store and no new
-// session field: the kernel's views blob (tags, members, tagOrder) is the whole model, the headers
-// are the very tags the Tags flyout edits, and reordering the groups IS reordering tagOrder — the
-// kernel-persisted union order the timeline's tag-pill drag writes too, so the two surfaces cannot
-// disagree. A session may hold other tags as well; they filter, they do not section.
+// user's tag order, each tab under EVERY tag it carries (T264b, the user 2026-09-08: tags are
+// equivalent, none takes precedence — a session under N tags has a copy in N sections; the earlier
+// "home tag" rule that placed it under its first holder alone is retired). Sessions in no tag trail
+// in an unlabeled section of their own. No new store and no new session field: the kernel's views
+// blob (tags, members, tagOrder) is the whole model, the headers are the very tags the Tags flyout
+// edits, and reordering the groups IS reordering tagOrder — the kernel-persisted union order the
+// timeline's tag-pill drag writes too, so the two surfaces cannot disagree.
 //
 // Per-browser state, this viewer's like romp:vieworder: whether the strip sections at all (ON by
 // default whenever some tag holds a visible tab; the chat tag-lens menu's "Group tabs by tag" turns
@@ -25,14 +25,14 @@ export const TABGROUPS_EVENT = "romp-tabgroups";
 /** sections that start folded until the user opens them (remembered per browser once toggled) */
 export const DEFAULT_COLLAPSED: ReadonlySet<string> = new Set(["archived"]);
 
-/** One strip section: a tag's name + color and the visible tabs homed in it, plus `localId` — the
+/** One strip section: a tag's name + color and the visible tabs it holds, plus `localId` — the
  *  local tag's stored id when the union has one, null for a union only remote hosts' tags make —
  *  which its pins are matched against beside its name (isPinned). name null = the trailing untagged
  *  section (unlabeled by the user's ruling — a separator, not a header; localId null). */
 export interface TabSection { name: string | null; localId: string | null; color: string; ids: string[] }
 
 /** A section as a pin is matched and written against it: its name and its local tag's id. The plan's
- *  TabSection is one; sectionRef builds one from a union (the menu row's home tag). */
+ *  TabSection is one; sectionRef builds one from a union (the menu row's tag). */
 export type SectionRef = Pick<TabSection, "name" | "localId">;
 
 /** A member kept visible under its folded section — the tab menu's "Show when folded" (the user
@@ -86,26 +86,22 @@ export function sectionRef(u: TagUnion): SectionRef {
   return { name: u.name, localId: u.localId };
 }
 
-/** THE home-tag rule: the first union (they arrive in tagOrder) holding the id, or null. */
-export function homeTag(id: string, unions: readonly TagUnion[]): TagUnion | null {
-  return unions.find((u) => u.members.includes(id)) || null;
-}
-
-/** Section the visible ids: one section per home tag, sections in UNION order (tagOrder governs —
- *  which is why reordering tags is first-class), tabs inside keep their strip order, the untagged
- *  trail last. A tag holding no visible id yields no section. */
+/** Section the visible ids: one section per TAG, holding EVERY visible member it carries (T264b, the
+ *  user 2026-09-08: tags are equivalent — no tag takes precedence, so a session under N tags appears
+ *  in N groups; the "home tag" rule that placed it under its first holder is retired). Sections in
+ *  UNION order (tagOrder governs — which is why reordering tags is first-class), tabs inside keep
+ *  their strip order, the untagged trail — the ids in NO tag — last. A tag holding no visible id
+ *  yields no section. */
 export function sectionTabs(visibleIds: readonly string[], unions: readonly TagUnion[]): TabSection[] {
-  const byName = new Map<string, TabSection>();
-  const loose: string[] = [];
-  for (const id of visibleIds) {
-    const home = homeTag(id, unions);
-    if (!home) { loose.push(id); continue; }
-    let s = byName.get(home.name);
-    if (!s) { s = { name: home.name, localId: home.localId, color: home.color || "", ids: [] }; byName.set(home.name, s); }
-    s.ids.push(id);
-  }
   const out: TabSection[] = [];
-  for (const u of unions) { const s = byName.get(u.name); if (s && !out.includes(s)) out.push(s); }
+  const tagged = new Set<string>();
+  for (const u of unions) {
+    const ids = visibleIds.filter((id) => u.members.includes(id));
+    if (!ids.length) continue;
+    for (const id of ids) tagged.add(id);
+    out.push({ name: u.name, localId: u.localId, color: u.color || "", ids });
+  }
+  const loose = visibleIds.filter((id) => !tagged.has(id));
   if (loose.length) out.push({ name: null, localId: null, color: "", ids: loose });
   return out;
 }
@@ -113,7 +109,7 @@ export function sectionTabs(visibleIds: readonly string[], unions: readonly TagU
 /** Does any tag hold a visible tab? Sectioning is on by default exactly then — an untagged world
  *  renders the flat strip it always had. */
 export function anySectioned(visibleIds: readonly string[], unions: readonly TagUnion[]): boolean {
-  return visibleIds.some((id) => homeTag(id, unions) !== null);
+  return visibleIds.some((id) => unions.some((u) => u.members.includes(id)));
 }
 
 const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
@@ -419,10 +415,10 @@ function storeSeqs(unions: readonly TagUnion[], views: SessionViews | null | und
  *  same-named tags' pins are not this tag's to move. EVERY matching rename is followed, one entry per:
  *  the new name, with the tag's id when the tag is local — so the next rename finds it by id even from
  *  a client with no previous blob. Where a rename SPLITS the section — a same-named tag on the other
- *  side still holds the tab, so the tab's home after the rename is whichever half tagOrder puts first
- *  (the kernel leaves tagOrder alone on a rename, so an old name once dragged into place keeps it and
- *  the renamed tag falls behind) — the half the tab did not move to keeps its entry beside the new
- *  one, whichever side renamed: a local rename keeps the old-name half while the remote tag holds the
+ *  side still holds the tab, so the tab shows under both halves, in tagOrder (the kernel leaves
+ *  tagOrder alone on a rename, so an old name once dragged into place keeps it and the renamed tag
+ *  falls behind) — the half the tab did not move to keeps its entry beside the new one, whichever
+ *  side renamed: a local rename keeps the old-name half while the remote tag holds the
  *  tab, a remote rename adds its new-name half while the local tag holds the tab under the old. The
  *  tab is pinned in both halves, and the prune drops the half that stops holding it. `unions` are the
  *  NEXT blob's. Exact duplicates collapse.
@@ -675,7 +671,9 @@ export function headWords(name: string, total: number, hidden: number, folded: b
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
  *  the member ids the header stands in for, the ones with no tab on the strip: folded, its members less
  *  the pinned ones that are not hidden; open, the hidden ones; `hides` = the members hidden inside the
- *  section by their own flag (isHidden), in strip order, whatever the fold, a subset of `hidden`) or a tab. */
+ *  section by their own flag (isHidden), in strip order, whatever the fold, a subset of `hidden`) or a tab.
+ *  The same id may appear as a tab under several headers (T264b: a session under N tags has N
+ *  copies); render.ts paints each copy as a full tab of the one session. */
 export type StripHead = { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] };
 export type StripItem = StripHead | { id: string };
 export interface StripPlan {
@@ -689,9 +687,9 @@ export interface StripPlan {
  *    every rendered tab; it has no header to unfold and no switch, so a folded section there made its
  *    sessions unreachable (`archived` starts folded). Sectioning is DESKTOP-ONLY: on the phone layout
  *    the plan is the flat strip, always — every visible id, nothing folded.
- *  - `pending`: a provisional tab (a create in flight) with the tags the request named. Its future
- *    home is the first of those in tagOrder — the kernel's own home-tag rule — so it renders there
- *    from the first paint instead of landing in the untagged trail and jumping when the frame arrives.
+ *  - `pending`: a provisional tab (a create in flight) with the tags the request named. It renders
+ *    under every one of them from the first paint — the way the kernel's frame will place it — instead
+ *    of landing in the untagged trail and jumping when the frame arrives.
  *  - A folded section hides its members EXCEPT the pinned ones (the tab menu's "Show when folded"),
  *    which keep their place under the header in strip order; the header stands in for `hidden` alone
  *    (its count and its flag read those), and only those ids join the `folded` set.
@@ -705,7 +703,15 @@ export interface StripPlan {
  *    so keyboard focus never landed on a hidden node). Its header is marked `active` whether open or
  *    folded: folded, the header is the hidden tab's stand-in — render.ts focuses it where it would
  *    focus the tab, ←/→ step from its position (neighborOfFolded), and the pane shows the section's
- *    snapshot (tab-snapshot.ts) instead of a transcript whose tab is nowhere on screen. */
+ *    snapshot (tab-snapshot.ts) instead of a transcript whose tab is nowhere on screen.
+ *  - A session under several tags (T264b, the user 2026-09-08: tags are equivalent) has a copy in each
+ *    section, and each copy's fold and hide stand on their own. The header of a holder that SHOWS a copy
+ *    (open and not hidden inside it, or folded with the copy pinned through the fold) is marked `active`;
+ *    a holder hiding its copy is not while another shows it; when no copy shows anywhere exactly one
+ *    holder, the first in tagOrder, is marked: the header that stands in for the tab. Nothing springs
+ *    open (the active tab's section folds like any other, above), so upstream's forced-open first holder
+ *    has no counterpart here. A tab joins the `folded` set only when EVERY copy is off the strip; one
+ *    copy on screen keeps it in the keyboard order. */
 export function planStrip(visibleIds: readonly string[], unions: readonly TagUnion[], st: TabGroupsState,
                           activeId: string | null, phone: boolean,
                           pending?: { id: string; tags: readonly string[] } | null): StripPlan {
@@ -721,14 +727,29 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
     for (const id of visibleIds) items.push({ id });
     return { items, folded, sectioned };
   }
-  for (const sec of sectionTabs(visibleIds, u)) {
-    const active = activeId !== null && sec.ids.includes(activeId);
+  const secs = sectionTabs(visibleIds, u);
+  // does this section put a copy of `id` on the strip: open and not hidden inside it, or folded with the
+  // copy pinned through the fold (the hide wins over the pin, as `hidden` below reads it)
+  const shows = (sec: TabSection, id: string): boolean =>
+    sec.name === null || (!isHidden(st, sec, id) && (!isSectionCollapsed(st, sec.name) || isPinned(st, sec, id)));
+  const holders = activeId !== null ? secs.filter((sec) => sec.ids.includes(activeId)) : [];
+  const shownSomewhere = activeId !== null && holders.some((sec) => shows(sec, activeId));
+  for (const sec of secs) {
+    // one holder: marked whatever the fold (folded, its header is the hidden tab's stand-in), as before.
+    // several (T264b): a holder showing a copy is marked; one hiding its copy is not while another shows
+    // it; when NO copy shows anywhere the first holder in tagOrder is the one stand-in. No fold is forced
+    // open here: the active tab's section folds like any other (the user 2026-09-06)
+    const active = activeId !== null && holders.includes(sec)
+      && (holders.length === 1 || shows(sec, activeId) || (!shownSomewhere && sec === holders[0]));
     const f = sec.name !== null && isSectionCollapsed(st, sec.name);
     const hides = sec.name !== null ? sec.ids.filter((id) => isHidden(st, sec, id)) : [];
     const hidden = f ? sec.ids.filter((id) => hides.includes(id) || !isPinned(st, sec, id)) : hides;
     items.push({ head: sec, folded: f, active, hidden, hides });
     for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
+  // a session under several tags (T264b) has a copy in each: it is folded away — skipped by the
+  // keyboard — only when EVERY copy is; one copy on screen keeps it in the order
+  for (const it of items) if ("id" in it) folded.delete(it.id);
   return { items, folded, sectioned };
 }
 
