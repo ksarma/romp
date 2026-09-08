@@ -11,8 +11,8 @@ it leans on.
 
 **User todo**:
 A need an agent registers with the person it works for — a decision, input, or action only
-they can provide — held open while the agent keeps working on whatever else it can. Cleared
-only by answer, dismiss, or withdraw; never by inference.
+they can provide — held open while the agent keeps working on whatever else it can. It may name
+the file it is about. Cleared only by answer, dismiss, or withdraw; never by inference.
 _Avoid_: ask (the feed payload's `asks` field already means the card list), request, user task
 
 **Answer**:
@@ -79,8 +79,9 @@ _Avoid_: history (reads as git history), log alone (the chat has logs), ledger
 
 **Send to session**:
 The one gesture that hands a file's unsent comments, replies, and decisions to the session that
-owns the file, as a single message in the person's voice; it may also answer the user todo the
-file was opened from.
+owns the file, as a single message in the person's voice; it may also answer one of that session's
+open user todos: a todo that names the file, however the file was opened, or the todo the file was
+opened from.
 _Avoid_: send review, ping, submit
 
 ### Pre-existing attention vocabulary

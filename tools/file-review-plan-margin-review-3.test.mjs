@@ -45,7 +45,7 @@ const noteAt = slice2.indexOf(LABEL);
 assert.ok(noteAt >= 0, 'the note is in the Slice 2 section');
 const builtAt = slice2.indexOf(' Built: ', noteAt);
 assert.ok(builtAt > noteAt, 'the note turns to what was built');
-// …to the next follow-on note under Slice 2 (the filter follow-on's, which stands after this note since the filter branch merged main), or the section's end
+// …to the next follow-on note under Slice 2 (the todo-file follow-on's, then the filter follow-on's, in date order since main merged both branches), or the section's end
 const builtEnd = (() => { const m = / The [a-z-]+ follow-on \(20\d\d-\d\d-\d\d\)/.exec(slice2.slice(builtAt)); return m ? builtAt + m.index : slice2.length; })();
 const built = slice2.slice(builtAt, builtEnd);
 const testsAt = built.lastIndexOf(' Tests: ');

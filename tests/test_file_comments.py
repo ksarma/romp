@@ -4,8 +4,10 @@
 Two WebSocket ops beside saveFile: `fileComments` runs ONE sidecar verb through the node host script
 (tools/file-comments-host.mjs) on the owning kernel's disk, and `fileCommentsSend` hands a file's
 unsent comments to the owning session as one message in the person's voice, optionally answering
-the user todo the file was opened from. saveFile appends a direct edit to the comments log before
-its ack. The kernel is the door — path resolution, the file-editing consent BEFORE any content
+the user todo the file was opened from — or, since the todo-file follow-on (2026-09-07), any open
+todo of that session whose structured `file` names the file: every successful fileComments reply
+carries those as `todos: [{id, text}]` (TheStatusListsTheTodosNamingTheFile). saveFile appends a
+direct edit to the comments log before its ack. The kernel is the door — path resolution, the file-editing consent BEFORE any content
 check, the node probe, a bounded subprocess with the request on stdin and argv as a list — so the
 host script here is a STUB written under the test's temp dir that records what it was handed and
 answers as told (canned JSON, a non-zero exit, garbage, or a stall). The real host script has its
@@ -1254,6 +1256,92 @@ class TheSendOpOnTheWire(_Wire, _SendWorld):
         self.assertEqual(self.seen()["request"]["verb"], "log-send")
 
 
+OSID = "7e7e7e7e-1111-4222-8333-944444444444"   # another session — a PRIVATE synthetic sid
+
+
+class TheStatusListsTheTodosNamingTheFile(_SendWorld):
+    """The todo-file follow-on (2026-09-07): a successful fileComments reply carries `todos`, the OPEN
+    user todos of the request's session whose structured `file` is the status'd file (matched by
+    realpath), as [{id, text}] — what the panel's Send confirm offers to answer however the file was
+    opened. Kernel side, after the host answers: the host's request is unchanged. Never a settled todo,
+    another session's, one without `file` (the detail-path todo _SendWorld mints still answers through
+    the opened-from-link todoId), or one naming a different file; [] with the switch off or no sid."""
+
+    def setUp(self):
+        super().setUp()
+        self.ftid = km._add_user_todo(SID, "Need a look at the findings report", file=self.fp)
+        self.stub()                                  # a status-shaped answer from the host
+
+    def status(self, **kw):
+        msg = {"type": "fileComments", "reqId": 7, "sid": SID, "path": self.fp, "verb": "status"}
+        msg.update(kw)
+        return km._file_comments_op(msg)
+
+    def test_the_matching_open_todo_is_listed_and_the_detail_path_one_is_not(self):
+        r = self.status()
+        self.assertEqual(r["type"], "fileCommentsResult")
+        self.assertEqual(r["todos"], [{"id": self.ftid, "text": "Need a look at the findings report"}])
+        self.assertEqual(self.seen()["request"], {"verb": "status", "path": self.fp, "args": {}, "fence": None},
+                         "kernel-side after the host answers: the host's request is unchanged")
+
+    def test_a_settled_todo_leaves_the_list(self):
+        km._resolve_user_todo(SID, self.ftid, "dismissed")
+        self.assertEqual(self.status()["todos"], [])
+
+    def test_another_sessions_todo_on_the_same_file_is_not_listed(self):
+        km._add_user_todo(OSID, "Need a look at the findings report too", file=self.fp)
+        self.assertEqual([t["id"] for t in self.status()["todos"]], [self.ftid])
+        self.assertEqual([t["text"] for t in self.status(sid=OSID)["todos"]], ["Need a look at the findings report too"])
+
+    def test_a_todo_naming_a_different_file_is_not_listed(self):
+        other = os.path.join(self.root, "docs", "other.md")
+        with open(other, "w") as f:
+            f.write("# Other\n")
+        km._add_user_todo(SID, "Need a look at the other note", file=other)
+        self.assertEqual([t["id"] for t in self.status()["todos"]], [self.ftid])
+        self.assertEqual([t["text"] for t in self.status(path=other)["todos"]], ["Need a look at the other note"])
+
+    def test_a_symlinked_spelling_of_the_same_file_matches_either_way(self):
+        vault = os.path.join(self.tmp, "vault")
+        os.symlink(self.root, vault)                 # vault/docs/report.md is notes-api/docs/report.md
+        alias = os.path.join(vault, "docs", "report.md")
+        t2 = km._add_user_todo(SID, "Need a look at the report, via the vault", file=alias)
+        self.assertEqual(km._user_todos()[SID][2]["file"], alias, "the spelling is stored; the realpath is the match")
+        both = sorted([self.ftid, t2])               # same-second filings order by id, not by filing order
+        self.assertEqual(sorted(t["id"] for t in self.status()["todos"]), both,
+                         "a status on the real path lists the todo filed through the link")
+        self.assertEqual(sorted(t["id"] for t in self.status(path=alias)["todos"]), both,
+                         "and a status through the link lists the one filed on the real path")
+
+    def test_a_send_with_the_todos_id_stamps_it_and_the_next_status_no_longer_lists_it(self):
+        self.stub(reply={"ok": True, "verb": "log-send", "logged": True})
+        r = self.send(todoId=self.ftid)
+        self.assertEqual(r, {"type": "fileCommentsSent", "reqId": 9, "queued": False})
+        self.assertEqual(self.injected[0]["user_todo"], self.ftid)
+        self.assertEqual(km._user_todos()[SID][1]["resolved"]["kind"], "answered")
+        self.stub()
+        self.assertEqual(self.status()["todos"], [], "settled → gone at the next status")
+        self.assertNotIn("resolved", self.todo(), "the detail-path todo is untouched: one send answers one todo")
+
+    def test_the_switch_off_or_no_sid_lists_nothing(self):
+        self.assertEqual(self.status(sid=None)["todos"], [])
+        km._set_user_todos(False)
+        self.assertEqual(self.status()["todos"], [])
+
+    def test_the_list_rides_every_successful_reply_not_the_status_verb_alone(self):
+        # the panel takes each verb's reply as its current status (applyStatus): a list on the status
+        # verb alone would vanish from the model at the first comment
+        self.stub(reply={"ok": True, "verb": "comment", "root": self.root, "store": {"comments": []}, "hunks": [],
+                         "unsent": {"comments": [], "replies": [], "accepted": 0, "rejected": 0, "watermark": None}})
+        r = self.status(verb="comment", args={"note": "Which cache?"}, fence={"storeMtimeNs": "", "configMtimeNs": ""})
+        self.assertEqual(r["type"], "fileCommentsResult")
+        self.assertEqual(r["todos"], [{"id": self.ftid, "text": "Need a look at the findings report"}])
+        self.stub(reply={"ok": False, "code": "stale", "error": "the sidecar moved"})
+        f = self.status()
+        self.assertEqual(f["type"], "fileCommentsFailed")
+        self.assertNotIn("todos", f, "a refusal carries no list")
+
+
 class TheTodoReplyIsUnchanged(_SendWorld):
     """The userTodoAnswer handler now goes through the shared helper in its STRICT mode; its own
     contract (tests/test_user_todos.py DriveOps) is pinned here beside the lenient one so a change to
@@ -1542,17 +1630,18 @@ class TheDefaultsVerdict(unittest.TestCase):
 
 class ThePromptTellsSessionsHowToAskForALook(unittest.TestCase):
     """claude/romp-session-prompt.md gains one sentence in Working style (plans/file-review.md,
-    decision 35): sessions learn to name the file's absolute path in a user todo's detail, so the
-    loop's first step exists. In the person's voice, conditional on the tool (it exists only while
-    the User todos switch is on), and outside Housekeeping, which CLAUDE.md reserves for explaining
-    romp's artifacts."""
+    decision 35): sessions learn to name the file's absolute path in a user todo, so the loop's
+    first step exists. In the person's voice, conditional on the tool (it exists only while the
+    User todos switch is on), and outside Housekeeping, which CLAUDE.md reserves for explaining
+    romp's artifacts. The pins hold whether the path travels in the detail or as the tool's `file`
+    argument (the todo-file follow-on, 2026-09-07)."""
 
     def test_the_sentence_is_there_in_working_style_and_names_the_tool(self):
         text = (Path(HERE).parent / "claude" / "romp-session-prompt.md").read_text()
         working, housekeeping = text.split("# Housekeeping", 1)
         self.assertIn("add_user_todo", working)
-        self.assertIn("if you have\nthat tool", working, "conditional on the tool, which the switch gates")
-        self.assertIn("absolute path in the detail", working)
+        self.assertRegex(working, r"if you have\s+that tool", "conditional on the tool, which the switch gates")
+        self.assertIn("absolute path", working)
         self.assertIn("comments come back to you as a message", working)
         self.assertNotIn("add_user_todo", housekeeping, "Housekeeping explains romp's artifacts only")
         for word in ("card", "board", "goal", "nudge", "viewer", "panel", "dashboard"):
