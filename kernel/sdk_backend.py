@@ -5049,9 +5049,16 @@ class SdkSession:
         held = bool(self._rewind_to and not self._rewind_armed)
         # A fed text the CLI has not yet TAKEN (_untaken) is in flight for this decision too (2026-09-08
         # review): after a mid-turn feed's result the counters read idle while the text still sits in
-        # the CLI's queue, about to be drained into a turn, and a teardown now killed the CLI with it:
-        # the message reached no one and nothing flagged it. The hold's release (the drained turn's
-        # first frame, _on_message) counts that turn, so the deferred arm fires at its result.
+        # the CLI's queue, about to be drained into a turn, and a teardown then ended the CLI with it:
+        # the message reached no one romp could see, and nothing flagged it. A teardown is NOT a kill
+        # (review round 3, 2026-09-08, read in the kernel's sdkvenv): the SDK's transport close()
+        # (claude_agent_sdk 0.2.152, _internal/transport/subprocess_cli.py, close()) closes stdin first
+        # and waits up to 5 s for the CLI to exit on its own before terminate() and then kill(), so a
+        # CLI that has already drained the text into a turn finishes that turn when it fits in the
+        # grace, and the text's record then exists in a transcript no frame reported; a turn that does
+        # not fit is cut with the process. Do not design against a kill here: the event is an EOF plus a
+        # grace. The hold's release (the drained turn's first frame, _on_message) counts that turn, so
+        # the deferred arm fires at its result.
         quiet = self.inflight == 0 and self._untaken is None
         if quiet and (held or not self._pending):
             if not defer:
@@ -5091,7 +5098,10 @@ class SdkSession:
         was), persisted to the reg mirror, so the next client (the next send, the crash heal's respawn, the
         boot reconcile) feeds it first and the chat shows it queued, with its ✕, meanwhile; a record found
         means the CLI took it (its echo prunes on that record); a scan that cannot read the transcript
-        takes the flag path, never a re-feed on doubt. Never a silent block, never a timer. The counters
+        takes the flag path on a RESUMABLE conversation, never a re-feed on doubt, and re-heads when no
+        conversation ever materialised (resume_sid None: no init streamed, so the next client starts
+        fresh and a re-feed cannot duplicate; _reconcile_stranded's distinction, review round 3,
+        2026-09-08). Never a silent block, never a timer. The counters
         are left as they are: an unsettled hold's turn was running (inflight > 0) and _on_session_gone
         reads that as the cut it is; a settled hold's CLI was between turns, and an idle death settles
         'waiting' as before, its message owed and visible instead of lost until the next spawn's scan."""
@@ -5105,12 +5115,23 @@ class SdkSession:
                                              cursor=u)
         except Exception:
             seen = None
-        if seen is False:
+        if seen is False or (seen is None and not self.resume_sid):
             with self._lock:
                 self._pending.insert(0, item)
             self._persist_queue()
-            self.backend._log("sdk %s: the CLI exited while it still held a fed text (never landed): back at "
-                              "the head of the queue for the next client" % self.sid[:8])
+            if seen is False:
+                self.backend._log("sdk %s: the CLI exited while it still held a fed text (never landed): back "
+                                  "at the head of the queue for the next client" % self.sid[:8])
+            else:
+                # _reconcile_stranded's distinction (review round 3, 2026-09-08): no init ever streamed, so
+                # no conversation materialised and the next client starts one fresh; a transcript the scan
+                # cannot read (typically: the CLI died before writing its first record, so the file does
+                # not exist) is no reason to flag the user's first message as never delivered when
+                # re-feeding it cannot duplicate anything the user can see.
+                self.backend._log("sdk %s: the CLI exited before any conversation materialised, holding a fed "
+                                  "text whose transcript could not be read (%s): back at the head of the "
+                                  "queue for the next client, which starts the conversation fresh"
+                                  % (self.sid[:8], u.get("scan_error") or "unreadable"))
         elif seen:
             self.backend._log("sdk %s: the CLI exited after taking the last fed text; nothing to re-feed"
                               % self.sid[:8])
@@ -5717,12 +5738,19 @@ class SdkSession:
             self._wake.clear()
             self._reconnect = False
             self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
+            # a move's turn-less result was owed by the client this iteration replaces; the new one will
+            # never emit it, and a standing arm keeps _on_message from counting the CLI's own turns
+            # (review round 3, 2026-09-08). _consume_move_settle drops it at a real result too.
+            self._move_settle_expected = False
             # same: a hold never outlives its client. Its text is the reconcile's: already in the fed-turn
             # twin while its turn runs; put back there when the hold was SETTLED (the turn ended, the CLI
             # still held the text for the drain, the settle zeroed both counters), so the reconcile
             # re-heads or flags it like any stranded turn instead of the text vanishing with the client
             # (2026-09-08 review). The reconnect arms defer while a hold is live, so this is the backstop
-            # for a teardown that armed some other way.
+            # for a teardown that armed some other way. On a resumable conversation that flag can be a
+            # false 'never delivered': the teardown closes stdin and gives the CLI up to 5 s to exit on
+            # its own (_do_request_reconnect), long enough to finish the drained turn, and when it did the
+            # next build finds the record and prunes the flag (_mark_dropped_echoes is self-correcting).
             u, self._untaken = self._untaken, None
             if u is not None and u.get("settled"):
                 with self._lock:
@@ -6763,8 +6791,9 @@ class SdkSession:
                     failed.append(("the rename ping's delivery", e))
                 # an effort change waited for this turn to end. NOT while a hold is settled: the CLI still
                 # holds a text fed mid-turn and drains it into a turn right after this result; tearing it
-                # down now killed the CLI with the text (2026-09-08 review). The arm stays set; the drained
-                # turn's first frame counts that turn (_on_message) and its result fires this.
+                # down now ended the CLI with the text in a turn romp never saw (2026-09-08 review; the
+                # teardown is an EOF plus a grace, not a kill: _do_request_reconnect). The arm stays set;
+                # the drained turn's first frame counts that turn (_on_message) and its result fires this.
                 if self._reconnect_when_idle and not self.ended and getattr(self, "_untaken", None) is None:
                     self._reconnect_when_idle = False
                     self._reconnect = True     # inputs() holds the queue from here: the wake above cannot feed
@@ -6811,6 +6840,16 @@ class SdkSession:
         if not getattr(self, "_move_settle_expected", False):   # getattr: __new__-built test doubles
             return False
         if getattr(msg, "num_turns", None) != 0:
+            # A REAL turn's result while the arm stands means the move's turn-less result never came
+            # (the CLI accepted the set_cwd and emitted no result, or its reply was lost and the arm
+            # kept on purpose, move()): had it come, it would have preceded this one, since move()
+            # refuses while busy and an accepted set_cwd answers within milliseconds. The arm is stale,
+            # and since round 2 a standing arm switches off the CLI-owned-turn count (_on_message), so
+            # left alone it would uncount every drain for the session's life and re-open the fuse the
+            # count closes (review round 3, 2026-09-08). Drop it here; the loop top drops it too.
+            self._move_settle_expected = False
+            self.backend._log("sdk %s: a real turn's result arrived while a move's turn-less result was still "
+                              "expected; the stale arm is dropped" % self.sid[:8])
             return False
         self._move_settle_expected = False
         # The move's init counts no CLI-owned turn (_on_message skips the count while the arm stands);

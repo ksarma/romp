@@ -37,6 +37,13 @@ Round 2 (2026-09-08) pinned three more:
     which drains a queued text into a new turn right after the interrupted result, while a SIGINT makes it
     exit without running the text): at the exit a held text that never landed goes back to the head of the
     queue for the next client; one the CLI took is left alone; an unreadable transcript flags, never re-feeds.
+Round 3 (2026-09-08) pinned two more:
+  * a stale move arm (the CLI accepted a set_cwd and never emitted the turn-less result) is dropped at a
+    real turn's result and at the loop top, so it cannot switch the CLI-owned-turn count off for the
+    session's life and re-open the fuse the count closes;
+  * the exit release applies _reconcile_stranded's distinction: when no conversation ever materialised
+    (no init streamed) a transcript the scan cannot read re-heads the text, since the next client starts
+    fresh and a re-feed cannot duplicate; a resumable conversation keeps the flag path.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -944,6 +951,142 @@ class OneFedTextAtATime(unittest.TestCase):
         self._push(c, _EOF)
         self._wait(lambda: not s.thread.is_alive(), "the thread ended")
         self.assertEqual(s.pending(), [], "nothing re-fed on doubt")
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
+        self.assertTrue(echo.get("dropped"), "the possible loss is visible")
+        self.assertTrue(any("could not be read" in l for l in self.lines), self.lines[-5:])
+
+    def test_a_stale_move_arm_is_dropped_at_a_real_turns_result_so_the_drain_still_counts(self):
+        """Round 3: the round-2 skip made the CLI-owned-turn count depend on the move arm, and only the
+        move's turn-less result spent it. A stale arm (the CLI accepted a set_cwd and never emitted that
+        result, or move() kept the arm across a lost reply) then switched the count off for the session's
+        life: the drain's init went uncounted, the next text was fed 'fresh', its hold cleared on the
+        running turn's next frame with the text still in the CLI's queue, and the text behind it fused
+        with it. A real turn's result (num_turns != 0) while the arm stands proves it stale (the move's
+        result would have preceded it) and drops it, so the drain counts as before and the text fed into
+        it waits for its own take."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)   # armed; no turn-less result comes
+        self._settle()
+        c.phase = "turn-A"
+        s.enqueue("A from idle")
+        self._wait(lambda: len(c.writes) == 2, "A fed")
+        self._init(c)
+        self._assistant(c)
+        self._wait(lambda: s._untaken is None, "A's turn started: its hold released")
+        s.enqueue("B mid-turn")
+        self._wait(lambda: len(c.writes) == 3, "B forwarded")
+        c.phase = "after-result-A"
+        self._result_frame(c)                            # num_turns 1: a real turn's result
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "A settled, B held")
+        self.assertFalse(s._move_settle_expected, "a real turn's result drops the stale arm")
+        self.assertTrue(any("stale arm is dropped" in l for l in self.lines), self.lines[-5:])
+        c.phase = "turn-B"
+        self._init(c)                                    # the drain: B's own turn
+        self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain released B's hold AND counted its turn")
+        s.enqueue("C into B's turn")
+        self._wait(lambda: len(c.writes) == 4, "C fed into B's turn")
+        self.assertIs(s._untaken["fresh"], False, "C went into a running turn, not from idle")
+        s.enqueue("D behind C")
+        self._assistant(c, "turn B keeps going")        # a frame of the running turn: not C's take
+        self._settle()
+        self.assertEqual(len(c.writes), 4, "D waits: C is untaken and the running turn's frame proves nothing")
+        c.phase = "after-result-B"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "B's turn settled")
+        c.phase = "turn-C"
+        self._init(c)
+        self._wait(lambda: len(c.writes) == 5, "D fed once C's drain showed")
+        self.assertEqual([w[0] for w in c.writes],
+                         ["first turn", "A from idle", "B mid-turn", "C into B's turn", "D behind C"])
+        self.assertEqual(c.writes[4][1], "turn-C")
+
+    def test_a_reconnect_drops_a_stale_move_arm_so_the_new_clients_turns_count(self):
+        """The loop top's backstop: the client that owed the move's turn-less result is torn down (a
+        reconnect), and the new one will never emit it. The arm is dropped there, so a turn the new CLI
+        starts on its own is counted like any CLI-owned turn."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
+        self._settle()
+        self.assertTrue(s._move_settle_expected)
+        s.request_reconnect()                            # idle: fires at once
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
+                   "the reconnect")
+        self.assertFalse(s._move_settle_expected, "the new client owes no turn-less result: the arm is dropped")
+        c2 = self._Client.instances[1]
+        c2.phase = "auto-turn"
+        self._init(c2)                                   # the new CLI starts a turn on its own
+        self._wait(lambda: s.inflight == 1, "the CLI-owned turn counted")
+        self.assertTrue(self.be.busy(SID))
+
+    def test_the_clis_exit_before_any_conversation_re_heads_the_first_text_rather_than_flag_it(self):
+        """Round 3: a new session's first send is fed from idle (a fresh hold, inflight 1) and the CLI dies
+        before it writes its first record (no init streamed: resume_sid None, no transcript file). The scan
+        answers None (the file does not exist), and the release flagged the echo 'never delivered' and
+        left the queue alone, so the crash heal respawned with the nudge only and the agent was told to
+        pick the work back up in an empty conversation. _reconcile_stranded's distinction applies: no
+        conversation materialised, so the next client starts fresh and a re-feed cannot duplicate. The
+        text goes back to the head with its id, the heal's nudge ahead of it, and the new client is fed
+        the nudge, then the text once the nudge's turn showed."""
+        s = self.s
+        s.start()
+        self._wait(lambda: s.client is not None, "the first connect")
+        c = self._Client.instances[0]
+        c.phase = "turn-1"
+        self.assertTrue(self.be.send(SID, "first composer send", send_id="s-first"))
+        self._wait(lambda: c.writes == [("first composer send", "turn-1")], "fed from idle")
+        self.assertIsNotNone(s._untaken)
+        self.assertIsNone(s.resume_sid, "no init streamed: no conversation")
+        self.assertFalse(os.path.exists(self._transcript()), "the CLI wrote nothing before it died")
+        self._push(c, _EOF)                              # the crash, before the CLI's first write
+        self._wait(lambda: not s.thread.is_alive(), "the thread ended")
+        self.assertIsNone(s._untaken, "the hold is released at the exit")
+        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()],
+                         [("first composer send", "s-first")], "re-headed with its id, not flagged")
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "first composer send")
+        self.assertFalse(echo.get("dropped"), "not a loss: it is queued again")
+        self.assertTrue(any("before any conversation materialised" in l for l in self.lines), self.lines[-6:])
+        # a death mid-turn (inflight 1, no result): the crash heal respawns with its nudge AHEAD of the
+        # kept queue, so the new client hears the nudge, then the user's message
+        self._wait(lambda: len(self._Client.instances) == 2 and len(self._Client.instances[1].writes) == 1,
+                   "the heal respawned and fed the nudge")
+        self.assertTrue(any("died mid-turn" in l for l in self.lines), "the crash heal ran")
+        c2 = self._Client.instances[1]
+        self.assertEqual(c2.writes[0][0], sb.CRASH_RESUME_NUDGE)
+        self._settle()
+        self.assertEqual(len(c2.writes), 1, "the text waits for the nudge's take")
+        c2.phase = "resumed"
+        self._init(c2)
+        self._wait(lambda: len(c2.writes) == 2, "the text fed once the nudge's turn showed")
+        self.assertEqual(c2.writes[1][0], "first composer send")
+        s2 = self.be.sessions[SID]
+        self.assertEqual(getattr(s2.fed_texts()[1], "send_id", ""), "s-first", "the id rode along")
+        self.assertFalse(any("re-delivering a typed send" in l for l in self.lines),
+                         "the spawn's echo scan had nothing to add: the queue already held it")
+
+    def test_the_clis_exit_still_flags_when_a_resumable_conversations_transcript_is_missing(self):
+        """The other side of the distinction: a conversation that did materialise (an init streamed, the
+        CLI wrote records) whose transcript file is gone at the exit. The scan answers None, and a
+        resumable conversation keeps the flag path: the record may have landed in a file the next client
+        resumes, so a re-feed could duplicate. Flagged, not re-fed (passes before round 3 too: it guards
+        the re-head from reaching a resumable conversation)."""
+        s, c = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c.writes) == 2, "the note forwarded")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self.assertEqual(s.resume_sid, FSID, "resumable")
+        os.remove(self._transcript())                    # the file is gone, not merely unreadable
+        self._push(c, _EOF)
+        self._wait(lambda: not s.thread.is_alive(), "the thread ended")
+        self.assertEqual(s.pending(), [], "resumable: nothing re-fed on doubt")
+        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), [])
         echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
         self.assertTrue(echo.get("dropped"), "the possible loss is visible")
         self.assertTrue(any("could not be read" in l for l in self.lines), self.lines[-5:])
