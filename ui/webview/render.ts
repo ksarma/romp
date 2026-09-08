@@ -21,7 +21,7 @@ import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
-import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
+import { openTagMenu, tagMenuButton, syncTagFilter, tagChip } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
 import { EMOJI_RECENT_KEY, gridSections, moveInGrid, parseRecentEmoji, rememberEmoji, sameEmoji } from "./emoji-picker";
 import type { GridPos } from "./emoji-picker";
@@ -68,6 +68,7 @@ import { insertAtCaret } from "./composer-insert";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
+import { followReader, keepPlaceAcrossShow } from "./scroll-keep";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
@@ -5364,13 +5365,14 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
   caret.setAttribute("aria-hidden", "true");
   head.appendChild(caret);
-  const swatch = el("span", "tab-group-swatch");  // the tag's color as a short bar — a dot beside a name is a session pip
-  if (sec.color) swatch.style.background = sec.color;
-  swatch.setAttribute("aria-hidden", "true");
-  head.appendChild(swatch);
-  const label = el("span", "tab-group-name");
-  label.textContent = name;
-  head.appendChild(label);
+  // the tag as THE CHIP it wears everywhere (T251, the user 2026-09-07: the swatch+name pair read as a
+  // plain label; the chip says "this is the tag" the way the tags bar and the feed say it, so which
+  // tabs belong to which group reads at a glance). The shared builder from tag-menu.ts — one
+  // vocabulary, never a lookalike — inheriting the header's own sub-line size (no nested em). The
+  // count rides right after it in the same row.
+  const chip = tagChip(name, sec.color, { inheritSize: true });
+  chip.classList.add("tab-group-chip");
+  head.appendChild(chip);
   const n = el("span", "tab-group-count");
   n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
   head.appendChild(n);
@@ -10784,8 +10786,15 @@ function toggleToolGroup(key: string): void {
 // next syncView rebuilds it via the right path, then repaint the active one.
 function rerenderAll(): void {
   cancelPrebuild(); // the queued plan is now stale (every view reset below) — re-warm after showActive
+  // The reader's place, captured BEFORE the clear below empties the active view (T249 review find, 2026-09-08):
+  // a settings change re-renders the transcript under a reader who may be scrolled up, and once the DOM is
+  // gone there is no anchor to capture and the box no longer overflows. Near the bottom → nothing to keep
+  // (follow mode lands there); a hidden pane has nothing to keep either. showActive restores it after the land.
+  const content = document.getElementById("content");
+  const av = activeId ? views.get(activeId) : null;
+  const keep = av && av.shown && content && content.clientHeight > 0 && !nearBottom(content) ? captureScrollAnchor(content, av) : null;
   for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
-  showActive();
+  showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
 }
 
@@ -10924,6 +10933,15 @@ function runPrebuild(deadline: IdleDeadline): void {
 // and then only the "ago" texts are refreshed in place: no rebuild, nothing moves.
 let snapView: string | null = null;
 let snapModel: SnapModel | null = null;
+// The reader's place in the hidden transcript, held across the snapshot (the T249 fold, 2026-09-08). The host is a
+// child of #content, so while the snapshot shows the pane's scroll is the snapshot's, and the #content scroll
+// listener (scroll-keep.ts followReader, which makes the saved spot follow the reader) would record the reveal's
+// clamp and every scroll of a long snapshot as the ACTIVE view's saved spot; leaving the snapshot then landed at
+// the bottom or on the snapshot's offset instead of the line being read. Captured from the view once, in the
+// synchronous pass that hides the views (showActive's snapshot branch: the clamp's scroll event is only queued
+// by then, so the fields still hold the reader's spot); written back when the snapshot hides (hideSnapshot, every
+// exit path), before landActive reads the spot. The hide is the event; the listener keeps upstream's text.
+let snapKeep: { v: View; scrollTop: number; stick: boolean } | null = null;
 function snapshotHost(): HTMLElement | null {
   let host = document.getElementById("tab-snapshot");
   if (host) return host;
@@ -10961,6 +10979,8 @@ function hideSnapshot(): void {
   const host = document.getElementById("tab-snapshot");
   if (host) host.style.display = "none";
   snapModel = null;
+  // the transcript comes back where the reader left it, not where the snapshot's scrolls put the spot (snapKeep)
+  if (snapKeep) { snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick; snapKeep = null; }
 }
 /** Whether keyboard focus is on the snapshot (a row a keyboard user Tabbed or arrowed onto). THE EXIT HANDS
  *  FOCUS ON (the round-3 review): leaving the view hides the host (hideSnapshot, display none), and hiding the
@@ -11045,13 +11065,15 @@ function renderSnapshot(): boolean {
   let list = host.querySelector<HTMLElement>(".snap-list");
   if (!list) {
     const h = document.createElement("h2"); h.className = "snap-head";
-    const sw = el("span", "tab-group-swatch"); sw.setAttribute("aria-hidden", "true");
+    // the heading's own bar (snap-swatch): the strip's header wears the tag CHIP since T251; this heading keeps
+    // its bar + name pair, whose parts the patch below rewrites in place (the rows' rule: nothing is remade)
+    const sw = el("span", "snap-swatch"); sw.setAttribute("aria-hidden", "true");
     h.append(sw, el("span", "snap-name"), el("span", "snap-count"));
     list = el("div", "snap-list"); list.setAttribute("role", "list");
     host.replaceChildren(h, list);
   }
   const part = (cls: string) => host.querySelector<HTMLElement>(".snap-head > ." + cls)!;
-  part("tab-group-swatch").style.background = next.color || "";
+  part("snap-swatch").style.background = next.color || "";
   part("snap-name").textContent = next.name;
   part("snap-count").textContent = words.count;
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
@@ -11120,7 +11142,10 @@ function fillSnapshotRow(btn: HTMLElement, r: SnapRow, now: number): void {
   }
 }
 
-function showActive() {
+// `keep` (review find, 2026-09-08): a caller that must EMPTY the view before showing it (rerenderAll on a
+// settings change) captures the reader's anchor first and hands it here — by the time this runs there is
+// no DOM left to capture from and the emptied box no longer overflows. undefined = capture here.
+function showActive(keep?: { uuid: string; y: number } | null) {
   const content = document.getElementById("content");
   if (!content) return;
   placeReviveLoader();   // session-local: shows over THIS pane only while the reviving tab is active
@@ -11138,6 +11163,10 @@ function showActive() {
   // the section is gone from the strip (a tag deleted, its last member hidden) — then the transcript.
   if (snapView && renderSnapshot()) {
     for (const v of views.values()) v.el.style.display = "none";
+    // the reader's place (snapKeep; once per visit): the hide above only queues the clamp's scroll event, so the
+    // view's fields still hold what the reader's last scroll recorded
+    const av = activeId ? views.get(activeId) : null;
+    if (av && !snapKeep) snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
     document.getElementById("tab-loading")?.remove();
     if (empty) empty.style.display = "none";
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
@@ -11211,6 +11240,17 @@ function showActive() {
   syncHostOfflineFoot();   // the tab we just switched to may sit on an unreachable host
   touchMru(activeId!); // record activation order so close returns to the previous tab
   const v = ensureView(activeId!);
+  // A RE-SHOW of the view already on screen keeps the reader's place across its rebuild (T249, the user
+  // 2026-09-07: a full show of a shown tab landed on the spot saved when the tab was last LEFT — a bubble
+  // they had read minutes ago — three seconds after they had scrolled to the bottom). Captured BEFORE the
+  // rebuild the way appendActive does, restored after landActive; a tab switch is not a re-show (the
+  // entering view is still display:none), so the leaving-tab save, the nav trail's spot and the jump
+  // button keep their explicit semantics. The decision and the saved-spot rule live in scroll-keep.ts.
+  // a live durable seek for this tab is navigation too: landActive re-arms pendingAnchor from it after this
+  // decision, and a restore over its landing would undo the jump the reader asked for (review find, 2026-09-08)
+  const navigating = !!pendingAnchor || pendingAnchorT != null || (!!seek && seek.sid === activeId);
+  const reshow = keepPlaceAcrossShow(v, v.el.style.display !== "none", content.clientHeight > 0, navigating);
+  const keepAnchor = reshow ? (keep !== undefined ? keep : (!nearBottom(content) ? captureScrollAnchor(content, v) : null)) : null;
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —
   // either way, revealing thousands of nodes is the big-session switch lag (the user 2026-06-25: 4144 turns
@@ -11219,7 +11259,8 @@ function showActive() {
   // scrolling up lazily reloads. Both render paths honour winStart, so this works in either mode. Skip when
   // a deep-link is pending (its target may be in the collapsed head). A small view (≤ cap) is left untouched
   // → the no-op fast path reveals it instantly.
-  if (!pendingAnchor && pendingAnchorT == null
+  // …and a SWITCH rule only: a re-show of the view on screen never snaps it to the tail (T249)
+  if (!reshow && !pendingAnchor && pendingAnchorT == null
       && v.el.querySelectorAll(".turn").length > WINDOW_CAP) {
     v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
   }
@@ -11234,7 +11275,11 @@ function showActive() {
   // the "Loading transcript…" hint — so it renders synchronously below via syncView, never deferred. The
   // `length > 0` guard is what stops a zero-event session from flashing (or sticking on) "Loading…".
   const heavy = s.events.length > 0 && (v.el.childNodes.length === 0 || (settings.compact && (v.rendered !== s.events.length || v.stale)));
-  if (!heavy) { syncView(activeId!); landActive(content, v); return; }
+  if (!heavy) {
+    syncView(activeId!); landActive(content, v);
+    if (keepAnchor) restoreScrollAnchor(content, v, keepAnchor);   // the line being read stays put across the rebuild (T249)
+    return;
+  }
   if (v.el.childNodes.length === 0) {   // truly empty → the ROMP LOADER holds the spot (the standing
     // wait-state rule: swirl + wordmark + pulsing accent dots — never a bare hint). Removed by the
     // deferred build replacing this view's children — the content event — and that build always
@@ -11254,8 +11299,10 @@ function showActive() {
     if (activeId !== target) return;    // switched away before the build ran → don't build the tab we left
     const vv = views.get(target);
     if (!vv || !sessions.has(target)) return;
+    const cc = document.getElementById("content");
     syncView(target);                   // the heavy build now (clears the loading hint)
-    landActive(document.getElementById("content"), vv);
+    landActive(cc, vv);
+    if (keepAnchor && cc) restoreScrollAnchor(cc, vv, keepAnchor);   // same keep on the deferred path (T249)
   });
 }
 
@@ -11499,6 +11546,28 @@ jumpBtn.onclick = () => {
   }
 }
 window.addEventListener("resize", updateJumpBtn);
+// The per-view saved spot FOLLOWS the reader (T249, the user 2026-09-07). landActive lands every show no
+// anchor scrolled on `v.stick ? bottom : v.scrollTop`, and until now those were written only by a tab
+// switch (the tab being LEFT), the jump button, the box-resize compensation and the nav trail — never by
+// the reader's own scrolling. So the spot named where the tab was when last left, and a full show of a
+// shown tab (a fork/first-build frame, a settings rerender, a revive failure, a dismissal's fallback)
+// snapped the reader back there. Every scroll of the active view now records its position and its
+// follow-mode (the same nearBottom threshold appendActive and the jump chip read), passive, no timer.
+// Programmatic scrolls (a land, an anchor restore) fire the same event, so the record is always the truth —
+// with ONE exception, the transient a DEFERRED build leaves (review find, 2026-09-08): showActive reveals
+// the entering view before its heavy build runs in the next frame, the browser clamps scrollTop to that
+// stale or empty DOM's bottom, and the clamp's scroll event is dispatched BEFORE the frame callback that
+// lands the view — recorded, it read as "the reader is at the bottom" and the land went there instead of
+// the saved spot (a compact-mode switch to a tab with an unbuilt update; a settings rerender). While a
+// build is pending the position is the clamp's, not the reader's, so nothing is recorded; the build's own
+// land fires the next scroll event, and that one is the truth. The pending build is the event, no timer.
+{
+  const c = document.getElementById("content");
+  if (c) c.addEventListener("scroll", () => {
+    if (c.clientHeight <= 0) return;
+    followReader(activeId ? views.get(activeId) : null, c.scrollTop, nearBottom(c), pendingBuildRaf != null);
+  }, { passive: true });
+}
 // Boxes ABOVE the transcript grow/shrink → keep the chat text visually anchored (the user 2026-06-30 for
 // #tabbar; extended to #ledger 2026-07-05). Both are `flex: 0 0 auto` directly above the `flex: 1 1 auto`
 // #content scroll area, so when one grows — a working dot wraps the tab strip to a second row, a ledger

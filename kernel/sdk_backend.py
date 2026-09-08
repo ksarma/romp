@@ -3998,6 +3998,14 @@ def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     never injected by the launch, so its line says only that a credential in the file contradicts
     the declared auth model — a billing claim there would be false. Undeclared, nothing is said: an
     installation that keeps its key in service.env and declares nothing is upstream's ordinary shape.
+    Beside this, _check_env_file_vs_declaration (upstream's review of the fork's offer of this check,
+    2026-09-08) is the auth-contradiction line for the key SOURCE the file selects under =login (a key
+    line, a ROMP_API_KEY_REF reference or a ROMP_API_KEY_CMD key command, or an invalid file), read
+    through keysource and gated on _declared_auth. This line is the fork's key-free policy over
+    credential-shaped VALUES (a key, any token) under either declaration: the value must leave the
+    file and be rotated. Under =login with a key line both speak, one about the source and one about the
+    value; they are worded apart (this one says "under", that one "while") so a reader can tell which
+    check spoke.
     The line names the file and the variable NAMES, never a value. Returns the names it warned about
     ([] when quiet) so the caller and the tests can see what it decided."""
     global _CREDENTIAL_LINE_SAID
@@ -4019,13 +4027,64 @@ def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     if others:
         parts.append("%s: a credential in a file contradicts the declared auth model" % ", ".join(others))
     many = len(names) > 1
-    log("auth: %s carries %s — credential line%s — while ROMP_EXPECTED_AUTH=%s. %s. "
+    log("auth: %s carries %s — credential line%s — under ROMP_EXPECTED_AUTH=%s. %s. "
         "This fork does not write API keys to files: remove the line%s and rotate the value%s, since "
         "%s reached a file."
         % (path or _keysrc.service_env_path(), ", ".join(names), "s" if many else "", exp, "; ".join(parts),
            "s" if many else "", "s" if many else "", "they" if many else "it"),
         problem=True)
     return names
+
+
+_ENV_FILE_AUTH_CHECKED = False   # the env-file-vs-declaration check (one line, once per process)
+
+
+def _check_env_file_vs_declaration(log, state_dir, path: str | None = None) -> str:
+    """Say ONCE per process, as a problem-ring line, when the env file selects an API key source while
+    ROMP_EXPECTED_AUTH=login declares that the sessions bill the machine login. The two cannot both
+    hold: a source the file selects — an `ANTHROPIC_API_KEY=` line with a value, a `ROMP_API_KEY_REF=`
+    line, or a `ROMP_API_KEY_CMD=` line — is injected at launch for every session without an explicit
+    Billing pick (effective_auth and default_auth answer "key" whenever a source is configured), so
+    those sessions bill the key. Without this line the first sign is _note_auth_source's per-init
+    mismatch, after a launch has already billed the wrong account, and that line names the helper and
+    the file without saying which line. A file whose source configuration is INVALID (both provider
+    lines; a garbled line) is still a selection — `configured` is True, so nothing falls back to the
+    login — and gets its own sentence: those sessions will try the source and fail to launch, not bill
+    the login. keysource's error strings are static by design, so quoting one names no value.
+
+    Gated on _declared_auth, not _expected_auth: one explicit gear Billing pick makes the declaration
+    inert everywhere else, and under a remembered login pick every spawn is seeded auth=login (spawn),
+    so the sentence above would be false there. =key is never a contradiction: a key source in the
+    file lands the sessions keyed, as declared (the reference shape docs/reference.md recommends
+    included), so nothing is said. Undeclared, nothing is said either: a key line in service.env
+    with no declaration is the ordinary shape. The file is read through keysource and the variable is
+    named through keysource.source_var, so the only names this can ever say are its three (a token
+    another service keeps in the file is never one of them), and the line names the file and the
+    variable, never a value. Returns the variable named ("error" for an invalid file, "" when quiet)
+    so the caller and the tests can see what it decided."""
+    global _ENV_FILE_AUTH_CHECKED
+    if _ENV_FILE_AUTH_CHECKED:
+        return ""
+    exp, src = _declared_auth(state_dir)
+    if exp != "login" or src != "env":
+        return ""
+    p = path or _keysrc.service_env_path()
+    source = _keysrc.read_source(p)
+    if not source.configured:
+        return ""                    # no source selected (a missing file, an empty key line): the sessions fall
+    _ENV_FILE_AUTH_CHECKED = True    # to Claude Code's own credential, and there is nothing to weigh against the declaration
+    if source.kind == "error":
+        log("auth: %s selects an API key source that cannot be used (%s) while ROMP_EXPECTED_AUTH=login. Every "
+            "session without an explicit Billing pick will try that source and fail to launch rather than bill "
+            "the machine login. Fix the file, or change the declaration to match what it should select."
+            % (p, source.error or "invalid API key source configuration"), problem=True)
+        return "error"
+    var = _keysrc.source_var(source.kind)
+    log("auth: %s sets %s while ROMP_EXPECTED_AUTH=login. The declaration says the sessions bill the machine "
+        "login, but the key source this file selects is injected at launch for every session without an "
+        "explicit Billing pick, so they bill the key. Fix whichever side is wrong: remove the line, or change "
+        "the declaration to match what the file selects." % (p, var), problem=True)
+    return var
 
 
 def _expected_auth() -> str:
@@ -7959,11 +8018,16 @@ class SdkBackend:
         # manager's environment, which every kernel inherits, so leaving the mode takes a manager
         # restart (envsource's module docstring). The other ROMP_CREDENTIAL_* values stay live-readable.
         command_mode = _envsrc.pin_mode()
-        # A credential in the env file under a declared auth is a contradiction of the box's design;
-        # said once, here, where the problem ring exists to carry it (the user 2026-09-05). In command
-        # mode the key-source verdict below covers the same file (the command wins, the line is
-        # ignored), so this stays quiet there: one line about that file, not two that disagree.
+        # Two lines about the env file, each said once, here, where the problem ring exists to carry them,
+        # before the boot reconcile below can launch a session on the account the declaration says it does
+        # not bill: the key SOURCE the file selects against ROMP_EXPECTED_AUTH=login
+        # (_check_env_file_vs_declaration, upstream's review of the fork's offer), and a credential-shaped
+        # VALUE in the file under a declared auth, the fork's key-free policy (the user 2026-09-05;
+        # _warn_credential_lines_in_env_file). In command mode the key-source verdict below covers the same
+        # file (the command wins, the line is ignored, so "injected at launch" would be false), and both
+        # stay quiet there: one line about that file, not two that disagree.
         if not command_mode:
+            _check_env_file_vs_declaration(self._log, self.state_dir)
             _warn_credential_lines_in_env_file(self._log)
         # The key-source verdict (key_source_verdict): ONE check per backend, here, before the boot
         # reconcile below can resume a session — in command mode this is the command's FIRST run, so a

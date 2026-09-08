@@ -76,15 +76,19 @@ const OBJ_ID = ["tabs"]; //                       an array of objects keyed by `
 // default-comment trio (setCommentModel/Effort/Fast, the user 2026-08-29) rides the same way. Broadcast in
 // routeOutbound rather than routed. setFileEditing is the viewer's edit opt-in (the user 2026-08-22:
 // one consent popup answers for the mesh — every kernel's save route gates on its own copy, so the
-// broadcast is what makes the one yes reach them all). Deliberately NOT here: setDefaultDir (a path on
-// one machine, meaningless on another), setColormap/setPalette (the viewer's display prefs, which the
-// local kernel persists for this browser), and the PER-INSTALL gear rows (Thinking summaries, User
-// todos: each kernel's answer is its own — their sub-copy says "this kernel keeps its own copy" — so
-// their ops post to the local kernel only, are never queued for or broadcast to another, and are not
-// named anywhere in this file; two tests pin that absence).
+// broadcast is what makes the one yes reach them all). setCompactSuggest rides the same way (T248, the
+// user 2026-09-07: it shipped per-install and a session on an attached machine, whose kernel's own copy
+// was on, received the suggestion while their gear showed the box off with the mixed mark — they want
+// no mixed state for this setting, ever; one click writes every machine, so the mark can only be
+// transient). Deliberately NOT here: setDefaultDir (a path on one machine, meaningless on another),
+// setColormap/setPalette (the viewer's display prefs, which the local kernel persists for this browser),
+// and the PER-INSTALL gear rows (Thinking summaries, User todos: each kernel's answer is its own — their
+// sub-copy says "this kernel keeps its own copy" — so their ops post to the local kernel only, are never
+// queued for or broadcast to another, and are not named anywhere in this file; two tests pin that absence).
 const KERNEL_SETTING = new Set(["setAutoNudge", "setJudgeModel", "setIndexModel",
                                 "setJudgeEffort", "setIndexEffort", "setUpdateMode",
                                 "setDistillModel", "setDistillEffort", "setFileEditing",
+                                "setCompactSuggest",
                                 "setCommentModel", "setCommentEffort", "setCommentFast"]);
 
 /** Return a COPY of an inbound message with every session-id field prefixed by `host`. The local host

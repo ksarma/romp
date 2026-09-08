@@ -480,12 +480,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-head:hover .tab-group-caret, .tab-group-head:focus-visible .tab-group-caret { color: var(--accent); }
 .tab-group-head:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* the section holding the tab being read: a mark, not a different header (the user 2026-09-06 — it folds
-   like any other, and folded, it is the hidden tab's stand-in): the name in the prose tone with an accent
-   underline (a "you are here" cue, the accent's job), so the strip still says where the reading is when
-   the tab itself is folded away. .snap-shown: the pane is showing this section's snapshot — the same
-   prose tone on the name, no underline (that is the tab's place, not the pane's). */
-.tab-group-head.holds-active .tab-group-name { color: var(--fg); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
-.tab-group-head.snap-shown .tab-group-name { color: var(--fg); }
+   like any other, and folded, it is the hidden tab's stand-in): the tag's chip with an accent underline
+   (a "you are here" cue, the accent's job), so the strip still says where the reading is when the tab
+   itself is folded away. The chip's colour is the tag's own, set inline by the shared builder (T251), so
+   the mark is the underline alone: the prose-tone lift the plain name used to get is moot on a chip that
+   is never dim, and .snap-shown (the pane is showing this section's snapshot; render.ts sets the class)
+   keeps no rule of its own for the same reason. */
+.tab-group-head.holds-active .tab-group-chip { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .tab-group-head.dragging { opacity: 0.45; }
 .tab-group-head.drop-target { box-shadow: inset 2px 0 0 var(--accent); }
 /* the disclosure chevron: ▸ folded, turned down while open — the fold-caret idiom (a CSS transition on
@@ -493,8 +494,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-caret { display: inline-block; flex: 0 0 auto; width: 0.9em; text-align: center; transition: transform 0.12s ease; }
 .tab-group-head:not(.collapsed) .tab-group-caret { transform: rotate(90deg); }
 /* the tag's color as a short bar, not a dot: a dot beside a name is a session pip */
-.tab-group-swatch { flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var(--dim); }
-.tab-group-name { font-weight: 600; }
+/* the tag's CHIP (T251) — the shared tag-menu builder's pill, sized by the header (no nested em); flex-none
+   so a wrapping strip never squeezes it, and a tab's own vertical rhythm stays the ceiling */
+.tab-group-chip { flex: 0 0 auto; font-weight: 600; line-height: 1.2; }
 .tab-group-count { opacity: 0.7; }
 /* the folded header's member-state pip (after the count, small — subordinate to the label): the tab's
    status colors by the tab's own rule (tab-state.ts) — working gold, blocked/waiting red, retrying the
@@ -802,6 +804,9 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    theme without a light override. */
 #tab-snapshot { padding: 6px 14px 14px; }
 .snap-head { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 0.82em; font-weight: 600; letter-spacing: 0.04em; color: var(--dim); }
+/* the heading's bar, the snapshot's own class: the strip's header wears the tag CHIP since T251, while the
+   pane heading keeps its bar + name pair, whose parts are patched in place on every model change */
+.snap-swatch { flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var(--dim); }
 .snap-count { font-weight: 400; opacity: 0.7; }
 .snap-list { display: flex; flex-direction: column; gap: 2px; }
 .snap-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; width: 100%; min-width: 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px;

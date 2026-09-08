@@ -218,7 +218,7 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
   assert.ok(!RENDER.includes('"group-active"'), "no delegate handler for a no-op either");
   assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/, "the header folds, so its cursor promises the click");
-  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-name \{ color: var\(--fg\); text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the name in the prose tone, accent-underlined");
+  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the tag's chip accent-underlined (T251 put the chip where the name was; its inline colour makes a prose-tone lift moot)");
   // the hidden active tab's stand-in in render.ts: focus lands on the header, ←/→ step from it, and a
   // pick of a folded-away session opens its section (the strip follows the gesture)
   assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/,
@@ -380,9 +380,10 @@ test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-l
   assert.match(head, /letter-spacing: 0\.04em;/);
   assert.match(head, /color: var\(--dim\);/);
   assert.match(CSS, /\.tab-group-count \{ opacity: 0\.7; \}/, "the count inherits the header's size — no em nested inside an em");
-  assert.match(CSS, /\.tab-group-name \{ font-weight: 600; \}/);
-  assert.match(CSS, /\.tab-group-swatch \{ flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var\(--dim\); \}/,
-    "the tag's color as a short bar — a 7px dot beside a name is a session pip");
+  // T251 (the user 2026-09-07): the swatch+name pair retired for THE CHIP the tag wears everywhere —
+  // the shared tag-menu builder's pill, bold like the name it replaces, sized by the header
+  assert.match(CSS, /\.tab-group-chip \{ flex: 0 0 auto; font-weight: 600; line-height: 1\.2; \}/);
+  assert.doesNotMatch(CSS, /\.tab-group-swatch|\.tab-group-name \{/, "the bar and the plain name are gone");
   assert.doesNotMatch(CSS, /\.tab-group-dot/, "the dot is gone");
   const sizes = new Set(Array.from(CSS.matchAll(/\n\.tab-group-[^{\n]*\{[^}]*font-size: ([^;]+);/g)).map((m) => m[1]));
   assert.deepEqual([...sizes], ["0.82em"], "one font-size across every section rule (the flag's glyph keeps the tab glyph's own class)");
@@ -392,14 +393,13 @@ test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-l
 test("the header's structure and gestures read as a label: chevron (flips with the fold) → color bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
-  assert.ok(at('el("span", "tab-group-caret")') < at('el("span", "tab-group-swatch")')
-    && at('el("span", "tab-group-swatch")') < at('el("span", "tab-group-name")')
-    && at('el("span", "tab-group-name")') < at('el("span", "tab-group-count")'), "chevron, bar, name, count");
+  assert.ok(at('el("span", "tab-group-caret")') < at('tagChip(name, sec.color, { inheritSize: true })')
+    && at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-count")'), "chevron, the tag's CHIP, count");
   assert.match(head, /caret\.textContent = "▸";/);
   assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
     "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
   assert.match(CSS, /\.tab-group-caret \{[^}]*transition: transform 0\.12s ease;/);
-  assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's color from the views store");
+  assert.match(head, /tagChip\(name, sec\.color, \{ inheritSize: true \}\)/, "the tag's color from the views store, on the SHARED chip (T251)");
   // none of a tab's affordances
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
     "no close, no state class of its own, no tab pip, no gauge");
@@ -1581,7 +1581,10 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   // label folded into the name. (The active section's header was a no-op "labeled group" then; since the
   // section folds like any other it is the same button as the rest, with aria-current on it.)
   assert.match(MAKE_HEAD, /caret\.setAttribute\("aria-hidden", "true"\);/, "the chevron is decoration");
-  assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
+  // T251: the color bar retired for the tag's CHIP, which carries the NAME — words, not decoration, so it is
+  // never aria-hidden (the header's explicit aria-label still outranks name-from-content)
+  assert.match(MAKE_HEAD, /const chip = tagChip\(name, sec\.color, \{ inheritSize: true \}\);/, "the chip carries the name");
+  assert.ok(!/chip\.setAttribute\("aria-hidden"/.test(MAKE_HEAD), "…and is words, never hidden decoration");
   assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ pip\.title;/, "the pip too — its phrase rides the label instead");
   assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
   assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip and the flag; an aria-label outranks name-from-content, so the header says what was appended and nothing that leaked in");
@@ -1636,4 +1639,33 @@ test("executed: the words of the way back: the open header whose snapshot the pa
   assert.equal(headWords("infra", 3, 0, false, true, false).label, "infra, 3 sessions, holds the tab you are reading", "the ordinary open header's label is as before");
   assert.deepEqual(headWords("infra", 3, 0, false, true, false), headWords("infra", 3, 0, false, true), "the default is the ordinary open header");
   assert.equal(headWords("infra", 3, 3, true, true, true).title, headWords("infra", 3, 3, true, true).title, "a folded header never offers it: the click opens the section (render.ts derives `back` from open + shown + holds the active tab)");
+});
+
+test("the group header wears the SHARED tag chip — one vocabulary with the tags bar and the feed (T251)", () => {
+  const MENU = ui("webview", "tag-menu.ts");
+  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean \}\): HTMLElement \{/,
+    "the chip is a named builder, not a lookalike");
+  assert.match(MENU, /const chip = tagChip\(c\.label, c\.color\);/, "the tags bar builds its chips through it");
+  assert.match(MENU, /\("var\(--dim, " \+ TAG_BTN_GRAY \+ "\)"\)/, "the uncoloured fallback is a THEME TOKEN — the light theme is never handed a dark gray");
+  const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+  assert.match(head, /chip\.classList\.add\("tab-group-chip"\);/);
+  assert.ok(!/font-size/.test(head), "the header sets no size of its own — the chip inherits the header's 0.82em (no nested em)");
+});
+
+test("the section snapshot holds the reader's place in the hidden transcript (the T249 fold, 2026-09-08): captured in the pass that hides the views, written back when the snapshot hides; the scroll listener stays upstream's", () => {
+  // T249 makes the per-view saved spot follow the reader: the #content scroll listener records every scroll of the
+  // ACTIVE view (scroll-keep.ts followReader). The snapshot host is a child of #content, so entering the snapshot
+  // hides the views, the browser clamps scrollTop to the snapshot's height, and that scroll event (plus every
+  // scroll of a long snapshot) would land on the hidden active view: leaving the snapshot then landed at the
+  // bottom or on the snapshot's offset, not on the line being read. The hold lives in the snapshot's own code;
+  // the listener's text is upstream's, pinned in scroll-keep-on-show.test.ts.
+  assert.match(RENDER, /let snapKeep: \{ v: View; scrollTop: number; stick: boolean \} \| null = null;/, "one held spot: the view it belongs to and what followReader would overwrite");
+  const SHOW = RENDER.slice(RENDER.indexOf("function showActive("), RENDER.indexOf("function landActive("));
+  assert.match(SHOW, /if \(snapView && renderSnapshot\(\)\) \{\s*\n\s*for \(const v of views\.values\(\)\) v\.el\.style\.display = "none";\s*\n(?:\s*\/\/[^\n]*\n)*\s*const av = activeId \? views\.get\(activeId\) : null;\s*\n\s*if \(av && !snapKeep\) snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};/,
+    "captured once per visit, from the view's fields, in the synchronous pass that hides the views (the clamp's scroll event is only queued by then; tab-snapshot.test.ts pins the if/for adjacency)");
+  const HIDE = RENDER.slice(RENDER.indexOf("function hideSnapshot(): void {"), RENDER.indexOf("function snapshotHoldsFocus("));
+  assert.match(HIDE, /if \(snapKeep\) \{ snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick; snapKeep = null; \}/,
+    "written back when the snapshot hides, which every exit takes (leaveSnapshot, a row pick, the section gone from the strip) before landActive reads the spot");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land");
+  assert.match(RENDER, /followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, nearBottom\(c\), pendingBuildRaf != null\);/, "the listener itself is upstream's, untouched");
 });

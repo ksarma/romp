@@ -1408,7 +1408,7 @@ def _version_info():
             # The top-level fields above stay: this tab's own gear and older kernels read those.
             "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
                          "conserveMemory": _conserve_on(),
-                         "compactSuggest": _compact_suggest_on(),   # T208: per-install, default OFF
+                         "compactSuggest": _compact_suggest_on(),   # default OFF; one value across machines (T248)
                          "fileEditing": _file_editing_on(),
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
@@ -8118,10 +8118,13 @@ def _set_auto_nudge(enabled, gt=None):
 
 
 def _compact_suggest_on():
-    """The compaction-suggestion regime's own per-install toggle (T208, the user 2026-09-01: the
-    regime must NOT ship default-on to every install — it stays behind this install's config).
-    OFF by default: the key is absent from a fresh install's blob and absent reads False — no
-    setdefault, deliberately, so shipping the feature never turns it on anywhere."""
+    """The compaction-suggestion regime's toggle. OFF by default (T208, the user 2026-09-01: the
+    regime must NOT ship default-on): the key is absent from a fresh install's blob and absent
+    reads False — no setdefault, deliberately, so shipping the feature never turns it on anywhere.
+    Each kernel stores its own copy, and the gear's click reaches every attached kernel (federation.ts
+    KERNEL_SETTING, like setFileEditing) so the mesh holds ONE value (T248, the user 2026-09-07: it
+    shipped per-install, and a session on an attached machine whose copy was on got the suggestion
+    while the gear they were looking at showed the box off with the mixed mark)."""
     return bool(_auto_nudge_data().get("compactSuggestEnabled"))
 
 
@@ -10729,19 +10732,22 @@ def _closer_pending(sid, path, now, store):
 
 
 # ── the compaction SUGGESTION (the user 2026-08-30, via the nightly optimizer) ──────────────────
-# The ~300k RECYCLE rule stays workers-only; every OTHER session gets a suggestion it decides on
-# itself: once its context crosses each threshold below AND it has been idle at least an hour, it
-# is told — in the person's voice, marker-free (the rename-ping precedent) — that a /compact at a
-# natural boundary would keep it snappy. Event-keyed end to end: the CROSSING arms it, a per-
-# threshold latch on the auto-nudge blob makes each fire once per episode, the idle gate reads the
-# settle event's age at fire time (_settle_event_key — the hook-ledger seam), and the latch re-arms
-# only on the session's own CONTEXT RESET (compact//clear/rewind), observed as the authoritative
-# token counter falling back below the latched threshold — a session that ignores the suggestion
-# is never re-asked (its counter never falls, the latch stands), one that acts hears nothing until
-# it has genuinely filled up again (the manager's amendment, 2026-08-30). Workers are excluded by
-# their roster tags (*_workers in the session-tag store), comment-thread forks by their registry
-# marker, and anything mid-turn by the progressing-state gate. Rides the auto-nudge tick's
-# alive-session walk — no new poll, no timer.
+# Every session gets a suggestion it decides on itself: once its context crosses each threshold
+# below AND it has been idle at least an hour, it is told — in the person's voice, marker-free (the
+# rename-ping precedent) — that a /compact at a natural boundary would keep it snappy. Event-keyed
+# end to end: the CROSSING arms it, a per-threshold latch on the auto-nudge blob makes each fire
+# once per episode, the idle gate reads the settle event's age at fire time (_settle_event_key —
+# the hook-ledger seam), and the latch re-arms only on the session's own CONTEXT RESET
+# (compact//clear/rewind), observed as the authoritative token counter falling back below the
+# latched threshold — a session that ignores the suggestion is never re-asked (its counter never
+# falls, the latch stands), one that acts hears nothing until it has genuinely filled up again (the
+# manager's amendment, 2026-08-30). Excluded at fire time: muted sessions (the per-session
+# opt-out), comment-thread forks (their registry marker) and anything mid-turn (the
+# progressing-state gate). Session TAGS are not a gate (T248, the user 2026-09-07): the first cut
+# skipped every member of a *_workers tag on the theory that a manager layer owned those sessions,
+# but that roster is a convention the user runs on top of romp, not something romp knows about —
+# to romp every session is a session. Rides the auto-nudge tick's alive-session walk — no new
+# poll, no timer.
 COMPACT_SUGGEST_TOKENS = (400_000, 800_000)
 COMPACT_SUGGEST_IDLE_S = 3600
 def _compact_suggest_body(name):
@@ -10757,23 +10763,6 @@ def _compact_suggest_body(name):
     return ("It's been quiet here for a while and this conversation has built up a lot of context. "
             "When you next reach a natural stopping point, run `romp compact %s` in your shell to "
             "compact it and keep things snappy; your call, nothing is waiting on it." % name)
-
-
-def _worker_tag_member(sid):
-    """True when any *_workers tag in the session-tag store holds this sid — the worker rosters ARE
-    session tags (the `romp tag` headless-edit workflow), and the recycle rule owns those sessions."""
-    try:
-        d = json.loads(_views_path().read_text())
-    except (OSError, ValueError):
-        return False
-    for t in (d.get("tags") or []):
-        if not str(t.get("name") or "").lower().endswith("workers"):
-            continue
-        for m in (t.get("members") or []):
-            ms = m.get("sid") if isinstance(m, dict) else str(m or "")
-            if ms == sid or (isinstance(ms, str) and ms.split(":", 1)[-1] == sid):
-                return True
-    return False
 
 
 def _compact_suggest_tick(sid, tm, now):
@@ -10820,8 +10809,6 @@ def _compact_suggest_tick(sid, tm, now):
     #                                                    (the nudge gate, the interrupt-block tick;
     #                                                    a routed review caught this one missing,
     #                                                    2026-09-01)
-    if _worker_tag_member(sid):
-        return False                                   # the recycle rule owns workers
     if _thread_reg(sid).get("threadOf"):
         return False                                   # a comment-thread fork is not first-class
     if (tm or {}).get("state", "") in _PROGRESSING_STATES:
@@ -20016,6 +20003,36 @@ def list_remotes():
         return [_remote_public(r) for r in _remotes.values()]
 
 
+def _tunnels_listing(fresh=False):
+    """The GET /tunnels payload. `fresh` re-reads this checkout's HEAD first, for a caller about to ACT on
+    the rows' `outOfDate` — the CLI's no-host `romp update` picks the hosts it pushes to from this listing.
+    The dashboard's polls read the 15 s head cache (a poll must not fork git), and a listing built from
+    that cache within 15 s of a local commit says every peer sitting on the previous commit is up to date,
+    so that command prints "all attached remotes are up to date" and pushes nothing. `known` = hosts
+    attached before but not now, so the popover can list them as persistent re-attach rows instead of
+    making you retype them."""
+    if fresh:
+        _fresh_local_head()
+    return {"tunnels": list_remotes(),
+            "known": list_known(),
+            "viaReach": _bus_via_reach(),   # hosts one relay hop away (trust-by-origin rows hang here)
+            "remoteHolds": _bus_remote_holds(),   # quarantine holds on OTHER machines (direct peers + one relay hop)
+            "autoUpdate": _auto_update_remotes_on(),   # the popover checkbox reflects the KERNEL, not this tab
+            "peerTiers": _bus_peer_tiers(),   # host → how IT holds OUR mail (both-direction display)
+            # THIS machine's build, top-level so the panel can name it with no hosts attached: a remote's
+            # sha is unreadable without your own beside it (the user 2026-07-30), which is the comparison
+            # every other line in the panel is implicitly asking you to make.
+            "local": {"ver": _kernel_ver() or "", "sha": _kernel_sha() or "", "host": _self_host()},
+            "peersMode": _postal_peers_on()}
+
+
+def _fresh_listing_asked(q):
+    """Whether a GET /tunnels query asks for the listing judged against the head this checkout is at now:
+    exactly `?fresh=1`. parse_qs hands back ["0"] for `?fresh=0`, so a truthiness test would re-read HEAD
+    for `0` and `no` while a blank `?fresh=` read as not fresh; the contract is the one spelling."""
+    return q.get("fresh", [""])[0] == "1"
+
+
 def _poll_remote_sessions(r):
     """GET the remote kernel's /sessions THROUGH the -L tunnel; return its id-bearing rows (each `{id, name,
     …}` — the same unified list _session_rows serves here). None on any failure — leave the last-known
@@ -20812,20 +20829,43 @@ def _local_head(short=False):
     rarely moves."""
     now = time.time()
     if now - _HEAD_CACHE["ts"] > 15:
-        full = short_s = None
-        try:
-            r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-                               capture_output=True, text=True, timeout=3)
-            if r.returncode == 0:
-                full = r.stdout.strip() or None
-            if full:
-                s = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
-                                   capture_output=True, text=True, timeout=3)
-                short_s = (s.stdout.strip() if s.returncode == 0 else "") or full[:8]
-        except Exception:
-            pass
+        full, short_s = _read_head()
         _HEAD_CACHE.update(ts=now, full=full, short=short_s)
     return _HEAD_CACHE["short"] if short else _HEAD_CACHE["full"]
+
+
+def _read_head():
+    """One read of this checkout's HEAD straight from git → (full, short); (None, None) outside a checkout.
+    The poll cache and the transport both fill from here, so they can never disagree on HOW HEAD is read."""
+    full = short_s = None
+    try:
+        r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            full = r.stdout.strip() or None
+        if full:
+            s = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                               capture_output=True, text=True, timeout=3)
+            short_s = (s.stdout.strip() if s.returncode == 0 else "") or full[:8]
+    except Exception:
+        pass
+    return full, short_s
+
+
+def _fresh_local_head():
+    """The committed HEAD as it is RIGHT NOW, for a decision about to act on it: a push, a pull, the
+    restart-all plan, the listing `romp update` chooses hosts from. `_local_head` serves the dashboard's
+    polls from a 15 s cache, which is exactly wrong there: a commit made seconds before `romp update` is
+    the one the user means, and the cached read still names its parent, so the peer came back "already up
+    to date" one commit behind, or the restart it was told to expect carried the old sha. This reads git
+    ITSELF and then writes the cache: the value acted on is the value read, never a cache entry that a
+    poller's own in-flight read could refill with the older head across a bare invalidation; and the
+    write puts that same value in front of every display in the call (the audit-row sha, the detail, the
+    expectation) and the dashboard's next poll. Returns the full 40-hex sha, or "" when this is not a
+    checkout (the caller says so)."""
+    full, short_s = _read_head()
+    _HEAD_CACHE.update(ts=time.time(), full=full, short=short_s)
+    return full if full and re.fullmatch(r"[0-9a-f]{40}", full) else ""
 
 
 def _shas_agree(a, b):
@@ -20835,26 +20875,29 @@ def _shas_agree(a, b):
     return bool(a and b and (a.startswith(b) or b.startswith(a)))
 
 
-def _remote_out_of_date(r):
+def _remote_out_of_date(r, head=None):
     """True iff this remote is running a DIFFERENT commit than the local kernel's HEAD — i.e. a push would
     change it. Compared against the LIVE HEAD (what `_update_remote` actually pushes), NOT the kernel's cached
     startup sha, so pushing HEAD makes the remote match HEAD and the flag CLEARS afterward (the user 2026-07-04
-    — mixing the cached compare with a live-HEAD push is exactly why the banner never went away)."""
-    return bool(r.get("kernel_sha") and _local_head(short=True)
-                and not _shas_agree(r.get("kernel_sha"), _local_head(short=True)))
+    — mixing the cached compare with a live-HEAD push is exactly why the banner never went away). `head` is
+    the sha to compare against when the caller holds one (the restart-all run judges every row against the
+    single head it read); None reads the polls' cache, as the dashboard does."""
+    lh = head if head is not None else _local_head(short=True)
+    return bool(r.get("kernel_sha") and lh and not _shas_agree(r.get("kernel_sha"), lh))
 
 
 _BEHIND_CACHE = {}   # (remote sha base, local full HEAD) → drift dict; both key parts name immutable commits
 
 
-def _behind_info(remote_sha):
+def _behind_info(remote_sha, head=None):
     """HOW an out-of-date remote's commit relates to local HEAD, for the popover row: `behind` = commits a
     push would deliver, `ahead` = commits the REMOTE has that this repo lacks (a push would clobber them, and
     _update_remote refuses — so the row must say 'ahead'/'diverged', never a false 'behind'), `date` = the
     remote commit's date. behind/ahead are None when the remote's sha isn't in this repo at all (it was
     updated from some other machine) — the row says so instead of guessing. Memoized per (remote sha, local
-    HEAD): git runs only when either commit actually changes, not on every /tunnels poll."""
-    base, lfull = _sha_base(remote_sha), _local_head()
+    HEAD): git runs only when either commit actually changes, not on every /tunnels poll. `head` = the local
+    sha to relate to when the caller holds one (see _remote_out_of_date); None reads the polls' cache."""
+    base, lfull = _sha_base(remote_sha), (head if head is not None else _local_head())
     if not base or not lfull:
         return {"behind": None, "ahead": None, "date": ""}
     key = (base, lfull)
@@ -20885,7 +20928,7 @@ def _behind_info(remote_sha):
     return info
 
 
-def _is_fast_forward(r):
+def _is_fast_forward(r, head=None):
     """Whether pushing local HEAD to this remote would be a STRAIGHT FAST-FORWARD — the remote's commit is an
     ancestor of ours, so the push only ADDS commits and can destroy nothing (the user 2026-07-24, who wanted
     the automatic push to fire exactly when that is observed).
@@ -20895,10 +20938,10 @@ def _is_fast_forward(r):
     as zero: an unknown relationship is precisely the case we must not auto-push into, since we cannot show it
     would clobber nothing. Same for diverged (ahead > 0) — `_update_remote` refuses those anyway, so
     auto-firing them would just manufacture failures. Those cases keep the manual Push button, which explains
-    the situation and lets the user decide."""
-    if not _remote_out_of_date(r):
+    the situation and lets the user decide. `head` pins the comparison, as in _remote_out_of_date."""
+    if not _remote_out_of_date(r, head=head):
         return False
-    d = _behind_info(r.get("kernel_sha") or "")
+    d = _behind_info(r.get("kernel_sha") or "", head=head)
     b, a = d.get("behind"), d.get("ahead")
     return isinstance(b, int) and isinstance(a, int) and b > 0 and a == 0
 
@@ -21003,7 +21046,16 @@ def _auto_push_remote(host):
     (CLAUDE.md: fail loudly) — a silently failing auto-push would look exactly like an up-to-date remote."""
     _set_auto_push(host, "pushing", "pushing this machine's build over SSH")
     try:
-        ok, detail = _update_remote(host)
+        head = _fresh_local_head()
+        with _remotes_lock:
+            base = _sha_base((_remotes.get(host) or {}).get("kernel_sha") or "")
+        with _auto_push_lock:
+            # _maybe_auto_push keyed this attempt on the polls' CACHED head, but the push uses the head read
+            # just now, which that read also wrote into the cache: the next supervisor pass then computed a
+            # new key for the same advance and fired a second push, which came back "already up to date" and
+            # logged "pushed" twice (review find, 2026-09-08). Key the attempt on the sha the push uses.
+            _auto_push_tried[host] = (base, head)
+        ok, detail = _update_remote(host, head=head)
     except Exception as e:
         ok, detail = False, str(e)
     if ok:
@@ -21107,7 +21159,13 @@ def _discover_remote_clone(host):
     overrides) — then a romp-serve found on PATH (non-login, then login shell) resolved to the repo
     that holds it, then conventional dirs. KEEP the source order IN SYNC with _start_remote_kernel.
     Returns (dir, head, dirty, error) — error set (and the rest blank) on any failure, naming
-    everything tried. Shared by the push (_update_remote) and pull (_pull_remote) directions."""
+    everything tried; `dirty` is "" (clean), "1" (uncommitted changes of any kind: an unstaged edit's
+    porcelain line starts with a SPACE, so the first character alone is not a verdict), or "STATERR" when
+    `git status` itself failed there (a corrupt index, an I/O error; NOT an index lock, which `git status`
+    reads through unbothered, so a lock surfaces later as RESETFAIL when the reset cannot take it): a
+    command that could not see the tree must never answer "clean", because that answer green-lights a
+    reset of it. Shared by
+    the push (_update_remote) and pull (_pull_remote) directions."""
     disc = (
         'R=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
         'if [ -n "$SR" ] && [ -d "$SR/.git" ]; then R="$SR"; fi; '
@@ -21118,7 +21176,8 @@ def _discover_remote_clone(host):
         'if [ -d "$d/.git" ]; then R="$d"; break; fi; done; fi; '
         'if [ -z "$R" ]; then echo NOROMP; exit 0; fi; '
         'echo "DIR:$R"; echo "HEAD:$(git -C "$R" rev-parse HEAD 2>/dev/null)"; '
-        'echo "DIRTY:$(git -C "$R" status --porcelain 2>/dev/null | head -c 1)"')
+        'if ds=$(git -C "$R" status --porcelain 2>/dev/null); then '
+        'if [ -n "$ds" ]; then echo DIRTY:1; else echo DIRTY:; fi; else echo DIRTY:STATERR; fi')
     try:
         d = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, disc], capture_output=True, text=True, timeout=25)
     except Exception as e:
@@ -21135,19 +21194,24 @@ def _discover_remote_clone(host):
     return rdir, rhead, rdirty, ""
 
 
-def _update_remote(host):
+def _update_remote(host, head=None):
     """PEER-TO-PEER update (the user 2026-07-04, who wanted p2p pushing by default, no GH backstop — just take what is
     committed on local). Push THIS kernel's committed HEAD straight to `host` over ssh and restart it, so the
     remote runs exactly the local code — GitHub/origin is never involved. Three steps, all over the same
     BatchMode/no-multiplexing ssh every other remote call uses:
       1. ssh-discover the remote romp clone (conventional dirs, mirrors _start_remote_kernel) + its HEAD; REFUSE
          on a dirty remote tree (won't silently clobber uncommitted remote work).
-      2. `git push --force` local HEAD to a scratch ref on the remote (a NON-checked-out ref, so no bare-repo /
-         denyCurrentBranch dance).
-      3. ssh: REFUSE if the remote has DIVERGED (its own commits not in local — don't clobber), else reset the
-         remote to that ref, delete the scratch ref, and `romp refresh` to restart.
+      2. `git push --force` the local HEAD's exact sha to a scratch ref on the remote (a NON-checked-out ref,
+         so no bare-repo / denyCurrentBranch dance).
+      3. ssh: bind to that sha (REFUSE unless the scratch ref resolves to the commit this call advertised — any
+         concurrent sender force-pushes the same ref), REFUSE if the remote has DIVERGED (its own commits not
+         in local — don't clobber), re-check its tree IN THE SAME SHELL (step 1's answer is an ssh round-trip
+         old; a status that fails, or an edit that landed since, refuses), else reset the remote to that sha,
+         delete the scratch ref (only while it still names that sha), and restart it.
     Returns (ok, detail), fail-loud. Requires a CLEAN local tree — we push COMMITS, so uncommitted local work
-    isn't sent; the caller is told to commit first."""
+    isn't sent; the caller is told to commit first. `head` = the full sha to push when the caller has already
+    read it with _fresh_local_head (the automatic push keys its once-per-advance gate on that same value);
+    None reads it here."""
     host = str(host or "").strip()
     if not host:
         return False, "no host"
@@ -21162,7 +21226,7 @@ def _update_remote(host):
                        "When it is behind this build, Update asks it to fast-forward itself; otherwise "
                        "sync from that machine's own dashboard" % host)
     kport = int((_rr or {}).get("kernel_port") or _REMOTE_KERNEL_PORT)   # for the restart's port poll
-    lfull = _local_head()
+    lfull = head if head is not None else _fresh_local_head()   # the head the user HAS, not the one the dashboard last polled
     if not lfull:
         return False, "local kernel isn't a git checkout — nothing to push"
     # We push the committed HEAD; uncommitted local edits are not sent ("just take what is committed on local"
@@ -21171,6 +21235,9 @@ def _update_remote(host):
     rdir, rhead, rdirty, derr = _discover_remote_clone(host)
     if derr:
         return False, derr
+    if rdirty == "STATERR":
+        return False, ("could not read the tree state on %s (git status failed there) — not touching a "
+                       "checkout whose state is unknown" % host)
     if rdirty:
         return False, "remote %s has uncommitted changes — commit or discard them there first (won't clobber)" % host
     if rhead and rhead == lfull:
@@ -21183,26 +21250,46 @@ def _update_remote(host):
                 # restart, or one nobody asked for) — expect it again rather than read its gap as death
                 rr["restartExpected"] = {"sha": lfull, "t": time.time(), "quiet": None}
                 return True, ("already up to date (%s) — that kernel has not restarted into it yet"
-                              % (_local_head(short=True) or lfull[:8]))
-        return True, "already up to date (%s)" % (_local_head(short=True) or lfull[:8])
+                              % lfull[:8])
+        return True, "already up to date (%s)" % lfull[:8]
     # (2) push local HEAD to a scratch ref on the remote (non-checked-out → no denyCurrentBranch issue)
     env = dict(os.environ, GIT_SSH_COMMAND="%s %s" % (SSH_BIN, " ".join(_SSH_OPTS)))
     push_url = "%s:%s" % (host, rdir)
     try:
         p = subprocess.run(["git", "-C", str(ROOT), "push", "--force", push_url,
-                            "HEAD:refs/heads/%s" % _P2P_REF],
+                            "%s:refs/heads/%s" % (lfull, _P2P_REF)],   # the advertised sha, not a HEAD that may move
                            capture_output=True, text=True, timeout=120, env=env)
     except Exception as e:
         return False, "git push to %s failed: %s" % (host, str(e)[:160])
     if p.returncode != 0:
         return False, "git push to %s failed: %s" % (host, (_ssh_err(p.stderr) or p.stdout or "").strip()[:160])
-    # (3) verify no divergence, reset the remote to the pushed HEAD, clean up, restart
+    # (3) bind to the advertised sha, verify no divergence, re-check the tree, reset the remote to that sha,
+    #     clean up, restart
     apply_cmd = (
-        'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; '
-        'if ! git -C "$R" merge-base --is-ancestor HEAD %s 2>/dev/null; then '
-        'git -C "$R" update-ref -d refs/heads/%s 2>/dev/null; echo DIVERGED; exit 0; fi; '
-        'git -C "$R" reset --hard %s >/dev/null 2>&1 || { git -C "$R" update-ref -d refs/heads/%s 2>/dev/null; echo RESETFAIL; exit 0; }; '
-        'git -C "$R" update-ref -d refs/heads/%s 2>/dev/null; '
+        'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; WANT=%s; '
+        # Every git step below names WANT, the exact commit this call pushed, never the scratch ref: that ref
+        # is force-pushed by any sender, so between our push and this apply another machine can have moved
+        # it, and "reset to the ref" would install THEIR build under OUR report. A ref that does not resolve
+        # to WANT is left alone (it is that other sender's to apply) and this call refuses.
+        'GOT="$(git -C "$R" rev-parse --verify --quiet refs/heads/%s 2>/dev/null)"; '
+        'if [ "$GOT" != "$WANT" ]; then echo "REFMISMATCH:$GOT"; exit 0; fi; '
+        # Every cleanup below is GUARDED by WANT (`update-ref -d <ref> <old>` deletes only while the ref still
+        # holds <old>): the gate above is one read, and a concurrent sender's push can land under the same
+        # name right after it. An unguarded delete removed THEIR ref and handed their apply a REFMISMATCH on
+        # nothing (review find, 2026-09-08). A guard that fails sets K, which trails the outcome tag so the
+        # detail can say the ref was left for that sender's own apply.
+        'K=""; '
+        'if ! git -C "$R" merge-base --is-ancestor HEAD "$WANT" 2>/dev/null; then '
+        'git -C "$R" update-ref -d refs/heads/%s "$WANT" 2>/dev/null || K=":REFKEPT"; echo "DIVERGED$K"; exit 0; fi; '
+        # Re-check dirtiness HERE, in the same shell as the reset: the discover probe's answer is an ssh
+        # round-trip old, and an edit that landed since would be destroyed by `reset --hard` on the strength
+        # of a stale "clean". A status that FAILS is its own refusal, not a clean tree.
+        'if ! AS=$(git -C "$R" status --porcelain 2>/dev/null); then '
+        'git -C "$R" update-ref -d refs/heads/%s "$WANT" 2>/dev/null || K=":REFKEPT"; echo "STATERR$K"; exit 0; fi; '
+        'if [ -n "$AS" ]; then '
+        'git -C "$R" update-ref -d refs/heads/%s "$WANT" 2>/dev/null || K=":REFKEPT"; echo "DIRTYNOW$K"; exit 0; fi; '
+        'git -C "$R" reset --hard "$WANT" >/dev/null 2>&1 || { git -C "$R" update-ref -d refs/heads/%s "$WANT" 2>/dev/null || K=":REFKEPT"; echo "RESETFAIL$K"; exit 0; }; '
+        'git -C "$R" update-ref -d refs/heads/%s "$WANT" 2>/dev/null || K=":REFKEPT"; '
         'NEW="$(git -C "$R" rev-parse --short HEAD)"; '
         # RESTART the kernel THROUGH THE MANAGER (the user 2026-07-04: the manager is romp's durable supervisor —
         # "there is never an invisible orphan" — so a restart should keep/leave the remote MANAGER-owned, not
@@ -21219,7 +21306,7 @@ def _update_remote(host):
         # is synced and nothing is killed or started; SYNCED:<sha>:DOWN says so, and `romp up` there boots
         # the new code. The OWNED check comes first: a manager running beside a marker was started some
         # way that did not clear it, and its kernel gets the normal quiet restart.
-        'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
+        'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW$K"; exit 0; fi; '
         # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
         # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
         # machine, to this sha) — nine restarts in three hours had no reason on record. The QUIET row
@@ -21252,9 +21339,9 @@ def _update_remote(host):
         'if [ "$OWNED" = 1 ]; then '
         # a manager owning the kernel beside a `romp down` marker (see above): its quiet restart is attributed too
         '[ ! -f "$LOGDIR/down-by-romp" ] || qrow; '
-        'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
+        'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET$K"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
-        'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
@@ -21271,10 +21358,10 @@ def _update_remote(host):
         'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
-        'echo "SYNCED:$NEW:FALLBACK"'
-    ) % (shlex.quote(rdir), _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
-         _local_machine_label(), (_local_head(short=True) or lfull[:8]), kport,
-         _local_machine_label(), (_local_head(short=True) or lfull[:8]), kport)
+        'echo "SYNCED:$NEW:FALLBACK$K"'
+    ) % (shlex.quote(rdir), lfull, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
+         _local_machine_label(), lfull[:8], kport,
+         _local_machine_label(), lfull[:8], kport)
     # The apply KILLS the running kernel before booting its replacement, so it must be immune to the
     # ssh dying between the two halves — exactly what a flaky link does (the user 2026-07-11:
     # every drop mid-apply left the host kernel-LESS, and each banner Retry re-killed whatever a
@@ -21311,52 +21398,76 @@ def _update_remote(host):
         _unexpect()
         return False, "pushed, but the remote reset/restart failed: " + str(e)[:150]
     aout = (a.stdout or "").strip()
+    # ":REFKEPT" trails any outcome whose cleanup found the scratch ref no longer at WANT: another sender's
+    # push landed under the name after the gate, and the guarded delete left it for that sender's own apply
+    kept = aout.endswith(":REFKEPT")
+    if kept:
+        aout = aout[:-len(":REFKEPT")]
     tag, _, rest = aout.partition(":")
     tag, rest = tag.strip(), rest.strip()
-    if tag == "SYNCED":
-        short, _, mode = rest.partition(":")
-        mode = mode.strip()
-        _expect(mode == "QUIET")
-        short = short.strip() or _local_head(short=True) or "HEAD"
-        if mode == "QUIET":
-            return True, "synced to %s — restarting at its next quiet window" % short
-        if mode == "FALLBACK":
-            return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
-                          "immediate restart)" % short)
-        if mode == "DOWN":
-            _unexpect()                           # nothing restarts: the host stays stopped on purpose
-            return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
-                          "(romp up on it starts the new code)" % (short, host))
-        return True, "synced to %s + restarting" % short
-    _unexpect()                                   # nothing restarted: DIVERGED / RESETFAIL / NOLAUNCH / error
-    if tag == "DIVERGED":
-        # Two very different causes land here, and the old wording only described the first, which is
-        # why a rewritten local history read as an unexplained refusal (the user 2026-07-22): either the
-        # remote really has its own commits, or LOCAL history was rewritten (rebase/filter-repo/amend),
-        # after which the remote's HEAD is an ancestor of nothing and the guard fires forever. Name both
-        # and give the exact way out, so the fix doesn't need a code read.
-        return False, ("remote %s has diverged — not clobbering. Either it has its own commits, or local "
-                       "history was rewritten (rebase/filter-repo), which orphans the remote's HEAD. To "
-                       "discard what's on %s and force it to match local: "
-                       "git push --force %s:<remote-romp-dir> HEAD:refs/heads/%s "
-                       "then, on %s: git reset --hard %s && git update-ref -d refs/heads/%s"
-                       % (host, host, host, _P2P_REF, host, _P2P_REF, _P2P_REF))
-    if tag == "RESETFAIL":
-        return False, "pushed, but the remote couldn't check out the new code"
-    if tag == "NOLAUNCH":
-        return False, "pushed + reset, but found no romp/romp-serve launcher to restart the kernel"
-    return False, (_ssh_err(a.stderr) or aout or "remote apply failed").strip()[:180]
+
+    def _verdict():
+        if tag == "SYNCED":
+            short, _, mode = rest.partition(":")
+            mode = mode.strip()
+            _expect(mode == "QUIET")
+            short = short.strip() or lfull[:8]
+            if mode == "QUIET":
+                return True, "synced to %s — restarting at its next quiet window" % short
+            if mode == "FALLBACK":
+                return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
+                              "immediate restart)" % short)
+            if mode == "DOWN":
+                _unexpect()                   # nothing restarts: the host stays stopped on purpose
+                return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
+                              "(romp up on it starts the new code)" % (short, host))
+            return True, "synced to %s + restarting" % short
+        _unexpect()                       # nothing restarted: REFMISMATCH / DIVERGED / STATERR / DIRTYNOW / RESETFAIL / NOLAUNCH / error
+        if tag == "REFMISMATCH":
+            return False, ("pushed %s, but the scratch ref on %s now holds %s — another push moved it between "
+                           "ours and the apply; nothing was reset there. Push again."
+                           % (lfull[:8], host, (rest[:8] if rest else "nothing")))
+        if tag == "DIVERGED":
+            # Two very different causes land here, and the old wording only described the first, which is
+            # why a rewritten local history read as an unexplained refusal (the user 2026-07-22): either the
+            # remote really has its own commits, or LOCAL history was rewritten (rebase/filter-repo/amend),
+            # after which the remote's HEAD is an ancestor of nothing and the guard fires forever. Name both
+            # and give the exact way out, so the fix doesn't need a code read.
+            return False, ("remote %s has diverged — not clobbering. Either it has its own commits, or local "
+                           "history was rewritten (rebase/filter-repo), which orphans the remote's HEAD. To "
+                           "discard what's on %s and force it to match local: "
+                           "git push --force %s:<remote-romp-dir> HEAD:refs/heads/%s "
+                           "then, on %s: git reset --hard %s && git update-ref -d refs/heads/%s"
+                           % (host, host, host, _P2P_REF, host, _P2P_REF, _P2P_REF))
+        if tag == "STATERR":
+            return False, ("pushed, but reading the tree state on %s failed right before the apply — not resetting "
+                           "a checkout whose state is unknown" % host)
+        if tag == "DIRTYNOW":
+            return False, ("pushed, but the tree on %s has uncommitted changes — nothing was reset there; commit "
+                           "or discard them, then push again" % host)
+        if tag == "RESETFAIL":
+            return False, "pushed, but the remote couldn't check out the new code"
+        if tag == "NOLAUNCH":
+            return False, "pushed + reset, but found no romp/romp-serve launcher to restart the kernel"
+        return False, (_ssh_err(a.stderr) or aout or "remote apply failed").strip()[:180]
+
+    ok, detail = _verdict()
+    if kept:
+        detail += ("; the scratch ref on %s now holds another sender's push, left alone for that sender's own "
+                   "apply" % host)
+    return ok, detail
 
 
-def _is_fast_pull(r):
+def _is_fast_pull(r, head=None):
     """Whether pulling this remote's commits would be a STRAIGHT FAST-FORWARD of the local checkout —
     the remote is strictly AHEAD (it has commits we lack, we have none it lacks), both counts actually
     known. The mirror of _is_fast_forward, for the other direction (the user 2026-07-27: the attaching
     side owns BOTH directions of sync — the remote has no ssh route back). None is NOT zero, same as
-    the push gate: an unprovable relationship is exactly what must not be pulled automatically."""
-    if not _remote_out_of_date(r):
+    the push gate: an unprovable relationship is exactly what must not be pulled automatically. `head`
+    pins the comparison, as in _remote_out_of_date."""
+    if not _remote_out_of_date(r, head=head):
         return False
-    d = _behind_info(r.get("kernel_sha") or "")
+    d = _behind_info(r.get("kernel_sha") or "", head=head)
     b, a = d.get("behind"), d.get("ahead")
     return isinstance(b, int) and isinstance(a, int) and a > 0 and b == 0
 
@@ -21390,7 +21501,7 @@ def _pull_remote(host):
     if _rr is not None and _rr.get("checkin_peer"):
         return False, ("no ssh path to %s from this machine (it checked in here over its own tunnel) — "
                        "sync from that machine's own dashboard" % host)
-    lfull = _local_head()
+    lfull = _fresh_local_head()          # the head this tree is AT, not the one the dashboard last polled
     if not lfull:
         return False, "local kernel isn't a git checkout — nowhere to pull to"
     try:
@@ -21408,7 +21519,11 @@ def _pull_remote(host):
     if derr:
         return False, derr
     if rhead and rhead == lfull:
-        return True, "already up to date (%s)" % (_local_head(short=True) or lfull[:8])
+        return True, "already up to date (%s)" % lfull[:8]
+    if not re.fullmatch(r"[0-9a-f]{40}", rhead):
+        # nothing to bind the merge to: without the commit the peer reported, "whatever the fetch brought
+        # back" is the only target, and that is exactly the thing a concurrent fetch can swap under us
+        return False, "%s did not report which commit it is on — nothing fetched" % host
     env = dict(os.environ, GIT_SSH_COMMAND="%s %s" % (SSH_BIN, " ".join(_SSH_OPTS)))
     try:
         f = subprocess.run(["git", "-C", str(ROOT), "fetch", "%s:%s" % (host, rdir), "HEAD"],
@@ -21418,15 +21533,24 @@ def _pull_remote(host):
     if f.returncode != 0:
         return False, "git fetch from %s failed: %s" % (host, (_ssh_err(f.stderr) or f.stdout or "").strip()[:160])
     try:
-        anc = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"],
+        # Every step binds to the EXACT commit the peer reported, and the fetch only has to have brought
+        # it: FETCH_HEAD never enters the decision (it is a mutable name — any other fetch into this
+        # checkout, a second peer or a hand-run `git fetch`, rewrites it between our fetch and our merge).
+        # The one refusal left is the honest one: the peer no longer stands where it said it did.
+        got = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", rhead + "^{commit}"],
+                             capture_output=True, text=True, timeout=10)
+        if got.returncode != 0 or (got.stdout or "").strip() != rhead:
+            return False, ("%s has moved off the commit it reported (%s) — nothing merged; try again"
+                           % (host, rhead[:8]))
+        anc = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", "HEAD", rhead],
                              capture_output=True, text=True, timeout=10)
         if anc.returncode != 0:
             return False, ("local and %s have diverged — a pull would need a merge, which is yours to "
                            "do by hand" % host)
-        n = subprocess.run(["git", "-C", str(ROOT), "rev-list", "--count", "HEAD..FETCH_HEAD"],
+        n = subprocess.run(["git", "-C", str(ROOT), "rev-list", "--count", "HEAD..%s" % rhead],
                            capture_output=True, text=True, timeout=10)
         count = (n.stdout or "").strip() or "?"
-        m = subprocess.run(["git", "-C", str(ROOT), "merge", "--ff-only", "FETCH_HEAD"],
+        m = subprocess.run(["git", "-C", str(ROOT), "merge", "--ff-only", rhead],
                            capture_output=True, text=True, timeout=30)
     except Exception as e:
         return False, str(e)[:200]
@@ -21604,7 +21728,7 @@ def _restart_remote_kernel(host):
     return False, (_ssh_err(a.stderr) or out or "remote restart failed").strip()[:180]
 
 
-def _fleet_restart_plan(r):
+def _fleet_restart_plan(r, head=None):
     """What a fleet restart would do to ONE remote row → (action, reason). Pure decision, so the report
     and the tests can both read it without any ssh happening:
       sync-push  — it is strictly behind us and the push can only add commits
@@ -21612,24 +21736,26 @@ def _fleet_restart_plan(r):
       ask        — a checked-in peer we can only ASK to fast-forward itself (no ssh route from here)
       restart    — same build: nothing to sync, just bring the process back
       skip       — anything we cannot prove is safe; the reason says which
+    `head` = the local sha the row is judged against, handed down by _fleet_restart_run so every row of one
+    run is judged against the same commit; None reads the polls' cache.
     """
     host = r.get("host") or "?"
     if r.get("status") != "up":
         return "skip", "not connected right now (romp is still dialing it)"
-    if not _remote_out_of_date(r):
+    if not _remote_out_of_date(r, head=head):
         return ("ask", "checked in here; asking it to restart itself") if r.get("checkin_peer") \
             else ("restart", "already on this build")
     if r.get("checkin_peer"):
-        return ("ask", "checked in here; asking it to fast-forward itself") if _is_ask_pull(r) \
+        return ("ask", "checked in here; asking it to fast-forward itself") if _is_ask_pull(r, head=head) \
             else ("skip", "checked in over its own tunnel and not provably behind — sync it from its own "
                           "dashboard")
-    if _is_fast_forward(r):
+    if _is_fast_forward(r, head=head):
         return "sync-push", "behind this build; pushing and restarting"
-    if _is_fast_pull(r):
+    if _is_fast_pull(r, head=head):
         if _local_branch() != "main":
             return "skip", "%s is ahead, but this checkout isn't on main — pull it yourself" % host
         return "sync-pull", "ahead of this build; fast-forwarding this machine onto it"
-    d = _behind_info(r.get("kernel_sha") or "")
+    d = _behind_info(r.get("kernel_sha") or "", head=head)
     b, a = d.get("behind"), d.get("ahead")
     if isinstance(b, int) and isinstance(a, int) and b > 0 and a > 0:
         return "skip", "diverged (it has %d commit(s) this machine lacks) — not clobbering either side" % a
@@ -21645,9 +21771,18 @@ def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
     rows = []
     with _remotes_lock:
         remotes = [dict(x) for x in _remotes.values()]
+    # The head every row is planned against: read from git ONCE here and carried as a VALUE, never re-read
+    # through the polls' cache per row. The cache can be 15 s behind a commit made just before Restart (a peer
+    # sitting on that commit then reads as "already on this build" and gets a restart where a push was owed),
+    # and a row is minutes of ssh, so per-row cache reads judged later rows against whatever HEAD had become
+    # by then and the report against a third reading (review find, 2026-09-08). The one event that moves it
+    # on purpose is a sync-pull below, which fast-forwards this checkout: it is re-read right there, so the
+    # rows after it are judged against the commit the pull brought in (a peer still on the old head is owed
+    # a push of it, not a bare restart).
+    head = _fresh_local_head()
     for r in remotes:
         host = r.get("host") or "?"
-        action, reason = _fleet_restart_plan(r)
+        action, reason = _fleet_restart_plan(r, head=head)
         try:
             if action == "skip":
                 rows.append({"host": host, "ok": None, "action": "skipped", "detail": reason})
@@ -21658,6 +21793,7 @@ def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
                 ok, detail = _pull_remote(host)
                 if ok:
                     detail += "; this machine restarts below"
+                    head = _fresh_local_head()          # HEAD moved by design: later rows are judged against it
             elif action == "ask":
                 ok, detail = _ask_peer_to_pull(host)
             else:
@@ -21666,7 +21802,7 @@ def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
         except Exception as e:                    # one bad host must never strand the rest of the fleet
             rows.append({"host": host, "ok": False, "action": action, "detail": str(e)[:180]})
     report = {"t": int(time.time()), "boot": _BOOT_ID, "rows": rows,
-              "local": {"head": _local_head(short=True) or "", "branch": _local_branch() or ""}}
+              "local": {"head": head[:7] if head else "", "branch": _local_branch() or ""}}
     try:
         _atomic_write(FLEET_REPORT, json.dumps(report))
     except OSError:
@@ -22115,11 +22251,12 @@ def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
         pass                                       # no manager reachable → nothing to restart
 
 
-def _is_ask_pull(r):
+def _is_ask_pull(r, head=None):
     """Whether this remote can be TOLD to fast-forward itself: a checked-in peer (no ssh from here) that is
     strictly BEHIND us, so what it pulls only ADDS commits. Same provable-fast-forward bar as the push gate
-    — a diverged or unknown relationship is never driven automatically, and never offered as one click."""
-    return bool(r.get("checkin_peer")) and _is_fast_forward(r)
+    — a diverged or unknown relationship is never driven automatically, and never offered as one click.
+    `head` pins the comparison, as in _remote_out_of_date."""
+    return bool(r.get("checkin_peer")) and _is_fast_forward(r, head=head)
 
 
 def _start_remote(host):
@@ -30203,22 +30340,43 @@ def _pointer_gitdir(dotgit, mt, ino, dev):
     within the same tick. Re-read per call, the pointer made a worktree cwd — this repo's own convention,
     so the shape most builds pay — cost five stats and a file read per _tree_of call against a plain
     toplevel's two stats (review find, 2026-09-06); it is three stats and no read now. '' for a malformed
-    pointer, memoized (the content is what it is until the file changes); '' and NOT memoized when the
-    file cannot be read."""
+    pointer, memoized (the content is what it is until the file changes). A FAULT is '' and NOT memoized
+    (upstream's rule, 2026-09-08: the next read retries, so a repair ends the episode without a kernel
+    restart): a file that cannot be read, or one naming a gitdir that is not there (torn bytes, or the
+    clone gone). Either is named ONCE per episode on stderr and the bell (_git_file_fault), so the
+    operator learns WHICH file is bad instead of reading a blank branch; the price is that a dangling
+    pointer costs its one-line read per call until it is repaired or removed. A gitdir that EXISTS
+    without a HEAD is the HEAD resolver's finding (_git_head_file), not this reader's: the config reader
+    (_git_config_file) follows the same pointer to commondir and config, which need no HEAD, so the path
+    is memoized here like any other and the missing HEAD is judged, uncached, where HEAD is wanted.
+    The pointer is read as BYTES and decoded by the filesystem's own rule (os.fsdecode, surrogateescape),
+    the way git writes and follows it: a non-UTF-8 byte in a path component is a valid worktree, not a
+    torn file, and every os.* call round-trips the bytes. A strict text-mode read raised UnicodeDecodeError
+    through _git_branch and build_session into _push's single try, and every pane of every session went
+    stale until that one file was fixed by hand (upstream #1028)."""
     key = (mt, ino, dev)
     hit = _pointer_cache.get(dotgit)
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
-        with open(dotgit) as f:
-            line = f.readline().strip()
-    except OSError:
-        return ""
+        with open(dotgit, "rb") as f:
+            line = os.fsdecode(f.readline()).strip()
+    except OSError as e:
+        _git_file_fault(dotgit, e)                       # never silent: the operator learns WHICH file is bad
+        return ""                                        # not memoized: the next read retries
     gd = ""
     if line.startswith("gitdir:"):
         rel = line[len("gitdir:"):].strip()
         if rel:
             gd = rel if os.path.isabs(rel) else os.path.normpath(os.path.join(os.path.dirname(dotgit), rel))
+    if gd and not os.path.isdir(gd):                     # THE fault git trips on at the pointer: nothing to follow
+        hp = os.path.join(gd, "HEAD")                    # (a gitdir that exists without a HEAD: _git_head_file)
+        shown = os.fsencode(hp).decode("utf-8", "backslashreplace")   # shown as the bytes git wrote
+        _git_file_fault(dotgit, FileNotFoundError(errno.ENOENT, "the gitdir it names has no HEAD", shown))
+        return ""                                        # not memoized either: a fault is never cached
+    if _git_file_faults:                                 # a clean read ends the episode (the dict is almost always empty)
+        with _git_file_faults_lock:
+            _git_file_faults.pop(dotgit, None)
     if len(_pointer_cache) > 512:                        # bounded, like _tree_cache
         _pointer_cache.clear()
     _pointer_cache[dotgit] = (key, gd)
@@ -30399,6 +30557,33 @@ def _tree_of(d):
 
 _branch_cache = {}   # toplevel -> (branch, head_mtime) — git branch derived straight from the FOLDER
 _head_path_cache = {}   # toplevel -> the resolved HEAD file path (worktrees indirect through a .git FILE)
+_git_file_faults = {}   # .git pointer-file path -> the fault text of its CURRENT episode; ONE stderr line + bell row per episode
+_git_file_faults_lock = threading.Lock()   # the pusher and a connect push both run _push, on their own threads
+_RESOLVER_RAISED = object()   # _tree_branch: the HEAD resolver raised, which is not git's verdict (see there)
+
+
+def _git_file_fault(path, exc):
+    """Name a .git pointer file that cannot be followed (an OS error reading it, or a gitdir with no HEAD)
+    on stderr AND as a dashboard bell row ONCE per fault episode. One non-UTF-8 byte in one session cwd's
+    .git file used to raise UnicodeDecodeError through _git_branch and build_session into _push's single
+    try, and every pane of every session went stale until that file was fixed by hand. A blank branch
+    alone would hide WHICH file, and a stderr line alone leaves the user reading the kernel log to learn
+    why a session shows no branch (review find, 2026-09-08): the bell row is the same one a state file
+    that cannot be read gets. The episode is the fault TEXT (the judge's _file_store_fault rule): an
+    identical repeat says nothing, a DIFFERENT fault on the same file is a new episode — a pointer that
+    goes EACCES, then readable but dangling, reports both — and a clean read ends it (_pointer_gitdir and
+    _git_head_file drop the entry). Never raises: the bell is a courtesy, and this runs inside the push."""
+    text = "%s: %s" % (type(exc).__name__, exc)
+    with _git_file_faults_lock:                       # check-and-set as ONE step: read-then-write let two _push
+        if _git_file_faults.get(path) == text:        # threads faulting the same file both see "no episode"
+            return                                    # and both speak (review find, 2026-09-08)
+        _git_file_faults[path] = text
+    msg = "git: %s cannot be read (%s); sessions there show no branch until it is fixed" % (path, text)
+    sys.stderr.write(msg + "\n")
+    try:
+        _sync_notice(msg, ok=False, kind="refused")   # the kind a state file that cannot be read wears (#1020)
+    except Exception:
+        pass
 
 
 def _git_head_file(cwd):
@@ -30421,7 +30606,21 @@ def _git_head_file(cwd):
     if not gd and _is_bare_gitdir(cwd):
         gd = cwd
     hp = os.path.join(gd, "HEAD") if gd else ""
+    dotgit = os.path.join(cwd, ".git")
+    if hp and gd != dotgit and gd != cwd and not os.path.exists(hp):
+        # THE fault git itself trips on: a pointer FILE whose gitdir has no HEAD. _pointer_gitdir reports a
+        # gitdir that is not there at read time and memoizes nothing; what reaches here is a gitdir that
+        # exists without a HEAD (a torn worktree admin dir, which the config reader can still follow to
+        # commondir), or a MEMOIZED pointer whose target vanished after the memo (its key is the pointer's
+        # own stat, which does not move when the target does). Shown as the bytes git wrote. Uncached,
+        # like every '' here: the next read retries, so a repair ends the episode without a kernel restart.
+        shown = os.fsencode(hp).decode("utf-8", "backslashreplace")
+        _git_file_fault(dotgit, FileNotFoundError(errno.ENOENT, "the gitdir it names has no HEAD", shown))
+        return ""
     if hp:
+        if _git_file_faults:                             # a clean resolve ends the episode (the dict is almost always empty)
+            with _git_file_faults_lock:
+                _git_file_faults.pop(dotgit, None)
         if len(_head_path_cache) > 512:                  # bounded, like _tree_cache
             _head_path_cache.clear()
         _head_path_cache[cwd] = hp
@@ -30452,12 +30651,17 @@ def _tree_branch(top):
     gitBranch into the transcript (the user 2026-06-24: branch should be a property of the dir, known in
     advance). Memoized on the resolved HEAD file's mtime (worktrees and bare clones included — see
     _git_head_file). '' when detached or unavailable; a HEAD file that cannot be found is git's own "not
-    a repository" and is '' without a fork."""
-    mt = _pointer_mtime(_git_head_file, _head_path_cache, top)
+    a repository" and is '' without a fork. The resolver reports its own faults (_git_file_fault) and
+    answers ''; a RAISE out of it is not git's verdict, so the query below runs (the fallback upstream
+    keeps for an unreadable HEAD, #1028's backstop) and memoizes nothing."""
+    try:
+        mt = _pointer_mtime(_git_head_file, _head_path_cache, top)
+    except (OSError, UnicodeDecodeError):
+        mt = _RESOLVER_RAISED
     if mt is None:
         return ""
     hit = _branch_cache.get(top)
-    if hit is not None and hit[1] == mt:
+    if hit is not None and mt is not _RESOLVER_RAISED and hit[1] == mt:
         return hit[0]
     br = ""
     try:
@@ -30469,7 +30673,8 @@ def _tree_branch(top):
         br = r.stdout.strip()
         if br == "HEAD":          # detached HEAD → no branch name
             br = ""
-    _branch_cache[top] = (br, mt)
+    if mt is not _RESOLVER_RAISED:
+        _branch_cache[top] = (br, mt)
     return br
 
 
@@ -35954,6 +36159,183 @@ SPEND_PRE_FIX_DATE = "2026-08-10"
 def _spend_pre_fix(key):
     """True for a day ("%Y-%m-%d") or hour ("%Y-%m-%dT%H") bucket key dated before the per-turn fix."""
     return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
+
+
+_DETAIL_TOP_N = 10       # stacks the histogram names; every further session folds into ONE "other" stack
+_DETAIL_DAYS = 90        # the day ledger's own depth (the recorder prunes to 90 days)
+
+
+def _spend_scope():
+    """Which figure the rail shows for THIS host, mirrored for the usage modal so its numbers are the
+    rail's: "total" on a no-login (key-only) machine — every turn there bills the key, and legacy files
+    predate the split — or "keyed" when a login's windows sit beside the key's spend, where only the
+    turns whose session billed the key are dollars anyone pays (_usage's two arms, the user 2026-08-08) —
+    or "computed" for a login with no key at all, where the rail shows no spend and every recorded
+    figure is a computed cost, not a bill."""
+    try:
+        o = json.loads((jd.STATE / "usage.json").read_text())
+    except Exception:
+        o = {}
+    if o.get("apiKey") or not _claude_account():
+        return "total"
+    if _auth_key_present():
+        return "keyed"
+    return "computed"   # a login and no key: the rail shows NO spend for this host (its third arm), and the
+    #                     ledger's figures are computed costs nobody is billed — the modal says so (review find)
+
+
+def _spend_detail(now=None):
+    """GET /spend/detail — the usage modal's per-SESSION story (T247, the user 2026-09-07, who wanted
+    to click the usage readout and see how much each session used, with a stacked histogram colored
+    by session). Read from spend.json's bySid maps (T100's per-session attribution) — the ledger, never
+    a transcript recount — with names and identity colors resolved HERE from the names registry
+    (sid-keyed, rename-proof; a dead or archived session keeps its last known name and reads dimmed).
+    Two ranges at the ledger's own granularity: the 192 hour buckets and the 90 day buckets, each as
+    dense arrays over the top-N sessions by dollars plus ONE "other" stack and ONE "unattributed"
+    stack — a bucket written before bySid existed, or the part of a bucket no sid accounts for, is
+    shown as such, never dropped or folded into a session (fail loudly). Local ledger only: a remote's
+    row carries no bySid through the relay today, so the payload counts the other machines whose spend
+    the hover's totals include and the modal says "this machine only" rather than omitting them silently.
+    The table's totals and the ranking cover exactly the day keys the daily chart draws — the last 90
+    local dates — not every bucket the recorder still holds (it keeps the 90 most RECENT spend days,
+    which can reach further back; review find).
+    Bucket keys are the recorder's LOCAL time; tz/tzOffsetMin let a viewer elsewhere label that."""
+    now = time.time() if now is None else now
+    try:
+        d = json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        d = {}
+    days = d.get("days") if isinstance(d.get("days"), dict) else {}
+    hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
+    scope = _spend_scope()
+    keyed = scope == "keyed"
+    KINDS = ("tokIn", "tokOut", "tokCacheR", "tokCacheW")
+
+    def _tot(e):
+        """(usd, tok, turns) of a bucket under the scope."""
+        if keyed:
+            e = e.get("key") if isinstance(e.get("key"), dict) else {}
+            return float(e.get("usd") or 0), int(e.get("tok") or 0), int(e.get("turns") or 0)
+        return (float(e.get("usd") or 0), sum(int(e.get(k) or 0) for k in KINDS), int(e.get("turns") or 0))
+
+    def _by(e):
+        """{sid: (usd, tok, turns)} under the scope, or None when the bucket predates attribution."""
+        by = e.get("bySid") if isinstance(e.get("bySid"), dict) else None
+        if by is None:
+            return None
+        out = {}
+        for sid, s in by.items():
+            if not isinstance(s, dict):
+                continue
+            if keyed:
+                s = s.get("key") if isinstance(s.get("key"), dict) else {}
+            out[str(sid)] = (float(s.get("usd") or 0), int(s.get("tok") or 0), int(s.get("turns") or 0))
+        return out
+
+    today = datetime.fromtimestamp(now).date()
+    day_keys = [(today - timedelta(days=i)).isoformat() for i in range(_DETAIL_DAYS - 1, -1, -1)]
+    day_set = set(day_keys)
+    totals, keyt, un = {}, {}, [0.0, 0, 0]
+    for k, e in days.items():
+        if k not in day_set or not isinstance(e, dict):
+            continue
+        tu, tt, tn = _tot(e)
+        bs = _by(e)
+        if bs is None:
+            un[0] += tu; un[1] += tt; un[2] += tn
+            continue
+        au = at = an = 0
+        for sid, (u, t, n) in bs.items():
+            r = totals.setdefault(sid, [0.0, 0, 0])
+            r[0] += u; r[1] += t; r[2] += n
+            au += u; at += t; an += n
+        if not keyed:
+            # the key-billed sub-count rides beside each session's total: on a mixed host the table
+            # shows the split where the hover would (a login turn's computed cost is dollars nobody pays)
+            for sid, s in e["bySid"].items():
+                k = s.get("key") if isinstance(s, dict) and isinstance(s.get("key"), dict) else None
+                if k:
+                    r = keyt.setdefault(str(sid), [0.0, 0, 0])
+                    r[0] += float(k.get("usd") or 0); r[1] += int(k.get("tok") or 0); r[2] += int(k.get("turns") or 0)
+        un[0] += max(0.0, tu - au); un[1] += max(0, tt - at); un[2] += max(0, tn - an)
+    # a session that contributed nothing under this scope (a login-only session in the keyed scope) is
+    # not a row and not a stack: an all-zero stack with a legend chip says nothing (review find)
+    totals = {sid: v for sid, v in totals.items() if v[0] > 0 or v[1] > 0 or v[2] > 0}
+    try:
+        live = set(_live_names(_tmux_sessions()).values())
+    except Exception:
+        live = set()
+    sessions = []
+    for sid, (u, t, n) in totals.items():
+        bg, fg = _identity_of(sid)
+        row = {"sid": sid, "name": _name_of(sid) or "", "bg": bg, "fg": fg, "live": sid in live,
+               "usd": round(u, 4), "tok": t, "turns": n}
+        if sid in keyt:
+            k = keyt[sid]
+            row["key"] = {"usd": round(k[0], 4), "tok": k[1], "turns": k[2]}
+        sessions.append(row)
+    sessions.sort(key=lambda s: (-s["usd"], -s["tok"], s["name"]))
+    top = [s["sid"] for s in sessions[:_DETAIL_TOP_N]]
+    meta = {s["sid"]: s for s in sessions}
+
+    def _series(buckets, keys):
+        idx = {k: i for i, k in enumerate(keys)}
+        n = len(keys)
+        per = {sid: ([0.0] * n, [0] * n) for sid in top}
+        other, una, others = ([0.0] * n, [0] * n), ([0.0] * n, [0] * n), set()
+        for k, e in buckets.items():
+            i = idx.get(k)
+            if i is None or not isinstance(e, dict):
+                continue
+            tu, tt, _ = _tot(e)
+            bs = _by(e)
+            if bs is None:
+                una[0][i] += tu; una[1][i] += tt
+                continue
+            au = at = 0
+            for sid, (u, t, _n) in bs.items():
+                au += u; at += t
+                dst = per.get(sid)
+                if dst is None:
+                    dst = other
+                    others.add(sid)
+                dst[0][i] += u; dst[1][i] += t
+            una[0][i] += max(0.0, tu - au); una[1][i] += max(0, tt - at)
+        stacks = []
+        for sid in top:
+            if not (any(per[sid][0]) or any(per[sid][1])):
+                continue          # a top-N session with nothing in THIS range: no empty stack, no legend chip (review find)
+            s = meta[sid]
+            stacks.append({"kind": "sid", "sid": sid, "name": s["name"], "bg": s["bg"], "live": s["live"],
+                           "usd": [round(v, 4) for v in per[sid][0]], "tok": per[sid][1]})
+        if any(other[0]) or any(other[1]):
+            stacks.append({"kind": "other", "name": "other", "count": len(others),
+                           "usd": [round(v, 4) for v in other[0]], "tok": other[1]})
+        if any(una[0]) or any(una[1]):
+            stacks.append({"kind": "unattributed", "name": "unattributed",
+                           "usd": [round(v, 4) for v in una[0]], "tok": una[1]})
+        return {"keys": keys, "stacks": stacks}
+
+    h0 = int(now // 3600) - (_SERIES_HOURS - 1)
+    hour_keys = []
+    for i in range(_SERIES_HOURS):
+        # the recorder keys by local hour, so a fall-back transition writes two epoch hours under ONE
+        # key: one slot for it here too, not a labeled empty twin (review find)
+        k = time.strftime("%Y-%m-%dT%H", time.localtime((h0 + i) * 3600))
+        if not hour_keys or hour_keys[-1] != k:
+            hour_keys.append(k)
+    with _remotes_lock:
+        # the machines the hover's spend totals include: the same predicate as its rows — a remote
+        # that reports spend windows — never any remote with a usage payload (review find)
+        up = sum(1 for r in _remotes.values()
+                 if r.get("status") == "up" and isinstance((r.get("usage") or {}).get("spend"), dict))
+    lt = time.localtime(now)
+    return {"host": _self_host(), "hosts": 1 + up, "scope": scope,
+            "tz": time.strftime("%Z", lt), "tzOffsetMin": int((getattr(lt, "tm_gmtoff", 0) or 0) // 60),
+            "recordedAt": _spend_recorded_at(),
+            "topN": _DETAIL_TOP_N, "sessions": sessions,
+            "unattributed": {"usd": round(un[0], 4), "tok": un[1], "turns": un[2]},
+            "hours": _series(hours, hour_keys), "days": _series(days, day_keys)}
 
 
 def _spend_windows(keyed_only=False, now=None, doc=None):
@@ -42392,7 +42774,7 @@ def _repo_index_key(cwd):
                     subs.append((e.name, e.stat().st_mtime))
         return ((os.path.getmtime(os.path.join(os.path.dirname(gi), "index")) if gi else None),
                 os.path.getmtime(tree), tuple(sorted(subs)))
-    except OSError:
+    except (OSError, UnicodeDecodeError):   # the same backstop as _git_branch: no key → an uncached listing, never a raise
         return None
 
 
@@ -46302,6 +46684,8 @@ _LANDING_ESC_JS = """
 function onEsc(e){if(e.key!=='Escape')return;
 var closed=false;
 if(window.__rompKeysClose&&window.__rompKeysClose()){closed=true;}
+else{var sp=document.getElementById('rsp-back');
+if(sp&&!sp.hidden&&window.__rompCloseSpend){window.__rompCloseSpend();closed=true;}
 else{var ru=document.getElementById('ru-back');
 if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose();closed=true;}
 else if(ru&&ru.classList.contains('on')&&window.__rompUsageClose){window.__rompUsageClose();closed=true;}
@@ -46310,7 +46694,7 @@ if(er&&!er.hidden&&window.__rompCloseErrs){window.__rompCloseErrs();closed=true;
 else{var bp=document.getElementById('rbell-back');
 if(bp&&!bp.hidden&&window.__rompCloseBellPop){window.__rompCloseBellPop();closed=true;}
 else{var nt=document.getElementById('rnet-back');
-if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}}
+if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}}}
 if(closed){e.preventDefault();e.stopPropagation();}}
 document.addEventListener('keydown',onEsc,true);
 ['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
@@ -46531,7 +46915,9 @@ el.innerHTML=aggBarsHTML(LAST)+apiCellHTML(LAST);
 // the rail. The mobile modal keeps its own pull-then-open path (openIt).
 if(tip.style.display==='block'&&!tip.classList.contains('ru-modal')){var th=tipHTML();
 if(th){tip.innerHTML=th;var rr=el.getBoundingClientRect();
-tip.style.top=Math.max(6,rr.top-tip.offsetHeight-8)+'px';}}}
+tip.style.top=Math.max(6,rr.top-tip.offsetHeight-8)+'px';}}
+// the spend modal's Totals section is these same rows: an open modal follows every landing too (T247)
+if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}}
 // The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
 // machine's row, leaving any other account's bars alone.
 function render(u){notices(u);
@@ -46613,7 +46999,9 @@ return h;}
 // The ONE API-spend section for the whole hover (the user 2026-08-13): every host's windows summed —
 // one shared key is one number — plus the summed $/hour over the last 7 days as an area graph. A host
 // that ships no series (an older kernel) still joins the window sums; the graph adds only contributors.
-function fleetSpendHTML(sets){var sum={},series=null,hosts=0,per=[],legacyN=0;
+var _spendRowsOnly=false;   // set by spendRowsHTML for the modal's first section (T247); the signature below is pinned
+function spendRowsHTML(sets){_spendRowsOnly=true;try{return fleetSpendHTML(sets);}finally{_spendRowsOnly=false;}}
+function fleetSpendHTML(sets){var sum={},series=null,hosts=0,per=[],legacyN=0,rowsOnly=_spendRowsOnly;
 sets.forEach(function(e){var sp=e.det&&e.det._spend;if(!sp)return;hosts++;
 if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd});
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
@@ -46653,6 +47041,10 @@ var row='<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
 if(v.split&&(v.tokIn+v.tokOut+v.tokCacheR+v.tokCacheW)>0)row+='<div class="ru-tip-row ru-tip-sub"><span class=ru-tip-k></span>'
 +'<span class=ru-tip-v>'+fmtTok(v.tokCacheR)+' cache read \u00b7 '+fmtTok(v.tokCacheW)+' cache write \u00b7 '+fmtTok(v.tokIn)+' in \u00b7 '+fmtTok(v.tokOut)+' out</span></div>';
 return row;}).join('');
+// rowsOnly: the usage MODAL's first section is THESE SAME window numbers (T247) — the sums across
+// every machine the hover shows, one renderer, so the two levels can never disagree; the graph and
+// the machine line stay the hover's (the modal draws its own stacked histogram instead)
+if(rowsOnly)return h.replace('<span>API spend','<span>Totals')+'</div>';
 // every machine in the sum, BY NAME (the user 2026-08-13: a host with no login \u2014 the devbox \u2014 vanished
 // from the hover entirely when the per-host spend rows collapsed into this one section; '3 machines'
 // with two names visible reads as a bug). One line, largest first, week numbers like the graph.
@@ -46701,10 +47093,14 @@ tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 window.__rompUsagePanel=function(){
 function openIt(){var h=tipHTML();if(!h)return;
 try{window.__rompApiClose&&window.__rompApiClose();}catch(e){}   // one modal on #ru-back at a time (the API detail does the same)
-tip.innerHTML=h;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.display='block';
+// the deeper level is one tap away here too (T247): the rail — and its click — do not exist on a
+// phone, and a compact view must never dead-end (progressive disclosure)
+tip.innerHTML=h+'<div class=ru-tip-age><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';
+tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.display='block';
 back.classList.add('on');
 var off=function(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');
 window.__rompUsageClose=null;};
+var bs=document.getElementById('ru-bysession');if(bs)bs.onclick=function(e){e.stopPropagation();off();openSpend();};
 // Escape lands via _LANDING_ESC_JS (shell AND pane documents — the shell-only listener this modal
 // used to bind was deaf whenever focus sat inside a pane iframe); the backdrop tap stays.
 window.__rompUsageClose=off;
@@ -46734,7 +47130,172 @@ var done=function(){_ruBusy=false;el.style.opacity='';};
 // are computed at render time, so repainting makes "updated/recorded … ago" keep climbing — a dead
 // kernel route shows visibly aging data, never a frozen "3m ago" that quietly lies for hours
 pullFleet().then(done,function(){if(ROWS.length)renderRows(ROWS,SELF);done();});}
-el.addEventListener('click',function(){pull(true);});
+// ── The usage MODAL (T247, the user 2026-09-07): the CLICK on the readout opens the deeper level of
+// the same story — gist (the rail) → hover (per host, the windows) → modal (per SESSION: who spent
+// what, and a histogram of spend over time stacked by session in each session's identity color).
+// Shell-native like #rnet-back: a centered card over the dimmed, unchanged dashboard; Esc (via
+// _LANDING_ESC_JS) and a backdrop tap close it. The data is /spend/detail — names and colors resolved
+// kernel-side, the ledger's bySid series — fetched on open behind the romp loader, never scraped from
+// the hover's HTML. The click still kicks the hover's own refresh (pull), so both levels are fresh.
+var spBack=document.getElementById('rsp-back'),spPanel=document.getElementById('rsp-panel'),spTip=null;
+var SP={data:null,err:'',range:'hours',measure:'usd',open:false,allRows:false};
+var SP_OTHER='#4a5361',SP_NONE='#6b7a8c';   // "other" and a session with no identity color: neutrals, never a hue
+function spName(s){return s.name||('session '+String(s.sid||'').slice(0,8));}
+function spColor(s){return (s.bg&&/^#[0-9a-fA-F]{3,8}$/.test(s.bg))?s.bg:SP_NONE;}
+function spHead(){return '<div class=rsp-top><span>'+(SP.data&&SP.data.scope==='computed'?'Spend (computed)':'API spend')+(SP.data&&SP.data.host?' \u00b7 '+esc(SP.data.host):'')+'</span>'
++'<button class=rsp-x data-act=close aria-label=Close>\u00d7</button></div>';}
+function openSpend(){if(!spBack||!spPanel)return;SP.open=true;spBack.hidden=false;SP.data=null;SP.err='';SP.allRows=false;
+spPanel.innerHTML=spHead()+'<div class=rsp-load>'+__ROMP_LOADER__+'</div>';   // the loader FIRST (the loader rule)
+fetch('/spend/detail',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+.then(function(d){SP.data=d;if(SP.open)renderSpend();},function(e){SP.err=String((e&&e.message)||e);if(SP.open)renderSpend();});}
+function closeSpend(){SP.open=false;if(spBack)spBack.hidden=true;spTipHide();}
+window.__rompCloseSpend=closeSpend;
+window.__rompOpenSpend=openSpend;
+// a click whose press and release land on different elements is dispatched at their common
+// ancestor — the backdrop — so a drag-select of table figures that ends outside the card read as a
+// tap and closed the modal (review find). The press must have begun on the backdrop too.
+var spDown=false;
+if(spBack){spBack.onpointerdown=function(e){spDown=(e.target===spBack);};
+spBack.onclick=function(e){var d=spDown;spDown=false;if(e.target===spBack&&d)closeSpend();};}
+// ONE listener on the STABLE panel (the click-safety rule): every control is a data-act, acknowledged
+// at once (the pressed state flips before the chart re-renders) — never a handler on a node a render
+// rebuilds. The close ✕ and the retry ride the same door.
+if(spPanel)spPanel.addEventListener('click',function(e){var t=e.target,b=null;
+while(t&&t!==spPanel){if(t.getAttribute&&t.getAttribute('data-act')){b=t;break;}t=t.parentNode;}
+if(!b)return;var a=b.getAttribute('data-act');
+if(a==='close'){closeSpend();return;}
+if(a==='retry'){openSpend();return;}
+if(a==='table:all'){SP.allRows=true;var tb=document.getElementById('rsp-table');if(tb)tb.innerHTML=sessionTable(SP.data);return;}
+var m=/^(range|measure):(\\w+)$/.exec(a);if(!m)return;
+SP[m[1]]=m[2];
+var sib=b.parentNode.querySelectorAll('[data-act^="'+m[1]+':"]');
+for(var i=0;i<sib.length;i++){if(sib[i]===b)sib[i].classList.add('on');else sib[i].classList.remove('on');}
+renderChart();});
+function sessionTable(d){var ss=d.sessions||[],un=d.unattributed;
+if(!ss.length&&!(un&&(un.usd>0||un.tok>0)))return '<div class=rsp-note>No per-session records yet.</div>';
+// the key-billed split shows where the hover would show it: the TOTAL scope on a mixed host, where a
+// session's key dollars differ from its computed total
+var keyCol=d.scope!=='keyed'&&ss.some(function(s){return s.key&&typeof s.key.usd==='number'&&Math.round(s.key.usd)!==Math.round(s.usd);});
+var h='<table class=rsp-tbl><thead><tr><th></th><th>session</th><th class=n>dollars</th>'+(keyCol?'<th class=n>key-billed</th>':'')
++'<th class=n>turns</th><th class=n>tokens</th></tr></thead><tbody>';
+// the table folds to the histogram's own top-N (progressive disclosure: the chart stays in view under
+// a long roster); one click shows every session
+var lim=(SP.allRows||ss.length<=(d.topN||10)+2)?ss.length:(d.topN||10),shown=ss.slice(0,lim);
+shown.forEach(function(s){h+='<tr'+(s.live?'':' class=rsp-dead')+'><td><i class=rsp-sw style="background:'+spColor(s)+'"></i></td>'
++'<td class=rsp-name>'+esc(spName(s))+(s.live?'':'<span class=ru-tip-reset> \u00b7 not running</span>')+'</td>'
++'<td class=n>'+fmtUsd(s.usd)+'</td>'+(keyCol?'<td class=n>'+(s.key?fmtUsd(s.key.usd):'\u2014')+'</td>':'')
++'<td class=n>'+(s.turns||0)+'</td><td class=n>'+fmtTok(s.tok||0)+'</td></tr>';});
+if(lim<ss.length){var rest=ss.slice(lim),ru=0,rt=0,rn=0;rest.forEach(function(s){ru+=s.usd||0;rt+=s.tok||0;rn+=s.turns||0;});
+h+='<tr class=rsp-dead><td><i class=rsp-sw style="background:'+SP_OTHER+'"></i></td><td class=rsp-name>'+rest.length+' more session'+(rest.length===1?'':'s')
++' <button class=rsp-btn data-act=table:all>show all</button></td><td class=n>'+fmtUsd(ru)+'</td>'+(keyCol?'<td class=n></td>':'')+'<td class=n>'+rn+'</td><td class=n>'+fmtTok(rt)+'</td></tr>';}
+// spend recorded before per-session attribution existed (T100, 2026-08-24), or the part of a bucket no
+// session accounts for: shown as its own row, never dropped or folded into a session (fail loudly)
+if(un&&(un.usd>0||un.tok>0))h+='<tr class=rsp-dead><td><i class="rsp-sw rsp-hatch"></i></td>'
++'<td class=rsp-name>unattributed<span class=ru-tip-reset> \u00b7 recorded before per-session tracking</span></td>'
++'<td class=n>'+fmtUsd(un.usd)+'</td>'+(keyCol?'<td class=n>\u2014</td>':'')+'<td class=n>'+(un.turns||0)+'</td><td class=n>'+fmtTok(un.tok||0)+'</td></tr>';
+return h+'</tbody></table>';}
+// 1. the SAME window numbers the hover shows — the sums across every machine, rows only (one renderer).
+// Its own node: renderRows re-renders it whenever fresh rows land while the modal is open, so the
+// two levels agree at every moment, not only at the instant the modal opened (review find)
+function totalsHTML(d){var rows=spendRowsHTML(LAST||[]);
+// a login with no key (scope "computed"): the rail shows no API spend for this machine on purpose, and
+// what the ledger holds is a computed cost nobody is billed — said here, not dressed up as a bill
+var computed=d.scope==='computed';
+return rows||('<div class=ru-tip-name><span>Totals</span></div><div class=rsp-note>'
++(computed?'No API spend on this machine: its sessions run on a login. The figures below are computed costs, not a bill.':'Nothing recorded yet.')+'</div>');}
+function renderSpend(){if(!spPanel)return;var d=SP.data,h=spHead();
+if(!d){h+='<div class=rsp-err>Couldn\u2019t load the spend detail'+(SP.err?': '+esc(SP.err):'')+'. '
++'<button class=rsp-btn data-act=retry>Try again</button></div>';spPanel.innerHTML=h;return;}
+var computed=d.scope==='computed';
+h+='<div class=rsp-sec id=rsp-totals>'+totalsHTML(d)+'</div>';
+// 2. per session — THIS machine's ledger; when other machines join the totals above, say so
+var many=(d.hosts||1)>1;
+h+='<div class=rsp-sec><div class=ru-tip-name><span>By session'+(many?' \u00b7 this machine only':'')+'</span>'
++'<span class=ru-tip-reset>'+(d.scope==='keyed'?'key-billed turns':computed?'computed cost, not billed':'all turns')+' \u00b7 last '+((d.days&&d.days.keys)?d.days.keys.length:90)+' days</span></div>';
+if(many)h+='<div class=rsp-note>Per-session detail covers '+esc(d.host||'this machine')+' only; the other '+(d.hosts-1)+' machine'+(d.hosts>2?'s':'')+' in the totals above do not share theirs yet.</div>';
+h+='<div id=rsp-table>'+sessionTable(d)+'</div></div>';
+// 3. the histogram — the two ranges the ledger itself holds; dollars by default, tokens on a toggle
+h+='<div class=rsp-sec><div class=ru-tip-name><span>Spend over time</span></div>'
++'<div class=rsp-ctl>'
++'<button class="rsp-btn'+(SP.range==='hours'?' on':'')+'" data-act=range:hours>8 days \u00b7 by hour</button>'
++'<button class="rsp-btn'+(SP.range==='days'?' on':'')+'" data-act=range:days>90 days \u00b7 by day</button>'
++'<span class=rsp-gap></span>'
++'<button class="rsp-btn'+(SP.measure==='usd'?' on':'')+'" data-act=measure:usd>dollars</button>'
++'<button class="rsp-btn'+(SP.measure==='tok'?' on':'')+'" data-act=measure:tok>tokens</button>'
++'</div><div id=rsp-chart></div></div>';
+spPanel.innerHTML=h;renderChart();}
+// 1-2-5 ceilings: the y-axis top is the nearest clean number above the tallest bucket
+function niceTop(mx){if(!(mx>0))return 1;var p=Math.pow(10,Math.floor(Math.log(mx)/Math.LN10)),f=mx/p;return (f<=1?1:f<=2?2:f<=5?5:10)*p;}
+function spFill(s){return s.kind==='unattributed'?'url(#rsp-hatch)':s.kind==='other'?SP_OTHER:spColor(s);}
+function spStackName(s){return s.kind==='other'?('other ('+(s.count||0)+' session'+(s.count===1?'':'s')+')'):s.kind==='unattributed'?'unattributed':spName(s);}
+function spTipShow(x,y,name,val,sub){if(!spTip){spTip=document.createElement('div');spTip.id='rsp-tip';document.body.appendChild(spTip);}
+// values lead, labels follow; built with textContent — a session name is user data
+spTip.textContent='';var b=document.createElement('b');b.textContent=val;spTip.appendChild(b);
+spTip.appendChild(document.createTextNode(' \u00b7 '+name+' \u00b7 '+sub));
+spTip.style.display='block';
+var w=spTip.offsetWidth,hh=spTip.offsetHeight;
+spTip.style.left=Math.max(6,Math.min(window.innerWidth-w-6,x+12))+'px';
+spTip.style.top=Math.max(6,(y-hh-12))+'px';}
+function spTipHide(){if(spTip)spTip.style.display='none';}
+function spBucketLabel(k,range){if(range==='hours'){var m=/^(\\d{4})-(\\d\\d)-(\\d\\d)T(\\d\\d)$/.exec(k);
+return m?(Number(m[2])+'/'+Number(m[3])+' '+m[4]+':00\u2013'+(('0'+((Number(m[4])+1)%24)).slice(-2))+':00'):k;}
+var n=/^(\\d{4})-(\\d\\d)-(\\d\\d)$/.exec(k);return n?(Number(n[2])+'/'+Number(n[3])):k;}
+function renderChart(){var box=document.getElementById('rsp-chart');if(!box||!SP.data)return;
+var d=SP.data,ser=d[SP.range],meas=SP.measure;
+if(!ser||!ser.keys||!ser.keys.length){box.innerHTML='<div class=rsp-note>No history yet.</div>';return;}
+var stacks=ser.stacks||[],n=ser.keys.length,W=Math.max(320,box.clientWidth||600),H=200;
+var tots=[],mx=0;for(var i=0;i<n;i++){var t=0;for(var s=0;s<stacks.length;s++){t+=(stacks[s][meas]&&stacks[s][meas][i])||0;}tots.push(t);if(t>mx)mx=t;}
+if(!(mx>0)){box.innerHTML='<div class=rsp-note>Nothing recorded in this range.</div>';return;}
+var top=niceTop(mx),slot=W/n,gap=Math.min(2,slot*0.3),bw=Math.max(1,slot-gap),PADT=6;
+var Y=function(v){return H-Math.max(0,Math.min(1,v/top))*(H-PADT);};
+var fmt=function(v){return meas==='usd'?fmtUsd(v):fmtTok(Math.round(v));};
+// axis labels wear whole dollars like every spend surface (no cents anywhere, the user 2026-08-09);
+// a half-line whose value is not a whole dollar (a $5 ceiling's $2.50) stays an unlabeled hairline
+// rather than rounding into a twin of another label
+var afmt=function(v){if(meas!=='usd')return fmtTok(Math.round(v));return v===Math.round(v)?fmtUsd(v):'';};
+// EVERY attribute quoted (review of the first render): this markup goes through innerHTML, i.e. the HTML
+// parser, where an unquoted value swallows the closing slash (`class=rsp-grid/>` is a line with the value
+// "rsp-grid/" left OPEN) and every later element became that line's child — an empty chart
+var svg='<svg class="rsp-svg" viewBox="0 0 '+W+' '+H+'" width="'+W+'" height="'+H+'">'
++'<defs><pattern id="rsp-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
++'<rect width="6" height="6" fill="rgba(138,151,166,0.18)"></rect><line x1="0" y1="0" x2="0" y2="6" stroke="#8a97a6" stroke-width="1.5"></line></pattern></defs>';
+// recessive hairline gridlines at thirds + the ceiling, labels overlaid in HTML (the hover graph's grammar)
+var ylab='';[top,top/2].forEach(function(g){var gy=Y(g);
+svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" class="rsp-grid"></line>';
+var al=afmt(g);if(al)ylab+='<span class=ru-tip-gy style="top:'+(gy+1).toFixed(0)+'px">'+al+'</span>';});
+// one column per bucket, stacked bottom-up in stack order (top-N by dollars, then other, then
+// unattributed); a 2px surface gap between touching segments; the topmost segment's top corners
+// rounded (4px data-end, square at the baseline) — the dataviz mark specs
+for(var i=0;i<n;i++){if(!(tots[i]>0))continue;var x=i*slot+gap/2,segs=[];
+for(var s=0;s<stacks.length;s++){var v=(stacks[s][meas]&&stacks[s][meas][i])||0;if(v>0)segs.push([s,v]);}
+var acc=0;for(var j=0;j<segs.length;j++){var si=segs[j][0],v=segs[j][1],yb=Y(acc),yt=Y(acc+v);acc+=v;
+var last=(j===segs.length-1),y0=yt+(last?0:1),y1=yb-(j===0?0:1),hgt=y1-y0;if(hgt<0.6){y0=y1-0.6;hgt=0.6;}
+var r=Math.min(4,bw/2,hgt);var dpath;
+if(last&&r>=1.5){dpath='M'+x.toFixed(1)+','+y1.toFixed(1)+' L'+x.toFixed(1)+','+(y0+r).toFixed(1)+' Q'+x.toFixed(1)+','+y0.toFixed(1)+' '+(x+r).toFixed(1)+','+y0.toFixed(1)
++' L'+(x+bw-r).toFixed(1)+','+y0.toFixed(1)+' Q'+(x+bw).toFixed(1)+','+y0.toFixed(1)+' '+(x+bw).toFixed(1)+','+(y0+r).toFixed(1)+' L'+(x+bw).toFixed(1)+','+y1.toFixed(1)+' Z';}
+else{dpath='M'+x.toFixed(1)+','+y0.toFixed(1)+' h'+bw.toFixed(1)+' v'+hgt.toFixed(1)+' h-'+bw.toFixed(1)+' Z';}
+svg+='<path class="rsp-seg" d="'+dpath+'" fill="'+spFill(stacks[si])+'" data-i="'+i+'" data-s="'+si+'"></path>';}}
+svg+='</svg>';
+// x labels: hourly range → weekday initials at the ledger's local midnights (the hover graph's rule);
+// daily range → the 1st and 15th. The keys are the KERNEL's local time — named when the viewer's differs.
+var xlab='';for(var i=0;i<n;i++){var k=ser.keys[i],m;
+if(SP.range==='hours'){m=/^(\\d{4})-(\\d\\d)-(\\d\\d)T00$/.exec(k);if(m){var dd=new Date(+m[1],+m[2]-1,+m[3]);
+xlab+='<span style="left:'+(((i+0.5)*slot)/W*100).toFixed(1)+'%">'+['S','M','T','W','T','F','S'][dd.getDay()]+'</span>';}}
+else{m=/^(\\d{4})-(\\d\\d)-(01|15)$/.exec(k);if(m)xlab+='<span style="left:'+(((i+0.5)*slot)/W*100).toFixed(1)+'%">'+Number(m[2])+'/'+Number(m[3])+'</span>';}}
+var leg='<div class=rsp-leg>'+stacks.map(function(s){return '<span class="rsp-chip'+(s.kind==='sid'&&!s.live?' rsp-dead':'')+'"><i class="rsp-sw'+(s.kind==='unattributed'?' rsp-hatch':'')+'"'
++(s.kind==='unattributed'?'':' style="background:'+(s.kind==='other'?SP_OTHER:spColor(s))+'"')+'></i>'+esc(spStackName(s))+'</span>';}).join('')+'</div>';
+var tzNote='';var mine=-(new Date().getTimezoneOffset());
+if(typeof d.tzOffsetMin==='number'&&d.tzOffsetMin!==mine)tzNote='<div class=rsp-note>Bucket times are '+esc(d.tz||'the kernel\u2019s clock')+' (the machine that recorded them), not your local time.</div>';
+box.innerHTML=svg+ylab+'<div class=ru-tip-gx>'+xlab+'</div>'+leg+tzNote;
+// the per-segment hover: session · value · bucket, the mark itself the hit target
+var svgEl=box.querySelector('svg');if(!svgEl)return;
+svgEl.onpointermove=function(e){var t=e.target;if(!t||!t.classList||!t.classList.contains('rsp-seg')){spTipHide();return;}
+var i=+t.getAttribute('data-i'),si=+t.getAttribute('data-s'),s=stacks[si];if(!s)return;
+var v=(s[meas]&&s[meas][i])||0,o=(s[meas==='usd'?'tok':'usd']&&s[meas==='usd'?'tok':'usd'][i])||0;
+spTipShow(e.clientX,e.clientY,spStackName(s),fmt(v),(meas==='usd'?fmtTok(Math.round(o))+' tok':fmtUsd(o))+' \u00b7 '+spBucketLabel(ser.keys[i],SP.range));};
+svgEl.onpointerleave=spTipHide;}
+window.addEventListener('resize',function(){if(SP.open&&SP.data)renderChart();});
+el.addEventListener('click',function(){pull(true);openSpend();});
 setInterval(function(){pull(false);},60000);     // backup auto-refresh: re-read usage.json every 60s
 pull(false);                                     // fill on load, independent of the timeline-forward path
 // (The old vertical-fit degrade ladder (fitRail/data-ruc, the user 2026-06-27/07-01) is gone: it shrank the
@@ -48858,6 +49419,45 @@ def _landing():
             # anywhere over it closes the modal (see _LANDING_USAGE_JS). Faint dim so it reads as tap-to-close.
             "#ru-back{position:fixed;inset:0;z-index:290;display:none;background:rgba(0,0,0,0.4)}"
             "#ru-back.on{display:block}"
+            # ── the usage MODAL (T247): one treatment with #rnet-back (the panel rule) — a centered card
+            # over rgba(0,0,0,0.55), the dashboard behind it untouched. Sizes reused from the hover
+            # (11px body, 10px annotations, 8px axis labels) and the net panel's card + 14px header —
+            # no new font size. Data colors are the sessions' identity colors; the accent is chrome only
+            # (the pressed toggle), never a data or status color.
+            "#rsp-back{position:fixed;inset:0;z-index:205;display:flex;align-items:center;justify-content:center;"
+            "background:rgba(0,0,0,0.55)}#rsp-back[hidden]{display:none}"
+            "#rsp-panel{width:min(880px,94%);max-height:92vh;overflow:auto;background:#252526;border:1px solid #3a3a3a;"
+            "border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:16px 20px;color:#cfd6dd;"
+            "font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.4}"
+            ".rsp-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
+            "margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #34343a}.rsp-top span{flex:1 1 auto}"
+            ".rsp-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
+            ".rsp-x:hover{color:#fff}"
+            ".rsp-sec{margin-top:14px}.rsp-sec:first-of-type{margin-top:0}"
+            ".rsp-note{opacity:.6;font-size:10px;margin:4px 0 6px}"
+            ".rsp-err{color:#f2b8b5;margin:10px 0}"
+            ".rsp-load{display:flex;justify-content:center;padding:40px 0}"
+            ".rsp-tbl{width:100%;border-collapse:collapse;margin-top:4px}"
+            ".rsp-tbl th{text-align:left;font-weight:400;opacity:.55;padding:2px 6px 4px 0;border-bottom:1px solid rgba(255,255,255,0.08)}"
+            ".rsp-tbl td{padding:3px 6px 3px 0;border-bottom:1px solid rgba(255,255,255,0.05);white-space:nowrap}"
+            ".rsp-tbl .n{text-align:right;font-variant-numeric:tabular-nums}"
+            ".rsp-tbl td.rsp-name{width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis}"
+            ".rsp-dead{opacity:.55}"   # a session no longer running keeps its last known name, dimmed
+            ".rsp-sw{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;background:#6b7a8c}"
+            # unattributed spend wears a TEXTURE, not a hue: it is not a session, and texture is the
+            # dataviz fallback for a class that must never be confused with one
+            ".rsp-hatch{background:repeating-linear-gradient(45deg,rgba(138,151,166,0.9) 0 1.5px,rgba(138,151,166,0.18) 1.5px 5px)}"
+            ".rsp-ctl{display:flex;align-items:center;gap:4px;margin:6px 0 8px}.rsp-gap{flex:0 0 12px}"
+            ".rsp-btn{background:none;border:1px solid rgba(255,255,255,0.14);border-radius:5px;color:#cfd6dd;font:inherit;"
+            "padding:2px 8px;cursor:pointer}"
+            ".rsp-btn.on{background:var(--accent,#9cd2ff);color:var(--accent-fg,#0c1a2e);border-color:transparent}"
+            "#rsp-chart{position:relative}.rsp-svg{display:block;width:100%;background:rgba(255,255,255,0.04);border-radius:3px}"
+            ".rsp-grid{stroke:rgba(255,255,255,0.10);stroke-width:1}"
+            ".rsp-seg{cursor:pointer}.rsp-seg:hover{filter:brightness(1.18)}"
+            ".rsp-leg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px}.rsp-chip{display:inline-flex;align-items:center;gap:5px}"
+            "#rsp-tip{position:fixed;z-index:310;pointer-events:none;display:none;background:#1e1e1e;border:1px solid #3a3a3a;"
+            "border-radius:6px;padding:5px 8px;color:#cfd6dd;font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            "box-shadow:0 5px 18px rgba(0,0,0,0.45)}#rsp-tip b{color:#e8eef5;font-weight:700}"
             "#ah-tip,#ru-tip{position:fixed;z-index:300;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:7px;"
             "padding:8px 10px;font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
             "box-shadow:0 5px 18px rgba(0,0,0,0.45);pointer-events:none;line-height:1.4}"
@@ -49151,6 +49751,18 @@ def _landing():
             "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
             "body.theme-light #ah-tip,body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
             "box-shadow:0 5px 18px rgba(31,26,20,0.18)}"
+            # the usage modal's light steps (T247): same card + hairlines as the other light panels;
+            # the data colors are the sessions' own and do not flip
+            "body.theme-light #rsp-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light .rsp-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.10)}"
+            "body.theme-light .rsp-x{color:#5D574E}body.theme-light .rsp-x:hover{color:#1F1E1D}"
+            "body.theme-light .rsp-tbl th{border-bottom-color:rgba(0,0,0,0.10)}body.theme-light .rsp-tbl td{border-bottom-color:rgba(0,0,0,0.06)}"
+            "body.theme-light .rsp-btn{border-color:rgba(0,0,0,0.18);color:#1F1E1D}"
+            "body.theme-light .rsp-err{color:#9A3324}"   # the dark-only pink read 1.7:1 on the white card (review find)
+            "body.theme-light .rsp-svg{background:rgba(0,0,0,0.04)}body.theme-light .rsp-grid{stroke:rgba(0,0,0,0.10)}"
+            "body.theme-light #rsp-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 5px 18px rgba(31,26,20,0.18)}body.theme-light #rsp-tip b{color:#1F1E1D}"
             "body.theme-light .ru-tip-name{color:#1F1E1D}"
             "body.theme-light .ru-name{color:#5D574E}"
             "body.theme-light .ru-pct{color:#1F1E1D}"
@@ -49338,6 +49950,10 @@ def _landing():
             # settings wears the desktop rail's OWN gear glyph, ⛭ (U+26ED), not the outlined star it had.
             "<button class=mact data-act=settings data-keycmd=settings.open aria-label=Settings title=Settings>⛭</button>"
             "</nav>"
+            # the usage MODAL (T247): the click on the rail's readout opens the per-session breakdown +
+            # stacked histogram here — shell-native like #rnet-back, a centered card over the dimmed,
+            # unchanged dashboard (filled by _LANDING_USAGE_JS on open; Esc + backdrop tap close it).
+            "<div id=rsp-back hidden><div id=rsp-panel role=dialog aria-label=\"API spend\"></div></div>"
             # the rail's network popover — manage federated remote kernels (driven by _LANDING_REMOTES_JS).
             "<div id=rnet-back hidden><div id=rnet-panel>"
             "<div class=rnet-top><span>Remote kernels</span><button id=rnet-x aria-label=Close>×</button></div>"
@@ -49415,7 +50031,7 @@ def _landing():
             # 2026-07-28). Loaded BEFORE the errs script, which reads it (with a dim fallback if absent).
             + ("<script src=/dist/age-color-global.js?v=%d></script>" % v) +
             "<script>" + _LANDING_ERRS_JS + "</script>"
-            "<script>" + _LANDING_USAGE_JS + "</script>"
+            "<script>" + _LANDING_USAGE_JS.replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_APIH_JS + "</script>"
             "<script>" + _LANDING_JS + "</script>"
             "<script>" + _LANDING_FOCUS_JS + "</script>"
@@ -50170,6 +50786,11 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write("api-health: tmux coverage count failed: %s\n" % e)
                     out["coverage"]["tmuxSessionsUncovered"] = None
                 return self._send(200, json.dumps(out), "application/json", cache="no-cache")
+            if p == "/spend/detail":                          # the usage MODAL's per-session breakdown (T247):
+                # who spent what and spend over time stacked by session, read from the ledger's bySid
+                # maps with names + colors resolved kernel-side — the same read class as /usage, and
+                # the shell fetches it on open rather than scraping the hover's HTML.
+                return self._send(200, json.dumps(_spend_detail()), "application/json", cache="no-cache")
             if p == "/mcp":                                   # the MCP panel's data (the user 2026-08-05): `/mcp`
                 # in a romp session hits the CLI's INTERACTIVE panel, which an SDK session can't render — it
                 # just says "use a terminal". These are the SAME facts via the SDK's designed control request
@@ -50199,21 +50820,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({"hosts": _ssh_config_hosts()}),
                                   "application/json", cache="no-cache")
             if p == "/tunnels":                               # attached remote kernels + state (drives the federated dashboard)
-                # `known` = hosts attached before but not now, so the popover can list them as persistent
-                # re-attach rows instead of making you retype them.
-                return self._send(200, json.dumps({"tunnels": list_remotes(),
-                                                   "known": list_known(),
-                                                   "viaReach": _bus_via_reach(),   # hosts one relay hop away (trust-by-origin rows hang here)
-                                                   "remoteHolds": _bus_remote_holds(),   # quarantine holds on OTHER machines (direct peers + one relay hop)
-                                                   "autoUpdate": _auto_update_remotes_on(),   # the popover checkbox reflects the KERNEL, not this tab
-                                                   "peerTiers": _bus_peer_tiers(),   # host → how IT holds OUR mail (both-direction display)
-                                                   # THIS machine's build, top-level so the panel can name it with
-                                                   # no hosts attached: a remote's sha is unreadable without your
-                                                   # own beside it (the user 2026-07-30), which is the comparison
-                                                   # every other line in the panel is implicitly asking you to make.
-                                                   "local": {"ver": _kernel_ver() or "", "sha": _kernel_sha() or "",
-                                                             "host": _self_host()},
-                                                   "peersMode": _postal_peers_on()}),
+                # `?fresh=1` = the caller is about to ACT on `outOfDate` (the CLI's `romp update`), so the
+                # listing is judged against the head this checkout is at now, not the polls' cache
+                return self._send(200, json.dumps(_tunnels_listing(fresh=_fresh_listing_asked(q))),
                                   "application/json", cache="no-cache")
             if p == "/tunnels/pairs":                         # how attached machines hold EACH OTHER's mail —
                 # read live from each machine's kernel through its tunnel (the popover's "Between your
@@ -52503,8 +53112,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
-            # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
-            # real apply acts at once on turn-on (instead of waiting out the pusher's 0.5 s backstop)
+            # T208 opt-in — kernel-side like autoNudge, broadcast by federation.ts KERNEL_SETTING so
+            # one click answers for every attached kernel (T248), gt-gated like every queued setting
+            # (a queued flush must not undo a newer choice). Only a real apply acts at once on
+            # turn-on (instead of waiting out the pusher's 0.5 s backstop)
             # — a stood-down toggle is not new information — through the same wrap as setAutoNudge
             # (_ws_act_now_tick: single-flight, no dead-wait sweep, a failure logged not raised)
             if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
