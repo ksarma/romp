@@ -306,7 +306,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => null,
     mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); },
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: noop, scrollToOffset: noop, reload: noop,
     ...over,
@@ -643,7 +643,7 @@ test("source: render latches the reply's key and swaps the cards around the box;
   assert.match(SRC, /this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/, "the key first, then the cards around the box, then the composer");
   assert.match(SRC, /if \(!cards\.contains\(box\) \|\| !this\.graft\(cards, \[fresh\], box\)\) cards\.replaceChildren\(fresh\);/, "a wholesale swap only when the box is not in a card the fresh list keeps");
   assert.match(SRC, /if \(this\.input\.scrollTop !== scroll\) this\.input\.scrollTop = scroll;/, "a moved textarea keeps its scroll offset");
-  assert.match(SRC, /if \(typing && this\.composerBox\.parentElement !== home\) this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");
+  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n\s*if \(moved\) this\.showComposer\(\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");
   assert.match(SRC, /const id = r === null \? null : cssId\(r\);/, "placeComposer's selector takes the id escaped");
   assert.match(SRC, /'\[data-act="fcreply"\]\[data-id="' \+ cssId\(was\.commentId\) \+ '"\]'/, "closeComposer's too");
   assert.match(SRC, /function cssId\(s: string\): string \{\n\s*return typeof CSS !== "undefined" && typeof CSS\.escape === "function" \? CSS\.escape\(s\) : s\.replace\(\/\["\\\\\]\/g, "\\\\\$&"\);/);

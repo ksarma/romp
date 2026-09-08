@@ -33,7 +33,10 @@ test("the kernel serves lineage per lane and clips the copied history only while
   assert.match(KERNEL, /"branch": branch_of\.get\(sid\),/);
   assert.match(KERNEL, /"comments": _comment_markers\(sid\),/);
   assert.match(KERNEL, /if _psid not in id2name:\s*\n\s*continue/, "parent lane present is the connector AND clip condition");
-  assert.match(KERNEL, /if _bft and \(seg\.get\("end"\) or seg\["t"\]\) <= _bft:\s*\n\s*continue/);
+  // the clip runs in the lane's segment derivation (_lane_segments, held by the per-lane memo since perf
+  // round 4), which takes the fork time as `bft`; build_timeline hands it branch_of's t for the lane
+  assert.match(KERNEL, /if bft and \(seg\.get\("end"\) or seg\["t"\]\) <= bft:\s*\n\s*continue/);
+  assert.match(KERNEL, /_bft = \(branch_of\.get\(sid\) or \{\}\)\.get\("t"\)\s*\n\s*bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo\(/);
   assert.match(KERNEL, /def _comment_markers\(sid\):/);
   // a promoted thread is a session (branch connector), not a square
   assert.match(KERNEL, /not in \("open", "resolved"\):\s*\n\s*continue/);

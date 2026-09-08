@@ -207,6 +207,9 @@ win.confirm = () => true;
 win.postMessage = () => { /* our own window: nothing listens here */ };
 (globalThis as any).window = win;
 (globalThis as any).document = doc;
+// the page's address: the web dashboard by default (canPreview() reads the protocol; the viewer's discard ask is a
+// confirm there and the notice bar in the VS Code webview, whose protocol a test sets for the length of a case)
+(globalThis as any).location = { protocol: "http:" };
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
@@ -403,6 +406,58 @@ const saveRefused = async (reqId: number, code: string, error: string) => {
 const fileSaved = (reqId: number, extra: Record<string, unknown>) =>
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileSaved", reqId, path: REPORT, mtimeNs: "1757145600000000009", ...extra } }));
 const errBar = (body: El) => body.querySelector(".fileview-err");
+
+test("the discard ask on both hosts: on the web a confirm asks about the editor's buffer, then about an action's draft registered through guardClose, and a no keeps everything; in the VS Code webview, where confirm shows nothing, nothing is asked, the thing is kept, the notice bar says so and what clears it, and every exit (Cancel, close, a replace-open) is vetoed the same way", async (t) => {
+  const o = await open(REPORT, t);
+  const { ctx, body, b } = o;
+  // an action's draft ask, as the comments panel registers one: the question and the kept notice, named by the action
+  let draft: { question: string; kept: string } | null = null;
+  ctx.guardClose(() => draft);
+  const confirms: string[] = [];
+  const loc = (globalThis as any).location as { protocol: string };
+  try {
+    // the web: the editor's buffer is dirty; Cancel asks in the editor's words, and a no keeps the editor
+    await enterEdit(o);
+    typeInto(DOC + "x");
+    win.confirm = (q: string) => { confirms.push(q); return false; };
+    b.cancel.click(); await settle();
+    assert.deepEqual(confirms, ["Discard unsaved changes to report.md?"]);
+    assert.ok(body.querySelector(".fileview-cm"), "declined: the editor stays");
+    assert.equal(errBar(body), null, "a dialog asked; no notice");
+    // the web: a close meets the editor's ask and then the action's, through one guard; a no to the second vetoes the close
+    draft = { question: "Discard the unsaved comment on report.md?", kept: "This file stays open: the comment typed on report.md is not saved. Save it, or clear the box, then try again." };
+    win.confirm = (q: string) => { confirms.push(q); return q.startsWith("Discard unsaved changes"); };   // yes to the editor, no to the draft
+    o.fv.closeFileView(); await settle();
+    assert.deepEqual(confirms.slice(1), ["Discard unsaved changes to report.md?", "Discard the unsaved comment on report.md?"], "the editor's ask, then the action's");
+    assert.ok(doc.getElementById("romp-fileview") === o.wrap, "the draft's no vetoed the close");
+    assert.ok(body.querySelector(".fileview-cm"), "and the editor is still up (its yes discarded nothing on its own)");
+    assert.equal(errBar(body), null);
+    // the VS Code webview: no dialog. Cancel with a dirty buffer keeps the editor and says so in the notice bar
+    loc.protocol = "vscode-webview:";
+    const asked = confirms.length;
+    b.cancel.click(); await settle();
+    assert.equal(confirms.length, asked, "no confirm: it would show nothing there");
+    assert.ok(body.querySelector(".fileview-cm"), "the editor stays");
+    assert.equal(errBar(body)!.textContent, "The editor stays open: report.md has unsaved changes. Save or undo them, then try again.");
+    // the buffer undone: the editor's ask has nothing to ask, and a close meets the action's draft the same way
+    typeInto(DOC);
+    o.fv.closeFileView(); await settle();
+    assert.equal(confirms.length, asked);
+    assert.ok(doc.getElementById("romp-fileview") === o.wrap, "kept: the viewer stays");
+    assert.equal(errBar(body)!.textContent, draft.kept, "the action's notice replaced the editor's");
+    // a replace-open (a link followed inside the file, a Files-pane row) meets the same wall
+    assert.equal(o.fv.openFileView(APP, SID), false, "the replace-open is vetoed");
+    assert.ok(doc.getElementById("romp-fileview") === o.wrap);
+    assert.equal(errBar(body)!.textContent, draft.kept);
+    assert.equal(confirms.length, asked);
+    // with nothing at stake the close goes through, on either host
+    draft = null;
+    o.fv.closeFileView(); await settle();
+    assert.equal(doc.getElementById("romp-fileview"), null, "closed");
+  } finally {
+    loc.protocol = "http:"; win.confirm = () => true; draft = null;   // the after-hook's close then meets a yes
+  }
+});
 
 test("mode(), text(), mtimeNs(), media(), identity(), body(): answered from the open viewer's own state, following the Rendered/Raw buttons and setMode", async (t) => {
   const o = await open(REPORT, t);

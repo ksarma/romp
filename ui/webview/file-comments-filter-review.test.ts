@@ -341,7 +341,7 @@ function world(over: WorldOpts = {}): World {
     body: () => body as unknown as HTMLElement, mode: () => mode, text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
-    onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
+    onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); }, guardClose: () => { /* inert */ },   // the viewer's close ask (main, 2026-09-07): the stand-in asks nothing
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
@@ -746,11 +746,11 @@ test("pins: replyAway takes the filter into account before the change fold; the 
   assert.match(SRC, /hiddenSaved: string \| null = null;/);
   assert.match(SRC, /fchiddenx: \(\) => \{ this\.hiddenSaved = null; this\.render\(\); \},/, "the ✕ is one of the panel's own delegated actions");
   assert.match(SRC, /const before = new Set\(this\.cards\(\)\.map\(\(x\) => x\.id\)\);[^\n]*\n\s+let r: Status \| null;/, "the comments before the save, so the fresh one is known");
-  assert.match(SRC, /const hid = r !== null && c\.kind !== "reply" && this\.noteHiddenSave\(before, note\);\n\s+if \(r\) this\.closeComposer\(\);[^\n]*\n\s+if \(hid\) this\.render\(\);/, "noted after the save, the cards rendered once more with the line");
+  assert.match(SRC, /const hid = r !== null && c\.kind !== "reply" && this\.noteHiddenSave\(before, note\);\n\s+if \(r\) this\.scrollToSaved\(c, had, r, note\);[^\n]*\n\s+if \(r\) this\.closeComposer\(\);[^\n]*\n\s+if \(hid\) this\.render\(\);/, "noted after the save, before the scroll to the saved card (which finds no card the filter hides) and the composer's close; the cards rendered once more with the line");
   assert.match(SRC, /if \(!mine \|\| mine\.hunk !== null \|\| this\.activeFilter\(\) !== "changes"\) return false;/, "only a comment on no change, under Changes");
   assert.match(SRC, /if \(!card \|\| filter !== "changes" \|\| card\.hunk !== null\) \{ this\.hiddenSaved = null; return null; \}/, "the line ends, and the id with it, once the card shows or the comment is gone");
   assert.match(SRC, /for \(const n of \[this\.loader\("bytes"\), this\.errRow\("bytes"\)\]\) if \(n\) list\.appendChild\(n\);\n\s+const saved = this\.hiddenSavedRow\(filter\);/, "at the top of the list, before the empty states and the cards");
-  assert.match(SRC, /this\.hiddenSaved = null;[^\n]*\n\s+this\.stopPoll\(\);\n\s+\}\n\s+dispose\(\): void \{/, "closePanel ends it");
+  assert.match(SRC, /closePanel\(\): void \{(?:(?!\n  \}\n)[\s\S])*?this\.hiddenSaved = null;[^\n]*\n\s+this\.stopPoll\(\);\n\s+\}\n/, "closePanel ends it");   // the method's own body (draftAsk stands between it and dispose)
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   assert.match(head, /let filterRow: HTMLElement \| null = null;/);
   assert.match(head, /head\.appendChild\(seg\);\n\s+filterRow = seg;/);

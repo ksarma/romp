@@ -21,9 +21,12 @@ import DOMPurify from "dompurify";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
+import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
-import { fileCommentsAction } from "./file-comments";
+import { fileCommentsAction, panelMark } from "./file-comments";
+import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
+import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
@@ -219,12 +222,24 @@ export function hostStub(sid: string): FileViewIdentity | null {
   const host = hostOf(sid);
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
+// Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
+// reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
+// pane's openHere, so the file enters its Recent list and names its session), else the shared viewer in place,
+// replacing the file that carried the link. The same document either way: the person is reading here.
+let openLinkedFile: (path: string, sid: string | null, line: number | null, frag: string | null) => void =
+  (path, sid, line, frag) => { openFileView(path, sid, { line, frag }); };
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
-// handler both close through it without knowing an edit is in progress.
+// handler both close through it without knowing an edit is in progress. It runs the editor's own ask
+// and then every ask an action registered through the seam (ctx.guardClose: the comments panel's, for a
+// note typed and not yet saved), so a close or a replace-open (a link followed inside the shown file, a
+// Files-pane row, the shell's relay) meets ONE code path whatever the person has unsaved, and nothing is
+// dropped silently (the 2026-09-07 review: a link click under a comment draft replaced the file and the
+// draft with it, with no ask).
 let closeGuard: (() => boolean) | null = null;
+let closeAsks: Array<() => CloseAsk | null> = [];
 // ONE live Escape handler at a time. Every open registers its own document-level onKey closure, and
 // the previous one must be UNREGISTERED when its viewer goes: the replace path used to leave it
 // behind, where — with a NEW viewer up, so its `!getElementById` guard no longer no-ops — its stale
@@ -355,7 +370,18 @@ export interface FileViewActionCtx {
   /** the panel's half of editing over a tracked file (Slice 5): registered once per open, null removes it. Read at every
    *  Edit and Save, never cached — the panel's status is the truth about what is pending and where Save must go */
   setTrackedEdit(t: TrackedEdit | null): void;
+  /** register an ask the viewer puts before this open ends by a close or a replace-open (a link followed inside the
+   *  file, a Files-pane row, the shell's relay). The callback answers null when the action has nothing unsaved, else
+   *  what to ask (CloseAsk); the VIEWER puts the ask, the way it puts the editor's own unsaved-changes ask, which runs
+   *  first: a confirm dialog on the web, and in the VS Code webview (no dialog) the notice bar with `kept`, the thing
+   *  kept. A declined ask vetoes the close and the viewer stays as it was. So nothing the person typed is dropped
+   *  without a word, in one code path for every host. Per open; dropped with it */
+  guardClose(ask: () => CloseAsk | null): void;
 }
+/** An action's answer to the close guard when it holds something unsaved: `question`, the yes/no put to the person where a
+ *  dialog exists ("Discard the unsaved comment on app.py?"), and `kept`, the notice shown where none does and the thing is
+ *  kept ("The unsaved comment on app.py is kept: ..."). */
+export interface CloseAsk { question: string; kept: string }
 /** One decision taken inside the editor (an accept or a reject of a pending change), as the chunk's decisions report
  *  it. "Decisions" is the plan's word for the save verb's two lists and the chunk's canonical name (editor-chunk.ts,
  *  TrackDecisions); the comments log is the OTHER record of these same decisions, on disk, in the host's hands. */
@@ -564,8 +590,9 @@ function composerWindow(): Window | null {
 export function closeFileView(): void {
   const wrap = document.getElementById("romp-fileview");
   if (!wrap) return;
-  if (closeGuard && !closeGuard()) return;   // unsaved edits, and the user chose to keep them
+  if (closeGuard && !closeGuard()) return;   // unsaved edits (or an unsaved comment), and the user chose to keep them
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
@@ -613,14 +640,18 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  Returns whether the open actually happened: false means the dirty-edit guard kept the PREVIOUS
  *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
- *  survivor as relay-opened nor arm a restore for an open that never happened).
+*  survivor as relay-opened nor arm a restore for an open that never happened).
  *  `opts.todoId`: the user todo the file was opened from (the Waiting-on-you pane's detail link).
- *  `opts.frag`: a sibling link's `#fragment` to land on after the first rendered paint (mdBlock's fv-open). */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; frag?: string | null }): boolean {
+ *  `opts.line`: a line the open should show (a `path:12` link in another file, file-view-links.ts): the code view
+ *  scrolls its row into view once the text lands; a markdown file opens in its Raw view for THIS open (the Rendered
+ *  view has no rows), without touching the saved preference.
+ *  `opts.frag`: a sibling link's `#fragment` (`[see](report.md#results)`) to land on after the first rendered paint. */
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; line?: number | null; frag?: string | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
@@ -635,9 +666,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.id = "romp-fileview";
   wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
   const box = el("div", "fileview");
-  // A sibling link's `#fragment` (`[see](report.md#results)`, stamped data-frag by mdBlock) lands on
-  // its heading after the FIRST rendered paint — once; a Raw view has no ids to land on, so the
-  // landing waits for the Rendered toggle rather than being spent (review find on #958, 2026-09-07).
+  // A sibling link's `#fragment` (`[see](report.md#results)`: data-frag on the path link, file-view-links.ts
+  // linkMarkdownAnchors) lands on its heading after the FIRST rendered paint — once; a Raw view has no ids to
+  // land on, so the landing waits for the Rendered toggle rather than being spent (review find on #958, 2026-09-07).
   let pendingFrag: string | null = opts?.frag || null;
   document.body.classList.add("fileview-open");
 
@@ -946,22 +977,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
-  // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the
-  // sibling file in this same viewer — mdBlock stamps each one `data-act="fv-open"` with the joined
-  // path (joinDocPath) instead of a target the page would navigate to. One delegated listener on
-  // the body, installed once per open and keyed off data-act (actions.ts: click-safe across the
-  // Rendered ⇄ Raw swaps that rebuild the body's children, and the press flash acknowledges the
-  // click). The chat's document-level anchor delegate (render.ts) leaves scheme-less hrefs alone,
-  // so the click reaches here in the chat document and in the feed document alike.
-  delegate(body, {
-    "fv-open": (a, ev) => {
-      ev.preventDefault();
-      const target = a.dataset.path;
-      if (target) openFileView(target, sid, { frag: a.dataset.frag || null });
-    },
-    // an in-document `[top](#evidence)` lands on its heading (mdBlock minted the ids) — never a tab
-    "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
-  });
+  // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
+  // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
+  // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
+  // ONE listener on the body reads the clicks (below, after the selection wiring: it is installed once per open, so
+  // it is click-safe across the Rendered ⇄ Raw swaps that rebuild the body's children). The chat's document-level
+  // anchor delegate (render.ts) leaves an anchor with no href alone, so the click reaches here in the chat document
+  // and in the feed document alike. The URL viewer below keeps a delegate of its own for its fv-anchor stamp.
   // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
   // over an ssh tunnel to a phone is a real wait.
   const load = el("div", "fileview-load");
@@ -1058,6 +1080,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     reload: () => { if (!editing) fetchFile(); },
     editing: () => editing,
     setTrackedEdit: (t) => { trackedEdit = t; },
+    guardClose: (ask) => { closeAsks.push(ask); },
   };
   // A text view is showing: the editor does not hold the body, the body is not a picture or a PDF frame, and the
   // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
@@ -1313,12 +1336,112 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   box.addEventListener("mouseup", onSelect);
   box.addEventListener("touchend", onSelect);   // the phone's selection settles on the lift, with no mouseup
 
+  // Links inside the file (file-view-links.ts): one listener on the body, which every paint keeps and only
+  // refills (click-safe, ui/CLAUDE.md). The gesture is the project's (the PDF and folder rule, preview.ts
+  // wantsOwnTab): a PLAIN click acts inside the dashboard, and a Cmd/Ctrl-click or a middle-click opens the
+  // link in a tab of its own. Plain: a path link opens the file through the host's opener, with this viewer's
+  // session (a relative path was already joined onto this file's directory at mark time; the kernel reads `~`
+  // and the session's machine); a URL anchor opens itself (target _blank) and is left to the browser (the
+  // chat's document-level opener takes it first there, the same way); a section link scrolls to its target
+  // in this document, or does nothing where there is none (its title says so), and never moves the hosting
+  // document. Modified: a path link opens in the browser's own tab off the kernel's /file route (openFileTab;
+  // a blocked popup falls through to the viewer, so the file is never unreachable), a URL anchor in a tab from
+  // here. One click does one thing (ui/CLAUDE.md): a click on a mark the comments panel painted over the link
+  // (a highlight, a change mark) is the card's opening and only that, so a plain one is cancelled here when
+  // the link is an anchor (the anchor's own open would follow the card's otherwise) and left to the panel's
+  // delegate on the row, as render.ts yields to panelMark (the 2026-09-06 precedent); a modified click on a
+  // mark is the link's and only the link's, so it stops before the row. A PLAIN click is not stopped: it goes on
+  // to the document's own listeners (the feed's window listener that returns focus to the chat, the chat's menu
+  // closers), which a stop here starved (the 2026-09-07 review). The chat's body delegate routes the same
+  // data-act="openpath" for the todo card's links (render.ts), and would have opened the file a second time from
+  // a click that reached it (a plain open tears this viewer down first, but an open the close guard DECLINES, an
+  // unsaved comment, leaves the span in the document); that delegate now serves only the todo card and its Reply
+  // modal, checked at the click, so a viewer link that reaches it opens nothing there (file-view-links-browser.test.ts,
+  // the chat page). A click that ends a drag which selected text (the selection is still open at click time; a
+  // press on text collapses it first, so a plain click never sees one) selects and navigates nowhere; the chat's
+  // capture-phase opener reads the same selection and yields too (path-links.ts selectionOpenIn). Enter on a
+  // focused path link is its click (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
+  const openUrlTab = (href: string) => {
+    if (!href) return;
+    if (canPreview()) window.open(href, "_blank", "noopener,noreferrer");   // the web dashboard: the browser's tab
+    else post({ type: "openLink", href });                                  // the VS Code webview: the host's openExternal
+  };
+  const linkOf = (t: Element | null): HTMLElement | null => {
+    const x = t && typeof t.closest === "function" ? t.closest('[data-act="openpath"], a.' + URL_LINK_CLASS + ", a." + FRAG_LINK_CLASS) as HTMLElement | null : null;
+    return x && body.contains(x) ? x : null;
+  };
+  const openLink = (x: HTMLElement, ev: MouseEvent) => {
+    const own = wantsOwnTab(ev);
+    if (x.classList.contains(FRAG_LINK_CLASS)) {                // a section of this document: this document's scroll, never the page's
+      ev.preventDefault();
+      // the rendered document's own headings, ids and named anchors, as mark time read them (scrollToFragment, over the
+      // .fileview-md box through file-view-links.ts fragmentTarget): the viewer's chrome carries ids of its own (the
+      // notice bar), and a lookup over the whole box scrolled to one of those on a colliding name
+      scrollToFragment(body, x.getAttribute("href") || "");
+      return;
+    }
+    if (x.dataset.act !== "openpath") {                          // the URL anchor
+      if (!own) return;                                          // a plain click: the browser's own open
+      ev.preventDefault(); ev.stopPropagation();                 // a modified one: one tab, from here, and the row's delegate never sees it
+      openUrlTab(x.getAttribute("href") || "");
+      return;
+    }
+    ev.preventDefault();
+    const p = x.dataset.path;
+    if (!p) return;
+    if (own) {
+      ev.stopPropagation();                                      // the row's delegate never sees the modified click (the mark's card would open too)
+      if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
+    }
+    const ln = Number(x.dataset.line);
+    openLinkedFile(p, sid || null, ln > 0 ? ln : null, x.dataset.frag || null);
+  };
+  body.addEventListener("click", (ev) => {
+    const t = ev.target as Element | null;
+    const x = linkOf(t);
+    if (!x) return;
+    if (panelMark(t) && !wantsOwnTab(ev)) {                      // a plain click on the panel's mark: the card's, and only the card's
+      if (x.dataset.act !== "openpath") ev.preventDefault();
+      return;
+    }
+    if (selectionOpenIn(box)) { ev.preventDefault(); return; }   // a drag-select ended on the link
+    openLink(x, ev);
+  });
+  // The middle button: its press would start the browser's autoscroll on a path link (a span, unlike an anchor)
+  // and swallow the auxclick, so the press is cancelled there; the auxclick is the link's own tab. A URL anchor's
+  // middle-click is the browser's (it opens the href in a new tab itself), so neither listener touches one. A
+  // section link's middle-click is this document's scroll, as its plain click is: the browser's own opened a second
+  // copy of the hosting page at `/files#id`, and a section of the shown file has no tab of its own (the 2026-09-07
+  // review, round 3).
+  body.addEventListener("mousedown", (ev) => {
+    const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
+    if (x && x.dataset.act === "openpath") ev.preventDefault();
+  });
+  body.addEventListener("auxclick", (ev) => {
+    if (ev.button !== 1) return;
+    const x = linkOf(ev.target as Element | null);
+    if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
+  });
+
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
   // mtime floor does the real safety work (agents edit these same trees — see _save_file).
+  // The ask before something typed and unsaved is dropped: the editor's buffer here, an action's draft through the
+  // close guard (the comments panel's typed note, ctx.guardClose). ONE function for both. On the web dashboard it is a
+  // confirm dialog. The VS Code webview shows no dialog: window.confirm returns false there without showing anything,
+  // so the ask read as a dead click (the 2026-09-07 review; the editor's Cancel and every close met the same wall). There
+  // the unsaved thing is kept and the notice bar says what is unsaved and what clears it, which is loud where the
+  // dialog was silent (CLAUDE.md, fail loudly): saving or undoing the edit, sending or clearing the note.
+  const askDiscard = (question: string, kept: string): boolean => {
+    if (canPreview()) return window.confirm(question);
+    noteBar(kept);
+    return false;
+  };
   const confirmDiscard = (): boolean =>
-    !editing || !dirty || window.confirm("Discard unsaved changes to " + path.slice(cut + 1) + "?");
-  closeGuard = confirmDiscard;
+    !editing || !dirty || askDiscard("Discard unsaved changes to " + path.slice(cut + 1) + "?",
+      "The editor stays open: " + path.slice(cut + 1) + " has unsaved changes. Save or undo them, then try again.");
+  // the editor's ask, then the actions' (ctx.guardClose): each names what it would drop, and the ask is put here
+  closeGuard = () => confirmDiscard() && closeAsks.every((ask) => { const q = ask(); return q === null || askDiscard(q.question, q.kept); });
   const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
@@ -1821,6 +1944,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   the edit ends (exitEdit, refetchAfterEdit): the exit is the event, not a timer.
   let fetchSeq = 0;
   let refetchAfterEdit = false;
+  // The row for a 1-based line of the code view, scrolled to the middle (scrollToOffset's own gesture); `pendingLine`
+  // is the open's `line`, spent on the first text that lands. A reload keeps the reader's place and does not scroll.
+  // A line past the end (a stale `x.py:400` in a file that shrank) lands on the last row AND says so in the viewer's
+  // notice dress: a silent landing on the wrong row reads as the file's truth (CLAUDE.md, fail loudly).
+  const scrollToLine = (n: number) => {
+    const rows = body.querySelectorAll("code.hljs .fv-cl");
+    if (!rows.length) return;
+    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
+    (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+  };
+  let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
@@ -1881,7 +2015,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       text = t;
+      // a line the link named: the Raw view for this open (unsaved: the preference stays), then the row
+      if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
+      if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
     }).catch((err) => {
       if (!document.getElementById("romp-fileview")) return;
       if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
@@ -2176,6 +2313,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   if (wrapLines) {
     pre.classList.add("fileview-wrap");
     code.innerHTML = wrapNumberedHtml(hl !== null ? hl : escapeHtml(text));
+    linkifyFileText(code, path);   // URLs and paths in the text, on the DOM the highlight built (file-view-links.ts)
     pre.appendChild(code);
     wrap.appendChild(pre);
     return wrap;
@@ -2184,20 +2322,25 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   gutter.textContent = lines.map((_, i) => String(i + 1)).join("\n");
   gutter.setAttribute("aria-hidden", "true");
   if (hl !== null) code.innerHTML = hl; else code.textContent = text;
+  linkifyFileText(code, path);
   pre.appendChild(code);
   wrap.appendChild(gutter); wrap.appendChild(pre);
   return wrap;
 }
 
-// Land an in-document fragment on its heading. The fragment — as typed, percent-encoded or not —
-// slugs the same way the heading ids were minted, so `#Evidence%20Results`, `#evidence-results` and
-// `#Evidence Results` all find md-evidence-results inside THIS rendered box (never the page's own ids).
-// Nothing found → nothing happens: inert, never a scroll to the top and never a navigation.
+// Land an in-document fragment on its target. The fragment — as typed, percent-encoded or not — names an
+// element of the RENDERED document (the .fileview-md box under `box`, never the viewer's chrome around it, whose
+// notice bar wears an id of its own, and never the page's ids): an element with exactly that id, a GitHub-style
+// `<a name>`, or a heading, through the slug the heading ids were minted with, so `#Evidence%20Results`,
+// `#evidence-results` and `#Evidence Results` all find md-evidence-results (file-view-links.ts fragmentTarget is
+// the one lookup; mark time reads it too). Nothing found → nothing happens: inert, never a scroll to the top and
+// never a navigation. Both viewers land through here: the local one's section links and a sibling link's
+// fragment, the URL one's fv-anchor links and the URL's own hash.
 function scrollToFragment(box: HTMLElement, fragment: string): boolean {
   let frag = fragment.replace(/^#/, "");
   try { frag = decodeURIComponent(frag); } catch { /* a stray % — match the bytes as written */ }
   if (!frag) return false;
-  const target = box.querySelector('[id="md-' + headingSlug(frag) + '"]');   // the slug's alphabet needs no escaping
+  const target = fragmentTarget(box.querySelector(".fileview-md") || box, frag);
   if (!target) return false;
   target.scrollIntoView({ block: "start" });
   return true;
@@ -2219,79 +2362,85 @@ type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; si
 // <img onerror> or a javascript: href in a README must never run in the dashboard.
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
+  let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   try {
-    const dirty = marked.parse(text) as string;
+    // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
+    // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
+    // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
+    // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
+    // the defaults runs as well: per-call options replace, not compose. The file kind's alone: a URL document has
+    // no directory for `notes.md:7` to sit in, and its links resolve against the URL below.
+    const base = marked.defaults.walkTokens;
+    const dirty = marked.parse(text, doc && doc.kind === "file"
+      ? { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }
+      : undefined) as string;
     // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
     // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
     // ALLOW_DATA_ATTR: false — a document's raw HTML must not carry data-* into the page: the viewer's
     // body delegate lets an act it does not own bubble to render.ts's document-level delegate, so a
     // `<span data-act="stopRetrying">` in a published report would interrupt the active session on a
-    // click (review find on #958, 2026-09-07). The viewer's own fv-open / fv-anchor stamps are set
-    // AFTER this sanitize, so they are unaffected.
+    // click (review find on #958, 2026-09-07). The viewer's own marks (the file kind's path and section links,
+    // the URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected.
     box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false });
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
+    rendered = false;
   }
+  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
+  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
+  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
+  // #tabs CSS and shadow getElementById("tabs") for the page's own controls. Both modes, before the
+  // anchors are sorted: a section link is live when its target is a heading, an element with that id
+  // or a named anchor (file-view-links.ts fragmentTarget reads all three).
+  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
+  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
   // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
   // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
   // document the browser knows nothing about). getAttribute, never the .src/.href property: the
   // property is already resolved against the PAGE, which is the wrong base.
-  //
-  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
-  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
-  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
-  // #tabs CSS and shadow getElementById("tabs") for the page's own controls.
-  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
-  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
-  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
-  if (doc) {
-    if (doc.kind === "url") {
-      box.querySelectorAll("img[src]").forEach((node) => {
-        const img = node as HTMLImageElement;
-        const src = img.getAttribute("src") || "";
-        const abs = resolveDocRelative(src, doc.href);
-        if (abs !== src) img.setAttribute("src", abs);
-      });
-    } else {
-      // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
-      // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
-      // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
-      // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
-      rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
-    }
+  if (doc && doc.kind === "url") {
+    box.querySelectorAll("img[src]").forEach((node) => {
+      const img = node as HTMLImageElement;
+      const src = img.getAttribute("src") || "";
+      const abs = resolveDocRelative(src, doc.href);
+      if (abs !== src) img.setAttribute("src", abs);
+    });
     box.querySelectorAll("a[href]").forEach((node) => {
       const a = node as HTMLAnchorElement;
       const href = a.getAttribute("href") || "";
       if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
-      if (doc.kind === "url") {
-        // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
-        // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
-        a.setAttribute("href", resolveDocRelative(href, doc.href));
-      } else if (!href.startsWith("//")) {
-        // The sibling path rides data-act/data-path for openFileView's delegated body listener;
-        // the href stays as written (hover still shows where it goes) and no _blank is forced —
-        // the page would only 404 on it.
-        const joined = joinDocPath(doc.path, href);
-        a.dataset.act = "fv-open";
-        a.dataset.path = joined;
-        const hash = href.indexOf("#") >= 0 ? href.slice(href.indexOf("#")) : "";
-        if (hash.length > 1) a.dataset.frag = hash;          // `report.md#results`: the heading to land on, once open
-        a.title = joined;
-      }
+      // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
+      // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
+      a.setAttribute("href", resolveDocRelative(href, doc.href));
+    });
+  } else if (doc) {
+    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
+    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
+    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
+    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
+    rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+  }
+  if (doc && doc.kind === "file") {
+    // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the
+    // web opens a NEW tab: the viewer lives inside the chat pane's document, and letting a README link navigate it
+    // away would silently eat the chat until a reload. A link whose target is a file relative to this one becomes a
+    // path link that opens THAT file in the viewer (its `#fragment` or `:line` riding along); a section link
+    // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why.
+    if (rendered) linkMarkdownAnchors(box, doc.path);
+  } else {
+    // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
+    // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
+    // delegated fv-anchor handler — a forced _blank on those opened a REAL tab at the chat page's own URL plus
+    // the fragment (found live, 2026-09-06). A URL document's sibling links are absolute by now, and the chat's
+    // own anchor delegate routes them (a same-origin .md back into the viewer).
+    box.querySelectorAll("a[href]").forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
+      a.target = "_blank";
+      a.rel = "noopener";
     });
   }
-  // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
-  // navigate it away would silently eat the chat until a reload. Two kinds stay in the viewer: a local
-  // document's sibling links (stamped fv-open above), and IN-DOCUMENT `#fragment` links, which land on
-  // their heading through the body's delegated fv-anchor handler — a forced _blank on those opened a
-  // REAL tab at the chat page's own URL plus the fragment (found live, 2026-09-06).
-  box.querySelectorAll("a[href]").forEach((node) => {
-    const a = node as HTMLAnchorElement;
-    if (a.dataset.act === "fv-open") return;
-    if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
-    a.target = "_blank";
-    a.rel = "noopener";
-  });
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
   box.querySelectorAll("pre code").forEach((node) => {
@@ -2303,6 +2452,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       codeEl.classList.add("hljs");
     } catch { /* leave plain */ }
   });
+  // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
+  // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
+  // The fallback's bare text is left bare: it is the content and nothing else, which is that branch's promise.
+  if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);
   return box;
 }
 
@@ -2470,8 +2623,10 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
  *  owes the shell no pane restore, since the pane stays up). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
-                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void): void {
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void,
+                             host?: { openFile?: (path: string, sid: string | null, line: number | null, frag: string | null) => void }): void {
   post = poster;
+  if (host && host.openFile) openLinkedFile = host.openFile;   // a link inside a shown file opens through the host (the Files pane's Recent list)
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

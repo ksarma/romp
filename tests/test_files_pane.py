@@ -222,7 +222,7 @@ class Relay(unittest.TestCase):
         # the receiving end reads it as a string or nothing, and hands it to the viewer's open
         files = (UI / "files.ts").read_text()
         self.assertIn('typeof m.todoId === "string" ? m.todoId : null', files)
-        self.assertIn("openFileView(path, sid, { todoId })", files)
+        self.assertIn("openFileView(path, sid, { todoId, line, frag })", files)
 
     def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
         """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the

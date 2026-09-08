@@ -335,9 +335,23 @@ class TintOnFullFramesOnly(unittest.TestCase):
         self.assertNotEqual(km._dedup_sig(a, json.dumps(a)), km._dedup_sig(c, json.dumps(c)))
         self.assertNotIn('"trgb"', km._feed_parts(a)[0]["%s:g9" % SID])
 
-    def test_every_builder_still_ships_the_tint_on_full_frames(self):
-        self.assertEqual(KSRC.count('"trgb": list(cm.age_rgb('), 8,
-                         "the eight card/node builders compute it as before (build_feed, the placeholders, quarantine)")
+    def test_the_tint_is_stamped_once_at_serialization_not_by_the_builders(self):
+        # 2026-09-07 (round-4 plan P2-A): the eight card/node builders no longer compute the tint; every whole
+        # frame gets it from _feed_body through _tinted_asks/_stamp_trgb, so a built card is a fixed value
+        self.assertEqual(KSRC.count('"trgb": list(cm.age_rgb('), 0, "no builder computes the tint")
+        self.assertIn("def _stamp_trgb(card, now, cmap):", KSRC)
+        self.assertIn('body["asks"] = _tinted_asks(feed)', KSRC, "_feed_body stamps every whole frame")
+        f = _feed()
+        for a in f["asks"]:
+            a.pop("trgb", None)
+            for n in a["tree"]:
+                n.pop("trgb", None)
+        body = json.loads(km._feed_body(f))
+        for a in body["asks"]:
+            self.assertEqual(a["trgb"], list(km.cm.age_rgb(NOW - a["t"])))
+            for n in a["tree"]:
+                self.assertEqual(n["trgb"], list(km.cm.age_rgb(NOW - n["last"])))
+        self.assertIs(km._strip_trgb(f["asks"][0]), f["asks"][0], "a tint-free card is not copied by the strip")
 
 
 def _client_frame(text):

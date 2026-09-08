@@ -1371,6 +1371,50 @@ print("romp perf: %.1f s window, kernel up %s, pid %d, romp-perf log %s"
 print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%, other %.1f%%)"
       % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge,
          cpu_proc - cpu_pusher - cpu_judge))
+pb, pa = (b.get("process") or {}), (a.get("process") or {})
+if "allocated_blocks" in pb:
+    # the exact memory gauges (M1-lite): levels from the newer snapshot, the window's delta beside the ones
+    # whose movement answers the RSS question (blocks flat while rss climbs: the allocator; blocks climbing:
+    # an object graph; a cache gauge climbing: that cache). A kernel without them prints neither line.
+    def mbk(kb):
+        return "%d MB" % (int(kb) // 1024)
+
+    def mbb(nbytes):
+        return "%.0f MB" % (nbytes / 1048576.0)
+
+    parts = ["rss %s (%+d MB)" % (mbk(pb.get("rss_kb") or 0), (int(pb.get("rss_kb") or 0) - int(pa.get("rss_kb") or 0)) // 1024)]
+    if pb.get("rss_anon_kb") is not None:
+        parts.append("anon %s" % mbk(pb["rss_anon_kb"]))
+    if pb.get("hwm_kb") is not None:
+        parts.append("hwm %s" % mbk(pb["hwm_kb"]))
+    if pb.get("allocated_blocks") is not None:
+        parts.append("blocks %d (%+d)" % (pb["allocated_blocks"], pb["allocated_blocks"] - (pa.get("allocated_blocks") or pb["allocated_blocks"])))
+    if pb.get("gc_gen2") is not None:
+        parts.append("gc2 %d (%+d)" % (pb["gc_gen2"], pb["gc_gen2"] - (pa.get("gc_gen2") if pa.get("gc_gen2") is not None else pb["gc_gen2"])))
+    m, ma = pb.get("malloc"), (pa.get("malloc") or {})
+    if isinstance(m, dict):
+        parts.append("malloc arena %s, in use %s, free %s (%+.0f MB), mmap %s"
+                     % (mbb(m.get("arena", 0)), mbb(m.get("uordblks", 0)), mbb(m.get("fordblks", 0)),
+                        (m.get("fordblks", 0) - ma.get("fordblks", m.get("fordblks", 0))) / 1048576.0, mbb(m.get("hblkhd", 0))))
+    else:
+        parts.append("malloc gauges unavailable")
+    print("memory    " + "   ".join(parts))
+cb = b.get("caches")
+if isinstance(cb, dict):
+    def cg(name, k):
+        v = (cb.get(name) or {}).get(k)
+        return v if isinstance(v, (int, float)) else 0
+
+    def mb(nbytes):
+        return "%.1f MB" % (nbytes / 1048576.0)
+
+    print("caches    jsonl %d files / %s / %d records   asm %d   judge parse %d, recon %d, chain %d   parse %d   "
+          "chat %d (%s)   usage %d rows   img %d (%s)   links %d + %d   stamps %d   task segs %d   tok %d"
+          % (cg("jsonl", "entries"), mb(cg("jsonl", "file_bytes")), cg("jsonl", "records"), cg("asm", "entries"),
+             cg("judge_parse", "entries"), cg("judge_recon", "entries"), cg("judge_chain", "entries"), cg("parse", "entries"),
+             cg("built_chat", "entries"), mb(cg("built_chat", "ms_bytes")), cg("judge_usage", "rows"),
+             cg("img", "entries"), mb(cg("img", "bytes")), cg("path_links", "entries"), cg("space_paths", "entries"),
+             cg("session_stamp", "entries"), cg("task_seg", "entries"), cg("session_tok", "entries")))
 print("pusher    %.2f cycles/s   %.2f wakes/s (event %d, backstop %d)   busy %.0f%% of wall"
       % (cyc / dt, wakes / dt, ev, bs, 100.0 * cyc_ms / (dt * 1000.0)))
 print("cycle ms  p50 %.0f   p90 %.0f   max %.0f (over the last %d cycles)   last %.0f"
@@ -1382,7 +1426,19 @@ print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)"
 parts = []
 for k in ("chat", "feed", "timeline"):
     built, cached, ms = dl("builds", k, "built"), dl("builds", k, "cached"), dl("builds", k, "ms")
-    parts.append("%s %d built / %d cached%s" % (k, built, cached, (" (%.0f ms avg)" % (ms / built)) if built else ""))
+    split = ""
+    if k == "chat":
+        # the chat builder's attribution (round-4 plan P3): rebuilds of the watched tab against background
+        # tabs whose signature moved, then per signature component the background rebuilds it caused; a
+        # kernel from before the split reports neither field and prints the line as before
+        active, bg = dl("builds", k, "active_built"), dl("builds", k, "bg_built")
+        if active or bg:
+            labels = sorted(((b.get("builds") or {}).get("chat") or {}).get("bg_miss") or {})
+            causes = ", ".join("%s %d" % (lab, dl("builds", k, "bg_miss", lab)) for lab in labels
+                               if dl("builds", k, "bg_miss", lab))
+            split = "; %d active, %d bg%s" % (active, bg, (": " + causes) if causes else "")
+    parts.append("%s %d built / %d cached%s"
+                 % (k, built, cached, (" (%.0f ms avg%s)" % (ms / built, split)) if built else ""))
 print("builds    " + "   ".join(parts))
 parts = []
 for kind in ("full", "delta", "deduped"):

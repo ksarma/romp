@@ -92,8 +92,10 @@ class CardTime(unittest.TestCase):
             {top: "completed"})
         card = self._card(top)
         self.assertEqual(card["t"], NOW - 600, "card time = COMPLETION (mt), not the 8h-ago mint")
-        self.assertEqual(card["trgb"], list(km.cm.age_rgb(NOW - card["t"])),
-                         "the recency tint follows completion, not mint (full frames only; deltas strip it)")
+        self.assertNotIn("trgb", card, "the built card carries no tint (stamped at serialization since 2026-09-07)")
+        wire = next(a for a in json.loads(km._feed_body(km.build_feed(NOW)))["asks"] if a["itemId"] == top)
+        self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - card["t"])),
+                         "the recency tint follows completion, not mint (whole frames only; deltas strip it)")
 
     def test_completed_card_time_ignores_a_no_op_rejudge_touch_of_the_umbrella(self):
         # An hours-old completed card must NOT jump to "moments ago" when a later no-op re-judge re-touches

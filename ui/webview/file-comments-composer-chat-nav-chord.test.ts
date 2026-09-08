@@ -307,7 +307,7 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => (src === undefined ? null : src),
     mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); },
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,
@@ -385,7 +385,7 @@ test("source: render.ts runs the chat's history keys from a window-capture liste
   // the static chain that puts this module's body before render.ts's: value imports at the top level, never import()
   assert.match(RENDER, /^import \{[^}]*\} from "\.\/file-view";$/m, "render.ts imports file-view.ts statically");
   assert.match(RENDER, /^import \{[^}]*\bpanelMark\b[^}]*\} from "\.\/file-comments";$/m, "…and this module directly");
-  assert.match(FILE_VIEW, /^import \{ fileCommentsAction \} from "\.\/file-comments";$/m, "file-view.ts imports this module statically");
+  assert.match(FILE_VIEW, /^import \{[^}]*\bfileCommentsAction\b[^}]*\} from "\.\/file-comments";$/m, "file-view.ts imports this module statically");
   assert.doesNotMatch(RENDER, /import\("\.\/file-(view|comments)"\)/, "neither is a lazy import");
   assert.doesNotMatch(FILE_VIEW, /import\("\.\/file-comments"\)/);
   // the feed's window listeners leave every Ctrl and Meta chord alone: the module's stopImmediatePropagation shadows none of them
@@ -584,7 +584,7 @@ window.__mount = () => {
     body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001",
     media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { window.__posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
+    post: (m) => { window.__posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { el.classList.add("fileview-aside"); aside = el; main.appendChild(el); } else if (aside) { aside.remove(); aside = null; } },
     setMode: noop, scrollToOffset: noop, reload: noop,
   };

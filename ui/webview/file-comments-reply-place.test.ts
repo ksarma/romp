@@ -306,7 +306,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => null,
     mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); },
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: noop, scrollToOffset: noop, reload: noop,
     ...over,
@@ -600,7 +600,7 @@ test("source: render builds the cards before the composer and puts the typing bo
   assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\) \|\| this\.replyTo\(\) === c\.id;/, "a comment card is open while its reply is written");
   assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.key\) \|\| c\.comments\.some\(\(cm\) => cm\.id === this\.replyTo\(\)\);/, "a change card too, for a hosted comment's reply");
   assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(!this\.openCards\.has\(id\)\) this\.openCards\.add\(id\); else if \(!this\.hostsReply\(id\)\) this\.openCards\.delete\(id\); this\.render\(\); \},/, "the head folds every card but the one hosting the reply");
-  assert.match(SRC, /this\.render\(\);\n\s*this\.composerBox\.scrollIntoView\(\{ block: "nearest" \}\);[^\n]*\n\s*this\.input\.focus\(\);\n\s*\}/, "startReply scrolls the box's place into view, then focuses it");
+  assert.match(SRC, /this\.render\(\);\n\s*this\.showComposer\(\);[^\n]*\n\s*this\.input\.focus\(\);\n\s*\}/, "startReply scrolls the box's place into view (showComposer: scrollIntoView outside the margin layout), then focuses it");
   assert.match(SRC, /const held = this\.composerBox\.contains\(document\.activeElement\);/, "closeComposer reads where the keyboard is before hiding the box");
   assert.match(SRC, /if \(was && was\.kind === "reply" && held\) \(this\.root\?\.querySelector\('\[data-act="fcreply"\]\[data-id="' \+ cssId\(was\.commentId\) \+ '"\]'\) as HTMLElement \| null\)\?\.focus\(\{ preventScroll: true \}\);/, "…and hands it to the card's Reply, found by the escaped id");
 });

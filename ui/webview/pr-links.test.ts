@@ -33,6 +33,10 @@ class E {
   childNodes: Array<E | T> = [];
   href = ""; target = ""; rel = ""; title = ""; className = "";
   dataset: Record<string, string | undefined> = {};
+  // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  attrs: Record<string, string> = {};
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   constructor(public tagName: string) {}
   get parentElement(): E | null { return this.parentNode; }
   get classList() { const cs = this.className.split(/\s+/).filter(Boolean); return { contains: (c: string) => cs.includes(c) }; }

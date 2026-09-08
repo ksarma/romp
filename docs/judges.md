@@ -471,7 +471,12 @@ permission/API-error floors: one interrupt at a time, the present event first.
   `STATE/judge-errors.jsonl` (the row contract above; kinds are parse,
   call, give-up, sweep-cut, cite-miss, rate-limited, task-store, history-unreadable,
   task-key-collision — a duplicated to-do mirror key, reconciled per node
-  and surfaced loudly),
+  and surfaced loudly — and the read-failure kinds the evidence gate's strict
+  readers write once per failure episode when a file exists and does not
+  read: store-unreadable, states-unreadable, cleared-unreadable,
+  stall-unreadable, captions-unreadable, session-archive-unreadable,
+  units-cache-unreadable, plus units-cache-write-failed for a unit-cache
+  publish that did not land),
   `STATE/judge-auth.json` (the per-session judge-auth-down latch — see
   "Billing" above).
 - Debugging: run the judge's own code against the live store

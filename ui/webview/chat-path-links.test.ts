@@ -33,21 +33,22 @@ test("the chat event carries the kernel's pathLinks verdict on user and assistan
 test("membership in pathLinks gates the link, and the map's value is the OPEN target", () => {
   // every existing shape gate stays — the map only ever narrows, never widens (the walk is path-links.ts's;
   // render.ts threads the event's map through: linkifyPathTokens(root, sid, pathLinks))
-  assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(inCode && looksLikeBareFileName\(tok\)\)\) continue;/);
+  assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(span\.inCode && looksLikeBareFileName\(tok\)\)\) continue;/);   // inCode is the node's the token lies in (textUnits)
   assert.match(LINKS, /const fixed = !isUri && pathLinks \? pathLinks\[tok\] : undefined;/);
   assert.match(LINKS, /if \(!isUri && pathLinks && typeof fixed !== "string"\) continue;/);
   assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks\)/);
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
-  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
+  // (a surface with its own place, the file viewer, hands the walk a `resolve` for the token or the fixed target; the chat passes none)
+  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(opts && opts\.resolve \? opts\.resolve\(fixed \?\? tok\) : \(fixed \?\? tok\)\);/);
   assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
-  assert.match(LINKS, /frag\.appendChild\(link\);/);
-  assert.match(LINKS, /a\.title = "Open " \+ open;/);
+  assert.match(LINKS, /list\.push\(\{ start, end: last, el: link \}\);/);   // the link takes the token's place in its node (rewriteSpan)
+  assert.match(LINKS, /a\.setAttribute\("title", "Open " \+ open\);/);
 });
 
 test("file:// URIs are explicit absolute paths — never gated on the map", () => {
   // both guards above test !isUri first, so a file:// token can't be dropped by the map…
-  assert.match(LINKS, /const isUri = \/\^file:\\\/\\\/\/i\.test\(tok\);/);
+  assert.match(LINKS, /const isUri = isFileUri\(tok\);/);   // a LOCAL URI (an empty authority, or localhost); file://host/path is prose (2026-09-07)
   // …and the kernel never puts file:// tokens in it
   assert.ok(KERNEL.includes('if not t.lower().startswith("file://")'), "kernel skips file:// tokens");
 });
