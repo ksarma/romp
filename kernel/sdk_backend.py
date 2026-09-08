@@ -11747,16 +11747,13 @@ class SdkBackend:
             r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
         ok = not err and isinstance(r, dict) and r.get("status") == "ok"
         if not ok:
-            # Each exit drops the claim FIRST and lowers the arm after (review round 5, 2026-09-08): the
-            # claim is the reg's, and a kept one refuses every later move of this session until a kernel
-            # boot heals it, so nothing that can fail may stand between the exit and its drop.
+            # The exits that leave the session where it was stand the move down: the arm lowered, THEN the
+            # claim dropped (_stand_down_move has the order and why).
             if err == _NO_CONTROL_SENDER:
-                self._update_reg_dropping(sid, ("cwdPending",))
-                s._disarm_move_settle()                         # nothing was sent
+                self._stand_down_move(s, sid)                   # nothing was sent
                 return err
             if isinstance(r, dict) and r.get("status") == "rejected":
-                self._update_reg_dropping(sid, ("cwdPending",))
-                s._disarm_move_settle()                         # the CLI answered: it did nothing
+                self._stand_down_move(s, sid)                   # the CLI answered: it did nothing
                 if r.get("reason") == "busy":
                     return "busy"
                 return str(r.get("message") or r.get("reason") or "the CLI rejected the move")
@@ -11788,11 +11785,27 @@ class SdkBackend:
             return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
         if r.get("changed") is False or new == old:
-            self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
-            s._disarm_move_settle()                             # no relocation → no turn-less result is coming
+            # already there: nothing to record, and with no relocation no turn-less result is coming
+            self._stand_down_move(s, sid)
             return ""
         self._finish_move(s, sid, old, new)
         return ""
+
+    def _stand_down_move(self, s, sid: str) -> None:
+        """A move() exit that leaves the session where it was: lower the arm (_disarm_move_settle), THEN
+        drop the claim (cwdPending), in that order (review round 6, 2026-09-08). The claim is what keeps a
+        second move() of this sid out (_claim_cwd_pending refuses while it stands), and the moment it is
+        released a second mover claims and raises the same arm for its own request; so the arm is settled
+        before the claim that guards it goes. Round 5 dropped the claim first, so that a raise in the
+        disarm could not keep it (a kept claim refuses every later move until a kernel boot heals it), and
+        that order let the second mover claim and arm in the gap and then lowered ITS arm, leaving its
+        relocation with the queue unheld (round 4's hazard). The disarm no longer raises, and the finally
+        keeps round 5's guarantee regardless: whatever the disarm does, the claim is dropped. The
+        uncertain-outcome exit is not one of these: its claim is decided by _heal_cwd_pending."""
+        try:
+            s._disarm_move_settle()
+        finally:
+            self._update_reg_dropping(sid, ("cwdPending",))
 
     def _claim_cwd_pending(self, sid: str, target: str) -> str:
         """Set the two-phase flag ONLY when no move is pending. Two concurrent move() calls for one sid (a

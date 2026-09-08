@@ -51,12 +51,17 @@ Round 4 (2026-09-08) pinned one more:
     exact events that lower the arm (the move's result consumed; move() refused), never on a timer, and the
     move's own request rides the control channel, so the hold never delays it.
 Round 5 (2026-09-08) pinned two more:
-  * move()'s exits drop the claim (cwdPending) before they lower the arm, and the disarm tolerates the closed
+  * move()'s exits drop the claim (cwdPending) whatever the disarm does, and the disarm tolerates the closed
     loop of a session whose CLI exited after the claim: move() returns the SDK's named error, not a raise, and
     a later move is not refused as already pending;
   * a lost reply after the CLI relocated keeps the arm, and the hold it leaves on the queue is announced on the
     problem ring (the session named, queued sends wait for the move's result); the chip shows the text queued,
     busy() reads it, and the hold ends on the exact event that lowers the arm, never on a timer.
+Round 6 (2026-09-08) pinned one more:
+  * move()'s standing-down exits (rejected, nothing changed, no control sender) lower the arm and THEN drop
+    the claim: the claim keeps a second move() of the sid out, and a second mover claims and arms the moment
+    it is released, so round 5's drop-first order lowered the second move's arm and left its relocation with
+    the queue unheld. The drop still happens whatever the disarm does.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -1234,8 +1239,9 @@ class OneFedTextAtATime(unittest.TestCase):
         request finds no client and move() takes the _NO_CONTROL_SENDER exit, which lowers the arm through
         _disarm_move_settle. At round 4 that raised RuntimeError on the closed loop before the claim was
         dropped: the kernel reported the raise in place of the SDK's named error, and every later move of
-        the session was refused as already pending until a kernel boot healed it. The exit drops the claim
-        first, and the disarm tolerates a closed loop."""
+        the session was refused as already pending until a kernel boot healed it. The disarm tolerates a
+        closed loop, and the exit drops the claim whatever the disarm does (round 6 put the disarm back in
+        front of the drop: _stand_down_move)."""
         s, c = self.s, self._idle_after_the_first_turn()
         new = os.path.join(self.state, "moved")
         os.makedirs(new, exist_ok=True)
@@ -1253,6 +1259,53 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertNotIn("cwdPending", sb.read_reg(self.state, SID) or {}, "the claim is dropped")
         self.assertEqual(real(SID, new), "", "a later move's claim is accepted")
         self.be._update_reg_dropping(SID, ("cwdPending",))
+
+    def test_a_standing_down_exit_releases_the_claim_after_the_arm_so_a_second_movers_arm_survives(self):
+        """Round 6: move()'s standing-down exits (the CLI rejected the set_cwd, or answered that nothing
+        changed, or the SDK had no control sender) lower the arm and drop the claim. Round 5 put the drop
+        first, which opened a window: the claim is what keeps a second move() of this sid out, so a second
+        mover claims the instant the flag is gone and arms for its own request, and the first move's disarm
+        then lowers THAT arm, leaving the second move's relocation with the queue unheld (round 4's hazard
+        again). The arm is settled before the claim that guards it is released, and the drop still happens
+        whatever the disarm does. The second mover's claim-and-arm is simulated inside the drop, the
+        instant the flag is gone, so the probe is exact and not a timing."""
+        s, c = self.s, self._idle_after_the_first_turn()
+        second = os.path.join(self.state, "moved-again")
+        real_drop, real_claim = self.be._update_reg_dropping, self.be._claim_cwd_pending
+        fired = []
+
+        def drop_then_a_second_mover_claims_and_arms(sid, drop=(), **fields):
+            real_drop(sid, drop, **fields)
+            if sid == SID and "cwdPending" in drop and not fired:
+                fired.append(real_claim(SID, second))      # "": the flag is gone, so the claim is accepted
+                with s._lock:
+                    s._move_settle_expected = True         # the second move arms for its own request
+        self.be._update_reg_dropping = drop_then_a_second_mover_claims_and_arms
+
+        def after_the_first_moves_exit(label, answer):
+            arm, claim = s._move_settle_expected, (sb.read_reg(self.state, SID) or {}).get("cwdPending")
+            s._disarm_move_settle()                        # the second move's own exit, so the next case
+            real_drop(SID, ("cwdPending",))                # starts clean whichever way this one went
+            self.assertEqual(fired, [""], "%s: the second mover claimed the instant the flag was gone" % label)
+            self.assertTrue(arm, "%s: the second move's arm survives the first move's exit" % label)
+            self.assertEqual(claim, second, "%s: the second move's claim stands" % label)
+            self.assertEqual(s.cwd, self.cwd, "%s: the session stays where it was" % label)
+            del fired[:]
+        words = "Couldn't find a directory at /srv/notes-api/moved."
+        for label, answer, expect in (
+                ("rejected", {"status": "rejected", "reason": "not_found", "message": words}, words),
+                ("changed: false", lambda path: {"status": "ok", "cwd": path, "changed": False}, "")):
+            with self.subTest(exit=label):
+                new, t, out = self._start_move(c, answer)
+                self.assertTrue(s._move_settle_expected, "the first move armed before its request")
+                c._query.gate.set()                        # the CLI answers
+                t.join(10)
+                self.assertEqual(out.get("r"), expect)
+                after_the_first_moves_exit(label, answer)
+        with self.subTest(exit="no control sender"):
+            c._query = object()                            # an SDK client without the private sender
+            self.assertEqual(self.be.move(SID, os.path.join(self.state, "moved")), sb._NO_CONTROL_SENDER)
+            after_the_first_moves_exit("no control sender", None)
 
     def test_a_lost_reply_after_the_cli_relocated_announces_the_hold_it_leaves(self):
         """Round 5: the CLI relocated the transcript for the set_cwd and never answered (a hang after the
