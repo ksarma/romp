@@ -762,7 +762,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) document\.addEventListener\(ev, this\.hideFloatOnDown, true\);/);
   assert.match(SRC, /if \(!body\.contains\(sel\.anchorNode\) \|\| !body\.contains\(sel\.focusNode\)\) return;/);
   assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "a change mark is a keyboard control too (Slice 2)");
-  assert.match(SRC, /if \(answerTodo && reply\.todoStamped\) \{ this\.todoAnswered = true; answeredTodos\.add\(this\.ctx\.todoId!\); \}/);
+  assert.match(SRC, /if \(todoId && reply\.todoStamped\) answeredTodos\.add\(todoId\);/, "the latch is the stamp, for whichever todo the send named (the todo-file follow-on)");
   assert.match(SRC, /todoStamped: !str\(m\.warning\)/, "the kernel's `warning` on a sent reply is exclusively the nothing-stamped text");
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");

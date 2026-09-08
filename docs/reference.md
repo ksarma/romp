@@ -39,31 +39,44 @@ reload prompt that reads "A newer romp build is available" is separate and stays
 mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
-meanwhile. Each open request is listed under *Waiting on you* on the card at the bottom of that
+meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
 session's transcript, with Reply and Dismiss, and a session that resumes after a restart or a
-compaction is handed its open requests back so it can withdraw the ones that no longer apply. A
-session that withdraws a request you already answered or dismissed, or one it already withdrew, is
+compaction is handed its open todos back so it can withdraw the ones that no longer apply. A
+session that withdraws a todo you already answered or dismissed, or one it already withdrew, is
 told so plainly, with the time, and not handed an error; only an id that is unknown or another
 session's is refused as one. A withdrawal the kernel cannot carry out is refused, never reported
-as closed: a request held on an attached machine the kernel cannot reach, or one running older
-romp, is reported as still standing, and a stored request whose closing record is damaged is
+as closed: a todo held on an attached machine the kernel cannot reach, or one running older
+romp, is reported as still standing, and a stored todo whose closing record is damaged is
 reported as unreadable, with the record named. The feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
 one machine at a time: each kernel keeps its own copy, and the choice does not spread to other
 attached machines. While it is off, sessions on that machine are not offered the tools that flag
-or withdraw a request, nothing is listed, and nothing is handed back on resume. Requests flagged
+or withdraw a todo, nothing is listed, and nothing is handed back on resume. Todos flagged
 earlier stay stored and reappear when you turn it back on; the kernel's log says how many are
 waiting. Every filing, answer, dismissal and withdrawal is also appended to `user-todos-log.jsonl`
 beside the store under Romp's state directory, one line per event and never rewritten, so the list
 can be rebuilt if the store is ever lost. The **Waiting on you** pane (bottom bar, off by default)
-collects every open request across all sessions and attached machines into one list with the same
+collects every open todo across all sessions and attached machines into one list with the same
 Reply and Dismiss; because the switch is per machine, the pane says when it is off on this one and
-still lists the other machines' requests. A file path in the one-line text or in the detail is a link
+still lists the other machines' todos. A file path in the one-line text or in the detail is a link
 that opens the file, on the session's card and in the pane alike. Paths that link: absolute, `~/`, `./`
 and `../` paths, relative paths whose last segment has a file extension, and `file://` URIs. A bare path
 is made of ASCII letters, digits and `_ . ~ / -` only, so any other character ends it (a space, `+`, `#`,
 `(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
 link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
+A todo can also name the file it is about, through the tool's `file` argument. The kernel that holds the
+session makes the path absolute and stores it: `~` is expanded, a relative path is read against the
+session's working directory like one in the text, and a `file://` URI becomes its path. The todo shows the
+file as a chip that opens it, on the session's card and in the pane alike, and a comment you send from that
+file's Comments panel offers to answer the todo however you opened the file. The kernel does not check that
+the file exists. A mistyped absolute path is stored as typed, with no warning; its chip opens nothing and no
+Send offers the todo. It is cleared like any other todo, by your Reply or Dismiss or by the session's
+withdraw. A value the kernel cannot make into a path on the session's machine is kept as given: the todo is
+still filed, and the tool's reply says why and asks for the absolute path. That happens for a relative path from
+a session whose working directory the kernel does not know, a `file://` URI that does not carry an absolute
+path, a URL of another scheme, and a spelling no path can have (a NUL byte in it, or a length past the
+machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
+names one.
 
 These are for scripting and for agents rather than daily use:
 
@@ -296,6 +309,8 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
+| `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about (User todos, above) |
+| `withdraw_user_todo(id)` | Take back a todo by the id `add_user_todo` returned |
 
 ### Claude Code 2.1.224 or newer
 
@@ -526,7 +541,7 @@ through to `install.sh`:
 **File comments** (the viewer's Comments panel) have two prerequisites and one
 consent. The **User todos** switch (above) is what lets a session flag a file
 for you to look at: without it the session has no `add_user_todo` tool, so no
-request appears under Waiting on you, and a comment you send from the viewer
+todo appears under Waiting on you, and a comment you send from the viewer
 reaches the session as a plain message. The machine whose kernel holds the
 file needs `node`: the kernel runs a small node helper for every read and
 write of a file's comments, and without it the viewer shows no Comments

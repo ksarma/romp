@@ -16,7 +16,9 @@ test("the todo ChatEvent and the session payload both carry the user todos", () 
   // the rows ride ON the event (the chatTail delta re-sends changed events only) AND on the
   // session as the merge seam the plan names
   assert.match(RENDER, /kind: "todo"; tasks: TodoTask\[\]; userTodos\?: UserTodo\[\]; error\?: string/);
-  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number \}/);
+  // `file` joined 2026-09-07 (the todo-file follow-on): the absolute path the kernel filed the todo
+  // against, optional like detail — render-todo-file-chip.test.ts pins what the row does with it
+  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number; file\?: string \}/);
   assert.match(RENDER, /userTodos\?: UserTodo\[\];/);
 });
 
@@ -127,8 +129,10 @@ test("reply opens a modal (outside the rebuilt transcript) and posts one answer+
   // one kernel op both injects the reply AND stamps the todo answered — never sendMessage plus a
   // separate stamp; and a modal, not an inline box, because the card rebuilds every push
   // (todoDetail — the ask's optional longer context, quoted beneath the line — joined 2026-09-02;
-  // user-todo-detail-hint.test.ts pins what the modal does with it)
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = ""\)/);
+  // user-todo-detail-hint.test.ts pins what the modal does with it; todoFile — the file the todo
+  // names, shown as a chip on the quoted line — joined 2026-09-07; render-todo-file-chip.test.ts
+  // pins the chip)
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\)/);
   assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "userTodoAnswer", id: sid, todoId, text \}\)/);
 });
 

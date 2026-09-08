@@ -211,8 +211,12 @@ reply. A file path in a todo's text or its detail is a link: click it and the
 file opens in the Files pane, which comes forward if it was closed. Absolute
 paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
-(`notes/plan.md`, not `notes/plan`). The pane is off by default,
-like the outline; turn it on from the bottom bar. Sessions flag todos only where
+(`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
+file's name as a chip on the row and in the Reply box, with the full path on
+hover; the session's own todo card in the chat shows the same chip. Click the
+chip and the file opens the same way; a **Send to session** from that file can
+then answer the todo (see Files). The pane is off by default, like the outline;
+turn it on from the bottom bar. Sessions flag todos only where
 the gear's **User todos** switch is on, and the switch is per machine: while it
 is off on this one, the pane says so and still lists the
 other machines' todos. A todo you expected can be missing for two reasons. A
@@ -375,16 +379,17 @@ the editor rewrites its line endings, which would move them; accept or reject th
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
 what it refers to and the commands the session needs to answer it. The number on the button
-is what will go, and the confirm lists it, with the message itself one click away. When the
-file was opened from a request under Waiting on you, a checkbox answers that request with
-the same send; when tracking is off, another turns it on first, so the session's revisions
-come back as changes. When changes are pending, a third checkbox, **accept the pending
-changes**, accepts them all before the send, so the session's later edits arrive as new
-changes instead of folding into an old one; the message then says how many changes you
-accepted and rejected. All are checked by default. One send answers a request; a request
-that named several files is answered by the first, and later sends show no checkbox. The
-panel then says **Sent to** the session and when, or **Queued for** it when the session has
-gone quiet, in which case the message goes when it wakes.
+is what will go, and the confirm lists it, with the message itself one click away. When a
+todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
+answers that todo with the same send; when several todos name the file, a row of choices
+picks the one to answer, or none. When tracking is off, another checkbox
+turns it on first, so the session's revisions come back as changes. When changes are pending,
+a third checkbox, **accept the pending changes**, accepts them all before the send, so the
+session's later edits arrive as new changes instead of folding into an old one; the message
+then says how many changes you accepted and rejected. All are checked by default. One send
+answers one todo; a todo that named several files is answered by the first, and later sends
+no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
+it when the session has gone quiet, in which case the message goes when it wakes.
 
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the

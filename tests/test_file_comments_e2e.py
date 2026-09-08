@@ -15,12 +15,20 @@ scripted: `_send_or_park` records the message instead of injecting it, the names
 that knows one session, `web`, whose recorded cwd is the project root (so the reject trace finds an
 owner), and that session's backend `send` is a recorder.
 
+The todo-file follow-on (2026-09-07) is walked here too: a todo filed through the real POST /usertodo
+with `file`, listed by a status on that file, answered by a send carrying its id, gone at the next status;
+and the same loop from the postal tool's side, the real `add_user_todo` posting over a loopback socket to
+the real handler on a ThreadingHTTPServer, with the kernel's path warning read back out of the tool's reply.
+Another session's todo naming the same file is neither listed for this session nor stamped by its send.
+
 Skipped when node is missing (the host script and the CLIs run under it). Synthetic only: the
 notes-api demo world, a placeholder sid, a `.git/` directory as the project landmark (store-io reads
 nothing from it).
 """
 import binascii
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -32,6 +40,7 @@ import threading
 import zlib
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -51,8 +60,12 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 km = load_source("romp_kernel_filecomments_e2e", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
+# the postal bus, whose add_user_todo is the door a session's request comes through; loaded under the same
+# hermetic state root (it reads XDG_STATE_HOME at import too), pointed at the test's own kernel server per test
+pm = load_source("romp_postal_filecomments_e2e", os.path.join(BIN, "romp-postal-service"))
 
 SID = "11111111-2222-3333-4444-555555555555"
+OSID = "7f7f7f7f-1111-4222-8333-944444444444"   # another session on this machine (a PRIVATE synthetic sid)
 NODE = shutil.which("node")
 TEXT = "# Findings\n\nThe api session cut p95 latency by 40%.\n\nWe recommend shipping the cache in v1.2.\n"
 EDITED = "# Findings\n\nThe api session cut p95 latency by 45%.\n\nWe recommend shipping the cache in v1.2.\n"
@@ -1257,3 +1270,166 @@ def test_a_region_comment_on_a_pdf_page_stores_the_page_and_the_hash_a_regenerat
     assert "Comment %s (on the region at 0.50, 0.50, 0.25, 0.25 of page 3):\nCrop the header.\n" % c["id"] in text
     assert "never run track-edit on it" in text
     assert pdf.read_bytes() == minimal_pdf(3), "no verb touched the PDF"
+
+
+def _serve_post(path, body):
+    """Drive the REAL do_POST dispatcher over a fake socket (tests/test_user_todos.py's harness), with the
+    serve token: the door the postal tool's add_user_todo comes through."""
+    raw = json.dumps(body).encode()
+    h = km.Handler.__new__(km.Handler)
+    h.client_address = ("127.0.0.1", 0)
+    h.headers = {"Content-Length": str(len(raw)), "X-Romp-Token": km.TOKEN}
+    h.path = path
+    h.command = "POST"
+    h.request_version = "HTTP/1.1"
+    h.wfile = io.BytesIO()
+    h.rfile = io.BytesIO(raw)
+    h.close_connection = True
+    captured = {}
+    h.send_response = lambda code, *a: captured.__setitem__("status", code)
+    h.send_header = lambda k, v: None
+    h.end_headers = lambda: None
+    h.log_message = lambda *a: None
+    h.do_POST()
+    return captured.get("status"), json.loads(h.wfile.getvalue().decode() or "{}")
+
+
+def test_a_todo_filed_with_its_file_is_listed_by_status_answered_by_a_send_with_its_id_and_gone_after(world):
+    """The todo-file follow-on (2026-09-07), end to end: the session files a todo naming the report through
+    the real route (a relative path, resolved against its cwd); a status on the file lists that todo and not
+    the one whose path lives only in its detail; a send carrying its id answers it; the next status no longer
+    lists it. An unresolvable path is filed all the same, kept as given, with the warning on the reply."""
+    code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the morning report", "file": "docs/report.md"})
+    assert code == 200 and res["ok"] and "warning" not in res, res
+    tid = res["todoId"]
+    rec = km._user_todos()[SID][1]
+    assert (rec["id"], rec["file"]) == (tid, str(world.fp)), "resolved against the session's cwd, stored absolute"
+    listed = [{"id": tid, "text": "Need a look at the morning report"}]
+    s = world.ok("status", world.fp)
+    assert s["todos"] == listed, s["todos"]
+    assert world.ok("status", world.other)["todos"] == [], "another file lists nothing"
+    r1 = world.comment(world.fp, "Which cache?")
+    assert r1["todos"] == listed, "every successful reply carries the list, not the status verb alone"
+    cs = r1["store"]["comments"]
+    comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+    rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                    "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": tid})
+    assert rep == {"type": "fileCommentsSent", "reqId": rep["reqId"], "queued": False}, rep
+    assert world.injected[0]["user_todo"] == tid
+    assert km._user_todos()[SID][1]["resolved"]["kind"] == "answered"
+    assert "resolved" not in world.todo(), "the detail-path todo is untouched: one send answers one todo"
+    s2 = world.ok("status", world.fp)
+    assert s2["todos"] == [], "answered, so gone at the next status"
+    assert s2["unsent"]["comments"] == []
+    # an unresolvable path: filed, kept as given, the warning on the reply, and it matches no file
+    saved = km._cwd_of
+    km._cwd_of = lambda s: ""
+    try:
+        code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the other note", "file": "docs/other.md"})
+    finally:
+        km._cwd_of = saved
+    assert code == 200 and res["ok"] and "did not resolve" in res["warning"], res
+    assert km._user_todos()[SID][2]["file"] == "docs/other.md"
+    assert world.ok("status", world.other)["todos"] == []
+
+
+def test_another_sessions_todo_naming_the_same_file_is_neither_listed_here_nor_stamped_by_a_send_from_here(world):
+    """The status lists the todos of the REQUEST's session only: another session's todo naming the same
+    file is not offered to this session's panel, and a send from this session carrying that id sends the
+    comments but stamps nothing — the reply says so and names the id — so one session's send never
+    settles another session's request."""
+    other = km._add_user_todo(OSID, "Need a look at the report as well", file=str(world.fp))
+    assert km._user_todos()[OSID][0]["file"] == str(world.fp)
+    assert world.ok("status", world.fp)["todos"] == [], "the other session's todo is not this session's"
+    rep = world.ws({"type": "fileComments", "sid": OSID, "path": str(world.fp), "verb": "status"})
+    assert rep["type"] == "fileCommentsResult", rep
+    assert rep["todos"] == [{"id": other, "text": "Need a look at the report as well"}], "listed for its own session"
+    r1 = world.comment(world.fp, "Which cache?")
+    cs = r1["store"]["comments"]
+    comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+    rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                    "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": other})
+    assert rep["type"] == "fileCommentsSent" and rep["queued"] is False, rep
+    assert other in rep["warning"] and "nothing was marked" in rep["warning"], rep["warning"]
+    assert world.injected[0]["sid"] == SID and world.injected[0]["user_todo"] is None, "sent, nothing stamped"
+    assert "resolved" not in km._user_todos()[OSID][0], "the other session's request still stands"
+    assert "resolved" not in world.todo()
+
+
+class _QuietHandler(km.Handler):
+    """The real handler, without the per-request access log on the test's stderr."""
+
+    def log_message(self, *a):
+        pass
+
+
+@contextlib.contextmanager
+def _kernel_server():
+    """The REAL kernel handler listening on a loopback port, the way the bus reaches it: the same
+    ThreadingHTTPServer the serve layer's own tests run it under (tests/test_kernel.py ServeSecurity)."""
+    from http.server import ThreadingHTTPServer
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _QuietHandler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield srv.server_address[1]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        t.join(10)
+
+
+def test_the_postal_tool_files_the_todo_over_the_wire_and_a_send_from_the_file_answers_it(world):
+    """The session's side of the loop with nothing scripted between the tool and the store: the real
+    postal `add_user_todo` (its `file` argument, a relative path) posts over a loopback socket to the real
+    handler; the tool's reply names the minted id and says nothing about the file; a status on the file
+    lists that todo with the tool's own text; a send carrying the id answers it; the next status no longer
+    lists it. Then the warning: with no working directory recorded for the session, the path is kept as
+    given, the todo is filed all the same, and the kernel's words reach the agent through the tool's reply.
+    The bus reads the kernel's switch by the same file name, so the switch the world turned on is the one
+    the tool consults."""
+    saved = (pm.KERNEL_BASE, pm.SERVE_TOKEN, pm.USER_TODOS_SWITCH, pm._self_identity, pm._heartbeat)
+    with _kernel_server() as port, mock.patch.dict(os.environ):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)      # the no-live-kernel seam makes _kernel_post a no-op; a kernel answers here
+        pm.KERNEL_BASE = "http://127.0.0.1:%d" % port
+        pm.SERVE_TOKEN = km.TOKEN
+        pm.USER_TODOS_SWITCH = jd.STATE / km.USER_TODOS_SWITCH_FILE
+        pm._self_identity = lambda: (SID, "web")
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            assert pm._user_todos_on(), "the switch the world turned on, read by the bus"
+            out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the morning report", "file": "docs/report.md"})
+            assert not err, out
+            m = re.search(r"Noted \(id (ut-[0-9a-f]{8})\)", out)
+            assert m and "About the file" not in out, out
+            tid = m.group(1)
+            rec = km._user_todos()[SID][1]
+            assert (rec["id"], rec["text"], rec["file"]) == (tid, "Need a look at the morning report", str(world.fp))
+            listed = [{"id": tid, "text": "Need a look at the morning report"}]
+            assert world.ok("status", world.fp)["todos"] == listed
+            assert world.ok("status", world.other)["todos"] == []
+            r1 = world.comment(world.fp, "Which cache?")
+            cs = r1["store"]["comments"]
+            comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+            rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                            "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": tid})
+            assert rep == {"type": "fileCommentsSent", "reqId": rep["reqId"], "queued": False}, rep
+            assert world.injected[0]["user_todo"] == tid
+            assert km._user_todos()[SID][1]["resolved"]["kind"] == "answered"
+            assert world.ok("status", world.fp)["todos"] == [], "answered, so gone at the next status"
+            # the kernel's warning for a path that did not resolve, read out of the tool's reply
+            saved_cwd = km._cwd_of
+            km._cwd_of = lambda s: ""
+            try:
+                out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the other note", "file": "docs/other.md"})
+            finally:
+                km._cwd_of = saved_cwd
+            assert not err, "filed all the same: a warning is not a failure"
+            m = re.search(r"Noted \(id (ut-[0-9a-f]{8})\)", out)
+            assert m, out
+            assert "About the file: the file path docs/other.md did not resolve to an absolute path" in out, out
+            assert km._user_todos()[SID][2] == {"id": m.group(1), "text": "Need a look at the other note",
+                                                "createdT": km._user_todos()[SID][2]["createdT"], "file": "docs/other.md"}
+            assert world.ok("status", world.other)["todos"] == [], "a path kept as given names no file on disk"
+        finally:
+            pm.KERNEL_BASE, pm.SERVE_TOKEN, pm.USER_TODOS_SWITCH, pm._self_identity, pm._heartbeat = saved
