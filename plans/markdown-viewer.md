@@ -693,6 +693,146 @@ none`; a `:---:` column computes `text-align: center`; `--hl-cmt` on the code ba
 4.5:1 or more; a long note prints multi-page in black; every fence has a gutter and Copy;
 anchor-map paints across `.cl` spans. Tests: computed-style leg; wrapped-code anchor-map fixture.
 
+**The Slice 3 build** (2026-09-08). Branch `mdviewer-s3`, stacked on `mdviewer-s2` (5c0c737c) with the fork's main
+merged in (aa474a3e). The gap analysis behind it ran every criterion above in headless Chromium over the real viewer
+at the Slice 2 tip; the numbers below are its and the build's. Where the code as built departs from the text, why, and
+which test holds each rule:
+1. *The heading scale.* GitHub's: h1 2em, h2 1.5em, h3 1.25em, h4 1em, h5 and h6 1em in the dim tier, weight 600, a
+   1px rule under h1 and h2 with 0.3em of padding above it, em of the prose so the text-size control scales them. The
+   text names no margins. GitHub writes its in rem, 1.5 above and 1 below every heading whatever its size; here the
+   distance is 1.5 prose-em above and 0.5 below, the larger levels dividing by their own size to land on the same
+   distance (`calc(1.5em / 2)` on h1), and the first child of the note stays flush. Before: h1 16.9px, h2 14.95, h3
+   13.65, h4 13 (equal to strong), h5 10.79 and h6 8.71 in bold from the browser's own sheet, no rules. After, at 100
+   percent: 29.9, 22.425, 18.6875, 14.95, 14.95 and 14.95 dimmed; at 115 percent 34.385, 25.79, 21.49, 17.19.
+   file-view-typescale-browser.test.ts measures the six levels, the rules and the margins on the three surfaces at
+   both sizes and in both themes; file-view-text-size.test.ts and styles-fc-region-layer.test.ts re-pin the h1 at 2em.
+2. *Decision 3: the `--font-doc` token.* Declared in all four token blocks (styles.css and feed.css, `:root` and
+   `body.theme-light`), `var(--sans)` in both themes, and `.fileview-md` reads it; `--font-prose` is untouched and
+   still mono in light for the chat's replies. A `--color-scheme` token (dark, light) joins it in the four blocks so a
+   form control a note carries is drawn for the theme (item 5). The `.fc-overlay` reset that stopped the light theme's
+   mono face reaching a figure's chip has nothing to stop on the face now and stays for the size, which the 2em h1
+   makes more necessary; its comment and the region-layer leg's light-theme assertion say so. The typescale leg reads
+   the note's computed face in light (Space Grotesk, the body's) and `--font-prose` still resolving to the mono stack
+   there.
+3. *Decision 4: the measure.* The prose is `calc(var(--fs) * 1.15 * var(--fv-scale, 1))`, 14.95px at the 13px default,
+   so a VS Code chat font size is honoured and the control still scales it; fenced code stays at 12px times the scale.
+   The column is the root's own inline padding, `max(18px, round(down, calc((100% - 80ch) / 2), 1px))`, so it is
+   eighty of the root's own zero glyphs, centred in the body, at every size and in either face, and every child of the
+   note sits in it, pictures and the figure layer's wrapper included; the 860px cap on every block (`.fileview-md >
+   :where(:not(table))`) and the direct-child media cap that scaled it are gone. The text says about 80ch; the build
+   is exactly 80ch rounded up to at most two pixels: the padding is rounded DOWN to whole pixels, since a fractional
+   left edge (69.84px at 900) put the text on sub-pixel positions where headless Chromium's drag selection stayed
+   collapsed at some offsets (4px into the first glyph at 70 percent, 5 and 12px at 100; measured 2026-09-08, and gone
+   with an integer edge), and whole pixels keep the two gaps equal to the pixel. Before: 860px, left-pinned, 104 zero
+   glyphs. After: 760.3px is 80.0ch at 900 and 1400 (ch 9.5px), 762px with the rounding; at 115 percent 80ch is 875px
+   and a 900px pane caps the column at 864 (79ch); at 380, 344px (36ch). A plain `padding: 14px 18px` stands before
+   the rounded declaration as the fallback for a browser without `round()`. The chat's own `.md` scale is not touched.
+   The typescale leg asserts the column against the glyph width and the two gaps within a pixel at 900 and 1400, the
+   aside open and closed; file-view-text-size.test.ts's declaration pins and its 860 numbers were rewritten, and its
+   one drag now starts 2px into the paragraph instead of 4 (the quirk above).
+4. *The pane-wide table under the centred column.* `.fileview-body` is a size container (`container-type:
+   inline-size`), and a table of the note's own (`.fileview-md > table`) is capped at `calc(100cqi - 36px)`, the body
+   less the root's inset, with `max-width: 100%` declared first as the fallback for a browser without container units.
+   The coordinator's formula for the centring (`margin-inline: calc((100% - 100cqi) / 2)`) was not used: a block with
+   negative inline margins starts at its left margin edge, so a narrow table would have sat at the body's edge, left
+   of the prose. The table is instead moved by `translate: min(0px, round(calc(50cqi - <the padding> - 50%), 1px))`, a
+   percentage in translate being of the table's own width: a table no wider than the column is not moved and sits at
+   the column's left edge with the prose, as on GitHub, and a wider one is moved left by half of what it exceeds the
+   column by, so it grows out of the column evenly into both gutters until it meets the body's inset, and scrolls in
+   its own box past that. The table's layout box stays where the layout put it, so the body never scrolls sideways
+   (`contain: layout` on the root). A table inside a quote or a list item keeps the `max-width: 100%` of its
+   container, the guide's standing promise. `display: grid` on the table, the other way to centre a box by its own
+   width, was tried and rejected: Chromium blockifies thead and tbody into separate items and the columns no longer
+   align. Measured at a 1400px pane: a six-column table 1207.9px wide in a 762px column with gaps of 96.0 and 96.1px;
+   a fourteen-column table 1364px, from inset to inset, scrolling 2596px inside it; with the Comments aside open (body
+   1060) the same tables 1024px, the body's, not the card's; at 900, capped at 864; at 380, the column's 344. The
+   typescale leg's second test lays the three tables out at 380, 900 and 1400 on the three surfaces, the aside open
+   and closed; file-view-text-size.test.ts pins the declarations and file-comments.test.ts the body's container-type.
+   The table's `scrollWidth` can read one pixel over its `clientWidth` when its max-content width lands a fraction
+   over the cap (913 in 912 at the document size); that check carries the pixel of slack the code block's already had.
+5. *Lists and tasks.* `padding-left: 2em` on ul and ol (was 1.4em). mdBlock stamps GitHub's `task-list-item` on a list
+   item after the sanitize when its first child is a disabled checkbox, or the first child of its first paragraph is
+   (marked puts a loose list's box inside the paragraph; the text names the first child alone); the item computes
+   `list-style: none`, and the box wears `accent-color: var(--accent)`, `color-scheme: var(--color-scheme)` and
+   GitHub's `margin: 0 0.2em 0.25em -1.4em` into the gutter. The typescale leg checks both list shapes, the plain
+   item's kept bullet, and the accent as the browser resolves the theme's token (the light theme's accent is its clay,
+   not the blue).
+6. *Tables.* th weight 600 on `var(--overlay-05)` (was 700 on `--box-bg`, 1.09:1 against a cell), even body rows on
+   the same wash, and `[align="center"]`, `[align="right"]` and `[align="left"]` rules for th and td, since the shared
+   `text-align: left` outranked the attribute marked writes for a `:---:` column. Both sheets' th rules are byte-equal
+   now (feed.css carried a fallback for `--box-bg`, which its `:root` lacks; `--overlay-05` it has). The typescale leg
+   reads the weight, the fills and the three alignments.
+7. *kbd and tabs.* `.fileview-md kbd` on `--kbd-bg` and `--kbd-border` (the settings modal's tokens, in both sheets),
+   mono at the ladder's 0.86em, a 3px radius, an inset bottom shadow line. `tab-size: 4` on `.fileview-md pre code`,
+   the Raw view's value (was the browser's 8). The typescale leg reads both on every fence.
+8. *Fenced code shares the chat's dress.* `ui/webview/code-block.ts` holds `wrapLinesHtml` (the pure walk),
+   `wrapCodeLines`, `addCopyBtn` and `copyText`, moved from render.ts as they were; render.ts and file-view.ts import
+   them, and file-view.ts still imports nothing from render.ts. mdBlock captures the raw text first, highlights a
+   fence that names a registered language (never `highlightAuto`), then wraps EVERY fence in rows and gives it Copy,
+   named or not; the math fill's source fallback keeps Copy alone, as in the chat. The line counter resets on
+   `.fileview-md pre code` rather than `code.hljs`, since a plain fence carries no hljs class and would have gone on
+   counting. Scoped copies of the chat's `.cl`, `.ct`, `.has-copy` and `.code-copy` rules sit in both sheets,
+   byte-equal, the code tint with the chat's literal as its fallback (feed.css defines no `--code-bg` in `:root`).
+   code-block.test.ts runs the walk and pins the callers, the bundle boundary and the sheets; codeblock-copy.test.ts,
+   codeblock-wrap.test.ts and file-view.test.ts point at the module; the typescale leg counts rows and Copy on a
+   python, a rust, a zig and an unnamed fence. The viewer's link pass (file-view-links.ts) joins the text nodes under
+   the nearest line unit, and a wrapped fence's `pre` no longer holds newlines, so `.cl` joined `.fv-cl` in
+   LINE_UNITS: without it a path ending one line ran into the path beginning the next (`data/x.jsondocs/fence2.md`),
+   and file-view-links-browser.test.ts caught it.
+9. *The anchor map across rows.* The wrap drops the newline each row stands for, so a wrapped code element's
+   textContent runs its lines together, and paintRendered's fallback matched a quote holding a newline against a hay
+   reading "commentdef" (0 marks for a two-line comment range, where the unwrapped block painted 13). anchor-map.ts
+   now reads a code element's lines through one set of helpers, `codeRuns` (the text runs with a newline put back
+   between adjacent `.cl` or `.fv-cl` rows), `codeText`, `codeLineAt` and `codeLineStart`; the fallback builds its hay
+   from them and maps the hit back onto the text nodes, and reader-place.ts reads the code line at the body's top edge
+   and where a line starts through the same helpers (its hit test moves to the first `.ct`'s left edge, past the
+   line-number gutter, and `codeLineAt` takes the DOM position rather than a character offset, since the end of one
+   row's text and the start of the next are one offset and two lines once the newline is gone). Slice 8 reads the same
+   helpers. After: the two-line range paints marks in rows 0 and 1, the whole fence in its four text rows, a two-line
+   range of a plain fence in both rows, an insertion across lines in two or more rows, and a Rendered selection inside
+   code is still refused with the Raw offer. anchor-map-wrapped-code.test.ts (node, over a stand-in built from the
+   walk's own output) and anchor-map-wrapped-code-browser.test.ts (the real files bundle over
+   anchor-map-fixtures/fenced.md) hold it; the Slice 2 place suites are unchanged and green.
+10. *Decision 5's grammars.* `ui/webview/viewer-grammars.ts` registers rust (rs), go (golang), c (h), java, sql and
+    ini under both `ini` and `toml` (hljs 11 has no toml module; ini.js declares the alias), and file-view.ts imports
+    it, so files.js and feed.js gain them through the viewer and the chat bundle through file-view.ts. The chat's
+    auto-detection of an unlabeled fence keeps to its ten: highlight-cache.ts passes `AUTO_LANGUAGES`, the ten names
+    render.ts registers, to `highlightAuto`. Beyond the text: the code view's extension map gains rs, go, c, h, java,
+    sql, toml and ini, so a `.rs` file reads as a rust fence does. Bundle deltas against the branch's base, production
+    (minifyWhitespace and minifySyntax, identifiers kept, as esbuild.js builds): files.js 466,821 to 491,370 bytes
+    (+24,549; gzip +7,641), feed.js 745,735 to 770,404 (+24,669; gzip +7,635), render.js 1,456,132 to 1,479,885
+    (+23,753; gzip +7,724); the six grammars are 20,781 of that (sql 7,068; c 4,741; rust 3,229; java 3,099; go 1,425;
+    ini 1,219), code-block.ts 1,612 and the anchor-map helpers 1,807, less 882 reader-place.ts gave back.
+    code-block.test.ts registers the six in node and pins the subset and the imports.
+11. *The code-comment token.* `--hl-cmt` dark from #6f6a5f to #978f81: 2.85:1 on a code block (the fill composited
+    over the card) to 4.79:1, 5.21 on the card; light from #6E675C to #67614f: 4.39:1 to 4.86:1. The chat's `.md pre`
+    reads the same token, so the chat's code comments are lighter in dark and darker in light too.
+    theme-parity.test.ts holds a pair for `--hl-cmt` over `--box-bg` at 4.5 beside the standing 3 over `--bg`; the
+    typescale leg measures the ratio from the browser's computed colours in both themes; file-view.test.ts's palette
+    pin carries the new values.
+12. *Print.* An `@media print` block at the end of styles.css and feed.css, byte-equal, and the pane's own overrides
+    in files-pane.css in keywords (no bare hex; css-census stays at 0): the modal's fixed overlay becomes static and
+    its 95 percent card unclipped (the pane's viewer keeps the position: relative files.test.ts pins, for the z-index
+    it holds on screen; in flow it prints as a block just the same), the page and the card white with black text, code
+    tokens and line numbers black, the body's scroll box open, the title bar, aside, Comment float, notice bar and
+    Copy buttons hidden, and everything else on the page left out while a note is open (`body.fileview-open >
+    :not(#romp-fileview)`). Before: one page, the card's dark grey, on the pane and the chat modal. After: ten A4
+    pages for the gap analysis's 120-paragraph note on both. file-view-print-browser.test.ts emulates print media,
+    reads the computed styles with the real aside mounted, counts the PDF's pages, and returns to screen media; its
+    node test pins the block byte-equal (fileview-parity's rule reader cannot read a nested block).
+13. *Pins moved.* fileview-parity.test.ts gains the new heads (the headings, the list gutter and task item, kbd, the
+    fences' rows and Copy, the table's fill, striping, alignment and break-out) and loses the direct-child media cap;
+    styles-fc-region-layer.test.ts re-pins the h1 at 2em, the face at `--font-doc` and its control's compounding at
+    2.3 times; file-comments.test.ts the body's container-type; codeblock-copy.test.ts the auto-detection subset; the
+    two md-sanitize legs' comments the retired 860px cap. The Slice 2 legs that read the old geometry were re-pinned,
+    not loosened: the Rendered view is the taller of the two at 900px now (15px prose in an 80ch column against 12px
+    rows at the pane's width), so the round trip's Raw scrollTop is asserted to differ rather than to exceed, the
+    bottom-of-document round trip starts in the shorter view (Raw), a paragraph that was two lines at 900px is three
+    and the fraction assertions say so, a replacement shorter than what showed sits at the edge, the three margin legs
+    and the six margin sheet suites (feed-css-margin-fit, -leader, -footers, -footer-rule, styles-fc-margin-fit and
+    -footer) name the six-heading rule head, the whitespace-point leg's sentence leaves room beside it for the struck
+    labels in the narrower column, and the place-edits leg's line reader reads the `.cl` row under the caret.
+
 ### Slice 4: one markdown configuration, Obsidian constructs included
 
 A `md-config.ts` imported by render.ts, file-view.ts and anchor-map.ts registers gfm, the
