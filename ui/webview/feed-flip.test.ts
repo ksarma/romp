@@ -34,8 +34,13 @@ test("render() gates both forced layouts on the flip decision, and remembers the
   // the decision is per column, read off the DOM itself: a column whose current key sequence equals the
   // planned one moved nothing, so neither its rects nor its fly are read or written; the stacked layout
   // (where a change in one section shifts the sections below it) widens a hit to every column
-  assert.match(SRC, /const differing = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);/);
+  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);/);
   assert.match(SRC, /flyColumnChanges\(flipFirst, cols, flipCols\);/);
+  // 2026-09-07 (upstream #1016): the release paint after a hidden stretch skips the pass once. On the
+  // per-column gate that is an empty differing list, so no column's rects are read and nothing flies; the
+  // flag is spent before flipCols is derived (the regex above pins the order), so the very next render
+  // decides on the painted DOM again. The arm and release paths are pinned in feed-hidden-paint.test.ts.
+  assert.match(SRC, /let skipFlipOnce = false;/);
   // what it remembers is the painted DOM: the keys reconcileCol wrote are what the next render compares the
   // plan against (childKeys/entryKey), so no prevCols/columnsOf ledger exists beside them
   assert.match(SRC, /import \{ cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv \} from "\.\/feed-card-gate";/);

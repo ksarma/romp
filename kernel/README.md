@@ -25,30 +25,35 @@ Session control (how romp drives Claude Code) sits behind one seam:
 Shared lookup tables: `colormap.py` (recency tints, single source shared with
 the web bundles) and `palette.py` (session-identity colors).
 
-Two key sources, one switch (`docs/reference.md`, "API keys on disk: the file
-mode", "Installing without keys on disk", and the migration and service
-authentication setup for a 1Password reference):
+Two key-source modules, one switch (`docs/reference.md`, "API keys on disk: the
+file mode", "Installing without keys on disk", and the migration and service
+authentication setup for a key command or a 1Password reference):
 
 - `keysource.py` is the file source. It selects the manager's live API key
-  source from `service.env`: a `ROMP_API_KEY_REF=op://vault/item/field`
-  reference or a legacy `ANTHROPIC_API_KEY=` line, re-read at every session
-  launch so a rotation there needs no manager restart. Source inspection is
-  separate from resolution, so a status read never fetches a secret; a selected
-  reference is resolved with `op read --no-newline` for each session
-  launch/reconnect, key-billed judge call and direct model-catalog refresh, an
-  explicit cycle check resolves it again to detect a rotation, resolved provider
-  keys are never cached or written to disk, and a resolution failure fails
-  closed. Removing a service-file source cannot restore a stale startup key.
+  source from `service.env`: a key command (`ROMP_API_KEY_CMD=<command line>`,
+  any secret manager's CLI printing the key, Claude Code's apiKeyHelper
+  contract), the 1Password shorthand (`ROMP_API_KEY_REF=op://vault/item/field`,
+  the same through `op read --no-newline`), or a legacy `ANTHROPIC_API_KEY=`
+  line, re-read at every session launch so a rotation there needs no manager
+  restart. Source inspection is separate from resolution, so a status read never
+  fetches a secret; a selected provider is run, in a minimal environment, for
+  each session launch/reconnect, key-billed judge call and direct model-catalog
+  refresh, an explicit cycle check resolves it again to detect a rotation,
+  resolved provider keys are never cached or written to disk, and a resolution
+  failure fails closed. Removing a service-file source cannot restore a stale
+  startup key.
   `cli/keyswap.py` (`romp keyswap`) loads the same module to read and
   fingerprint that line, so the two cannot disagree about the path or the
   parse. This fork does not write API keys to files: the named swap that would
   write the line is refused in this mode.
-- `envsource.py` is the command source, selected by `ROMP_CREDENTIAL_COMMAND`:
-  the kernel runs that command with the selector file's token as `$1` and
-  merges the `NAME=VALUE` set it prints into every session CLI's launch
-  environment, every judge call's and the catalog fetch's, never into its own
-  environment or a file. The set is event-cached (invalidated by a refresh, a
-  cycle or an authentication failure; a failed run keeps the previous set),
+- `envsource.py` is the credential-set command source, selected by
+  `ROMP_CREDENTIAL_COMMAND` (this fork's; distinct from the key command above,
+  whose output is the key alone): the kernel runs that command with the
+  selector file's token as `$1` and merges the `NAME=VALUE` set it prints into
+  every session CLI's launch environment, every judge call's and the catalog
+  fetch's, never into its own environment or a file. The set is event-cached
+  (invalidated by a refresh, a cycle or an authentication failure; a failed run
+  keeps the previous set),
   concurrent readers coalesce on one run, and every function but the one
   injection accessor is value-free. The same module fingerprints the configured
   `apiKeyHelper` when the set carries no key, so a cycle converges on it.

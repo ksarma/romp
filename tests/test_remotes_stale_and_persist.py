@@ -115,7 +115,7 @@ class SupervisorStatePersists(unittest.TestCase):
     def test_a_views_poll_stamp_alone_does_not_rewrite_the_file(self):
         # _poll_remote_views restamps _views_at on every real read — once a minute per up host. Counted, it
         # rewrote the token file every minute forever, the churn _NOT_SAVED's usage entry names, by the
-        # other poll (round 8 of the 2026-09-06 tab-groups review).
+        # other poll.
         with km._remotes_lock:
             km._remotes["TESTHOST"]["_views_at"] = 1785272930.0
         self.assertFalse(km._remotes_save_if_changed())
@@ -146,10 +146,10 @@ class SupervisorStatePersists(unittest.TestCase):
         self.assertEqual([t["name"] for t in served], ["web"], "the down host's cached tags are in the union after the boot")
 
     def test_a_file_an_older_build_wrote_loads_without_the_keys_this_build_does_not_save(self):
-        # Round 9 of the 2026-09-06 tab-groups review: _NOT_SAVED keeps _views_at out of the SAVED row, but a
-        # remotes.json the previous build wrote carries one, and _remotes_load copied every key of the row —
-        # so the first boot on this build restored the stamp, and _poll_remote_views' gate served the cached
-        # reading for up to REMOTE_VIEWS_EVERY past it instead of re-reading. Every unsaved key goes on load.
+        # _NOT_SAVED keeps _views_at out of the SAVED row, but a remotes.json the previous build wrote
+        # carries one, and _remotes_load copied every key of the row — so the first boot on this build
+        # restored the stamp, and _poll_remote_views' gate served the cached reading for up to
+        # REMOTE_VIEWS_EVERY past it instead of re-reading. Every unsaved key goes on load.
         reading = {"tags": [{"id": "g100", "name": "web", "color": "", "members": ["s1"]}]}
         rows = self._disk()
         rows[0].update({"views": reading, "_views_at": time.time(), "misses": 3, "ok_polls": 9,

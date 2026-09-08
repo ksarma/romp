@@ -540,4 +540,9 @@ class RunLeavesNothing(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # A direct script run never imports the tests package, so the mkdtemp hook would be absent: the
+    # first Hygiene check failed and the child runs left two romp-hygiene-* directories behind (the
+    # #944 review). Import it here; the package also floors XDG_STATE_HOME, as for a unittest run.
+    sys.path.insert(0, ROOT)
+    import tests  # noqa: F401
     unittest.main()

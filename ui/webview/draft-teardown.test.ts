@@ -294,7 +294,7 @@ test("every teardown names its reason, and only a genuine end clears the compose
   // the same stamp prunes the host's ids from kernelListed first (pinned in tab-ghost-heal.test.ts)
   assert.match(RENDER, /else if \(m\.type === "closed"\) \{[\s\S]{0,1400}?dismissSession\(m\.id, m\.hostDrop === true \? "hostDrop" : "end"\);\s*\n\s*\}/);
   // applyTabOrder's kernel-order omission
-  assert.match(RENDER, /const omitted = new Set\(order\.filter\(\(id\) => kernelListed\.has\(id\) && !inKernel\.has\(id\)\)\);[^\n]*\n\s*for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(omitted\.has\(id\)\) dismissSession\(id, "omitted", omitted\);/);
+  assert.match(RENDER, /const omitted = new Set\(order\.filter\(\(id\) => kernelListed\.has\(id\) && !inKernel\.has\(id\) && !liveSet\.has\(id\)\)\);[^\n]*\n(?:.*\n){0,3}?\s*for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(omitted\.has\(id\)\) dismissSession\(id, "omitted", omitted\);/);   // a live id is never omitted (T258)
   // the clear is gated: the existing one-liner (composer-draft-persist.test.ts pins it) now runs for an end only
   assert.match(RENDER, /if \(why === "close" \|\| why === "end"\) \{[\s\S]*?drafts\.delete\(id\); composerCitations\.delete\(id\); composerEdits\.delete\(id\); composerFiles\.delete\(id\); persistDrafts\(\);\s*\n\s*\} else \{\s*\n\s*persistDrafts\(\);/);
 });

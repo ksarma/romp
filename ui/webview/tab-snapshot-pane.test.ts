@@ -14,12 +14,18 @@ import { viewTagUnion } from "./session-views";
 import { parseTabGroups, planStrip, setSectionCollapsed, homeSectionOf } from "./tab-groups";
 import { hostPrefix } from "./host-prefix";
 import { noteLine } from "./tab-snapshot";
+import { followReader, landSpot } from "./scroll-keep";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
-const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), RENDER.indexOf("function showActive() {"));
-const SHOW = RENDER.slice(RENDER.indexOf("function showActive() {"), RENDER.indexOf("function showActive() {") + 6500);
+// the slices end / start at showActive's signature, which T249 (upstream, folded 2026-09-08) gave a `keep`
+// parameter; a missing anchor fails here instead of sliding the windows over the whole file
+const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null) {";
+const SHOW_AT = RENDER.indexOf(SHOW_SIG);
+assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
+const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
+const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 7500);   // wide enough for the transcript path's composer lines (the snapKeep re-target grew the snapshot branch, 2026-09-08)
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const DELEGATE = RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 1400);
@@ -38,7 +44,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   // showed the transcript again: every view display:none, the composer disabled under the snapshot's
   // placeholder, until the user happened to click a tab. The absence from the plan is the event; the same
   // renderTabs answers it with showActive, which re-enables the composer.
-  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
+  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*hiddenTabIds = [^\n]*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
   assert.match(TABS, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
@@ -76,9 +82,9 @@ test("the way back (review findings 6 and 12): Escape leaves the snapshot when n
   assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && ctxMenuEl\) \{ dismissTabMenu\(\); e\.preventDefault\(\); \} \}, true\);/,
     "an Escape that closed the tab menu says so, and the snapshot's handler yields to it");
   // the header: the act derived from the rendered state (open + shown + holds the active tab), like the fold's data-folded
-  assert.match(HEAD, /head\.dataset\.act = "toggle-group";\s*\n\s*head\.dataset\.folded = collapsed \? "1" : "0";\s*\n\s*if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "every header folds and shows the section…");
-  assert.match(HEAD, /const back = snapView === name && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "…except the one whose click is being undone");
-  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);/, "the title and the spoken label say which click this is (tab-groups.test.ts executes the words)");
+  assert.match(HEAD, /head\.dataset\.act = "toggle-group";\s*\n\s*head\.dataset\.folded = collapsed \? "1" : "0";\s*\n(?:\s*\/\/[^\n]*\n)*\s*const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "every header folds and shows the section…");
+  assert.match(HEAD, /const back = shown && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "…except the one whose click is being undone");
+  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);/, "the title and the spoken label say which click this is (tab-groups.test.ts executes the words)");
   // to assistive tech the way-back header is a plain button, not a disclosure (round 2): it announced "expanded"
   // and pressing it folded nothing, so aria-expanded is left off in that state; the label (headWords) names the action
   assert.match(HEAD, /if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/, "no aria-expanded on the header whose press puts the transcript back");
@@ -148,7 +154,7 @@ test("the client's Ledger type declares the two fields the snapshot reads off th
   assert.match(line, /workingNote: the session's postal working note[^\n]*the snapshot row's second line/, "the comment says where the note goes now (the row's second line, not the now line)");
   assert.match(line, /needsInput: the feed's needs-you verdict/, "…and names the second field's source");
   assert.doesNotMatch(line, /now line/, "the stale 'now line' claim is gone");
-  assert.match(RENDER, /snapshotModel\(head\.head, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
+  assert.match(RENDER, /snapshotModel\(\{ \.\.\.head\.head, hides: head\.hides \}, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
 });
 
 test("the row's second line: the session's own working note, quieter, under the now line (tab-snapshot.ts SnapRow.note, the model's request of the renderer)", () => {
@@ -175,25 +181,28 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   const paint = SNAP.slice(SNAP.indexOf("function renderSnapshot(): boolean {"), SNAP.indexOf("function snapshotRowNode("));
   assert.match(paint, /if \(next === snapModel && host\.childElementCount\) \{/, "the same-object gate stands");
   assert.equal(paint.split("host.replaceChildren(").length - 1, 1, "the host's children are replaced once: the first paint");
-  assert.match(paint, /let list = host\.querySelector<HTMLElement>\("\.snap-list"\);\s*\n\s*if \(!list\) \{[\s\S]*?host\.replaceChildren\(h, list\);\s*\n\s*\}/, "the heading and the list are made once, with the host's first paint");
+  assert.match(paint, /let list = host\.querySelector<HTMLElement>\(":scope > \.snap-list"\);\s*\n\s*if \(!list\) \{[\s\S]*?host\.replaceChildren\(h, list, fold\);\s*\n\s*\}/, "the heading, the list and the Hidden fold are made once, with the host's first paint");
   assert.match(paint, /part\("snap-name"\)\.textContent = next\.name;\s*\n\s*part\("snap-count"\)\.textContent = words\.count;/, "the heading's parts are patched, not remade");
-  assert.match(paint, /reconcileRows<SnapRow, Element>\(list, next\.rows, \(n\) => n\.getAttribute\("data-id"\), \(r\) => snapshotRowNode\(r, now\), \(n, r\) => fillSnapshotRow\(n\.firstElementChild as HTMLElement, r, now\)\);/,
-    "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotRow");
+  assert.match(paint, /reconcileRows<SnapRow, Element>\(list, shown, keyOf, \(r\) => snapshotRowNode\(r, now, next\.name\), \(n, r\) => fillSnapshotItem\(n as HTMLElement, r, now, next\.name\)\);/,
+    "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotItem (the shown list; the hidden list is the same call: tab-hide.test)");
+  assert.match(paint, /const keyOf = \(n: Element\) => n\.getAttribute\("data-id"\);/, "the key both reconciles read IS the session id the item carries (round 1 of the tabhide review: the re-pin had dropped the attribute)");
   assert.doesNotMatch(paint, /for \(const r of next\.rows\) list\.appendChild/, "no wholesale row build");
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the same
   // event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under focus
   // (its session left the section): the row now in its place takes it, the last when it was last, so the keyboard
-  // user is not dropped to body by a removal either
-  assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedAt = focused && list\.contains\(focused\) \? Array\.from\(list\.children\)\.indexOf\(focused\.closest\("\.snap-item"\)!\) : -1;\s*\n\s*reconcileRows<SnapRow, Element>\(/,
+  // user is not dropped to body by a removal either. (A row that changed LISTS under focus: tab-hide.test.)
+  assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedList = focused && list\.contains\(focused\) \? list : focused && hlist\.contains\(focused\) \? hlist : null;\s*\n\s*const focusedAt = focusedList \? Array\.from\(focusedList\.children\)\.indexOf\(focused!\.closest\("\.snap-item"\)!\) : -1;/,
     "the focused node and its place, read before the update");
-  assert.match(paint, /if \(focused && list\.contains\(focused\)\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back");
-  assert.match(paint, /else if \(focusedAt >= 0 && list\.children\.length\) list\.children\[Math\.min\(focusedAt, list\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
-  // the row node: the item carries the key; the button (Tab's target, the title's owner) is filled by the same function a
-  // patch calls, so a made row and a patched row have one shape
+  assert.ok(paint.indexOf("const focusedAt =") < paint.indexOf("reconcileRows<SnapRow, Element>("), "read before the update");
+  assert.match(paint, /if \(focused && host\.contains\(focused\) && !foldGone\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back (unless the fold it sits in has just gone: tab-hide.test)");
+  assert.match(paint, /else if \(focusedList && focusedAt >= 0 && focusedList\.children\.length\) focusedList\.children\[Math\.min\(focusedAt, focusedList\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
+  // the row node: the item carries the key; the buttons (Tab's targets, the titles' owners) are filled by the same
+  // function a patch calls, so a made row and a patched row have one shape
   const node = SNAP.slice(SNAP.indexOf("function snapshotRowNode("), SNAP.indexOf("function fillSnapshotRow("));
   assert.match(node, /item\.dataset\.id = r\.id;/, "the key, on the item the list holds");
-  assert.match(node, /fillSnapshotRow\(btn, r, now\);\s*\n\s*item\.appendChild\(btn\);\s*\n\s*return item;/, "one fill for both paths");
-  const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("), SNAP.indexOf("function showActive() {"));
+  assert.match(node, /item\.append\(btn, act\);\s*\n\s*fillSnapshotItem\(item, r, now, section\);\s*\n\s*return item;/, "one fill for both paths");
+  assert.match(node, /function fillSnapshotItem\(item: HTMLElement, r: SnapRow, now: number, section: string\): void \{\s*\n\s*fillSnapshotRow\(item\.firstElementChild as HTMLElement, r, now\);/, "the open button's parts through the one fillSnapshotRow");
+  const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("));   // to SNAP's end: showActive's signature is where SNAP stops
   assert.match(fill, /btn\.className = "snap-row" \+ \(r\.closed \? " closed" : ""\) \+ \(r\.loading \? " loading" : ""\);/, "the classes rewritten, not toggled one by one");
   assert.match(fill, /btn\.replaceChildren\(\);/, "the parts emptied, then appended in order: the button stands");
   assert.match(fill, /const nowEl = el\("span", "snap-now"\); nowEl\.textContent = r\.loading \? "opening…" : r\.now; btn\.appendChild\(nowEl\);/, "the parts as before");
@@ -230,4 +239,58 @@ test("leaving the snapshot from a focused row hands focus to the active tab, not
     "read before renderSnapshot; the hand-off after showActive, only on the section-gone path, only when focus was on the snapshot");
   assert.equal(RENDER.match(/(?<!function )snapshotHoldsFocus\(\)/g)?.length, 2, "two exits, both read it; no other caller");
   assert.equal(RENDER.split("if (held) focusActiveTab();").length - 1, 2, "and both hand focus on the same way");
+});
+
+test("the active changes under the snapshot (the session being read closes): the held spot moves to the survivor, and leaving lands it where its reader left it (round-2 review)", () => {
+  // The T249 fold holds the ACTIVE view's saved spot across the snapshot (snapKeep: captured in showActive's snapshot
+  // branch, written back in hideSnapshot), because the #content scroll listener (scroll-keep.ts followReader) records
+  // the snapshot's every scroll and the reveal's clamp onto the active view. It was captured once per visit. When the
+  // active session closed while the snapshot showed, dismissSession reassigned activeId to the MRU survivor and called
+  // showActive with snapView still set: the branch ran with av = the survivor while snapKeep named the removed view,
+  // so the survivor was unprotected (followReader wrote the snapshot's scrolls onto it) and leaving landed it on the
+  // snapshot's offset or at the bottom. Now the branch re-targets: the old view gets its spot back, the survivor's
+  // is held from the moment the active changes. The active change is the event; no timer.
+  const branch = SHOW.slice(SHOW.indexOf("if (snapView && renderSnapshot()) {"), SHOW.indexOf('document.getElementById("tab-loading")?.remove();'));
+  assert.match(branch, /const av = activeId \? views\.get\(activeId\) : null;\s*\n\s*if \(av && !snapKeep\) snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};/, "the capture (tab-groups.test.ts pins its adjacency)");
+  assert.match(branch, /if \(av && snapKeep && snapKeep\.v !== av\) \{\s*\n\s*snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick;\s*\n\s*snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};\s*\n\s*\}/,
+    "the re-target: the old view restored, the new active held, in the same synchronous pass");
+  assert.ok(branch.indexOf("if (av && !snapKeep)") < branch.indexOf("snapKeep.v !== av"), "after the capture, so a first visit still captures once");
+  const dismiss = RENDER.slice(RENDER.indexOf("function dismissSession("), RENDER.indexOf("function pipeBanner("));
+  assert.match(dismiss, /activeId = mru\.find\([\s\S]*?showActive\(\);\s*\n\s*\}\n\}/, "dismissSession hands activeId on and comes back through showActive (snapView untouched: the snapshot stays)");
+  assert.doesNotMatch(dismiss, /snapView|snapKeep/, "no snapshot bookkeeping of its own: the branch is the one place the active is resolved under the snapshot");
+  // Executed over the pinned lines, with the real followReader and landSpot (scroll-keep.ts): views A (read, mid-transcript)
+  // and B (read earlier, mid-transcript); the snapshot opens over A; A closes; the survivor B is active under the snapshot.
+  type V = { scrollTop: number; stick: boolean; shown: boolean };
+  const A: V = { scrollTop: 1200, stick: false, shown: true };
+  const B: V = { scrollTop: 300, stick: false, shown: true };
+  let snapKeep: { v: V; scrollTop: number; stick: boolean } | null = null;
+  let active: V | null = A;
+  const snapshotBranch = () => {   // showActive's snapshot branch, the pinned lines
+    const av = active;
+    if (av && !snapKeep) snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
+    if (av && snapKeep && snapKeep.v !== av) {
+      snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick;
+      snapKeep = { v: av, scrollTop: av.scrollTop, stick: av.stick };
+    }
+  };
+  const hideSnapshot = () => { if (snapKeep) { snapKeep.v.scrollTop = snapKeep.scrollTop; snapKeep.v.stick = snapKeep.stick; snapKeep = null; } };
+  snapshotBranch();                                   // the header click: the snapshot opens over A
+  followReader(active, 0, true);                      // the reveal's clamp: #content collapsed to the short snapshot, nearBottom true
+  assert.equal(A.stick, true, "the listener records the clamp onto A (upstream's text, untouched)");
+  active = B; snapshotBranch();                       // A closed: dismissSession moved activeId to B and re-ran the branch
+  assert.equal(snapKeep!.v, B, "the held spot is the survivor's");
+  assert.deepEqual([snapKeep!.scrollTop, snapKeep!.stick], [300, false], "read before the snapshot's next scroll event");
+  assert.deepEqual([A.scrollTop, A.stick], [1200, false], "the old view got its spot back (harmless on a removed view, right on any other)");
+  followReader(active, 40, true);                     // a scroll of the snapshot list, recorded onto B
+  assert.deepEqual([B.scrollTop, B.stick], [40, true], "followReader wrote the snapshot's scroll onto B, as before the fix");
+  hideSnapshot();                                     // Escape: leaveSnapshot -> showActive -> hideSnapshot, then landActive reads the spot
+  assert.deepEqual([B.scrollTop, B.stick], [300, false], "the write-back restored B");
+  assert.equal(landSpot(B), 300, "leaving lands B where its reader left it");
+  // the same steps with the fold's once-per-visit guard alone land B at the bottom: the defect the re-target closes
+  const B2: V = { scrollTop: 300, stick: false, shown: true };
+  let keep2: { v: V; scrollTop: number; stick: boolean } | null = { v: { scrollTop: 1200, stick: true, shown: true }, scrollTop: 1200, stick: false };
+  if (!keep2) keep2 = { v: B2, scrollTop: B2.scrollTop, stick: B2.stick };
+  followReader(B2, 40, true);
+  if (keep2) { keep2.v.scrollTop = keep2.scrollTop; keep2.v.stick = keep2.stick; keep2 = null; }
+  assert.equal(landSpot(B2), "bottom", "without the re-target the survivor lands at the bottom");
 });

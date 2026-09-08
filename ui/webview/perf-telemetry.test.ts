@@ -10,6 +10,8 @@
 // window the way feed-delta.test.ts does.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   Ring, percentile, histBucket, histQuantileBucket, classifyFrame, scriptKey, sanitizeInvoker, uaClass, attributeScripts,
   createPerfTelemetry, installPerfTelemetry, perfFrameHandler,
@@ -752,4 +754,91 @@ test("installPerfTelemetry: one collector per page on window.__rompPerf, wired t
     delete g.window;
     delete g.document;
   }
+});
+
+test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport probe OR the pane's published word", () => {
+  // The pane shim's paneHidden() read (kernel.py) and this row agree: a pane that publishes its word
+  // (paint-gate.ts publishPaneHidden, chat-visibility.ts) is reported hidden after a first show in Chromium, where
+  // the probe alone never saw it (a display:none iframe keeps its size there); in Firefox the viewport goes to
+  // zero and the observer does not run, so the probe carries it and a stale word of false must not override it.
+  const g: any = globalThis;
+  const win: any = new EventTarget();
+  win.performance = { now: () => 0 };
+  win.navigator = { userAgent: "Mozilla/5.0 (Macintosh) Chrome/128.0.0.0 Safari/537.36", maxTouchPoints: 0 };
+  win.location = { href: "http://h:1/chat" };
+  win.parent = {};                                   // framed
+  win.innerWidth = 800; win.innerHeight = 600;
+  const doc: any = new EventTarget();
+  doc.visibilityState = "visible";
+  doc.getElementsByTagName = () => ({ length: 3 });
+  g.window = win;
+  g.document = doc;
+  try {
+    const a = installPerfTelemetry("chat")!;
+    assert.ok(a);
+    assert.equal((a.snapshot() as any).hidden_pane, false, "unset word, a viewport: the probe says shown");
+    win.__rompPaneHidden = true;
+    assert.equal((a.snapshot() as any).hidden_pane, true, "the pane's word wins: hidden after a first show, size kept");
+    win.innerWidth = 0; win.__rompPaneHidden = false;
+    assert.equal((a.snapshot() as any).hidden_pane, true, "a zero viewport says hidden whatever a stale word says (Firefox)");
+    delete win.__rompPaneHidden;
+    assert.equal((a.snapshot() as any).hidden_pane, true, "unset: the probe's turn (zero viewport)");
+    win.innerWidth = 800; win.parent = win;
+    win.__rompPaneHidden = true;
+    assert.equal((a.snapshot() as any).hidden_pane, true, "a standalone page: the probe never applies, the word (the tab's hiding) does");
+  } finally {
+    delete g.window;
+    delete g.document;
+  }
+});
+
+// ── the wraps themselves ──
+// Everything above drives the collector through PerfDeps, so nothing in it fails when a pane bundle stops
+// wrapping its listener: the whole suite stayed green with a wrap removed (review, 2026-09-07). These pin the
+// source text, the way heal-on-hostup.test.ts pins the chat pane's listener, for all four panes and for the
+// collector install in federation's start().
+const UI = path.resolve(process.cwd(), "..", "ui", "webview");
+const readUi = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
+
+test("each pane bundle's one frame listener is installed through perfFrameHandler under its own app name, on both delivery paths", () => {
+  // the pane hands the wrapped handler to listenForFrames (frame-listener.ts), which puts the SAME function on
+  // window and in federation's direct-delivery registry: one install per pane, no bare window listener beside it
+  const panes: Array<[string, string]> = [["render.ts", "chat"], ["feed.ts", "feed"], ["fleet.ts", "fleet"], ["timeline-main.ts", "timeline"]];
+  for (const [file, app] of panes) {
+    const src = readUi(file);
+    assert.match(src, /import \{ perfFrameHandler \} from "\.\/perf-telemetry";/, file + " imports the wrapper");
+    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the installer");
+    const bare = src.match(/window\.addEventListener\("message", /g) || [];
+    assert.equal(bare.length, 0, file + " installs no window message listener of its own");
+    const installs = src.match(/\blistenForFrames\(/g) || [];
+    assert.equal(installs.length, 1, file + " has one frame listener");
+    assert.ok(src.includes('listenForFrames(perfFrameHandler("' + app + '", '),
+      file + " installs it through perfFrameHandler as app " + app);
+  }
+  // the one window install every pane shares, and the registry registration of the same handler beside it
+  const fl = readUi("frame-listener.ts");
+  assert.equal((fl.match(/window\.addEventListener\("message", /g) || []).length, 1, "frame-listener.ts owns the one window install");
+  assert.match(fl, /window\.addEventListener\("message", handler\);/);
+  assert.match(fl, /fed\.onFrame\(handler\);/);
+});
+
+test("federation's start() installs the page collector first: before __rompFed, whose inbound path times through it", () => {
+  const src = readUi("federation.ts");
+  assert.ok(src.includes('import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";'));
+  const at = src.indexOf("\n  start(): void {");
+  assert.ok(at > 0, "start() found");
+  const end = src.indexOf("\n  }\n", at);
+  assert.ok(end > at, "start() closes");
+  const body = src.slice(at, end);
+  // through perfCollectorFor: the page collector everywhere the kernel pushes frames, none on the Files pane
+  assert.match(src, /export function perfCollectorFor\(app: string\): RompPerf \| null \{\n\s*return app === "files" \? null : installPerfTelemetry\(app\);/);
+  const install = body.indexOf("this.perf = perfCollectorFor(this.app);");
+  assert.ok(install > 0, "start() installs the collector");
+  const app = body.indexOf('this.app = w.__rompApp || "chat";');
+  assert.ok(app > 0 && app < install, "the app name is read first: the collector is keyed by it");
+  const fed = body.indexOf("w.__rompFed = {");
+  assert.ok(fed > install, "__rompFed (the shim's inbound entry, which runs inbound() and its fed: brackets) is published after the collector");
+  // nothing else runs before the install: the two lines above it are the window handle and the app name
+  const before = body.slice(0, install).split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
+  assert.deepEqual(before, ["start(): void {", "const w = window as any;", 'this.app = w.__rompApp || "chat";']);
 });

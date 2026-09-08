@@ -16,8 +16,9 @@ test("render() captures rects BEFORE the reconcile and flies changed cards AFTER
   // capture and the fly each force a layout of the whole document on the main thread every pane shares
   // (2026-09-04). The gate is per column: the columns whose planned key sequence differs from the DOM's
   // (feed-card-gate.ts sameKeySeq); a column where nothing enters, leaves or changes place has nothing that
-  // can glide, so its rects go unread
-  assert.match(FEED, /const differing = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/,
+  // can glide, so its rects go unread. The release paint after a hidden stretch snaps instead (skipFlipOnce,
+  // upstream #1016, 2026-09-07 fold): no column differs for that one paint, and the snap is spent before flipCols
+  assert.match(FEED, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/,
     "…and in the stacked layout a move anywhere reads every column: the sections below the move all shift");
   // …and the fly runs after the DOM (and scroll) settle (the identity-alias step sits just before it)
   assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols, flipCols\);/);

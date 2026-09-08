@@ -102,7 +102,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ["ROMP_SERVE_TOKEN"] = "testtok"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")  # setdefault like every other module: an unconditional set poisons a shared-name kernel loaded earlier in the worker
 km = load_source("romp_kernel_ut", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 

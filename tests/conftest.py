@@ -7,11 +7,13 @@ top exactly as before."""
 import atexit
 import importlib.util
 import os
+import re
 import shutil
 import sys
 import tempfile
 
 import pytest
+from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
 
 # Temp-directory hygiene, the child-process half (2026-09-06): every temp path a run creates lives
 # under ONE private root, removed when the run ends. tests/__init__.py's mkdtemp hook (the other
@@ -37,9 +39,9 @@ import pytest
 # first conftest to import: an xdist worker inherits the controller's record along with its TMPDIR
 # (setdefault, not an assignment: a worker's own gettempdir() is the controller's root, and
 # recording that put the worker's fallback one level deeper than a socket path can bear under a
-# long TMPDIR — four socket tests failed at bind under -n 2, 2026-09-06). A test that must leave
-# the root (an AF_UNIX socket path that would not fit sun_path under a nested root) falls back to
-# it, and only to it — a literal system path in a `dir=` would bypass the redirect (one did).
+# long TMPDIR — four socket tests failed at bind under -n 2). A test that must leave the root (an
+# AF_UNIX socket path that would not fit sun_path under a nested root) falls back to it, and only
+# to it — a literal system path in a `dir=` would bypass the redirect (one did).
 os.environ.setdefault("ROMP_TESTS_SYSTEM_TMPDIR", tempfile.gettempdir())
 _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
@@ -62,11 +64,15 @@ def _remove_run_dirs(report=False):
 atexit.register(_remove_run_dirs)
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     """The in-process half (tests/__init__.py): remove every directory this process made through
-    tempfile.mkdtemp inside the root, this module's state root included. The package's atexit hook
-    does the same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the
-    root itself afterwards."""
+    tempfile.mkdtemp inside the root, this module's state root included, when the session ends. Runs
+    in the controller and in every xdist worker, since each is its own pytest session, and last, after
+    pytest's own runner sessionfinish has performed the deferred teardown an interrupted run leaves
+    behind, so nothing is swept from under a fixture still closing. The package's atexit hook does the
+    same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
+    afterwards."""
     try:
         from tests import remove_made_dirs
     except Exception:
@@ -80,10 +86,10 @@ def pytest_unconfigure(config):
 
 # No test's git reads the developer's configuration (2026-09-06). Fixture repos are built by `git
 # init` + `git commit` in temp dirs, and those commands honoured the developer's global config: a
-# global core.hooksPath ran their pre-commit hook (a gitleaks scan) on every seed commit, an LFS
-# filter would run on every checkout, and a credential helper or insteadOf rewrite could reach a
-# real remote (tests/test_file_github.py pins its own environment for exactly that reason). CI has no
-# global git config, so a test that leans on one is already broken there; this makes every run match.
+# global core.hooksPath ran their pre-commit hook on every seed commit, an LFS filter would run on
+# every checkout, and a credential helper or insteadOf rewrite could reach a real remote
+# (tests/test_file_github.py pins its own environment for exactly that reason). CI has no global git
+# config, so a test that leans on one is already broken there; this makes every run match.
 # GIT_CONFIG_GLOBAL is honoured by git >= 2.32; the identity is synthetic, and it is set rather than
 # defaulted so a developer's own GIT_AUTHOR_* cannot leak into fixture commits either. The env
 # identity outranks `git config user.*` and `-c user.*`, so a test that must pin a particular author
@@ -95,6 +101,26 @@ os.environ["GIT_AUTHOR_EMAIL"] = os.environ["GIT_COMMITTER_EMAIL"] = "tests@exam
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")   # inside the root; the hook records it
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sessions; it outranks the XDG floor
+
+# No test may resolve the REAL ~/.claude (2026-09-08): the judge module and the event model compute
+# their projects root at IMPORT from CLAUDE_CONFIG_DIR (default ~/.claude), the kernel and the SDK
+# backend read the same variable at call time for the task store and transcripts, and a test that
+# touched a per-session project dir without patching jd.PROJECTS wrote thirty synthetic-sid
+# directories under a developer's real ~/.claude/projects. Floored like the state root: a fresh
+# directory inside the run's private temp root, set (not defaulted: a developer's own export must
+# not reach a test either) before any test module loads, and re-asserted per test below so a
+# module-level pop or write in one test file cannot erase it for the run. A test that needs its own
+# Claude root sets the variable in setUp, after the fixture, exactly as the ones that do already do.
+# The operator's own location is saved FIRST, before the floor replaces it: the one opt-in live test that
+# borrows the user's apiKeyHelper command (tests/test_session_move_live.py) reads it through
+# ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR. Captured after the floor (the 2026-09-08 fold's first cut) it named the
+# run's empty temp dir and that test skipped as "no auth". setdefault, so an xdist worker keeps the
+# controller's value rather than re-reading an environment the controller has already floored.
+os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
+                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+_CLAUDE_CONFIG = tempfile.mkdtemp(prefix="romp-tests-claude-")
+os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
+
 
 # No test may reach a REAL manager control port (2026-08-27): on a machine running a live romp,
 # every shell the manager tree spawns inherits ROMP_MANAGER_PORT, and any test kernel that dials
@@ -128,10 +154,36 @@ os.environ["ROMP_SERVE_PORT"] = "1"
 _NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
-# A runtime provider can also be selected directly from the manager's environment. Remove its
-# inherited reference before module loading, so an auth test cannot resolve a developer's vault
-# merely because the isolated service.env is absent. Tests set synthetic references explicitly.
-os.environ.pop("ROMP_API_KEY_REF", None)
+# No test starts with a KEY SOURCE the developer's shell configured (2026-09-08). Every session shell
+# under a romp-managed manager inherits the manager's credentials: ANTHROPIC_API_KEY (the startup key
+# sdk_backend.startup_api_key claims), ROMP_API_KEY_CMD and ROMP_API_KEY_REF (the runtime providers
+# keysource._env_provider selects straight from the environment when the isolated env file above is
+# absent), ROMP_EXPECTED_AUTH (the box-wide auth declaration), the competing token credentials
+# sdk_backend.startup_auth_env claims, and 1Password's own names keysource.claim_op_env takes. A
+# test that constructs a backend, resolves a key or asks default_auth then reads the DEVELOPER'S
+# configuration: 73 tests across eight modules went red on a box running the command key source
+# while CI, which exports none of these, stayed green (the manager's full run, 2026-09-08). Popped at
+# import so module-level loads see the clean baseline, and re-asserted per test below; a test that
+# wants a source sets a synthetic one itself in setUp, which runs after the fixture. The list is the
+# code's own constants (tests/test_key_source_floor.py pins it against keysource.SOURCE_VARS,
+# keysource.OP_ENV_NAMES / OP_ENV_PREFIX and sdk_backend.AUTH_ENV_NAMES).
+KEY_SOURCE_ENV_NAMES = (
+    "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF", "ROMP_API_KEY_CMD",          # keysource.SOURCE_VARS
+    "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",                     # sdk_backend.AUTH_ENV_NAMES (the rest)
+    "ROMP_EXPECTED_AUTH",                                                  # the auth declaration
+    "OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT",   # keysource.OP_ENV_NAMES
+)
+KEY_SOURCE_ENV_PREFIXES = ("OP_SESSION_",)                                # keysource.OP_ENV_PREFIX
+
+
+def _scrub_key_source_env():
+    for name in KEY_SOURCE_ENV_NAMES:
+        os.environ.pop(name, None)
+    for name in [k for k in os.environ if k.startswith(KEY_SOURCE_ENV_PREFIXES)]:
+        os.environ.pop(name, None)
+
+
+_scrub_key_source_env()
 # Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
 # unit exports it), and keysource gives that variable authority: a supervised manager reads the env
 # file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
@@ -160,9 +212,15 @@ def _no_real_service_env():
     phase, before TestCase.run calls setUp) — so per-test intent still wins."""
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
-    os.environ.pop("ROMP_API_KEY_REF", None)
+    _scrub_key_source_env()
     os.environ.pop("ROMP_SUPERVISED", None)
     _reset_keysource_state()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude_config():
+    os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
     yield
 
 
@@ -342,16 +400,15 @@ def pytest_runtest_setup(item):
 # developer's own apiKeyHelper setting (and envsource.helper_fingerprint could RUN that helper). The
 # three are floored to empty temp dirs under the state root: no unit, no plist, no settings. The one
 # test that deliberately borrows the user's own apiKeyHelper command (the opt-in live move test)
-# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, set here once. Import-time
-# plus a per-test re-assert, on the same reasoning as the manager-port floor; a test that needs its
-# own dirs points the vars at temp paths in setUp, which runs after the fixture.
+# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, saved above beside the
+# CLAUDE_CONFIG_DIR floor, before any floor touched the variable. Import-time plus a per-test
+# re-assert, on the same reasoning as the manager-port floor; a test that needs its own dirs points
+# the vars at temp paths in setUp, which runs after the fixture.
 _EMPTY_DIRS = {
     "ROMP_SYSTEMD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-systemd-user"),
     "ROMP_LAUNCHD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-launch-agents"),
     "CLAUDE_CONFIG_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-claude-config"),
 }
-os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
-                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
 for _v, _d in _EMPTY_DIRS.items():
     os.makedirs(_d, exist_ok=True)
     os.environ[_v] = _d
@@ -403,32 +460,69 @@ def _stub_place_llm(monkeypatch):
 # No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A
 # test that renders an env mapping in an assertion (assertNotIn on os.environ, on a _judge_env() copy
 # of it, on a launch env) prints the whole mapping when it fails, and on a developer's box that
-# mapping holds live credentials; the assertion rules below are the fix, this hook is the safety net
-# for the next test nobody remembered to write that way. Two nets, applied to every report's text
-# (the longrepr and the captured-output sections) whatever the outcome, and to collection reports:
+# mapping holds live credentials. Assertions that test membership and name the key are the fix; this
+# hook is the safety net for an assertion still written the other way. Two nets, applied to every
+# report's text (the longrepr and the captured-output sections) whatever the outcome, and to
+# collection reports:
 #   * every value seen in this process's environment, 16 characters or longer, is replaced with one
 #     marker, and so is each whitespace-separated chunk of such a value that is 16 characters or
 #     longer (pprint renders a value with spaces as adjacent literals on separate lines, so a
-#     whole-value replace misses the pieces). Values are noted the moment they are WRITTEN into
+#     whole-value replace misses the pieces), and so is each piece of such a value that pytest or
+#     unittest left beside a cut (`'<head>...<tail>'`, `[N chars]`: a failed `==` keeps 12 and 13
+#     characters of each operand, so most of a 30-character value showed on the assert line and in
+#     the short summary, 2026-09-07). Values are noted the moment they are WRITTEN into
 #     os.environ (the mutation path is wrapped below: a plain assignment, update, setdefault,
 #     os.putenv, os.environb, mock.patch.dict), and sampled at import, around each test and at
 #     report time as well, for values that entered by another route (inherited from the parent
-#     process, written by a C extension). Path-valued shell variables a traceback quotes
-#     legitimately (the cwd, the state root) are exempt by NAME, and never when the name is
-#     credential-shaped.
+#     process, written by a C extension). Exempt, and never when the name is credential-shaped: a
+#     path-valued variable by NAME (the shell's, this conftest's own dirs, the interpreter and
+#     workspace paths GitHub Actions exports); a variable whose value is public by NAME (the ones
+#     GitHub Actions exports to describe the run: the server URLs, the sha, the ref, the workflow
+#     and job names, the repository and the actor, each of which a CI failure report was showing as
+#     the marker, 2026-09-07; and the synthetic git identity this conftest sets at import); a name
+#     family that is never a credential (XDG_*, and pytest's own PYTEST_*: PYTEST_CURRENT_TEST holds
+#     the running test's node id and is written for every phase of every test, so noting it grew the
+#     set by one value per test, slowed every report's scrub in step and made the node id of every
+#     test already run a target in later reports); and any value that IS a path this machine has
+#     (one absolute path that exists, or a PATH-style list of them), because a traceback quotes the
+#     interpreter's prefix on every frame and a developer's shell names it under any variable (a
+#     pyenv root, a conda prefix).
 #   * credential-shaped tokens by PATTERN (tests/credential_patterns.py: the public key prefixes, and
 #     a long token in a value position), whatever their provenance: a token that never touched the
 #     environment (read from a file, printed by a child) is caught by this one.
-# A report the hook changes becomes plain text (no colour); one it leaves alone keeps pytest's own
-# rendering.
+# A report the hook leaves alone keeps pytest's own object and rendering. One it changes is rebuilt
+# from the scrubbed text as a native-style traceback with its crash location kept (its message
+# scrubbed too), so the short test summary still ends in the assertion message, junitxml keeps its
+# message and xdist carries it to the controller; that report loses colour and source highlighting,
+# nothing else (_redacted_longrepr).
 ENV_VALUE_MIN_LEN = 16
 ENV_VALUE_REDACTED = "[REDACTED-ENV-VALUE]"
 _ENV_VALUE_PATH_NAMES = frozenset((
     "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
-    "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
     "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
-    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
-    "ROMP_CREDENTIAL_SELECTOR_FILE"))
+    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "TMUX_TMPDIR", "ROMP_TESTS_SYSTEM_TMPDIR",
+    # this conftest's own floors that the offer upstream does not carry: the pre-floor Claude settings
+    # dir the live move test reads, and the selector path under the state root that is never created
+    "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", "ROMP_CREDENTIAL_SELECTOR_FILE",
+    # GitHub Actions: the runner's workspace and tool cache, and the interpreter prefix setup-python
+    # exports under six names (every stdlib and site-packages frame of a CI traceback is under it)
+    "GITHUB_WORKSPACE", "RUNNER_WORKSPACE", "RUNNER_TEMP", "RUNNER_TOOL_CACHE", "pythonLocation",
+    "Python_ROOT_DIR", "Python2_ROOT_DIR", "Python3_ROOT_DIR", "LD_LIBRARY_PATH", "PKG_CONFIG_PATH"))
+# Public by name, so never a value a report must hide. GitHub Actions describes the run in these (its
+# secrets are GITHUB_TOKEN, ACTIONS_RUNTIME_TOKEN and ACTIONS_ID_TOKEN_REQUEST_TOKEN, credential-shaped
+# names this set is never consulted for); without them a CI failure read `assert '[REDACTED-ENV-VALUE]'
+# == 'x'` where a test compared the ref, the repository or the actor. Listed by name rather than by the
+# GITHUB_ prefix so that a token GitHub adds under a name this list does not know still qualifies. The
+# GIT_* names are the synthetic identity this conftest writes at import (`romp tests`,
+# `tests@example.invalid`), under which every fixture commit is made.
+_ENV_VALUE_PUBLIC_NAMES = frozenset((
+    "GITHUB_SERVER_URL", "GITHUB_API_URL", "GITHUB_GRAPHQL_URL", "GITHUB_SHA", "GITHUB_REF", "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF", "GITHUB_BASE_REF", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW", "GITHUB_WORKFLOW_REF",
+    "GITHUB_WORKFLOW_SHA", "GITHUB_JOB", "GITHUB_ACTION", "GITHUB_ACTION_REF", "GITHUB_ACTION_REPOSITORY",
+    "GITHUB_REPOSITORY", "GITHUB_REPOSITORY_OWNER", "GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "RUNNER_NAME",
+    "RUNNER_ARCH",
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"))
+_ENV_VALUE_EXEMPT_PREFIXES = ("XDG_", "PYTEST_")   # never a credential: the XDG base dirs, pytest's bookkeeping
 _ENV_VALUES_SEEN: set = set()
 
 
@@ -452,13 +546,27 @@ def _credential_shaped(name: str) -> bool:
             or "SECRET" in n or "PASSWORD" in n or "APIKEY" in n)
 
 
+def _is_existing_path(value: str) -> bool:
+    """Whether `value` is a path this machine has: one absolute path that exists, or a PATH-style list
+    of them (every non-empty os.pathsep chunk). No token is an absolute path that exists, so this
+    exempts no token; a path that does not exist is a value like any other."""
+    chunks = [c for c in value.split(os.pathsep) if c]
+    return bool(chunks) and all(os.path.isabs(c) and os.path.exists(c) for c in chunks)
+
+
 def env_value_qualifies(name: str, value: str) -> bool:
     """Whether one environment entry's value is one a report must not show: ENV_VALUE_MIN_LEN
-    characters or more, unless the name is a path-valued shell variable that is not credential-shaped.
-    The one rule, for the sampler and for the write hook."""
+    characters or more, unless the name is exempt (a path-valued variable by name, a variable whose
+    value is public by name, or a name family that is never a credential) or the value is a path this
+    machine has; a credential-shaped name is never exempt. The one rule, for the sampler and for the
+    write hook."""
     if len(value) < ENV_VALUE_MIN_LEN:
         return False
-    return not (name in _ENV_VALUE_PATH_NAMES and not _credential_shaped(name))
+    if _credential_shaped(name):
+        return True
+    if name in _ENV_VALUE_PATH_NAMES or name in _ENV_VALUE_PUBLIC_NAMES or name.startswith(_ENV_VALUE_EXEMPT_PREFIXES):
+        return False
+    return not _is_existing_path(value)
 
 
 def env_values_to_redact(environ=None) -> set:
@@ -509,12 +617,33 @@ def _install_env_write_hook() -> None:
 _install_env_write_hook()
 
 
+# A piece of a value beside a cut pytest or unittest made: a maximal run of ENV_CUT_FRAGMENT_MIN_LEN or
+# more token characters that abuts `...` or `[N chars]` on at least one side (the marker before it, the
+# marker after it, or a quote on one side and the marker on the other). pytest renders a failed `==` at
+# default verbosity with each operand cut to 12 and 13 characters around `...` (`'abcdefghijkl...rstuvwxyzabcd'`
+# for a 30-character value), its saferepr of a local or a `+  where` operand keeps 117 on each side,
+# the short summary cuts the message at the terminal's width with `...` appended, a long explanation
+# is cut at 640 characters the same way, and unittest shortens a container repr with `[N chars]`; none
+# of those pieces is the whole value or a whitespace chunk of it, so the replace above left them
+# standing (2026-09-07). A candidate is replaced only when it is a substring of a noted value: exact,
+# never a guess from its shape (the pattern net's fragment rule does that for tokens of no known
+# provenance). Two alternatives so each maximal run is tried once from its start, which keeps the pass
+# linear on a long run that reaches no cut.
+ENV_CUT_FRAGMENT_MIN_LEN = 8
+_ENV_CUT_FRAG_RE = re.compile(
+    r"(?:(?<=\.\.\.)|(?<=chars\]))[A-Za-z0-9_\-]{%d,}"                                  # after a cut
+    r"|(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{%d,}(?=\.\.\.|\[\d+ chars\])"                    # before one
+    % (ENV_CUT_FRAGMENT_MIN_LEN, ENV_CUT_FRAGMENT_MIN_LEN))
+
+
 def redact_env_values(text: str, values) -> str:
     """`text` with every occurrence of every value replaced by ENV_VALUE_REDACTED, longest first (a
-    value that contains another is replaced whole), and then every whitespace-separated chunk of a
-    value that is ENV_VALUE_MIN_LEN characters or more: pprint renders a long value with spaces as
+    value that contains another is replaced whole), then every whitespace-separated chunk of a
+    value that is ENV_VALUE_MIN_LEN characters or more (pprint renders a long value with spaces as
     adjacent string literals on separate lines, so the token half of `Authorization: Bearer <token>`
-    survived a whole-value replace, and unittest's shortened repr shows a differing tail on its own."""
+    survived a whole-value replace, and unittest's shortened repr shows a differing tail on its own),
+    and then every piece of a value left beside a cut (_ENV_CUT_FRAG_RE: a run of token characters
+    against `...` or `[N chars]` that is a substring of a value)."""
     parts = set()
     for v in values:
         if not v:
@@ -525,7 +654,13 @@ def redact_env_values(text: str, values) -> str:
             parts.update(c for c in chunks if len(c) >= ENV_VALUE_MIN_LEN)
     for v in sorted(parts, key=len, reverse=True):
         text = text.replace(v, ENV_VALUE_REDACTED)
-    return text
+    if not parts:
+        return text
+
+    def cut_piece(m):
+        frag = m.group(0)
+        return ENV_VALUE_REDACTED if any(frag in v for v in parts) else frag
+    return _ENV_CUT_FRAG_RE.sub(cut_piece, text)
 
 
 def redact_credential_tokens(text):
@@ -558,11 +693,38 @@ def _remember_env_values():
     _note_env_values()
 
 
+def _redact_crash_message(message: str) -> str:
+    """A crash message scrubbed as the report body renders it. pytest writes the message's lines under
+    the `E` marker (`E   ` + line), and the pattern net's rules for a failed comparison's diff lines
+    and quoted elements are keyed on that marker; the bare message (`  - <token>` after the diff's
+    header) is a rendering the rules do not know, so it is scrubbed marked and unwrapped. Under CI
+    pytest prints the whole message, every line, in the short test summary."""
+    marked = "\n".join("E   " + line for line in message.split("\n"))
+    return "\n".join(line[4:] if line.startswith("E   ") else line
+                     for line in redact_report_text(marked).split("\n"))
+
+
+def _redacted_longrepr(lr, text: str):
+    """The scrubbed `text` of a longrepr as a longrepr again. A failure's keeps its crash location
+    (pytest's own ReprFileLocation, the message scrubbed too) over a native-style traceback whose one
+    entry is the text: the short test summary ends in reprcrash.message, junitxml's message attribute
+    reads it, and xdist serializes a longrepr with a traceback and a crash structurally, where a plain
+    str showed the traceback's first line in the summary instead (`def test_x():`, or `self = <Case
+    testMethod=...>`). pytest renders a native entry as is, so that report loses colour and source
+    highlighting and nothing else. A longrepr with no crash location (a collection error's) becomes
+    the plain text."""
+    crash = getattr(lr, "reprcrash", None)
+    if crash is None:
+        return text
+    return ReprExceptionInfo(reprtraceback=ReprTracebackNative([text + "\n"]),
+                             reprcrash=ReprFileLocation(crash.path, crash.lineno, _redact_crash_message(crash.message)))
+
+
 def _redact_report(rep) -> None:
     """Every text a report carries, whatever its outcome: the longrepr (a failure's text; a skip's is
     a (path, line, reason) tuple, whose reason is the text) and the captured-output sections (which
     -rA and -rP print for passed tests too). A longrepr the nets leave unchanged keeps pytest's own
-    object and rendering."""
+    object and rendering; one they change is rebuilt by _redacted_longrepr."""
     _note_env_values()
     lr = getattr(rep, "longrepr", None)
     if isinstance(lr, tuple) and len(lr) == 3 and isinstance(lr[2], str):
@@ -573,7 +735,7 @@ def _redact_report(rep) -> None:
         text = str(lr)
         red = redact_report_text(text)
         if red != text:
-            rep.longrepr = red
+            rep.longrepr = _redacted_longrepr(lr, red)
     if getattr(rep, "sections", None):
         rep.sections = [(name, redact_report_text(content)) for name, content in rep.sections]
 

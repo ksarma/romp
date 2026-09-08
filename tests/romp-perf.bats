@@ -15,6 +15,9 @@
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
 setup() {
+    # bin/romp resolves the state directory as ${ROMP_STATE_DIR:-$XDG_STATE_HOME/romp} and the token as
+    # ${ROMP_SERVE_TOKEN:-<state>/serve-token}: a live kernel's exports outrank the redirection below
+    unset ROMP_STATE_DIR ROMP_SERVE_TOKEN
     TEST_DIR="$(mktemp -d)"
     export XDG_STATE_HOME="$TEST_DIR/state"
     mkdir -p "$XDG_STATE_HOME/romp"
@@ -77,6 +80,7 @@ JSON
             "session_stamp": {"entries": 31}, "task_seg": {"entries": 200}, "session_tok": {"entries": 31}},
  "pusher": {"cycles": 120, "wakes": 360, "wakes_event": 300, "wakes_backstop": 60, "cycle_ms_sum": 36000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 250.0, "cycle_cpu_ms_sum": 10300.0,
+            "wakes_live": 30, "held": 10, "held_ms": 3000.0, "exempt": 4,
             "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
  "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9,
@@ -131,6 +135,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"10.0 s window"* ]]                 # the window is the snapshots' own clocks, not the sleep
     [[ "$output" == *"2.00 cycles/s"* ]]                 # 20 cycles over 10 s
     [[ "$output" == *"6.00 wakes/s (event 50, backstop 10)"* ]]
+    [[ "$output" == *"held 10 (mean 300 ms)   exempt 4"* ]]   # the interval's counters; A predates them and reads as zero
     [[ "$output" == *"busy 60% of wall"* ]]              # 6 s of cycle time in a 10 s window
     [[ "$output" == *"rss 410 MB"* ]]
     [[ "$output" == *"pid 4242"* ]]

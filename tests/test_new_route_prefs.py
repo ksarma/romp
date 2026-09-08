@@ -451,8 +451,8 @@ class NewRouteTags(unittest.TestCase):
         self.assertEqual(self.created, [], "nothing created on either open")
 
     def test_a_refused_tag_edit_rides_beside_the_ack(self):
-        # twins written to the file: the write door refuses a second tag under a taken name (round 4
-        # of the 2026-09-05 review), so a store holding twins predates that kernel
+        # twins written to the file: the write door refuses a second tag under a taken name, so a
+        # store holding twins predates that kernel (or was hand-edited)
         km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
             {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]}))
         km._flags_cache.clear()

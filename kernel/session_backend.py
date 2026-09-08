@@ -31,15 +31,16 @@ from abc import ABC, abstractmethod
 
 def echo_text_key(text) -> str:
     """The one rule under which an input echo's text and a transcript record's user text are compared:
-    outer whitespace stripped, nothing else. Three readers share it and must agree: the kernel's
-    _atom_user_texts (the keys of the `tx_user_texts` mapping prune_live receives), SdkBackend.prune_live's
-    by-text retire (the echo side of that comparison), and SdkBackend._text_landed / _landed_texts (the
-    transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06 the scan collapsed
-    internal whitespace while the prune compared the raw echo text against stripped keys, so a send whose
-    text carried a trailing newline (`romp send` passes its argument verbatim) was FOUND by the scan,
-    neither re-fed nor flagged, and never pruned or dismissable. Strip is as wide as the data needs: the
-    CLI stores user text verbatim (checked over this machine's transcripts, 2026-09-06 — double spaces,
-    bare CRs and line-trailing blanks all preserved). Not a str → ""."""
+    outer whitespace stripped, nothing else. Every reader shares it and must agree: the kernel's
+    _atom_user_text(s) (the keys of the `tx_user_texts` mapping prune_live receives, and the sets the
+    queued fold, _merge_live_atoms, _comments_frame and _tmux_echo_prune compare against),
+    SdkBackend.prune_live's by-text retire (the echo side of that comparison), and SdkBackend._text_landed
+    / _landed_texts (the transcript scan behind the boot and dead-spawn duplicate guard). Until 2026-09-06
+    the scan collapsed internal whitespace while the prune compared the raw echo text against stripped
+    keys, so a send whose text carried a trailing newline (`romp send` passes its argument verbatim) was
+    FOUND by the scan, neither re-fed nor flagged, and never pruned or dismissable. Strip is as wide as
+    the data needs: the CLI stores user text verbatim (checked against recorded SDK transcripts,
+    2026-09-06 — double spaces, bare CRs and line-trailing blanks all preserved). Not a str → ""."""
     return text.strip() if isinstance(text, str) else ""
 
 
@@ -121,10 +122,13 @@ class SessionBackend(ABC):
 
     def forwards_sends(self) -> bool:
         """True if this backend accepts a plain composer send at ANY time — even mid-turn — and manages its
-        own delivery: forwarding the message to the model at the next tool boundary, folding several queued
-        sends into one turn, and holding them across an interrupt until the turn settles (SdkSession._pending
-        + its inputs() generator). The kernel then hands composer sends straight to send() the instant they
-        arrive (the user 2026-07-17, who wanted them in as soon as possible), instead of parking them itself.
+        own delivery: forwarding the message to the model at the next tool boundary, handing queued sends to
+        the CLI one message each, in order (SdkSession._pending + its inputs() generator, which holds the
+        next text until the CLI has taken the last: since 2026-09-08, when two texts sent during one turn
+        reached the agent fused; that incident superseded the 2026-07-17 fold of several queued sends into
+        one turn for SDK sessions), and holding them across an interrupt until the turn settles. The kernel
+        then hands composer sends straight to send() the instant they arrive (the user 2026-07-17, who
+        wanted them in as soon as possible), instead of parking them itself.
         False (default) means the backend has no such queue, so the kernel holds sends while a turn runs and
         merges them into one message at turn end (tmux). Slash-command drive ops (/compact, /effort, …) still
         park in the kernel FIFO on BOTH backends to preserve press-order — this flag governs plain text sends

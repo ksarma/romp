@@ -19,8 +19,10 @@ and the kernel degrades gracefully when the SDK is absent.
 from __future__ import annotations
 import asyncio
 import difflib
+import errno
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -62,10 +64,12 @@ _keysrc = sys.modules.get("romp_keysource") or load_source("romp_keysource", _HE
 _envsrc = load_source("romp_envsource", _HERE / "envsource.py")
 # The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
 # text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
-# scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
-# the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
+# scan below can never find what prune_live cannot retire. The kernel's own copy of that module when it
+# is loaded (the same idiom as _keysrc above); otherwise the file is loaded under its OWN module name:
+# the kernel loads it as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
 # re-executing the source into that module object would rebind the class out from under the subclass.
-echo_text_key = load_source("romp_session_backend_keys", _HERE / "session_backend.py").echo_text_key
+echo_text_key = (sys.modules.get("romp_session_backend")
+                 or load_source("romp_session_backend_keys", _HERE / "session_backend.py")).echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -2200,6 +2204,11 @@ class ApiHealth:
         self._last_state: dict = {}
         self._transitions: deque = deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)   # the global tail, newest last
         self._by_bucket: dict = {}       # bucket key -> deque(maxlen=API_HEALTH_TRANSITIONS_KEEP): that bucket's own tail
+        # the boot's stamp in the signal: boot_at truncated to the millisecond, or one millisecond past the newest
+        # restored transition when that is not before it. Set by _seed; served as the payload's bootAt, and the
+        # stateSince of every bucket the boot seeded and the t of every row the boot filed carry the same number
+        # (review round 4: the route stamped its own round(_STARTED, 3), a second number whenever the clamp fired)
+        self.boot_stamp = None
         self._seed(time.time() if boot_at is None else float(boot_at))
 
     # ---- labels ----
@@ -2337,17 +2346,24 @@ class ApiHealth:
 
     @staticmethod
     def _row_ok(r) -> bool:
-        """A persisted transition row: a dict with a non-empty string `bucket` and `to` and a numeric `t`."""
+        """A persisted transition row: a dict with a non-empty string `bucket` and `to` and a finite numeric `t`.
+        A `t` that is missing, null, a bool, a string, not finite, or an int no float can hold fails the row, so
+        the seed's max over the restored stamps never meets one (review round 4: `float(r.get("t") or 0)` passed
+        a null t, the max then raised on it, and the outer guard dropped EVERY restored row and bucket, not the
+        one; round 5: math.isfinite converts an int to float first and RAISES OverflowError past about 309 digits
+        instead of answering, and json.loads reads a 400-digit integer literal as such an int, so the raise left
+        this check for the same outer guard, with the same loss)."""
         if not isinstance(r, dict):
             return False
-        b, to = r.get("bucket"), r.get("to")
+        b, to, t = r.get("bucket"), r.get("to"), r.get("t")
         if not (isinstance(b, str) and b and isinstance(to, str) and to):
             return False
-        try:
-            float(r.get("t") or 0)
-        except (TypeError, ValueError):
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
             return False
-        return True
+        try:
+            return math.isfinite(t)
+        except OverflowError:       # an int beyond float range: not a stamp float(t) can read
+            return False
 
     def _seed(self, boot_at: float):
         """Restore the per-bucket (state, stateSince, why, evidence) and the transition tail from
@@ -2359,9 +2375,26 @@ class ApiHealth:
         `unknown -> <state>` after it. What the boot filed is written, and so is a legacy seed, so the
         old ledger is read once: the state file exists from the first boot that found one.
 
+        The seed is stamped at `boot_at` truncated to the millisecond (math.floor, never round: a start at
+        X.9996 rounded to (X+1).000 while /version's `started` is int(X.9996) = X), or one millisecond past
+        the newest transition the file carries when that is not before it: a transition the previous kernel
+        filed after this one's start (the two overlapped, or the clock stepped) would otherwise sort ABOVE
+        the restart row in the tail and read as the current state, with the head saying unknown since the
+        boot. The clamp is logged once. The stamp is kept as `boot_stamp` and served as the payload's bootAt,
+        so bootAt, the stateSince of every bucket the boot seeded and the restart rows are one number in
+        every case, clamp or not (review round 3: an int seed sat on the second boundary before the process
+        started, under a row the previous kernel filed in that same second; round 4: the route stamped its
+        own round(_STARTED, 3), a second number whenever the clamp fired, and one that named the next
+        second when the start's fraction rounded up).
+
         Never raises: this runs inside SdkBackend.__init__, and an exception here pinned the SDK backend
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
-        non-numeric `t` or a non-string `bucket` is skipped; the skips are logged once."""
+        missing, null, non-numeric or non-finite `t` (an int past float range included) or a non-string
+        `bucket` is skipped and counted; the skips are logged once, and the other rows are kept."""
+        # floor, so int(boot_stamp) == int(boot_at) (/version's started) whenever nothing is clamped: a float one step
+        # below a whole second multiplies to more than half an ulp below it, so the floor never lands on the next second
+        base = math.floor(boot_at * 1000) / 1000.0
+        self.boot_stamp = base
         try:
             rows, per, recs, bad, legacy = [], {}, {}, 0, False
             try:
@@ -2386,7 +2419,7 @@ class ApiHealth:
                         continue
                     rows.append(r)
                     per.setdefault(r["bucket"], []).append(r)
-                    recs[r["bucket"]] = {"state": r["to"], "since": float(r["t"] or 0), "why": r.get("why") or "",
+                    recs[r["bucket"]] = {"state": r["to"], "since": float(r["t"]), "why": r.get("why") or "",
                                          "evidence": r.get("evidence"), "auth": r.get("auth"), "family": r.get("family")}
             else:
                 if not isinstance(doc, dict):
@@ -2417,6 +2450,17 @@ class ApiHealth:
             if bad and self._log:
                 self._log("api-health: %d malformed row(s) skipped at boot (%s)"
                           % (bad, API_HEALTH_LEGACY_LEDGER if legacy else API_HEALTH_STATE_FILE))
+            # one stamp, at the tail's millisecond precision, for the restart rows, the seeded since and the payload's
+            # bootAt: the boot itself, or one millisecond past the newest restored transition when that is not before
+            # the boot (every row passed _row_ok, so every t here is a finite number)
+            at = base
+            newest = max((float(r["t"]) for rs in [rows] + list(per.values()) for r in rs), default=None)
+            if newest is not None and newest >= at:
+                if self._log:
+                    self._log("api-health: the state file's newest transition (%.3f) is not before this boot (%.3f): "
+                              "seeding at %.3f so the restart row stays the newest" % (newest, at, newest + 0.001))
+                at = round(newest + 0.001, 3)
+            self.boot_stamp = at
             filed = False
             with self._lock:
                 self._transitions.extend(rows)
@@ -2428,11 +2472,11 @@ class ApiHealth:
                     fam = rec["family"] if isinstance(rec["family"], str) and rec["family"] else f
                     ev = {"window": None, "rate429": None, "rate5xx": None, "n": 0}
                     if rec["state"] != "unknown":
-                        self._file_locked({"t": round(boot_at, 3), "bucket": key, "auth": auth, "family": fam,
+                        self._file_locked({"t": at, "bucket": key, "auth": auth, "family": fam,
                                            "from": rec["state"], "to": "unknown", "why": API_HEALTH_RESTART_WHY,
                                            "evidence": ev})
                         filed = True
-                    self._last_state[key] = {"state": "unknown", "since": boot_at, "why": API_HEALTH_RESTART_WHY,
+                    self._last_state[key] = {"state": "unknown", "since": at, "why": API_HEALTH_RESTART_WHY,
                                              "evidence": ev, "auth": auth, "family": fam}
                 if filed or legacy:
                     self._write_state_locked()
@@ -2440,6 +2484,7 @@ class ApiHealth:
             if self._log:
                 self._log("api-health: state file unreadable (%s) — starting with no history" % e)
             self._last_state, self._transitions, self._by_bucket = {}, deque(maxlen=API_HEALTH_TRANSITIONS_KEEP), {}
+            self.boot_stamp = base           # nothing restored, so nothing to clamp past
 
     def _read_legacy_tail(self):
         """The last 64 KB of the first cut's STATE/api-health.jsonl as lines, or None when there is no
@@ -2500,8 +2545,9 @@ class ApiHealth:
 
     # ---- the read ----
     def snapshot(self, now: float | None = None, uptime_s=None) -> dict:
-        """The /api-health payload minus boot identity (the kernel stamps bootId/bootAt from /version's
-        globals). Windows and states are computed here, from the ring and the last persisted
+        """The /api-health payload minus `bootId` (the kernel stamps that from /version's globals; `bootAt`
+        is this aggregator's `boot_stamp`, the number every seeded stateSince and every restart row
+        carry). Windows and states are computed here, from the ring and the last persisted
         (state, stateSince), at read time; the transitions a read finds are the events that rewrite
         the state file. Every KNOWN bucket is derived — one in the ring, or one the state file remembers
         whose events have all aged out: absent from the ring is `unknown`, filed at the read that found
@@ -2563,7 +2609,8 @@ class ApiHealth:
             if filed:
                 self._write_state_locked()       # once per read, after every bucket's record is current
             transitions = list(self._transitions)
-        return {"schema": API_HEALTH_SCHEMA, "asOf": round(now, 3), "uptimeS": None if uptime_s is None else round(uptime_s, 1),
+        return {"schema": API_HEALTH_SCHEMA, "asOf": round(now, 3), "bootAt": self.boot_stamp,
+                "uptimeS": None if uptime_s is None else round(uptime_s, 1),
                 "complete": None if uptime_s is None else bool(uptime_s >= max(cfg["windows"])),
                 "seq": seq, "lastEventAt": None if last_at is None else round(last_at, 3),
                 "rate429Basis": "attempts",
@@ -3746,24 +3793,26 @@ def work_api_key_source():
         if source.kind == "file":
             _check_key_file_agrees(startup, source.value)
             _note_key_file_gone(source.value)
-        if source.kind in ("file", "op"):
+        if source.kind == "file" or _keysrc.is_provider_kind(source.kind):
             # A real selection retires the startup key for good. Said ONCE when that key was non-empty:
             # an operator who delivers the key through a systemd drop-in or a launchd plist rather than
             # service.env would otherwise watch every session bill the login with nothing in the log
             # (review find, 2026-09-05) — the silent fallback this module exists to end.
             # (the standard install exports the file's own key line into the manager environment, so the
             # SAME key on both sides is nothing to say; a DIFFERENT file key is _check_key_file_agrees's line)
-            discarded = source.kind == "op" or (source.kind == "file" and not source.value)
+            discarded = _keysrc.is_provider_kind(source.kind) or (source.kind == "file" and not source.value)
             if startup and discarded and not _STARTUP_KEY_DISCARD_SAID:
                 _STARTUP_KEY_DISCARD_SAID = True
                 why = ("supervised managers read %s only" % _keysrc.service_env_path()
                        if source.kind == "file" and os.environ.get("ROMP_SUPERVISED") == "1"
                        else "%s selects the 1Password source" % _keysrc.REF_VAR if source.kind == "op"
+                       else "%s selects the key command source" % _keysrc.CMD_VAR if source.kind == "command"
                        else "the env file's key line is empty")
-                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. Sessions without an "
-                                 "explicit Billing pick %s.\n"
-                                 % (_keysrc.fingerprint(startup), why,
-                                    "launch on the login" if not source.configured else "use that source"))
+                tail = ("Sessions launch with nothing of romp's injected, whatever their Billing pick (Claude "
+                        "Code's own credential pays)." if not source.configured
+                        else "Sessions without an explicit Billing pick use that source.")
+                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. %s\n"
+                                 % (_keysrc.fingerprint(startup), why, tail))
             _WORK_KEY = ""
         # "error" (an unreadable or undecodable file) is not a selection: it fails the operation that asked
         # while it lasts, and the startup key stays claimed so a transient permission blemish cannot
@@ -3796,8 +3845,9 @@ def work_api_key() -> str:
 def _note_key_file_gone(live: str) -> None:
     """Say ONCE, on stderr, when the env file's static key line is REMOVED while this process runs. The
     file stays authoritative (select_source returns an empty file source, never the startup key), so
-    every session without an explicit Billing pick quietly starts launching on the login — a change of
-    who pays with nothing in the log to find it by (review find, 2026-09-06). Fingerprint and path only.
+    every session — whatever its Billing pick (2026-09-07) — quietly starts launching with nothing of
+    romp's injected, and Claude Code's own credential pays: a change of who pays with nothing in the
+    log to find it by (review find, 2026-09-06). Fingerprint and path only.
     A line that comes back re-arms the notice, so a second removal is said too."""
     global _FILE_KEY_SEEN_FP
     if live:
@@ -3806,8 +3856,8 @@ def _note_key_file_gone(live: str) -> None:
     if not _FILE_KEY_SEEN_FP:
         return
     sys.stderr.write("work key: the %s line (sha256:%s) is GONE from %s — the file stays authoritative, so "
-                     "sessions without an explicit Billing pick now launch on the login. Restore the line or "
-                     "select a source with `romp keyswap`.\n"
+                     "sessions now launch with nothing of romp's injected, whatever their Billing pick (Claude "
+                     "Code's own credential pays). Restore the line or select a source with `romp keyswap`.\n"
                      % (_keysrc.KEY_VAR, _FILE_KEY_SEEN_FP, _keysrc.service_env_path()))
     _FILE_KEY_SEEN_FP = ""
 
@@ -3909,13 +3959,14 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
     """Say ONCE, on stderr (the kernel's log wire), whether the file this process reads holds the
     same key its environment was started with. Both sides are fingerprints, never values.
 
-    Worth the six lines: this is the one way the live read can go quietly wrong. The launchers do
-    not parse identically to each other — systemd's EnvironmentFile strips one layer of quotes, the
-    macOS launcher's `export` does not — so a quoted value, a stray duplicate line, or a key that
-    reaches the manager some other way makes the file disagree with the environment, and every
-    session would then launch on a key nobody chose. Disagreement at startup is a configuration
-    fact the operator can fix in a minute, and silence about it would surface hours later as
-    inexplicable 401s."""
+    Worth the six lines: this is the one way the live read can go quietly wrong. Three readers each
+    parse the file themselves — systemd's EnvironmentFile, the macOS launcher (bin/romp-node-launch)
+    and keysource._assignments — and all strip one layer of matching quotes and the whitespace around a
+    value, but a backslash escape inside quotes (systemd interprets some, the other two none), a stray
+    duplicate line, or a key that reaches the manager some other way makes the file disagree with the
+    environment, and every session would then launch on a key nobody chose.
+    Disagreement at startup is a configuration fact the operator can fix in a minute, and silence
+    about it would surface hours later as inexplicable 401s."""
     global _KEY_FILE_CHECKED
     if _KEY_FILE_CHECKED:
         return
@@ -3927,7 +3978,7 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
     sys.stderr.write(
         "work key: the manager env file sets a DIFFERENT key than this process started with "
         "(file sha256:%s, startup sha256:%s) — sessions launch on the file's. If that is not what "
-        "you meant, check %s for a quoted or duplicated %s line.\n"
+        "you meant, check %s for a duplicated %s line or a backslash escape inside its quotes.\n"
         % (_keysrc.fingerprint(live), _keysrc.fingerprint(startup),
            _keysrc.service_env_path(), _keysrc.KEY_VAR))
 
@@ -3992,6 +4043,14 @@ def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     never injected by the launch, so its line says only that a credential in the file contradicts
     the declared auth model — a billing claim there would be false. Undeclared, nothing is said: an
     installation that keeps its key in service.env and declares nothing is upstream's ordinary shape.
+    Beside this, _check_env_file_vs_declaration (upstream's review of the fork's offer of this check,
+    2026-09-08) is the auth-contradiction line for the key SOURCE the file selects under =login (a key
+    line, a ROMP_API_KEY_REF reference or a ROMP_API_KEY_CMD key command, or an invalid file), read
+    through keysource and gated on _declared_auth. This line is the fork's key-free policy over
+    credential-shaped VALUES (a key, any token) under either declaration: the value must leave the
+    file and be rotated. Under =login with a key line both speak, one about the source and one about the
+    value; they are worded apart (this one says "under", that one "while") so a reader can tell which
+    check spoke.
     The line names the file and the variable NAMES, never a value. Returns the names it warned about
     ([] when quiet) so the caller and the tests can see what it decided."""
     global _CREDENTIAL_LINE_SAID
@@ -4013,13 +4072,73 @@ def _warn_credential_lines_in_env_file(log, path: str | None = None) -> list:
     if others:
         parts.append("%s: a credential in a file contradicts the declared auth model" % ", ".join(others))
     many = len(names) > 1
-    log("auth: %s carries %s — credential line%s — while ROMP_EXPECTED_AUTH=%s. %s. "
+    log("auth: %s carries %s — credential line%s — under ROMP_EXPECTED_AUTH=%s. %s. "
         "This fork does not write API keys to files: remove the line%s and rotate the value%s, since "
         "%s reached a file."
         % (path or _keysrc.service_env_path(), ", ".join(names), "s" if many else "", exp, "; ".join(parts),
            "s" if many else "", "s" if many else "", "they" if many else "it"),
         problem=True)
     return names
+
+
+_ENV_FILE_AUTH_CHECKED = False   # the env-file-vs-declaration check (one line, once per process)
+
+
+def _check_env_file_vs_declaration(log, state_dir) -> str:
+    """Say ONCE per process, as a problem-ring line, when the API key source the LAUNCH would select
+    contradicts ROMP_EXPECTED_AUTH=login, which declares that the sessions bill the machine login. The two
+    cannot both hold: a selected source — an `ANTHROPIC_API_KEY=` line with a value, a `ROMP_API_KEY_REF=`
+    line, or a `ROMP_API_KEY_CMD=` line in the env file, and for a foreground manager the same names
+    exported in its environment — is injected at launch for every session without an explicit Billing
+    pick (effective_auth and default_auth answer "key" whenever a source is configured), so those
+    sessions bill the key. The selection is keysource.select_source, the launch's own (work_api_key_source),
+    so the check's silence is truthful: the file's lines alone missed the durable provider MARKER beside
+    the file (a removed provider the launch still tries, and fails on) and the foreground environment
+    (a review of the merged check, 2026-09-08). The startup key is PEEKED, never claimed: the claim and
+    its once-only semantics belong to the launch (startup_api_key). Without this line the first sign is _note_auth_source's per-init
+    mismatch, after a launch has already billed the wrong account, and that line names the helper and
+    the file without saying which line. A file whose source configuration is INVALID (both provider
+    lines; a garbled line) is still a selection — `configured` is True, so nothing falls back to the
+    login — and gets its own sentence: those sessions will try the source and fail to launch, not bill
+    the login. keysource's error strings are static by design, so quoting one names no value.
+
+    Gated on _declared_auth, not _expected_auth: one explicit gear Billing pick makes the declaration
+    inert everywhere else, and under a remembered login pick every spawn is seeded auth=login (spawn),
+    so the sentence above would be false there. =key is never a contradiction: a key source in the
+    file lands the sessions keyed, as declared (the reference shape docs/reference.md recommends
+    included), so nothing is said. Undeclared, nothing is said either: a key line in service.env
+    with no declaration is the ordinary shape. The file is read through keysource and the variable is
+    named through keysource.source_var, so the only names this can ever say are its three (a token
+    another service keeps in the file is never one of them), and the line names the file and the
+    variable, never a value. Returns the variable named ("error" for an invalid file, "" when quiet)
+    so the caller and the tests can see what it decided."""
+    global _ENV_FILE_AUTH_CHECKED
+    if _ENV_FILE_AUTH_CHECKED:
+        return ""
+    exp, src = _declared_auth(state_dir)
+    if exp != "login" or src != "env":
+        return ""
+    p = _keysrc.service_env_path()
+    startup = _WORK_KEY if _WORK_KEY is not None else (os.environ.get("ANTHROPIC_API_KEY") or "")   # a peek
+    source = _keysrc.select_source(startup)
+    if not source.configured:
+        return ""                    # the launch selects nothing anywhere it looks (file, marker, environment):
+    _ENV_FILE_AUTH_CHECKED = True    # the sessions fall to Claude Code's own credential, nothing to weigh
+    from_env = source.kind == "environment" or "from the environment" in (source.error or "") \
+        or not _keysrc.read_source(p).configured and source.kind != "error"
+    where = "the manager's environment" if from_env else p
+    if source.kind == "error":
+        log("auth: %s selects an API key source that cannot be used (%s) while ROMP_EXPECTED_AUTH=login. Every "
+            "session without an explicit Billing pick will try that source and fail to launch rather than bill "
+            "the machine login. Fix the source, or change the declaration to match what it should select."
+            % (where, source.error or "invalid API key source configuration"), problem=True)
+        return "error"
+    var = _keysrc.source_var(source.kind)
+    log("auth: %s sets %s while ROMP_EXPECTED_AUTH=login. The declaration says the sessions bill the machine "
+        "login, but the key source it selects is injected at launch for every session without an explicit "
+        "Billing pick, so they bill the key. Fix whichever side is wrong: remove the line (or the export), or "
+        "change the declaration to match what is selected." % (where, var), problem=True)
+    return var
 
 
 def _expected_auth() -> str:
@@ -4386,36 +4505,45 @@ def key_fast_org_env(key: str, log) -> dict[str, str]:
 # The live session (one quarantined asyncio thread).
 # ---------------------------------------------------------------------------
 
-class _TodoText(str):
-    """A queued user-todo ANSWER's text: a plain str to every consumer (equality, sets, joins,
-    json — all unchanged), with the id of the todo it answers riding as an attribute. The id
-    travels WITH the message — through _pending, the reg mirror, the fed-turn twin and the
-    stranded re-head — so the recall and loss machinery read it off the entry they act on, and no
-    side table (whose lifetime was the kernel process while the queue it tracked was persisted —
-    the round-2 2026-08-22 restart-recall hole) has to remember which message answers what.
-    getattr(entry, "todo", "") reads it off any queue text."""
+class _QueueText(str):
+    """A queued text that carries an identity: a plain str to every consumer (equality, sets,
+    joins, json — all unchanged), with up to two ids riding as attributes. `todo` is the id of
+    the user todo this text ANSWERS (the 2026-08-22 shape, then named _TodoText); `send_id` is
+    the id the CLIENT minted for the send at the press (2026-09-08), so its "sending…" bubble
+    can be matched to this exact entry — in the queued chip, in the echo, and in the record that
+    lands it — instead of to the first entry wearing the same words. Both travel WITH the
+    message — through _pending, the reg mirror, the fed-turn twin and the stranded re-head — so
+    the recall and loss machinery read them off the entry they act on, and no side table (whose
+    lifetime was the kernel process while the queue it tracked was persisted — the round-2
+    2026-08-22 restart-recall hole) has to remember which message is which.
+    getattr(entry, "todo", "") / getattr(entry, "send_id", "") read them off any queue text."""
 
-    __slots__ = ("todo",)
+    __slots__ = ("todo", "send_id")
 
-    def __new__(cls, text, todo):
+    def __new__(cls, text, todo="", send_id=""):
         o = str.__new__(cls, text)
         o.todo = str(todo or "")
+        o.send_id = str(send_id or "")
         return o
+
+
+_TodoText = _QueueText   # the answer-only name the 2026-08-22 change introduced; readers and tests keep it
 
 
 def _queue_text(e):
     """One persisted queue entry → the text the in-memory queue holds: a bare string stays a bare
-    string; a {"text","todo"} dict (a user-todo ANSWER — see _TodoText) comes back carrying its
-    id. None for malformed junk, exactly as the old strings-only filter treated it. Bare entries
-    are byte-identical to the pre-todo mirror in BOTH directions, so every non-answer send
-    round-trips untouched by any kernel version; an OLDER kernel reading a dict entry drops it
+    string; a {"text","todo","sendId"} dict (an id-carrying entry — see _QueueText) comes back
+    carrying its ids. None for malformed junk, exactly as the old strings-only filter treated it.
+    Bare entries are byte-identical to the pre-todo mirror in BOTH directions, so a send with no
+    id round-trips untouched by any kernel version; an OLDER kernel reading a dict entry drops it
     from its seed (its filter is isinstance(str)) — accepted for the downgrade path: the message
-    class did not exist before the id rode the entry."""
+    class did not exist before the ids rode the entry."""
     if isinstance(e, str):
         return e or None
     if isinstance(e, dict) and isinstance(e.get("text"), str) and e["text"]:
         todo = str(e.get("todo") or "")
-        return _TodoText(e["text"], todo) if todo else e["text"]
+        send_id = str(e.get("sendId") or "")
+        return _QueueText(e["text"], todo, send_id) if (todo or send_id) else e["text"]
     return None
 
 
@@ -4426,9 +4554,17 @@ def _queue_texts(q):
 
 def _queue_wire(t):
     """One in-memory queue text → its persisted shape: bare strings stay bare (byte-compat with
-    every reader of reg['queue']); an id-carrying answer serializes as {"text","todo"}."""
-    todo = getattr(t, "todo", "")
-    return {"text": str(t), "todo": todo} if todo else str(t)
+    every reader of reg['queue']); an id-carrying entry serializes as {"text","todo","sendId"},
+    each id only when set."""
+    todo, send_id = getattr(t, "todo", ""), getattr(t, "send_id", "")
+    if not (todo or send_id):
+        return str(t)
+    d = {"text": str(t)}
+    if todo:
+        d["todo"] = todo
+    if send_id:
+        d["sendId"] = send_id
+    return d
 
 
 class _AskCancelled(Exception):
@@ -4677,6 +4813,9 @@ class SdkSession:
         #   _note_auth_source compares the init's apiKeySource against THIS, so a CLI that lands on
         #   the other auth (a stale login, a key found via apiKeyHelper) is flagged loudly instead
         #   of silently billing the wrong account
+        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched with NOTHING injected
+        #   because romp holds no key source (_options): Claude Code's own credential — its apiKeyHelper
+        #   or its login — is what pays, said once per process in the log
         self._last_cost_total = 0.0   # the CLI's totalCostUSD is CUMULATIVE per process (verified in
         #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
@@ -4746,6 +4885,21 @@ class SdkSession:
         #                              queue so no message can share its pre-turn window (the CLI batches
         #                              everything pre-start into ONE record — the 2026-08-25 fold); cleared
         #                              by the turn's first streamed message, an exact event, or a reconnect
+        # THE FED TEXT THE CLI HAS NOT YET TAKEN (2026-09-08), the same fold generalized to every send: the
+        # CLI drains EVERY queued prompt it holds into ONE user message when it next reads its queue — at
+        # a turn's start (the pre-turn window above) or when a running turn ends — so two texts fed into
+        # it before that drain reach the agent fused: one message, the first text then the second, which
+        # the chat showed as one bubble wearing both (the incident: a composer send and a todo reply
+        # during one open turn). inputs() therefore feeds ONE text and holds the rest until the CLI
+        # demonstrably TOOK it — see _untaken_taken for the exact events — so every queued text lands as
+        # its own record, in queue order. RUNTIME-ONLY: a reconnect defers while a hold is live (the CLI
+        # still owes the drain; _do_request_reconnect) and the loop top hands any hold that reached it to
+        # the stranded reconcile; a restart re-delivers the persisted queue. None, or {"text", "item"
+        # (the queue entry itself, with its ids), "fresh" (fed from idle), "settled" (the turn it was fed
+        # into has since ended), "fault" (the landing scan raised: logged once, the hold escapes on the
+        # next turn frame), "t", "off", "fsid" (the transcript mark the landing scan starts at,
+        # _transcript_mark), plus the scan's own cursor keys}.
+        self._untaken = None
         # A RESTORED /compact must light the compacting bracket too (the user 2026-07-22). send() sets
         # _compacting when it enqueues a compact command, but a persisted queue lands here INSTEAD of
         # going through send() — any /compact still queued when the kernel died arrives this way. Without
@@ -4764,6 +4918,7 @@ class SdkSession:
         #   overwrite the first's future (a hang) or share it (one click answering both — a silently wrong
         #   permission). Each ask site holds this from present to resolve (PR #875 review, 2026-09-02).
         self._lock = threading.Lock()
+        self._persist_lock = threading.Lock()   # one queue-mirror snapshot+write at a time (_persist_queue)
         self._ready = threading.Event()
         # Boot-stagger hook (see BOOT_RESUME_CONCURRENCY): fired exactly once when this session's CLI
         # is demonstrably past its spawn+catch-up burst (first init message) or its thread dies —
@@ -4788,15 +4943,16 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("boot-settled callback (%s) failed: %s" % (self.name, e))
 
-    def enqueue(self, text: str, todo: str = ""):
+    def enqueue(self, text: str, todo: str = "", send_id: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
         before the loop is ready too (the generator drains _pending on its first pass).
-        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo): it rides the
-        entry itself (_TodoText), through the reg mirror and back, so a recall reads the id off
-        the entry it removes — never a kernel-side table a restart empties."""
-        if todo:
-            text = _TodoText(text, todo)
+        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo) and `send_id`
+        the client's id for the send (SdkBackend.send's send_id): both ride the entry itself
+        (_QueueText), through the reg mirror and back, so a recall reads them off the entry it
+        removes — never a kernel-side table a restart empties."""
+        if todo or send_id:
+            text = _QueueText(text, todo, send_id)
         with self._lock:
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
@@ -4831,23 +4987,68 @@ class SdkSession:
         """The texts FED to the current client whose ResultMessage has not landed (`_inflight_texts`,
         oldest first); thread-safe. A mid-turn send lives here from the inputs() pop until the turn
         settles: the CLI holds it, queued behind the running turn, to splice at the next tool boundary.
-        The observable twin of `inflight`, for diagnostics and tests; prune_live read it for one day as a
-        floor guard, until the floor itself went (no SDK echo is floored — its docstring)."""
+        The observable twin of `inflight`, for diagnostics and tests; nothing gates on it (prune_live
+        floors no echo, so there is nothing to shield a fed echo from — its docstring)."""
         with self._lock:
             return list(self._inflight_texts)
 
-    def unqueue(self, idx: int, expect: str | None = None) -> str | None:
+    def _busy_under_lock(self) -> bool:
+        """SdkBackend.busy's reading, for a caller already holding self._lock: a turn in flight, a text
+        queued and about to run, or a fed text the CLI still holds (_untaken). move() reads it in the
+        same hold as its arm (review round 4, 2026-09-08), so no text can be popped between an idle
+        reading and the arm the feeder then holds on."""
+        return self.inflight > 0 or bool(self._pending) or getattr(self, "_untaken", None) is not None
+
+    def _disarm_move_settle(self) -> None:
+        """Lower the move arm (_move_settle_expected) and wake the feeder, from either thread. A
+        standing arm HOLDS the queue (inputs(), review round 4, 2026-09-08), and the feeder sleeps on
+        _input_wake, so every site that lowers the arm must wake it or the head stays held until some
+        unrelated event does: move() lowers it from the kernel thread (a refusal, a control error, a
+        same-folder answer, an uncertain outcome), _consume_move_settle from the session's own thread
+        (the move's turn-less result, or a real result proving the arm stale). The loop top clears the
+        flag bare: the new client's inputs() is created after it and reads the flag on its first pass."""
+        self._move_settle_expected = False
+        loop, wake = getattr(self, "loop", None), getattr(self, "_input_wake", None)
+        if loop is None or wake is None:
+            return
+        # The session's thread may have ended: asyncio.run closed its loop and self.loop is never nulled,
+        # and move() lowers the arm from the kernel thread after a claim the CLI's exit can outrun
+        # (review round 5, 2026-09-08). There is no feeder left to wake then, and a raise here left
+        # move()'s exit half done (a RuntimeError in place of the SDK's named error, cwdPending kept).
+        # Lowering the arm is the point: wake only an open loop, and never raise.
+        closed = getattr(loop, "is_closed", None)
+        if callable(closed) and closed():
+            return
+        try:
+            loop.call_soon_threadsafe(wake.set)
+        except RuntimeError:     # closed between the check and the call
+            pass
+
+    def unqueue(self, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
-        and return its raw text, or None if it's gone — a user-todo ANSWER comes back as its
-        _TodoText, so the caller reads the ask it was clearing off the entry itself (the recall's
+        and return its raw text, or None if it's gone — an id-carrying entry comes back as its
+        _QueueText, so the caller reads the ask it was clearing off the entry itself (the recall's
         reopen). Lets the user CANCEL a message they queued
         behind a busy turn — click it in the chat to pull it back out and re-edit (the user 2026-06-27).
         Only pending (not-yet-started) turns are cancelable; once the input generator has fed a turn to
         the CLI there is no recall (the control protocol has no queue-remove), so a miss here is the
         caller's cue to say so loudly. `expect` is the exact text the click meant: verified (and, on a
         shifted index, re-located) UNDER the lock, so the input generator consuming entries between the
-        caller's snapshot and this pop can never cancel the wrong message."""
+        caller's snapshot and this pop can never cancel the wrong message. `send_id` names the entry
+        exactly (the id the client minted at the press, riding the entry — _QueueText): when given
+        and found, it wins over both the index and the text, so of two queued entries wearing the same
+        words the ✕ removes the one it was pressed on (2026-09-08). When given and NOT found, the pop is
+        a miss: nothing is removed and the text relocation below does not run (review of 2026-09-08,
+        cancel by id is exact). The kernel applies the same rule over its snapshot before calling here,
+        but this pop runs under the lock and closes the window between that snapshot and the pop: if
+        the feeder took the named entry in between, a text fallback would pop a same-words neighbour
+        and the kernel would report the cancel as done. Only an id-less call relocates by text."""
         with self._lock:
+            if send_id:
+                hit = next((i for i, q in enumerate(self._pending) if getattr(q, "send_id", "") == send_id), -1)
+                if hit < 0:
+                    return None
+                idx, expect = hit, None
             if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
                 idx = next((i for i, q in enumerate(self._pending) if q == expect), -1)
             item = self._pending.pop(idx) if 0 <= idx < len(self._pending) else None
@@ -4863,13 +5064,20 @@ class SdkSession:
         turn already FED to the SDK is out of the persisted queue by design: it reaches the
         transcript as a user atom, which is the cut-turn resume's territory, not replay's.
         Serialization: bare strings, except an id-carrying answer's {"text","todo"} (_queue_wire)
-        — every non-answer entry is byte-identical to the pre-todo mirror."""
-        with self._lock:
-            snap = list(self._pending)
-        try:
-            self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap])
-        except Exception:
-            self.backend._log("persist queue (%s): %s" % (self.name, traceback.format_exc()))
+        so every non-answer entry is byte-identical to the pre-todo mirror.
+        The snapshot and its write are ONE step (_persist_lock, 2026-09-08): the feeder's post-pop
+        persist on the loop thread and an enqueue's persist on the kernel thread each snapshot under
+        _lock and write under _update_reg's own lock, so the pair could interleave as snapshot-A (empty,
+        after the pop), snapshot-B (the new entry), write-B, write-A: a lost update that left the mirror
+        without an entry _pending held until the next mutation (seen as a load-dependent failure of the
+        mirror test). Serializing whole persists keeps the last write the latest snapshot."""
+        with self._persist_lock:
+            with self._lock:
+                snap = list(self._pending)
+            try:
+                self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap])
+            except Exception:
+                self.backend._log("persist queue (%s): %s" % (self.name, traceback.format_exc()))
 
     def interrupt(self):
         """Escalating stop (the user 2026-07-10, terminal parity). The old body was `if self.loop and
@@ -4993,7 +5201,20 @@ class SdkSession:
         # a rewind-HELD queue must not defer the reconnect: those turns can't start until the
         # reconnect arms them (the input gate) — deferring on their account would deadlock the rewind
         held = bool(self._rewind_to and not self._rewind_armed)
-        if self.inflight == 0 and (held or not self._pending):
+        # A fed text the CLI has not yet TAKEN (_untaken) is in flight for this decision too (2026-09-08
+        # review): after a mid-turn feed's result the counters read idle while the text still sits in
+        # the CLI's queue, about to be drained into a turn, and a teardown then ended the CLI with it:
+        # the message reached no one romp could see, and nothing flagged it. A teardown is NOT a kill
+        # (review round 3, 2026-09-08, read in the kernel's sdkvenv): the SDK's transport close()
+        # (claude_agent_sdk 0.2.152, _internal/transport/subprocess_cli.py, close()) closes stdin first
+        # and waits up to 5 s for the CLI to exit on its own before terminate() and then kill(), so a
+        # CLI that has already drained the text into a turn finishes that turn when it fits in the
+        # grace, and the text's record then exists in a transcript no frame reported; a turn that does
+        # not fit is cut with the process. Do not design against a kill here: the event is an EOF plus a
+        # grace. The hold's release (the drained turn's first frame, _on_message) counts that turn, so
+        # the deferred arm fires at its result.
+        quiet = self.inflight == 0 and self._untaken is None
+        if quiet and (held or not self._pending):
             if not defer:
                 with self._sub_lock:             # the loop-side re-check the key cycle relies on: live work
                     busy_work = bool(self._subagents or self._bg_tasks)   # that registered since the caller looked
@@ -5008,6 +5229,71 @@ class SdkSession:
         else:
             self.backend._log("keyswap (%s): became busy before the reconnect ran — not cycled; cycle it "
                               "again when it is quiet" % self.name)
+
+    def _release_hold_at_exit(self):
+        """THE CLI'S EXIT is the one event on which the CLI loses its prompt queue, and so the one event
+        besides a teardown (the loop top, above _reconcile_stranded) that must release a feed hold
+        (_untaken) itself: a hold whose text left the CLI's queue with no drain turn and no landed record
+        has no releasing frame, and it would park every later text for good, with the reconnect deferred
+        behind it (review round 2, 2026-09-08). Verified on the installed CLI 2.1.263 over stream-json
+        against a logging stand-in Messages endpoint (2026-09-08):
+          * the INTERRUPT control request is NOT a loss event: a text queued mid-turn survived it; the
+            interrupted turn's result (error_during_execution) was followed 6 ms later by a new init and
+            the queued text's own turn. The CLI's schema says the same (queued commands survive an
+            interrupt without `cancel_queued`, which the SDK's interrupt() never sends), so the settle
+            marks the hold settled as for any result and the drain's first frame releases it;
+          * a SIGINT (the stop ladder's second rung) made the CLI emit the interrupted result and EXIT 30 ms
+            later WITHOUT running the queued text; a kill emits nothing at all; a crash is a kill. In every
+            case the stream ends and this thread ends with it, which is where this runs (_run's finally,
+            before _on_session_gone reads the counters).
+        With the process gone the transcript is final, so its verdict is proof, the rule _mark_dropped_echoes
+        applies to a dead spawn: a scan that finds no record of the held text means the text reached no
+        turn, and it goes back to the HEAD of _pending with its ids (ahead of what queued behind it, as it
+        was), persisted to the reg mirror, so the next client (the next send, the crash heal's respawn, the
+        boot reconcile) feeds it first and the chat shows it queued, with its ✕, meanwhile; a record found
+        means the CLI took it (its echo prunes on that record); a scan that cannot read the transcript
+        takes the flag path on a RESUMABLE conversation, never a re-feed on doubt, and re-heads when no
+        conversation ever materialised (resume_sid None: no init streamed, so the next client starts
+        fresh and a re-feed cannot duplicate; _reconcile_stranded's distinction, review round 3,
+        2026-09-08). Never a silent block, never a timer. The counters
+        are left as they are: an unsettled hold's turn was running (inflight > 0) and _on_session_gone
+        reads that as the cut it is; a settled hold's CLI was between turns, and an idle death settles
+        'waiting' as before, its message owed and visible instead of lost until the next spawn's scan."""
+        u = getattr(self, "_untaken", None)
+        if u is None:
+            return
+        self._untaken = None
+        item = u.get("item", u["text"])
+        try:
+            seen = self.backend._text_landed(self.sid, u["text"], u.get("t"), u.get("off"), u.get("fsid"),
+                                             cursor=u)
+        except Exception:
+            seen = None
+        if seen is False or (seen is None and not self.resume_sid):
+            with self._lock:
+                self._pending.insert(0, item)
+            self._persist_queue()
+            if seen is False:
+                self.backend._log("sdk %s: the CLI exited while it still held a fed text (never landed): back "
+                                  "at the head of the queue for the next client" % self.sid[:8])
+            else:
+                # _reconcile_stranded's distinction (review round 3, 2026-09-08): no init ever streamed, so
+                # no conversation materialised and the next client starts one fresh; a transcript the scan
+                # cannot read (typically: the CLI died before writing its first record, so the file does
+                # not exist) is no reason to flag the user's first message as never delivered when
+                # re-feeding it cannot duplicate anything the user can see.
+                self.backend._log("sdk %s: the CLI exited before any conversation materialised, holding a fed "
+                                  "text whose transcript could not be read (%s): back at the head of the "
+                                  "queue for the next client, which starts the conversation fresh"
+                                  % (self.sid[:8], u.get("scan_error") or "unreadable"))
+        elif seen:
+            self.backend._log("sdk %s: the CLI exited after taking the last fed text; nothing to re-feed"
+                              % self.sid[:8])
+        else:
+            self.backend._log("sdk %s: the CLI exited while it held a fed text and the transcript could not "
+                              "be read (%s): the text's echo is flagged, not re-fed on doubt"
+                              % (self.sid[:8], u.get("scan_error") or "unreadable"), problem=True)
+            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
 
     def _reconcile_stranded(self):
         """RECONCILE ACROSS A RECONNECT, at the loop's top where no client is connected so nothing can
@@ -5040,7 +5326,11 @@ class SdkSession:
           loss, and a re-feed would land the message TWICE in the resumed conversation, the exact
           duplicate this branch is documented to refuse. The re-feed lives only
           where the conversation is NOT resumable — the re-head above, and the boot/dead-spawn callers
-          (_reseed_echoes, _run), where no client survives to have landed it."""
+          (_reseed_echoes, _run), where no client survives to have landed it.
+        A text whose hold was SETTLED when the client went (fed mid-turn, its turn ended, the CLI still
+        held it for the drain) is in neither counter (the settle zeroed both), so the loop top puts it
+        back into `_inflight_texts` before calling here (2026-09-08): it takes the same two branches
+        as any stranded turn, never a silent drop."""
         if not self.inflight:
             return
         stranded = list(self._inflight_texts)      # fed to the abandoned client, never resulted
@@ -5383,9 +5673,12 @@ class SdkSession:
     def effective_auth(self, key=None) -> str:
         """Billing intent, without retrieving credentials for repeated UI snapshots.
 
-        An explicit key pick stays keyed even when retrieval fails: launch must report
-        the missing credential instead of billing the login. `key` permits callers
-        holding an already-resolved credential to avoid a second source read.
+        An explicit key pick stays keyed while a source is CONFIGURED, even when its
+        retrieval fails: the launch must then report the missing credential instead of
+        billing the login. With no source selected romp injects nothing for any pick and
+        Claude Code's own credential decides (the maintainer 2026-09-07); _options owns
+        that rule. `key` permits callers holding an already-resolved credential to avoid a
+        second source read.
         """
         if self.auth == "login":
             return "login"
@@ -5489,6 +5782,7 @@ class SdkSession:
         finally:
             self._fire_boot_settled()   # a dead thread must free its boot-stagger slot (first, so
             #                             a raising _on_session_gone can never leak the slot)
+            self._release_hold_at_exit()   # the CLI's queue died with it: a held text goes back to the queue
             self.backend._on_session_gone(self)
 
     async def _amain(self):
@@ -5530,13 +5824,30 @@ class SdkSession:
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
                     blocked = blocked or self._ping_feeding   # the ping's record must not share its window
+                    # ONE FED TEXT AT A TIME (2026-09-08): the last fed text is still in the CLI's queue —
+                    # the CLI drains every queued prompt into one message when it next reads that queue,
+                    # so a second feed now would reach the agent fused with the first (the incident). Hold
+                    # until the CLI demonstrably took it (_untaken_taken); mid-turn forwards still flow, one
+                    # per take, so a message sent mid-turn still reaches the running turn at its next step.
+                    blocked = blocked or self._untaken is not None
+                    # a MOVE is in flight (review round 4, 2026-09-08): move() armed _move_settle_expected
+                    # under this lock and the CLI is relocating for its set_cwd. The CLI relocates FIRST
+                    # and replies after, then emits an init and a turn-less result; a text fed into that
+                    # window could run a whole turn before the move's own result arrived, and that turn's
+                    # result would read the arm as stale and drop it (_consume_move_settle), leaving the
+                    # late turn-less result to settle as a turn end. Hold the head until the arm is down:
+                    # the move's result consumed, a real result dropping a stale arm, move() lowering it
+                    # at a refusal or an uncertain outcome (each wakes this feeder, _disarm_move_settle),
+                    # or the loop top's clear (a new inputs() follows it). The move's own request rides
+                    # the control channel, not this generator, so the hold never delays it.
+                    blocked = blocked or self._move_settle_expected
                     # a reconnect is ARMED (_reconnect: the waker is about to tear this client down) →
                     # hold the head for the NEXT client. The settle wakes this feeder and arms a deferred
                     # reconnect in the same finally, both wakeups queued FIFO on the loop, so without
                     # this hold the feeder ran first and fed a message gate-held behind an interrupted
                     # turn to the dying client; the teardown stranded it in flight and
                     # _reconcile_stranded, on a resumable conversation, flagged it 'never delivered'
-                    # (round-3 review, 2026-09-06). The same hold covers the idle arm in
+                    # (2026-09-06). The same hold covers the idle arm in
                     # _do_request_reconnect racing a send that lands before the waker runs. The loop's
                     # top clears _reconnect before the new client's inputs() is created.
                     blocked = blocked or self._reconnect
@@ -5546,16 +5857,29 @@ class SdkSession:
                     # in-flight turn can still finish; the wedged/rewind holds above are untouched.
                     blocked = blocked or (self.inflight == 0 and self.backend.drain_holding())
                     item = self._pending.pop(0) if (self._pending and not blocked) else None
-                    fresh = item is not None and self.inflight == 0     # starting from idle, not mid-turn
+                    # starting from idle, not mid-turn. inflight counts the CLI's own turns too (a turn
+                    # frame at inflight 0 raises it, _on_message), so a text fed while the CLI runs a turn
+                    # romp did not feed (the drain of a mid-turn text, a notification-started turn) is
+                    # mid-turn here and its hold waits for a real take, not the running turn's next frame
+                    fresh = item is not None and self.inflight == 0
                     if item is not None:
                         # under the SAME lock as the pop: busy() reads inflight>0 or _pending, and the kernel's
                         # parked-op drain re-runs right after a delivery (2026-09-03) — a gap between the pop
                         # and this increment read as idle and could feed the op behind into this very turn
                         self.inflight += 1
                         self._inflight_texts.append(item)   # the fed-turn twin — see its init comment
+                        # the hold above, armed under the same lock as the pop: nothing else feeds until the
+                        # CLI has taken this text (_untaken_taken clears it). The transcript mark is taken
+                        # below, before the yield — the CLI has not seen the text yet, so its record can only
+                        # begin at or after the file's size now (_transcript_mark's argument).
+                        self._untaken = {"text": str(item), "item": item, "fresh": fresh, "settled": False,
+                                         "t": int(time.time()), "off": None, "fsid": None}
                 if item is None:
                     await self._input_wake.wait()   # idle, or holding behind a wedged turn → wait for a change
                     continue
+                off, fsid = self.backend._transcript_mark(self.sid)
+                if self._untaken is not None:
+                    self._untaken["off"], self._untaken["fsid"] = off, fsid
                 self._persist_queue()               # the fed turn leaves the persisted queue (it lands in the transcript)
                 if fresh:
                     self.since = int(time.time())    # a new turn starts now (mid-turn forwards keep the turn's clock)
@@ -5582,6 +5906,24 @@ class SdkSession:
             self._wake.clear()
             self._reconnect = False
             self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
+            # a move's turn-less result was owed by the client this iteration replaces; the new one will
+            # never emit it, and a standing arm keeps _on_message from counting the CLI's own turns
+            # (review round 3, 2026-09-08). _consume_move_settle drops it at a real result too.
+            self._move_settle_expected = False
+            # same: a hold never outlives its client. Its text is the reconcile's: already in the fed-turn
+            # twin while its turn runs; put back there when the hold was SETTLED (the turn ended, the CLI
+            # still held the text for the drain, the settle zeroed both counters), so the reconcile
+            # re-heads or flags it like any stranded turn instead of the text vanishing with the client
+            # (2026-09-08 review). The reconnect arms defer while a hold is live, so this is the backstop
+            # for a teardown that armed some other way. On a resumable conversation that flag can be a
+            # false 'never delivered': the teardown closes stdin and gives the CLI up to 5 s to exit on
+            # its own (_do_request_reconnect), long enough to finish the drained turn, and when it did the
+            # next build finds the record and prunes the flag (_mark_dropped_echoes is self-correcting).
+            u, self._untaken = self._untaken, None
+            if u is not None and u.get("settled"):
+                with self._lock:
+                    self._inflight_texts.append(u.get("item", u["text"]))
+                    self.inflight = max(self.inflight, 1)
             # the abandoned client's live subagents and background tasks died with it — retire them on
             # the teardown event itself (and tell the session what it lost, as a CLI death does)
             self._drop_live_work("reconnect")
@@ -6088,12 +6430,17 @@ class SdkSession:
             return False
 
     def _note_message_failure(self, msg, e) -> None:
-        """One problem line per failure, with enough to fix by: the exception type, the message's type
-        and subtype (never its content), the exception's own text (uuid-shaped ids shortened, clipped —
-        _mask_ids), what that message losing its handling cost (_failure_consequence — for a
-        ResultMessage read from whether the settle's finally ran for it, never assumed), and the frame
-        chain (file:line function, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'` with
-        none of this is what the last such failure left to diagnose from.
+        """One problem line per failure, with enough to fix by: the exception type and the FAILING SITE
+        (the innermost frame of a real function, file:line function — _failing_site; a comprehension's
+        or lambda's own frame is skipped, so the site reads the same on every interpreter), the
+        message's type and subtype (never its content), what that message losing its handling cost
+        (_failure_consequence — for a ResultMessage read from whether the settle's finally ran for it,
+        never assumed), the exception's own text (uuid-shaped ids shortened, clipped — _mask_ids), and
+        the frame chain (innermost first, no locals, bounded; _compact_tb). A bare `KeyError: '<uuid>'`
+        with none of this is what the last such failure left to diagnose from. The site LEADS the line,
+        right after the type: the error center shows a row's first 240 characters (the kernel feed caps
+        the text at 400), and with the chain at the end of ~335 characters of prose a user never saw
+        where a handler failed (2026-09-07 review). The full chain stays at the tail for the kernel log.
 
         Repeats: a signature is (session, exception type, the failing frame as file/line/function —
         _failing_frame, read from the traceback itself, so the chain's length cap cannot change it).
@@ -6103,7 +6450,7 @@ class SdkSession:
         log gets one short counted line per repeat. Once the ring has evicted the entry, the next
         repeat re-enters it with the FULL line — chain, consequence and the count — because the short
         form's "logged with the first" points at a kernel log that may have rotated, and a ring row
-        built from it named no site to fix by (round-2 review, 2026-09-06)."""
+        built from it named no site to fix by (2026-09-06)."""
         kind = _describe_msg(msg)
         sig = (self.sid, type(e).__name__, _failing_frame(e))
         with SdkSession._stream_fail_lock:
@@ -6117,12 +6464,93 @@ class SdkSession:
             return
         settled = getattr(self, "_settled_msg", None) is msg   # getattr: __new__-built test doubles
         again = "" if n == 1 else " (repeat %d this kernel life; its earlier error-center entry was evicted)" % n
-        self.backend._log("sdk session %s: %s while handling a %s message%s; that message's handling "
-                          "stopped there (%s) and the stream continues. %s: %s, at %s"
-                          % (self.name, type(e).__name__, kind, again, _failure_consequence(msg, settled=settled),
+        self.backend._log("sdk session %s: %s at %s while handling a %s message%s; that message's handling "
+                          "stopped there (%s) and the stream continues. %s: %s. Frames, innermost first: %s"
+                          % (self.name, type(e).__name__, _failing_site(e), kind, again,
+                             _failure_consequence(msg, settled=settled),
                              type(e).__name__, _mask_ids(e), _compact_tb(e)), problem=True, key=key)
 
+    @staticmethod
+    def _turn_frame(msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
+        """Is `msg` a frame that proves the CLI read its prompt queue and is running a turn: the init
+        SystemMessage (one per turn), an assistant message, the CLI's own user record, a result. Every
+        other system subtype streams independently of the queue: the background-task machinery's
+        task_started / task_progress / task_updated / task_notification / background_tasks_changed,
+        hook_started / hook_response, status, commands_changed, compact_boundary; and a rate-limit or
+        tool-progress event is not a system frame at all; none proves anything about the queue, and one
+        arriving in the gap between a feed and the CLI's dequeue must not stand in for the dequeue
+        (2026-09-08 review: the isinstance test admitted every subtype)."""
+        if isinstance(msg, (AssistantMessage, ResultMessage)):
+            return True
+        if isinstance(msg, SystemMessage):
+            return getattr(msg, "subtype", None) == "init"
+        return type(msg).__name__.lstrip("_") == "UserMessage"
+
+    def _untaken_taken(self, msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
+        """Has the CLI TAKEN the last fed text (self._untaken), so the next queued text may be fed
+        without the two fusing into one message? `msg` is the frame just streamed. Three exact events,
+        each proving the text left the CLI's queue:
+          * fed from IDLE (`fresh`): any turn frame after the feed. The only prompt the CLI held was
+            this one, so the turn now streaming is its turn — the rename ping's rule (_ping_feeding).
+            `fresh` means inflight was 0 at the feed, and inflight counts the CLI's own turns too
+            (_on_message raises it on a turn frame at 0), so a text fed while the CLI runs a turn romp
+            did not feed is NOT fresh: it takes the mid-turn rules below.
+          * fed MID-turn, and the turn it went into has since ENDED (`settled`, set at that turn's
+            ResultMessage): any turn frame after that. The CLI drains its queue when a turn ends, so the
+            next turn's first frame — its init, or its first assistant message — says the drain happened
+            and the text went with it; a feed between the result and this frame is the 2026-08-25 fold.
+          * fed MID-turn, the turn still running: the text's record LANDED — the queued_command
+            attachment a mid-turn splice leaves at a tool boundary (the same record _text_landed reads
+            for the re-delivery guard), scanned from the feed-time mark forward. This is the accelerator:
+            the next text can follow it into the same turn instead of waiting for the turn to end.
+        Only turn frames count (_turn_frame: the init, assistant messages, the CLI's own user records,
+        results); a task, hook, rate-limit or progress frame proves nothing about the queue. The scan is
+        bounded: it resumes at the last complete line it read and skips a file that has not grown.
+        A scan that RAISES (None: the transcript or the registry unreadable) is a fault, not a miss:
+        it is logged once per hold, to the problem ring, and the hold escapes on the next turn frame,
+        at once when this frame is the result, since after a result nothing later is guaranteed to
+        stream if the text was consumed mid-turn, and a hold with no releasing event would park every
+        later text for good (2026-09-08 review)."""
+        u = self._untaken
+        if u is None or not self._turn_frame(msg, AssistantMessage, ResultMessage, SystemMessage):
+            return False
+        if u.get("fresh") or u.get("settled") or u.get("fault"):
+            return True
+        seen = self.backend._text_landed(self.sid, u["text"], u.get("t"), u.get("off"), u.get("fsid"),
+                                         cursor=u)
+        if seen is None:
+            u["fault"] = True
+            self.backend._log("feed hold (%s): the landing scan for the last fed text failed (%s); the next "
+                              "queued text goes in at the next turn frame instead of waiting for the "
+                              "record" % (self.name, u.get("scan_error") or "transcript unreadable"),
+                              problem=True, key=("feed-hold-scan", self.sid))
+            return isinstance(msg, ResultMessage)
+        return seen is True
+
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
+        if getattr(self, "inflight", None) == 0 and getattr(self, "_lock", None) is not None \
+                and not getattr(self, "_move_settle_expected", False) \
+                and self._turn_frame(msg, AssistantMessage, ResultMessage, SystemMessage):
+            # A turn frame while nothing romp fed is in flight: the CLI opened a turn on its own (it
+            # drained a text fed mid-turn once the last turn ended, or a subagent's or task's
+            # notification woke it), and inflight counted none of it (2026-09-08 review: a text fed
+            # into such a turn read `fresh`, its hold cleared on the turn's very next frame with the
+            # text still in the CLI's queue, and the text behind it was fed to fuse with it). Count the
+            # turn NOW, before the hold below is read: the feeder's next pop then computes fresh False,
+            # busy() reads the turn, a reconnect defers to its result, and the settle zeroes it as it
+            # does every turn. When a settled hold is what this frame releases, its text is what the CLI
+            # drained: it rejoins the fed-turn twin so a teardown mid-turn still reconciles it.
+            # NOT while an accepted live move's settle is expected: the CLI answers a set_cwd with an
+            # init and a turn-less result, no query sent (_consume_move_settle), and counting that init
+            # left an idle session busy (a reconnect deferred, a drive op parked) until its next real
+            # turn (review round 2, 2026-09-08); should a count slip through anyway, the move's result
+            # zeroes it.
+            with self._lock:
+                if self.inflight == 0:
+                    self.inflight = 1
+                    u = getattr(self, "_untaken", None)
+                    if u is not None and u.get("settled") and getattr(self, "_inflight_texts", None) is not None:
+                        self._inflight_texts.append(u.get("item", u["text"]))
         if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
             # the ping's turn is streaming — the CLI demonstrably started it, so a message fed from
             # here on lands MID-TURN as its own record (the CLI's designed forward behavior); the
@@ -6130,6 +6558,14 @@ class SdkSession:
             self._ping_feeding = False
             if self._input_wake is not None:
                 self._input_wake.set()   # same-loop thread — the settle path sets it the same way
+        if getattr(self, "_untaken", None) is not None \
+                and self._untaken_taken(msg, AssistantMessage, ResultMessage, SystemMessage):
+            # the CLI took the last fed text (an exact event — see _untaken_taken): the next queued text
+            # can go in as its own message now. Checked BEFORE the result settle below marks the turn
+            # ended, so a result frame is read against the state the text was fed into.
+            self._untaken = None
+            if self._input_wake is not None:
+                self._input_wake.set()
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             self._fire_boot_settled()   # the CLI is up and streaming — its transcript catch-up burst
             #                             is over, so the boot-stagger slot (if any) frees NOW
@@ -6382,11 +6818,50 @@ class SdkSession:
                 # /api-health: the settle names a give-up's status (api_error_status) and ends the turn
                 self._ah_note_result(msg)
                 # (This try is the whole branch: its body is the result's BOOKKEEPING, its finally is
-                # THE SETTLE — the finally's comment has the rule.)
+                # THE SETTLE — the finally's comment has the rule. The spend accounting runs LAST in the
+                # body: it is the step most likely to raise on data (a NaN usage field, a failing spend
+                # write), and ahead of the others it skipped the rewind consumption and the live-tail
+                # sweep — 2026-09-07 review.)
+                if self._rewind_to and getattr(self, "_rewind_wait", False):
+                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                    # ResultMessage).
+                    try:
+                        self.backend._complete_rewind_wait(self)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                          "settle: %s" % (self.name, e))
+                elif self._rewind_to and self._rewind_armed:
+                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
+                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
+                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                    # running turn before, so armed-only is byte-identical for the idle paths.
+                    self._rewind_to = self._rewind_leaf = ""
+                    self._rewind_bare = False
+                    self._rewind_armed = False
+                    self._rewind_wait = False
+                    try:
+                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                                 rewindWait=False)
+                    except Exception as e:
+                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
+                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
+                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
+                    self.backend._rewind_resolved(self.sid, "taken")
+                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
+                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
+                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
+                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
                 # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
                 # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
                 # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
                 # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
+                # (The scheduled refreshes above cannot run before this synchronous step: nothing yields.)
                 total = getattr(msg, "total_cost_usd", None)
                 if isinstance(total, (int, float)) and total > 0:
                     delta = total - self._last_cost_total if total >= self._last_cost_total else total
@@ -6431,46 +6906,11 @@ class SdkSession:
                     #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                     #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                     #   honest on a mixed host (see _record_spend)
-                if self._rewind_to and getattr(self, "_rewind_wait", False):
-                    # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
-                    # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
-                    # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
-                    # the turn shapes where Stop never fires (an interrupt that dies straight to the
-                    # ResultMessage).
-                    try:
-                        self.backend._complete_rewind_wait(self)
-                    except Exception as e:
-                        self.backend._log("rewind (%s): delete-while-busy completion failed at the "
-                                          "settle: %s" % (self.name, e))
-                elif self._rewind_to and self._rewind_armed:
-                    # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
-                    # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
-                    # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
-                    # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
-                    # lands moments after the Stop hook armed the flag, and an unguarded consume read
-                    # that fresh arm as the branch-take — flags could never accompany an UNARMED
-                    # running turn before, so armed-only is byte-identical for the idle paths.
-                    self._rewind_to = self._rewind_leaf = ""
-                    self._rewind_bare = False
-                    self._rewind_armed = False
-                    self._rewind_wait = False
-                    try:
-                        self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
-                                                 rewindWait=False)
-                    except Exception as e:
-                        self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
-                    # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
-                    # the kernel's held goal cleanup archives on exactly this (two-phase rewind timing)
-                    self.backend._rewind_resolved(self.sid, "taken")
-                self.backend.retire_live_work(self.sid)   # turn over → a work atom that never landed never will
-                asyncio.ensure_future(self._do_refresh_context())   # refresh ctx % + model from the SDK and
-                #   persist them, so the bar reflects the turn that just landed and survives idle/restart.
-                asyncio.ensure_future(self._do_refresh_usage())     # + the exact /usage snapshot (rail bars)
             finally:
                 # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
-                # bookkeeping above did (api-health, the spend fold, the rewind flags, the live-tail
-                # sweep, the refreshes: any step may raise and stop the rest). The rule (round-2 review,
-                # 2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
+                # bookkeeping above did (api-health, the rewind flags, the live-tail sweep, the refreshes,
+                # the spend accounting last: any step may raise and stop the rest). The rule
+                # (2026-09-06): a ResultMessage is the CLI saying the turn ended, so a kernel-side failure
                 # while filing it must never leave the session reading 'working' with its queue parked.
                 # The first cut opened the try only ahead of the rewind steps, so a raise in the spend
                 # fold (a NaN usage field — json.loads accepts the token and int() refuses it — or a
@@ -6497,6 +6937,14 @@ class SdkSession:
                 # the CLI, its next streamed atom re-asserts 'working' via _forward — the stream is the truth.
                 self.inflight = 0
                 self._inflight_texts.clear()           # the CLI processed everything fed — same settle semantics
+                if getattr(self, "_untaken", None) is not None:
+                    # a text fed MID-turn is still in the CLI's queue at this result: the CLI drains it
+                    # into the NEXT turn, whose first frame is the take (_untaken_taken). Not cleared
+                    # here — a feed right after this result would land in the same drain (the fold).
+                    # An INTERRUPTED turn's result is no exception: the CLI keeps its queue across the
+                    # interrupt control request and drains it the same way (verified on CLI 2.1.263,
+                    # 2026-09-08; see _release_hold_at_exit for the one event that does lose it).
+                    self._untaken["settled"] = True
                 # A /compact that found NOTHING to compact emits no boundary — the turn just settles here. Clear
                 # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
                 self._compacting = False
@@ -6519,12 +6967,17 @@ class SdkSession:
                     self.backend._deliver_rename_ping(self)
                 except Exception as e:
                     failed.append(("the rename ping's delivery", e))
-                if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
+                # an effort change waited for this turn to end. NOT while a hold is settled: the CLI still
+                # holds a text fed mid-turn and drains it into a turn right after this result; tearing it
+                # down now ended the CLI with the text in a turn romp never saw (2026-09-08 review; the
+                # teardown is an EOF plus a grace, not a kill: _do_request_reconnect). The arm stays set;
+                # the drained turn's first frame counts that turn (_on_message) and its result fires this.
+                if self._reconnect_when_idle and not self.ended and getattr(self, "_untaken", None) is None:
                     self._reconnect_when_idle = False
                     self._reconnect = True     # inputs() holds the queue from here: the wake above cannot feed
                     self._wake_set()           #   the head to THIS client — the new one takes it (see inputs)
                 for what, err in failed:
-                    # The report is guarded too (round-3 review): _log runs the kernel's log callback
+                    # The report is guarded too: _log runs the kernel's log callback
                     # bare, and a callback raising here (a closed stderr under a service restart) would
                     # propagate out of this finally and REPLACE the bookkeeping's exception, so the
                     # containment reported the callback's fault and the bookkeeping's site never
@@ -6565,8 +7018,28 @@ class SdkSession:
         if not getattr(self, "_move_settle_expected", False):   # getattr: __new__-built test doubles
             return False
         if getattr(msg, "num_turns", None) != 0:
+            # A REAL turn's result while the arm stands means the move's turn-less result never came
+            # (the CLI accepted the set_cwd and emitted no result, or its reply was lost and the arm
+            # kept on purpose, move()): had it come, it would have preceded this one, since move()
+            # refuses while busy and an accepted set_cwd answers within milliseconds. The arm is stale,
+            # and since round 2 a standing arm switches off the CLI-owned-turn count (_on_message), so
+            # left alone it would uncount every drain for the session's life and re-open the fuse the
+            # count closes (review round 3, 2026-09-08). Drop it here; the loop top drops it too. Since
+            # round 4 the arm also holds the queue, so the drop wakes the feeder (_disarm_move_settle).
+            self._disarm_move_settle()
+            self.backend._log("sdk %s: a real turn's result arrived while a move's turn-less result was still "
+                              "expected; the stale arm is dropped" % self.sid[:8])
             return False
-        self._move_settle_expected = False
+        self._disarm_move_settle()   # spent, and the queue it held resumes (round 4)
+        # The move's init counts no CLI-owned turn (_on_message skips the count while the arm stands);
+        # should a count have fired anyway, this turn-less result is the last frame the move emits, so
+        # the count must not outlive it: nothing was fed (an empty fed-turn twin), and an idle session
+        # stays idle: busy() False, a requested reconnect fires at once (review round 2, 2026-09-08).
+        lock = getattr(self, "_lock", None)
+        if lock is not None:
+            with lock:
+                if self.inflight and not getattr(self, "_inflight_texts", None):
+                    self.inflight = 0
         self.backend._log("sdk %s: the move's turn-less result arrived — not a turn end" % self.sid[:8])
         return True
 
@@ -7585,14 +8058,16 @@ LIVE_TAIL_CAP = 100
 # handler — which reads a pasted path wearing one of those extensions and rewrites the token in the
 # submitted text to "[Image #N]", so the picture lands as an image block and the path is gone from the
 # record's text (the user 2026-06-25, the screenshots-piling-up bug) — and two attachment uploaders'
-# isImage. No bmp, no svg: the set this carried until 2026-09-06 had both, so a `.svg` path echo was
-# classed as an extraction the CLI never performs (adversarial review, F2).
+# isImage. No bmp, no svg: the wider set this carried until 2026-09-06 (any absolute or ~-rooted path,
+# then an image set with both) classed a `.svg` path echo, or a quote chip's `path:line` label, as an
+# extraction the CLI never performs.
 # WHO READS IT. The kernel's _tmux_echo_settle borrows _path_bearing for the TMUX route, where a send
 # IS a paste into the composer and the hook runs. The SDK route never reaches it: its input is
-# stream-json and the CLI takes the text as typed (counts over 71 SDK sessions' transcripts, 2026-09-06:
-# 0 image blocks in 8,569 user records; every image-path text landed verbatim), which is why prune_live
-# below floors NO echo — see its docstring. Twin of the kernel's _IMG_PATH_RE (_injected_img_paths
-# waits on the CLI's rewrite and _paste_landed_texts reads it back; the kernel's bare-path PREVIEW,
+# stream-json and the CLI takes the text as typed (a count over one installation's SDK transcripts,
+# 2026-09-06: 0 image blocks in 8,569 user records across 71 sessions; every image-path text landed
+# verbatim), which is why prune_live below floors NO echo — see its docstring. Twin of the kernel's
+# _IMG_PATH_RE (_injected_img_paths waits on the CLI's rewrite and _paste_landed_texts reads it
+# back; the kernel's bare-path PREVIEW,
 # _user_images, is romp's own feature on its own set, _PREVIEW_IMG_RE — not bound to the CLI's);
 # tests/test_kernel_fed_echo_absorbed.py pins both twins to the CLI's set.
 _IMG_PATH_RE = re.compile(r"(?:^|[\s'\"`(])((?:~/|/)[^\s'\"`()]+\.(?:png|jpe?g|gif|webp))\b", re.I)
@@ -7672,28 +8147,49 @@ def _frame_step(f) -> str:
 
 
 def _failing_frame(exc):
-    """The exception's innermost frame — where it was raised — as (file basename, line, function),
-    read from the traceback itself. This is the recurring-failure dedupe key (_note_message_failure):
-    taken from the frame and not from the rendered chain, so no rendering bound can change it. None
-    when the exception carries no traceback."""
+    """The exception's failing frame — the innermost frame of a REAL function — as (file basename,
+    line, function), read from the traceback itself. This is the recurring-failure dedupe key
+    (_note_message_failure) and the site the problem line names (_failing_site): taken from the frame
+    and not from the rendered chain, so no rendering bound can change it. None when the exception
+    carries no traceback.
+
+    Synthetic scopes are skipped: a frame whose code name is angle-bracketed (`<dictcomp>`,
+    `<listcomp>`, `<setcomp>`, `<genexpr>`, `<lambda>`, `<module>`) is not a function a reader can look
+    up by name, and whether one exists at all depends on the interpreter — before Python 3.12
+    (PEP 709) a comprehension runs in its own frame, so a raise inside one named `<dictcomp>` on 3.10
+    and 3.11 while 3.12 and 3.13 named the enclosing function, and the site (the dedupe key with it)
+    differed by interpreter (upstream CI on the 2026-09-07 review: the NaN-usage settle test). The
+    site is the innermost frame whose name is a function's, at the line that frame reports (for a
+    comprehension, the line the comprehension is on); when every frame is synthetic (a raise caught at
+    the top level of an exec'd string) the innermost one stands. The rendered chain (_compact_tb)
+    keeps every frame, synthetic ones included."""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
     if not frames:
         return None
-    f = frames[-1]
+    f = next((f for f in reversed(frames) if not f.name.startswith("<")), frames[-1])
     return (os.path.basename(f.filename), f.lineno or 0, f.name)
 
 
+def _failing_site(exc) -> str:
+    """The failing frame rendered as the chain renders a step (`file:line function`), or "?" when the
+    exception carries no traceback — what the problem line names right after the exception type."""
+    site = _failing_frame(exc)
+    return "%s:%d %s" % site if site else "?"
+
+
 def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_CHARS) -> str:
-    """The exception's frame chain as `file:line function` steps, outermost first — no locals, no
-    source lines: enough to name the site on the next occurrence, small enough for one log line.
-    BOUNDED FROM THE OUTER END: at most the innermost `max_frames` frames, then outer frames dropped
-    one at a time until the chain fits `cap` characters, with a prefix saying how many were dropped
-    in all. The innermost frame — the failing site — is always kept; if it alone overflows the cap,
-    its function name is clipped and its file:line stands. (A RecursionError's chain ran to 18 KB
-    before any bound, into the error-center ring and every feed payload that carries it; the first
-    bound then clipped the chain's TAIL, which is the innermost frame, so a chain through long-named
-    frames lost its failing site, and a dedupe key read off the rendering became the literal '…' —
-    every long-chained failure of one type folded into one ring entry. 2026-09-06.)"""
+    """The exception's frame chain as `file:line function` steps, INNERMOST FIRST — the failing site
+    leads, and each ` < ` step is the caller of the one before it — no locals, no source lines: enough
+    to name the site on the next occurrence, small enough for one log line. BOUNDED FROM THE OUTER
+    END: at most the innermost `max_frames` frames, then outer frames dropped one at a time until the
+    chain fits `cap` characters, with a suffix saying how many were dropped in all. The innermost
+    frame — the failing site — is always kept; if it alone overflows the cap, its function name is
+    clipped and its file:line stands. (A RecursionError's chain ran to 18 KB before any bound, into
+    the error-center ring and every feed payload that carries it; the first bound then clipped the
+    chain's TAIL, which was the innermost frame, so a chain through long-named frames lost its failing
+    site, and a dedupe key read off the rendering became the literal '…' — every long-chained failure
+    of one type folded into one ring entry. 2026-09-06. Innermost first since 2026-09-07: the chain
+    sits at the end of a line the error center clips, so what survives the clip must be the site.)"""
     frames = traceback.extract_tb(getattr(exc, "__traceback__", None))
     if not frames:
         return "?"
@@ -7701,21 +8197,21 @@ def _compact_tb(exc, max_frames: int = COMPACT_TB_FRAMES, cap: int = COMPACT_TB_
 
     def render(kept):
         dropped = total - len(kept)
-        s = " > ".join(kept)
-        return "…%d outer frame%s dropped… > %s" % (dropped, "" if dropped == 1 else "s", s) if dropped else s
+        s = " < ".join(kept)
+        return "%s < …%d outer frame%s dropped…" % (s, dropped, "" if dropped == 1 else "s") if dropped else s
 
-    steps = [_frame_step(f) for f in frames[-max(1, max_frames):]]
-    kept = steps[-1:]                        # the innermost frame, unconditionally
-    for step in reversed(steps[:-1]):        # then outward, one frame at a time, while the whole fits
-        if len(render([step] + kept)) > cap:
+    steps = [_frame_step(f) for f in reversed(frames[-max(1, max_frames):])]   # innermost first
+    kept = steps[:1]                         # the innermost frame, unconditionally
+    for step in steps[1:]:                   # then outward, one frame at a time, while the whole fits
+        if len(render(kept + [step])) > cap:
             break
-        kept = [step] + kept
+        kept = kept + [step]
     s = render(kept)
     if len(s) > cap:                         # the innermost frame alone overflows: clip its function name
         site, _, func = kept[0].partition(" ")
-        head = render([site + " "])          # the prefix and the file:line — never clipped
-        room = cap - len(head) - 1
-        s = (head + func[:room] + "…") if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
+        bare = render([site + " "])          # the file:line and the drop suffix — never clipped
+        room = cap - len(bare) - 1
+        s = render([site + " " + func[:room] + "…"]) if room >= 0 else s[:cap - 1] + "…"   # (a site wider than the cap: bound it anyway)
     return s
 
 
@@ -7749,7 +8245,7 @@ def _is_command_stdout(msg) -> bool:
 def _failure_consequence(msg, settled: bool = True) -> str:
     """What the kernel lost when this message's handler failed, by the message's SHAPE — the problem
     line's reassurance has to be true for the message it is about, so the class name alone is not
-    enough (round-2 review, 2026-09-06). An assistant message, and a user message that is a real
+    enough (2026-09-06). An assistant message, and a user message that is a real
     turn, are also transcript records, so the chat rebuilds them from disk — but a user message
     carrying a command's `<local-command-stdout>` has a record only when the command was TYPED: a
     control request (client.set_model, a permission-mode set) streams the same line and the CLI
@@ -7822,9 +8318,9 @@ class SdkBackend:
     pushing to clients and a few launch parameters that mirror the tmux launch."""
 
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
-                 push_session=None,
+                 push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, todo_lost=None):
+                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
@@ -7834,6 +8330,9 @@ class SdkBackend:
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._owns_memo: dict = {}         # sid -> ((reg mtime_ns, size), owns?) — see owns()
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
+        self._push_live_cb = push_live     # push_live(sid): the same wake carrying WHICH session's live tail
+        #   changed (kernel _pusher_wake_live): the pusher's minimum cycle interval exempts a watched tab's
+        #   live-tail wakes; None (an older kernel, a test) falls back to `push`
         self._push_session_cb = push_session   # targeted ONE-session push (kernel _push_session_now) for
         #   per-session chip events (the connect handshake): a wake alone leaves the flip riding the next
         #   full push cycle, which runs seconds on a busy fleet (the user 2026-08-10)
@@ -7857,6 +8356,11 @@ class SdkBackend:
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
+        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
+        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
+        #                                           — the chat-build signature's live component (2026-09-03; the
+        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
+        #                                           never read as a value beyond equality
         # THE LIVE-TAIL LOCK (2026-09-06). `_live` and every per-sid dict inside it are shared by the
         # kernel thread (send, recall, dismiss_echo, the pusher's live_atoms/prune_live) and each
         # session's loop thread (_forward, the settle's retire_live_work, _mark_dropped_echoes at
@@ -7872,11 +8376,6 @@ class SdkBackend:
         # so a locked site may call a helper that locks. The class attribute below is the default
         # for __new__-built test doubles.
         self._live_lock = threading.RLock()
-        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
-        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
-        #                                           — the chat-build signature's live component (2026-09-03; the
-        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
-        #                                           never read as a value beyond equality
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
@@ -7899,6 +8398,8 @@ class SdkBackend:
         #   EVERY session whatever its pick. The VALUE is read per launch off `work_key` below, live,
         #   so a keyswap needs no kernel restart (the user 2026-09-04).
         self._key_fp_said = None                  # last key fingerprint written to the log (change-only)
+        self._unkeyed_pick_said = False           # the "launching on Claude Code's own credential" row: once per process
+        self._seed_skip_said = False              # the "remembered key pick set aside, no key source" row: once per process
         # Backend PROBLEMS, kept in a bounded ring so the dashboard can show them (see _log): until
         # 2026-07-28 every SDK failure went to the kernel log alone, which nobody tails, so a session
         # whose stream died or whose model switch was refused just looked odd with no way to find out.
@@ -7912,11 +8413,16 @@ class SdkBackend:
         # manager's environment, which every kernel inherits, so leaving the mode takes a manager
         # restart (envsource's module docstring). The other ROMP_CREDENTIAL_* values stay live-readable.
         command_mode = _envsrc.pin_mode()
-        # A credential in the env file under a declared auth is a contradiction of the box's design;
-        # said once, here, where the problem ring exists to carry it (the user 2026-09-05). In command
-        # mode the key-source verdict below covers the same file (the command wins, the line is
-        # ignored), so this stays quiet there: one line about that file, not two that disagree.
+        # Two lines about the env file, each said once, here, where the problem ring exists to carry them,
+        # before the boot reconcile below can launch a session on the account the declaration says it does
+        # not bill: the key SOURCE the file selects against ROMP_EXPECTED_AUTH=login
+        # (_check_env_file_vs_declaration, upstream's review of the fork's offer), and a credential-shaped
+        # VALUE in the file under a declared auth, the fork's key-free policy (the user 2026-09-05;
+        # _warn_credential_lines_in_env_file). In command mode the key-source verdict below covers the same
+        # file (the command wins, the line is ignored, so "injected at launch" would be false), and both
+        # stay quiet there: one line about that file, not two that disagree.
         if not command_mode:
+            _check_env_file_vs_declaration(self._log, self.state_dir)
             _warn_credential_lines_in_env_file(self._log)
         # The key-source verdict (key_source_verdict): ONE check per backend, here, before the boot
         # reconcile below can resume a session — in command mode this is the command's FIRST run, so a
@@ -7945,7 +8451,11 @@ class SdkBackend:
         _register_credential_noter(self._note_credential_set)
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
-        self.api_health = ApiHealth(self.state_dir, log=self._log)
+        # Seeded as of `boot_at`, the kernel's own start when the kernel passes it (the aggregator truncates
+        # it to the millisecond and serves the stamp as the payload's bootAt), else this construction's
+        # clock: the two ran seconds apart, and the hover's head said one minute for a bucket the boot
+        # seeded while its divider said another.
+        self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
         self._sdk_missing = not sdk_importable()
@@ -8070,8 +8580,10 @@ class SdkBackend:
         return self._work_key_source().fingerprint()
 
     def _work_key_and_source(self, source=None, cred=None) -> tuple:
-        """(key, source kind) in ONE read: "command" (the configured command's ANTHROPIC_API_KEY line),
-        "file" (the env file's line), "op" (retrieved at runtime from 1Password), "startup" (the claim
+        """(key, source kind) in ONE read: "command" (in command mode the configured credential command's
+        ANTHROPIC_API_KEY line; in file mode upstream's key command, keysource's kind of the same name for a
+        ROMP_API_KEY_CMD line, run per resolve), "file" (the env file's line), "op" (retrieved at runtime
+        from 1Password), "startup" (the claim
         made at boot, because the file has no usable line), "pin" (a test's explicit value), "" (no key
         anywhere). _options wants both, and must not read the source twice per connect: a keyswap can
         land between two reads, and the source named in the log must be the source injected. In command
@@ -8100,8 +8612,10 @@ class SdkBackend:
         run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
         helper is configured at all (the machine login bills, and there is nothing to fingerprint —
         not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
-        the file's or the startup key ("key"), or ("", "") for a 1Password reference, which is retrieved
-        per launch and never held. The value cycle_key converges sessions on, and what
+        the file's or the startup key ("key"), or ("", "") for a provider (a 1Password reference or a key
+        command, ROMP_API_KEY_CMD), which is retrieved per launch and never held: its descriptor's own
+        fingerprint is the hash of a reference or a command line, a configuration identity that must not
+        read as a credential's. The value cycle_key converges sessions on, and what
         the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
         already took and `values` the set beside it (_cred_take's pair), so one operation reads the
         set once and the helper runs in that set's environment rather than reading it again — which
@@ -8120,10 +8634,12 @@ class SdkBackend:
         # reference is retrieved per launch and never held, so a status read has nothing to fingerprint
         # and answers ("", "") rather than running `op read` for a value it would only hash. Upstream's
         # rule for /keycycle, kept here because the route reads this too: the fold's first cut resolved
-        # the reference twice per bare status read (review find, 2026-09-07).
+        # the reference twice per bare status read (review find, 2026-09-07). Every provider kind, not op
+        # alone: a ROMP_API_KEY_CMD line answered the hash of its command line as a key fingerprint (the
+        # 2026-09-08 fold's review, an R9 miss).
         source = self._work_key_source()
-        if source.kind == "op":
-            return "", ""
+        if _keysrc.is_provider_kind(source.kind):
+            return "", ""             # a 1Password reference or a key command (R9): retrieved per launch, never held
         fp = source.fingerprint()
         return fp, ("key" if fp else "")
 
@@ -8176,12 +8692,80 @@ class SdkBackend:
                 src = ("the environment this manager started with; %s has no %s line the kernel can use"
                        % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
             elif source == "command":
-                src = "the ANTHROPIC_API_KEY line the credential command printed"
+                # two kinds share the tag (the 2026-09-08 fold, round 2): the fork's credential command
+                # (kernel/envsource.py, a set with an ANTHROPIC_API_KEY line) when the command mode governs,
+                # else upstream's key command (kernel/keysource.py, #1029). The line says which ran.
+                src = ("the ANTHROPIC_API_KEY line the credential command printed (%s)" % _envsrc.COMMAND_VAR
+                       if _envsrc.configured() else
+                       "retrieved at runtime by the key command (%s)" % _keysrc.CMD_VAR)
             elif source == "op":
                 src = "retrieved at runtime from 1Password"
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
+
+    def _no_source_is_the_declared_design(self) -> str:
+        """Whether the two no-source rows below are information rather than a problem: the box declares key
+        billing (ROMP_EXPECTED_AUTH=key, or a remembered key pick, _declared_auth: the same reading the usage
+        row takes) AND Claude Code's user settings name an apiKeyHelper, so a launch with nothing of romp's
+        injected bills the key through that helper: the box working as declared, this fork's own shape (the
+        key never rides service.env; the 2026-09-08 fold, round 2). Answers the declaration's name for the
+        row's text ("" when the row is a problem). Either half missing, the row is the problem upstream's
+        #1014 made it: undeclared is the surprising case, and declared with no helper lands on the login
+        (the per-init mismatch line rings for that too). Read live and cheaply (a dict lookup and one
+        settings.json read), once per process per row."""
+        try:
+            exp, src = _declared_auth(self.state_dir)
+            if exp != "key" or not _envsrc.helper_command():
+                return ""
+            return "ROMP_EXPECTED_AUTH=key" if src == "env" else "the remembered API-key Billing pick"
+        except Exception:
+            return ""
+
+    def _no_source_remedy(self, declared: str) -> str:
+        """The tail of the two no-source rows. A key in service.env is the fork's problem line
+        (_warn_credential_lines_in_env_file, the key-free policy), so the ANTHROPIC_API_KEY route is worded
+        as the init mismatch's remedy is: the manager's environment, or the file where an installation
+        allows a key in one. Under a declaration (`declared` names it: the quiet, informational row) the
+        tail names the helper as what pays."""
+        put = ("add ROMP_API_KEY_CMD=<command> or ROMP_API_KEY_REF=op://vault/item/field to %s, or "
+               "ANTHROPIC_API_KEY to the manager's environment (or service.env, where your installation allows "
+               "a key in a file)" % _keysrc.service_env_path())
+        if declared:
+            return ("%s and the apiKeyHelper in Claude Code's settings.json make that the box's design (the "
+                    "helper pays; the per-init check rings if a session lands elsewhere); if romp should manage "
+                    "the key instead, %s" % (declared, put))
+        return put
+
+    def _note_unkeyed_pick(self) -> None:
+        """Said ONCE per process: a session picked for API-key billing is launching with nothing of romp's
+        injected, because romp holds no key source: Claude Code's own credential (its apiKeyHelper or its
+        login) is what pays. That is how these boxes ran before #932 and it works; but it is a key romp
+        cannot see, swap or fingerprint, so the row names what puts romp in charge of it. A problem row,
+        except on a box that DECLARES this shape (_no_source_is_the_declared_design): an information line."""
+        if self._unkeyed_pick_said:
+            return
+        self._unkeyed_pick_said = True
+        declared = self._no_source_is_the_declared_design()
+        self._log("sessions picked for API-key billing launch on Claude Code's own credential (its apiKeyHelper "
+                  "or login) because romp holds no key source; %s%s"
+                  % ("" if declared else "if romp should manage the key, ", self._no_source_remedy(declared)),
+                  problem=not declared)
+
+    def _note_seed_skipped(self) -> None:
+        """Said ONCE per process: the remembered Billing default is the API key, but romp holds no key source,
+        so new sessions are left unpicked (spawn); they launch the same way either pick would here (nothing
+        of romp's injected; Claude Code's own credential pays), but their badge, judge billing and cycling
+        read an unpicked session, and a pick the user made is being set aside without a word otherwise. A
+        problem row, except on a box that DECLARES this shape (_no_source_is_the_declared_design)."""
+        if self._seed_skip_said:
+            return
+        self._seed_skip_said = True
+        declared = self._no_source_is_the_declared_design()
+        self._log("the remembered Billing pick is the API key but romp holds no key source, so new sessions start "
+                  "unpicked and launch on Claude Code's own credential (its apiKeyHelper or login); %s%s"
+                  % ("" if declared else "to apply the pick, ", self._no_source_remedy(declared)),
+                  problem=not declared)
 
     def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
         """Log what the command source is handing launches, change-only, from its value-free record:
@@ -8503,6 +9087,12 @@ class SdkBackend:
                 return "cycle"
         else:
             source = self._work_key_source()
+            if not source.configured:
+                # romp holds no key source: every session launched with nothing of romp's injected, whatever its
+                # pick (Claude Code's own credential pays), so there is no key to re-present — the row reads
+                # `login`, as for a login pick, not the refusal it answered until 2026-09-07 (review find; the
+                # PR that made the launch un-injected had left --cycle on the old error)
+                return "login"
             if s.effective_auth(source.configured) != "key":
                 return "login"
             if working():
@@ -9417,8 +10007,14 @@ class SdkBackend:
         # the box's UNPICKED design, while set_auth's contract is that the next init confirms the
         # PICK — judged (and worded) against what the pick launched, so a landing honoring the pick
         # stays quiet whatever the box declares, and one contradicting it still rings.
+        # An explicit API-key pick that launched with NOTHING injected (romp holds no key source, so
+        # Claude Code's own resolution decides — the maintainer's direction, 2026-09-07) MEANT the key:
+        # a keyed landing (the CLI's apiKeyHelper) is what the pick wanted and stays quiet, a login
+        # landing is the pick contradicted and rings. Before this the row rang on every init of such a
+        # session — the same false alarm ROMP_EXPECTED_AUTH was introduced to end for unpicked ones.
+        meant_key = sess._launched_keyed or sess._launched_unkeyed_pick
         exp, exp_src = ("", "") if sess.auth in ("login", "key") else _declared_auth(self.state_dir)
-        if keyed != ((exp == "key") if exp else sess._launched_keyed):
+        if keyed != ((exp == "key") if exp else meant_key):
             if exp:
                 what = ("ROMP_EXPECTED_AUTH=%s" % exp) if exp_src == "env" \
                     else ("the remembered Billing pick is %s" % exp)
@@ -9427,11 +10023,17 @@ class SdkBackend:
                           "(or service.env, where your installation allows a key in a file)."
                           % (sess.name, what, source, "API key" if keyed else "login"), problem=True)
             else:
-                self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
-                          "is billing the %s. Check the login (claude /login) and the manager's environment "
+                # an explicit key pick that launched with nothing injected landed on the login: the key it
+                # meant was Claude Code's own (apiKeyHelper), so that is what to check — not romp's login
+                remedy = ("Check Claude Code's apiKeyHelper (romp injected nothing) and the manager's environment "
                           "(or service.env, where your installation allows a key in a file)."
-                          % (sess.name, "the API key" if sess._launched_keyed else "the login", source,
-                             "API key" if keyed else "login"), problem=True)
+                          if getattr(sess, "_launched_unkeyed_pick", False) and not keyed
+                          else "Check the login (claude /login) and the manager's environment (or service.env, "
+                               "where your installation allows a key in a file).")
+                self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
+                          "is billing the %s. %s"
+                          % (sess.name, "the API key" if meant_key else "the login", source,
+                             "API key" if keyed else "login", remedy), problem=True)
         sess.auth_live = "key" if keyed else "login"   # the CLI's own report, for the Billing row
         if keyed == sess.api_key_auth:
             return
@@ -9732,7 +10334,8 @@ class SdkBackend:
     def api_health_snapshot(self, now: float | None = None, uptime_s=None) -> dict:
         """The /api-health payload (ApiHealth.snapshot) plus what only the backend knows: how many SDK
         sessions it holds and how many are in a retry storm right now — the cheapest direct thrash
-        indicator, independent of the ratio thresholds. Boot identity is the kernel's to stamp."""
+        indicator, independent of the ratio thresholds. `bootId` is the kernel's to stamp; `bootAt` is
+        the aggregator's own boot stamp, already in the payload."""
         out = self.api_health.snapshot(now, uptime_s=uptime_s)
         with self._lock:
             sess = list(self.sessions.values())
@@ -10010,13 +10613,21 @@ class SdkBackend:
         role_vars.pop(_envsrc.KEY_VAR, None)
         if role_vars:
             kw["env"] = {**role_vars, **kw["env"]}
-        # Authentication is resolved only for a launch that selects API-key billing. For the file and
-        # 1Password sources, source presence is metadata and a provider failure cannot turn a keyed
-        # launch into a login one (upstream, 2026-09-05): a key pick with no key source raises, and
-        # _record_launch_error reports it on the session. In COMMAND mode (fork-only) the launch is never
-        # refused: the set is read once, a key pick with no key in the set launches without one (the
-        # apiKeyHelper or the login bills), said as a problem, and cycle_key converges on the helper's
-        # fingerprint instead (the key-free install's design, 2026-09-05).
+        # Authentication is resolved only for a launch that selects API-key billing AND has a source to
+        # bill. An explicit API-key pick with NO key source configured (an empty supervised service.env,
+        # nothing anywhere) launches like an unpicked session: romp injects nothing, and Claude Code's
+        # own credential resolution applies — its apiKeyHelper if one is configured, else its login.
+        # That is how such boxes ran before #932; the hard refusal #932 put here took every one of their
+        # sessions down, with no way back until an operator rewrote service.env and restarted the
+        # service (the maintainer's direction, 2026-09-07: given no key, romp defers to Claude Code's
+        # default). Said once per process, as a problem row, when an explicit pick launched this way.
+        # A CONFIGURED source that fails to resolve stays the hard failure below: source presence is
+        # metadata, and a provider failure cannot turn it into login.
+        # In COMMAND mode (fork-only) the set is read once and the launch is never refused either: a key
+        # pick with no key in the set launches without one, the same un-injected launch, said per launch
+        # as the command's own problem line (the once-per-process no-source row is for a box with no
+        # source at all; the command is a source, one that printed no key), and cycle_key converges on
+        # the helper's fingerprint instead (the key-free install's design, 2026-09-05).
         work_key = ""
         if _envsrc.configured():
             work_key, key_src = self._work_key_and_source(key_source, cred)
@@ -10026,7 +10637,7 @@ class SdkBackend:
                           "ANTHROPIC_API_KEY — launching without one (the apiKeyHelper or the login bills)"
                           % sess.name, problem=True)
         else:
-            launch_keyed = sess.auth == "key" or (sess.auth != "login" and key_source.configured)
+            launch_keyed = key_source.configured and sess.auth != "login"
             if launch_keyed:
                 work_key, key_src = self._work_key_and_source(key_source)
                 if not work_key:
@@ -10037,7 +10648,10 @@ class SdkBackend:
                              **key_fast_org_env(work_key, self._log))
         else:
             kw["env"] = dict(kw["env"], **startup_auth_env())
+            if sess.auth == "key" and not _envsrc.configured():
+                self._note_unkeyed_pick()   # no source at all; the command case said its own line above
         sess._launched_keyed = launch_keyed
+        sess._launched_unkeyed_pick = sess.auth == "key" and not launch_keyed
         # The stamps cycle_key converges on: the credential (the injected key's fingerprint; in
         # command mode with nothing injected, the apiKeyHelper output's — envsource runs it and hashes
         # inside, cached until an invalidation) and the role variables injected.
@@ -10091,6 +10705,17 @@ class SdkBackend:
         # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
         # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
         a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
+        if a == "key" and not auth and not self.work_key_configured:
+            # A REMEMBERED key default on a box with no key source seeds nothing. Not because of the launch
+            # or the per-init check: both come out the same either way (nothing of romp's injected, and a
+            # login landing rings through the remembered pick in _declared_auth just as it would through a
+            # seeded one). Because the picker offers no key choice on this box (_auth_avail shows login), so
+            # a re-seed would apply a pick the user cannot make here, and because what the session SAYS
+            # about itself — Billing badge, judge billing, cycling — should read what it is: unpicked. A
+            # remembered pick set aside is said once, as a problem row (review find, 2026-09-07). A re-seed
+            # is never an explicit pick (_declared_auth); an EXPLICIT `auth` from the picker still lands.
+            a = ""
+            self._note_seed_skipped()
         if a:
             reg["auth"] = a
         # Per-session env is a per-spawn ask, never a remembered default (a var one session needed is
@@ -10386,13 +11011,14 @@ class SdkBackend:
             return []
         return _queue_texts(q) if isinstance(q, list) else []
 
-    def unqueue(self, sid: str, idx: int, expect: str | None = None) -> str | None:
+    def unqueue(self, sid: str, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Cancel the queued turn at `idx` for an SDK session (the kernel's cancelQueued route). Returns
         its text, or None on a MISS — the message already left the queue (handed to the CLI, no recall
         exists), and the caller must surface that loudly rather than show a fake delete (the user
         2026-07-20). tmux has no equivalent (its queue lives in Claude Code), so only SDK sessions
         expose this — the kernel gates the chat's cancel affordance on the backend having `unqueue`.
-        `expect` (the exact queued text the click meant) is re-verified under the session lock.
+        `expect` (the exact queued text the click meant) is re-verified under the session lock;
+        `send_id` (the client's id for the send, on the entry) names it exactly (SdkSession.unqueue).
 
         ALSO drops the message's optimistic echo from the live tail: send() adds a blue 'you' bubble that
         normally prunes when the real user atom lands in the transcript — but a CANCELED message never
@@ -10402,19 +11028,24 @@ class SdkBackend:
             s = self.sessions.get(sid)
         if not s:
             return None
-        text = s.unqueue(idx, expect)
+        text = s.unqueue(idx, expect, send_id) if send_id else s.unqueue(idx, expect)
         if text is not None:
+            # the canceled ENTRY's echo: by its send id when it carries one (two queued sends can wear the
+            # same words, and the first echo with the text may be the other send's), else by text
+            sid_id = getattr(text, "send_id", "")
             with self._live_lock:                          # find + pop + the sid-level pop, one step
                 live = self._live.get(sid) or {}
-                for k, a in list(live.items()):
-                    if a.get("_echo_text") == text:
-                        live.pop(k, None)                  # one echo per canceled message
-                        self._touch_live(sid)
-                        break
+                hits = [k for k, a in live.items() if a.get("_echo_text")
+                        and ((sid_id and a.get("_send_id") == sid_id) or (not sid_id and a.get("_echo_text") == text))]
+                if not hits and sid_id:
+                    hits = [k for k, a in live.items() if a.get("_echo_text") == text and not a.get("_send_id")]
+                if hits:
+                    live.pop(hits[0], None)                # one echo per canceled message
+                    self._touch_live(sid)
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too
-            self._wake_push()                              # repaint without the echo so it stops reading as sent
+            self._wake_push_live(sid)                      # repaint without the echo so it stops reading as sent
         return text
 
     def queue_recallable(self, sid: str) -> bool:
@@ -10435,12 +11066,18 @@ class SdkBackend:
                 return True
             return bool(s._interrupted
                         or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
+                        or getattr(s, "_untaken", None) is not None   # held behind a fed text the CLI has not taken
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str, user_todo: str | None = None) -> bool:
+    def send(self, sid: str, text: str, user_todo: str | None = None, send_id: str | None = None) -> bool:
         """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
-        it rides the queue entry (_TodoText) and the echo below, so the recall and the loss
-        machinery can reopen exactly that ask — the id travels with the message end to end."""
+        it rides the queue entry (_QueueText) and the echo below, so the recall and the loss
+        machinery can reopen exactly that ask — the id travels with the message end to end.
+        `send_id` is the id the CLIENT minted for this send at the press (2026-09-08): it rides the
+        same entry and the echo (and, once the record lands, the chat stamps it on that record —
+        kernel._note_send_landings), so the client's "sending…" bubble is matched to THIS send by
+        id — its queued copy, its echo, its landing, its ✕ — never to the first copy of the same
+        words. Empty for sends with no client identity (an agent's `romp send`, a nudge)."""
         s = self._ensure(sid)
         if not s:
             return False
@@ -10459,7 +11096,10 @@ class SdkBackend:
         # 2026-09-06, is where _text_landed starts the scan for this echo — see _transcript_mark).
         sent_t = int(time.time())
         sent_off, sent_fsid = self._transcript_mark(sid)
-        s.enqueue(text, todo=user_todo or "")
+        if send_id:
+            s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
+        else:
+            s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -10480,11 +11120,13 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
+        if send_id:
+            echo["_send_id"] = str(send_id)                  # the client's id: the bubble's exact match
         if sent_off is not None:
             echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
-        self._wake_push()
+        self._wake_push_live(sid)
         return True
 
     def _transcript_mark(self, sid: str):
@@ -10531,6 +11173,8 @@ class SdkBackend:
                      "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
                 if a.get("_todo"):
                     e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
+                if a.get("_send_id"):
+                    e["sendId"] = str(a["_send_id"])   # …and the client's send id, for the bubble still open there
                 if a.get("_echo_off") is not None:
                     e["off"] = int(a["_echo_off"])                 # the send-time transcript mark (_transcript_mark)
                     e["fsid"] = str(a.get("_echo_fsid") or "")
@@ -10567,6 +11211,8 @@ class SdkBackend:
                     atom["dropped"] = True
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
+                if e.get("sendId"):
+                    atom["_send_id"] = str(e["sendId"])
                 if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
                     atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
                 if e.get("landed"):
@@ -10666,8 +11312,11 @@ class SdkBackend:
                     if _is_clear_cmd(a["_echo_text"]):
                         s._clearing = True
                     # `todo`: a redelivered user-todo ANSWER keeps the id its echo carries (_TodoText
-                    # through enqueue), so a recall or a later loss can still reopen exactly that ask
-                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""))
+                    # through enqueue), so a recall or a later loss can still reopen exactly that ask;
+                    # `send_id`: a send keeps its client id the same way (its bubble is still open there),
+                    # as the reg arm below does; the live arm dropped it (2026-09-08 review)
+                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""),
+                              send_id=str(a.get("_send_id") or ""))
                     self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
                               % (sid[:8], a["_echo_text"]))
             else:
@@ -10686,7 +11335,8 @@ class SdkBackend:
                             if a["_echo_text"] in have_texts:
                                 continue
                             todo = str(a.get("_todo") or "")   # a redelivered ANSWER keeps its ask's id
-                            add.append(_TodoText(a["_echo_text"], todo) if todo else a["_echo_text"])
+                            send_id = str(a.get("_send_id") or "")   # …and a send its client id (its bubble is still open there)
+                            add.append(_QueueText(a["_echo_text"], todo, send_id) if (todo or send_id) else a["_echo_text"])
                         if add:
                             # behind the surviving queue: original send order
                             reg["queue"] = [_queue_wire(t) for t in have + add]
@@ -10713,9 +11363,9 @@ class SdkBackend:
             with self._live_lock:
                 self._touch_live(sid)
         self._persist_echoes(sid)
-        self._wake_push()
+        self._wake_push_live(sid)
 
-    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
+    def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None, cursor=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
         echo may still be un-pruned at boot), so a queue re-add without this scan would duplicate a
         delivered message. Three answers, because the caller acts on each differently:
@@ -10744,34 +11394,53 @@ class SdkBackend:
         pre-filtered on the two record types' literals only, never on the text: JSON escapes newlines
         and quotes, so a raw-line prefix test skipped every multi-line send (a quote chip's reply, for
         one) as never landed. A mark taken while the CLI was mid-write leaves a line fragment first; it
-        fails to parse and is skipped like any other non-record line."""
+        fails to parse and is skipped like any other non-record line. `cursor`, a dict the caller
+        keeps across calls, makes a REPEATED scan for the same text resumable (the feed hold's take
+        check, _untaken_taken, runs once per streamed frame): a miss records where the scan stopped —
+        after the last COMPLETE line, so a record the CLI was mid-write on is re-read whole next time —
+        and the next call starts there, or returns at once when the file has not grown; a cursor from
+        another file (the fsid changed) is ignored and the mark rule above applies."""
         try:
             reg = read_reg(self.state_dir, sid) or {}
             cur = str(reg.get("lastSid") or sid)
             path = transcript_path(reg.get("cwd") or "", cur)
             want = echo_text_key(text)
             floor = int(t or 0)
+            size = os.path.getsize(path)
             start = 0
-            if (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
-                    and str(fsid) == cur and 0 <= off <= os.path.getsize(path)):
+            so = cursor.get("scan_off") if isinstance(cursor, dict) else None
+            if (isinstance(so, int) and not isinstance(so, bool) and cursor.get("scan_fsid") == cur
+                    and 0 <= so <= size):
+                start = so
+            elif (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
+                    and str(fsid) == cur and 0 <= off <= size):
                 start = off
-            with open(path, "rb") as f:
-                f.seek(start)
-                for raw in f:
-                    if b'"user"' not in raw and b'"queued_command"' not in raw:
-                        continue
-                    try:
-                        rec = json.loads(raw.decode(errors="replace"))
-                    except ValueError:
-                        continue
-                    if not isinstance(rec, dict) or want not in _landed_texts(rec):
-                        continue
-                    ts = _record_epoch(rec.get("timestamp"))
-                    if floor and ts is not None and ts < floor:
-                        continue                       # an earlier record wearing the same words
-                    return True
+            pos = start
+            if start < size:
+                with open(path, "rb") as f:
+                    f.seek(start)
+                    for raw in f:
+                        if not raw.endswith(b"\n"):
+                            break                          # a line still being written: read it whole next time
+                        pos += len(raw)
+                        if b'"user"' not in raw and b'"queued_command"' not in raw:
+                            continue
+                        try:
+                            rec = json.loads(raw.decode(errors="replace"))
+                        except ValueError:
+                            continue
+                        if not isinstance(rec, dict) or want not in _landed_texts(rec):
+                            continue
+                        ts = _record_epoch(rec.get("timestamp"))
+                        if floor and ts is not None and ts < floor:
+                            continue                       # an earlier record wearing the same words
+                        return True
+            if isinstance(cursor, dict):
+                cursor["scan_off"], cursor["scan_fsid"] = pos, cur
             return False
-        except Exception:
+        except Exception as e:
+            if isinstance(cursor, dict):       # the caller's one log line names the fault (_untaken_taken)
+                cursor["scan_error"] = "%s: %s" % (type(e).__name__, _mask_ids(e))
             return None
 
     def dismiss_echo(self, sid: str, uuid: str | None = None, t: int | None = None) -> str | None:
@@ -10789,15 +11458,15 @@ class SdkBackend:
                     continue
                 if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
                     live.pop(k, None)
+                    self._touch_live(sid)
                     if not live and self._live.get(sid) is live:
                         self._live.pop(sid, None)
-                    self._touch_live(sid)
                     hit = a
                     break
         if hit is None:
             return None
         self._persist_echoes(sid)                          # the reg write and the wake, outside the lock
-        self._wake_push()
+        self._wake_push_live(sid)
         return hit.get("_echo_text")
 
     def rewind(self, sid: str, target_uuid: str, text: str) -> "tuple[bool, str]":
@@ -11030,7 +11699,8 @@ class SdkBackend:
 
     def forwards_sends(self) -> bool:
         """True (see SessionBackend.forwards_sends): the SDK holds queued turns in _pending and its inputs()
-        generator forwards them at the next tool boundary, folds several into one turn, and holds them across
+        generator forwards them at the next tool boundary, hands several to the CLI one message each, in order
+        (the next waits until the CLI has taken the last, 2026-09-08), and holds them across
         an interrupt. So the kernel hands composer sends straight to send() even mid-turn instead of parking
         them; the reconciliation renders the still-waiting message as a queued bubble until it forwards."""
         return True
@@ -11058,6 +11728,9 @@ class SdkBackend:
     # _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
     # capability, and hands the plain two-argument send to any backend without it (tmux, fakes).
     queue_carries_todos = True
+    # send() can carry the CLIENT's id for a send the same way (send's send_id → _QueueText.send_id, the
+    # echo's _send_id): the kernel's _backend_send probes this before passing it (2026-09-08).
+    queue_carries_send_ids = True
 
     def _todo_lost(self, sid: str, tid: str, text: str) -> None:
         """Hand a possibly-undelivered user-todo ANSWER to the kernel's todo_lost seam — fired at
@@ -11075,13 +11748,22 @@ class SdkBackend:
 
     def busy(self, sid: str) -> "bool | None":
         """Authoritative in-flight signal (see SessionBackend.busy): a turn is running (inflight>0) OR one is
-        queued and about to run (_pending). Either means a drive op pressed now must PARK to hold press-order,
-        with no wait for the transcript to catch up. None when we don't run this sid (→ cached-parse fallback)."""
+        queued and about to run (_pending) OR the CLI still holds a fed text (_untaken: fed mid-turn, its turn
+        ended, and the CLI drains it into a turn right after the result). Any of the three means a drive op
+        pressed now must PARK to hold press-order, with no wait for the transcript to catch up. The hold is
+        read here as the reconnect gate reads it (_do_request_reconnect): in the settled gap the counters said
+        idle, so a parked /compact drained and a typed slash command bypassed the park, and the feeder held
+        both behind the text and fed them into the drained turn mid-turn, where the CLI answers a command as
+        text (review round 2, 2026-09-08). None when we don't run this sid (→ cached-parse fallback)."""
         s = self.sessions.get(sid)
         if not s:
             return None
         with s._lock:
-            return s.inflight > 0 or bool(s._pending)
+            # called as a plain function on the session, not as its method: busy() is duck-typed (the
+            # delete-while-busy tests hand it a double carrying inflight, _pending and _lock only, no
+            # SdkSession methods), and the helper reads nothing but those attributes (review round 5,
+            # 2026-09-08, after round 4's method call broke seven of them)
+            return SdkSession._busy_under_lock(s)
 
     def compacting(self, sid: str) -> "bool | None":
         """Authoritative 'is a /compact in progress' (see SessionBackend.compacting): set when /compact is
@@ -11335,19 +12017,30 @@ class SdkBackend:
         claim = self._claim_cwd_pending(sid, target)
         if claim:
             return claim
-        s._move_settle_expected = True   # armed BEFORE the request — see _consume_move_settle
+        # The busy reading and the arm are ONE step under the session lock (review round 4, 2026-09-08):
+        # the feeder pops under that lock and holds the head while the arm stands (inputs()), so a text
+        # enqueued between the idle reading above and the arm cannot reach the CLI ahead of the request
+        # and run its turn inside the relocation window. After the claim, so a second asker refused there
+        # lowers no arm of ours; a busy reading here (the race) returns the claim.
+        with s._lock:
+            busy = s._busy_under_lock()
+            if not busy:
+                s._move_settle_expected = True   # armed BEFORE the request: see _consume_move_settle
+        if busy:
+            self._update_reg_dropping(sid, ("cwdPending",))
+            return "busy"
         r, err = self._set_cwd_request(s, target)
         if not err and isinstance(r, dict) and r.get("status") == "needs_trust":
             r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
         ok = not err and isinstance(r, dict) and r.get("status") == "ok"
         if not ok:
+            # The exits that leave the session where it was stand the move down: the arm lowered, THEN the
+            # claim dropped (_stand_down_move has the order and why).
             if err == _NO_CONTROL_SENDER:
-                s._move_settle_expected = False                 # nothing was sent
-                self._update_reg_dropping(sid, ("cwdPending",))
+                self._stand_down_move(s, sid)                   # nothing was sent
                 return err
             if isinstance(r, dict) and r.get("status") == "rejected":
-                s._move_settle_expected = False                 # the CLI answered: it did nothing
-                self._update_reg_dropping(sid, ("cwdPending",))
+                self._stand_down_move(s, sid)                   # the CLI answered: it did nothing
                 if r.get("reason") == "busy":
                     return "busy"
                 return str(r.get("message") or r.get("reason") or "the CLI rejected the move")
@@ -11357,26 +12050,59 @@ class SdkBackend:
             # under the new one (a blind feed, and the next --resume writes to the wrong place). The
             # transcript's location decides, exactly as the boot heal decides a kernel death mid-move.
             why = err or ("unexpected reply to set_cwd: %r" % (r,))
-            self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old})
-            after = read_reg(self.state_dir, sid) or {}
-            if after.get("cwd") == target and not after.get("cwdPending"):
-                # it moved (and the CLI's turn-less result is still expected — the arm stands)
-                self._log("sdk %s: set_cwd's reply was lost (%s) but the transcript is under %s — the move stands"
-                          % (sid[:8], why, target))
+            # The heal releases the claim itself when it finds the move never happened, so it is handed
+            # _stand_down_move as its release (review round 6, 2026-09-08): the arm this move raised is
+            # lowered before the claim goes, as at every other standing-down exit. Its answer is the heal's
+            # own outcome, not a re-read of the reg: once the claim is released the reg may already carry a
+            # second mover's claim, which a re-read took for this move's flag still standing.
+            outcome = self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old},
+                                             release=lambda: self._stand_down_move(s, sid))
+            if outcome == "moved":
+                # It moved, and the CLI's turn-less result is still expected: the arm stands, and with it
+                # the feeder's hold on the queue (inputs(), round 4). A hold that outlives move()'s return
+                # is announced on the problem ring (review round 5, 2026-09-08): a CLI that relocated and
+                # then hung leaves every queued send waiting with nothing else saying why. The hold ends
+                # on the exact events that lower the arm (the CLI's result, or its exit and the loop-top
+                # clear at the reconnect); no timer, since nothing short of those proves the result will
+                # never come.
+                self._log("sdk %s (%s): set_cwd's reply was lost (%s) but the transcript is under %s: the move "
+                          "stands, and queued sends wait for the CLI's result of it; they go on when it arrives "
+                          "or at the session's next reconnect" % (sid[:8], s.name, why, target), problem=True)
                 return ""
-            s._move_settle_expected = False
-            if after.get("cwdPending"):
+            if outcome == "kept":
+                # the claim stays, and refuses a second mover at the claim, so the arm standing is this move's
+                s._disarm_move_settle()
                 return ("the move's outcome is uncertain: %s — the transcript was not found under exactly one of "
                         "%s and %s, so nothing was changed; the next kernel start re-checks (see the kernel log)"
                         % (why, old or "its folder", target))
+            if outcome != "released":     # nothing was pending: not a state move() reaches after its own claim
+                s._disarm_move_settle()
             return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
         if r.get("changed") is False or new == old:
-            s._move_settle_expected = False                     # no relocation → no turn-less result is coming
-            self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
+            # already there: nothing to record, and with no relocation no turn-less result is coming
+            self._stand_down_move(s, sid)
             return ""
         self._finish_move(s, sid, old, new)
         return ""
+
+    def _stand_down_move(self, s, sid: str) -> None:
+        """A move() exit that leaves the session where it was: lower the arm (_disarm_move_settle), THEN
+        drop the claim (cwdPending), in that order (review round 6, 2026-09-08). The claim is what keeps a
+        second move() of this sid out (_claim_cwd_pending refuses while it stands), and the moment it is
+        released a second mover claims and raises the same arm for its own request; so the arm is settled
+        before the claim that guards it goes. Round 5 dropped the claim first, so that a raise in the
+        disarm could not keep it (a kept claim refuses every later move until a kernel boot heals it), and
+        that order let the second mover claim and arm in the gap and then lowered ITS arm, leaving its
+        relocation with the queue unheld (round 4's hazard). The disarm no longer raises, and the finally
+        keeps round 5's guarantee regardless: whatever the disarm does, the claim is dropped. The
+        uncertain-outcome exit reaches this through _heal_cwd_pending's release hook, when the heal finds
+        the move never happened; when the heal keeps the claim, no second mover can arm, and when it
+        finishes the move the arm stands for the CLI's turn-less result."""
+        try:
+            s._disarm_move_settle()
+        finally:
+            self._update_reg_dropping(sid, ("cwdPending",))
 
     def _claim_cwd_pending(self, sid: str, target: str) -> str:
         """Set the two-phase flag ONLY when no move is pending. Two concurrent move() calls for one sid (a
@@ -11450,42 +12176,54 @@ class SdkBackend:
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
 
-    def _heal_cwd_pending(self, reg: dict) -> None:
+    def _heal_cwd_pending(self, reg: dict, release=None) -> str:
         """Settle a reg the previous kernel left mid-move (cwdPending set: the request went out, the reg
         never learned the answer). The transcript's location is the fact that decides it — exactly ONE
         of the two project slugs should hold `<lastSid>.jsonl`: under the pending cwd the CLI said `ok`
         and only romp's half is missing (finish it); still under the old cwd the move never happened
         (drop the flag). Neither or both is a state this code must not guess at: say so loudly and
-        leave the flag for a person."""
+        leave the flag for a person.
+
+        `release` is how the flag is dropped when the move never happened: the boot path's plain drop by
+        default; move() passes _stand_down_move so the arm it raised is lowered before the claim goes
+        (review round 6, 2026-09-08). Returns the outcome, for move() to answer from: "moved" (romp's
+        half finished; the arm stands), "released" (the flag dropped through `release`), "kept" (the flag
+        left for a person), "" (nothing was pending)."""
         sid = str(reg.get("sid") or "")
         pend = str(reg.get("cwdPending") or "")
         cur = str(reg.get("cwd") or "")
         fsid = str(reg.get("lastSid") or sid)
         if not sid or not pend:
-            return
+            return ""
+        if release is None:
+            def release():
+                self._update_reg_dropping(sid, ("cwdPending",))
         if pend == cur:
             # a move to the folder the session was already in, cut mid-flight (a reg from before move()
             # short-circuited that case): nothing moved and nothing can be learned from the location
             # test below — both slugs are ONE slug, so it would read "under BOTH" and file a problem
             # on every boot for as long as the flag lived
             self._log("boot reconcile: %s had a move to its own folder pending — nothing to settle; cleared" % sid[:8])
-            self._update_reg_dropping(sid, ("cwdPending",))
-            return
+            release()
+            return "released"
         at_new = os.path.exists(transcript_path(pend, fsid))
         at_old = bool(cur) and os.path.exists(transcript_path(cur, fsid))
         if at_new and not at_old:
             self._log("boot reconcile: %s was mid-move to %s — the transcript is there; finishing romp's half"
                       % (sid[:8], pend))
             self._finish_move(self.sessions.get(sid), sid, cur, pend)
+            return "moved"
         elif at_old and not at_new:
             self._log("boot reconcile: %s had a move to %s pending that never happened — cleared" % (sid[:8], pend))
-            self._update_reg_dropping(sid, ("cwdPending",))
+            release()
+            return "released"
         else:
             self._log("boot reconcile: %s has cwdPending=%s but its transcript %s is %s — leaving the flag; "
                       "check %s and %s by hand"
                       % (sid[:8], pend, fsid, "under BOTH slugs" if at_new else "under NEITHER slug",
                          transcript_path(cur, fsid) if cur else "(no cwd)", transcript_path(pend, fsid)),
                       problem=True)
+            return "kept"
 
     def set_model(self, sid: str, value: str) -> bool:
         """Change the session's model. Persisted in the registry (so a reconnect keeps it) and applied
@@ -11680,7 +12418,7 @@ class SdkBackend:
             "t": t, "author": "human", "command": command, "_echo_text": disp,
             "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
         append_cmd_gesture(self.state_dir, sid, disp, t=t)
-        self._wake_push()
+        self._wake_push_live(sid)
 
     def set_fast(self, sid: str, value: str) -> bool:
         """Toggle fast mode ('on'|'off'). The CLI's /fast descriptor is marked supportsNonInteractive,
@@ -11897,6 +12635,41 @@ class SdkBackend:
         if a in ("login", "key"):
             return a
         return "key" if self.work_key_configured else "login"
+
+    def sid_for_name(self, name: str) -> str:
+        """The sid of the ONE alive session (not a comment thread) whose reg carries `name`, else "".
+        The regs are this backend's durable record of its sessions, so a name resolves here without
+        the live set; two alive regs with the same name resolve to nothing — a guess would mail the
+        wrong session."""
+        name = str(name or "")
+        if not name:
+            return ""
+        hits = [str(reg.get("sid")) for reg in list_regs(self.state_dir)
+                if reg.get("alive") and not reg.get("threadOf") and reg.get("name") == name and reg.get("sid")]
+        return hits[0] if len(hits) == 1 else ""
+
+    def end_marker(self, sid: str):
+        """What this backend's own DURABLE record says about `sid`, for a caller whose send it just
+        refused — never a liveness probe. True: the reg is present and says alive=false, the explicit
+        end marker written at session end. False: the record stands (the refusal was something else;
+        the caller retries): a reg that says alive, or a session RUNNING in this process, whatever the
+        disk says this instant (the proof owns() and _ensure already take). None: NO reg file, which is
+        durable, since this backend never unlinks a reg. A reg that EXISTS but would not read or parse
+        RAISES (EMFILE, EIO, EACCES, torn JSON: the transient class owns() was repaired for on
+        2026-09-07), so the caller waits on a reader's fault instead of counting it as no record. The
+        first version read through read_reg, which answers None for an unreadable reg exactly as for
+        an absent one, and never looked at self.sessions: a running session whose reg would not read
+        was classed as no record, its landing mail withheld, and its watch retired as ended (review
+        find, 2026-09-08)."""
+        s = self.sessions.get(sid)
+        if s is not None and s.thread.is_alive():
+            return False
+        reg = read_reg_for_rmw(self.state_dir, sid)
+        if reg is None:
+            raise OSError(errno.EIO, "reg for %s exists but would not read" % sid[:8])
+        if not reg:
+            return None
+        return not bool(reg.get("alive"))
 
     def owns(self, sid: str) -> bool:
         """Whether this backend has a registry entry for `sid`. Memoized on the reg file's (mtime, size):
@@ -12179,8 +12952,8 @@ class SdkBackend:
         (retire_live_work), the kernel thread pruned landed ones during a chat build (prune_live), and
         each sweep walked a stale key list and read `d[k]` — so when the kernel thread pruned a
         just-landed reply while the settle sweep still held its uuid, `KeyError: '<message uuid>'`
-        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (a peer
-        session lost its turn, a Workflow run and a background agent to it). The lock (`_live_lock`,
+        escaped _on_message and ended the receive loop, which tore the CLI down mid-work (the in-flight
+        turn, its subagents and its background tasks went with it). The lock (`_live_lock`,
         see __init__) is the fix; the sweeps still walk a snapshot and pop with a default, so a key
         that vanishes anyway costs nothing — and it is reported, ONCE per site per kernel life, because
         under the lock it can only mean a mutator changed the tail without taking it: a fix that made
@@ -12229,7 +13002,7 @@ class SdkBackend:
         if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
                 and not sess._cli_working:
             sess._mark("working")   # (an isApiError settle is the turn DYING, not producing — never 'working')
-        self._wake_push()
+        self._wake_push_live(sess.sid)
 
     def _wake_push(self):
         if self._push_cb:
@@ -12237,6 +13010,22 @@ class SdkBackend:
                 self._push_cb()
             except Exception as e:
                 self._log("chat push wake failed: %s" % e)
+
+    def _wake_push_live(self, sid: str):
+        """The wake for a change to `sid`'s live tail (a streamed atom; an echo added, retired or flagged; a
+        command chip; the session process ending): the kernel's cause-carrying callback when it wired one,
+        else the plain wake. Every _wake_push site that follows a _touch_live / _stash_live of one sid uses
+        this, and _on_session_gone names its sid the same way; the sites that wake for something else (a
+        fast-mode or env change) keep _wake_push. tests/test_pusher_cadence.py pins the split."""
+        cb = getattr(self, "_push_live_cb", None)
+        if not cb:
+            self._wake_push()
+            return
+        try:
+            cb(sid)
+        except Exception as e:
+            self._log("chat push wake (%s) failed: %s" % (sid, e))
+            self._wake_push()                  # the cause is lost, the wake is not
 
     def _push_session(self, sid: str) -> None:
         """Targeted one-session push (kernel _push_session_now), for per-session events the chat chip
@@ -12304,17 +13093,16 @@ class SdkBackend:
         The floor this replaces: `human_floor` (the newest genuine-human atom's time) once retired every
         echo it postdated, was narrowed to path-bearing echoes (the user 2026-07-20) — the image-
         extraction case, where the CLI's composer paste hook rewrites a pasted image path to "[Image #N]"
-        and the echo's text can never match — and narrowed again to image paths (2026-09-06) after it
+        and the echo's text can never match — and that predicate matched far more than image paths: it
         retired a staged comment whose quote chip carried a `path:line` label while the CLI still held
-        the message. The review of that change found the remaining rule had no true positives here: the
-        hook runs only in the terminal composer, and an SDK session's input is stream-json, so the CLI
-        takes the text as typed (0 image blocks in 8,569 user records over 71 sessions; every image-path
-        text landed verbatim). Its only effect was the false kind — a `.png` echo retired while its text
-        sat in the CLI's queue, or in the gap between the turn's ResultMessage and the next turn's record,
-        so the message blinked out of every client but the sender's. The fed-texts guard that shielded a
-        fed echo from the floor went with it (nothing left to shield from; `SdkSession.fed_texts` stays
-        as the observable twin of `inflight`). The tmux route keeps its own floor in
-        kernel._tmux_echo_settle, borrowing _path_bearing: there a send is a paste into the composer.
+        the message, so nothing showed the message until the splice. Narrowing it to image paths left a
+        rule with no true positives here: the hook runs only in the terminal composer, and an SDK
+        session's input is stream-json, so the CLI takes the text as typed (0 image blocks in 8,569 user
+        records over 71 sessions of one installation; every image-path text landed verbatim). Its only
+        effect was the false kind — a `.png` echo retired while its text sat in the CLI's queue, or in
+        the gap between the turn's ResultMessage and the next turn's record, so the message blinked out
+        of every client but the sender's. The tmux route keeps its own floor in kernel._tmux_echo_settle,
+        borrowing _path_bearing: there a send is a paste into the composer.
 
         The by-text comparison is keyed by echo_text_key on BOTH sides (2026-09-06): the kernel builds
         `tx_user_texts` from _atom_user_texts, and the echo's text is keyed the same way here — before,
@@ -12430,6 +13218,11 @@ class SdkBackend:
                 self._live.pop(sid, None)
             if popped:
                 self._touch_live(sid)
+        if popped:
+            # the tail changed (the work atoms are gone; the chip can read ready) and the three callers wake only
+            # through the plain _poke; the ResultMessage forwarded after a settle yields no atom, so without this
+            # a watched tab's turn-end repaint waited out the pusher's minimum interval (review 2026-09-08)
+            self._wake_push_live(sid)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
@@ -12643,6 +13436,10 @@ class SdkBackend:
         # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
         self._heal_stale_awaiting(sess.sid)
         self.retire_live_work(sess.sid)   # no stream left → unlanded work atoms must not hold the turn open
+        self._wake_push_live(sess.sid)    # the death is this sid's event and the tab it belongs to shows it (the
+        #                                   chip, the tail's end); the plain _poke below carries no sid, so a
+        #                                   watched tab's repaint would wait out the pusher's minimum interval
+        #                                   (review 2026-09-08); the retire's own wake fires only when it popped
         if sess._model_pending:           # a switch that never resolved before the thread died → don't trap the dots
             sess._model_pending = ""
             try:

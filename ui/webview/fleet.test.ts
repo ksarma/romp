@@ -360,8 +360,8 @@ test("the strip's styles live in the fleet's own sheet, mirroring feed.css — t
     "the feed's rule this mirrors is still the reference");
 });
 
-test("the outline's lens write carries a writeId and `edited: []`, so the kernel applies the lens only (round 5 of the 2026-09-05 review)", () => {
-  // until round 5 this was the one views write posted without either: the kernel judged its tag set as a
+test("the outline's lens write carries a writeId and `edited: []`, so the kernel applies the lens only (the 2026-09-05 review)", () => {
+  // before this change this was the one views write posted without either: the kernel judged its tag set as a
   // whole blob, and a targeted edit that landed in the same second as the pane's frame copy was reverted
   // by the next lens change. The empty list is the kernel's word that the write changes no tag.
   assert.match(SRC, /import \{ mintWriteId \} from "\.\/views-writes";/);

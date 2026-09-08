@@ -186,13 +186,17 @@ _stub_curl() {
 echo "curl $*" >> "$MOCK_LOG"
 # drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
 # it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+# as a false "not reachable" — one random kernel-API test failed per run
 [[ " $* " == *" --config - "* ]] && cat >/dev/null
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
 if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
 if [[ -n "${MOCK_CURL_SEND_QUEUED:-}" && "$url" == */send ]]; then echo '{"ok": true, "queued": true}'; exit 0; fi
+if [[ -n "${MOCK_CURL_WATCH_PR_REFUSE:-}" && "$url" == */watch-pr ]]; then
+  echo '{"ok": false, "retryable": true, "error": "the watch could not be saved ([Errno 28] No space left on device) - nothing is watching TESTORG/testrepo#7; retry once the state directory takes writes again"}'
+  exit 0
+fi
 if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
   for a in "$@"; do
     if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
@@ -266,10 +270,7 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
-# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
-# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
-[[ " $* " == *" --config - "* ]] && cat >/dev/null
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ "$url" == */new ]]; then
@@ -339,10 +340,7 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
-# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
-# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
-# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
-[[ " $* " == *" --config - "* ]] && cat >/dev/null
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 echo '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "queued": true, "dir": "/srv/notes-api/web"}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -452,6 +450,18 @@ MOCK
     [[ "$output" == *"--session <name> required"* ]]
     run run_romp watch-pr
     [ "$status" -eq 2 ]
+}
+
+@test "watch-pr: a refused registration is relayed, never reported as watching" {
+    # the kernel refuses a watch whose save failed (ok:false, retryable): the CLI prints that
+    # refusal and exits non-zero — the caller must never read "watching" for a watch nobody holds
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 MOCK_CURL_WATCH_PR_REFUSE=1 "$ROMP_SCRIPT" watch-pr 7 --repo TESTORG/testrepo
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp watch-pr: refused — the watch could not be saved ([Errno 28]"* ]]
+    [[ "$output" != *"romp watch-pr: watching"* ]]
 }
 
 @test "tag: --rename rides the payload and counts as an edit" {
@@ -1221,6 +1231,31 @@ _stale_server_globals() {
     grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
 }
 
+@test "new -t: a key command line (ROMP_API_KEY_CMD) in the env FILE alone is a provider too and scrubs the tmux server" {
+    # 2026-09-07: the generic provider. With a key command governing, ANTHROPIC_API_KEY must still leave
+    # the server's globals (a keyswap retired it), and op's names go too if they are present.
+    _stale_server_globals
+    unset ROMP_API_KEY_REF ROMP_API_KEY_CMD
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"     # CI runners export XDG_CONFIG_HOME: pin the path
+    printf '%s\n' "ROMP_PERF=1" "ROMP_API_KEY_CMD=fetch-synthetic-key --field api" > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
+    [ "$(grep -n 'set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG" | cut -d: -f1)" -lt \
+      "$(grep -n 'tmux new-session' "$MOCK_LOG" | cut -d: -f1)" ]
+}
+
+@test "new -t: a key command in the CLIENT env scrubs the tmux server too" {
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "ROMP_PERF=1" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_API_KEY_CMD="fetch-synthetic-key --field api" run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+}
+
 @test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
     _stale_server_globals
     unset ROMP_API_KEY_REF
@@ -1460,6 +1495,26 @@ _stale_server_globals() {
     grep -qE 'tmux respawn-pane -k -t myproject-2 exec ROMP_SID=abc123-uuid ROMP_SESSION_NAME="myproject-2" claude --resume abc123-uuid --name "myproject-2"' "$MOCK_LOG"
 }
 
+@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
+    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
+    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
+    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
+    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
+    # state dir alone; a recording one for this test shows the resume path reaching the seam —
+    # the call is detached, so the check waits (bounded) for its record instead of racing it.
+    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
+    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$HOME/.local/state/romp" ]
+
+    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
+    run run_romp resume abc123-uuid
+    [ "$status" -eq 0 ]
+    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
+    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
+}
+
 # ─── Detach tests ────────────────────────────────────────────────────
 
 @test "detach: new -t --detach creates the session but does not attach" {
@@ -1482,26 +1537,6 @@ _stale_server_globals() {
     [[ "$output" == *"(detached)"* ]]
     run grep -q 'tmux attach-session' "$MOCK_LOG"
     [ "$status" -ne 0 ]
-}
-
-@test "resume: the background picker-check goes through ROMP_POSTAL_BIN, and the stand-in writes nothing" {
-    # bin/romp double-forks `romp-postal-service picker-check` on a resume and returns at once;
-    # the real service mints ~/.local/state/romp/serve-token when none exists, and did so after
-    # teardown had removed TEST_DIR, re-creating it. bin/romp's own directory leads PATH, so the
-    # seam is the only way a test can stand in for the service. The setup() stand-in leaves the
-    # state dir alone; a recording one for this test shows the resume path reaching the seam —
-    # the call is detached, so the check waits (bounded) for its record instead of racing it.
-    [ "$ROMP_POSTAL_BIN" = "$MOCK_DIR/romp-postal-service" ]
-    run "$ROMP_POSTAL_BIN" picker-check --name myproject --id abc123-uuid
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ ! -e "$HOME/.local/state/romp" ]
-
-    printf '#!/usr/bin/env bash\necho "postal $*" >> "%s"\n' "$TEST_DIR/postal.log" > "$MOCK_DIR/romp-postal-service"
-    run run_romp resume abc123-uuid
-    [ "$status" -eq 0 ]
-    local i; for i in $(seq 1 50); do [ -s "$TEST_DIR/postal.log" ] && break; sleep 0.1; done
-    grep -q '^postal picker-check --name myproject --id abc123-uuid$' "$TEST_DIR/postal.log"
 }
 
 # ─── Misc ────────────────────────────────────────────────────────────

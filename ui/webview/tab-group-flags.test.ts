@@ -12,7 +12,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { planStrip, parseTabGroups, setSectionCollapsed, isSectionCollapsed, type TabSection } from "./tab-groups";
-import { sectionTodoFlag, sectionTodoTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
+import { sectionTodoFlag, sectionTodoTitle, sectionPip, sectionPipMembers, sectionPipTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { standInPip } from "./tab-snapshot";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -20,8 +21,9 @@ const CSS = ui("webview", "styles.css");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
-// the folded-only block of the header: from `if (collapsed) {` to the drag wiring that follows it
-const FOLDED = HEAD.slice(HEAD.indexOf("if (collapsed) {"), HEAD.indexOf("head.draggable = true;"));
+// the header's stand-in block, where the member-derived marks live: from `if (hidden.length) {` (folded, the unpinned
+// members; open, the members hidden inside the section, 2026-09-08) to the drag wiring that follows it
+const FOLDED = HEAD.slice(HEAD.indexOf("if (hidden.length) {"), HEAD.indexOf("head.draggable = true;"));
 const HANDLER = RENDER.slice(RENDER.indexOf('"open-group": (el) => {'), RENDER.indexOf('"open-group": (el) => {') + 260);
 
 // the demo world: web + api in "infra", tests + old1 in "archived" (folded by default), a loose one
@@ -35,7 +37,7 @@ const V = {
 type Sess = { name: string; userTodos?: { id: string; text: string }[] };
 const todo = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i + 1}`, text: `synthetic need ${i + 1}` }));
 const heads = (items: ReturnType<typeof planStrip>["items"]) =>
-  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in i);
+  items.filter((i): i is { head: TabSection; folded: boolean; active: boolean; hidden: string[]; hides: string[] } => "head" in i);
 
 test("executed: a folded section with ONE member holding an open todo shows the flag, count 1, that session named", () => {
   const sessions = new Map<string, Sess>([["tests", { name: "tests", userTodos: todo(1) }], ["old1", { name: "old1", userTodos: [] }]]);
@@ -96,24 +98,30 @@ test("executed: federation — a remote host's session counts for its section th
     "the name is the one its tab shows — host-prefixed like the label");
 });
 
-test("the flag never appears twice for one section: one construction, inside the folded block, one append; open headers carry none", () => {
+test("the flag never appears twice for one section: one construction, inside the stand-in block, one append; an open header with nothing hidden carries none", () => {
   assert.equal(RENDER.split('b.className = "tab-group-flag";').length - 1, 1, "exactly one place builds it (renderTabs' focus restore only looks one up)");
-  assert.equal(FOLDED.split("sectionTodoFlag(").length - 1, 1, "…inside the header's folded-only block");
+  assert.equal(FOLDED.split("sectionTodoFlag(").length - 1, 1, "…inside the header's stand-in block");
   assert.equal(FOLDED.split("head.appendChild(b);").length - 1, 1, "appended once");
-  assert.equal(HEAD.indexOf("sectionTodoFlag("), FOLDED.indexOf("sectionTodoFlag(") + HEAD.indexOf("if (collapsed) {"),
-    "no second derivation outside the folded block");
+  assert.equal(HEAD.indexOf("sectionTodoFlag("), FOLDED.indexOf("sectionTodoFlag(") + HEAD.indexOf("if (hidden.length) {"),
+    "no second derivation outside the stand-in block");
   // and one header per section in the plan — the flag rides the header, so one flag per section
   const plan = planStrip(["web", "api", "tests", "old1"], viewTagUnion(V), parseTabGroups(null), "web", false);
   assert.deepEqual(heads(plan.items).map((h) => h.head.name), ["infra", "archived"]);
-  // OPEN headers (the active tab's section renders open whatever the store says): every member tab
-  // wears its own glyph there, so a header flag would be a second mark over the same need
+  // OPEN headers with nothing hidden inside them: every member tab wears its own glyph there, so a header
+  // flag would be a second mark over the same need; `hidden` is empty, and the block does not run. (Open with a
+  // member hidden inside the section, the block runs over that member: tab-hide.test, the user 2026-09-08.)
   const infra = heads(plan.items).find((h) => h.head.name === "infra")!;
-  assert.deepEqual([infra.folded, infra.active], [false, true]);
-  assert.match(FOLDED, /^if \(collapsed\) \{/, "the flag lives in the `if (collapsed)` block — never rendered on an open header");
+  assert.deepEqual([infra.folded, infra.active, infra.hidden], [false, true, []]);
+  assert.match(FOLDED, /^if \(hidden\.length\) \{/, "the marks live in the stand-in block: rendered exactly when the header stands in for a member with no tab");
+  assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block any more: an open header stands in for its hidden members too");
 });
 
 test("expanding via the flag: its own data-act opens the group explicitly (never a toggle), on the stable #tabs delegate, one render path", () => {
-  assert.match(FOLDED, /b\.dataset\.act = "open-group";/);
+  // on a FOLDED header; on an open one (`door`: the header stands in for members hidden inside the section) the same
+  // button is the non-folding door to the pane, show-group (tab-hide.test, round 1 of the tabhide review 2026-09-08)
+  assert.match(FOLDED, /b\.dataset\.act = door \? doorAct : "open-group";/);
+  assert.equal(sectionTodoTitle({ count: 1, names: ["tests"] }, false), "waiting on you — tests flagged something it needs from you; click to open this group", "the folded header's title, as before");
+  assert.equal(sectionTodoTitle({ count: 1, names: ["tests"] }, true), "waiting on you — tests flagged something it needs from you; " + SHOW_GROUP_CLICK, "the open header's: what its click does there");
   assert.match(FOLDED, /b\.dataset\.group = name;/);
   assert.match(HANDLER, /const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, false\)\);/,
     "an explicit OPEN: a press landing after a sibling pane already opened the group must not fold it back");
@@ -133,15 +141,15 @@ test("click-safe and keyboard: a real button (focusable; Enter and Space click I
   // button's native activation and clicked the header: toggle-group ran, not open-group (the same fold
   // opened, by luck of the flag riding folded headers only). The handler returns for a key on the flag.
   const keys = HEAD.slice(HEAD.indexOf('head.addEventListener("keydown"'), HEAD.indexOf("const caret = el("));
-  assert.match(keys, /^head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
-    "the guard comes first, before any preventDefault");
+  assert.match(keys, /^head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag, \.tab-group-door"\)\) return;\s*\n/,
+    "the guard comes first, before any preventDefault (and stands down for the open header's count button too: tab-hide.test)");
   assert.match(keys, /if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
     "…and the press is the handler's last word (the stand-in's ←/→ and Enter sit between; tab-groups.test.ts)");
   assert.equal(HEAD.split('addEventListener("keydown"').length - 1, 1, "one key handler on the header, none on the button (native activation is the button's)");
   assert.match(FOLDED, /b\.draggable = true;\s*\n\s*b\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/,
     "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: canceled, and never reaching the header's (draggedGroup stays null)");
   assert.doesNotMatch(FOLDED, /b\.addEventListener\("click"/, "no per-node click handler — the node is rebuilt on every push");
-  assert.match(FOLDED, /b\.title = sectionTodoTitle\(flag\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);/, "the tooltip names the sessions, and a screen reader hears the same");
+  assert.match(FOLDED, /b\.title = sectionTodoTitle\(flag, door, shown\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);/, "the tooltip names the sessions and says what the click does on this header, and a screen reader hears the same");
   assert.ok(RENDER.indexOf("head.addEventListener(\"dragstart\"") > RENDER.indexOf("head.appendChild(b);"), "the header's own drag wiring stays, after the flag");
 });
 
@@ -183,6 +191,8 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   const kind = sectionPip(arch.hidden.map((id) => sessions.get(id)?.status));
   assert.equal(kind, "blocked", "a hidden member waiting on you → the red pip");
   assert.equal(sectionPipTitle(kind!, sectionPipMembers(kind!, arch.hidden.map((id) => sessions.get(id)))), "a session in this group is blocked or waiting on you: tests");
+  // render.ts reads the same rule through standInPip (tab-snapshot.ts), which folds the feed's verdict in (tab-hide.test)
+  assert.deepEqual(standInPip(arch.hidden.map((id) => ({ session: sessions.get(id), ledger: null }))), { kind: "blocked", names: ["tests"] });
   assert.deepEqual(sectionTodoFlag(arch.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] }, "…and the flag for the other, side by side");
   // pin tests (the waiting one): its state leaves the pip; the flag is unchanged
   const pinned = setSectionCollapsed(st, "archived", true);
@@ -192,12 +202,13 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.deepEqual(arch2.hidden, ["old1"], "the pinned member is on the strip");
   assert.equal(sectionPip(arch2.hidden.map((id) => sessions.get(id)?.status)), null, "its waiting state shows on its own tab, not the header");
   assert.deepEqual(sectionTodoFlag(arch2.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] });
-  // render.ts: both marks are built inside the folded block, pip before flag, both over `hidden`
-  assert.match(FOLDED, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/);
-  assert.ok(FOLDED.indexOf("sectionPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
-  assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("sectionPip("), "both after the count — subordinate to the label");
-  assert.equal(HEAD.split("sectionPip(").length - 1, 1, "one pip derivation, inside the folded block — open headers carry neither mark");
-  assert.match(HEAD, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the pip's tooltip names the sessions, like the flag's");
+  // render.ts: both marks are built inside the stand-in block, pip before flag, both over `hidden`; the pip through
+  // standInPip (the tab's rule with the feed's verdict folded in: tab-hide.test)
+  assert.match(FOLDED, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/);
+  assert.ok(FOLDED.indexOf("standInPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
+  assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("standInPip("), "both after the count — subordinate to the label");
+  assert.equal(HEAD.split("standInPip(").length - 1, 1, "one pip derivation, inside the stand-in block: an open header with nothing hidden carries neither mark");
+  assert.match(HEAD, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{doorClick\(shown\)\}` : said;/, "the pip's tooltip names the sessions, like the flag's, and on an open header says what its click does");
   assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px;/, "small");
 });
 
@@ -207,7 +218,7 @@ test("a push while the flag holds focus puts focus back on the rebuilt FLAG, not
   // keyboard user on the ⚑ was walked back a stop every 0.5–3s, the focus ring and label gone
   const cap = RENDER.slice(RENDER.indexOf("const focusedEl = document.activeElement"), RENDER.indexOf("bar.replaceChildren();"));
   assert.match(cap, /const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);/, "which of the two held focus is remembered");
-  assert.match(RENDER, /\(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| h\)\.focus\(\);/,
-    "the rebuilt header's flag when the flag held it; the header when this push resolved the todo and the header has none");
+  assert.match(RENDER, /\(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| \(focusedDoor && h\.querySelector<HTMLElement>\("\.tab-group-door"\)\) \|\| h\)\.focus\(\);/,
+    "the rebuilt header's flag when the flag held it (the open header's count button the same, tab-hide.test); the header when this push resolved the todo and the header has none");
   assert.match(RENDER, /const refocusTab = bar\.contains\(document\.activeElement\);\s*\n\s*bar\.replaceChildren\(\);/, "the tab rule's two-line shape stands (chat-focus-model.test)");
 });

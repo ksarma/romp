@@ -102,7 +102,13 @@ session is shown as a chip in that session's color.
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already
 running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
-note says when the session took it (to the minute), with a link that jumps to it.
+note says when the session took it (to the minute), with a link that jumps to it. In an SDK
+session, send several messages during one turn (a composer message, then a todo reply) and
+each reaches the session as its own message, in the order you sent them: the next one
+waits, shown as queued, until the session has taken the one before it, so two messages are
+never joined into one. A tmux session takes a message only while it is idle, so messages
+sent during its turn wait, shown as queued, and arrive together when the turn ends, as one
+message.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
@@ -150,13 +156,32 @@ went quiet shows the word with no dot: the dot follows the session's own state, 
 the feed. What it is doing now comes from its current task, else from the headline of
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
-its formatting; click one to open that session, which also opens its section. The rows update as
+its formatting; click one to open that session, which also opens its section if the section is
+folded (a hidden session's section stays as it was; see the next paragraph). The rows update as
 the sessions work and change only when something about a session changes; the **needs you** word
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
 The transcript comes back when you pick a session, press Escape, or click that header again while
 its section is open and holds the tab you are reading. Sections, and this view with them, are for
 the desktop layout; the phone layout keeps its flat list.
+
+**Hiding a session inside its group.** Each row in this view has a **Hide** button, or **Show**
+once the session is hidden. Hiding a session takes its tab off the strip while its group is open
+and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
+**Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
+open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
+hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
+when one of them needs you), and its count says how many are hidden. When a hidden session needs
+you, the fold's head says so in red before you open it, and its row says **needs you**. While the
+group is open, its count opens this view without folding the group, so hiding a session never needs
+a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
+the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
+you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
+standing in for the tab, and leaves it hidden, its group folded or open as it was. A session set to
+**Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes when
+you show it again. A hidden session keeps the setting when its group is renamed, and shows again
+wherever it lands when it leaves the group. Like the sections, hiding is per browser and for the
+desktop layout.
 
 ### The feed
 
@@ -696,7 +721,10 @@ Your sessions now show up in its interface from whatever network you are on.
 Because the laptop is the end that connects, the always-on machine never holds a
 way in to it; untick the box and it forgets you. Romp calls this checking in,
 and the always-on machine the hub, which is where `romp checkin` and
-`romp checkout` get their names.
+`romp checkout` get their names. Restarting Romp from the hub's interface
+restarts the machines linked to it as well, and a checked-in machine is asked to
+restart itself only: anything attached to that machine alone is restarted from
+its own interface.
 
 #### Hand the connection to a different machine
 
@@ -957,7 +985,11 @@ how many sessions are waiting and names the problem: **rate limited**,
 **overloaded**, **offline** (this machine cannot reach the API), or **errors**.
 Red **paused** means auto-retry and the judges are stopped, and says why: a
 usage limit, the monthly spend cap, or that you stopped them. Hover for the same
-reading with the waiting sessions listed. Click the cell, or press Enter on it,
+reading with the waiting sessions listed, and the history under it: the API's
+state over the last 1, 5 and 15 minutes (attempts, the 429 and 5xx shares,
+give-ups, sessions that retried) and the most recent state changes with how long
+each held. A kernel restart shows as its own line there, because the counts
+start over with the kernel. Click the cell, or press Enter on it,
 for the detail: each waiting session (click one to open that session), a button
 that stops auto-retry for every session while sessions are waiting and resumes
 it while paused, and links to the usage figures and the Log.

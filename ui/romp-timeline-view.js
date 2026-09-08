@@ -56,21 +56,21 @@ function viewsAdopts(held, incoming, announced) {
   return h === null || i === null || i >= h || (typeof announced === 'number' && i === announced);
 }
 // whether the kernel's `caps` frame, the reconnect event, adopts the blob the gate last REJECTED since
-// its last adoption — the hand-mirror of views-writes.ts capsAdopts (rounds 6 and 7 of the 2026-09-05
+// its last adoption — the hand-mirror of views-writes.ts capsAdopts (the 2026-09-05
 // review). The connect push precedes the caps frame and `served` is the frame's viewsSeq, the seq of the
 // views blob that push put on this socket (null when it carried none; undefined on a frame from a kernel
 // before the field). A push a restarted kernel served under an OLDER seq (a store restored while it was
 // down; its seq floor lives for its process) was turned away a frame ago and is the kept blob: its seq
 // matches, it is adopted. A pusher-thread frame built before a concurrent write and kept because it
 // arrived between the push and the caps frame carries an older seq: no match, discarded, the gate stands.
-// A frame without the field adopts the kept blob outright (the round-6 rule).
+// A frame without the field adopts the kept blob outright (the pre-field rule).
 function viewsCapsAdopts(rejected, served) {
   if (!rejected) return false;
   if (served === undefined) return true;
   return typeof served === 'number' && isFinite(served) && viewsSeq(rejected) === served;
 }
 // the seq a caps frame ANNOUNCES as the kernel's current store, remembered when the frame adopted no kept
-// blob — the hand-mirror of views-writes.ts announcedSeq (round 8 of the 2026-09-05 review): its viewsSeq
+// blob — the hand-mirror of views-writes.ts announcedSeq (the 2026-09-05 review): its viewsSeq
 // when a number (the served blob's seq, or the store's current seq when the push carried no views frame),
 // null when null (no store at all) or absent (a kernel from before the field). Kept in one slot per store
 // (_announcedViewsSeq), overwritten by each caps frame and cleared by the next adoption that changes the
@@ -78,12 +78,12 @@ function viewsCapsAdopts(rejected, served) {
 // from an older copy, met by a reconnect whose push carried no blob, left nothing kept for the caps frame
 // to match: the pusher's next frame was turned away and no second caps frame comes.
 function viewsAnnouncedSeq(served) { return (typeof served === 'number' && isFinite(served)) ? served : null; }
-// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (round 9 of the review):
+// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (the review):
 // cleared only by an adoption that CHANGES the held blob (a seq other than the held one — a newer write, or
 // the announced seq itself below it — a seq-less side, or the announced seq arriving at the held seq), and
 // left standing through a re-arrival of the blob already held, which is no new information. The federation
 // router replays its stored blob into the merged lanes payload on every re-emit (a remote host's lanes, a
-// view-order storage event, a host drop); round 8's clear on ANY adoption let such a re-emit, landing between
+// view-order storage event, a host drop); the earlier clear on any adoption let such a re-emit, landing between
 // the caps frame and the pusher's next frame, spend the slot, and the restored store the router then adopted
 // and re-emitted at the announced seq was turned away here: router and pane silently diverged until the next
 // write.
@@ -92,7 +92,7 @@ function viewsAnnouncedAfter(held, incoming, announced) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return (i !== null && i === h && i !== announced) ? announced : null;
 }
-// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
+// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
 // plus the writes still in flight, oldest first — a whole-blob write IS the state it posted, a
@@ -133,7 +133,7 @@ function rederiveViews(base, writes) {
 }
 // The placeholder id an optimistic create's row wears until the kernel's ack names the real one
 // (views-writes.ts isPlaceholderId): such a row takes no gesture — an op addressed by it is
-// refused as a tag that does not exist (round 4 of the 2026-09-05 review).
+// refused as a tag that does not exist (the 2026-09-05 review).
 function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(id); }
 // A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
 // and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
@@ -141,7 +141,7 @@ function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(
 // stored array reads in the dragged order too: over the socket the kernel's door orders the stored
 // array by the write's tagOrder itself; on the Electron path, where the posted blob IS the file,
 // this re-sort does it. The
-// hand-mirrors of views-writes.ts applyLensFields / lensBlob (round 4 of the 2026-09-05 review: a
+// hand-mirrors of views-writes.ts applyLensFields / lensBlob (the 2026-09-05 review: a
 // whole-blob write built from the pending copy carried every targeted edit still in flight as this
 // page's claim on those tags, and a rename the kernel had refused landed through a lens toggle).
 function applyLensFields(v, fields) {
@@ -984,6 +984,11 @@ class TimelinePanel {
     // so draw() paints the romp swirl loader there. Set true the instant applyBars runs (or a full one-shot
     // data object arrives through update()), and the loader is gone on the next draw. CLAUDE.md loader rule.
     this._barsLoaded = false;
+    // A bars frame that arrived BEFORE any lanes skeleton (the user 2026-09-07, who came back to a frozen
+    // dashboard tab): the pane shim now coalesces same-type frames, so on a first connect [data1, bars1,
+    // data2] can reach the pane as [bars1, data2] — and applyBars used to drop bars1 on `!this.data`. It is
+    // parked here instead and lands with the next skeleton (update()). Newest parked frame wins.
+    this._pendingBars = null;
     // per-LANE bars evidence (the user 2026-08-15: after a restart, a live WORKING lane vanished from
     // the active-only view, then reappeared bar-less): every with_bars build writes a turns entry for
     // EVERY lane it covered (empty for a quiet one), so a lane's key appearing is the exact "its
@@ -1016,6 +1021,8 @@ class TimelinePanel {
     this._lockNow = false;
     this._compactClicked = {};   // sid → click ts: show the compacting cue OPTIMISTICALLY until the real state catches up
     this._pendingFlags = {};     // sid → {flag: value}: an optimistic eye-toggle held STICKY across pushes until the kernel's data confirms it (no flicker-back)
+    this._laneRefusal = null;    // {sid, flag, text}: the kernel's refusal of the last lane-gear toggle, shown in the gear until dismissed or retried
+    this._laneMenuBuild = null;  // the last-opened lane gear's rebuild-in-place, so a refusal arriving while it is open repaints it (like _viewsDialogBuild; every use is gated on _laneMenu being open)
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
     this._rejectedViews = null;  // the last blob the seq gate turned away since it last adopted one — what the caps frame adopts (setCaps)
@@ -1223,6 +1230,30 @@ class TimelinePanel {
       if (this.tip && this.tip.classList && this.tip.classList.contains('show')) this.hideTip();
       _release();
     });
+    // Paint only when the pane can be seen (the user 2026-09-07, who came back to the dashboard's browser tab
+    // after it sat in the background and found the page frozen): every frame the kernel pushed while the tab
+    // was hidden was parsed AND fully drawn — N frames, N whole-SVG rebuilds — so the return paid for all of
+    // them at once. update()/applyBars() now apply their STATE unconditionally (this.data, the live edge's
+    // clock, the loader latch) but hold the draw while hidden, on the same _dirtyWhileTip path the tooltip
+    // and click holds use, and this is that hold's RELEASE: the tab coming back (visibilitychange → visible)
+    // or the pane itself coming into view (IntersectionObserver on the wrap — a display:none pane, a hidden
+    // Obsidian leaf, where the tab never changed state). One catch-up draw per return, never one per frame.
+    // Both are events; no timer polls for visibility. The observer is optional (Obsidian / a bare host may
+    // lack it) — see _hiddenForPaint for what the hold keys on without it.
+    this._paneIntersecting = null;   // the observer's last word (null: it has not spoken yet); one input of the shim's word (_publishPaneHidden)
+    this._onVis = () => { this._publishPaneHidden(); this._releasePaintHold(); };
+    if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', this._onVis);
+    this._io = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+      try {
+        this._io = new IntersectionObserver((entries) => {
+          this._paneIntersecting = entries.some((e) => e.isIntersecting);
+          this._publishPaneHidden();
+          if (this._paneIntersecting) this._releasePaintHold();
+        });
+        this._io.observe(this.wrap);
+      } catch (e) { this._io = null; }
+    }
 
     // controls row BELOW the time axis. Layout (the user 2026-06-11): usage bars LEFT-justified,
     // then a flexible spacer, then RIGHT-justified "collapse idle gaps" with the 🔒 lock-to-now
@@ -1395,7 +1426,7 @@ class TimelinePanel {
     this._hover = null; // feed→timeline hover highlight {ids,...} (set by update from data.hover OR setHover; null = none)
     this._hoverNonce = null;  // highest hover nonce applied — gates the direct push vs the file poll so neither clobbers the other (the same monotonic nonce rides both; see setHover)
     this._frozeFromPin = false;  // freeze-on-hover: true while a tooltip has paused live-follow that WAS pinned (so hideTip knows to resume)
-    this._dirtyWhileTip = false; // a data poll arrived while a tooltip was up (draw was skipped) → hideTip repaints the catch-up
+    this._dirtyWhileTip = false; // a data poll arrived while a tooltip was up (draw was skipped) → hideTip repaints the catch-up; also set under a pressed pointer (_release repaints) and while the pane is out of sight (_releasePaintHold repaints, 2026-09-07)
     this._unfreezeTimer = null;  // deferred hideTip resume — cancelled by a quick glyph→glyph hover handoff
     this.wrap.tabIndex = 0; this.wrap.style.outline = 'none';
     this._onKey = (e) => this.onKey(e);
@@ -1461,6 +1492,8 @@ class TimelinePanel {
       this.wrap.removeEventListener('touchstart', this._onTouchStart); this.wrap.removeEventListener('touchmove', this._onTouchMove); this.wrap.removeEventListener('touchend', this._onTouchEnd); this.wrap.removeEventListener('touchcancel', this._onTouchEnd); }
     if (this._drawRAF) cancelAnimationFrame(this._drawRAF);
     this._stopLiveTick();
+    if (this._onVis && typeof document !== 'undefined' && document.removeEventListener) document.removeEventListener('visibilitychange', this._onVis);
+    if (this._io) { try { this._io.disconnect(); } catch (e) {} this._io = null; }
     if (this._autoOpenT) clearTimeout(this._autoOpenT);
     if (this._unfreezeTimer) clearTimeout(this._unfreezeTimer);
     if (this._onDragMove) window.removeEventListener('mousemove', this._onDragMove, true);
@@ -1766,6 +1799,42 @@ class TimelinePanel {
     const w = this.wrap;
     return !!(w && w.offsetParent !== null);
   }
+  // Out of sight, for the PAINT hold in update()/applyBars() (2026-09-07)? Says "hidden" only for a reason
+  // whose RELEASE event is wired: the tab's visibilityState always (visibilitychange); the pane's own layout
+  // (offsetParent null — a display:none iframe, a hidden Obsidian leaf) only where the IntersectionObserver
+  // could be installed to notice it coming back. Without the observer an offsetParent-null pane keeps
+  // painting as it always did, rather than freezing on a stale frame with nothing to wake it — the
+  // 2026-06-25 stuck-hold bug in a new coat (a held pane must always have a release).
+  _hiddenForPaint() {
+    if (this._io) return !this._isVisible();
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  }
+  // The paint hold's release (2026-09-07): the tab came back or the pane came into view. Repaint the held
+  // frames as ONE catch-up — exactly what hideTip / _release do for their holds — and re-arm the live tick,
+  // which _tickLive stopped while hidden. Still hidden by the OTHER criterion (tab visible, pane display:none,
+  // or the reverse) → that criterion's own event releases later. A shown tip or a pressed pointer keeps its
+  // own hold and its own release repaints; the tick re-arm is safe under both (it self-gates).
+  // The shim's word (the 2026-09-08 fold's round-2 ruling; ui/webview/paint-gate.ts publishPaneHidden is the panes'
+  // copy of this): the kernel's pane shim gates its stale banner on its zero-viewport probe OR a published
+  // window.__rompPaneHidden of true, and in Chromium the probe misses a pane hidden after a first show (the iframe
+  // keeps its size). Published on the hold's own events (visibilitychange, the observer's callback), never on a timer;
+  // and NOT until the observer has spoken (round 3): a page loaded in a background tab gets no observer callback
+  // before the tab's first rendering step after its return, so the return's visibilitychange would publish the
+  // visible verdict for a display:none pane one step early, and the shim would prefer it over its probe, which
+  // reads innerWidth 0 and is right. While _paneIntersecting is null (unspoken, or no observer) the probe decides.
+  _publishPaneHidden() {
+    if (typeof window === 'undefined') return;
+    if (this._paneIntersecting === null) return;
+    const docHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    window.__rompPaneHidden = docHidden || this._paneIntersecting === false;
+  }
+
+  _releasePaintHold() {
+    if (this._hiddenForPaint()) return;
+    const tipUp = this.tip && this.tip.classList && this.tip.classList.contains('show');
+    if (this._dirtyWhileTip && !tipUp && !this._pointerHeld) { this._dirtyWhileTip = false; this.draw(); }
+    this._startLiveTick();
+  }
   // The effective `now` draw() renders the right edge at: data.now plus wall-clock since that poll while
   // live-following, else the raw data.now (a held/frozen view must NOT creep as time passes).
   _liveNow() {
@@ -1783,8 +1852,10 @@ class TimelinePanel {
   // the frame; see _tickLive), then the next look on an animation frame, or, when the look had to rebuild and
   // got no plot to translate, a sleep sized to the edge's speed first. Restarted by update()/applyBars() (each
   // frame re-paces it: a pending sleep computed for the old zoom or data is dropped), by gestures, and by the
-  // pointer release when a look was skipped under a held pointer. Hidden pane: it keeps sleeping (long) so it
-  // resumes by itself when shown; not live-following: it stops until a gesture pins the edge again.
+  // pointer release when a look was skipped under a held pointer. Hidden pane: the loop STOPS (its old 2 s
+  // sleep re-entered _isVisible()'s forced offsetParent layout every wake, for a pane nobody could see —
+  // 2026-09-07) and the paint hold's release (_releasePaintHold) re-arms it; not live-following: it stops
+  // until a gesture pins the edge again.
   _startLiveTick() {
     if (!this._liveFollowing() || !this._isVisible()) return;
     if (this._liveRAF != null) return;                                        // a look is already imminent
@@ -1808,7 +1879,7 @@ class TimelinePanel {
   _tickLive() {
     this._liveRAF = null; this._liveTO = null;
     if (!this._liveFollowing() || !this.data) return;          // gate closed → stop; a gesture or a frame re-arms
-    if (!this._isVisible()) { this._sleep(2000); return; }      // hidden pane: stay alive cheaply, resume when shown
+    if (!this._isVisible()) return;                             // hidden pane: stop; _releasePaintHold re-arms when it shows (no 2 s layout poll)
     // Click-safe: don't rebuild the SVG under a pressed pointer (a click in progress). The release event
     // (_release) restarts the loop — no polling for it. See the constructor.
     if (this._pointerHeld) { this._liveResume = true; return; }
@@ -2002,7 +2073,8 @@ class TimelinePanel {
     // A FULL data object (the test harness / an older one-shot) carries its own turns, so the bars are
     // already present → no loader. The two-message path leaves turns empty here; the loader shows until
     // applyBars lands. Read the RAW turns BEFORE the prev-carry below back-fills them.
-    if (data.turns && Object.keys(data.turns).length) this._barsLoaded = true;
+    const ownBars = !!(data.turns && Object.keys(data.turns).length);
+    if (ownBars) this._barsLoaded = true;
     if (data.turns) for (const k of Object.keys(data.turns)) this._barsSeen.add(k);
     const prev = this.data;
     if (prev && (!data.turns || !Object.keys(data.turns).length)) {
@@ -2034,6 +2106,11 @@ class TimelinePanel {
       this._nowBaseSec = data.now; this._nowBaseMs = _tMs;
     }
     this._wasLive = _live;
+    // A bars frame parked ahead of its skeleton (see applyBars) lands now that lanes exist — the skeleton
+    // arriving IS the event. Merged AFTER this frame's clock so the newer skeleton's `now` wins the edge, and
+    // BEFORE the fit + draw below so the first paint carries the bars. A skeleton that brought its own turns
+    // (a full one-shot) is newer than anything parked before it, so the parked frame is dropped (2026-09-07).
+    if (this._pendingBars) { const pb = this._pendingBars; this._pendingBars = null; if (!ownBars) this._mergeBars(pb); }
     if (!this.fitted && Object.keys(this.data.turns || {}).length && this.fitWindow()) this.fitted = true;   // fit once bars exist (a skeleton-only first paint waits for applyBars); no latch without a clock sample
     // first paint with a chat already open → seed the highlight from it (don't override a later local pick)
     if (this.selectedSid == null) { const sid = this._sidForActiveChat(data.activeChat); if (sid) this.selectedSid = sid; }
@@ -2062,9 +2139,11 @@ class TimelinePanel {
     // every x-position = the jump the user saw under the held edge. Keep the last frame; hideTip repaints
     // the buffered data as ONE catch-up. (Also skips the focus-jump + live-tick below — both move the view.)
     // Hold the SVG layout while it's deliberately frozen: a tooltip is up (freeze-on-hover) OR a pointer is
-    // pressed (a click in progress — click-safe, see the constructor). Buffer the data; repaint the catch-up
-    // when the hold ends (hideTip / pointer release). Skips the focus-jump + live-tick below — both move the view.
-    if ((this.tip && this.tip.classList && this.tip.classList.contains('show')) || this._pointerHeld) { this._dirtyWhileTip = true; return; }
+    // pressed (a click in progress — click-safe, see the constructor) OR the pane is out of sight (a hidden tab,
+    // a display:none pane — 2026-09-07; nobody sees a paint there, and the return used to pay for every held
+    // frame's rebuild at once). Buffer the data; repaint the catch-up when the hold ends (hideTip / pointer
+    // release / _releasePaintHold). Skips the focus-jump + live-tick below — both move the view.
+    if ((this.tip && this.tip.classList && this.tip.classList.contains('show')) || this._hiddenForPaint() || this._pointerHeld) { this._dirtyWhileTip = true; return; }
     this.draw();
     // feed→timeline locate: a NEW focus nonce (update_feed wrote timeline-focus.json on a card click)
     // → pan/scroll/pulse to that event. Adopt the nonce silently on first load (don't jump to a stale
@@ -2093,7 +2172,23 @@ class TimelinePanel {
     this._wasLive = live;
   }
   applyBars(m) {
-    if (!m || !this.data || !this.data.sessions) return;
+    if (!m) return;
+    // No skeleton yet → PARK the frame, don't drop it (2026-09-07): the pane shim coalesces same-type frames,
+    // so a first connect's [data1, bars1, data2] can arrive here as [bars1, data2]; dropping bars1 left the
+    // loader up until the next bars push. update() merges the parked frame when the skeleton lands.
+    if (!this.data || !this.data.sessions) { this._pendingBars = m; return; }
+    this._pendingBars = null;   // anything parked is older than this frame
+    this._mergeBars(m);
+    // honor the same freeze-on-hover / click-hold / out-of-sight guard update() uses (don't relayout under a
+    // held pointer or tip, nor for a pane nobody can see — _releasePaintHold repaints the catch-up)
+    if ((this.tip && this.tip.classList && this.tip.classList.contains('show')) || this._hiddenForPaint() || this._pointerHeld) { this._dirtyWhileTip = true; return; }
+    this.draw();
+    this._startLiveTick();   // bars are up now → resume the smooth-advance loop (gated off while the loader showed)
+  }
+  // The STATE half of a bars frame — everything that must land whether or not the pane can be seen: the
+  // turns/judging/messages, the loader latch, the live edge's clock (2026-09-07). applyBars() paints after
+  // it; update() runs it for a frame that was parked ahead of its skeleton.
+  _mergeBars(m) {
     this.data.turns = m.turns || {};
     for (const k of Object.keys(this.data.turns)) this._barsSeen.add(k);
     this.data.judging = m.judging || [];
@@ -2122,10 +2217,6 @@ class TimelinePanel {
       this._anchorNow(this.data.now);
     }
     if (!this.fitted && Object.keys(this.data.turns).length && this.fitWindow()) this.fitted = true;   // no latch without a clock sample (see fitWindow)
-    // honor the same freeze-on-hover / click-hold guard update() uses (don't relayout under a held pointer/tip)
-    if ((this.tip && this.tip.classList && this.tip.classList.contains('show')) || this._pointerHeld) { this._dirtyWhileTip = true; return; }
-    this.draw();
-    this._startLiveTick();   // bars are up now → resume the smooth-advance loop (gated off while the loader showed)
   }
 
   // Direct hover push from the kernel (server.ts pushHover) — the FAST path that skips the
@@ -2999,7 +3090,7 @@ class TimelinePanel {
     this._metaMenu = menu;
   }
 
-  // closing a surface that held the join menu drops its new-tag draft (round 4 of the 2026-09-05
+  // closing a surface that held the join menu drops its new-tag draft (the 2026-09-05
   // review: the draft outlived the menu and reappeared in the next one opened for the same rows)
   _closeLaneMenu() {
     if (!this._laneMenu) return;
@@ -3107,6 +3198,38 @@ class TimelinePanel {
     this.draw();
   }
 
+  // the kernel's refusal of a gesture this page posted (the store it edits could not be read), answered on
+  // THIS page's socket and naming the gesture. A lane-gear flag (gesture 'flag', sid + flag): end the
+  // optimistic state ON THIS EVENT — the flag's sticky latch drops and the lane repaints to the value the
+  // kernel still paints (the frame carries it: what the next push shows; not a value recorded at the click,
+  // which a second click before the first refusal made wrong) — and the reason shows in the gear (rebuilt in
+  // place if it is open, on its next open otherwise) until dismissed or until the toggle is tried again.
+  // Filed in the shell's bell under its own `refused` kind, so it is findable after the fact and muting judge
+  // warnings never mutes it. Before this the kernel sent a `warn`, which this page never rendered, so the
+  // gear kept showing the refused state until a reload. The feed's bell and the chat's tab menu handle the
+  // same frame for their gestures.
+  settingRefused(m) {
+    const sid = String((m && m.sid) || ''), flag = String((m && m.flag) || '');
+    const text = String((m && m.text) || "couldn't save that setting");
+    if (m && m.gesture === 'flag' && sid && flag) {
+      const pend = this._pendingFlags[sid];
+      if (pend) { delete pend[flag]; if (!Object.keys(pend).length) delete this._pendingFlags[sid]; }
+      if (typeof m.value === 'boolean') {
+        // both copies a click may have written: the current frame's session, and the one the open gear built from
+        const targets = [((this.data && this.data.sessions) || []).find((x) => x.id === sid),
+                         this._laneMenu && this._laneMenu._sid === sid ? this._laneMenu._session : null];
+        for (const s of targets) if (s) s[flag] = m.value;
+      }
+      this._laneRefusal = { sid, flag, text };
+      if (this._laneMenu && this._laneMenu._sid === sid && this._laneMenuBuild) this._laneMenuBuild();
+    }
+    try {
+      if (typeof window !== 'undefined' && window.parent && window.parent !== window)
+        window.parent.postMessage({ romp: 'notify', kind: 'refused', text, sid }, '*');
+    } catch (e) { /* no parent frame (Obsidian, headless) */ }
+    this.draw();
+  }
+
   // ── the NAME-KEYED tag editor (user ruling 2026-08-24), shared by the dialog and the lane gear ──
   // One union group = one tag identity. Edits stay routed under the hood: an ADD lands on the LOCAL
   // store when the name exists locally, else the tag's single home; a REMOVE removes the
@@ -3121,7 +3244,7 @@ class TimelinePanel {
   _editTagUnion(g, edit) {
     // a create still in flight has no id to address (its row wears the placeholder the ack
     // replaces): the builders offer no gesture on it, and one that arrives anyway does nothing
-    // rather than posting a tid the kernel refuses as a tag that does not exist (round 4)
+    // rather than posting a tid the kernel refuses as a tag that does not exist
     if (g.pending) return;
     const meta = { name: g.name, tid: g.localId };
     if (edit.add && edit.add.length) {
@@ -3184,7 +3307,7 @@ class TimelinePanel {
       ch.createSpan({ text: g.name });
       if (g.pending) {
         // a create still in flight: the chip shows, with no ✕ and no click, until the ack names the
-        // tag (round 4 of the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
+        // tag (the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
         ch.style.cursor = 'default';
         ch.setAttribute('title', 'creating "' + g.name + '"…');
         ch.setAttribute('aria-disabled', 'true');
@@ -3206,7 +3329,7 @@ class TimelinePanel {
   // rows name their own.
   _tagJoinMenu(box, rowIds, rebuild, menuKey) {
     for (const g of viewTagUnion(this._curViews())) {
-      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address (round 4)
+      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
       const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
@@ -3219,10 +3342,10 @@ class TimelinePanel {
         this._editTagUnion(g, { add: rowIds.filter((id) => g.members.indexOf(id) < 0) }); rebuild();
       });
     }
-    // The new-tag input's text and caret SURVIVE a repaint (round 3 of the 2026-09-05 review — the
+    // The new-tag input's text and caret SURVIVE a repaint (the 2026-09-05 review — the
     // rename draft did not cover it): an ack or refusal for some other write rebuilds the whole
     // surface while the user is typing here. The draft is kept on the instance per MENU (the [+]
-    // that is open, not the rows it lists — round 4: keyed by the row set, the bulk menu's draft
+    // that is open, not the rows it lists — before this change keyed by the row set, the bulk menu's draft
     // hid whenever the search filter or a session's liveness changed the rows, and came back when
     // they changed back); the live input is read before the rebuild tears it down, and the rebuilt
     // input restores text and caret. Submitting, or closing the menu or the dialog, drops it.
@@ -3276,12 +3399,12 @@ class TimelinePanel {
   // blob logs once per page, so a kernel serving stale frames is a visible fact. The last ignored blob
   // is KEPT (and let go by the next adoption): a kernel restarted over a store restored from an older
   // copy serves it under the old seq, so its connect push is turned away here — and the caps frame
-  // that follows it adopts it (setCaps; round 6 of the 2026-09-05 review). When that push carried no
+  // that follows it adopts it (setCaps; the 2026-09-05 review). When that push carried no
   // blob to keep, the caps frame's viewsSeq is remembered instead (_announcedViewsSeq) and the later
-  // blob carrying exactly that seq is adopted below the held one (round 8; viewsAnnouncedSeq). The slot
+  // blob carrying exactly that seq is adopted below the held one (viewsAnnouncedSeq). The slot
   // clears when an adoption CHANGES the held blob, never on a re-arrival of the blob already held — the
   // federation router replays its stored blob into the merged lanes payload on every re-emit, and a slot
-  // spent on one of those missed the restored store the router adopted next (round 9; viewsAnnouncedAfter).
+  // spent on one of those missed the restored store the router adopted next (viewsAnnouncedAfter).
   _takeViews(v) {
     if (!v) return false;
     if (viewsAdopts(this._views, v, this._announcedViewsSeq)) { this._announcedViewsSeq = viewsAnnouncedAfter(this._views, v, this._announcedViewsSeq); this._views = v; this._rejectedViews = null; return true; }
@@ -3323,7 +3446,7 @@ class TimelinePanel {
   // does not name and is discarded. When nothing kept matches, viewsSeq (a number: the served blob's
   // seq, or the store's current seq when the push carried no views frame) is remembered as the
   // kernel's announced store and _takeViews adopts the later blob that carries it even below the held
-  // seq (round 8; viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
+  // seq (viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
   // adoption that changes the held blob; null (no store at all) and a missing field announce nothing. A write in flight is
   // dropped whatever the base became: its ack cannot reach this socket, and one that somehow did is
   // an ack for a write this page no longer tracks — its blob meets the gate like any other arrival,
@@ -3344,10 +3467,10 @@ class TimelinePanel {
   }
 
   // the two surfaces that show a tag-edit notice, repainted in place when one arrives or clears: the
-  // dialog (its build closure) and the lane gear menu (menu._build) — whichever is open
+  // dialog (its build closure) and the lane gear menu (_laneMenuBuild) — whichever is open
   _repaintTagSurfaces() {
     if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
-    if (this._laneMenu && typeof this._laneMenu._build === 'function') this._laneMenu._build();
+    if (this._laneMenu && typeof this._laneMenuBuild === 'function') this._laneMenuBuild();
   }
 
   // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
@@ -3384,7 +3507,7 @@ class TimelinePanel {
     if (!this._tagEditsTargeted()) {
       if (!nv) return;
       // LEGACY: the whole blob IS the store write here, so a create's placeholder id would be
-      // persisted as-is (round 3 of the 2026-09-05 review) — the row takes a client-minted `g…` id,
+      // persisted as-is (the 2026-09-05 review) — the row takes a client-minted `g…` id,
       // the scheme the dialog's own pre-2026-09-05 create used, and the write names it as edited,
       // which a kernel that reads `edited` needs to tell a create from a stale copy re-creating a
       // deleted tag
@@ -3402,7 +3525,7 @@ class TimelinePanel {
   }
 
   // a create is in flight: the gate on a second [+ New tag] or new-tag Enter before the first is
-  // answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags)
+  // answered (the 2026-09-05 review: two clicks before the ack made two tags)
   _createInFlight() {
     return this._viewsWrites.some((w) => w.edit && w.edit.op === 'create');
   }
@@ -3421,7 +3544,7 @@ class TimelinePanel {
   // some other row, whose editor is left alone. Refused → THIS write's change reverts AT ONCE: with
   // nothing else in flight the store's blob is what stands; with other writes still pending the copy
   // is rebuilt from that blob plus them (rederiveViews), so a later gesture never flaps off and back
-  // on (round 3 of the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
+  // on (the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
   // dialog, rebuilt in place if open (the tagEditFailed door's rendering).
   viewsAck(m) {
     if (!m) return;
@@ -3450,8 +3573,7 @@ class TimelinePanel {
   // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
   // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
   // A LENS or ORDER write — {active?, actives?, tagOrder?}: the whole blob is built from the STORE's
-  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (round
-  // 4 of the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
+  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
   // dialog's claim on those tags, and a rename the kernel had refused as a duplicate landed through
   // the next lens toggle). The pending copy SHOWN is the current one with the same fields applied,
   // so in-flight edits stay visible; the in-flight record keeps the fields for rederiveViews.
@@ -3825,7 +3947,7 @@ class TimelinePanel {
         for (const tg of viewTagUnion(v)) {
           // a create still in flight (`pending`) is not editable and not draggable: its row wears
           // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
-          // that does not exist (round 4 of the 2026-09-05 review) — it reads "creating…" instead
+          // that does not exist (the 2026-09-05 review) — it reads "creating…" instead
           const editable = !tg.pending && (tg.localId || canEdit);
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
@@ -3971,7 +4093,7 @@ class TimelinePanel {
           }
         }
         // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
-        // the row reads "creating…" and takes no click (round 3 of the 2026-09-05 review: a second
+        // the row reads "creating…" and takes no click (the 2026-09-05 review: a second
         // click before the ack made a second tag); the ack's repaint brings the button back.
         const ntRow = tgrid.createDiv();
         ntRow.setAttribute('style', 'grid-column:1 / -1;');
@@ -4233,6 +4355,7 @@ class TimelinePanel {
     menu.setAttribute('style', 'position:fixed;z-index:1001;width:280px;' + MENU_STYLE);
     menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu._sid = s.id;
+    menu._session = s;             // the copy build() reads; a refusal restores it alongside the frame's
     menu.addEventListener('click', (e) => e.stopPropagation());   // inside clicks must not reach the doc closer
     const build = () => {
       menu.textContent = '';
@@ -4255,6 +4378,7 @@ class TimelinePanel {
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           const next = t.value(!on);                 // the flag value that flips this toggle
+          if (this._laneRefusal && this._laneRefusal.sid === s.id && this._laneRefusal.flag === t.flag) this._laneRefusal = null;   // a retry retires the last refusal
           s[t.flag] = next;                          // optimistic …
           (this._pendingFlags[s.id] = this._pendingFlags[s.id] || {})[t.flag] = next;   // … sticky until the kernel confirms
           this._setSessionFlag(s, t.flag, next);
@@ -4262,6 +4386,17 @@ class TimelinePanel {
           this.draw();
           build();                                   // repaint states in place; the panel stays open
         });
+      }
+      // the kernel's refusal of this lane's last toggle (settingRefused): the same dismissible row the
+      // views dialog wears for a refused tag edit, here because the gear is where the click was made
+      if (this._laneRefusal && this._laneRefusal.sid === s.id) {
+        const er = menu.createDiv();
+        er.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 8px;padding:4px 8px;'
+          + 'border:1px solid #F85B5A;border-radius:5px;color:#F85B5A;font-size:0.82em;line-height:1.3;');
+        er.createSpan({ text: '⚠ ' + this._laneRefusal.text });
+        const ex = er.createSpan({ text: '✕' });
+        ex.setAttribute('style', 'margin-left:auto;cursor:pointer;opacity:0.7;flex:0 0 auto;');
+        ex.addEventListener('click', (e) => { e.stopPropagation(); this._laneRefusal = null; build(); });
       }
       // ── Tags (the user 2026-08-24: taggable from the gear too, not only the filter dialog) ──
       // The SAME name-keyed editor the dialog rows carry — the shared builders, never a fork:
@@ -4291,7 +4426,7 @@ class TimelinePanel {
       }
       // a refused tag edit made FROM this menu shows here too (the 2026-09-05 review): the dialog's
       // notice, in the menu's compact idiom — the reason, ✕ to dismiss. viewsAck and setCaps repaint
-      // the open menu (menu._build) the way they repaint the open dialog.
+      // the open menu (_laneMenuBuild) the way they repaint the open dialog.
       if (this._tagEditErr) {
         const er = menu.createDiv();
         er.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 8px 4px;padding:3px 8px;'
@@ -4303,7 +4438,7 @@ class TimelinePanel {
       }
     };
     build();
-    menu._build = build;   // viewsAck / setCaps / tagEditFailed repaint the open menu with a refusal
+    this._laneMenuBuild = build;    // viewsAck / setCaps / tagEditFailed and a settingRefused arriving while the gear is open repaint it in place
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     h.doc.body.appendChild(menu);   // a cross-document append ADOPTS the node; its listeners are kept
     const left = Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - 300);   // clamp on-screen
@@ -4350,22 +4485,35 @@ class TimelinePanel {
   }
 
   // Persist a per-session flag. Web dashboard: the host WS hook (→ kernel setSessionFlag → rebuild feed).
-  // Obsidian/headless fallback: write the same session-flags.json the kernel's build_feed reads.
+  // Obsidian desktop fallback: write the same session-flags.json the kernel's build_feed reads, with the
+  // discipline the kernel's own writer has (review find, 2026-09-08). Before this it was the exact shape
+  // the kernel dropped: any read fault or torn bytes became {} and was written over EVERY session's flags
+  // (postal isolation included), and the write truncated the live file in place, so the kernel's strict
+  // reader could observe 0 bytes mid-write and quarantine the very file being written. Now it mirrors
+  // _persistOrder / _setViews: Electron-or-nothing (a bare-node test run must never touch the real file),
+  // the kernel's state root, a refusal on any read fault or non-object parse (only a MISSING file reads as
+  // empty; the kernel quarantines torn bytes on its own next read), and an atomic tmp + rename publish.
   _setSessionFlag(s, flag, value) {
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetFlag === 'function') {
         window.__rompTimelineSetFlag(s.id, flag, value); return;
       }
+      if (typeof process === 'undefined' || !process.versions || !process.versions.electron) return;
       const fs = require('fs'), os = require('os'), path = require('path');
-      const dir = path.join(os.homedir(), '.local', 'state', 'romp');
+      const dir = process.env.ROMP_STATE_DIR
+        || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'romp');
       const fp = path.join(dir, 'session-flags.json');
       let cur = {};
-      try { cur = JSON.parse(fs.readFileSync(fp, 'utf8')) || {}; } catch (e) {}
+      try { cur = JSON.parse(fs.readFileSync(fp, 'utf8')); }
+      catch (e) { if (!e || e.code !== 'ENOENT') return; }   // unreadable or torn: never write over a store we could not read
+      if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return;   // valid JSON of the wrong shape: not ours to overwrite
       const f = (cur[s.id] && typeof cur[s.id] === 'object') ? cur[s.id] : {};
       if (value) f[flag] = true; else delete f[flag];
       if (Object.keys(f).length) cur[s.id] = f; else delete cur[s.id];
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(fp, JSON.stringify(cur));
+      const tmp = fp + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(cur));
+      fs.renameSync(tmp, fp);
     } catch (e) { /* no host hook + no Node fs → can't persist */ }
   }
 

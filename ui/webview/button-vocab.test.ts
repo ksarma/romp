@@ -94,13 +94,13 @@ test("destructive stays RED; a SELECTED .on keeps the reverse-highlight", () => 
 
 test("ONE transition string + the :active press cue on every touched family", () => {
   const T = "transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;";
-  // styles.css: .bg-stop, .composer-stage-btn, .ask-btn, .fileview-btn
-  assert.equal(CHAT.split(T).length - 1, 4, "styles.css: the four touched families share the one string");
+  // styles.css: .bg-stop, .composer-stage-btn, .ask-btn, .fileview-btn, .snap-act (the section snapshot's Hide / Show, 2026-09-08)
+  assert.equal(CHAT.split(T).length - 1, 5, "styles.css: the five touched families share the one string");
   // feed.css: .fask-secbtn, .ftree-act-btn, .fconfirm-btn, .fdismiss, .fileview-btn
   assert.equal(FEED.split(T).length - 1, 5, "feed.css: the five touched families share the one string");
   // gear.css: #rs-keys-btn, .ra-openbtn, the .ra-* toggles
   assert.equal(GEAR.split(T).length - 1, 3, "gear.css: the three touched families share the one string");
-  for (const sel of [".bg-stop", ".composer-stage-btn", ".ask-btn", ".fileview-btn"]) {
+  for (const sel of [".bg-stop", ".composer-stage-btn", ".ask-btn", ".fileview-btn", ".snap-act"]) {
     assert.ok(CHAT.includes(sel + ":active { transform: scale(0.96); }"), sel + " press cue (styles.css)");
   }
   for (const sel of [".fask-secbtn", ".ftree-act-btn", ".fconfirm-btn", ".fdismiss", ".fileview-btn"]) {
