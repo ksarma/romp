@@ -82,7 +82,7 @@ import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
-  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered, detachedChanges,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
@@ -841,6 +841,9 @@ class Panel {
   // Changes). The inline toggle applies on top: "changes" with the marks off shows the change cards and no mark. The control
   // is offered only while the file has a card to filter (filterOffered), and the choice governs nothing until then (activeFilter).
   filter: CommentsFilter = loadSettings().commentsFilter;
+  // The comment saved while the filter showed the changes alone (noteHiddenSave): its card and mark are hidden by that
+  // choice, so the list says so where the card would be (hiddenSavedRow) until the card shows or the person dismisses it.
+  hiddenSaved: string | null = null;
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
@@ -1054,6 +1057,7 @@ class Panel {
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
+        fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
         // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
@@ -1323,6 +1327,7 @@ class Panel {
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
+    this.hiddenSaved = null;                           // the line about a save this panel showed nothing for was read with the panel open (hiddenSavedRow)
     this.stopPoll();
   }
   dispose(): void {
@@ -1999,6 +2004,7 @@ class Panel {
       this.renderComposer();
       return;
     }
+    const before = new Set(this.cards().map((x) => x.id));   // the comments before the save, so the saved one can be told apart (noteHiddenSave)
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -2017,7 +2023,23 @@ class Panel {
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
       r = await this.mutate("comment", args, "composer");
     }
+    const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
+    if (hid) this.render();                            // the cards were rendered with the reply before the saved comment was known: once more, with its line
+  }
+  /** After a comment is saved (not a reply): while the filter shows the changes alone, the fresh card and its mark are
+   *  hidden (renderCards, paintAll), and a save that shows nothing reads as a save that failed — the person may write the
+   *  comment again. The saved comment's id is kept (hiddenSaved) and the list says so where the card would be
+   *  (hiddenSavedRow); the kept choice is not changed for it, as it is not for a reply's box (replyAway). The fresh
+   *  comment is the one the list did not hold before the save — with several landed at once (another client's, a
+   *  session's), the one with the person's words. A comment on a change (the change card's Reply) rides that card under
+   *  Changes, so it is never hidden. Returns whether the line is due. */
+  private noteHiddenSave(before: Set<string>, note: string): boolean {
+    const fresh = this.cards().filter((x) => !before.has(x.id));
+    const mine = fresh.find((x) => x.author === "you" && x.body === note) || fresh[fresh.length - 1] || null;
+    if (!mine || mine.hunk !== null || this.activeFilter() !== "changes") return false;
+    this.hiddenSaved = mine.id;
+    return true;
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
@@ -2997,17 +3019,30 @@ class Panel {
     // row under them, the chosen one filled — offered once the file has a card to filter (filterOffered), and never before:
     // a control over an empty list is noise. Its counts are the action-row label's (cardCounts), so the glance and the
     // control agree. The buttons take the arrow keys as one group (the constructor's keydown).
+    let filterRow: HTMLElement | null = null;          // the filter's row, when offered: the toggles' confirm rows go above it (underToggles)
     if (filterOffered(s)) {
       const seg = el("div", "fc-row fc-filter");
       seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Show");
       const n = cardCounts(s);
+      // a detached change is neither pending nor counted (cardCounts), and the Changes list shows its card in the detached
+      // group: the option carries the action-row label's own detached clause ("Changes 0 · 1 detached"), so the count and
+      // the list it opens agree and a file holding detached changes alone does not read as one with nothing to show
+      const d = s && s.store ? detachedChanges(s.store).length : 0;
+      // the marks half of each title is the read view's (paintAll): the editor (Slice 5) draws every change itself, from the
+      // records it took at Edit, and no comment highlight, so while it is up the titles say what the list does and that the
+      // editor's marks stay — the row is offered there all the same, since finding a comment among the change cards is
+      // what the filter is for (Show changes inline, which governs marks alone, is not)
+      const editing = this.ctx.editing();
+      const commentsTitle = "Show only the comments, including comments on changes; " + (editing ? "the editor keeps every change marked in its text" : "the change marks in the text are hidden with the change cards");
+      const changesTitle = "Show only the changes, each with the comments made on it" + (editing ? "" : "; the comment highlights in the text are hidden with the comment cards")
+        + (d ? "; the " + (d === 1 ? "detached change is" : d + " detached changes are") + " listed too, in a group of " + (d === 1 ? "its" : "their") + " own" : "");
       const options: Array<[CommentsFilter, string, string]> = [
         ["all", "All", "Show every comment and change"],
-        ["comments", "Comments " + n.comments, "Show only the comments, including comments on changes; the change marks in the text are hidden with the change cards"],
-        ["changes", "Changes " + n.changes, "Show only the changes, each with the comments made on it; the comment highlights in the text are hidden with the comment cards"],
+        ["comments", "Comments " + n.comments, commentsTitle],
+        ["changes", "Changes " + n.changes, changesTitle],
       ];
       for (const [key, label, title] of options) {
-        const b = btn(label, "fcfilter", "fileview-btn fc-toggle");
+        const b = btn(key === "changes" && d ? label + " · " + d + " detached" : label, "fcfilter", "fileview-btn fc-toggle");
         b.dataset.key = key;
         b.dataset.on = this.filter === key ? "1" : "0";
         b.setAttribute("aria-pressed", this.filter === key ? "true" : "false");
@@ -3015,7 +3050,14 @@ class Panel {
         seg.appendChild(b);
       }
       head.appendChild(seg);
+      filterRow = seg;
     }
+    // a row answering a click on the toggles' row — the Track scope choice, the Stop confirm, the track slot's loader and
+    // refusal — stands directly under that row, above the filter's, the way the foot's Reject-all confirm and Send's stand
+    // under their buttons (the plan: an error row under the control that asked); the filter's row is under the toggles
+    // again once the question is answered. The other head rows (the status refusal, the poll's, the editor's, the save's)
+    // are about the file and the panel as a whole and keep their place below the filter's row.
+    const underToggles = (n: HTMLElement): void => { head.insertBefore(n, filterRow); };
     if (this.trackChoice && s) {
       const pick = el("div", "fc-row fc-choice");
       pick.appendChild(el("span", "fc-note", "Track:"));
@@ -3028,7 +3070,7 @@ class Panel {
       f.title = "Everything under the folder, files not written yet included";
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(pick);
+      underToggles(pick);
     }
     if (this.trackStop && s?.trackedBy) {
       const stop = el("div", "fc-row fc-choice");
@@ -3037,9 +3079,12 @@ class Panel {
       stop.appendChild(ask);
       stop.appendChild(btn("Stop", "fctrackstop"));
       stop.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(stop);
+      underToggles(stop);
     }
     for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
+    // the track slot's loader and refusal, built with the head's rows above: moved under the toggle that asked, like its confirms
+    // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row)
+    for (const n of Array.from(head.childNodes)) if (n.nodeType === 1 && (n as HTMLElement).dataset.slot === "track") underToggles(n as HTMLElement);
     const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
@@ -3175,21 +3220,45 @@ class Panel {
    *  `back`, for the keyboard when the box closes (focusAway). The comment gone from the sidecar (`gone`: the row wears
    *  the refusal's colour); a comment on its own card resolved since the reply began, or resolved before it and its
    *  Resolved fold closed since; its change card folded behind the "… N more changes" row, when a change the session made
-   *  in an earlier paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. A
-   *  comment bound to a change is shown on the change's card resolved or not (changeCards), never under the Resolved
-   *  fold, so its resolved state says nothing about where its card is: only the change fold can hide it. */
+   *  in an earlier paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. Where
+   *  a comment bound to a change stands follows the filter (renderCards): under All and Changes it is shown on the
+   *  change's card resolved or not (changeCards), never under the Resolved fold, so only the change fold can hide it;
+   *  under Comments it stands on its own card like any other, and resolved it is under the Resolved fold, while no
+   *  change card, group or fold row is rendered to name. */
   private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean; back: "fcresolved" | "fcmore" | "fcfilter" | null } {
-    const card = this.cards().find((x) => x.id === c.commentId);
-    if (!card) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
+    const found = this.cards().find((x) => x.id === c.commentId);
+    if (!found) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
+    // under Comments a comment bound to a change stands on its own card, as one on no change does, and no change card or
+    // fold row is rendered (renderCards): it is read here as a comment on none, so the Resolved fold is the row that can hide it
+    const card = this.activeFilter() === "comments" ? { ...found, hunk: null } : found;
     // the filter shows the changes alone, and the comment is on none: its card is behind All or Comments above (the row that
     // brings it back is the group's first button, All)
     if (this.activeFilter() === "changes" && card.hunk === null) return { gone: false, back: "fcfilter", text: "The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it." };
     if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved", text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it." };
+    if (card.hunk === null) return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };   // its own card, open, and not shown: a status not yet in — never the change fold
     const view = this.changeView();
     if (view.hidden.some((g) => g.changes.some((ch) => ch.comments.some((cm) => cm.id === c.commentId)))) {
       return { gone: false, back: "fcmore", text: "The comment's card is under “" + moreChangesLabel(view.hiddenChanges) + "” below; the reply still goes to it." };
     }
     return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };
+  }
+  /** The line under Changes for the comment just saved there (noteHiddenSave): its card and its mark are hidden by the
+   *  choice above, and the line names the options that show them, as the Changes empty state does — the card itself is
+   *  not shown, since the filter's own words exclude it. Rendered while the list still hides the card; once it shows
+   *  (another pick) or the comment is gone from the file's comments, the line is over and the id with it: a later return
+   *  to Changes must not bring it back, the card having been seen. The ✕ ends it early (fchiddenx). */
+  private hiddenSavedRow(filter: CommentsFilter): HTMLElement | null {
+    const id = this.hiddenSaved;
+    if (id === null) return null;
+    const card = this.cards().find((c) => c.id === id);
+    if (!card || filter !== "changes" || card.hunk !== null) { this.hiddenSaved = null; return null; }
+    const mark = card.target ? "rectangle" : card.anchor ? "highlight" : null;   // a whole-file comment has no mark in the file
+    const row = el("div", "fc-row fc-note fc-saved-hidden");
+    row.dataset.id = card.id;
+    row.appendChild(el("span", undefined, "Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")
+      + " hidden while Changes is chosen above (All or Comments shows " + (mark ? "them" : "it") + ")."));
+    const x = btn("✕", "fchiddenx", "fileview-btn fc-x"); x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
+    return row;
   }
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
@@ -3211,6 +3280,8 @@ class Panel {
     }
     // a reject's reload is out: the body shows the bytes it changed, unmarked, until the fetch lands (awaitBytes)
     for (const n of [this.loader("bytes"), this.errRow("bytes")]) if (n) list.appendChild(n);
+    const saved = this.hiddenSavedRow(filter);          // a comment saved under Changes: the line for its hidden card, where the card would be
+    if (saved) list.appendChild(saved);
     if (!cards.length && !view.cards.length && filter === "changes") {
       // the changes alone, and none: the line says where the comments are (ui/CLAUDE.md, never dead-end a compact view)
       list.appendChild(el("div", "fc-empty", "No changes are pending. All or Comments above shows the comments."));
@@ -3360,9 +3431,17 @@ class Panel {
     }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
-    // a comment on a pending change stands on its own card only while the filter shows the comments alone (renderCards):
-    // the tag says the change is there, behind All or Changes
-    if (c.hunk) { const t = el("span", "fc-tag", "on a change"); t.title = "This comment is on a pending change; All or Changes above shows the change's card"; head.appendChild(t); }
+    // a comment on a change the sidecar holds stands on its own card only while the filter shows the comments alone
+    // (renderCards): the tag says the change is there, behind All or Changes — and which it is, since `hunk` is set for a
+    // PENDING change and for a DETACHED one alike (cardModel), and only the pending one has a card that Accept or Reject
+    // decides; the detached one's card sits in the detached group (changeCards)
+    if (c.hunk) {
+      const pending = !!this.status && (this.status.hunks || []).some((h) => h.id === c.hunk!.id);
+      const t = el("span", "fc-tag", "on a change");
+      t.title = pending ? "This comment is on a pending change; All or Changes above shows the change's card"
+        : "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change's card, under Detached changes";
+      head.appendChild(t);
+    }
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));
     if (c.replies.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.replies.length)));
@@ -3463,8 +3542,8 @@ class Panel {
     head.dataset.id = c.key; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
     if (c.comments.some((cm) => cm.id === this.replyTo())) this.holdHead(head);
-    const kind = el("span", "fc-kind", "Change");      // the kind cue, as a comment card wears it (renderCard)
-    kind.title = "A change the session made to the file, for you to accept or reject";
+    const kind = el("span", "fc-kind", "Change");      // the kind cue, as a comment card wears it (renderCard); no decision is offered on a detached change
+    kind.title = c.detached ? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";
     head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.ref);

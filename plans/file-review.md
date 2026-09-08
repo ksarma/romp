@@ -1052,12 +1052,14 @@ is the list as before. Show changes inline applies on top ("Changes" with the ma
 and no mark), the keyed expand state is untouched by a pick, and Send to session is not filtered: the
 confirm lists everything unsent as before. The buttons are one group for the keyboard: an arrow chooses
 the next or previous option, wrapping at the ends, and Home and End the first and last. Every card head
-names its kind, Comment, Change, or Region, in the note's dress before the author's chip, and the
-card's left edge is the accent for a comment (a region is one) and the muted tone for a change
-(`data-cue`; both sheets, tokens only); a detached card keeps its dashed edge. A reply's box whose card
-the filter hides returns to the panel's slot with a line saying so, and Escape or Cancel hands the
-keyboard to All. Tests: `ui/webview/file-comments-filter.test.ts` (driven); `tools/file-review-plan.test.mjs`
-and `tests/test_guide_files_filter.py` hold this note and the guide's paragraph to the source.
+names its kind, Comment, Change, or Region, in a word before the author's chip, styled like `.fc-note`
+(`--dim`, 0.86em; the `.fc-kind` rule), and the card's left edge is colored by kind, a 3px border in the
+accent for a comment (a region is one) and in `--text-muted` for a change (`data-cue`; both sheets,
+tokens only); a detached card keeps its dashed edge. A reply's box whose card the filter hides returns to
+the panel's slot with a line saying so, and Escape or Cancel moves the focus to the All button, the one
+that brings the card back. Tests: `ui/webview/file-comments-filter.test.ts` (driven);
+`tools/file-review-plan.test.mjs`, `tools/file-review-plan-kind-cue.test.mjs` and
+`tests/test_guide_files_filter.py` hold this note and the guide's paragraph to the source.
 
 ### Slice 3: region comments on images
 
@@ -1532,7 +1534,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   against the label's, and pins the delegate action, the header's order, the paint guards, the store's
   key and default and the sheets' rules at source; `tools/file-review-plan.test.mjs` and
   `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
-  the source.
+  the source, and `tools/file-review-plan-kind-cue.test.mjs` holds the note's kind-cue and focus
+  sentences to the sheets and the panel.
 
 ## Docs
 

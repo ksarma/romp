@@ -1,22 +1,26 @@
 // The Comments panel's filter (the filter follow-on to plans/file-review.md, 2026-09-07): All · Comments · Changes in
 // the panel header, under the Track changes and Show changes inline row — which cards the list shows and which marks the
 // text wears, kept across opens and pages through the shared settings store — and the kind cue every card head wears.
-// Driven AS A PANEL over the inline-toggle suite's DOM stand-in (a Raw body built to the viewer's shape; its settings store
-// is the stub localStorage every panel suite installs):
+// Driven AS A PANEL over the inline-toggle suite's DOM stand-in (a Raw body built to the viewer's shape, and a Rendered
+// one with an embedded figure, whose overlay the region rectangles paint on; its settings store is the stub localStorage
+// every panel suite installs):
 //   • the default: All, the three buttons offered once the file has a comment or a change and never before, their counts
 //     the action-row label's; nothing written to the store until a pick;
 //   • Comments: every comment card on its own — passage, whole-file, region, and a comment on a pending change with the
-//     change's words and an "on a change" tag — no change card, fold or foot; no change mark in the text, the highlights kept;
+//     change's words and an "on a change" tag — no change card, fold or foot; no change mark in the text, the highlights
+//     and the figure's rectangle kept;
 //   • Changes: the change cards alone, each with the comments made on it once open; no comment card or Resolved fold; the
-//     change marks kept, no highlight; with Show changes inline off on top, the cards and no mark;
+//     change marks kept, no highlight and no region rectangle (gone on the pick, back under All, none from the first pass
+//     of a panel opened with Changes kept); with Show changes inline off on top, the cards and no mark;
 //   • All: today's list; the keyed expand state untouched by any pick; Send to session unfiltered;
 //   • remembered: the store's commentsFilter, read when the next panel opens and written on each pick; a foreign value
 //     reads as All; a pick elsewhere (the settings signal) re-renders the live panel;
 //   • the arrow keys move along the group and choose, wrapping; Home and End;
 //   • the kind cue: Comment / Change / Region before the chip, and the card's data-cue for the sheets' left edge.
-// What a stand-in cannot show is pinned at source: the delegate action, the header's order, the paint guards, the store's
-// key and default, the second listener, the sheets' rules (byte-equal in both). Synthetic fixtures only: the notes-api
-// world, placeholder ids.
+// What a stand-in cannot show is pinned at source: the delegate action, the header's order, the paint guards' placement
+// (their effects are driven above; the region guard's place after the PDF crop is kept is not), the store's key and
+// default, the second listener, the sheets' rules (byte-equal in both). Synthetic fixtures only: the notes-api world,
+// placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -558,6 +562,79 @@ test("All brings today's list and both kinds of mark back; the keyed expand stat
   store.delete(SETTINGS_KEY);
 });
 
+// ── a figure: the region rectangle is a comment's mark ─────────────────────────────────────────────
+// Rendered markdown with an embedded figure after the title: the source is DOC with the embed line in, the hunks moved
+// past it, and a region comment on the figure (the embed line's anchor and target.src, as a drag on the figure writes it)
+const EMBED = "![Figure](figure.png)\n\n";
+const FIG_DOC = "# Report\n\n" + EMBED + DOC.slice("# Report\n\n".length);
+const FIG_HASH = "3333333333333333333333333333333333333333333333333333333333333333";
+const figure: StoreComment = {
+  id: T0 + 4000 + "-6", author: "you", ts: T0 + 4000, body: "Label the axis.",
+  anchor: { quote: "![Figure](figure.png)", prefix: "# Report\n\n", suffix: "\n\n## Findings" },
+  target: { kind: "image", region: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 }, hash: FIG_HASH, src: "figure.png" }, replies: [], resolved: false,
+};
+const figureIntro = (): El => { const img = new El("img"); img.setAttribute("src", "figure.png"); img.setAttribute("alt", "Figure"); return el("p", img); };
+const figured = (over: Partial<Status> = {}): Status => full({
+  hunks: FIVE.map((h) => shifted(h, EMBED.length)),
+  store: { v: 3, path: "docs/report.md", suggestions: SUGG, comments: [passage, hosted, whole, figure, done] },
+  unsent: { comments: [passage.id, hosted.id, whole.id, figure.id], replies: [], accepted: 0, rejected: 0, watermark: null },
+  embeddedHashes: { "figure.png": FIG_HASH }, ...over,
+});
+const rects = (w: World): El[] => w.body.querySelectorAll(".fc-region");
+
+test("a figure in rendered markdown: the region rectangle is painted under All and Comments and not under Changes — gone on the pick and back on the next, the overlay standing and the change marks untouched; a panel opened with Changes kept paints none from the first", async (t: TestContext) => {
+  store.delete(SETTINGS_KEY);
+  const w = world({ mode: "rendered", src: FIG_DOC, intro: figureIntro }); t.after(() => w.close());
+  const { aside } = await openPanel(w, figured());
+  const img = w.body.querySelector(".fileview-md img")!;
+  const overlay = w.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay")!;
+  assert.ok(overlay, "the figure is wrapped and has its overlay");
+  assert.equal(img.parentNode, overlay.parentNode, "the picture inside the wrapper, beside the overlay");
+  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode]), [[figure.id, "fcopen", overlay]], "All: the region comment's rectangle, a control on the figure's overlay");
+  assert.equal(rects(w)[0].classes.join(" "), "fc-region", "the figure's bytes are the comment's: neither stale nor unknown");
+  assert.equal(w.body.querySelectorAll('.fc-hl[data-id="' + figure.id + '"]').length, 0, "the rectangle is the comment's mark: no text highlight doubles it");
+  assert.equal(highlights(w).length, 2, "the passage comment's and the hosted comment's highlights, as in the Raw world");
+  assert.equal(marksOf(w).length, 6, "the change marks, past the embed line");
+  assert.equal(kindOf(card(aside, figure.id)!), "Region");
+  assert.ok(isLink(card(aside, figure.id)!), "the card's reference links to the painted rectangle");
+  assert.equal(option(aside, "comments").textContent, "Comments 4", "the region comment counts as a comment");
+  // Changes: the rectangle goes with the highlights; the overlay stays up (the panel is open), and the marks stay
+  await pick(aside, "changes");
+  assert.deepEqual(rects(w), [], "Changes: no region rectangle");
+  assert.equal(w.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay"), overlay, "the layer stands: the picture is not unwrapped and rewrapped for a pick");
+  assert.equal(img.parentNode, overlay.parentNode);
+  assert.equal(highlights(w).length, 0); assert.equal(marksOf(w).length, 6, "the change marks are the Changes view's own");
+  assert.equal(card(aside, figure.id), null, "and the card is hidden with the other comment cards");
+  // with Show changes inline off on top: no mark of any kind
+  act(aside, "fcinline")!.click(); await flush();
+  assert.deepEqual(rects(w), []); assert.equal(marksOf(w).length, 0); assert.equal(highlights(w).length, 0);
+  act(aside, "fcinline")!.click(); await flush();
+  assert.deepEqual(rects(w), []); assert.equal(marksOf(w).length, 6, "the marks back, the rectangle still withheld");
+  // All: the rectangle is back on the same overlay, the same control
+  await pick(aside, "all");
+  assert.deepEqual(rects(w).map((r) => [r.dataset.id, r.dataset.act, r.parentNode]), [[figure.id, "fcopen", overlay]], "All: the rectangle is back");
+  assert.equal(highlights(w).length, 2); assert.equal(marksOf(w).length, 6);
+  assert.ok(isLink(card(aside, figure.id)!), "the card links to it again");
+  // Comments: a rectangle is a comment's mark, so it stays while the change marks go
+  await pick(aside, "comments");
+  assert.deepEqual(rects(w).map((r) => r.dataset.id), [figure.id], "Comments: the rectangle stays");
+  assert.equal(marksOf(w).length, 0); assert.equal(highlights(w).length, 2);
+  await pick(aside, "all");
+  assert.deepEqual(rects(w).map((r) => r.dataset.id), [figure.id]);
+  w.close();
+  // the kept choice: a panel opened under Changes paints no rectangle from its first pass, and the rectangle comes with All
+  store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
+  const w2 = world({ mode: "rendered", src: FIG_DOC, intro: figureIntro }); t.after(() => w2.close());
+  const { aside: a2 } = await openPanel(w2, figured());
+  assert.deepEqual(chosen(a2), ["changes"]);
+  assert.ok(w2.body.querySelector(".fileview-md .fc-imgwrap .fc-overlay"), "the overlay is up: the panel is open over a figure");
+  assert.deepEqual(rects(w2), [], "opened with Changes kept: no rectangle painted at all");
+  assert.equal(marksOf(w2).length, 6);
+  await pick(a2, "all");
+  assert.deepEqual(rects(w2).map((r) => r.dataset.id), [figure.id]);
+  store.delete(SETTINGS_KEY);
+});
+
 test("Changes with no change pending, and comments to show: the line says where they are; Comments with no comment: the plain empty state", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
   const w = world(); t.after(() => w.close());
@@ -759,7 +836,7 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   assert.match(SRC, /filter: CommentsFilter = loadSettings\(\)\.commentsFilter;/, "read from the shared store when the panel is made");
   assert.match(SRC, /if \(!this\.inline\) return;[^\n]*\n\s+if \(this\.activeFilter\(\) === "comments"\) return;/, "Comments: the change painters are not called, after the inline gate");
   assert.match(SRC, /for \(const card of this\.activeFilter\(\) === "changes" \? \[\] : this\.cards\(\)\) \{\n\s+if \(card\.resolved \|\| !card\.anchor\) continue;/, "Changes: no comment highlight is painted");
-  assert.match(SRC, /const hideRegions = this\.activeFilter\(\) === "changes";[\s\S]*?if \(card\.resolved\) continue;\n\s+if \(hideRegions\) continue;/, "Changes: no region rectangle either, after the crop is kept");
+  assert.match(SRC, /const hideRegions = this\.activeFilter\(\) === "changes";[\s\S]*?if \(card\.resolved\) continue;\n\s+if \(hideRegions\) continue;/, "Changes: the region guard stands after the crop is kept (its effect on the rectangles is driven above, over the figure; the PDF crop it lets through is not, so the order is held here)");
   assert.match(SRC, /const cards = filter === "changes" \? \[\] : this\.cards\(\)\.filter\(\(c\) => filter === "comments" \|\| c\.hunk === null\);/, "the list: no comment card under Changes; every comment card, bound or not, under Comments");
   assert.match(SRC, /const view = filter === "comments" \? \{ cards: \[\], groups: \[\], shown: \[\], hidden: \[\], hiddenChanges: 0 \} : this\.changeView\(\);/, "no change card, group or fold under Comments (the foot hangs off view.cards)");
   assert.match(SRC, /return c && c\.hunk && this\.activeFilter\(\) !== "comments" \? "chg:" \+ c\.hunk\.id : commentId;/, "a bound comment's card is its own under Comments");
