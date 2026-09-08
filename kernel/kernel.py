@@ -26433,9 +26433,15 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     # row gone once em._bg_expired says its deadline passed — a clock crossing this fold carries).
     sig.append(tuple((r.get("tid"), r.get("desc"), r.get("t"), r.get("type"), r.get("deadline"), r.get("agentId"))
                      for r in _bg_live_norm(sid, path, live=tm)))
-    # watch: the kernel watches this session registered, as the awaiting source reads them.
+    # watch: the kernel watches this session registered, as the awaiting source reads them AND as the
+    # payload renders them: beside the why, since, tasks and count, every row's item (its id, the cancel
+    # handle watchId, the predicate as detail, the note as label, its own since; a PR watch's repo and
+    # number). A watch cancelled and re-armed under the same note with a new id or predicate left the
+    # (why, since, tasks, count) projection unchanged, so the cached tab served a dead cancel handle and
+    # the old predicate (re-review 2026-09-08, should-fix 1; upstream's active key stat'd watches.json).
     _w = _watch_awaiting(sid)
-    sig.append((_w.get("why"), _w.get("since"), tuple(_w.get("tasks") or ()), _w.get("count")) if _w else None)
+    sig.append((_w.get("why"), _w.get("since"), tuple(_w.get("tasks") or ()), _w.get("count"),
+                tuple(tuple(sorted(it.items())) for it in (_w.get("items") or ()))) if _w else None)
     # stamp: the session's durable awaiting-stamp view (_session_stamp_read: the freshest live stamp, the
     # stamped tops, the delegation peers), by value through its own memo, which is keyed on the store,
     # the override journal, the POSTAL LOG (a peer's answer supersedes a peer wait, so mail landing

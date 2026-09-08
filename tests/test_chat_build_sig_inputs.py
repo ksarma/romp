@@ -633,6 +633,42 @@ class Differential(_World):
                                 "note": "the nightly job", "at": NOW})
         self.assertEqual(self.moved(a, self.sig()), ("watch",))
 
+    def test_a_watch_replaced_under_the_same_note_misses_under_watch(self):
+        """Re-review should-fix 1 (2026-09-08): the payload renders each watch's id (the box's Cancel handle),
+        its predicate and its own since; a watch cancelled and re-armed under the same note, with a new id
+        and predicate, left the (why, since, tasks, count) projection unchanged, so the cached tab served a
+        dead cancel handle (Cancel then failed loudly) and the old predicate. The rows the payload renders
+        are in the key."""
+        with km._watch_lock:
+            km._watches.append({"id": "w-old", "cmd": "true", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the nightly build", "at": NOW - 50})
+            km._watches.append({"id": "w-b", "cmd": "test -f a", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 40})
+        a = self.sig()
+        with km._watch_lock:
+            km._watches[:] = [w for w in km._watches if w.get("id") != "w-b"]
+            km._watches.append({"id": "w-c", "cmd": "test -f b", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 10})
+        self.assertEqual(self.moved(a, self.sig()), ("watch",), "a new id and predicate under the same note")
+
+    def test_a_single_watch_re_armed_in_the_same_second_and_a_pr_watch_miss_under_watch(self):
+        with km._watch_lock:
+            km._watches.append({"id": "w-1", "cmd": "test -f a", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 40})
+        a = self.sig()
+        with km._watch_lock:
+            km._watches[:] = [w for w in km._watches if w.get("id") != "w-1"]
+            km._watches.append({"id": "w-2", "cmd": "test -f b", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 40})
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("watch",), "same note, same second: the id and predicate still move the key")
+        n = len(km._pr_watches)
+        km._pr_watches.append({"sid": SID, "pr": 5, "repo": "o/r", "at": NOW})
+        try:
+            self.assertEqual(self.moved(b, self.sig()), ("watch",), "a PR watch is a row too")
+        finally:
+            del km._pr_watches[n:]
+
     def test_the_awaiting_stamp_view_misses_under_stamp_when_a_peers_answer_lands_in_the_postal_log(self):
         a = self.sig()
         self.store(nodes={"g1": {"id": "g1", "text": "ask the api session", "t": T0, "parentId": None,
@@ -841,6 +877,31 @@ class RealBuildIdleBoard(_World):
                          {"transcript": 1})
         km._push([self.client])
         self.assertEqual(self._chat()["cached"] - c2["cached"], 1, "served again once nothing moves")
+
+    def test_a_watch_replaced_under_the_same_note_rebuilds_the_tab_and_the_served_payload_is_a_fresh_builds(self):
+        """Re-review should-fix 1, at the payload: the served tab carries the new watch's cancel handle and
+        predicate after the replace, and equals a fresh build over the same world."""
+        with km._watch_lock:
+            km._watches.append({"id": "w-old", "cmd": "true", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the nightly build", "at": NOW - 50})
+            km._watches.append({"id": "w-b", "cmd": "test -f a", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 40})
+        km._push([self.client])
+        items = [i for i in km._built_chat[SID][1]["status"]["awaitingItems"] if i.get("kind") == "watches"]
+        self.assertEqual([i.get("watchId") for i in items], ["w-old", "w-b"])
+        with km._watch_lock:
+            km._watches[:] = [w for w in km._watches if w.get("id") != "w-b"]
+            km._watches.append({"id": "w-c", "cmd": "test -f b", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the deploy", "at": NOW - 10})
+        c0 = self._chat()
+        km._push([self.client])
+        self.assertEqual(self._chat()["built"] - c0["built"], 1, "the replaced watch rebuilds the tab")
+        served = km._built_chat[SID][1]
+        items = [i for i in served["status"]["awaitingItems"] if i.get("kind") == "watches"]
+        self.assertEqual([(i.get("watchId"), i.get("detail")) for i in items], [("w-old", "true"), ("w-c", "test -f b")])
+        fresh = km.build_session(SID, int(time.time()), self.tmux)
+        self.assertEqual(json.dumps(served, sort_keys=True, default=str), json.dumps(fresh, sort_keys=True, default=str),
+                         "what the pusher serves is what a fresh build renders")
 
     def test_a_tab_built_during_a_liveness_collapse_caches_the_chip_of_the_handed_row(self):
         """The review's should-fix 2: _push hands the chat loop the GUARDED map (the previous rows carried
