@@ -10,9 +10,15 @@
 // (real-viewer-leg.ts), the pane surface: (1) mousedown on Copy, the reload's fetch lands, mouseup: one copy, of the
 // text the reader pressed on, the button acknowledges, and only then do the new bytes paint; (2) the release paths: a
 // press begun over the body and released over the title bar, and a blur while pressed (a release in another frame),
-// each let the parked landing paint, once. The fetch stub answers in microtasks, so two frames after the reload's
-// fetch was made the landing has run: painted, or parked under the press. Skips LOUDLY without a playwright browser
-// (CI installs none), as the other legs do. Synthetic values only: an invented note, the placeholder sid.
+// each let the parked landing paint, once. Round 2 of the review added two more: (3) a right or middle press holds
+// nothing (a right press's release commonly never reaches the page, the native context menu takes it on Linux and
+// macOS, so a hold taken on one parked the landing until the reader's next click anywhere), so a reload under one
+// paints at once, and a contextmenu while pressed (the browser ended the press itself) releases the hold; (4) a release
+// and a second press on Copy back-to-back, before the release's zero timer fires (Chromium runs a pending input before
+// a due timer): the landing waits for the second press's release too, and both presses copy. The fetch stub answers in
+// microtasks, so two frames after the reload's fetch was made the landing has run: painted, or parked under the press.
+// Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an
+// invented note, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, paintsReach, REPORT, MT2 } from "./real-viewer-leg";
@@ -24,14 +30,20 @@ const note = (intro: string, fence: string): string => ["# Report", "", intro, "
 const DOC1 = note("An intro paragraph before the fence.", FENCE1);
 const DOC2 = note("An intro paragraph before the fence, rewritten by a session.", FENCE2);
 const MT3 = "1757145600000000019";
+const MT4 = "1757145600000000029";
 
 /** Record every clipboard write and every click that reaches the document (capture phase: a handler's stopPropagation
- *  cannot hide it), and remember the Copy button about to be pressed (a detached node keeps its text). */
+ *  cannot hide it), the order of the pointer events, the clicks and the seam's paints (`__log`), and remember the Copy
+ *  button about to be pressed (a detached node keeps its text). */
 const arm = (page: any): Promise<void> => page.evaluate(() => {
   const w = window as any;
-  w.__copied = []; w.__clicks = 0;
+  w.__copied = []; w.__clicks = 0; w.__log = [];
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (t: string) => { w.__copied.push(t); return Promise.resolve(); } } });
-  if (!w.__armed) { w.__armed = true; document.addEventListener("click", () => { w.__clicks++; }, true); }
+  if (!w.__armed) {
+    w.__armed = true;
+    for (const type of ["pointerdown", "pointerup", "click"]) document.addEventListener(type, () => { w.__log.push(type); if (type === "click") w.__clicks++; }, true);
+    w.__seam.onRendered(() => { w.__log.push("paint"); });
+  }
   w.__pressed = document.querySelector(".fileview-md pre > .code-copy");
 });
 const centre = (page: any, sel: string, dx = 0): Promise<{ x: number; y: number }> => page.evaluate(([s, d]: [string, number]) => {
@@ -105,6 +117,78 @@ test("in a browser: a press released over the title bar, and a blur while presse
     assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT3, "(b) the blur released the hold and the landing painted");
     await page.mouse.up(); await frames(page, 2);
     assert.equal((await counts(page)).paints, pressedB.paints + 1, "(b) the mouseup after the blur paints nothing more");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser: a right or middle press holds nothing, so a reload under it paints at once; a contextmenu while pressed releases the hold", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: DOC1 } });
+    const p = await centre(page, ".fileview-md p", 10);
+    await page.mouse.move(p.x, p.y); await frames(page, 1);
+    // (a) a right press: headless Chromium delivers the pointerdown and the contextmenu, and the pointerup only at the
+    // release, which is the most a page ever sees of one (a native menu takes the release outright)
+    await page.mouse.down({ button: "right" }); await frames(page, 1);
+    const pressedA = await counts(page);
+    await reload(page, DOC2, MT2);
+    assert.equal((await counts(page)).paints, pressedA.paints + 1, "(a) the landing painted under the right press: no hold is taken for a button that yields no click");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, "(a) the new bytes are what shows");
+    await page.mouse.up({ button: "right" }); await frames(page, 2);
+    assert.equal((await counts(page)).paints, pressedA.paints + 1, "(a) the right button's release paints nothing more");
+    // (b) a middle press, the same
+    await page.mouse.down({ button: "middle" }); await frames(page, 1);
+    const pressedB = await counts(page);
+    await reload(page, DOC1, MT3);
+    assert.equal((await counts(page)).paints, pressedB.paints + 1, "(b) the landing painted under the middle press");
+    await page.mouse.up({ button: "middle" }); await frames(page, 2);
+    // (c) a primary press that the browser ends itself with a contextmenu (ctrl+click on macOS, a long press on a touch
+    // screen): the landing parks under the press and the contextmenu releases it, since no click follows one
+    await page.mouse.down(); await frames(page, 1);
+    const pressedC = await counts(page);
+    await reload(page, DOC2, MT4);
+    assert.equal((await counts(page)).paints, pressedC.paints, "(c) the landing waits under the primary press");
+    await page.evaluate(() => { document.querySelector(".fileview-md p")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 0 })); });
+    await paintsReach(page, pressedC.paints + 1);
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT4, "(c) the contextmenu released the hold and the landing painted");
+    await page.mouse.up(); await frames(page, 2);
+    assert.equal((await counts(page)).paints, pressedC.paints + 1, "(c) the pointerup after the contextmenu paints nothing more");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser: a release and a second press on Copy back-to-back: the landing waits for the second press's release too, and both presses copy", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: DOC1 } });
+    await arm(page);
+    const b = await centre(page, ".fileview-md pre > .code-copy");
+    await page.mouse.move(b.x, b.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);                      // press 1 on Copy
+    const pressed = await counts(page);
+    await reload(page, DOC2, MT2);                                       // the landing parks under press 1
+    assert.equal((await counts(page)).paints, pressed.paints, "the landing waits under press 1");
+    // the release and press 2, dispatched without a wait between them: the input that begins press 2 is pending when
+    // the release's zero timer comes due, and Chromium runs the input first
+    const cdp = await page.context().newCDPSession(page);
+    const up = cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: b.x, y: b.y, button: "left", clickCount: 1 });
+    const down = cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: b.x, y: b.y, button: "left", clickCount: 1 });
+    await Promise.all([up, down]);
+    await cdp.detach();
+    await frames(page, 2);
+    await page.mouse.up(); await frames(page, 2);                        // press 2 released
+    await paintsReach(page, pressed.paints + 1);
+    const after = await page.evaluate(() => { const w = window as any; return { copied: w.__copied.slice(), clicks: w.__clicks, log: w.__log.slice(), paints: w.__paints, mt: w.__seam.mtimeNs() }; });
+    const pu1 = after.log.indexOf("pointerup");
+    const pd2 = after.log.indexOf("pointerdown", pu1);
+    const pu2 = after.log.indexOf("pointerup", pd2);
+    const paint = after.log.indexOf("paint");
+    assert.ok(pu1 >= 0 && pd2 > pu1 && pu2 > pd2 && paint >= 0, "two presses and a paint in the log: " + after.log.join(" "));
+    assert.equal(paint > pd2 && paint < pu2, false, "the paint did not land under press 2 (the timer found the surface pressed again and parked the run): " + after.log.join(" "));
+    assert.equal(after.clicks, 2, "both presses clicked: " + after.log.join(" "));
+    assert.equal(after.copied.length, 2, "and both copied");
+    assert.equal(after.paints, pressed.paints + 1, "one paint for the one landing");
+    assert.equal(after.mt, MT2, "which is on screen");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

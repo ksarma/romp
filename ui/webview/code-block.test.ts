@@ -52,6 +52,7 @@ test("render.ts and file-view.ts import the two functions from the module; rende
   assert.doesNotMatch(RENDER, /^(export )?function (wrapCodeLines|addCopyBtn|copyText|fallbackCopy)\(/m, "the definitions moved");
   assert.match(BLOCK, /^export function wrapLinesHtml\(html: string\): string/m);
   assert.match(BLOCK, /^export function wrapCodeLines\(code: HTMLElement\): void/m);
+  assert.match(BLOCK, /code\.style\.setProperty\("--ln-digits", String\(String\(code\.childElementCount\)\.length\)\);/, "wrapCodeLines writes the fence's digit count on the code element, for the gutter's basis in both sheets (the review's round 2: a five-digit number widened its own row alone)");
   assert.match(BLOCK, /^export function addCopyBtn\(pre: HTMLElement, raw: string\): void/m);
   assert.match(BLOCK, /^export function copyText\(text: string\): Promise<boolean>/m);
   assert.doesNotMatch(BLOCK, /from "\.\/render"|from "\.\/file-view"/, "the module imports neither caller");
@@ -102,7 +103,7 @@ const ruleOf = (css: string, head: string): string => { const at = css.indexOf(h
 const decls = (rule: string): string[] => rule.slice(rule.indexOf("{") + 1, -1).split(";").map((d) => d.trim()).filter(Boolean);
 
 test("both sheets: the viewer's fences carry scoped copies of the chat's row and Copy rules, byte-equal, the counter reset and tab-size on `.fileview-md pre code`", () => {
-  const HEADS = [".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre.has-copy {", ".fileview-md .code-copy {",
+  const HEADS = [".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre code .ct::before {", ".fileview-md pre.has-copy {", ".fileview-md .code-copy {",
     ".fileview-md pre.has-copy:hover .code-copy, .fileview-md .code-copy:focus-visible {", ".fileview-md .code-copy:hover {", ".fileview-md .code-copy.copied {"];
   for (const head of HEADS) assert.equal(ruleOf(CHAT, head), ruleOf(FEED, head), head + " mirrors exactly");
   for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
@@ -114,6 +115,11 @@ test("both sheets: the viewer's fences carry scoped copies of the chat's row and
     assert.deepEqual(decls(ruleOf(css, ".fileview-md pre code .cl {")), decls(ruleOf(CHAT, "\npre code .cl {")), name + ": .cl is the chat's");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md pre code .cl::before {")), decls(ruleOf(CHAT, "\npre code .cl::before {")), name + ": the gutter is the chat's");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md pre code .ct {")), decls(ruleOf(CHAT, "\npre code .ct {")), name + ": .ct is the chat's");
+    // the review's round 2: a blank line's row is the line-height (the .ct's ::before is a word joiner, the line box an empty .ct had
+    // none of), and the gutter's basis follows the fence's digit count, which wrapCodeLines writes on the code element
+    assert.deepEqual(decls(ruleOf(css, ".fileview-md pre code .ct::before {")), ['content: "\\2060"'], name + ": the .ct's ::before is the word joiner, U+2060 (zero width, unbreakable; file-view-fence-rows-browser.test.ts measures the rows)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-md pre code .ct::before {")), decls(ruleOf(CHAT, "\npre code .ct::before {")), name + ": ...the chat's rule");
+    assert.ok(decls(ruleOf(css, ".fileview-md pre code .cl::before {")).includes("flex: 0 0 max(2.5em, calc(var(--ln-digits, 0) * 1ch + 0.05em))"), name + ": the gutter's basis is 2.5em or the fence's digits in ch, whichever is wider");
     const copy = decls(ruleOf(css, ".fileview-md .code-copy {"));
     const chatCopy = decls(ruleOf(CHAT, "\n.code-copy {"));
     assert.deepEqual(copy.filter((d) => !d.startsWith("background")), chatCopy.filter((d) => !d.startsWith("background")), name + ": the Copy button is the chat's, but for the tint's fallback");

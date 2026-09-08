@@ -2786,17 +2786,27 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    the chat at a 14px base), the fraction that crept the viewer's kept code line a pixel per Rendered/Raw round trip. With
    line-height 1 the gutter's box is never taller than the text's and the baselines are still shared. It never wraps either
    (overflow-wrap: normal against the code's anywhere, which broke a four-digit number over two lines and doubled every
-   row from line 1000 on), and the 2.5em basis holds four digits; a longer number widens the gutter instead. The viewer's
-   copies (.fileview-md pre code .cl::before, both sheets) carry these declarations byte for byte (code-block.test.ts);
-   file-view-fence-rows-browser.test.ts measures the rows (review 2026-09-08). */
+   row from line 1000 on). The basis is 2.5em, four digits, or the fence's own digit count in ch (its zero glyph's advance,
+   plus a twentieth of an em against the layout unit's rounding): wrapCodeLines (code-block.ts) writes --ln-digits on the
+   code element, the digits of its last line number, so every row
+   of a 10000-line fence carries a five-digit gutter and the text column stays one line, where a basis a row outgrew
+   widened that row alone and stepped the code 5.6px right from line 10000 on (review round 2). A .ct with no text (a blank
+   line, or a blank line inside a token that spans lines, which leaves an empty hljs span) had no line box, so the row was
+   only the gutter's 0.92em tall, 11px against an 18px line-height; the .ct's ::before puts a word joiner (U+2060, zero
+   width, no break before or after it, not in the DOM's text) at the start of every line, so an empty .ct is one line-height
+   with the text's baseline and a text line is unchanged (review round 2; a no-break space on :empty missed the spanned
+   blank line, a zero-width space and an inline-block each broke an over-long line once more). The viewer's copies
+   (.fileview-md pre code .cl::before and .ct::before, both sheets) carry these declarations byte for byte
+   (code-block.test.ts); file-view-fence-rows-browser.test.ts measures the rows (review 2026-09-08). */
 pre code.hljs { counter-reset: ln; }
 pre code .cl { display: flex; align-items: baseline; }
 pre code .cl::before {
   counter-increment: ln; content: counter(ln);
-  flex: 0 0 2.5em; margin-right: 0.85em; text-align: right;
+  flex: 0 0 max(2.5em, calc(var(--ln-digits, 0) * 1ch + 0.05em)); margin-right: 0.85em; text-align: right;
   color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.92em; line-height: 1; overflow-wrap: normal;
 }
 pre code .ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre code .ct::before { content: "\2060"; }
 /* automatic per-block Copy button (the user 2026-06-22): parked top-right, faint until the block is
    hovered, flips to a green "Copied" on success; position:relative on the pre anchors it. */
 pre.has-copy { position: relative; }
@@ -3816,14 +3826,16 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 .fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
-/* The body is the size container a table's pane-wide cap reads (100cqi in .fileview-md > table, below): the body, aside open or
-   closed, not the card. Its scrollbar gutter is reserved before layout: a container unit resolves against the box BEFORE an
-   auto scrollbar takes its space, while the root's 100% padding (the column) resolves against the content box after it, so
-   on every note that scrolls the two disagreed by the scrollbar's width (the pane's classic 10px one) and a pane-wide table
-   sat 18px from the inset and 8px from the scrollbar, past the column's edge (review 2026-09-08). With the gutter stable,
-   100cqi is the content box the column is measured in; file-view-scrollbar-browser.test.ts launches Chromium with the
-   scrollbar visible (the other legs run under playwright's --hide-scrollbars, where the two always agreed) and measures it. */
-.fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; container-type: inline-size; }
+/* The body's content width reaches the sheet as --fv-body-w, written on the body by the viewer's ResizeObserver
+   (file-view.ts, the width observer: the observer's report is the layout's own event, one write per report), for the
+   pane-wide table's cap (.fileview-md > table, below). The body reserves no scrollbar gutter and is no size container: the
+   review's round 1 had `scrollbar-gutter: stable` here so a container unit (100cqi, resolved before an auto scrollbar takes
+   its space) agreed with the root's 100% padding, and the gutter was then a blank strip on every body that never scrolls, a
+   short note 5px off the card's centre, a picture too, a PDF frame and the editor 10px short of the body's edge (15 on the
+   feed's platform scrollbar); the observer's width is the content box the column is measured in, scrollbar or none (review
+   round 2). file-view-scrollbar-browser.test.ts launches Chromium with the scrollbar visible (the other legs run under
+   playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
+.fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the raw-mode editor: height: 100% (not flex) — .fileview-body above is a plain overflow block,
    not a flex container, so a flex basis on its child is inert and the textarea sat at the UA's
    default rows (the user 2026-08-17, whose edit window was a few lines tall). The percentage
@@ -3997,11 +4009,14 @@ body.filebrowse-open { overflow: hidden; }
 .fileview[data-fv-text="200"] { --fv-scale: 2; }
 /* Rendered markdown (the Raw ⇄ Rendered toggle; Rendered is the default — the user 2026-08-09).
    A document's type scale since Slice 3 of plans/markdown-viewer.md (GitHub's, as a note reads there): prose at
-   1.15 times the page's size (15px at the 13px default, VS Code's chat font size honoured through --fs), in the
+   1.15 times the page's size (15px at the 13px default; --fs falls back to 13px, since VS Code hands a webview no chat font size variable), in the
    viewer's own face --font-doc, sans in both themes (decision 3); headings 2 / 1.5 / 1.25 / 1em with h5 and h6
    dimmed and a rule under h1 and h2; a 2em list gutter; fenced code at 12px mono with the chat's per-line rows and
-   Copy button; inline code and kbd at the ladder's 0.92 and 0.86em. Vars the feed sheet does not define carry the
-   chat's literals as fallbacks (feed-css-vars.test.ts holds that line). One treatment, two sheets — the .romp-acted
+   Copy button; inline code and kbd at the ladder's 0.92 and 0.86em; the prose leading 1.5 (GitHub's), declared on
+   the root rather than inherited, since the pane's and the chat's body is 1.6 and the feed's 1.5, so the same note
+   ran 6 percent taller on two surfaces than on the third (the slice's review, round 2;
+   file-view-prose-leading-browser.test.ts measures the three). Vars the feed sheet does not define carry the chat's
+   literals as fallbacks (feed-css-vars.test.ts holds that line). One treatment, two sheets: the .romp-acted
    precedent; fileview-parity.test.ts pins the heads byte-equal. */
 /* contain: layout makes the md box the containing block for any fixed or absolutely positioned descendant: an author's
    element wearing one of the page's fixed classes stays inside the note instead of covering the viewer's chrome
@@ -4009,7 +4024,7 @@ body.filebrowse-open { overflow: hidden; }
    horizontal scroll are untouched. Content wider than the md box becomes ink overflow the body cannot scroll to,
    so the media rules below cap an <img>, <svg>, <canvas> or <video> at the column. Pinned byte-equal in both
    sheets (fileview-parity.test.ts). */
-.fileview-md { padding: 14px 18px; padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px)); overflow-wrap: anywhere; font-family: var(--font-doc); font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1)); contain: layout; }
+.fileview-md { padding: 14px 18px; padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px)); overflow-wrap: anywhere; font-family: var(--font-doc); font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1)); line-height: 1.5; contain: layout; }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }
 .fileview-md p { margin: 0.5em 0; }
@@ -4084,15 +4099,18 @@ body.filebrowse-open { overflow: hidden; }
    parked top-right, faint until the block is hovered, green on success. Scoped copies of the chat's unscoped rules
    (styles.css), byte-equal in both sheets since the feed page loads only feed.css (fileview-parity.test.ts); the code
    tint carries the chat's literal as its fallback, since feed.css defines no --code-bg in :root (feed-css-vars.test.ts).
-   The gutter's own line-height is 1 and it never wraps (the chat's rule says why); a 2.5em basis holds four digits, and a
-   longer number widens the gutter instead of breaking. file-view-fence-rows-browser.test.ts measures the rows. */
+   The gutter's own line-height is 1 and it never wraps (the chat's rule says why); the basis is 2.5em, four digits, or the
+   fence's digit count in ch (--ln-digits, written by wrapCodeLines), so a 10000-line fence's rows share one text column;
+   the .ct's ::before is a word joiner, the line box a blank line's empty .ct had none of, so every row is the line-height
+   (the chat's rule says why that character). file-view-fence-rows-browser.test.ts measures the rows. */
 .fileview-md pre code .cl { display: flex; align-items: baseline; }
 .fileview-md pre code .cl::before {
   counter-increment: ln; content: counter(ln);
-  flex: 0 0 2.5em; margin-right: 0.85em; text-align: right;
+  flex: 0 0 max(2.5em, calc(var(--ln-digits, 0) * 1ch + 0.05em)); margin-right: 0.85em; text-align: right;
   color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.92em; line-height: 1; overflow-wrap: normal;
 }
 .fileview-md pre code .ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fileview-md pre code .ct::before { content: "\2060"; }
 .fileview-md pre.has-copy { position: relative; }
 .fileview-md .code-copy {
   position: absolute; top: 6px; right: 6px; z-index: 1;
@@ -4118,22 +4136,25 @@ body.filebrowse-open { overflow: hidden; }
 }
 /* A table is a block as wide as its columns need, scrolling in its own box past its cap, whole words kept (overflow-wrap:
    normal against the root's anywhere). A table inside a quote or a list item is capped at its container. A table of the
-   page's own (a direct child of the root) is capped at the BODY's width less the root's 18px inset (100cqi: .fileview-body
-   is the size container, declared above), not the column's, so a wide table keeps fork PR #348's pane-wide room under decision
-   4's centred column. A table no wider than the column sits at the column's left edge with the prose, as on GitHub; one wider than the
-   column grows out of it EVENLY, into both gutters, until it meets the body's inset: the translate moves it left by half of
-   what it exceeds the column by (a percentage in translate is of the table's own width; 50cqi less the root's inline padding
-   is half the column, the padding rounded down here as the root rounds it, and the body's stable scrollbar gutter keeps 100cqi
-   the content box the root's 100% is, so the two agree to the pixel; min() holds a
-   narrower table still; the shift is rounded to whole pixels, as the measure is). Nothing
-   else in CSS places a block by its own width, and the table's box stays where the layout put it, so the body never scrolls
-   sideways (contain: layout on the root). `max-width: 100%` before the container-unit cap is the fallback for a browser
-   without cqi (the table stays in the column there); without round() the translate is dropped and the table sits at the
-   column's left edge.
+   page's own (a direct child of the root) is capped at the BODY's width less the root's 18px inset (--fv-body-w, the body's
+   content width as its ResizeObserver reports it, written on .fileview-body; the rule there says why not a container unit),
+   not the column's, so a wide table keeps fork PR #348's pane-wide room under decision 4's centred column. A table no wider
+   than the column sits at the column's left edge with the prose, as on GitHub; one wider than the column grows out of it
+   EVENLY, into both gutters, until it meets the body's inset: the translate moves it left by half of what it exceeds the
+   column by (a percentage in translate is of the table's own width; half the body less the root's inline padding is half the
+   column, the padding rounded down here as the root rounds it, and the observer's width is the content box the root's 100%
+   is, so the two agree to the pixel; min() holds a narrower table still; the shift is rounded to whole pixels, as the
+   measure is). Nothing else in CSS places a block by its own width, and the table's box stays where the layout put it, so
+   the body never scrolls sideways (contain: layout on the root). Before the observer's first report, or with no
+   ResizeObserver, the property is unset and both declarations read the same stand-in, 100% plus the inset the cap takes
+   back: the cap is then the column (100% of the root's content box), and in the translate, where 100% is the table's own
+   width, the padding term is under 19px for any table the column holds and rounds down to its 18px floor, so the shift is
+   exactly none; the table sits at the column's left edge, as it does in a browser without round() (feed-css-vars.test.ts
+   holds that every var() the feed sheet reads without a definition carries a fallback).
    file-view-typescale-browser.test.ts lays out a narrow, a wide and a wider-than-the-pane table at 380, 900 and 1400px, the
    Comments aside open and closed. */
 .fileview-md table { border-collapse: collapse; margin: 0.6em 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
-.fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
+.fileview-md > table { max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px); translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px)); }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { font-weight: 600; background: var(--overlay-05); }
 .fileview-md tbody tr:nth-child(even) { background: var(--overlay-05); }
@@ -4512,8 +4533,24 @@ body.filebrowse-open { overflow: hidden; }
    the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on the white page, an open task
    reading as done); a table is a table again, its cells wrapping to the column, since paper cannot scroll the columns the
    screen's block hides past the page edge; and the comment marks print bare, the comments they point to being left out
-   (review 2026-09-08; file-view-print-marks-browser.test.ts measures the four). Byte-equal in styles.css and feed.css
-   (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in files-pane.css. */
+   (review 2026-09-08). A comment on a picture frames it with an outline file-comments.ts's styleFrame writes INLINE, which
+   outranks every plain sheet rule, so the picture printed ringed in amber while its comment was left out; the block strips
+   `.fileview-body img.fc-img` with `!important`, the one way a sheet rule outranks an inline declaration (review round 2;
+   file-view-print-marks-browser.test.ts measures the five). Code prints black wherever it is in the
+   body, not only in a fence: the Raw view and a source file are `code.hljs` under `.fileview-pre`, whose highlight rules
+   (`.hljs`, the tokens, and `.hljs-title.function_` at two classes, which outranks `.fileview-md pre code span`) beat the
+   card's inherited black, and its row numbers kept the dim ink; `code.hljs span` under the body outranks the two-class
+   token. A region comment's overlay is left out, as the comments are (the figure is the content; with
+   backgrounds off Chromium paints a box that has a background solid white, so the rectangle blanked the band of the figure it
+   was about). The change marks print in black with no wash (a black underline under an insertion, a black struck label, the
+   Raw view's author chip black in a black ring): a reader who printed with changes shown gets a redline, and Show changes
+   inline is the way to print without them. A table of the page's own keeps the screen's room on paper, the body less the
+   root's inset, and the screen's shift into both gutters: the cqi cap and the translate are restated here, since a
+   `max-width: 100%` on the print table would cap a direct child at the column and squeeze a table the paper has room for (A4
+   landscape: 761 of 1123px, every cell broken mid-word); the body is made a size container here (the screen's body is none,
+   its rule says why), so 100cqi is the body's width, and no script runs at print layout, so a unit the sheet resolves is the
+   one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). Byte-equal in styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the
+   Files pane's own overrides are in files-pane.css. */
 @media print {
   html, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -4522,7 +4559,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview { width: auto; height: auto; display: block; overflow: visible; background: white; color: black; border: 0; border-radius: 0; box-shadow: none; }
   .fileview-bar, .fileview-aside, .fileview-fc, .fileview > .fileview-err, .fc-float, .fileview-md .code-copy { display: none; }
   .fileview-main { display: block; }
-  .fileview-body { overflow: visible; }
+  .fileview-body { overflow: visible; container-type: inline-size; }
   .fileview-md, .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6, .fileview-md strong,
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
@@ -4531,7 +4568,13 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }
   .fileview-md pre, .fileview-md th, .fileview-md td, .fileview-md hr, .fileview-md blockquote, .fileview-md h1, .fileview-md h2, .fileview-md kbd { border-color: black; }
   .fileview-md kbd { box-shadow: none; }
-  .fileview-md table { display: table; width: auto; max-width: 100%; overflow: visible; overflow-wrap: anywhere; }
-  .fileview-md > table { max-width: 100%; translate: none; }
+  .fileview-body code.hljs, .fileview-body code.hljs span, .fileview-body .fv-cl::before { color: black; }
+  .fileview-md table { display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; }
+  .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }
+  .fileview-body img.fc-img { outline: none !important; }
+  .fileview-body .fc-overlay { display: none; }
+  .fileview-body .fc-ins, .fileview-body .fc-del { border-bottom-color: black; background: none; }
+  .fileview-body .fc-del::before { color: black; background: none; }
+  .fileview-body .fc-ins::after, .fileview-body .fc-del::after { color: black; background: none; box-shadow: inset 0 0 0 1px black; }
 }

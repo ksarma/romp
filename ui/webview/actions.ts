@@ -16,12 +16,14 @@
 //      ancestor (the container fetched by id survives replaceChildren(); only its
 //      children are swapped) and key it off a `data-act` attribute. The listener
 //      then survives every rebuild BETWEEN clicks, and a press released over a
-//      sibling of the pressed node still lands (the browser dispatches `click` to
-//      their nearest common ancestor). What it does not cover: a pressed node
-//      REMOVED before the mouseup dispatches no click at all, to the node or to any
-//      ancestor (Chromium, in step with Firefox and Safari; probed in headless
-//      Chromium 151, 2026-09-08), so a rebuild that can land DURING a press needs
-//      the technique below (pressHold) as well.
+//      sibling of the pressed node still dispatches a click, to their nearest common
+//      ancestor, which routes to a control only when that ancestor is inside one
+//      (the ✕ inside a tab released over the tab's label). What it does not cover: a
+//      pressed node REMOVED or replaced before the mouseup dispatches no click that
+//      names a control (none at all in most shapes; at most one targeted at the
+//      container itself; probed with real input events in headless Chromium 151 and
+//      Firefox 153, 2026-09-08), so a rebuild that can land DURING a press needs the
+//      technique below (pressHold) as well.
 //   2. Every activation gives IMMEDIATE feedback (a press flash), independent of
 //      the kernel round-trip, so the user always sees the click registered — then
 //      any dialog / error / result follows. A button that "does nothing visible
@@ -83,30 +85,65 @@ export function delegate(root: HTMLElement | Document, handlers: Record<string, 
 // fence and its Copy button. Delegation does not cover that case (header): the pressed node has to survive until the
 // press ends, so the swap waits.
 //   - pointerdown on the surface, in the capture phase (a child that stops propagation cannot hide the press), marks
-//     it held. pointerup or pointercancel on `release` (the window: a press begun inside a surface commonly ends
-//     outside it) and the window's blur (a release in another frame never reaches this one; the timeline's lesson,
-//     2026-06-25) release it. The release listeners are installed at the press and removed at the release, so a
-//     surface that comes and goes (a viewer per open) leaves nothing behind.
+//     it held, for the PRIMARY button only (`button === 0`: a mouse's left button, a pen or a finger). A right or middle
+//     press yields no click, so nothing needs holding, and a right press often yields no pointerup either: Chromium on
+//     Linux and macOS opens the native context menu on the mousedown and the menu takes the release, so a hold taken
+//     on one stood until the reader's next click anywhere, a landing parked under it (the Slice 3 review, round 2).
+//   - The release: pointerup, pointercancel or contextmenu on `release` (the window, in the capture phase: a press
+//     begun inside a surface commonly ends outside it, and a child that stops the pointerup's propagation cannot hide
+//     the release; a contextmenu means the browser ended the press itself, ctrl+click on macOS and a long press on a
+//     touch screen among the primary-button ways there, and no click follows it), and the window's blur (a release in
+//     another frame never reaches this one; the timeline's lesson, 2026-06-25), at the target only: a capture-phase blur
+//     listener would fire for the focus that every press moves. The release listeners are installed at the press and
+//     removed at the release, so a surface that comes and goes (a viewer per open) leaves nothing behind.
 //   - defer(run) runs `run` at once when nothing is pressed, else parks it for the release. A later defer under the
 //     same press REPLACES the parked run: a landing the next one overtook paints nothing, the newest is what shows.
+//     The promise it returns settles with the run: resolved once it has returned (or was replaced), rejected with what
+//     it threw, so a caller's chain (the viewer's fetch, whose catch paints the failure in the body) sees a throw from
+//     a run that ran at the release as it sees one from a run that ran at once; a failure never ends in a timer.
 //   - The parked run goes on a zero timer at the release rather than running inside the pointerup listener: the
 //     click dispatches synchronously after the pointerup (pointerup, mouseup, click, one input task), and the run
-//     must come after it, as the timeline's draw does. Event-based (the press's own events); no time heuristic.
-export type PressHold = { held(): boolean; defer(run: () => void): void };
-const RELEASE_EVENTS = ["pointerup", "pointercancel", "blur"];
+//     must come after it, as the timeline's draw does. The timer reads the hold again: a press that begins before it
+//     fires (Chromium runs a pending input before a due timer, so a second press inside a busy stretch lands first)
+//     parks the run again, unless a newer one is parked under the new press already, rather than swapping the surface
+//     under that press and losing ITS click. Event-based (the press's own events); no time heuristic.
+export type PressHold = { held(): boolean; defer(run: () => void): Promise<void> };
+type Parked = { run: () => void; resolve: () => void; reject: (err: unknown) => void };
+const POINTER_RELEASE = ["pointerup", "pointercancel", "contextmenu"];   // in the capture phase on `release`; blur at the target
+// The options object for both the install and the removal: node's EventTarget (v22) does not match a boolean `true` on
+// removal against a listener installed with one, so the helper's node tests would see the listener stay; browsers take both.
+const CAPTURE = { capture: true };
 export function pressHold(surface: EventTarget, release: EventTarget = window): PressHold {
   let held = false;
-  let parked: (() => void) | null = null;
-  const onRelease = (): void => {
-    for (const t of RELEASE_EVENTS) release.removeEventListener(t, onRelease);
-    held = false;
-    const run = parked; parked = null;
-    if (run) setTimeout(run, 0);
+  let parked: Parked | null = null;
+  const settle = (p: Parked): void => {
+    try { p.run(); } catch (err) { p.reject(err); return; }
+    p.resolve();
   };
-  surface.addEventListener("pointerdown", () => {
-    if (held) return;
+  const onRelease = (): void => {
+    for (const t of POINTER_RELEASE) release.removeEventListener(t, onRelease, CAPTURE);
+    release.removeEventListener("blur", onRelease);
+    held = false;
+    const p = parked; parked = null;
+    if (p) setTimeout(() => {
+      if (!held) settle(p);
+      else if (parked) p.resolve();   // a newer run is parked under the new press: this one paints nothing
+      else parked = p;                // parked again, for the new press's release
+    }, 0);
+  };
+  surface.addEventListener("pointerdown", (ev) => {
+    if (held || (ev as PointerEvent).button !== 0) return;
     held = true;
-    for (const t of RELEASE_EVENTS) release.addEventListener(t, onRelease);
+    for (const t of POINTER_RELEASE) release.addEventListener(t, onRelease, CAPTURE);
+    release.addEventListener("blur", onRelease);
   }, true);
-  return { held: () => held, defer: (run) => { if (held) parked = run; else run(); } };
+  return {
+    held: () => held,
+    defer: (run) => new Promise<void>((resolve, reject) => {
+      const p = { run, resolve, reject };
+      if (!held) { settle(p); return; }
+      if (parked) parked.resolve();   // replaced: the landing the next one overtook paints nothing
+      parked = p;
+    }),
+  };
 }

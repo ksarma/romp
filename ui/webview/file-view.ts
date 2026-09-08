@@ -1228,6 +1228,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`): on the BODY, which
+      // stands for the open (mdBlock rebuilds .fileview-md on every render and no report follows a render), from the
+      // layout's own report, one write per report; a scrollbar's width is taken, a reserved gutter is none (Slice 3 review,
+      // round 2: `scrollbar-gutter: stable` reserved a blank strip on every body that never scrolls)
+      body.style.setProperty("--fv-body-w", w + "px");
       if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
       seenWidth = w;
       if (w === paintedWidth || frame) return;
@@ -2053,6 +2058,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
   let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
+  // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
+  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
+  // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
+  // under the new mtime with no error row, while the same throw from an immediate landing reached the `.catch` below.
+  // The promise rejects with the parked run's throw into that same `.catch` now (review round 2, 2026-09-08;
+  // file-view-landing-throw-browser.test.ts); a parked run a later landing replaced resolves with nothing painted, which
+  // is what the hold's header says of an overtaken landing.
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };

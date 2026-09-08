@@ -516,9 +516,10 @@ text, and which test holds each rule:
    pixels when the write changed the block's text (30px into a paragraph the session appended a sentence to stays 30px
    in; a block now shorter by any amount moves down by the loss, to the edge at most, so as much of it shows below the
    edge as showed before). When the reader is partway into a block that shows lines (any block in Raw, a code block in
-   Rendered) the line at the edge is kept as well, as its own source span (the Raw row's, or the code line the
-   browser's hit test finds at the edge), and followed through the edit, so line 50 stays line 50 across the switch
-   and after lines inserted above it inside the block or deleted below it, and lines rewritten around it seat the
+   Rendered) the line at the edge is kept as well, as its own source span (the Raw row's, or the code line at the
+   edge in Rendered: the browser's hit test here, the fence's own row since Slice 3 wrapped every fence in rows),
+   and followed through the edit, so line 50 stays line 50 across the switch and after lines inserted above it inside
+   the block or deleted below it, and lines rewritten around it seat the
    first line of the replacement (the review's second round: the block's top edge held and line 45 stood at the edge
    after five inserted lines; the Rendered, Raw, Rendered round trip on line 50 is exact now, where the fraction came
    back within three lines); the depth applies when no line of the block stands. A body at its very top stays at its
@@ -716,7 +717,8 @@ which test holds each rule:
    the note's computed face in light (Space Grotesk, the body's) and `--font-prose` still resolving to the mono stack
    there.
 3. *Decision 4: the measure.* The prose is `calc(var(--fs) * 1.15 * var(--fv-scale, 1))`, 14.95px at the 13px default,
-   so a VS Code chat font size is honoured and the control still scales it; fenced code stays at 12px times the scale.
+   so the note follows `--fs` (13px on every surface today: VS Code hands a webview no chat font size variable, the
+   review's round 2) and the control still scales it; fenced code stays at 12px times the scale.
    The column is the root's own inline padding, `max(18px, round(down, calc((100% - 80ch) / 2), 1px))`, so it is
    eighty of the root's own zero glyphs, centred in the body, at every size and in either face, and every child of the
    note sits in it, pictures and the figure layer's wrapper included; the 860px cap on every block (`.fileview-md >
@@ -731,34 +733,42 @@ which test holds each rule:
    The typescale leg asserts the column against the glyph width and the two gaps within a pixel at 900 and 1400, the
    aside open and closed; file-view-text-size.test.ts's declaration pins and its 860 numbers were rewritten, and its
    one drag now starts 2px into the paragraph instead of 4 (the quirk above).
-4. *The pane-wide table under the centred column.* `.fileview-body` is a size container (`container-type:
-   inline-size`), and a table of the note's own (`.fileview-md > table`) is capped at `calc(100cqi - 36px)`, the body
-   less the root's inset, with `max-width: 100%` declared first as the fallback for a browser without container units.
-   The formula first proposed for the centring (`margin-inline: calc((100% - 100cqi) / 2)`) was not used: a block with
-   negative inline margins starts at its left margin edge, so a narrow table would have sat at the body's edge, left
-   of the prose. The table is instead moved by `translate: min(0px, round(calc(50cqi - <the padding> - 50%), 1px))`, a
-   percentage in translate being of the table's own width: a table no wider than the column is not moved and sits at
-   the column's left edge with the prose, as on GitHub, and a wider one is moved left by half of what it exceeds the
-   column by, so it grows out of the column evenly into both gutters until it meets the body's inset, and scrolls in
-   its own box past that. The table's layout box stays where the layout put it, so the body never scrolls sideways
-   (`contain: layout` on the root). A table inside a quote or a list item keeps the `max-width: 100%` of its
-   container, the guide's standing promise. `display: grid` on the table, the other way to centre a box by its own
-   width, was tried and rejected: Chromium blockifies thead and tbody into separate items and the columns no longer
-   align. Measured at a 1400px pane: a six-column table 1207.9px wide in a 762px column with gaps of 96.0 and 96.1px;
-   a fourteen-column table 1364px, from inset to inset, scrolling 2596px inside it; with the Comments aside open (body
-   1060) the same tables 1024px, the body's, not the card's; at 900, capped at 864; at 380, the column's 344. The
-   typescale leg's second test lays the three tables out at 380, 900 and 1400 on the three surfaces, the aside open
-   and closed; file-view-text-size.test.ts pins the declarations and file-comments.test.ts the body's container-type.
-   The table's `scrollWidth` can read one pixel over its `clientWidth` when its max-content width lands a fraction
-   over the cap (913 in 912 at the document size); that check carries the pixel of slack the code block's already had.
-   The body reserves its scrollbar gutter (`scrollbar-gutter: stable`; the review, round 1): a container unit resolves
-   against the container's box BEFORE an `overflow: auto` scrollbar takes its space, while the root's 100% padding
-   resolves against the content box after it, so on every note that scrolled the cap and the column disagreed by the
-   scrollbar's width, and a pane-wide table sat 18px from the inset and 8px from the pane's 10px scrollbar (3px from
-   the feed's 15px one), past the column's edge wherever the column was at its floor; with the gutter reserved, 100cqi
-   is the content box the column is measured in. The other legs never saw it, since playwright launches Chromium with
-   `--hide-scrollbars`; file-view-scrollbar-browser.test.ts launches without that flag and measures 100cqi against the
-   body's client width and the table 18px from both edges at 380, 900 and 1400, the aside open and closed.
+4. *The pane-wide table under the centred column.* A table of the note's own (`.fileview-md > table`) is capped at the
+   BODY's width less the root's inset, not the column's: `calc(var(--fv-body-w, calc(100% + 36px)) - 36px)`, where
+   `--fv-body-w` is the body's content width, written on `.fileview-body` by the width observer file-view.ts already
+   runs for the reflow (the ResizeObserver's report is the layout's own event; one write per report), and `max-width:
+   100%` on every table is the cap for one inside a quote or a list item, the guide's standing promise. The formula
+   first proposed for the centring (`margin-inline: calc((100% - 100cqi) / 2)`) was not used: a block with negative
+   inline margins starts at its left margin edge, so a narrow table would have sat at the body's edge, left of the
+   prose. The table is instead moved by `translate: min(0px, round(calc(<half the body> - <the padding> - 50%),
+   1px))`, a percentage in translate being of the table's own width: a table no wider than the column is not moved
+   and sits at the column's left edge with the prose, as on GitHub, and a wider one is moved left by half of what it
+   exceeds the column by, so it grows out of the column evenly into both gutters until it meets the body's inset, and
+   scrolls in its own box past that. The table's layout box stays where the layout put it, so the body never scrolls
+   sideways (`contain: layout` on the root). Before the observer's first report, or without one, both declarations
+   read the same stand-in, 100% plus the inset the cap takes back: the cap is then the column and the shift exactly
+   none (the padding term rounds down to its 18px floor for any table the column holds), so the table sits at the
+   column's left edge, as it does in a browser without `round()`. `display: grid` on the table, the other way to
+   centre a box by its own width, was tried and rejected: Chromium blockifies thead and tbody into separate items and
+   the columns no longer align. Measured at a 1400px pane: a six-column table 1207.9px wide in a 762px column with
+   gaps of 96.0 and 96.1px; a fourteen-column table 1364px, from inset to inset, scrolling 2596px inside it; with the
+   Comments aside open (body 1060) the same tables 1024px, the body's, not the card's; at 900, capped at 864; at 380,
+   the column's 344. The typescale leg's second test lays the three tables out at 380, 900 and 1400 on the three
+   surfaces, the aside open and closed; file-view-text-size.test.ts pins the declarations and the observer's write,
+   file-comments.test.ts the body's rule. The table's `scrollWidth` can read one pixel over its `clientWidth` when its
+   max-content width lands a fraction over the cap (913 in 912 at the document size); that check carries the pixel of
+   slack the code block's already had. The cap was a container unit first (`container-type: inline-size` on the body,
+   `calc(100cqi - 36px)`), and the review's two rounds moved it off: a container unit resolves against the box BEFORE
+   an `overflow: auto` scrollbar takes its space, while the root's 100% padding resolves against the content box after
+   it, so on every note that scrolled the cap and the column disagreed by the scrollbar's width and a pane-wide table
+   sat 8px from the pane's 10px scrollbar (round 1); `scrollbar-gutter: stable` made the two agree and reserved a
+   blank strip on every body that never scrolls, a short note 5px off the card's centre, a picture too, a PDF frame
+   and the editor 10px short of the body's edge, 15 on the feed's platform scrollbar (round 2). The observer's width
+   is the content box the column is measured in, scrollbar or none. The other legs never saw the scrollbar, since
+   playwright launches Chromium with `--hide-scrollbars`; file-view-scrollbar-browser.test.ts launches without that
+   flag and measures `--fv-body-w` against the body's client width and the table 18px from both edges at 380, 900 and
+   1400, the aside open and closed, and that nothing is reserved beside a note that does not scroll, a picture, the
+   PDF frame or the editor.
 5. *Lists and tasks.* `padding-left: 2em` on ul and ol (was 1.4em). mdBlock stamps GitHub's `task-list-item` on a list
    item after the sanitize when its first child is a disabled checkbox, or the first child of its first paragraph is
    (marked puts a loose list's box inside the paragraph; the text names the first child alone); the item computes
@@ -792,31 +802,52 @@ which test holds each rule:
    python, a rust, a zig and an unnamed fence. The viewer's link pass (file-view-links.ts) joins the text nodes under
    the nearest line unit, and a wrapped fence's `pre` no longer holds newlines, so `.cl` joined `.fv-cl` in
    LINE_UNITS: without it a path ending one line ran into the path beginning the next (`data/x.jsondocs/fence2.md`),
-   and file-view-links-browser.test.ts caught it. From the review's round 1: the gutter rule, the chat's and the
-   viewer's copies alike, is `flex: 0 0 2.5em; line-height: 1; overflow-wrap: normal`. At 0.92em under `align-items:
-   baseline` the number's line box hung further below the shared baseline than the text's, so every row was 18.5625px
-   against an 18px line-height (the fraction that crept the kept code line a pixel per Rendered/Raw round trip at
-   380px and beside the aside), and a four-digit number broke over two lines in the 2.3em basis and doubled every row
-   from line 1000 on; now a row is exactly the line-height, four digits fit and a longer number widens the gutter
-   (file-view-fence-rows-browser.test.ts: a 1200-line fence's rows, a counter from 9999, three round trips at three
-   widths). Copy copies the fence's text as the note holds it: marked's lexer turns a line's leading tabs into four
-   spaces each before it cuts the fence, so the raw text mdBlock captured pasted a Makefile recipe back as spaces.
-   fence-source.ts finds each code token's lines in marked's view of the source and reads them back (a fully expanded
-   tab is a tab again, one a list item's indent consumed part of is the spaces CommonMark leaves, a mid-line tab was
-   never expanded), and mdBlock hands addCopyBtn the note's bytes for every document kind, the rendered text for a
-   fence it does not find (file-view-fence-source.test.ts over the real marked; file-view-copy-source-browser.test.ts
-   on the pane and the feed). And the button's label is not the note's text: anchor-map's text walks skip the
-   `.code-copy` control, since the label had joined a block's rendered text and every block holding a fence, and every
-   list or quote with one in it, was refused as not matching the file (file-view-copy-map-browser.test.ts).
+   and file-view-links-browser.test.ts caught it. From the review: the gutter rule, the chat's and the viewer's copies
+   alike, is `flex: 0 0 max(2.5em, calc(var(--ln-digits, 0) * 1ch + 0.05em)); line-height: 1; overflow-wrap: normal`.
+   At 0.92em under `align-items: baseline` the number's line box hung further below the shared baseline than the
+   text's, so every row was 18.5625px against an 18px line-height (the fraction that crept the kept code line a pixel
+   per Rendered/Raw round trip at 380px and beside the aside), and a four-digit number broke over two lines in the
+   2.3em basis and doubled every row from line 1000 on (round 1). With `line-height: 1` on the gutter a BLANK line's
+   row fell to the gutter's own 11px, an empty `.ct` having no line box, and a blank line inside a token that spans
+   lines (a docstring's) the same, its `.ct` holding an empty hljs span; and a five-digit number widened its own row's
+   gutter alone (a flex item's min-content), stepping the text 5.6px right from line 10000 on (round 2). Now the
+   `.ct`'s `::before` is a word joiner (U+2060: zero width, no break before or after it, outside the DOM's text and
+   any selection), so an empty `.ct` is one line-height with the text's baseline and a text line is unchanged (a
+   no-break space on `:empty` missed the spanned blank line; a zero-width space and an inline-block each broke an
+   over-long line once more); and wrapCodeLines writes `--ln-digits`, the digits of the fence's last line number, on
+   the code element, so every row of a 10000-line fence shares a five-digit gutter (a pure-CSS `:has()` on the ten
+   thousandth row was built and rejected on measured cost: the one-shot layout of a 10005-row fence went from 269 to
+   1617ms and a 1200-row fence from 41 to 235ms, a price every chat fence would pay).
+   file-view-fence-rows-browser.test.ts measures a 1200-line fence's rows with twelve blank lines, the blank shapes in
+   a python and an unnamed fence at 100 and 150 percent on the pane and the feed, a real 10005-line fence's gutter,
+   and three round trips at three widths on rows over text and under one and two blank rows. Copy copies the fence's
+   text as the note holds it: marked's lexer turns a line's leading tabs into four spaces each before it cuts the
+   fence, so the raw text mdBlock captured pasted a Makefile recipe back as spaces. fence-source.ts finds each code
+   token's lines in marked's view of the source and reads them back (a fully expanded tab is a tab again, one a list
+   item's indent consumed part of is the spaces CommonMark leaves, a mid-line tab was never expanded, and an empty
+   fence, whose text marked also gives a fence of one blank line, is matched by its opener and closer rather than
+   searched as one blank line, which had claimed the blank first line of the next fence and cost that fence its tabs:
+   round 2), and mdBlock hands addCopyBtn the note's bytes for every document kind, the rendered text for a fence it
+   does not find (file-view-fence-source.test.ts over the real marked; file-view-copy-source-browser.test.ts on the
+   pane and the feed). And the button's label is not the note's text: anchor-map's text walks skip the `.code-copy`
+   control, since the label had joined a block's rendered text and every block holding a fence, and every list or
+   quote with one in it, was refused as not matching the file (file-view-copy-map-browser.test.ts).
 9. *The anchor map across rows.* The wrap drops the newline each row stands for, so a wrapped code element's
    textContent runs its lines together, and paintRendered's fallback matched a quote holding a newline against a hay
    reading "commentdef" (0 marks for a two-line comment range, where the unwrapped block painted 13). anchor-map.ts
    now reads a code element's lines through one set of helpers, `codeRuns` (the text runs with a newline put back
    between adjacent `.cl` or `.fv-cl` rows), `codeText`, `codeLineAt` and `codeLineStart`; the fallback builds its hay
    from them and maps the hit back onto the text nodes, and reader-place.ts reads the code line at the body's top edge
-   and where a line starts through the same helpers (its hit test moves to the first `.ct`'s left edge, past the
-   line-number gutter, and `codeLineAt` takes the DOM position rather than a character offset, since the end of one
-   row's text and the start of the next are one offset and two lines once the newline is gone). Slice 8 reads the same
+   and where a line starts off the `.cl` rows themselves, as it reads the Raw rows (the first row whose box ends below
+   the edge, its index the line number, its box's top the line's top). Round 1 read them through the browser's hit
+   test at the first `.ct`'s left edge and `codeLineAt` over the DOM position (the end of one row's text and the start
+   of the next are one offset and two lines once the newline is gone); round 2 found that a blank line's row holds no
+   character, so the hit test read no line and the seat fell to the block fraction, that a Range around the empty row
+   read back a zero-height rect at its baseline, 9px under the row's top, and that a text row read at its glyph's top,
+   2px under the row's, so a code row at the edge came back 14 to 17px off after a Rendered/Raw round trip, walking on
+   some trips (file-view-fence-blank-rows-browser.test.ts: a blank row, rows under one and two blank rows, four cells,
+   three trips each, exact). The hit test and `codeLineAt` remain for a code element with no rows, the math fill's
+   source fallback. Slice 8 reads the same
    helpers. After: the two-line range paints marks in rows 0 and 1, the whole fence in its four text rows, a two-line
    range of a plain fence in both rows, an insertion across lines in two or more rows, and a Rendered selection inside
    code is still refused with the Raw offer. anchor-map-wrapped-code.test.ts (node, over a stand-in built from the
@@ -854,8 +885,20 @@ which test holds each rule:
     filled dark square on white, an open task reading as done), lays a table out as a table again with its cells
     wrapping to the column (paper cannot scroll the screen's block), and prints the comment marks bare (`.fc-hl`,
     `.fc-hl-context`, `.fc-presel`; the comments they point to are left out); file-view-print-marks-browser.test.ts
-    measures the four (the review, round 1). The print leg's own `before` count is taken with screen media forced,
-    since page.pdf renders under print media by default, so what it counts is the defect's rendering.
+    measures the five (the review, rounds 1 and 2). The print leg's own `before` count is taken with screen media
+    forced, since page.pdf renders under print media by default, so what it counts is the defect's rendering, and the
+    leg asserts it at one page (round 2). Round 2 extended the block: code prints black wherever it is in the body
+    (the Raw view and a source file are `code.hljs` under `.fileview-pre`, outside `.fileview-md`, and
+    `.hljs-title.function_` at two classes outranked the fence rule; `.fileview-body code.hljs span` outranks it), a
+    region comment's overlay is left out (its rectangle printed amber, and solid white over the figure with
+    backgrounds off), the change marks print black with no wash (a black underline, a black struck label, the Raw
+    view's chip black in a black ring: a redline, with Show changes inline for a print without them), a framed
+    picture's inline outline (styleFrame in file-comments.ts) is stripped with `!important`, the one way a sheet rule
+    outranks an inline declaration, and a table of the page's own keeps the body's room and the screen's shift on
+    paper, the cqi cap and translate restated in the block with the body made a size container there (the column alone
+    squeezed a 6-column table to 761 of A4 landscape's 1123px, every cell broken mid-word);
+    file-view-print-inks-browser.test.ts measures these, and the print leg's fixture is 120 paragraphs now (it was one
+    120-line paragraph; 9 A4 pages at the leg's 900x700).
 13. *Pins moved.* fileview-parity.test.ts gains the new heads (the headings, the list gutter and task item, kbd, the
     fences' rows and Copy, the table's fill, striping, alignment and break-out) and loses the direct-child media cap;
     styles-fc-region-layer.test.ts re-pins the h1 at 2em, the face at `--font-doc` and its control's compounding at
@@ -880,15 +923,36 @@ which test holds each rule:
     file-view-place-blocks-browser.test.ts's bottom scene pins both directions on the chat and the pane. And a
     reload's fetch landing (the Comments panel's poll saw a session's write) rebuilds the body under no gesture of the
     reader's, so a press on a fence's Copy that straddled it lost its click: a pressed node removed before the mouseup
-    dispatches no click at all, to the button or to any ancestor (probed in headless Chromium; delegating the action
-    would not help, and ui/CLAUDE.md's sentence that a swapped target still bubbles to the stable ancestor is wrong on
-    this point, left for the user's call). The landing is held while a pointer is pressed over the body and runs at
-    the release (actions.ts `pressHold`, the timeline's `_pointerHeld` guard as a helper; the landing's own guards
-    re-run then). file-view-copy-held-browser.test.ts pins the press over the real viewer and the release paths;
-    file-view-copy-held.test.ts the helper alone. Measured and left as it is: the prose line-height is the body's, 1.6
-    on the pane and the chat and 1.5 on the feed (a 101-line paragraph 2416 against 2265px); the slice declares none
-    and the text names none, and one `line-height: 1.5` on `.fileview-md` in both sheets would even it, with the Slice
-    2 legs it moves, as its own item.
+    dispatches no click that names a control (probed with real input events in headless Chromium 151 and Firefox 153;
+    delegating the action would not help, and ui/CLAUDE.md's sentence that a swapped target still bubbles to the
+    stable ancestor was wrong on this point: round 2 rewrote the rule, delegation and the hold named as
+    complementary). The landing is held while a pointer is pressed over the body and runs at the release (actions.ts
+    `pressHold`, the timeline's `_pointerHeld` guard as a helper; the landing's own guards re-run then).
+    file-view-copy-held-browser.test.ts pins the press over the real viewer and the release paths;
+    file-view-copy-held.test.ts the helper alone. Round 2 refined the hold: it is taken for the primary button only (a
+    right press yields no click, and Chromium's context menu takes its release, so a hold on one stood until the
+    reader's next click with a landing parked under it), released on contextmenu as well, on the window in the capture
+    phase, re-parked when a new press begins before the release's zero timer fires (unless a newer landing is parked
+    under the new press, which then wins), and `defer` returns a promise that settles with the run, so a throw from a
+    run the hold parked (an uncaught page error before, the old text standing under the new mtime with no error row)
+    reaches the fetch's `.catch` and paints the failure row as an immediate landing's does
+    (file-view-copy-held.test.ts, file-view-copy-held-browser.test.ts scenes 3 and 4,
+    file-view-landing-throw-browser.test.ts). A keyboard press has the same window (a button's Space click is native
+    to the keyup) and the hold reads pointer events only, so code-block.ts closes it from the button's side: Copy acts
+    on the Space keydown, as Enter does, the key's default prevented, and the chat's Copy gets the same
+    (file-view-copy-space-browser.test.ts, the pane and the chat modal). And readPlace's top-block reads take an
+    element showing under a pixel as not the top one (`edge + 1`, was 0.5): the browser snaps scrollTop to whole
+    pixels, so a seat lands a block up to half a pixel from where it asked, and at the chat's end under the new
+    leading a paragraph's last line seated 0.525px under the edge landed at 0.64 and was read back as the top block
+    (file-view-place-blocks-browser.test.ts's bottom scene, whose scrollTop pin is exact again and names the top block
+    by position as well as by text, since every blank Raw row reads as the same empty text). The prose leading,
+    measured in round 1 and set in round 2: the
+    slice declared none, so the note took the body's, 1.6 on the pane and the chat and 1.5 on the feed (a 101-line
+    paragraph 2416 against 2265px; the same note 6 percent taller on two surfaces than on the third), and the text
+    named none; `.fileview-md` now declares `line-height: 1.5` (GitHub's) in both sheets, so the three surfaces set a
+    line the same and a paragraph is the same height wherever the note is shown.
+    file-view-prose-leading-browser.test.ts measures the ratio and the paragraph on the three surfaces at 100 and
+    115 percent, and pins the declaration in both sheets.
 
 ### Slice 4: one markdown configuration, Obsidian constructs included
 

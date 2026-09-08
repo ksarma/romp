@@ -2,7 +2,7 @@
 // added inside highlight() — the one post-processor over `pre code` — so it covers ALL render paths
 // (assistant body, agent report, postal body, diffs) for free. The RAW source is captured BEFORE the
 // markup is rewritten (line-wrapping drops the \n joins, so the on-screen textContent isn't copy-safe).
-// No jsdom harness here — like codeblock-wrap.test.ts, pin the behaviour at the source level. addCopyBtn and copyText
+// No jsdom harness here: like codeblock-wrap.test.ts, pin the behaviour at the source level. addCopyBtn and copyText
 // live in code-block.ts since Slice 3 of plans/markdown-viewer.md (the viewer's mdBlock shares them; code-block.test.ts
 // runs the module), and highlight() imports them.
 import { test } from "node:test";
@@ -37,6 +37,15 @@ test("addCopyBtn builds a .code-copy button, is idempotent, and shows Copied fee
   assert.match(BLOCK, /copyText\(raw\)/);
   assert.match(BLOCK, /btn\.textContent = ok \? "Copied" : "Copy failed"/);
   assert.match(BLOCK, /btn\.classList\.toggle\("copied", ok\)/);
+});
+
+test("addCopyBtn: Space acts on the keydown, the key's default prevented on the keydown and the keyup, a held key's repeats the same press", () => {
+  // a button's Space click is native to the keyup, so a rebuild between the keydown and the keyup took the focused button
+  // and the keyup clicked nothing (Slice 3 review, round 2); the button acts on the keydown, as Enter does, and the
+  // prevented keydown keeps it out of :active for the key (file-view-copy-space-browser.test.ts runs it over the viewer)
+  assert.match(BLOCK, /btn\.addEventListener\("keydown", \(ev\) => \{\n\s*if \(ev\.key !== " "\) return;\n\s*ev\.preventDefault\(\);\n\s*if \(ev\.repeat\) return;\n\s*copy\(\);\n\s*\}\);/);
+  assert.match(BLOCK, /btn\.addEventListener\("keyup", \(ev\) => \{ if \(ev\.key === " "\) ev\.preventDefault\(\); \}\);/);
+  assert.match(BLOCK, /btn\.addEventListener\("click", \(ev\) => \{\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);\n\s*copy\(\);\n\s*\}\);/, "the click and the key share one copy()");
 });
 
 test("copyText uses the async Clipboard API with an execCommand fallback", () => {

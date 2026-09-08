@@ -50,10 +50,11 @@ function bundle(): string {
   return r.outputFiles[0].text;
 }
 // the viewer's body at a narrow width, so a long label has to wrap (the sheet's @import and font urls 404 here, harmlessly).
-// 435px: the body reserves its scrollbar gutter (`scrollbar-gutter: stable`, 15px here with no scrollbar drawn; review
-// 2026-09-08), so the column inside is the 384px the scenes were written against (420 less the 36px inset, before the gutter)
+// 420px: the column inside is the 384px the scenes were written against (420 less the root's 36px inset). The body reserves
+// no scrollbar gutter (review round 2 of Slice 3 of plans/markdown-viewer.md took round 1's `scrollbar-gutter: stable` back
+// out: it was a blank strip on every body that never scrolls, this one included, and the host stood at 435 to pay for it)
 const PAGE = (html: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/sheet.css>
-<style>body{margin:0} #host{width:435px;margin:16px}</style></head>
+<style>body{margin:0} #host{width:420px;margin:16px}</style></head>
 <body><div id=host class=fileview-body><div id=box class=fileview-md>${html}</div></div><script src=/dist/probe.js></script></body></html>`;
 
 type Probe = {

@@ -337,20 +337,20 @@ the height it names.
 
 **How a markdown file reads.** The Rendered view shows a markdown file the way GitHub
 shows a README. The text is a little larger than the dashboard's own (15 pixels where the
-chat is 13, and it follows the chat font size you set in VS Code), in the same sans face
-in both themes. Headings step down from twice the text size for a top-level heading to the
-text size for the fourth level and below, with a rule under the first two levels; the
-fifth and sixth levels are dimmed. A task list shows its boxes without bullets, ticked
-where the file says so. A table's header row is bold on a faint fill, every second row is
-tinted, and a column the file aligns with `:---:` or `---:` is centred or right-aligned. A
-`<kbd>` key reads as a key. Every fenced code block is numbered by line, wraps long lines
-and carries a **Copy** button that copies the block's text; a block that names its
-language is coloured when the language is one the viewer knows: bash, python, javascript,
-typescript, json, xml and html, css, markdown, diff, yaml, rust, go, c, java, sql and toml
-(an ini file's grammar). A block that names any other language stays plain rather than
-being guessed at. Comments in coloured code are readable against the block. Printing the
-page while a markdown file is open prints the file alone, black on white, across as many
-pages as it needs, without the title bar, the Comments panel or the Copy buttons.
+chat is 13), in the same sans face in both themes. Headings step down from twice the text
+size for a top-level heading to the text size for the fourth level and below, with a rule
+under the first two levels; the fifth and sixth levels are dimmed. A task list shows its
+boxes without bullets, ticked where the file says so. A table's header row is bold on a
+faint fill, every second row is tinted, and a column the file aligns with `:---:` or
+`---:` is centred or right-aligned. A `<kbd>` key reads as a key. Every fenced code block
+is numbered by line, wraps long lines and carries a **Copy** button that copies the
+block's text; a block that names its language is coloured when the language is one the
+viewer knows: bash, python, javascript, typescript, json, xml and html, css, markdown,
+diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar). A block that names
+any other language stays plain rather than being guessed at. Comments in coloured code are
+readable against the block. Printing the page while a markdown file is open prints the
+file alone, black on white, across as many pages as it needs, without the title bar, the
+Comments panel or the Copy buttons.
 
 **Your place in the file.** The passage at the top of the view stays where it is when
 the file is read again after a session writes it, when you switch between Rendered and

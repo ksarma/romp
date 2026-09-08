@@ -92,5 +92,31 @@ class TheSentencesMatchTheSheets(unittest.TestCase):
         self.assertTrue([s for s in sizes if s > 100], "the ladder has steps above 100 percent")
 
 
+class TheSizeSentencePromisesNoKnobTheExtensionLacks(unittest.TestCase):
+    """The prose is 1.15 times `--fs`, and `--fs` is `var(--vscode-chat-font-size, 13px)`: 13px unless a source
+    defines the variable. VS Code hands a webview `vscode-font-*`, `vscode-editor-font-*` and its colour and size
+    registries, no chat key, and the extension defines none of its own (its one font coupling is a body zoom from
+    editor.fontSize). So the guide may say the 15-for-13 ratio, and not that a note follows a VS Code chat font
+    size: review round 2 of Slice 3 found that promise in the guide with nothing behind it (2026-09-08). A source
+    that starts setting the variable fails the premise test below, the cue to revisit the sentence and this pin."""
+
+    def setUp(self):
+        self.section = _flat(_section(_read("docs", "guide.md"), "Files"))
+
+    def test_the_premise_nothing_in_the_extension_sets_the_variable(self):
+        src = os.path.join(ROOT, "vscode-extension", "src")
+        sources = [os.path.join(d, n) for d, _, names in os.walk(src) for n in names
+                   if n.endswith(".ts") and not n.endswith(".test.ts")]
+        self.assertTrue(sources)
+        for path in sources:
+            with open(path, encoding="utf-8") as f:
+                self.assertNotIn("--vscode-chat-font-size", f.read(), path)
+
+    def test_the_ratio_stays_and_the_promise_is_gone(self):
+        self.assertIn("(15 pixels where the chat is 13)", self.section)
+        self.assertNotIn("chat font size you set in VS Code", self.section)
+        self.assertNotIn("follows the chat font size", self.section)
+
+
 if __name__ == "__main__":
     unittest.main()

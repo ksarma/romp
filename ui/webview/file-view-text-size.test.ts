@@ -79,7 +79,7 @@ class El {
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
   src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
   innerHTML = "";
-  style: Record<string, string> = {};
+  style: Record<string, any> = { setProperty: (k: string, v: string) => { this.style[k] = v; } };   // CSSOM's write, for the body's --fv-body-w
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
@@ -705,17 +705,18 @@ test("both sheets: the measure is the root's inline padding, a centred column of
     assert.doesNotMatch(css, /\.fileview-md > img, \.fileview-md > svg/, name + ": the direct-child media cap went with the constant (100% of the column is the measure for a direct child too)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
     assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
-    // the table's cap is the BODY's width less the root's 18px inset (100cqi: .fileview-body is the size container), and a
-    // table wider than the column is moved left by half the excess (a percentage in translate is of the table's own width;
-    // 50cqi less the padding is half the column), so it grows out of the column evenly, into both gutters, and a table no
-    // wider than the column is not moved at all (the min); file-view-typescale-browser.test.ts lays the three widths out
+    // the table's cap is the BODY's width less the root's 18px inset (--fv-body-w: the body's content width, written on the body
+    // by the viewer's ResizeObserver), and a table wider than the column is moved left by half the excess (a percentage in
+    // translate is of the table's own width; half the body less the padding is half the column), so it grows out of the column
+    // evenly, into both gutters, and a table no wider than the column is not moved at all (the min); with the property unset
+    // the cap falls back to the column and the shift to none. file-view-typescale-browser.test.ts lays the three widths out
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
       name + ": a table is a block as wide as its content up to its container, scrolling inside beyond it, whole words kept (a table in a quote or a list item stays in it)");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md > table {")),
-      ["max-width: calc(100cqi - 36px)", "translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px))"],
-      name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (the fallback for a browser without cqi is the 100% above)");
-    assert.ok(decls(ruleOf(css, ".fileview-body {")).includes("container-type: inline-size"), name + ": the body is the container the table's cqi reads (the aside open or closed, it is the body, not the card)");
+      ["max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))"],
+      name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (with the property unset both read the stand-in: the cap is the column and the shift none)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls in its own box");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
@@ -782,9 +783,12 @@ const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
  *  over the feed (feed.css alone, the browser over the feed's document). */
 const PAGE = (mode: "pane" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("feed.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : "fileview-open"}"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn">A−</button><button class="fileview-btn">A+</button><button class="fileview-btn">✕</button></div></div>
-<div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div></body></html>`;
+<div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div>
+<script>/* the viewer's one write (file-view.ts, the width observer): the body's content width, for the pane-wide table's cap */
+new ResizeObserver(function (es) { document.getElementById("body").style.setProperty("--fv-body-w", es[es.length - 1].contentRect.width + "px"); }).observe(document.getElementById("body"));</script></body></html>`;
 type Lay = { bodyClient: number; gutter: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
-const layout = (page: any): Promise<Lay> => page.evaluate(() => {
+const layout = (page: any): Promise<Lay> => page.evaluate(async () => {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));   // the width observer's report lands before a frame paints
   const q = (s: string) => document.querySelector(s) as HTMLElement;
   const w = (s: string) => q(s).getBoundingClientRect().width;
   const body = q("#body");
@@ -832,11 +836,12 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       const step = (n: number) => page.evaluate((n: number) => { document.getElementById("root")!.dataset.fvText = String(n); }, n);
       // 1000px wide, the default size
       let l = await layout(page);
-      // the body reserves its scrollbar's gutter whether or not the note scrolls (scrollbar-gutter: stable, so a table's 100cqi is
-      // the content box the column is measured in; file-view-scrollbar-browser.test.ts): the pane's classic 10px one (styles.css
-      // ::-webkit-scrollbar), the platform's on the feed page (feed.css styles none), reserved even under playwright's --hide-scrollbars
-      if (mode === "pane") assert.equal(l.gutter, 10, mode + " @1000: the pane's 10px scrollbar gutter is reserved");
-      near(l.bodyClient, 1000 - inset - l.gutter, mode + " @1000: the body is the pane, less the modal's inset and the scrollbar gutter (" + l.gutter + ")");
+      // the body reserves nothing beside its content: round 1's `scrollbar-gutter: stable` (a table's 100cqi against the column's
+      // 100%) was a blank strip beside every body that does not scroll, and went in round 2; the cap reads the body's width off
+      // its ResizeObserver instead (file-view-scrollbar-browser.test.ts measures it with the scrollbar drawn; this page runs
+      // under playwright's --hide-scrollbars, where a scrollbar takes no room either)
+      assert.equal(l.gutter, 0, mode + " @1000: no scrollbar gutter is reserved");
+      near(l.bodyClient, 1000 - inset, mode + " @1000: the body is the pane, less the modal's inset");
       fits(l, mode + " @1000/100");
       // the document size: 1.15 times the page's 13px, GitHub's 2em h1 of it, fenced code at 12px (Slice 3 of plans/markdown-viewer.md)
       assert.equal(l.mdFont, "14.95px", mode + ": the document size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "29.9px");
@@ -850,8 +855,7 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       // a max-content table is as wide as its content to the layout unit; scrollWidth and clientWidth snap a fractional width
       // two ways (913 vs 912 at the document size, when the unbreakable cell was 66 characters), so the pixel of slack the code
       // block's check has applies here too. The unbreakable cell is 55 characters: the table's min-content (the unbreakable cell
-      // plus each column's longest word) has to fit the body less its 36px inset, and the body reserves its scrollbar gutter now
-      // (15px on the feed page under headless Linux)
+      // plus each column's longest word) has to fit the body less its 36px inset
       assert.ok(l.tScroll <= l.tClient + 1, mode + " @1000: room enough, so the table does not scroll (" + l.tScroll + " in " + l.tClient + ")");
       near(l.md, l.bodyClient, mode + " @1000: the root is the body's width");
       assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
@@ -870,7 +874,7 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
         await step(n);
         l = await layout(page);
         fits(l, mode + " @420/" + n);
-        near(l.bodyClient, 420 - (mode === "pane" ? 0 : 420 * 0.05 + 2) - l.gutter, mode + " @420/" + n + ": the body is the pane, less the modal's inset and the scrollbar gutter");
+        near(l.bodyClient, 420 - (mode === "pane" ? 0 : 420 * 0.05 + 2), mode + " @420/" + n + ": the body is the pane, less the modal's inset");
         near(l.t, l.bodyClient - 36, mode + " @420/" + n + ": the table is the column");
         assert.ok(l.tScroll > l.tClient + 100, mode + " @420/" + n + ": the unbreakable cell scrolls inside the table's own box (" + l.tScroll + " in " + l.tClient + ")");
         near(l.p, l.bodyClient - 36, mode + " @420/" + n + ": the prose follows the pane below its measure");

@@ -508,7 +508,7 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
   assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");
-  // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor; then EVERY fence, named or
+  // fenced blocks highlight only a NAMED, registered language (the same no-guessing rule as langFor); then EVERY fence, named or
   // not, gets the chat's rows and Copy button (code-block.ts; Slice 3 of plans/markdown-viewer.md), the raw text captured first
   assert.match(VIEW, /if \(lang && hljs\.getLanguage\(lang\)\) \{/);
   // Copy hands the clipboard the fence's text as the note holds it (fence-source.ts; the raw text has marked's four spaces for

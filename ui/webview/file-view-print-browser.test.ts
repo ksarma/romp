@@ -5,23 +5,28 @@
 // The @media print blocks (styles.css and feed.css byte-equal, files-pane.css for the pane's own overrides) make the
 // overlay and the card static and unclipped, open the body's scroll box, hide the title bar, the Comments aside, the
 // Comment float, the notice bar and the Copy buttons, leave everything else on the page out, and print black on white,
-// code included. Measured here first as an A4 PDF of the screen layout, the defect's rendering, one page (page.pdf
-// renders under print media by default, so the screen layout is asked for with `page.emulateMedia({ media: "screen"
-// })`; without the ask that PDF is the print count over again), then under `page.emulateMedia({ media: "print" })` as
-// computed styles and as a real A4 PDF whose page count for a 120-paragraph note is more than one, then back under
-// screen media, where the screen values return. The pane and the chat modal (the feed shares feed.css's block, pinned
+// code included. Measured here first as an A4 PDF of the screen layout, the defect's rendering, asserted to be one page
+// (page.pdf renders under print media by default, so the screen layout is asked for with `page.emulateMedia({ media:
+// "screen" })`; without the ask that PDF is the print count over again, and the review's round 2 found the count
+// reported in a message and pinned nowhere, so a screen ask that stopped taking effect passed), then under
+// `page.emulateMedia({ media: "print" })` as computed styles and as a real A4 PDF whose page count for a 120-paragraph
+// note is more than one, then back under screen media, where the screen values return. The note's paragraphs are
+// separated by blank lines and their count is pinned first, so the fixture is the 120 blocks the messages describe (the
+// review, round 2: joined with one newline they rendered as a single <p>, one block with no paragraph margins or block
+// boundaries for the pages to break at). The pane and the chat modal (the feed shares feed.css's block, pinned
 // byte-equal to styles.css's by the node test below). Skips loudly without a browser. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openViewer, openPanel, frames, REPORT, UI, type Mode } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, REPORT, UI, PARA, type Mode } from "./real-viewer-leg";
 
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 const F = "```";
 const NOTE = ["# Print me", "", "A paragraph with `inline code` and a [link](https://example.test/).", "", F + "python", "# a comment", "def f(x):", "    return x", F, "",
   "| a | b |", "|---|---|", "| 1 | 2 |", "| 3 | 4 |", "",
-  ...Array.from({ length: 120 }, (_, i) => "Paragraph " + (i + 1) + ": " + "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".repeat(3).trim() + "."), ""].join("\n");
+  Array.from({ length: 120 }, (_, i) => PARA(i + 1)).join("\n\n"), ""].join("\n");   // a blank line between paragraphs: joined with one newline they are one <p> (marked runs with breaks: false)
+const PARAGRAPHS = 121;   // the 120 and the one under the heading; pinned below so the fixture stays the note the messages describe
 
 // ── the sheets: one block, byte-equal, and the pane's own ──────────────────────────────────────────
 
@@ -34,7 +39,7 @@ test("the print block is byte-equal in styles.css and feed.css, names every piec
   for (const sel of [".fileview-bar", ".fileview-aside", ".fileview-fc", ".fileview > .fileview-err", ".fc-float", ".fileview-md .code-copy"]) assert.ok(chat.includes(sel), "hidden in print: " + sel);
   assert.match(chat, /#romp-fileview \{ position: static; inset: auto; z-index: auto; display: block; background: none; \}/, "the overlay joins the flow");
   assert.match(chat, /\.fileview \{ width: auto; height: auto; display: block; overflow: visible; background: white; color: black;/, "the card is unclipped, white, black text");
-  assert.match(chat, /\.fileview-body \{ overflow: visible; \}/, "the body's scroll box opens");
+  assert.match(chat, /\.fileview-body \{ overflow: visible; container-type: inline-size; \}/, "the body's scroll box opens, and the body is the size container the print table's cqi cap reads (the screen's body is none since round 2: --fv-body-w there)");
   assert.match(chat, /body\.fileview-open > :not\(#romp-fileview\) \{ display: none; \}/, "the rest of the page is left out while a note is open");
   assert.match(chat, /\.fileview-md pre code span,\s*\n?\s*\.fileview-md pre code \.cl::before, \.fileview-md code\.md-math-src \{ color: black; \}/, "code tokens and line numbers print black");
   assert.doesNotMatch(chat.replace(/\/\*[\s\S]*?\*\//g, ""), /#[0-9a-fA-F]{3,8}\b(?!-)/, "keywords, no hex");
@@ -54,7 +59,7 @@ function printFacts(): P {
   const q = (s: string) => document.querySelector(s) as HTMLElement | null; const cs = (e: Element) => getComputedStyle(e);
   const ov = q("#romp-fileview")!, card = q(".fileview")!, body = q(".fileview-body")!, md = q(".fileview-md")!, bar = q(".fileview-bar")!;
   const cmt = md.querySelector(".hljs-comment"), kw = md.querySelector(".hljs-keyword"), copy = md.querySelector(".code-copy"), aside = q(".fileview-aside"), fc = q(".fileview-fc");
-  return { matchesPrint: matchMedia("print").matches, htmlBg: cs(document.documentElement).backgroundColor, bodyBg: cs(document.body).backgroundColor, bodyOverflow: cs(document.body).overflow, bodyH: document.body.getBoundingClientRect().height,
+  return { matchesPrint: matchMedia("print").matches, paras: md.querySelectorAll(":scope > p").length, htmlBg: cs(document.documentElement).backgroundColor, bodyBg: cs(document.body).backgroundColor, bodyOverflow: cs(document.body).overflow, bodyH: document.body.getBoundingClientRect().height,
     ov: { position: cs(ov).position, display: cs(ov).display, bg: cs(ov).backgroundColor }, card: { width: cs(card).width, height: card.getBoundingClientRect().height, bg: cs(card).backgroundColor, color: cs(card).color, overflow: cs(card).overflow, border: cs(card).borderTopWidth },
     body: { overflow: cs(body).overflow, clientH: body.clientHeight, scrollH: body.scrollHeight }, md: { color: cs(md).color, height: md.getBoundingClientRect().height }, bar: cs(bar).display, aside: aside ? cs(aside).display : "(none mounted)", fc: fc ? cs(fc).display : "(none mounted)",
     copy: copy ? cs(copy).display : "(none)", cmt: cmt ? cs(cmt).color : null, kw: kw ? cs(kw).color : null, code: cs(md.querySelector("pre code")!).whiteSpace, link: cs(md.querySelector("a")!).color, th: cs(md.querySelector("th")!).backgroundColor,
@@ -69,6 +74,7 @@ test("under print media the note is a static, unclipped, black-on-white document
       await openPanel(page);   // the aside mounted, so its hiding is measured
       const screen0 = await page.evaluate(printFacts);
       assert.equal(screen0.matchesPrint, false);
+      assert.equal(screen0.paras, PARAGRAPHS, mode + ": the note is " + PARAGRAPHS + " paragraphs, each its own block (one newline between them would fold the 120 into one <p>)");
       assert.equal(screen0.bar, "flex", mode + ": on screen the title bar shows"); assert.notEqual(screen0.aside, "none", mode + ": ...and the aside");
       assert.equal(screen0.ov.position, mode === "pane" ? "relative" : "fixed", mode + ": the overlay's screen position");
       assert.ok(screen0.body.scrollH > screen0.body.clientH * 3, mode + ": on screen the body scrolls its 120 paragraphs (" + screen0.body.scrollH + " in " + screen0.body.clientH + ")");
@@ -76,6 +82,7 @@ test("under print media the note is a static, unclipped, black-on-white document
       // so screen media is asked for; without the ask this count is the print count over again, not a baseline
       await page.emulateMedia({ media: "screen" }); await frames(page, 2);
       const before = pagesOf(await page.pdf({ format: "A4", printBackground: true }));
+      assert.equal(before, 1, mode + ": the screen layout on paper is the defect's one page (" + before + "; the print count over again means the screen ask did not take)");
       await page.emulateMedia({ media: "print" }); await frames(page, 2);
       const pr = await page.evaluate(printFacts);
       assert.equal(pr.matchesPrint, true);

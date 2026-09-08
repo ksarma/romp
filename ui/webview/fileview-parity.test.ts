@@ -35,7 +35,7 @@ const RULES = [
   ".fileview-md h4 {", ".fileview-md h5, .fileview-md h6 {", ".fileview-md h1, .fileview-md h2 {",
   ".fileview-md ul, .fileview-md ol {", ".fileview-md li.task-list-item {", ".fileview-md li.task-list-item input {",
   '.fileview-md li.task-list-item > input[type="checkbox"], .fileview-md li.task-list-item > p:first-child > input[type="checkbox"] {',
-  ".fileview-md kbd {", ".fileview-md pre code {", ".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {",
+  ".fileview-md kbd {", ".fileview-md pre code {", ".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre code .ct::before {",
   ".fileview-md pre.has-copy {", ".fileview-md .code-copy {", ".fileview-md pre.has-copy:hover .code-copy, .fileview-md .code-copy:focus-visible {",
   ".fileview-md .code-copy:hover {", ".fileview-md .code-copy.copied {",
   ".fileview-md table {", ".fileview-md > table {", ".fileview-md th, .fileview-md td {", ".fileview-md th {", ".fileview-md tbody tr:nth-child(even) {",

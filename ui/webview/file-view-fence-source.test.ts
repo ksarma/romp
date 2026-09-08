@@ -111,3 +111,29 @@ test("fenceCopyQueue: keyed by the rendered text, in document order, null for a 
   assert.equal(fenceCopyQueue(clean, tokens(clean)).size, 0, "no tab, no CR: nothing to read back");
   assert.equal(fenceCopyQueue(src, []).size, 0, "no fences: nothing to queue");
 });
+
+test("an empty fence is matched as its opener and closer, so the fence after it is found: marked's text is empty for no line and for one blank line alike, and read as one blank content line it ran past its own closer and claimed a blank line inside the next fence", () => {
+  // the closer directly followed by a fence whose first line is blank and whose second holds a tab: read as one blank
+  // line, the empty fence matched the py fence's blank first line, and the py fence, behind the cursor, was null
+  const adjacent = `${F}\n${F}\n${F}py\n\n\tx = 1\n${F}\n`;
+  const t = tokens(adjacent);
+  assert.equal(t[0].text, "", "marked: a fence of no lines has the empty text");
+  assert.deepEqual(fenceSources(adjacent, t), ["\n", "\n\tx = 1\n"]);
+  assert.deepEqual(fenceCopyQueue(adjacent, t).get("\n    x = 1\n"), ["\n\tx = 1\n"], "Copy on the py fence pastes the tab");
+  // the closer directly followed by prose, the next fence in the usual blank-line style
+  const prose = `${F}\n${F}\nText.\n\n${F}py\n\tx = 1\n${F}\n\nMore.\n`;
+  assert.deepEqual(fenceSources(prose, tokens(prose)), ["\n", "\tx = 1\n"]);
+  // one blank line as the fence's content: the same empty text, the blank line is the fence's own
+  const blankLine = `${F}\n\n${F}\n${F}py\n\n\tx = 1\n${F}\n`;
+  assert.equal(tokens(blankLine)[0].text, "", "marked: a fence of one blank line has the empty text too");
+  assert.deepEqual(fenceSources(blankLine, tokens(blankLine)), ["\n", "\n\tx = 1\n"]);
+  // without a trailing newline the lone empty fence is found by its closer, not by a blank line after it
+  assert.deepEqual(fenceSources(`${F}\n${F}`, tokens(`${F}\n${F}`)), ["\n"]);
+  // an opener the note ends on: an unclosed fence runs to the end, and its text is empty
+  assert.deepEqual(fenceSources(`${F}\n`, tokens(`${F}\n`)), ["\n"]);
+  // inside a quote, the blank line a bare `>`; directly after another fence's closer
+  const quoted = `> ${F}\n>\n> ${F}\n> ${F}\n> \tq\n> ${F}\n`;
+  assert.deepEqual(fenceSources(quoted, tokens(quoted)), ["\n", "\tq\n"]);
+  const after = `${F}\nx\n${F}\n${F}\n${F}\n${F}py\n\n\ty\n${F}\n`;
+  assert.deepEqual(fenceSources(after, tokens(after)), ["x\n", "\n", "\n\ty\n"]);
+});

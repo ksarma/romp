@@ -13,10 +13,16 @@
 // it is the place (the Slice 2 review: read as its own place, a blank top row seated the paragraph BEFORE the first
 // text the reader saw), while a blank row inside a fenced code block belongs to the code block. When the reader is
 // partway into a block that shows LINES (any block in Raw, a code block in Rendered), the line at the edge is kept too,
-// as its own source span and its top edge: the Raw row under the edge, or, in Rendered, the code line the browser's
-// hit test finds there (caretRangeFromPoint on the code element's first column at the edge; a Range at a line's start
-// reads its box back). After the paint the block is found in the new view, whichever view it is, and the body is
-// scrolled so it sits where the block sat:
+// as its own source span and its top edge: the Raw row under the edge, or, in Rendered, the code's row under the edge
+// (code-block.ts wraps every fence in one `.cl` row per line, blank lines included, and the row is read as a Raw row
+// is: the first whose box ends below the edge, its box's top; a code element with no rows, the math fill's source
+// fallback, is read through the browser's hit test at its first column and a Range at the line's start). The row's
+// top on both sides, never a glyph's or a Range's (the Slice 3 review, round 2: a blank line's row holds no character,
+// so the hit test read no line and the seat fell to the block fraction, a Range around the empty row read back a
+// zero-height rect at its baseline, 9px under the row's top, and a text row read at its glyph's top, 2px under the
+// row's, left the row above it showing at the Raw edge, so the way back kept that row instead; a blank row at the edge
+// and every code line under one came back 14 to 17px high). After the paint the block is found in the new view,
+// whichever view it is, and the body is scrolled so it sits where the block sat:
 //   - a block that started below the edge keeps that distance;
 //   - a block the reader was partway into keeps the LINE when one was kept and it still stands (its span followed
 //     through the edit, or, with the line itself rewritten, the line after the nearest line before it that stands,
@@ -64,10 +70,11 @@
 // Raw) declines the same way. An html block of sibling tags, each in its source, is read as one block still.
 //
 // Written over the DOM the viewer builds and nothing else (querySelector, childNodes, getBoundingClientRect,
-// scrollTop, and for a Rendered code line the document's caret hit test and a Range's rects, both absent from a
-// stand-in) and the anchor map's block table, so a stand-in with no layout (every box at 0,0) reads no place and seats
-// nothing, and the node tests over the viewer run unchanged; the browser legs (file-view-place-browser.test.ts,
-// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts) measure the real thing.
+// scrollTop, and for a Rendered code line in a code element without rows the document's caret hit test and a Range's
+// rects, both absent from a stand-in) and the anchor map's block table, so a stand-in with no layout (every box at
+// 0,0) reads no place and seats nothing, and the node tests over the viewer run unchanged; the browser legs
+// (file-view-place-browser.test.ts, file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts)
+// measure the real thing.
 import { followPassage } from "./file-comments";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, codeLineAt, codeLineStart, type SourceRange } from "./anchor-map";
 
@@ -217,6 +224,9 @@ function codeOf(els: Element[]): Element | null {
   if (els.length !== 1 || String(els[0].tagName).toUpperCase() !== "PRE") return null;
   return els[0].querySelector("code") || els[0];
 }
+/** The rows of a code element code-block.ts wrapped (its element children wearing `cl`, one per line, a blank line's
+ *  holding no text), in line order; none for a code element with no rows (the math fill's source fallback). */
+const codeRows = (code: Element): Element[] => elementsOf(code).filter((c) => typeof c.getAttribute === "function" && (" " + (c.getAttribute("class") || "") + " ").indexOf(" cl ") >= 0);
 type CaretDoc = {
   caretRangeFromPoint?: (x: number, y: number) => { startContainer: Node; startOffset: number } | null;
   caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -240,34 +250,50 @@ function charTop(doc: CaretDoc, node: Node, offset: number): number | null {
   const r = rg.getBoundingClientRect();
   return r.height > 0 || r.width > 0 ? r.top : null;
 }
-/** The code line under the body's top edge in a Rendered code block, when the code's text starts above the edge: the
- *  hit test on the code's first text column a pixel below the edge (the first `.ct`'s left edge when the block is
- *  wrapped in rows, code-block.ts, since the column before it is the line-number gutter; else the code element's),
- *  read to its line and the line's source span. The line is counted through anchor-map's codeLineAt, which puts the
- *  newline back between rows: the wrap drops it from the text. */
+/** The code line under the body's top edge in a Rendered code block, when the code's text starts above the edge, as
+ *  its source span and its top. A code element wrapped in rows is read as the Raw rows are: the first row whose box
+ *  ends below the edge is the line, its index among the rows its line number (one row per line, so the two agree with
+ *  codeLineAt's count), and its box's top is the line's top. Not a hit test and not a character's box: a blank line's
+ *  row holds no character (the hit on its empty `.ct` measured nothing and the line was dropped), and a text row's
+ *  glyph top sits under the row's top by the half-leading, while the Raw seat puts a row's TOP there, so the row above
+ *  showed at the Raw edge and the way back kept that one (the Slice 3 review, round 2). A code element with no rows is
+ *  read through the hit test on its first column a pixel below the edge, to its line (anchor-map's codeLineAt, which
+ *  counts the newlines) and the character's top. */
 function renderedLineAt(source: string, span: SourceRange, els: Element[], edge: number): Line | null {
   const code = codeOf(els);
   if (!code) return null;
-  const doc = code.ownerDocument as unknown as CaretDoc;
   const r = code.getBoundingClientRect();
   if (!(r.top < edge)) return null;
-  const ct = typeof code.querySelector === "function" ? code.querySelector(".ct") : null;
-  const x = (ct ? ct.getBoundingClientRect().left : r.left) + 2;
-  const hit = caretAt(doc, x, edge + 1);
-  if (!hit || typeof code.contains !== "function" || !code.contains(hit.node)) return null;
-  const k = codeLineAt(code as unknown as Parameters<typeof codeLineAt>[0], hit.node as unknown as Parameters<typeof codeLineAt>[1], hit.offset);
-  if (k < 0) return null;
+  const rows = codeRows(code);
+  let k: number, top: number | null;
+  if (rows.length) {
+    const i = topVisibleIndex(rows.length, (j) => bottomOrNaN(rows[j]), edge + 1);
+    const box = i < rows.length ? boxOf(rows[i]) : null;
+    if (!box) return null;
+    k = i; top = box.top;
+  } else {
+    const doc = code.ownerDocument as unknown as CaretDoc;
+    const hit = caretAt(doc, r.left + 2, edge + 1);
+    if (!hit || typeof code.contains !== "function" || !code.contains(hit.node)) return null;
+    k = codeLineAt(code as unknown as Parameters<typeof codeLineAt>[0], hit.node as unknown as Parameters<typeof codeLineAt>[1], hit.offset);
+    if (k < 0) return null;
+    top = charTop(doc, hit.node, hit.offset);
+  }
   const ls = lineSpanIn(source, span, k + (fenced(source, span) ? 1 : 0));
-  const top = ls ? charTop(doc, hit.node, hit.offset) : null;
   return ls && top !== null ? { start: ls.start, end: ls.end, top: top - edge } : null;
 }
-/** Where a source line of block `span` starts in the Rendered code block: the top of its first character; null for
- *  any other block or a line the code does not show. */
+/** Where a source line of block `span` starts in the Rendered code block: its row's top when the code is wrapped in
+ *  rows (the top renderedLineAt reads, a blank line's included: a Range around its empty row read back one zero-height
+ *  rect at the row's baseline, 9px under its top, and seated the row 9px high), else the top of its first character;
+ *  null for any other block or a line the code does not show. */
 function renderedLineTop(source: string, span: SourceRange, els: Element[], lineStart: number): number | null {
   const code = codeOf(els);
   if (!code) return null;
   const k = countNL(source, span.start, lineStart) - (fenced(source, span) ? 1 : 0);
-  const pos = k < 0 ? null : codeLineStart(code as unknown as Parameters<typeof codeLineStart>[0], k);
+  if (k < 0) return null;
+  const rows = codeRows(code);
+  if (rows.length) { const box = k < rows.length ? boxOf(rows[k]) : null; return box ? box.top : null; }
+  const pos = codeLineStart(code as unknown as Parameters<typeof codeLineStart>[0], k);
   return pos ? charTop(code.ownerDocument as unknown as CaretDoc, pos.node as unknown as Node, pos.offset) : null;
 }
 /** Where a source line of block `span` starts in the Raw view: its row's top; null when the row is not the block's. */
@@ -285,7 +311,10 @@ function rawLineTop(code: Element, source: string, span: SourceRange, lineStart:
  *  when the reader is partway into a block that shows lines. null when the body shows neither view, when nothing is in
  *  view (a stand-in with no layout), when no element at or below the top edge is a block's (whitespace between
  *  blocks, an html block's leftover node: the next is read), when the top element is one an html wrapper swallowed
- *  (the header), or when the Raw rows disagree with the source. */
+ *  (the header), or when the Raw rows disagree with the source. An element showing under a pixel below the edge is
+ *  not the top one, here and in the code rows: the browser snaps scrollTop to whole pixels, so a seat lands a block up
+ *  to half a pixel from where it asked (the Slice 3 review, round 2: at the chat's end, a paragraph's last line seated
+ *  0.525px under the edge landed at 0.64 and was read back as the top block, so the round trip came back 11px off). */
 export function readPlace(body: HTMLElement, source: string): Place | null {
   if (!hasBox(body)) return null;
   const edge = body.getBoundingClientRect().top;
@@ -294,7 +323,7 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
   const md = body.querySelector(".fileview-md");
   if (md) {
     const kids = elementsOf(md);
-    for (let i = topVisibleIndex(kids.length, (k) => bottomOrNaN(kids[k]), edge + 0.5); i < kids.length; i++) {
+    for (let i = topVisibleIndex(kids.length, (k) => bottomOrNaN(kids[k]), edge + 1); i < kids.length; i++) {
       if (!boxOf(kids[i])) continue;
       const b = renderedBlockIndex(md, source, kids[i]);
       if (b < 0 || b >= spans.length) continue;
@@ -309,7 +338,7 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
   const code = body.querySelector("code.hljs");
   const rows = code ? rawRows(code, source) : null;
   if (!code || !rows) return null;
-  for (let i = topVisibleIndex(rows.length, (k) => bottomOrNaN(rows[k]), edge + 0.5); i < rows.length; i++) {
+  for (let i = topVisibleIndex(rows.length, (k) => bottomOrNaN(rows[k]), edge + 1); i < rows.length; i++) {
     const rowBox = boxOf(rows[i]);
     if (!rowBox) continue;
     const span = rawRowSpan(code, source, rows[i]);

@@ -13,10 +13,12 @@
 //     tokenization expands what is left) stays a tab.
 // A fence is found by its content lines: consecutive lines of marked's view each ending in the token's line, past a prefix of
 // spaces and quote markers (what the containers took), the line before them a fence opener (an indented code block has none
-// and is matched by its lines alone); fences are searched in document order, each from past the one before. A fence not found
-// (an author's construction this reading does not follow) is null, and the caller copies the rendered text as before. Nothing
-// here changes the parse: the source reaches marked untouched (the plan's Slice 4 rule, extensions over string preprocessing),
-// and the rendered text is untouched too; the display's four spaces measure a tab at the sheet's `tab-size: 4`.
+// and is matched by its lines alone); a fence whose text is empty by its opener and closer, since marked's text is empty for
+// a fence of no lines and for one of a single blank line alike; fences are searched in document order, each from past the one
+// before. A fence not found (an author's construction this reading does not follow) is null, and the caller copies the
+// rendered text as before. Nothing here changes the parse: the source reaches marked untouched (the plan's Slice 4 rule,
+// extensions over string preprocessing), and the rendered text is untouched too; the display's four spaces measure a tab at
+// the sheet's `tab-size: 4`.
 
 /** marked's code token, as mdBlock collects it from walkTokens: the text, and whether it is an indented block (no fence lines). */
 export type Fence = { text: string; indented: boolean };
@@ -53,6 +55,9 @@ export const renderedFenceText = (text: string): string => text.replace(/\n$/, "
 /** A fence opener as marked's view shows it, with whatever containers put before it on its line: spaces, quote markers, a
  *  list marker with its space (a fence may open on a list item's first line). */
 const OPENER = /^(?:[ >]|[-*+][ \t]|\d{1,9}[.)][ \t])*(?:`{3,}|~{3,})/;
+/** A fence closer as marked's view shows it: the fence run, any more fence characters, spaces, and before it only what a
+ *  container puts there (spaces, quote markers; a list marker would open an item, not close a fence). */
+const CLOSER = /^[ >]*(?:`{3,}|~{3,})[`~]* *$/;
 /** The lexer's rewrite over one line, as an inner blockTokens (a quote's, a list item's) applies it to the text it was handed. */
 const expandLeading = (s: string): string => s.replace(/^( *)(\t+)/, (_, l: string, t: string) => l + "    ".repeat(t.length));
 
@@ -96,6 +101,28 @@ export function fenceSources(source: string, fences: Fence[]): (string | null)[]
   const out: (string | null)[] = [];
   let from = 0;
   for (const f of fences) {
+    if (f.text === "") {
+      // marked's text is "" for a fence of no lines and for one of a single blank line alike (its content match is lazy, and
+      // the renderer's dropped newline is the lexer's too), and for an opener the note ends on (an unclosed fence runs to
+      // the end). Read as one blank content line, a fence of no lines was searched past its own closer, and the first
+      // blank line after any opener-shaped line matched: the blank first line inside the next fence, whose lines then lay
+      // behind `from` and made it null, so its Copy pasted marked's spaces. So the empty text is matched as its lines are:
+      // an opener, then a closer, or a blank line and a closer, or a blank line the note ends on. (An indented block's
+      // text is never empty: the lexer takes blank lines as space before its code rule sees them.)
+      let end = -1;
+      for (let j = from; j < lines.length && end < 0; j++) {
+        if (j === 0 || !OPENER.test(lineText(j - 1))) continue;
+        if (CLOSER.test(lineText(j))) end = j + 1;
+        else if (contentStart(lineText(j), "") >= 0) {
+          if (j + 1 === lines.length) end = j + 1;
+          else if (CLOSER.test(lineText(j + 1))) end = j + 2;
+        }
+      }
+      if (end < 0) { out.push(null); continue; }
+      out.push(renderedFenceText(""));
+      from = end;
+      continue;
+    }
     const want = f.text.split("\n");
     let found = -1;
     for (let j = from; j + want.length <= lines.length && found < 0; j++) {

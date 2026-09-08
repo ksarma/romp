@@ -7,7 +7,7 @@
 //    container, so a swipe that started on a rectangle found `none` on the overlay and never panned `.fileview-body`.
 //    The disarmed layer now gives the pan back; a rectangle cannot do it on its own (a touch-action there is dead).
 // 2. The author chip compounded with the rendered markdown's heading sizes: 0.72em of a layer sitting inside an h1
-//    (1.3em then; 2em since Slice 3 of plans/markdown-viewer.md) rendered at 0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or
+//    (1.3em then; 2em since Slice 3 of plans/markdown-viewer.md) rendered at 0.94em: the same chip a third larger than on a paragraph figure, on the standalone image, or
 //    in the aside (the README banner pattern, <h1><img></h1>; ui/CLAUDE.md, font sizes: nested em compounds). In the
 //    light theme it also wore the prose face (mono) where every other chip wears the body's. The layer in rendered
 //    markdown now wears the body's own size and face (--fs, --sans), so the chip lands where the aside's does.

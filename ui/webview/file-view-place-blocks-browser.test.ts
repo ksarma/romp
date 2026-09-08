@@ -54,6 +54,13 @@ const rowAtTop = (page: any) => page.evaluate(() => {
   for (const r of Array.from(body.querySelectorAll("code.hljs .fv-cl"))) { const rr = r.getBoundingClientRect(); if (rr.bottom > br.top + 0.5) return { text: (r.textContent || "").trim().slice(0, 24), top: Math.round((rr.top - br.top) * 10) / 10 }; }
   return null;
 });
+/** The position, among the Rendered view's blocks or the Raw view's rows, of the first ending below the body's top edge: the
+ *  identity a blank Raw row's text cannot carry (at the document's end in the chat modal the top row is a blank one). */
+const topIndex = (page: any): Promise<number> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  const sel = document.querySelector(".fileview-md") ? ".fileview-md > *" : "code.hljs .fv-cl";
+  return Array.from(body.querySelectorAll(sel)).findIndex((e) => e.getBoundingClientRect().bottom > br.top + 0.5);
+});
 const click = async (page: any, label: string) => { await page.locator("#romp-fileview .fileview-btn", { hasText: new RegExp("^" + label + "$") }).click(); await frames(page, 3); };
 const reload = async (page: any, text: string) => {
   const paints: number = await page.evaluate(() => (window as any).__paints);
@@ -162,18 +169,26 @@ test("in a browser, the real module: a blank Raw row at the top seats the paragr
     // at the pane's width; Raw before it) the seat into the shorter one is clamped at its end, and the way back seats the
     // place the reader had, held across the clamp (file-view.ts seat), not the block the clamp showed: the Slice 3 tree read
     // the clamped body back and came back one paragraph early, the top block changed and its edge 65 to 107px lower (the
-    // Slice 3 review); before the slice the same clamp drifted the other direction by up to 264px.
+    // Slice 3 review); before the slice the same clamp drifted the other direction by up to 264px. The top block is named by
+    // its position as well as its text: in the chat modal from Raw the top row at the end is a blank one, and every blank row
+    // reads as "". The scrollTop pin is EXACT: the seat hands the held place back into the same layout, so the pixel a
+    // tolerance would forgive is the per-trip creep the fence-rows leg caught in the Slice 3 tree (1070 for 1071). The
+    // chat-from-Raw cell sits on a knife edge: paragraph 93's last line is seated 0.525px under the edge, and the browser's
+    // whole-pixel scrollTop lands it at 0.64, so readPlace takes an element showing under a pixel as not the top one
+    // (edge + 1, since the Slice 3 review's round 2; at 0.5 the 1.5 leading read paragraph 93 back as the top block).
     for (const [mode, raw] of [["chat", false], ["chat", true], ["pane", false], ["pane", true]] as [Mode, boolean][]) {
       const cell = `bottom, ${mode}, from ${raw ? "Raw" : "Rendered"}`;
       const { page, errors } = await openViewer(browser, mode, 900, 600, { raw });
       await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; b.scrollTop = b.scrollHeight; }); await frames(page, 3);
-      const before = (await topBlock(page))!;
+      const before = (await topBlock(page))!; const beforeAt = await topIndex(page);
       assert.equal(before.view, raw ? "raw" : "rendered", cell + ": the scene opens in the view named");
+      assert.ok(beforeAt >= 0, cell + ": a top block is found");
       await click(page, raw ? "Rendered" : "Raw"); await click(page, raw ? "Raw" : "Rendered");
-      const after = (await topBlock(page))!;
+      const after = (await topBlock(page))!; const afterAt = await topIndex(page);
       assert.equal(after.text, before.text, cell + ": the same top block (the Slice 3 tree: Paragraph 93 for 94 from Rendered)");
+      assert.equal(afterAt, beforeAt, cell + ": the same top block by position (a blank Raw row's text matches every blank row)");
       near(after.top, before.top, cell + ": at the same height (the first cut moved it 54px; the Slice 3 tree 65 to 107px from Rendered)");
-      near(after.scrollTop, before.scrollTop, cell + ": the same scrollTop", 1);
+      assert.equal(after.scrollTop, before.scrollTop, cell + ": the same scrollTop");
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }

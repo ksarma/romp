@@ -9,11 +9,14 @@
 //     `<span class="cl"><span class="ct">…</span></span>`, an hljs span that straddles a newline re-opened on the next
 //     line so the markup stays valid. The NEWLINES ARE DROPPED: a row stands for its line and the CSS counter on .cl
 //     draws the number. Whatever reads a wrapped block's lines puts the newline back between rows (anchor-map.ts
-//     codeRuns: the paint fallback, the reader's place, Slice 8's mapping), and Copy reads the raw text its caller
-//     captured before the rewrite.
+//     codeRuns: the paint fallback, the reader's place, Slice 8's mapping), and Copy never reads the rows: its caller
+//     hands addCopyBtn the text to copy, settled before the rewrite. For the chat that is the code element's
+//     textContent as captured (render.ts highlight); for the viewer it is the fence's text as the NOTE holds it
+//     (fence-source.ts: marked expanded the note's leading tabs to spaces before the textContent existed), the
+//     captured textContent only for a fence the module does not find in the note (file-view.ts mdBlock).
 //   - wrapCodeLines applies it to a code element.
 //   - addCopyBtn parks a Copy button top-right of the <pre>, idempotent (a re-render can run it again), copying the
-//     raw text it was given: the on-screen textContent lost its newlines to the wrap and is not copy-safe.
+//     text it was given: the on-screen textContent lost its newlines to the wrap and is not copy-safe.
 //   - copyText: the async Clipboard API with a hidden-textarea execCommand fallback.
 //
 // Click-safety (ui/CLAUDE.md): the Copy button's action stays on the button. Delegating it to a stable ancestor would
@@ -23,6 +26,13 @@
 // by a reload's fetch landing with no gesture behind it (the Comments panel's poll saw a session's write), and that
 // landing is held while a pointer is pressed over the body and runs on the release (actions.ts pressHold;
 // file-view-copy-held-browser.test.ts pins it). The chat rebuilds a card on its own paths; that is the chat's matter.
+// A KEYBOARD press has the same window and no hold reads it (the hold reads pointer events; the chat has none): a
+// button's Space activation is native to the keyup (Enter's to the keydown), so a swap between the keydown and the
+// keyup took the focused button and the keyup clicked nothing (the Slice 3 review, round 2). The button closes that
+// window itself: Space acts on the KEYDOWN, as Enter does, with the key's default prevented on the keydown (the button is
+// never put :active by the key, so its keyup dispatches no click) and on the keyup; a held key's repeats copy nothing
+// more. That is the same reading of Space the Comments panel gives its own controls (file-comments.ts, KEY_ACTS), and
+// every surface with a Copy gets it (file-view-copy-space-browser.test.ts pins it over the viewer).
 //
 // The sheets: the chat's unscoped `pre code .cl` / `.ct` / `.code-copy` rules (styles.css) and the viewer's scoped
 // `.fileview-md` copies in styles.css and feed.css (the feed page loads only feed.css), byte-equal
@@ -46,13 +56,19 @@ export function wrapLinesHtml(html: string): string {
   }).join("");
 }
 
-/** Wrap each logical line of a (highlighted or plain) code element in the rows above. */
+/** Wrap each logical line of a (highlighted or plain) code element in the rows above, and write the digits of its last
+ *  line number on the element (`--ln-digits`): the sheets' gutter basis reads it, so every row of a 10000-line block
+ *  carries a five-digit gutter and the text column stays one line (the Slice 3 review, round 2: a flex item's min-content
+ *  widened the one row a five-digit number outgrew, and `:has(> .cl:nth-child(10000))` in the sheet cost the layout six
+ *  times over on every fence). The rows are the element's children, so childElementCount is the line count; both callers
+ *  wrap after any sanitize, so the inline property stands. */
 export function wrapCodeLines(code: HTMLElement): void {
   code.innerHTML = wrapLinesHtml(code.innerHTML);
+  code.style.setProperty("--ln-digits", String(String(code.childElementCount).length));
 }
 
 // Copy text to the clipboard, falling back to a hidden-textarea execCommand when the async Clipboard API
-// is unavailable (it needs a secure context — localhost counts, but stay safe). Returns whether it copied.
+// is unavailable (it needs a secure context; localhost counts, but stay safe). Returns whether it copied.
 export function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
@@ -70,22 +86,37 @@ function fallbackCopy(text: string): boolean {
   } catch { return false; }
 }
 
-// An automatic "Copy" button parked top-right of every rendered code block (the user 2026-06-22). The RAW
-// source is captured at highlight time and closed over — the on-screen markup adds a line-number gutter and
-// drops the newline joins, so copying its textContent would be wrong. Faint until the block is hovered;
-// flips to a green "Copied" for ~1.2s on success. Idempotent (highlight can re-run on a re-render).
+// An automatic "Copy" button parked top-right of every rendered code block (the user 2026-06-22). The text to copy
+// is the caller's, closed over here and never read off the block: the on-screen markup adds a line-number gutter
+// and drops the newline joins, so its textContent would be wrong. The chat passes the textContent it captured
+// before the highlight rewrite; the viewer passes the fence's text as the note holds it (fence-source.ts), the
+// captured textContent only for a fence not found there (the header). Faint until the block is hovered; flips to
+// a green "Copied" for ~1.2s on success. Idempotent (highlight can re-run on a re-render).
 export function addCopyBtn(pre: HTMLElement, raw: string): void {
   if (pre.querySelector(":scope > .code-copy")) return;
   pre.classList.add("has-copy");
   const btn = el("button", "code-copy") as HTMLButtonElement;
   btn.type = "button"; btn.textContent = "Copy"; btn.title = "copy this code block";
-  btn.addEventListener("click", (ev) => {
-    ev.preventDefault(); ev.stopPropagation();
+  const copy = (): void => {
     copyText(raw).then((ok) => {
       btn.textContent = ok ? "Copied" : "Copy failed";
       btn.classList.toggle("copied", ok);
       window.setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1200);
     });
+  };
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    copy();
   });
+  // Space on the keydown, not the native keyup (header, Click-safety): the keydown's default prevented keeps the button
+  // out of :active for the key, so the keyup clicks nothing; the keyup's prevented too, for an engine that would click
+  // anyway. Repeats of a held key are the same press. Enter is left to the button: its click is on the keydown already.
+  btn.addEventListener("keydown", (ev) => {
+    if (ev.key !== " ") return;
+    ev.preventDefault();
+    if (ev.repeat) return;
+    copy();
+  });
+  btn.addEventListener("keyup", (ev) => { if (ev.key === " ") ev.preventDefault(); });
   pre.appendChild(btn);
 }

@@ -44,3 +44,27 @@ for (const mode of ["pane", "feed"] as Mode[]) {
     });
   });
 }
+
+// An empty fence directly before a fence whose first line is blank (the slice's review, round 2): fence-source.ts read the
+// empty token's text as one blank content line, so its search ran past its own closer to the blank first line inside the
+// next fence, and that fence, now behind the cursor, was not found and copied marked's spaces. The module is shared by the
+// three surfaces, so one surface measures it.
+const EMPTY_THEN_BLANK = ["Intro.", "", F, F, F + "py", "", "\tx = 1", F, "", "Tail."].join("\n") + "\n";
+test("in a browser, the real viewer, pane: Copy on the fence after an empty fence copies the note's tab (before the fix: marked's spaces, the empty fence having claimed its blank first line)", { timeout: 90000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 1000, 800, { docs: { [REPORT]: EMPTY_THEN_BLANK } });
+    const out = await page.evaluate(async () => {
+      const w = window as any;
+      w.__copied = [];
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (s: string) => { w.__copied.push(s); return Promise.resolve(); } } });
+      const pres = Array.from(document.querySelectorAll(".fileview-md pre")) as HTMLElement[];
+      for (const p of pres) (p.querySelector(":scope > .code-copy") as HTMLElement).click();
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      return { n: pres.length, copied: w.__copied as string[] };
+    });
+    assert.deepEqual(errors, [], "no script error");
+    assert.equal(out.n, 2, "two fences");
+    assert.deepEqual(out.copied, ["\n", "\n\tx = 1\n"], "the empty fence copies one newline; the next fence copies its blank line and the tab-indented line");
+    await page.close();
+  });
+});

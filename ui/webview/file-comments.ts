@@ -394,8 +394,12 @@ export function imgForRange(root: Element, src: string, range: SourceRange, file
   const imgs = imgsIn(root);
   return imgs.find((i) => embedOf(i, imgs, all, filePath) === e) || null;
 }
-// A framed picture wears the mark classes itself — an <img> has no text to wrap — plus an inline outline,
-// because the sheets' ring is an inset shadow the picture covers. `fc-img` tells unpaint to strip, not unwrap.
+// A framed picture wears the mark classes itself (an <img> has no text to wrap) plus an inline outline, because the
+// sheets' ring is an inset shadow the picture covers. `fc-img` tells unpaint to strip, not unwrap. Being inline, the
+// outline outranks every plain sheet rule, the print block's `outline: none` on the marks included, so the block has to
+// strip a framed picture with `!important` (`.fileview-body img.fc-img`, styles.css and feed.css): without that a
+// comment on a figure printed as an amber ring around the picture while the comment itself was hidden with the aside
+// (Slice 3 review, round 2; file-view-print-marks-browser.test.ts measures it).
 function styleFrame(img: HTMLElement): void {
   const presel = img.classList.contains("fc-presel");
   const dashed = !presel && img.classList.contains("fc-hl-context");
