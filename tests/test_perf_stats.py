@@ -184,10 +184,11 @@ class Collector(unittest.TestCase):
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["nudge_walk"]),
                          {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
-                          "deleg_hit", "deleg_miss", "lifted", "evict", "entries"},
+                          "deleg_hit", "deleg_miss", "lifted", "evict", "stale", "entries"},
                          "the auto-nudge walk (round 5): session-cycles visited and gated, the decision's store reads "
                          "and the shared-cache answers, the placement gate's memo counters and its bypass, the "
-                         "delegated check's, the wake-only lifts filed, evictions, plus its occupancy")
+                         "delegated check's, the wake-only lifts filed, evictions and stale-pin releases, plus its "
+                         "occupancy")
         for k, v in snap["memos"]["nudge_walk"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["bg_tops"]),

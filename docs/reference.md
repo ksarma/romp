@@ -2129,7 +2129,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   memoized, or computed uncached over a non-shared store), `deleg_hit` and
   `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
   wake-only dead-man filed), `evict` (entries dropped for sessions that left
-  the alive set) and the gauge `entries`. `bg_tops` is the placed-launch memo behind that lift and the
+  the alive set), `stale` (entries released because the parse cache no longer
+  holds the pinned turns) and the gauge `entries`. `bg_tops` is the placed-launch memo behind that lift and the
   feed's background-task classification, keyed on the parse object and the
   store object: `hit` and `miss` (calls answered from the per-version map
   against looked up), `resolve` (launch ids looked up on a miss, placed or

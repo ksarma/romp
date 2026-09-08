@@ -464,7 +464,9 @@ class _PerfStats:
                                    uncached over a non-shared store), deleg_hit / deleg_miss (the
                                    delegated-work check, same memo), lifted (lifts the wake-only
                                    dead-man filed), evict (entries dropped for sids that left the
-                                   alive set) and the gauge entries; bg_tops (the placed-launch memo
+                                   alive set), stale (entries released because the parse cache no
+                                   longer holds the pinned turns) and the gauge entries; bg_tops
+                                   (the placed-launch memo
                                    behind the lift and the feed's task classification,
                                    _bg_placed_tops, keyed on the parse and store objects) -> hit /
                                    miss (calls answered from the per-version map vs looked up),
@@ -10140,9 +10142,22 @@ def _auto_nudge_pass(now, tmux, run_dead_wait):
         except Exception:
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
-    for sid in [k for k in _NUDGE_GATE_MEMO if k not in alive_ids]:
-        del _NUDGE_GATE_MEMO[sid]                         # the sid left the alive set: nothing to gate
-        _nudge_walk_stats["evict"] += 1
+    for sid in list(_NUDGE_GATE_MEMO):
+        if sid not in alive_ids:
+            del _NUDGE_GATE_MEMO[sid]                     # the sid left the alive set: nothing to gate
+            _nudge_walk_stats["evict"] += 1
+            continue
+        # RELEASE A STALE PIN (review 2026-09-08). A session gated upstream of the placement gate (working,
+        # closer-unsettled, awaiting-dispatch, ...) never reaches the memo, so its entry would hold the parse
+        # and the store it was last judged under until its next idle cycle. The _bg_placed_tops rule: keep
+        # the entry only while its held turns object IS the parse cache's current one (then it costs no
+        # memory beyond what the cache holds anyway); a re-parsed transcript, or nothing cached, is the
+        # stale pin. A conservative drop costs one recomputation, never a wrong answer.
+        p = _NUDGE_GATE_MEMO[sid].get("plan")
+        cur = jd._PARSE_CACHE.get(sid)
+        if p is None or cur is None or (cur[1] or {}).get("turns") is not p[0]:
+            del _NUDGE_GATE_MEMO[sid]
+            _nudge_walk_stats["stale"] += 1
     try:
         if on:
             _debt_backstop_tick(now)                   # reminder outcomes for debtors the walk can't reach
@@ -11760,11 +11775,13 @@ def _nudge_response_ready(turns, store, rec, gid, now):
 # that matches nothing, so the gate recomputes until it can. The same entry memoizes
 # _all_outstanding_delegated per top goal on the store object alone (it reads nodes only). One entry per
 # sid, touched only under _AUTO_NUDGE_TICK_LOCK (the pass is single-flight); sids that leave the alive
-# set are evicted by the pass; past 512 entries the memo is cleared whole (the _PARSE_CACHE idiom).
+# set are evicted by the pass, and an entry whose held turns object is no longer the parse cache's current
+# one is released at the end of every walk (the stale pin of a session gated upstream of this gate; see
+# the pass); past 512 entries the memo is cleared whole (the _PARSE_CACHE idiom).
 _NUDGE_GATE_MEMO = {}   # sid -> {"plan": (turns, store, episodes ident, cleared ident, unplanned),
 #                                 "deleg": (store, {top gid: all-delegated})}
 _nudge_walk_stats = {"walked": 0, "gated": 0, "loads": 0, "shared": 0, "plan_hit": 0, "plan_miss": 0,
-                     "plan_bypass": 0, "deleg_hit": 0, "deleg_miss": 0, "lifted": 0, "evict": 0}
+                     "plan_bypass": 0, "deleg_hit": 0, "deleg_miss": 0, "lifted": 0, "evict": 0, "stale": 0}
 
 
 def _nudge_walk_report():
@@ -11774,7 +11791,9 @@ def _nudge_walk_report():
     `plan_hit` / `plan_miss` / `plan_bypass` placement-gate evaluations served from the memo, computed and
     memoized, or computed uncached over a non-shared store, `deleg_hit` / `deleg_miss` the delegated-work
     check's, `lifted` lifts the wake-only dead-man filed, `evict` entries dropped for sids that left the
-    alive set, and the gauge `entries` (sids holding an entry)."""
+    alive set, `stale` entries released at the end of a walk because the parse cache no longer holds the
+    pinned turns (a session gated upstream of the placement gate whose transcript was re-parsed), and the
+    gauge `entries` (sids holding an entry)."""
     out = dict(_nudge_walk_stats)
     out["entries"] = len(_NUDGE_GATE_MEMO)
     return out

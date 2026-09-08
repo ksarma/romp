@@ -113,7 +113,15 @@ class _Base(unittest.TestCase):
         jd.load_goals_shared = lambda sid: _count("load_goals_shared", real_shared(sid))
         self.turns = [{"id": "t1", "ended": True, "end": NOW - 8 * H, "t": NOW - 8 * H - 10, "atoms": []},
                       {"id": "t2", "ended": True, "end": NOW - 7 * H - 100, "t": NOW - 7 * H - 200, "atoms": []}]
-        jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}
+
+        def _parsed(sid, paths, now):
+            # as the real function records its parse: the end-of-walk sweep keeps a session's memo entry
+            # only while the parse cache's turns object is the one the entry holds
+            sess = {"turns": self.turns}
+            jd._PARSE_CACHE[sid] = (("fixture",), sess)
+            return sess
+        jd.parsed_session = _parsed
+        jd._PARSE_CACHE.pop(SID, None)
         self.gid = SID + ":g1"
 
     def tearDown(self):
@@ -125,6 +133,7 @@ class _Base(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
         getattr(km, "_NUDGE_GATE_MEMO", {}).clear()
+        jd._PARSE_CACHE.pop(SID, None)
         jd._SHARED_OFF[0] = self.shared_off_before
         try:
             (jd._overrides_dir() / (SID + ".jsonl")).unlink()
@@ -320,9 +329,59 @@ class TheWalkGateMemoOnlyServesTheSharedView(_Base):
         self._seed(stamped=False)
         self._cycle()
         self.assertIn(SID, km._NUDGE_GATE_MEMO)
+        before = dict(km._nudge_walk_stats)
         km._alive_sessions = lambda now, tmux: []
         self._tick(NOW + 5)
         self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "a sid that left the alive set holds no entry")
+        self.assertEqual((km._nudge_walk_stats["evict"] - before["evict"], km._nudge_walk_stats["stale"] - before["stale"]), (1, 0))
+
+
+class StalePinsAreReleased(_Base):
+    """A session gated upstream of the placement gate never reaches the memo, so without the end-of-walk
+    sweep its entry would hold the parse and store it was last judged under until its next idle cycle
+    (review 2026-09-08). The rule is _bg_placed_tops': keep the pin only while the held turns object is
+    the parse cache's current one."""
+
+    def setUp(self):
+        super().setUp()
+        self._toggle(False)
+        self._seed(stamped=False)
+        self._cycle()                                    # memoized on the current parse
+        self.assertIn(SID, km._NUDGE_GATE_MEMO)
+        self.before = dict(km._nudge_walk_stats)
+
+    def _delta(self, k):
+        return km._nudge_walk_stats[k] - self.before[k]
+
+    def test_a_gated_session_keeps_its_pin_while_the_parse_is_the_caches_current_one(self):
+        km._session_working = lambda turns: True         # gated upstream of the placement gate from now on
+        self._cycle(NOW + 5)
+        self.assertIn(SID, km._NUDGE_GATE_MEMO, "the cache still holds these turns: the pin costs nothing")
+        self.assertEqual((self._delta("stale"), self._delta("evict")), (0, 0))
+
+    def test_a_gated_sessions_pin_is_released_when_the_walk_re_parses_it(self):
+        km._session_working = lambda turns: True
+        self.turns = [dict(t) for t in self.turns]       # the transcript re-parsed: a new turns object
+        self._cycle(NOW + 5)                             # the walk parses (before the working gate), then returns
+        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "the held turns is no longer the cache's: released")
+        self.assertEqual((self._delta("stale"), self._delta("evict")), (1, 0))
+        km._session_working = lambda turns: False        # idle again: one recomputation, then memoized
+        self.assertEqual(self._cycle(NOW + 10)["plan_units"], 1)
+        self.assertEqual(self._cycle(NOW + 15)["plan_units"], 0)
+
+    def test_a_pin_is_released_when_another_reader_re_parsed_a_session_gated_before_its_parse(self):
+        km._session_flag = lambda sid, flag: True        # muted: the walk returns before it parses
+        jd._PARSE_CACHE[SID] = (("fixture-2",), {"turns": [dict(t) for t in self.turns]})   # a judge's re-parse
+        self._cycle(NOW + 5)
+        self.assertNotIn(SID, km._NUDGE_GATE_MEMO)
+        self.assertEqual(self._delta("stale"), 1)
+
+    def test_nothing_cached_is_the_stale_pin_too(self):
+        km._session_flag = lambda sid, flag: True
+        jd._PARSE_CACHE.pop(SID, None)                   # the cache was cleared whole (its overflow rule)
+        self._cycle(NOW + 5)
+        self.assertNotIn(SID, km._NUDGE_GATE_MEMO, "a conservative drop: one recomputation, never a wrong answer")
+        self.assertEqual(self._delta("stale"), 1)
 
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
@@ -343,7 +402,7 @@ class PerfBlock(_Base):
         self.assertIn("nudge_walk", snap["memos"])
         self.assertEqual(set(snap["memos"]["nudge_walk"]),
                          {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
-                          "deleg_hit", "deleg_miss", "lifted", "evict", "entries"})
+                          "deleg_hit", "deleg_miss", "lifted", "evict", "stale", "entries"})
         for k, v in snap["memos"]["nudge_walk"].items():
             self.assertIsInstance(v, int, k)
 
