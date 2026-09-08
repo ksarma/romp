@@ -1,9 +1,22 @@
 // TeX math for chat markdown: inline \( .. \) and $ .. $, display \[ .. \] and $$ .. $$
 // (the user 2026-08-03). marked has no math syntax, so without this every formula an agent
-// writes reaches the transcript as raw TeX source. KaTeX renders with output: "html" ONLY,
-// no MathML twin, so the result passes md()'s DOMPurify html profile untouched and the
-// sanitizer never widens for math. The KaTeX layout CSS ships via styles.css
-// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild).
+// writes reaches the transcript as raw TeX source.
+//
+// Rendering happens AFTER the sanitizer, not inside marked (plans/markdown-viewer.md Slice 1 review,
+// 2026-09-07). KaTeX carries every piece of vertical layout in inline `style` (a strut's height and
+// vertical-align, a vlist row's top, a fraction line's border width, a radical's padding), and the
+// shared sanitizer keeps only colour declarations in a `style` attribute (decision 6), so KaTeX's
+// output passed through sanitizeMd came back flat: numerator and denominator on one line, a
+// superscript at the baseline, the radical drawn over its radicand. The extensions therefore emit an
+// INERT placeholder (class md-math-inline or md-math-display, a span inside a paragraph or a div for a
+// display paragraph of its own, the TeX as its text, HTML-escaped) that the sanitizer treats as any
+// element with text, and renderMathPlaceholders below renders KaTeX into each placeholder on the
+// sanitized DOM, so its styles never meet DOMPurify. Nothing an author writes gains by hand-writing the
+// placeholder markup: KaTeX renders only what TeX says, under `trust: false` (no \href, \url,
+// \includegraphics, \htmlClass, \htmlStyle, \htmlData), which is KaTeX's own safety model. KaTeX
+// renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css
+// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). The file viewer's
+// mdBlock will call the same post-pass once KaTeX ships in its bundle (decision 1, Slice 4).
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -26,6 +39,12 @@ import type { TokenizerAndRendererExtension, Tokens } from "marked";
 
 type MathToken = Tokens.Generic & { text: string; display: boolean };
 
+/** The placeholder classes: inline math, and display math (KaTeX's displayMode). The class is the whole
+ *  contract between the extensions and renderMathPlaceholders; the tag (span in a paragraph, div for a
+ *  display paragraph of its own) only keeps an unrendered placeholder in the flow it came from. */
+export const MATH_INLINE_CLASS = "md-math-inline";
+export const MATH_DISPLAY_CLASS = "md-math-display";
+
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
 const AFTER_CLOSE = "[\\s.,;:!?)\\]}\"'*_~\\-、。，；：！？）】」]";
@@ -43,16 +62,16 @@ const INLINE_DOLLAR = new RegExp(
 const BLOCK_DOLLARS = /^ {0,3}\$\$([\s\S]+?)\$\$ *(?:\n+|$)/;
 const BLOCK_BRACKET = /^ {0,3}\\\[([\s\S]+?)\\\] *(?:\n+|$)/;
 
-function renderTex(tex: string, display: boolean): string {
-  // throwOnError: false renders bad TeX as visibly-flagged source instead of throwing; the
-  // catch is a belt for the residual throws (wrong option types, internal errors), falling
-  // back to the escaped literal so a formula can never blank a message.
-  try {
-    return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: "html" });
-  } catch {
-    const esc = tex.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return display ? `<pre><code>${esc}</code></pre>` : `<code>${esc}</code>`;
-  }
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** The placeholder marked emits for a formula: the TeX as escaped text under the class that names the
+ *  mode. `block` picks the tag, a div for a display paragraph of its own, a span inside a paragraph. */
+export function mathPlaceholder(tex: string, display: boolean, block: boolean): string {
+  const cls = display ? MATH_DISPLAY_CLASS : MATH_INLINE_CLASS;
+  const tag = block ? "div" : "span";
+  return `<${tag} class="${cls}">${escapeText(tex)}</${tag}>`;
 }
 
 export const mathBlock: TokenizerAndRendererExtension = {
@@ -68,7 +87,7 @@ export const mathBlock: TokenizerAndRendererExtension = {
     return { type: "mathBlock", raw: m[0], text: m[1].trim(), display: true } as MathToken;
   },
   renderer(token) {
-    return renderTex((token as MathToken).text, true);
+    return mathPlaceholder((token as MathToken).text, true, true);
   },
 };
 
@@ -89,6 +108,33 @@ export const mathInline: TokenizerAndRendererExtension = {
   },
   renderer(token) {
     const t = token as MathToken;
-    return renderTex(t.text, t.display);
+    return mathPlaceholder(t.text, t.display, false);
   },
 };
+
+/** Render KaTeX into every math placeholder under `root`, the SANITIZED DOM (sanitizeMd's body), and
+ *  unwrap each so the rendered `.katex` (or `.katex-display`) root stands where the placeholder stood,
+ *  exactly where marked's own KaTeX output used to: the comment highlights' closest(".katex") pairing
+ *  and the anchor map see the shape they always did. throwOnError: false renders bad TeX as
+ *  visibly-flagged source instead of throwing; the catch is a belt for the residual throws (an internal
+ *  error), falling back to the TeX as a code span so a formula can never blank a message. A second run
+ *  over the same root is a no-op: no placeholder survives the first. Plain and exported so the file
+ *  viewer can call it too (Slice 4). */
+export function renderMathPlaceholders(root: ParentNode): void {
+  root.querySelectorAll("." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS).forEach((node) => {
+    const el = node as HTMLElement;
+    const display = el.classList.contains(MATH_DISPLAY_CLASS);
+    const tex = el.textContent || "";
+    if (!tex.trim()) { el.replaceWith(...Array.from(el.childNodes)); return; }
+    try {
+      katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false });
+      el.replaceWith(...Array.from(el.childNodes));
+    } catch {
+      const doc = el.ownerDocument;
+      const code = doc.createElement("code");
+      code.textContent = tex;
+      if (display) { const pre = doc.createElement("pre"); pre.appendChild(code); el.replaceWith(pre); }
+      else el.replaceWith(code);
+    }
+  });
+}

@@ -3834,7 +3834,9 @@ body.filebrowse-open { overflow: hidden; }
 /* contain: layout makes the md box the containing block for any fixed or absolutely positioned descendant: an author's
    element wearing one of the page's fixed classes stays inside the note instead of covering the viewer's chrome
    (plans/markdown-viewer.md, Slice 1). Layout only, not paint: the body's vertical scroll and a table's own
-   horizontal scroll are untouched. Pinned byte-equal in both sheets (fileview-parity.test.ts). */
+   horizontal scroll are untouched. Content wider than the md box becomes ink overflow the body cannot scroll to,
+   so the media rules below cap an <img>, <svg>, <canvas> or <video> at the column. Pinned byte-equal in both
+   sheets (fileview-parity.test.ts). */
 .fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); contain: layout; }
 .fileview-md > :where(:not(table)) { max-width: calc(860px * var(--fv-scale, 1)); }
 .fileview-md > :first-child { margin-top: 0; }
@@ -3873,7 +3875,16 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
-.fileview-md > img, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
+/* Media a note draws itself (an inline <svg> diagram, a <canvas>, a <video>) fits the column the way an <img> does. Under
+   contain: layout anything wider than the md box is ink overflow the body cannot scroll to, so a 1500px drawing nested
+   in a paragraph was painted, clipped at the body's edge and unreachable (review of Slice 1, plans/markdown-viewer.md).
+   height: auto keeps the element's own ratio (its viewBox, or its width and height) as it shrinks. :where() holds the
+   rule at zero class specificity so KaTeX's `.katex svg { height: inherit; width: 100% }` (katex.min.css, which styles.css
+   inlines and the feed sheet gains with Slice 4) still wins over its stretchy glyphs once math renders in a note. The
+   direct-child rule carries the prose measure for these as it does for <img>: the bare 860px cap would itself overflow
+   a narrow pane. Byte-equal in both sheets (fileview-parity.test.ts); laid out in md-sanitize-wide-media-browser.test.ts. */
+:where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video { max-width: 100%; height: auto; }
+.fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap { max-width: min(100%, calc(860px * var(--fv-scale, 1))); }
 /* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
    heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
    0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README

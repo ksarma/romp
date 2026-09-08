@@ -30,8 +30,10 @@ export const delDoubleTilde = {
 } as MarkedExtension;
 
 // TeX math ($..$, $$..$$, \(..\), \[..\]) rendered via KaTeX. All delimiter heuristics (the
-// $-vs-shell/price disambiguation) live in math.ts; the output is plain spans + inline styles
-// (output: "html"), which DOMPurify's html profile in md() passes through unchanged.
+// $-vs-shell/price disambiguation) live in math.ts. The extensions emit an inert placeholder (the TeX as
+// text under md-math-inline / md-math-display); the caller renders KaTeX into it AFTER the sanitizer
+// (math.ts renderMathPlaceholders), because sanitizeMd keeps only colour in an inline style and KaTeX's
+// layout is all inline style.
 export const chatMdExtensions: MarkedExtension[] = [delDoubleTilde, { extensions: [mathBlock, mathInline] }];
 
 // The user-text instance: the chat grammar with hard line breaks. Its own `Marked` so the singleton's
@@ -39,7 +41,8 @@ export const chatMdExtensions: MarkedExtension[] = [delDoubleTilde, { extensions
 export const userMarked = new Marked({ gfm: true, breaks: true }, ...chatMdExtensions);
 
 /** marked's HTML for the user's own typed text: newlines kept as <br>, otherwise the chat grammar.
- *  UNSANITIZED — render.ts's userMd() is the only caller that reaches innerHTML, and it purifies first. */
+ *  UNSANITIZED — render.ts's userMd() is the only caller that reaches innerHTML; it purifies first and then
+ *  renders the math placeholders (math.ts renderMathPlaceholders) on the sanitized DOM. */
 export function userMdHtml(src: string): string {
   return userMarked.parse(src) as string;
 }

@@ -28,7 +28,7 @@ import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pu
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
 import { delegate } from "./actions";
-import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs } from "./md-links";
+import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -2250,6 +2250,14 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
   const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+  // Which elements are links: LINK_SEL (md-links.ts), the selector the chat's click delegate keys on too. An HTML <a>,
+  // an image map's <area> and an inline SVG <a>, spelled `href` or SVG 1.1's `xlink:href`, all navigate on a click, and
+  // DOMPurify's html and svg profiles keep every one of them; the passes below used to run over `a[href]`, which
+  // reached only the first (an area is not an anchor, and `[href]` matches the null-namespace attribute alone), so an
+  // <area href> or an SVG <a xlink:href> in a note took the pane's document to its URL, in the same frame (review of
+  // Slice 1, 2026-09-07). The XLink spelling is copied to a plain `href` first: the browser follows `href` when both are
+  // present, and the body's delegates (fv-anchor, fv-open) read `href`, so from here on every link is read one way.
+  box.querySelectorAll("a[*|href]:not([href])").forEach((a) => { a.setAttribute("href", linkHref(a)); });
   if (doc) {
     if (doc.kind === "url") {
       box.querySelectorAll("img[src]").forEach((node) => {
@@ -2265,9 +2273,9 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
       rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
     }
-    box.querySelectorAll("a[href]").forEach((node) => {
-      const a = node as HTMLAnchorElement;
-      const href = a.getAttribute("href") || "";
+    box.querySelectorAll(LINK_SEL).forEach((node) => {
+      const a = node as HTMLElement | SVGElement;
+      const href = linkHref(a);
       if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
       if (doc.kind === "url") {
         // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
@@ -2282,7 +2290,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
         a.dataset.path = joined;
         const hash = href.indexOf("#") >= 0 ? href.slice(href.indexOf("#")) : "";
         if (hash.length > 1) a.dataset.frag = hash;          // `report.md#results`: the heading to land on, once open
-        a.title = joined;
+        a.setAttribute("title", joined);                      // the attribute: an SVG <a> has no title property
       }
     });
   }
@@ -2290,13 +2298,16 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // navigate it away would silently eat the chat until a reload. Two kinds stay in the viewer: a local
   // document's sibling links (stamped fv-open above), and IN-DOCUMENT `#fragment` links, which land on
   // their heading through the body's delegated fv-anchor handler — a forced _blank on those opened a
-  // REAL tab at the chat page's own URL plus the fragment (found live, 2026-09-06).
-  box.querySelectorAll("a[href]").forEach((node) => {
-    const a = node as HTMLAnchorElement;
+  // REAL tab at the chat page's own URL plus the fragment (found live, 2026-09-06). Every link element (LINK_SEL,
+  // above) is stamped, and with setAttribute rather than the `target` and `rel` properties: on an SVGAElement `target`
+  // is a read-only SVGAnimatedString, so the property write was dropped without a word (the bundle is not strict there)
+  // and an SVG link kept navigating the pane; the attribute is what the browser reads on every one of these elements.
+  box.querySelectorAll(LINK_SEL).forEach((node) => {
+    const a = node as HTMLElement | SVGElement;
     if (a.dataset.act === "fv-open") return;
-    if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
-    a.target = "_blank";
-    a.rel = "noopener";
+    if (linkHref(a).startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener");
   });
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.

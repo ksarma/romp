@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MD_FORBID_TAGS, MD_PURIFY, colourOnlyStyle, isLiteralColour, styleAttributeHook, installMdSanitizeHooks } from "./md-sanitize";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, colourOnlyStyle, isLiteralColour, styleAttributeHook, installMdSanitizeHooks } from "./md-sanitize";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -83,14 +83,15 @@ test("the profile: html + svg, data: on img, no data-*, GitHub's forbidden tags,
   assert.deepEqual(MD_PURIFY.USE_PROFILES, { html: true, svg: true });
   assert.deepEqual(MD_PURIFY.ADD_DATA_URI_TAGS, ["img"]);
   assert.equal(MD_PURIFY.ALLOW_DATA_ATTR, false);
-  assert.equal(MD_PURIFY.SANITIZE_NAMED_PROPS, true, "GitHub's rule: an author's id and name are prefixed user-content-, never FORBID_ATTR (departure 1 in the plan's build note)");
+  assert.equal(MD_PURIFY.SANITIZE_NAMED_PROPS, true, "GitHub's rule: an author's id and name are prefixed user-content-, never FORBID_ATTR (departure 2 in the plan's Slice 1 build note)");
   assert.deepEqual(MD_PURIFY.FORBID_TAGS, [...MD_FORBID_TAGS]);
   for (const tag of ["style", "dialog", "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress"]) {
     assert.ok(MD_FORBID_TAGS.includes(tag), tag + " is forbidden");
   }
   assert.ok(!MD_FORBID_TAGS.includes("input"), "input is allowed by the profile; sanitizeMd's post-pass keeps only a disabled checkbox");
   assert.ok(!MD_FORBID_TAGS.includes("details") && !MD_FORBID_TAGS.includes("summary"), "details/summary are prose structure GitHub keeps");
-  assert.equal(MD_PURIFY.FORBID_ATTR, undefined, "no attribute is forbidden outright: id/name are prefixed, style is filtered by the hook");
+  assert.deepEqual(MD_PURIFY.FORBID_ATTR, [...MD_FORBID_ATTR]);
+  assert.deepEqual([...MD_FORBID_ATTR], ["background"], "the one forbidden attribute: a background image fetches on render with no click and no gate; id/name are prefixed, style is filtered by the hook");
 });
 
 // ── source pins: one sanitizer ──────────────────────────────────────────────────────────────────────

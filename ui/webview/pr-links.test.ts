@@ -773,8 +773,8 @@ test("the chat links inside md(): the sanitized tree is walked before it seriali
   assert.match(RENDER, /import \{ linkifyPrRefs, senderPrRepo, postalSenderHost \} from "\.\/pr-links";/);
   assert.match(RENDER, /function md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{/);
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(mdFn, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);\s*\n\s*return clean\.innerHTML;/,
-    "DOMPurify's own serialization is replaced by ours, after the walk — the sanitizer's verdicts stand (sanitizeMd returns the sanitized <body>)");
+  assert.match(mdFn, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*renderMathPlaceholders\(clean\);\s*\n\s*linkifyPrRefs\(clean, repo\);\s*\n\s*return clean\.innerHTML;/,
+    "DOMPurify's own serialization is replaced by ours, after the math post-pass and the walk; the sanitizer's verdicts stand (sanitizeMd returns the sanitized <body>)");
   assert.match(RENDER, /const id = sid \?\? renderingOwnerSid \?\? renderingSid \?\? activeId;/, "the owning session, as relative paths resolve");
   assert.doesNotMatch(RENDER, /installPrLinkOpener/, "the chat's own a[href] delegate already opens every absolute-scheme anchor");
 });

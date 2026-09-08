@@ -126,33 +126,90 @@ built departs from the text above, and why:
    allowed for marked's task checkbox, and a post-pass in `sanitizeMd` removes every input that is not a checkbox
    and forces `disabled` on a checkbox that lacks it, so no control in a note is live. A forbidden element's text
    stays as prose (DOMPurify's KEEP_CONTENT); a `<style>` block's text goes with it (DEFAULT_FORBID_CONTENTS).
+   One attribute is forbidden outright (`FORBID_ATTR: background`, added in review): `<td background=URL>` makes
+   the browser fetch the URL the moment the note renders, with no click and no gate, and decision 8's `img[src]`
+   gate would never see it; DOMPurify's html list keeps the attribute, GitHub's allowlist does not. `bgcolor`
+   fetches nothing and stays. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video poster>`,
+   `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a
    `style` attribute only `color` and `background-color` declarations whose value is a literal colour: a bare
-   keyword (a named colour, `transparent`, `currentcolor`; an unknown word is a declaration the browser ignores),
-   `#` plus 3 to 8 hex digits, or rgb()/rgba()/hsl()/hsla() over 3 or 4 plain numbers or percentages (deg, grad,
-   rad or turn on an hsl hue; `none`), separated by commas, spaces or a slash. No other function and no nested
-   parentheses (so no url(, var(, expression(, calc(), no `!important`, no quotes, escapes or comments. The
-   `background` shorthand is not `background-color` and is dropped. The attribute is rewritten to the surviving
-   declarations and removed when none survive. The hook is global to the DOMPurify instance and there is one
-   sanitize call, so it applies on both pages and to inline SVG.
+   word of letters (a named colour, `transparent`, `currentcolor`, or a CSS-wide keyword such as `inherit`,
+   `unset` or `initial`, which the browser applies and which can only set the colour; an unknown word is a
+   declaration the browser ignores; a hyphenated word such as `revert-layer` fails the pattern), `#` plus 3 to
+   8 hex digits, or rgb()/rgba()/hsl()/hsla() over 3 or 4 arguments, each a plain number or percentage with an
+   optional angle unit (deg, grad, rad or turn) or `none`, separated by commas, spaces or a slash. One argument
+   pattern serves every position, so an angle unit is accepted wherever it appears, though only an hsl hue can
+   carry one; a value such as `rgb(1deg 2 3)` is kept in the attribute and the browser discards it. No other
+   function and no nested parentheses (so no url(, var(, expression(, calc(), no `!important`, no quotes,
+   escapes or comments. The `background` shorthand is not `background-color` and is dropped. The attribute is
+   rewritten to the surviving declarations and removed when none survive. The hook is global to the DOMPurify
+   instance and there is one sanitize call, so it applies on both pages and to inline SVG.
 5. *Containment.* `contain: layout` on `.fileview-md` in both sheets; the parity test now pins `.fileview-md {`.
-   Finding: since fork PR #348 `.fileview-main` carries `container-type: inline-size`, which already makes it the
-   containing block for fixed descendants, so on main at build time a fixed element in a note could no longer
-   reach the close button, but it could still cover the body and the Comments aside; the md rule narrows the
-   containing block to the note itself. The region layer (`.fc-overlay`, absolute inside its own
-   `position: relative` wrap), the Comment float (`.fc-float`, appended to `document.body`) and the `.fc-hl`
-   highlights (inline) are unaffected: all 47 file-comments test files pass, the regions browser leg included.
+   It is the only rule that contains a fixed or absolutely positioned element in a note. `.fileview-main`'s
+   `container-type: inline-size` (fork PR #247, the Comments panel) applies style and inline-size containment,
+   not layout containment, so it forms no containing block: on the base commit an `inset: 0` fixed box nested
+   in a note measured the whole viewport, and `elementFromPoint` at the close button's centre and at the
+   Comments aside's first button returned that box (headless Chromium 151, measured in review on 2026-09-07
+   after the first draft of this note credited `container-type` with containing it). With the md rule the same
+   box measures the md rect and both hits return the buttons. Slice 2's move of `container-type: inline-size`
+   to `.fileview` serves its container query and adds no containment; the md rule stays. The region layer
+   (`.fc-overlay`, absolute inside its own `position: relative` wrap), the Comment float (`.fc-float`, appended
+   to `document.body`) and the `.fc-hl` highlights (inline) are unaffected: all 47 file-comments test files
+   pass, the regions browser leg included.
    Layout containment treats content overflowing the md box as ink overflow, but the box's height is auto, so
    the body's vertical scroll is unchanged (the browser leg scrolls a 120-paragraph note to its end) and a table
    or a `pre` keeps its own `overflow-x: auto`. A probe box in the browser leg has to be nested, not a direct
    child: `.fileview-md > :where(:not(table))` caps a direct child at the prose measure.
+   Content wider than the md box is ink overflow the body cannot scroll to (on the base commit the body scrolled
+   sideways to it), so the media a note draws itself is capped at the column the way `img` already was: `svg`,
+   `canvas` and `video` under `.fileview-md` take `max-width: 100%; height: auto`, written through `:where()` at
+   zero class specificity so KaTeX's own `.katex svg` rule wins once Slice 4 renders math in a note, and the
+   direct-child measure rule covers them too. A no-viewBox svg wider than the column is cropped rather than
+   scrolled to, the one case where the base's sideways scroll showed more. Byte-equal in both sheets; the parity
+   test pins the three heads; md-sanitize-wide-media-browser.test.ts lays the fixtures out at 900 and 380px.
 6. *The submit backstop* is one `submit` listener calling `preventDefault` on `.fileview-body`, in `openFileView`
    and in `openUrlView`, installed once per open beside the click delegate. The sanitizer never lets a form
    through, so the browser leg exercises the listener by inserting a real form after render.
-7. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
-   pins, the guide's paragraph) and `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over
-   the real files bundle). On the base commit the browser leg times out waiting for `.fileview-md`: the fixture's
-   `<style>` block hides the viewer, the audit's defect reproduced.
+7. *KaTeX renders after the sanitizer* (review round 1). The chat's math extensions (math.ts) emitted KaTeX's
+   markup into marked's output, and KaTeX carries every piece of vertical layout in inline `style` (a strut's
+   height, a vlist row's top, a radical's padding), so through the colour-only rule a fraction came back on one
+   line, a superscript at the baseline and a radical a hairline, while the source pin that stood for "the profile
+   passes KaTeX" stayed green. The extensions now emit an inert placeholder (a span under `md-math-inline`; a span,
+   or a div for a display paragraph of its own, under `md-math-display`; the TeX as escaped text), `sanitizeMd`
+   runs, and `renderMathPlaceholders` (math.ts, a plain exported function) renders KaTeX into each placeholder on
+   the sanitized DOM with `katex.render(tex, el, { displayMode, throwOnError: false, output: "html", trust: false })`
+   and unwraps it, so the `.katex` root stands where marked's output used to stand and KaTeX's styles never meet
+   DOMPurify. `md()` and `userMd()` call it between `sanitizeMd` and the PR-link walk. An author who hand-writes
+   the placeholder gets only what KaTeX renders from TeX under `trust: false` (no \href, \htmlStyle,
+   \includegraphics, \htmlClass). The colour-only rule is unchanged and no class name is special-cased; the svg
+   profile now serves a note's own inline SVG, not KaTeX. Slice 4 calls the same post-pass from `mdBlock` once
+   KaTeX ships in the files and feed bundles (decision 1).
+8. *Every link element* (review round 1). DOMPurify's html profile keeps `<map>` and `<area>`, and its svg
+   profile keeps an SVG `<a>` with `href` or SVG 1.1's `xlink:href`; `mdBlock`'s two link passes and the chat's
+   click delegate ran over `a[href]`, which reaches only an HTML anchor (an area is not an anchor, and `[href]`
+   matches the null-namespace attribute alone), so an `<area href>` or an SVG `<a xlink:href>` in a note or a
+   chat message navigated the pane's document to its URL in the same frame. md-links.ts exports `LINK_SEL`
+   (`a[*|href], area[href]`) and `linkHref` (`href`, else `xlink:href`); `mdBlock` copies an xlink-only href to
+   a plain `href` first, runs both passes over `LINK_SEL`, and writes `target`, `rel` and `title` with
+   `setAttribute` (an SVGAElement's `target` property is a read-only SVGAnimatedString, so the property write
+   was dropped without a word); the chat's delegate keys on the same selector and reads the same function. A
+   relative `<area href="sibling.md">` therefore rides fv-open into the viewer like a relative `<a>`. `map` and
+   `area` stay allowed: every link element the profile admits is now stamped or delegated.
+9. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
+   pins, the guide's paragraph), `md-sanitize-guide.test.ts` (the guide's `<style>` clause) and
+   `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over the real files bundle, with an
+   author's `data-*` fixture and a whole-leg log of main-frame navigations and off-host requests). On the base
+   commit the browser leg times out waiting for `.fileview-md`: the fixture's `<style>` block hides the viewer,
+   the audit's defect reproduced. Review round 1 added `md-sanitize-math.test.ts` and `render-math.test.ts`
+   (node: the placeholder contract, the katex.render options, the render.ts wiring),
+   `md-sanitize-postpass-browser.test.ts` (a fraction, a superscript, a radical and a display sum measured after
+   the post-pass; an author's style beside them keeps only colour; hand-written placeholders under trust: false;
+   the forced-disabled checkbox clicked), `md-sanitize-katex-browser.test.ts` (the rendered `.katex` is
+   byte-identical to katex.render's own output; the userMd path; idempotence),
+   `md-sanitize-viewer-links.test.ts` and `-browser.test.ts` (LINK_SEL in mdBlock; an area, an SVG anchor and a
+   fragment clicked in the viewer), `md-sanitize-chat-links-browser.test.ts` (the same shapes clicked in the
+   chat), `md-sanitize-background-browser.test.ts` (no `background=` survives and no request leaves the host) and
+   `md-sanitize-wide-media-browser.test.ts` (the media caps at two pane widths).
 
 ### Slice 2: layout follows the pane, reader keeps their place
 

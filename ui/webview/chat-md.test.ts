@@ -53,12 +53,14 @@ test("the chat grammar rides along: ~~double~~ strikes, a lone ~ stays literal",
   assert.match(lone, /~21/);
 });
 
-test("the chat grammar rides along: $x$ still renders KaTeX, and a price stays a price", () => {
+test("the chat grammar rides along: $x$ still becomes math, and a price stays a price", () => {
+  // math.ts emits an inert placeholder carrying the TeX; render.ts's userMd() renders KaTeX into it after the
+  // sanitizer (renderMathPlaceholders), so marked's own output holds the placeholder, never KaTeX's markup
   const out = userMdHtml("Euler: $e^{i\\pi}+1=0$\nnext line");
-  assert.ok(out.includes('class="katex"'), "inline math renders");
+  assert.ok(out.includes('<span class="md-math-inline">e^{i\\pi}+1=0</span>'), "inline math becomes the placeholder: " + out);
   assert.match(out, /<br>\s*next line/, "…and the newline after it is still kept");
   const price = userMdHtml("costs $5 and $10 today");
-  assert.ok(!price.includes('class="katex"'));
+  assert.ok(!price.includes("md-math"));
   assert.match(price, /\$5/);
 });
 

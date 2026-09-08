@@ -1,5 +1,6 @@
 import { marked } from "marked";
 import { sanitizeMd } from "./md-sanitize";   // the one sanitizer every markdown surface shares (md-sanitize.ts)
+import { renderMathPlaceholders } from "./math";   // KaTeX renders into marked's placeholders AFTER the sanitizer (render-math.test.ts)
 import hljs from "highlight.js/lib/core";
 import { highlightHtml } from "./highlight-cache";
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
@@ -59,6 +60,7 @@ import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
 import { openUrlView } from "./file-view";                 // the URL mode of the same viewer (md-url-view.test.ts)
 import { isMarkdownUrl } from "./md-links";
+import { LINK_SEL, linkHref } from "./md-links";   // the link selector and href read the click delegate shares with the viewer's mdBlock
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
 import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
 import { pastedFilePath } from "./paste-path";
@@ -1090,9 +1092,11 @@ function el(tag: string, cls?: string): HTMLElement {
 }
 
 // ONE sanitizer for both renderers, shared with the file viewer: sanitizeMd in md-sanitize.ts holds the
-// profile (html + svg for KaTeX's stretchy glyphs, data: URIs on <img>, no data-* attributes, GitHub's
-// rules for a message's own HTML: no <style>, no form controls, prefixed ids, colour-only inline styles)
-// and returns the sanitized <body> for the DOM walk below.
+// profile (html + svg, data: URIs on <img>, no data-* attributes, GitHub's rules for a message's own HTML:
+// no <style>, no form controls, prefixed ids, colour-only inline styles) and returns the sanitized <body>
+// for the DOM walk below. KaTeX is rendered AFTER the sanitizer, into the inert placeholders the math
+// extensions emit (math.ts renderMathPlaceholders): its layout is all inline style, which the colour-only
+// rule would strip, so it never passes through DOMPurify (plans/markdown-viewer.md, Slice 1 review).
 function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal
   // bodies) is UNTRUSTED and `marked` emits raw HTML verbatim, so its output
@@ -1109,6 +1113,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
     // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice. The
     // profile is sanitizeMd's, the one shared with userMd below and the file viewer.
     const clean = sanitizeMd(dirty);   // the sanitized <body>
+    renderMathPlaceholders(clean);
     linkifyPrRefs(clean, repo);
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1123,6 +1128,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
 function userMd(src: string): string {
   try {
     const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>
+    renderMathPlaceholders(clean);
     linkifyPrRefs(clean, prRepoFor());
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1279,7 +1285,8 @@ function preEl(text: string, scrollKey?: string): HTMLElement {
 }
 
 // Links in the chat (markdown [x](url) and GFM-autolinked bare URLs alike, all rendered as <a href>
-// by md()) must actually follow on click. Two hosts, two paths:
+// by md(), plus the anchor-like elements a message's own HTML can carry) must actually follow on click.
+// Two hosts, two paths:
 //   • Web dashboard (http(s): origin): open it in the user's OWN browser, on the device they're viewing
 //     from — a normal window.open in the click gesture (not popup-blocked). This is the common case and
 //     it used to silently die: the old code only ever postMessage'd the host, and the kernel has no
@@ -1288,15 +1295,24 @@ function preEl(text: string, scrollKey?: string): HTMLElement {
 //     the host extension, which openExternal()s normal URLs and feeds vscode://romp.romp-chat-view deep
 //     links into its own URI handler.
 // DOMPurify already stripped dangerous schemes (javascript:, etc.) in md(), so a surviving href is safe.
+// The delegate owns EVERY element a sanitized message can carry a navigating href on, not just <a href>: an
+// image map's <area href> (the html profile keeps map and area, and an area is not an anchor) and an SVG <a>
+// whose href is spelled xlink:href (the svg profile keeps XLink, and a bare `[href]` matches only the
+// null-namespace attribute, so the SVG 1.1 spelling is not `a[href]`). `*|href` names the attribute in any
+// namespace, which covers both spellings of an anchor. Before this, a click on either shape ran the default
+// action and the chat document itself navigated to the URL, losing the pane until a reload (web dashboard;
+// the 2026-09-07 review of the markdown viewer's Slice 1). md-sanitize-chat-links-browser.test.ts clicks both.
+// LINK_SEL and linkHref (the href, else xlink:href) are md-links.ts's, the same two the viewer's mdBlock stamps
+// its links with, so a link the one handles the other handles too (md-sanitize-viewer-links.test.ts).
 document.addEventListener("click", (e) => {
-  const a = (e.target as HTMLElement)?.closest?.("a[href]") as HTMLAnchorElement | null;
+  const a = (e.target as Element)?.closest?.(LINK_SEL) as HTMLElement | SVGElement | null;
   if (!a) return;
   // A control the file-comments panel painted INTO a linked figure in the viewer — a region's rectangle, the overlay a
   // press was handed on from, the picture an embed-line comment framed — is the panel's activation, not the link's:
   // its delegate opens the card and cancels the anchor (fcopen). Running first, at the capture phase, this handler
   // opened the tab and let no card open (the 2026-09-06 review); the panel's registry, never the markup, says which.
   if (panelMark(e.target as Element | null)) return;
-  const href = a.getAttribute("href") || "";
+  const href = linkHref(a);
   if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
   e.preventDefault();
   e.stopPropagation();

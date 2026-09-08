@@ -252,12 +252,16 @@ that; a table inside a quote or a list item stays within the prose width. Pictur
 shrink to fit, so resizing the pane never leaves the page wider than the pane.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries under the
-rules GitHub applies to a README. A `<style>` block, a form and its controls, and a
-`<dialog>` are dropped (their text stays as prose); a task-list checkbox stays but cannot be
-ticked; an inline `style` keeps only its `color` and `background-color`, so a coloured span
-keeps its colour and nothing in a file can move, hide or cover the viewer's own controls. An
-element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own heading
-ids are not, so a link to a heading inside the file still lands on it.
+rules GitHub applies to a README. A `<style>` block is dropped whole; a form and its
+controls, and a `<dialog>` are dropped but their text stays as prose; a task-list checkbox
+stays but cannot be ticked; an inline `style` keeps only its `color` and `background-color`,
+so a coloured span keeps its colour and nothing in a file can move, hide or cover the
+viewer's own controls. A `background=` attribute is dropped, since it would load a remote
+image the moment the file opens. An inline `svg`, a `canvas` or a `video` shrinks to the
+column, as a picture does. An element's `id` or `name` is prefixed `user-content-`, as on
+GitHub; the viewer's own heading ids are not, so a link to a heading inside the file still
+lands on it. A link in the file opens in a new tab whatever element carries it, an image
+map's region or a link drawn inside an inline SVG included.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or

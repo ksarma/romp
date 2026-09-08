@@ -22,7 +22,7 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 
 // the chat's global anchor-click delegate (the same isolation chat-link-open.test.ts uses)
-const HANDLER = (RENDER.match(/closest\?\.\("a\[href\]"\)[\s\S]*?\}, true\);/) || [""])[0];
+const HANDLER = (RENDER.match(/closest\?\.\((?:"a\[href\]"|LINK_SEL)\)[\s\S]*?\}, true\);/) || [""])[0];   // the delegate keys on LINK_SEL since the 2026-09-07 review
 // the URL viewer, from its export to the next top-level function
 const URL_FN = (VIEW.split("export function openUrlView")[1] || "").split("// Kick the browser's downloader")[0];
 // the markdown renderer
@@ -272,7 +272,7 @@ test("mdBlock takes the document's location and rewrites relative img/src and a/
   assert.ok(sanitize > -1 && rewrite > sanitize, "sanitise first; the rewrite only ever sees what DOMPurify kept");
   // the ATTRIBUTE, never the property — .src/.href are already resolved against the page (the wrong base)
   assert.match(MD_FN, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(MD_FN, /const href = a\.getAttribute\("href"\) \|\| "";/);
+  assert.match(MD_FN, /const href = linkHref\(a\);/);   // linkHref reads the href attribute (or xlink:href), never the property
   assert.doesNotMatch(MD_FN, /img\.src\b|a\.href\b/, "no property reads");
   // URL mode: both resolve against the document URL through the executed helper
   assert.match(MD_FN, /const abs = resolveDocRelative\(src, doc\.href\);\s*\n\s*if \(abs !== src\) img\.setAttribute\("src", abs\);/);
@@ -280,7 +280,7 @@ test("mdBlock takes the document's location and rewrites relative img/src and a/
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
   // the helpers arrive from the pure module
-  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs \} from "\.\/md-links";/);
+  assert.match(VIEW, /import \{ resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, linkHref \} from "\.\/md-links";/);
 });
 
 test("local file mode: a relative image is the sibling over the kernel's /file route (fileUrl, never hand-built)", () => {
@@ -303,7 +303,7 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
 
 test("local file mode: a relative link opens the sibling in the viewer via ONE delegated data-act listener on the body", () => {
   // the anchor carries the joined path as data, keeps its href for hover, and is not forced to _blank
-  assert.match(MD_FN, /const joined = joinDocPath\(doc\.path, href\);\s*\n\s*a\.dataset\.act = "fv-open";\s*\n\s*a\.dataset\.path = joined;\s*\n\s*const hash = href\.indexOf\("#"\) >= 0 \? href\.slice\(href\.indexOf\("#"\)\) : "";\s*\n\s*if \(hash\.length > 1\) a\.dataset\.frag = hash;[^\n]*\n\s*a\.title = joined;/,
+  assert.match(MD_FN, /const joined = joinDocPath\(doc\.path, href\);\s*\n\s*a\.dataset\.act = "fv-open";\s*\n\s*a\.dataset\.path = joined;\s*\n\s*const hash = href\.indexOf\("#"\) >= 0 \? href\.slice\(href\.indexOf\("#"\)\) : "";\s*\n\s*if \(hash\.length > 1\) a\.dataset\.frag = hash;[^\n]*\n\s*a\.setAttribute\("title", joined\);/,
     "the joined path rides data-path and the link's own #fragment rides data-frag (review fold 2026-09-07)");
   assert.match(MD_FN, /if \(a\.dataset\.act === "fv-open"\) return;/);
   // …the delegate: actions.ts's delegate, installed once per open on the body (stable across the
@@ -325,14 +325,15 @@ test("every heading gets id=md-<slug> after sanitisation, in both modes (the md-
   const sanitize = MD_FN.indexOf("sanitizeMd(");
   const ids = MD_FN.indexOf('h.id = "md-"');
   const docGate = MD_FN.indexOf("if (doc) {");
-  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate — every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
+  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate: every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
   assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
 test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank; every other anchor still does", () => {
-  assert.match(MD_FN, /if \(\(a\.getAttribute\("href"\) \|\| ""\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\s*\n\s*a\.target = "_blank";\s*\n\s*a\.rel = "noopener";/);
+  // setAttribute, not the properties: an SVG <a> is a link too now, and its `target` property is read-only (md-sanitize-viewer-links.test.ts)
+  assert.match(MD_FN, /if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\s*\n\s*a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/);
   // the fragment branch is in the UNCONDITIONAL loop — a document with no location still lands its own links
-  const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll("a[href]")'));
+  const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll(LINK_SEL)'));   // every link element, not only <a href>
   assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the final, doc-independent pass");
   assert.ok(finalLoop.includes('if (a.dataset.act === "fv-open") return;'), "…which also leaves the sibling links alone");
 });
