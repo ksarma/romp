@@ -76,7 +76,10 @@ test("the section wears the spend hover's grammar: a heading, label/figure rows,
   assert.ok(HIST.includes("var since=b?b.stateSince:0;"));
   assert.ok(!HIST.includes("b.why===RESTART_WHY"), "no why-keyed clock in the head");
   assert.ok(BACKEND.includes("self.api_health = ApiHealth(self.state_dir, log=self._log, boot_at=boot_at)"), "the backend hands its boot_at to the aggregator");
-  assert.ok(KERNEL.includes("boot_at=int(_STARTED))") && KERNEL.includes('out["bootAt"] = int(_STARTED)'), "the kernel passes the clock the route stamps");
+  // the float, to the millisecond the payload's stamps carry (review round 3: int() sat on the second boundary before the
+  // process started, under a row the previous kernel filed in that same second, and the tail read that row as current)
+  assert.ok(KERNEL.includes("boot_at=_STARTED)") && KERNEL.includes('out["bootAt"] = round(_STARTED, 3)'), "the kernel passes the clock the route stamps");
+  assert.ok(!KERNEL.includes("boot_at=int(_STARTED)"), "never truncated to the second");
   assert.ok(HIST.includes("(since?'<span class=ah-since>since '+hmd(since)+'</span>':'')"));
   assert.ok(HIST.includes("if(b&&b.why)h+='<div class=\"ah-line ru-tip-reset\">'+esc(b.why)+'</div>';"), "the reason in the small annotation grammar, no new font size");
   // the windows come from the config in force, labelled in minutes, the incomplete one saying how long the kernel is up
@@ -119,9 +122,12 @@ test("the tail: six rows newest first, each state's hold, and a restart never hi
   // previous stop, so the boot filed nothing) a divider is inserted
   assert.ok(HIST.includes("pre=hasBoot&&r.t<boot;"));
   assert.ok(HIST.includes("if(!crossed&&pre){crossed=true;"));
-  assert.ok(HIST.includes("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}"),
+  assert.ok(HIST.includes("if(!sawRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}"),
     "the divider takes no slot: the cap counts transitions (review round 1: it used to count the divider, so a tail across a restart showed five)");
-  assert.ok(HIST.includes("prevRestart=restart;shown++;}"));
+  // any restart row shown above suppresses it, not only the row right above: the backend seeds the restart row one
+  // millisecond past a row the previous kernel filed at or after this start, so that row can sit between (review round 3)
+  assert.ok(HIST.includes("if(restart)sawRestart=true;shown++;}"));
+  assert.ok(!HIST.includes("prevRestart"), "one restart is one mark, whatever sits between the row and the crossing");
   assert.equal(HIST.split("shown++").length - 1, 1, "shown counts transition rows only");
   // a bucket is named only when there are several; two of one family are told apart by their auth label
   assert.ok(HIST.includes("var word=(multi?bname(d,r.bucket)+' ':'')+r.to"));
@@ -129,16 +135,19 @@ test("the tail: six rows newest first, each state's hold, and a restart never hi
   assert.ok(HIST.includes("' · worst of '+nb+' buckets</span>'"));
 });
 
-test("accessibility: focus shows the hover, blur hides it, the cell is described by the tip, and the close does not re-pop it", () => {
+test("accessibility: focus shows the hover, blur hides it, the cell is described by a short summary, and the close does not re-pop it", () => {
   // a focus the browser re-dispatches because the window regained focus is skipped only when the cell already held
-  // focus at the window's event (winFocusEl): a Tab out of a pane iframe fires the same window event with the iframe
-  // host active, and must show (review round 2)
+  // focus at the window's event (winFocusEl): a Tab out of a pane iframe fires the same window event with the BODY
+  // active (Chromium clears the document's focused element before it fires; the recorded element is never the cell),
+  // and must show (review round 2)
   assert.ok(JS.includes("el.addEventListener('focus',function(){if(skipFocus||winFocusEl===el||pinned||tip.style.display==='block')return;show(null);});"));
   assert.ok(!JS.includes("winFocus=true"), "the mark is an element, not a flag");
   // the cell is described by a SHORT visually-hidden summary (#ah-desc), refreshed on every render, never by the tip
   assert.ok(JS.includes("var desc=document.createElement('span');desc.id='ah-desc';desc.className='ah-vh';document.body.appendChild(desc);"));
   assert.ok(JS.includes("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();desc.textContent=descText();"));
-  assert.ok(HIST.includes("function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'Reading the history.'+tail;"));
+  // before the answer the description carries the state word the frame already put on the cell (review round 3: assistive
+  // tech reads the description at focus time, and a loading line with no state word left it unsaid); the landed line adds the since
+  assert.ok(HIST.includes("function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'History: '+((LAST&&LAST.text)||'unknown')+'. Reading the details.'+tail;"));
   assert.ok(HIST.includes("return 'History: '+(ov.state||'unknown')+((b&&b.stateSince)?' since '+hmd(b.stateSince):'')+'.'+tail;}"), "the state word and its since");
   assert.ok(!JS.includes("'aria-describedby','ah-tip'"), "the tip's whole text is never the description");
   assert.ok(KERNEL.includes(".ah-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}"));

@@ -26,6 +26,11 @@ the cell is described by a short summary, not the tip; a transition filed at asO
 state before it; a bucket the boot seeded reads one time in the head, the divider and the boot's row; a mixed window
 counts every attempt once and says how many had no status.
 
+Review round 3: the previous kernel's last row filed in the same second as this kernel's start sits UNDER the restart
+row (the boot is the kernel's start to the millisecond, the row seeded at it); a row filed after the start sits under
+the clamped restart row with one restart mark, not a row and a divider; the cell's description at focus time, in the
+focus's own task, carries the state word the frame put on the cell, and the landed one its since.
+
 Synthetic only: invented bucket labels, a fixed shape, times relative to the run so the same-day clock words
 apply; no real data."""
 import functools
@@ -153,6 +158,21 @@ PAYLOADS = {
                     buckets={KEY: _bucket(KEY, "unknown", BOOT_M, FEW, QUIET_WINS)},
                     transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
                                  _tr(BOOT_M, KEY, "thrashing", "unknown", RESTART)]),
+    # the previous kernel's last read filed a transition 0.2 s before this kernel's start (it drains under SIGTERM
+    # while still serving; the manager respawns at once), so the two sit in one second. bootAt is the start to the
+    # millisecond and the restart row is seeded at it: the row is the newest, the old row's hold ends at it, no
+    # divider (review round 3: an int boot sat before the old row, which then read as the current state)
+    "inversion": _base(bootAt=BOOT + 0.9, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
+                       buckets={KEY: _bucket(KEY, "unknown", BOOT + 0.9, FEW, QUIET_WINS)},
+                       transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
+                                    _tr(BOOT + 0.7, KEY, "thrashing", "healthy"), _tr(BOOT + 0.9, KEY, "healthy", "unknown", RESTART)]),
+    # the previous kernel filed AFTER this one's start (the two overlapped, or the clock stepped): the backend seeds
+    # the restart row one millisecond past that row, so the row sits between the restart row and the pre-boot rows;
+    # one restart, one mark: the restart row above suppresses the divider at the crossing
+    "clamped": _base(bootAt=BOOT + 0.9, uptimeS=float(NOW - (BOOT + 0.9)), overall={"state": "unknown", "worstBucket": KEY},
+                     buckets={KEY: _bucket(KEY, "unknown", BOOT + 0.951, FEW, QUIET_WINS)},
+                     transitions=[_tr(NOW - 3000, KEY, "unknown", "healthy"), _tr(NOW - 1500, KEY, "healthy", "thrashing"),
+                                  _tr(BOOT + 0.95, KEY, "thrashing", "healthy"), _tr(BOOT + 0.951, KEY, "healthy", "unknown", RESTART)]),
     # the hover's own read filed a transition, so its t is asOf: the state it closed reads its duration, closed, and
     # the new state is the one 'so far' (a flag, never a stamp comparison; review round 2 asked for it executed)
     "ownread": _base(overall={"state": "thrashing", "worstBucket": KEY},
@@ -179,6 +199,12 @@ def _hm(t):
 def _min(s):
     """dur()'s minute form for 60 s <= s < 3600 s: Math.round, which rounds a half up (Python's round would not)."""
     return "%d min" % int(s / 60 + 0.5)
+
+
+def _dur(s):
+    """dur() under an hour: whole seconds first (Math.round), then '<n> s' under a minute, else Math.round minutes."""
+    s = int(s + 0.5)
+    return "%d s" % s if s < 60 else "%d min" % int(s / 60 + 0.5)
 
 
 def _hmd(t):
@@ -309,6 +335,17 @@ await step("stale", async () => {
   R.minute = { head: await head(), rows: await rows() };
   await leave();
 });
+await step("inversion", async () => {
+  // 7d. the previous kernel's last row 0.2 s before the boot, the restart row at the boot: the restart row is the
+  //     newest, the old row closes at it, no divider; 7e. that row AFTER the boot and the restart row a millisecond
+  //     past it (the backend's clamp): still one restart mark
+  await show("inversion"); await waitRows();
+  R.inversion = { head: await head(), rows: await rows() };
+  await leave();
+  await show("clamped"); await waitRows();
+  R.clamped = { head: await head(), rows: await rows() };
+  await leave();
+});
 await step("ownread", async () => {
   // 7c. a transition at t === asOf, the hover's own read: the closed state reads its duration, the new one 'so far'
   await show("ownread"); await waitRows();
@@ -374,12 +411,18 @@ await step("order", async () => {
   await ev((f) => { window.__rompApiHealth(f); }, frame());
 });
 await step("focus", async () => {
-  // 12. keyboard focus shows the hover as the pointer does; blur hides it
-  await ev(() => { document.getElementById("rail-api").focus(); });
+  // 12. keyboard focus shows the hover as the pointer does; blur hides it. The focus and the look at the description
+  //     are ONE task: assistive tech reads the description at focus time, and what is there then is what the user
+  //     hears (review round 3: a loading line with no state word). A frame with a distinctive text stands on the cell
+  //     first, so the word the description carries is provably the frame's; frame() is put back after.
+  await ev((f) => { window.__rompApiHealth(f); }, frame({ state: "degraded", cls: "429", text: "rate limited · 1 waiting", waiting: 1, since: NOW_PLACEHOLDER }));
+  R.focusDesc0 = await ev(() => { document.getElementById("rail-api").focus(); return (document.getElementById("ah-desc") || {}).textContent; });
   R.focusShown = await shown(); R.focusDescribed = await described(); R.focusMode = await mode();
   await waitRows();
+  R.focusDesc = await descOf();
   await ev(() => { document.getElementById("rail-api").blur(); });
   R.blurHidden = !(await shown()); R.blurDescribed = await described();
+  await ev((f) => { window.__rompApiHealth(f); }, frame());
   // 13. the pointer arriving on the tip focus already shows keeps its rows and does not re-read
   await ev(() => { document.getElementById("rail-api").focus(); });
   await waitRows();
@@ -593,7 +636,7 @@ class ServedHistory(unittest.TestCase):
 
     def test_a_fresh_show_drops_the_last_answer_and_the_newest_read_wins_a_race(self):
         R = self.R
-        for name in ("quiet", "empty", "two", "twoFam", "offline", "stale", "minute", "ownread", "cap", "capPost"):
+        for name in ("quiet", "empty", "two", "twoFam", "offline", "stale", "minute", "inversion", "clamped", "ownread", "cap", "capPost"):
             self.assertTrue(R[name + "Wait"], "%s: the dots stand in again, not the last hover's rows" % name)
             self.assertEqual(R[name + "Rows0"], 0, name)
         self.assertEqual(R["racePending"], 2, "enter, leave, enter: two reads in flight")
@@ -669,6 +712,36 @@ class ServedHistory(unittest.TestCase):
         self.assertEqual(h["since"], "since " + tail[0]["k"], "head since == the restart row's stamp: one clock")
         self.assertFalse(any(r["boot"] for r in tail))
         self.assertEqual(BOOT_M % 60, 58, "the payload's boot sits two seconds before a minute boundary")
+
+    def test_the_restart_row_sorts_above_the_previous_kernel_s_last_row_filed_in_the_same_second(self):
+        h, rows = self.R["inversion"]["head"], self.R["inversion"]["rows"]
+        self.assertEqual(h["word"], "unknown")
+        self.assertEqual(h["since"], "since " + _hmd(BOOT + 0.9), "the seeded stateSince, the boot to the millisecond")
+        tail = rows[3:]
+        self.assertEqual([(r["k"], r["w"], r["v"], r["boot"]) for r in tail],
+                         [(_hmd(BOOT + 0.9), "unknown · kernel restarted", _dur(NOW - (BOOT + 0.9)) + " so far", False),
+                          (_hmd(BOOT + 0.7), "healthy", "0 s", False),
+                          (_hmd(NOW - 1500), "thrashing", _dur(BOOT + 0.7 - (NOW - 1500)), False),
+                          (_hmd(NOW - 3000), "healthy", "25 min", False)],
+                         "the restart row is the newest; the previous kernel's last state closed at the restart, never 'so far'; "
+                         "the boot's own row names the restart, so no divider")
+        self.assertEqual(h["since"], "since " + tail[0]["k"], "head since == the restart row's stamp")
+        self.assertEqual(sum(1 for r in tail if " so far" in (r["v"] or "")), 1)
+        self.assertFalse(any(r["boot"] for r in tail))
+
+    def test_a_row_the_previous_kernel_filed_after_this_start_sits_under_the_clamped_restart_row_with_one_mark(self):
+        h, rows = self.R["clamped"]["head"], self.R["clamped"]["rows"]
+        self.assertEqual(h["since"], "since " + _hmd(BOOT + 0.951))
+        tail = rows[3:]
+        self.assertEqual([(r["k"], r["w"], r["v"], r["boot"]) for r in tail],
+                         [(_hmd(BOOT + 0.951), "unknown · kernel restarted", _dur(NOW - (BOOT + 0.951)) + " so far", False),
+                          (_hmd(BOOT + 0.95), "healthy", "0 s", False),
+                          (_hmd(NOW - 1500), "thrashing", _dur(BOOT + 0.9 - (NOW - 1500)), False),
+                          (_hmd(NOW - 3000), "healthy", "25 min", False)],
+                         "the old row sits between the restart row and the pre-boot rows (its hold ends at the restart row); the "
+                         "pre-boot hold ends at the boot; the restart row above suppresses the divider: one restart, one mark")
+        self.assertFalse(any(r["boot"] for r in tail), "no divider under a shown restart row, whatever sits between")
+        self.assertEqual(sum(1 for r in tail if "kernel restarted" in (r["w"] or "")), 1)
 
     def test_a_transition_the_hover_s_own_read_filed_closes_the_state_before_it(self):
         h, rows = self.R["ownread"]["head"], self.R["ownread"]["rows"]
@@ -797,7 +870,8 @@ class ServedHistory(unittest.TestCase):
 
     def test_the_cell_is_described_by_a_short_summary_and_never_by_the_rows(self):
         R = self.R
-        self.assertEqual(R["stormDesc0"], "Reading the history. Press Enter to open it.", "before the answer: the read in flight, not the loader's markup")
+        self.assertEqual(R["stormDesc0"], "History: ok. Reading the details. Press Enter to open it.",
+                         "before the answer: the state word the frame put on the cell and the read in flight, not the loader's markup")
         m = R["storm"]["mode"]
         d = m["descText"]
         self.assertEqual(d, "History: thrashing since %s. Press Enter to open it." % _hmd(NOW - 300), "the state word, its since, how to reach the rest")
@@ -807,6 +881,13 @@ class ServedHistory(unittest.TestCase):
         self.assertTrue(m["descInTree"])
         self.assertLessEqual(max(m["descBox"]), 1.0, "visually hidden: one pixel or less each way")
         self.assertEqual(R["fail503"]["desc"], "Could not read the API history: HTTP 503. Press Enter to open it.")
+        # at focus time, in the focus's own task (where assistive tech reads it), the description carries the state
+        # word the frame already put on the cell; the landed one carries the since (review round 3: the loading line
+        # had no state word, and nothing announces the landed text)
+        self.assertEqual(R["focusDesc0"], "History: rate limited · 1 waiting. Reading the details. Press Enter to open it.")
+        self.assertIn("rate limited", R["focusDesc0"], "the frame's own words, before any read")
+        self.assertEqual(R["focusDesc"], "History: thrashing since %s. Press Enter to open it." % _hmd(NOW - 300))
+        self.assertIn(" since ", R["focusDesc"])
 
     def test_enter_pins_the_section_a_frame_re_reads_it_and_escape_does_not_re_pop_the_hover(self):
         R = self.R

@@ -13,7 +13,9 @@ section's bootAt divider covers that case, so the boundary is never hidden); the
 the route with no Origin header, which is what a same-origin GET fetch sends; the apiHealth frame carries no
 history and _api_health_push still sends nothing on an unchanged world, a route read in between included; the
 backend's aggregator is seeded with the kernel's own boot clock, the one the route stamps as bootAt, so a bucket
-the boot seeded has one since-time in the head, the divider and the boot's row (review round 2).
+the boot seeded has one since-time in the head, the divider and the boot's row (review round 2); that clock is the
+float, to the millisecond, and the seed is clamped past the restored tail, so the restart row is the newest row
+however close the previous kernel's last transition came to this start (review round 3).
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
 import inspect
@@ -182,9 +184,9 @@ class Payload(unittest.TestCase):
         # so the section cannot key the boundary on a row; it keys it on the payload's bootAt, which the route
         # stamps from the kernel's own boot identity
         self.assertIn("if(!crossed&&pre){crossed=true;", HIST)
-        self.assertIn("if(!prevRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\">", HIST)
+        self.assertIn("if(!sawRestart){out+='<div class=\"ru-tip-row ah-hrow ah-boot\">", HIST)
         self.assertIn("<span class=ah-hword>kernel restarted</span>", HIST)
-        self.assertIn('out["bootAt"] = int(_STARTED)', inspect.getsource(km.Handler.do_GET))
+        self.assertIn('out["bootAt"] = round(_STARTED, 3)', inspect.getsource(km.Handler.do_GET))
 
 
 class OneClock(unittest.TestCase):
@@ -193,7 +195,10 @@ class OneClock(unittest.TestCase):
     its own clock, seconds after _STARTED (the backend is built after the boot's imports and warm-up), and the
     hover's head named one minute for a bucket the boot seeded while its divider named the other whenever that gap
     straddled a minute; the JS branch that keyed the head on the bucket's why being the restart reason was dead,
-    because the read that serves the payload replaces that reason with its own."""
+    because the read that serves the payload replaces that reason with its own. Round 3: the clock is the FLOAT, to
+    the millisecond the payload's stamps carry (int() sat on the second boundary before the process started, under a
+    row the previous kernel filed in that same second, and the tail read that row as current above the restart row),
+    and the seed is clamped one millisecond past a restored row that is not before it, with one log line."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -221,9 +226,12 @@ class OneClock(unittest.TestCase):
     def test_the_backend_hands_its_boot_at_to_the_aggregator_and_the_kernel_passes_its_start(self):
         be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, boot_at=T0 + 30)
         self._check(be.api_health.snapshot(T0 + 31), T0 + 30)
-        # the kernel's construction site passes _STARTED, the clock the route stamps as bootAt
-        self.assertIn("boot_at=int(_STARTED))", inspect.getsource(km._sdk_locked))
-        self.assertIn('out["bootAt"] = int(_STARTED)', inspect.getsource(km.Handler.do_GET))
+        # the kernel's construction site passes _STARTED, the clock the route stamps as bootAt: the float, never
+        # int() (review round 3); the route rounds it to the millisecond, the precision the aggregator stamps in
+        src = inspect.getsource(km._sdk_locked)
+        self.assertIn("boot_at=_STARTED)", src)
+        self.assertNotIn("boot_at=int(_STARTED)", src)
+        self.assertIn('out["bootAt"] = round(_STARTED, 3)', inspect.getsource(km.Handler.do_GET))
         # and the section reads stateSince alone: no why-keyed branch, nothing for it to be dead on
         self.assertIn("var since=b?b.stateSince:0;", HIST)
         self.assertNotIn("b.why===RESTART_WHY", HIST)
@@ -234,7 +242,7 @@ class OneClock(unittest.TestCase):
                 inner.ah = sb.ApiHealth(d, boot_at=boot)
         saved = km._sdk
         try:
-            km._sdk = lambda: _Seeded(self.d, int(km._STARTED))     # seeded the way _sdk_locked seeds the live one
+            km._sdk = lambda: _Seeded(self.d, km._STARTED)     # seeded the way _sdk_locked seeds the live one
             status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
         finally:
             km._sdk = saved
@@ -242,9 +250,57 @@ class OneClock(unittest.TestCase):
         out = json.loads(body)
         b = out["buckets"][self.key]
         row = [r for r in out["transitions"] if r["why"] == sb.API_HEALTH_RESTART_WHY][-1]
-        self.assertEqual(out["bootAt"], int(km._STARTED))
+        self.assertEqual(out["bootAt"], round(km._STARTED, 3), "the kernel's start to the millisecond")
+        self.assertEqual(int(out["bootAt"]), int(km._STARTED), "/version's started is its whole seconds")
         self.assertEqual(b["stateSince"], out["bootAt"], "head since and bootAt: one number")
         self.assertEqual(row["t"], out["bootAt"], "the restart row's stamp too")
+
+    def _previous_kernel(self, last_t):
+        """A state file as the previous kernel left it: its last read filed unknown -> thrashing at `last_t`."""
+        d = tempfile.mkdtemp()
+        ah = sb.ApiHealth(d)
+        label = _label(ah)
+        for e in _storm(last_t - 600, last_t, label):
+            ah._push(e)
+        ah.snapshot(last_t)
+        return d, label + "|fable"
+
+    def test_the_restart_row_is_the_newest_row_when_the_previous_kernel_filed_in_this_boot_s_second(self):
+        # the previous kernel drains under SIGTERM while still serving, and an open card's re-read filed a transition
+        # at T0 + 0.7; the manager respawned at once and this kernel's _STARTED is T0 + 0.9. int() of that is T0,
+        # BEFORE the row, and a seed there sorted under it: the tail read the old kernel's thrashing as the current
+        # state above the restart row while the head said unknown since the boot (review round 3)
+        d, key = self._previous_kernel(T0 + 0.7)
+        lines = []
+        snap = sb.ApiHealth(d, boot_at=T0 + 0.9, log=lines.append).snapshot(T0 + 1.5)
+        rows = snap["transitions"]
+        self.assertEqual(rows[-1]["why"], sb.API_HEALTH_RESTART_WHY)
+        self.assertAlmostEqual(rows[-1]["t"], T0 + 0.9, delta=1e-6, msg="the restart row at the float boot")
+        self.assertEqual(rows[-1]["t"], max(r["t"] for r in rows), "the newest row in the tail")
+        self.assertAlmostEqual(rows[-2]["t"], T0 + 0.7, delta=1e-6)
+        self.assertGreater(rows[-2]["t"], int(T0 + 0.9), "the int seed sat under this row")
+        b = snap["buckets"][key]
+        self.assertGreaterEqual(b["stateSince"], rows[-1]["t"])
+        self.assertEqual(b["stateSince"], rows[-1]["t"], "the head's since and the row: one number")
+        self.assertEqual([ln for ln in lines if "not before this boot" in ln], [], "nothing to clamp: the boot is past the row")
+
+    def test_a_boot_not_past_the_restored_tail_seeds_one_millisecond_past_it_and_says_so_once(self):
+        # the previous kernel filed AFTER this one's start (the two overlapped, or the clock stepped back): the seed
+        # moves one millisecond past that row and the log says so once. Judged at the millisecond the tail is kept
+        # in: a boot inside the row's own millisecond is clamped too, one 0.6 ms past it rounds past it on its own
+        for boot, clamped in ((T0 + 0.65, True), (T0 + 0.7, True), (T0 + 0.7004, True), (T0 + 0.7006, False)):
+            d, key = self._previous_kernel(T0 + 0.7)
+            lines = []
+            snap = sb.ApiHealth(d, boot_at=boot, log=lines.append).snapshot(T0 + 2)
+            row, b = snap["transitions"][-1], snap["buckets"][key]
+            self.assertEqual(row["why"], sb.API_HEALTH_RESTART_WHY, boot)
+            self.assertAlmostEqual(row["t"], T0 + 0.701, delta=1e-6, msg=repr(boot))
+            self.assertEqual(row["t"], max(r["t"] for r in snap["transitions"]), "the restart row stays the newest")
+            self.assertEqual(b["stateSince"], row["t"], "one number: the head's since and the row")
+            said = [ln for ln in lines if "not before this boot" in ln]
+            self.assertEqual(len(said), 1 if clamped else 0, (boot, lines))
+            if clamped:
+                self.assertIn("%.3f" % (T0 + 0.7), said[0])
 
 
 class Route(unittest.TestCase):
@@ -265,7 +321,8 @@ class Route(unittest.TestCase):
         for k in ("asOf", "bootAt", "uptimeS", "config", "overall", "buckets", "transitions"):
             self.assertIn(k, out, k)
         self.assertIsInstance(out["config"]["windows"], list)
-        self.assertIsInstance(out["bootAt"], int)
+        self.assertIsInstance(out["bootAt"], float)
+        self.assertEqual(out["bootAt"], round(out["bootAt"], 3), "to the millisecond, as every stamp in the payload")
         key = out["overall"]["worstBucket"]
         self.assertIn(key, out["buckets"])
         b = out["buckets"][key]

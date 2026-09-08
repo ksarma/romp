@@ -619,7 +619,9 @@ class ApiHealthRouteGate(unittest.TestCase):
         v = km._version_info()
         self.assertEqual(out["bootId"], km._BOOT_ID)
         self.assertEqual(out["bootId"], v["boot"], "the same id /version and X-Romp-Boot carry — never a third")
-        self.assertEqual(out["bootAt"], v["started"])
+        self.assertEqual(int(out["bootAt"]), v["started"], "bootAt is the same start to the millisecond (the payload's stamp "
+                         "precision, so a bucket the boot seeded carries the very number); started is its whole seconds")
+        self.assertEqual(out["bootAt"], round(km._STARTED, 3))
         self.assertAlmostEqual(out["uptimeS"], v["uptime_s"], delta=2.0)
         self.assertIsInstance(out["complete"], bool)
         self.assertEqual(out["complete"], out["uptimeS"] >= 900)

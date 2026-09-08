@@ -2359,6 +2359,14 @@ class ApiHealth:
         `unknown -> <state>` after it. What the boot filed is written, and so is a legacy seed, so the
         old ledger is read once: the state file exists from the first boot that found one.
 
+        The seed is stamped at `boot_at` itself, or one millisecond past the newest transition the file
+        carries when that is later: a transition the previous kernel filed after this one's start (the two
+        overlapped, or the clock stepped) would otherwise sort ABOVE the restart row in the tail and read
+        as the current state, with the head saying unknown since the boot. The clamp is logged once. The
+        kernel passes its own start to the millisecond, so the seed, the restart row and the route's
+        bootAt are one number when nothing is clamped (review round 3: an int seed sat on the second
+        boundary before the process started, under a row the previous kernel filed in that same second).
+
         Never raises: this runs inside SdkBackend.__init__, and an exception here pinned the SDK backend
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
         non-numeric `t` or a non-string `bucket` is skipped; the skips are logged once."""
@@ -2417,6 +2425,15 @@ class ApiHealth:
             if bad and self._log:
                 self._log("api-health: %d malformed row(s) skipped at boot (%s)"
                           % (bad, API_HEALTH_LEGACY_LEDGER if legacy else API_HEALTH_STATE_FILE))
+            # one stamp, at the tail's millisecond precision, for the restart rows and the seeded since: the boot
+            # itself, or one millisecond past the newest restored transition when that is not before the boot
+            at = round(boot_at, 3)
+            newest = max((float(r["t"]) for rs in [rows] + list(per.values()) for r in rs), default=None)
+            if newest is not None and newest >= at:
+                if self._log:
+                    self._log("api-health: the state file's newest transition (%.3f) is not before this boot (%.3f): "
+                              "seeding at %.3f so the restart row stays the newest" % (newest, at, newest + 0.001))
+                at = round(newest + 0.001, 3)
             filed = False
             with self._lock:
                 self._transitions.extend(rows)
@@ -2428,11 +2445,11 @@ class ApiHealth:
                     fam = rec["family"] if isinstance(rec["family"], str) and rec["family"] else f
                     ev = {"window": None, "rate429": None, "rate5xx": None, "n": 0}
                     if rec["state"] != "unknown":
-                        self._file_locked({"t": round(boot_at, 3), "bucket": key, "auth": auth, "family": fam,
+                        self._file_locked({"t": at, "bucket": key, "auth": auth, "family": fam,
                                            "from": rec["state"], "to": "unknown", "why": API_HEALTH_RESTART_WHY,
                                            "evidence": ev})
                         filed = True
-                    self._last_state[key] = {"state": "unknown", "since": boot_at, "why": API_HEALTH_RESTART_WHY,
+                    self._last_state[key] = {"state": "unknown", "since": at, "why": API_HEALTH_RESTART_WHY,
                                              "evidence": ev, "auth": auth, "family": fam}
                 if filed or legacy:
                     self._write_state_locked()

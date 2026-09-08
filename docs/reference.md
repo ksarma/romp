@@ -1639,7 +1639,9 @@ and `key:managed` name sources whose material the kernel never holds.
   is the response time. A clock step moves it; a reader that wants a freshness
   check a clock step cannot fake uses `seq`.
 - `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
-  `/version` and `X-Romp-Boot` carry. A changed `bootId` means a restart, and
+  `/version` and `X-Romp-Boot` carry. `bootAt` is the kernel's start to the
+  millisecond, the precision of every other stamp in the payload; `/version`'s
+  `started` is its whole seconds. A changed `bootId` means a restart, and
   the windows restarted with it.
 - `complete`: true once the longest window (900 s) fits inside the uptime.
 - `seq`: count of ring events (attempts, successful responses and give-ups)
@@ -1880,7 +1882,11 @@ file knows comes back `unknown` with `stateSince` at the boot time. For each
 bucket whose persisted state was not already `unknown` the reload files
 `<state> -> unknown` at boot, so the transitions list is continuous across the
 restart, and the first read with enough evidence records `unknown -> <state>`
-after it. The pre-restart state is not carried over: an empty ring is no
+after it. The boot's stamp is `bootAt` itself, or one millisecond past the
+newest transition the file carries when that one is not before the boot (the
+previous kernel filed it after this one started, or the clock stepped), so
+the restart row is always the newest row; the kernel log says when the stamp
+was moved. The pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the SDK backend from starting.
 

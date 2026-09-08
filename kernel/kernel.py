@@ -14873,8 +14873,11 @@ def _sdk_locked():
                 # the API-health aggregator's boot clock: the same _STARTED the /api-health route stamps as
                 # bootAt, so a bucket the boot seeded is unknown since the kernel's own start and the hover's
                 # head, divider and restart row name one time (the aggregator's own clock ran seconds later:
-                # this backend is built after the boot's imports, migrations and warm-up)
-                boot_at=int(_STARTED))
+                # this backend is built after the boot's imports, migrations and warm-up). The float, never
+                # int(): truncated to the second boundary BEFORE the process started, the seed sorted under
+                # a row the previous kernel filed in that same second, and the tail read the old kernel's
+                # last state as current above the restart row (review round 3)
+                boot_at=_STARTED)
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask
@@ -45634,20 +45637,23 @@ return '<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+esc(lab)+'</span>
 // several), and how long it held (until the same bucket's next transition; 'so far' for the current one, a flag and
 // never a stamp comparison: the transition the hover's own read files carries that read's asOf as its time, and the
 // state it closed must not read 'so far' beside it). A row the boot filed says so; where the tail crosses this
-// kernel's bootAt and the newer row is not such a row (the bucket was already unknown at shutdown, so the boot
-// filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Every bucket comes
-// back unknown at a restart, so a hold from before the boot ends at the boot and is never 'so far'; a bucket the
-// boot seeded carries that same boot clock as its stateSince, so the head and the tail name one time. Never hidden.
+// kernel's bootAt with no such row shown above the crossing (the bucket was already unknown at shutdown, so the boot
+// filed nothing), a divider names the restart, and takes no slot: the cap counts transitions. Any restart row above
+// suppresses it, not only the one right above: the backend seeds the restart row one millisecond past a row the
+// previous kernel filed at or after this start, so that row can sit between the two, and one restart is one mark
+// (review round 3). Every bucket comes back unknown at a restart, so a hold from before the boot ends at the boot and
+// is never 'so far'; a bucket the boot seeded carries that same boot clock as its stateSince, so the head and the
+// tail name one time. Never hidden.
 function transRows(d){var rows=(d.transitions||[]).slice().sort(function(a,b){return b.t-a.t;});
-var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,hasBoot=typeof boot==='number',out='',crossed=false,prevRestart=false,shown=0;
+var multi=Object.keys(d.buckets||{}).length>1,now=d.asOf,boot=d.bootAt,hasBoot=typeof boot==='number',out='',crossed=false,sawRestart=false,shown=0;
 for(var i=0;i<rows.length&&shown<HIST_ROWS;i++){var r=rows[i],restart=r.why===RESTART_WHY,pre=hasBoot&&r.t<boot;
 if(!crossed&&pre){crossed=true;
-if(!prevRestart){out+='<div class="ru-tip-row ah-hrow ah-boot"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}
+if(!sawRestart){out+='<div class="ru-tip-row ah-hrow ah-boot"><span class=ru-tip-k>'+hmd(boot)+'</span><span class=ah-hword>kernel restarted</span></div>';}}
 var end=now,cur=true;for(var j=i-1;j>=0;j--)if(rows[j].bucket===r.bucket){end=rows[j].t;cur=false;break;}
 if(pre&&end>boot){end=boot;cur=false;}
 var word=(multi?bname(d,r.bucket)+' ':'')+r.to+(restart?' · kernel restarted':'');
 out+='<div class="ru-tip-row ah-hrow"><span class=ru-tip-k>'+hmd(r.t)+'</span><span class=ah-hword>'+esc(word)+'</span><span class=ru-tip-v>'+dur(end-r.t)+(cur?' so far':'')+'</span></div>';
-prevRestart=restart;shown++;}
+if(restart)sawRestart=true;shown++;}
 return out;}
 function histHTML(){var h='<div class="ru-tip-win ah-hist"><div class=ru-tip-name><span>History</span>'
 +((HIST&&!HIST.error&&typeof HIST.asOf==='number')?'<span class=ru-tip-reset>as of '+hms(HIST.asOf)+'</span>':'')+'</div>';
@@ -45666,9 +45672,12 @@ if(!b)h+='<div class=ah-line>No API traffic seen'+(typeof d.bootAt==='number'?' 
 else ((d.config&&d.config.windows)||[60,300,900]).forEach(function(w){h+=winRow(w,(b.windows||{})[String(w)],d.uptimeS);});
 var tr=transRows(d);if(tr)h+='<div class="ru-tip-name ah-hname"><span>State changes</span></div>'+tr;
 return h+'</div>';}
-// the cell's description while the hover shows: the state word and its since, then how to reach the rest; before the
-// answer lands it says the read is in flight, and a failed read says so in the same words as the section's line
-function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'Reading the history.'+tail;
+// the cell's description while the hover shows: the state word and its since, then how to reach the rest. Before the
+// answer lands it carries the state word the frame already put on the cell (assistive tech reads the description once,
+// at focus time, and the landed text replaces it with nothing to announce the change: a loading line with no state
+// word left a screen-reader user with none; review round 3) and says the read is in flight; the landed line adds the
+// since; a failed read says so in the same words as the section's line
+function descText(){var tail=' Press Enter to open it.';if(!HIST)return 'History: '+((LAST&&LAST.text)||'unknown')+'. Reading the details.'+tail;
 if(HIST.error)return 'Could not read the API history: '+HIST.error+'.'+tail;
 var ov=HIST.overall||{},key=ov.worstBucket,b=key?(HIST.buckets||{})[key]:null;
 return 'History: '+(ov.state||'unknown')+((b&&b.stateSince)?' since '+hmd(b.stateSince):'')+'.'+tail;}
@@ -49086,7 +49095,11 @@ class Handler(BaseHTTPRequestHandler):
                 now = time.time()
                 out = fn(now, uptime_s=now - _STARTED)
                 out["bootId"] = _BOOT_ID
-                out["bootAt"] = int(_STARTED)
+                # the kernel's start to the millisecond, the precision of every other stamp in this payload
+                # (asOf, transitions[].t, stateSince): the backend's aggregator is seeded from the same
+                # _STARTED, so a bucket the boot seeded carries this very number as its stateSince and the
+                # restart row's t. /version's `started` is its whole-second form (int(bootAt) == started).
+                out["bootAt"] = round(_STARTED, 3)
                 # coverage's kernel half: tmux-backed sessions have no SDK stream and sit outside
                 # the signal — the count says how much of the box the signal does not see. A null
                 # (never a silent 0) when the live enumeration fails.
