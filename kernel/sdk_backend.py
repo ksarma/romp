@@ -4870,6 +4870,26 @@ class SdkSession:
         with self._lock:
             return list(self._inflight_texts)
 
+    def _busy_under_lock(self) -> bool:
+        """SdkBackend.busy's reading, for a caller already holding self._lock: a turn in flight, a text
+        queued and about to run, or a fed text the CLI still holds (_untaken). move() reads it in the
+        same hold as its arm (review round 4, 2026-09-08), so no text can be popped between an idle
+        reading and the arm the feeder then holds on."""
+        return self.inflight > 0 or bool(self._pending) or getattr(self, "_untaken", None) is not None
+
+    def _disarm_move_settle(self) -> None:
+        """Lower the move arm (_move_settle_expected) and wake the feeder, from either thread. A
+        standing arm HOLDS the queue (inputs(), review round 4, 2026-09-08), and the feeder sleeps on
+        _input_wake, so every site that lowers the arm must wake it or the head stays held until some
+        unrelated event does: move() lowers it from the kernel thread (a refusal, a control error, a
+        same-folder answer, an uncertain outcome), _consume_move_settle from the session's own thread
+        (the move's turn-less result, or a real result proving the arm stale). The loop top clears the
+        flag bare: the new client's inputs() is created after it and reads the flag on its first pass."""
+        self._move_settle_expected = False
+        loop, wake = getattr(self, "loop", None), getattr(self, "_input_wake", None)
+        if loop is not None and wake is not None:
+            loop.call_soon_threadsafe(wake.set)
+
     def unqueue(self, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
         and return its raw text, or None if it's gone — an id-carrying entry comes back as its
@@ -5673,6 +5693,17 @@ class SdkSession:
                     # until the CLI demonstrably took it (_untaken_taken); mid-turn forwards still flow, one
                     # per take, so a message sent mid-turn still reaches the running turn at its next step.
                     blocked = blocked or self._untaken is not None
+                    # a MOVE is in flight (review round 4, 2026-09-08): move() armed _move_settle_expected
+                    # under this lock and the CLI is relocating for its set_cwd. The CLI relocates FIRST
+                    # and replies after, then emits an init and a turn-less result; a text fed into that
+                    # window could run a whole turn before the move's own result arrived, and that turn's
+                    # result would read the arm as stale and drop it (_consume_move_settle), leaving the
+                    # late turn-less result to settle as a turn end. Hold the head until the arm is down:
+                    # the move's result consumed, a real result dropping a stale arm, move() lowering it
+                    # at a refusal or an uncertain outcome (each wakes this feeder, _disarm_move_settle),
+                    # or the loop top's clear (a new inputs() follows it). The move's own request rides
+                    # the control channel, not this generator, so the hold never delays it.
+                    blocked = blocked or self._move_settle_expected
                     # a reconnect is ARMED (_reconnect: the waker is about to tear this client down) →
                     # hold the head for the NEXT client. The settle wakes this feeder and arms a deferred
                     # reconnect in the same finally, both wakeups queued FIFO on the loop, so without
@@ -6846,12 +6877,13 @@ class SdkSession:
             # refuses while busy and an accepted set_cwd answers within milliseconds. The arm is stale,
             # and since round 2 a standing arm switches off the CLI-owned-turn count (_on_message), so
             # left alone it would uncount every drain for the session's life and re-open the fuse the
-            # count closes (review round 3, 2026-09-08). Drop it here; the loop top drops it too.
-            self._move_settle_expected = False
+            # count closes (review round 3, 2026-09-08). Drop it here; the loop top drops it too. Since
+            # round 4 the arm also holds the queue, so the drop wakes the feeder (_disarm_move_settle).
+            self._disarm_move_settle()
             self.backend._log("sdk %s: a real turn's result arrived while a move's turn-less result was still "
                               "expected; the stale arm is dropped" % self.sid[:8])
             return False
-        self._move_settle_expected = False
+        self._disarm_move_settle()   # spent, and the queue it held resumes (round 4)
         # The move's init counts no CLI-owned turn (_on_message skips the count while the arm stands);
         # should a count have fired anyway, this turn-less result is the last frame the move emits, so
         # the count must not outlive it: nothing was fed (an empty fed-turn twin), and an idle session
@@ -11428,7 +11460,7 @@ class SdkBackend:
         if not s:
             return None
         with s._lock:
-            return s.inflight > 0 or bool(s._pending) or getattr(s, "_untaken", None) is not None
+            return s._busy_under_lock()
 
     def compacting(self, sid: str) -> "bool | None":
         """Authoritative 'is a /compact in progress' (see SessionBackend.compacting): set when /compact is
@@ -11682,18 +11714,29 @@ class SdkBackend:
         claim = self._claim_cwd_pending(sid, target)
         if claim:
             return claim
-        s._move_settle_expected = True   # armed BEFORE the request — see _consume_move_settle
+        # The busy reading and the arm are ONE step under the session lock (review round 4, 2026-09-08):
+        # the feeder pops under that lock and holds the head while the arm stands (inputs()), so a text
+        # enqueued between the idle reading above and the arm cannot reach the CLI ahead of the request
+        # and run its turn inside the relocation window. After the claim, so a second asker refused there
+        # lowers no arm of ours; a busy reading here (the race) returns the claim.
+        with s._lock:
+            busy = s._busy_under_lock()
+            if not busy:
+                s._move_settle_expected = True   # armed BEFORE the request: see _consume_move_settle
+        if busy:
+            self._update_reg_dropping(sid, ("cwdPending",))
+            return "busy"
         r, err = self._set_cwd_request(s, target)
         if not err and isinstance(r, dict) and r.get("status") == "needs_trust":
             r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
         ok = not err and isinstance(r, dict) and r.get("status") == "ok"
         if not ok:
             if err == _NO_CONTROL_SENDER:
-                s._move_settle_expected = False                 # nothing was sent
+                s._disarm_move_settle()                         # nothing was sent
                 self._update_reg_dropping(sid, ("cwdPending",))
                 return err
             if isinstance(r, dict) and r.get("status") == "rejected":
-                s._move_settle_expected = False                 # the CLI answered: it did nothing
+                s._disarm_move_settle()                         # the CLI answered: it did nothing
                 self._update_reg_dropping(sid, ("cwdPending",))
                 if r.get("reason") == "busy":
                     return "busy"
@@ -11711,7 +11754,7 @@ class SdkBackend:
                 self._log("sdk %s: set_cwd's reply was lost (%s) but the transcript is under %s — the move stands"
                           % (sid[:8], why, target))
                 return ""
-            s._move_settle_expected = False
+            s._disarm_move_settle()
             if after.get("cwdPending"):
                 return ("the move's outcome is uncertain: %s — the transcript was not found under exactly one of "
                         "%s and %s, so nothing was changed; the next kernel start re-checks (see the kernel log)"
@@ -11719,7 +11762,7 @@ class SdkBackend:
             return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
         if r.get("changed") is False or new == old:
-            s._move_settle_expected = False                     # no relocation → no turn-less result is coming
+            s._disarm_move_settle()                             # no relocation → no turn-less result is coming
             self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
             return ""
         self._finish_move(s, sid, old, new)

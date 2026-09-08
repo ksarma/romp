@@ -44,6 +44,12 @@ Round 3 (2026-09-08) pinned two more:
   * the exit release applies _reconcile_stranded's distinction: when no conversation ever materialised
     (no init streamed) a transcript the scan cannot read re-heads the text, since the next client starts
     fresh and a re-feed cannot duplicate; a resumable conversation keeps the flag path.
+Round 4 (2026-09-08) pinned one more:
+  * the feeder holds the head while a move's settle is expected (move() armed _move_settle_expected and the
+    CLI is relocating for its set_cwd): a text fed into that window could run a whole turn before the move's
+    turn-less result, whose late arrival the settle would then take for a turn end. The hold lifts on the
+    exact events that lower the arm (the move's result consumed; move() refused), never on a timer, and the
+    move's own request rides the control channel, so the hold never delays it.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -95,6 +101,19 @@ class _RateLimitEvent:
     """A frame that is NOT a turn frame (the SDK's RateLimitEvent): proves nothing about the CLI's queue."""
     def __init__(self, uuid="rl1"): self.uuid = uuid
 _EOF = object()   # pushed as a frame: the CLI process exited, its stream ends (receive_messages returns)
+
+
+class _ControlChannel:
+    """The SDK client's private control-request sender, scripted and GATED: the request is recorded the
+    moment it is sent (it rides the control channel, not the feeder), and the CLI's answer waits for the
+    test's gate, which stands in for the relocation the CLI performs BEFORE it replies to a set_cwd."""
+    def __init__(self, answer):
+        self.answer, self.requests, self.gate = answer, [], threading.Event()
+
+    async def _send_control_request(self, req):
+        self.requests.append(dict(req))
+        await asyncio.get_running_loop().run_in_executor(None, self.gate.wait)
+        return self.answer
 _TextBlock.__name__ = "TextBlock"; _AssistantMessage.__name__ = "AssistantMessage"
 _ResultMessage.__name__ = "ResultMessage"; _SystemMessage.__name__ = "SystemMessage"
 _RateLimitEvent.__name__ = "RateLimitEvent"
@@ -963,26 +982,41 @@ class OneFedTextAtATime(unittest.TestCase):
         running turn's next frame with the text still in the CLI's queue, and the text behind it fused
         with it. A real turn's result (num_turns != 0) while the arm stands proves it stale (the move's
         result would have preceded it) and drops it, so the drain counts as before and the text fed into
-        it waits for its own take."""
+        it waits for its own take. Round 4 holds the queue while the arm stands, so the real turn that
+        drops a stale arm is one the CLI opened on its own (a notification woke it); the held text goes
+        in at the drop, and every drain after it counts."""
         s, c = self.s, self._first_turn()
         c.phase = "after-result-1"
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0, "idle")
         s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)   # armed; no turn-less result comes
         self._settle()
-        c.phase = "turn-A"
+        c.phase = "held-behind-the-arm"
         s.enqueue("A from idle")
-        self._wait(lambda: len(c.writes) == 2, "A fed")
+        self._settle()
+        self.assertEqual(len(c.writes), 1, "held: a move's settle is expected (round 4)")
+        c.phase = "cli-owned-turn"
+        self._init(c)                                    # the CLI opened a turn on its own (a notification)
+        self._assistant(c, "the CLI's own turn")
+        self._settle()
+        self.assertEqual(s.inflight, 0, "not counted while the arm stands (round 2)")
+        self.assertEqual(len(c.writes), 1, "still held: the running turn's frames are not the event")
+        c.phase = "after-the-drop"
+        self._result_frame(c)                            # num_turns 1: a real turn's result
+        self._wait(lambda: len(c.writes) == 2, "the drop released the held text")
+        self.assertFalse(s._move_settle_expected, "a real turn's result drops the stale arm")
+        self.assertTrue(any("stale arm is dropped" in l for l in self.lines), self.lines[-5:])
+        self.assertEqual(c.writes[1], ("A from idle", "after-the-drop"))
+        self.assertIs(s._untaken["fresh"], True, "fed from idle")
+        c.phase = "turn-A"
         self._init(c)
         self._assistant(c)
         self._wait(lambda: s._untaken is None, "A's turn started: its hold released")
         s.enqueue("B mid-turn")
         self._wait(lambda: len(c.writes) == 3, "B forwarded")
         c.phase = "after-result-A"
-        self._result_frame(c)                            # num_turns 1: a real turn's result
+        self._result_frame(c)
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "A settled, B held")
-        self.assertFalse(s._move_settle_expected, "a real turn's result drops the stale arm")
-        self.assertTrue(any("stale arm is dropped" in l for l in self.lines), self.lines[-5:])
         c.phase = "turn-B"
         self._init(c)                                    # the drain: B's own turn
         self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain released B's hold AND counted its turn")
@@ -1090,6 +1124,99 @@ class OneFedTextAtATime(unittest.TestCase):
         echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
         self.assertTrue(echo.get("dropped"), "the possible loss is visible")
         self.assertTrue(any("could not be read" in l for l in self.lines), self.lines[-5:])
+
+    # -- round 4: the feeder holds while a move is in flight --
+    def _idle_after_the_first_turn(self):
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        return c
+
+    def _start_move(self, c, answer):
+        """Drive the REAL move() on a kernel-side thread against the running session. Its control channel
+        is the gated fake on the client: the set_cwd request goes out at once and the CLI's answer waits
+        for the gate. Returns the target folder, the thread and the dict move()'s answer lands in."""
+        new = os.path.join(self.state, "moved")
+        os.makedirs(new, exist_ok=True)
+        c._query = _ControlChannel(answer(new) if callable(answer) else answer)
+        self.addCleanup(c._query.gate.set)   # a failed assertion before the gate must not wedge the teardown
+        out = {}
+        t = threading.Thread(target=lambda: out.__setitem__("r", self.be.move(SID, new)), daemon=True)
+        t.start()
+        self._wait(lambda: c._query.requests, "the set_cwd request went out")
+        return new, t, out
+
+    def test_a_text_sent_while_the_cli_relocates_waits_for_the_moves_turn_less_result(self):
+        """Round 4: move() arms and sends set_cwd; the CLI relocates FIRST and replies after, then emits an
+        init and a turn-less result. A text fed into that window could run a whole turn before the move's
+        result arrived: that turn's result would read the arm as stale and drop it (round 3), and the late
+        turn-less result would settle as a turn end (a turn_seq bump, a 'waiting' write, the rename ping or
+        a deferred reconnect fired early). The feeder holds the head while the arm stands and feeds on the
+        exact event that lowers it: the move's turn-less result, consumed. The move's own request is not
+        held: it rides the control channel."""
+        s, c = self.s, self._idle_after_the_first_turn()
+        new, t, out = self._start_move(c, lambda path: {"status": "ok", "cwd": path, "changed": True,
+                                                         "transcript_relocated": True})
+        self.assertTrue(s._move_settle_expected, "armed before the request")
+        self.assertEqual(c._query.requests, [{"subtype": "set_cwd", "path": new}],
+                         "the request went out through the control channel while the arm stood")
+        c.phase = "relocating"
+        s.enqueue("sent during the move")
+        self._settle()
+        self.assertEqual(c.writes, [("first turn", "turn-1")], "held: the CLI is relocating for the move")
+        self.assertEqual(s.pending(), ["sent during the move"], "queued, visible, cancellable")
+        self.assertTrue(self.be.busy(SID), "a queued text: a drive op pressed now parks")
+        c.phase = "after-ok"
+        c._query.gate.set()                              # the CLI relocated and replies ok
+        t.join(10)
+        self.assertEqual(out.get("r"), "")
+        self.assertEqual(s.cwd, new, "romp's half of the move followed the ok")
+        self._settle()
+        self.assertEqual(len(c.writes), 1, "the ok is not the event: the CLI still owes its turn-less result")
+        c.phase = "after-move-init"
+        self._init(c)                                    # the CLI's init, no query behind it
+        self._settle()
+        self.assertEqual(len(c.writes), 1, "the move's init is not the event either")
+        self.assertEqual(s.inflight, 0, "the init counted no turn: the arm stands")
+        c.phase = "after-move-result"
+        self._move_result(c)
+        self._wait(lambda: len(c.writes) == 2, "fed once the move's turn-less result was consumed")
+        self.assertEqual(c.writes[1], ("sent during the move", "after-move-result"))
+        self.assertFalse(s._move_settle_expected, "spent")
+        self.assertEqual(s.inflight, 1)
+        self.assertIs(s._untaken["fresh"], True, "fed from idle, after the move")
+        self.assertEqual(s.pending(), [])
+        self._sys(c, "commands_changed")                 # the move's tail frames prove nothing about the queue
+        self._settle()
+        self.assertIsNotNone(s._untaken, "still held until the turn shows")
+
+    def test_a_refused_move_lowers_the_arm_and_the_held_text_is_fed_then(self):
+        """Round 4, the other exit: the CLI refuses the set_cwd. move() lowers the arm at the refusal and
+        wakes the feeder, so the text held through the request is fed then, with no move result to wait
+        for; the session stays where it was."""
+        s, c = self.s, self._idle_after_the_first_turn()
+        words = "Couldn't find a directory at /srv/notes-api/moved."
+        new, t, out = self._start_move(c, {"status": "rejected", "reason": "not_found", "message": words})
+        self.assertTrue(s._move_settle_expected, "armed before the request")
+        c.phase = "relocating"
+        s.enqueue("sent during the move")
+        self._settle()
+        self.assertEqual(c.writes, [("first turn", "turn-1")], "held while the move is in flight")
+        c.phase = "after-refusal"
+        c._query.gate.set()                              # the CLI answers: rejected
+        t.join(10)
+        self.assertEqual(out.get("r"), words)
+        self._wait(lambda: len(c.writes) == 2, "fed once the refusal lowered the arm")
+        self.assertEqual(c.writes[1], ("sent during the move", "after-refusal"))
+        self.assertFalse(s._move_settle_expected)
+        self.assertEqual(s.cwd, self.cwd, "the session stays where it was")
+        self.assertNotIn("cwdPending", sb.read_reg(self.state, SID) or {})
+        self.assertEqual(s.inflight, 1)
+        self.assertIs(s._untaken["fresh"], True)
+        c.phase = "turn-2"
+        self._init(c)
+        self._wait(lambda: s._untaken is None, "the text's own turn started: its hold released")
 
 
 class QueueEntryWire(unittest.TestCase):
