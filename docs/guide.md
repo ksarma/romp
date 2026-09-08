@@ -292,8 +292,9 @@ that; a table inside a quote or a list item stays within the prose width. Pictur
 shrink to fit, so resizing the pane never leaves the page wider than the pane.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
-the file (below it when the column is narrow). Select a passage in either view, Rendered or
-Raw, and press the **Comment** button that appears next to the selection; type the comment
+the file, where each card sits level with the passage it is about and scrolls with the text;
+when the column is narrow the panel drops below the file and lists the cards instead. Select a
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the

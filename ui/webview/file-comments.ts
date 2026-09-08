@@ -89,9 +89,23 @@ import {
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
+import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+/** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
+const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+/** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
+ *  the status before the write did not hold — the write's fence (storeMtimeNs) admits no other write between the two.
+ *  After a moved fence's re-read and retry the baseline `had` predates the retry's, so another client's comments may be
+ *  new too; then the one whose body is the note, and null when that does not name exactly one — nothing to scroll to,
+ *  and nothing in doubt about the save itself. */
+function savedCommentId(had: Set<string>, r: Status, note: string): string | null {
+  const fresh = r.store ? r.store.comments.filter((c) => !had.has(c.id)) : [];
+  if (fresh.length === 1) return fresh[0].id;
+  const mine = fresh.filter((c) => c.body === note);
+  return mine.length === 1 ? mine[0].id : null;
+}
 // The verbs that rewrite the FILE, not only the sidecar (reject applies the engine's reverse edits): they
 // fence on the file's mtime as the panel last saw it, so a `track-edit` landing mid-round refuses `file-moved`
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
@@ -402,8 +416,9 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
 /** A comment id inside a selector's quoted attribute value. The ids are sidecar data — a session's tools mint them, a hand
  *  can write them — and nothing on the read path constrains their grammar, so a `"` or `\` in one made querySelector throw,
  *  and on the render path (placeComposer) that stopped every section after the cards from refreshing while the reply was
- *  open. CSS.escape where the platform has it (every browser the panel runs in); for a stand-in without it, the two
- *  characters a quoted value cannot hold raw. */
+ *  open; inside the margin pass (placeCards ownMarks), which every render runs, it left every card without a top and the
+ *  failure surfaced nowhere (both found in the 2026-09-07 reviews). CSS.escape where the platform has it (every browser
+ *  the panel runs in); for a stand-in without it, the two characters a quoted value cannot hold raw. */
 function cssId(s: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
 }
@@ -909,6 +924,26 @@ class Panel {
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
+  // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
+  // comments might move with the window when possible, each trying to stay centered near its place in the text; the
+  // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
+  // with the user's word still to come). Beside the body the aside is laid out as a document editor's margin:
+  // the head and the composer stay put at the top, Accept all · Reject all, Send and the Log at the bottom, and between
+  // them the cards section is a TRACK whose scroll is locked to the body's — the body's scrollTop is mirrored onto the
+  // track on its scroll event and the reverse on the track's (syncFrom guards the echo) — with every card absolutely
+  // positioned at its mark's height (placeCards, card-layout.ts). `margin` is whether that layout is on: off in the
+  // narrow fold (the sheet's container query stacks the aside under the body: the list layout as before, read off the
+  // row's computed flex-direction) and in edit mode (the editor's own marks; no read view to sit beside).
+  margin = false;
+  placed = new Map<string, PlacedItem>();    // the last pass's placement by card key, in placement order (centerOn and cardsInOrder read it)
+  cardsEnd = 0;                               // the last pass's bottom edge of the last card plus the gap: the track content the last card's end needs (followBody)
+  bodyPad = 0;                                // the end padding the pass gave the body, in px (padBody): the footer's height plus the last card's overhang
+  contentWatched = new Set<Element>();        // the body's element children the size observer holds (watchContent: the content's box, which grows when the body's does not)
+  layoutFrame: number | null = null;          // the pass scheduled for the next frame (scheduleLayout: one per frame, however many events ask)
+  syncFrom: "body" | "track" | null = null;   // the scroller whose write onto the other is still to echo (mirrorScroll)
+  sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
+  cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
+  expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -1078,6 +1113,7 @@ class Panel {
       x.click();
     });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
+    this.installLayout(row);                           // the margin layout's scroll lock and its re-layout events
   }
 
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
@@ -1298,6 +1334,7 @@ class Panel {
     // are the person's, and its pending rectangle is a mark like any other.
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
+    if (this.margin) this.layoutOff();                 // the body's end padding and the placement go with the aside (a reopen's first pass brings them back)
     this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
     this.stopPoll();
   }
@@ -1316,11 +1353,16 @@ class Panel {
   dispose(): void {
     this.clearLanding();
     this.stopPoll();
+    if (this.margin) this.layoutOff();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
     this.crops.clear();
     if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; }
+    this.sizer?.disconnect(); this.cardSizer?.disconnect(); this.contentWatched.clear();   // the margin layout's observers and its pending frame go with the viewer
+    if (this.layoutFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = null;
+    window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
@@ -1855,7 +1897,7 @@ class Panel {
     this.errors.delete("composer");
     this.repaintPresel();
     this.render();
-    this.composerBox.scrollIntoView({ block: "nearest" });   // the card's foot, where the box now stands, into view when it is not
+    this.showComposer();                               // the card's foot, where the box now stands, into view when it is not
     this.input.focus();
   }
   /** The key of the card the reply being written stands in, latched into the keyed expand state. startReply latches the key
@@ -1987,6 +2029,7 @@ class Panel {
       this.renderComposer();
       return;
     }
+    const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -2005,7 +2048,21 @@ class Panel {
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
       r = await this.mutate("comment", args, "composer");
     }
+    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why)
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
+  }
+  /** The card a save landed in, brought into view, as the re-place gesture brings its card after the write. In the margin
+   *  layout a whole-file comment's card is loose at the top of the track, whose scroll is the body's: with the text
+   *  scrolled anywhere but its top, the composer closed and no card appeared, and the save read as having done nothing
+   *  (the 2026-09-07 review; ui/CLAUDE.md: always acknowledge). A passage comment's or a reply's card is level with its
+   *  mark, and the mark is centered the way a card's opening centers it. BEFORE the composer closes: the reply's render
+   *  placed the cards with the composer's box above the track, and centerOn measures the header live, so the two must
+   *  agree — the composer's closing shortens the header, and the pass that follows it (the track's observer) re-places
+   *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
+   *  (savedCommentId names the new one off the reply). */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+    const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
+    if (saved !== null) this.scrollCard(this.cardKey(saved));
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
@@ -2588,6 +2645,7 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
+    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
@@ -2647,7 +2705,332 @@ class Panel {
     row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
+    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
+  }
+
+  // ── the margin layout (the 2026-09-07 follow-on; card-layout.ts is the pure half) ─────────────────
+  /** Wire what the layout listens to, once per panel: the two scrollers' events (the lock); a picture loading in the
+   *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
+   *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
+   *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
+   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
+   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
+   *  scroll changes. */
+  private installLayout(row: HTMLElement): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    body.addEventListener("scroll", () => this.mirrorScroll("body"));
+    track.addEventListener("scroll", () => this.mirrorScroll("track"));
+    body.addEventListener("load", () => this.scheduleLayout(), true);
+    track.addEventListener("click", (ev) => {
+      const t = ev.target as HTMLElement | null;
+      const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
+      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+    });
+    window.addEventListener("resize", this.onWindowResize);
+    if (typeof ResizeObserver !== "undefined") {
+      this.sizer = new ResizeObserver(() => this.scheduleLayout());
+      this.sizer.observe(body); this.sizer.observe(row); this.sizer.observe(track);
+      this.cardSizer = new ResizeObserver(() => this.scheduleLayout());
+    }
+  }
+  onWindowResize = (): void => this.scheduleLayout();
+  /** Whether the aside is laid out as a margin now: beside the body — the row's computed flex-direction is the
+   *  sheet's own verdict on the fold, `column` being the narrow column, where the aside stands under the body and
+   *  the cards are the list — and in read mode. A document with no computed style (a stand-in) is the list. */
+  private marginMode(): boolean {
+    if (this.ctx.editing() || typeof getComputedStyle !== "function") return false;
+    const row = this.ctx.body().parentElement;
+    return !!row && getComputedStyle(row).flexDirection !== "column";
+  }
+  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth). */
+  private scheduleLayout(): void {
+    if (this.layoutFrame !== null || !this.open) return;
+    if (typeof requestAnimationFrame !== "function") { this.placeCards(false); return; }
+    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.placeCards(false); });
+  }
+  /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
+   *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
+   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. */
+  private afterRender(): void {
+    this.placeCards(true);
+    const intent = this.expandIntent; this.expandIntent = null;
+    if (intent && this.margin && !intent.wasOpen && this.openCards.has(intent.key)) this.centerOn(intent.key);
+  }
+  /** The margin pass: card-layout.ts decides, this measures and applies. The mode first — a change toggles the
+   *  sheet's `fc-margin`, and the margin layout ending OUTSIDE a render re-renders, since the rows stand in the
+   *  footer and must return to the list (layoutOff). In the margin layout: the list's ROWS — the foot (Accept all ·
+   *  Reject all), a loader, a refusal, a fold, the empty note — leave the track for the footer, above Send
+   *  (moveRows); each card's desired top is its mark's top in the body's content less the header's height (the track
+   *  begins that far below the body's top, so a card level with its mark sits that much higher in the track's
+   *  content: a mark under the header itself is clamped, and level once the text has scrolled by the header's
+   *  height); the cards are placed (layoutCards) and their tops written, a pushed card carrying the leader's length;
+   *  the cards' DOM order is made the placement's (so the Tab order runs down the margin, top to bottom: a head is a
+   *  Tab stop, focusing one scrolls the track and the body with it, and an order by time scrolled the text up and
+   *  down with every Tab); the body's content is padded at its end by the footer's height plus the last card's overhang
+   *  (padBody), so the body itself can scroll every mark's card into the track's box; the list is made as tall as
+   *  puts the track's farthest position at the body's (one range: the body's content less the body's box plus the
+   *  track's), or as the last card, whichever is more; and the track is brought to the body's position. `fromRender`:
+   *  the sections were just rebuilt, so the rows are in the list again and the cards are new (the card observer takes
+   *  them, as it does the cards the list layout held when the margin layout comes on outside a render). */
+  placeCards(fromRender: boolean): void {
+    const root = this.root;
+    if (!root || !this.open) return;
+    const margin = this.marginMode();
+    const flipped = margin !== this.margin;
+    if (flipped) root.classList.toggle("fc-margin", margin);
+    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
+    const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
+    const body = this.ctx.body(), track = this.sections.cards;
+    const list = Array.from(track.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    this.watchContent(body);
+    const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
+    this.moveRows(kids());
+    const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
+    const offset = trackRect.top - bodyRect.top;
+    const scroll = body.scrollTop;
+    const items: LayoutItem[] = [];
+    const nodes = new Map<string, HTMLElement>();
+    const laid: HTMLElement[] = [];                    // the items' nodes in the DOM's order, as the pass found them
+    if (watch) this.cardSizer?.disconnect();
+    let n = 0;
+    for (const child of kids()) {
+      if (child.hidden || child.classList.contains("fc-group")) continue;   // the paragraph titles: the sheet hides them here, the card's place says the paragraph
+      const isCard = child.classList.contains("fc-card") && !!child.dataset.id;
+      const key = isCard ? child.dataset.id! : "#" + n++;
+      const mark = isCard ? this.markTop(key) : null;
+      items.push({ key, desired: mark === null ? null : mark - bodyRect.top + scroll - offset, height: child.getBoundingClientRect().height });
+      nodes.set(key, child); laid.push(child);
+      if (isCard && watch) this.cardSizer?.observe(child);
+    }
+    const out = layoutCards(items, CARD_GAP);
+    for (const p of out.placed) {
+      const node = nodes.get(p.key)!;
+      node.style.top = p.top + "px";
+      if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
+      else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+    }
+    const order = out.placed.map((p) => nodes.get(p.key)!);
+    if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
+    // the body's end padding: the footer's height (the part of the body's box the track's box does not reach), plus how
+    // far the last card hangs past the content's end. The content's height is the body's scroll height less the padding
+    // it holds — known only while the body scrolls at all (scrollHeight floors at the box); a body that does not scroll
+    // is padded by the footer alone, and its track goes on past it for the rest (followBody). That padding is KEPT only
+    // where it lengthens the body. A box's padding comes out of its content box, and content sized to the box by a
+    // `min-height: 100%` — the standalone picture's box (.fileview-imgbox, which centers the picture in itself), the Raw
+    // view's — shrinks by the padding instead of scrolling: the body gained no range, and the picture rose by half the
+    // footer at every open of the panel and fell back at the close, on no new information about it (the 2026-09-07
+    // review, round 3). So the padding is written, then measured: where it bought the body no range it is taken back the
+    // same pass (the content box is whole again before the frame paints, so no observer sees a change). A picture nearly
+    // the box's height is the band where it does buy range — its own box outgrows the padded content box — and there it
+    // stays, as the padding that lets the body reach a card at the picture's foot.
+    const footer = Math.max(0, bodyRect.bottom - trackRect.bottom);
+    const scrolls = body.scrollHeight > body.clientHeight;
+    const content = scrolls ? body.scrollHeight - this.bodyPad : null;
+    const hang = content === null ? 0 : Math.max(0, out.bottom + CARD_GAP + offset - content);
+    this.padBody(body, Math.ceil(footer + hang));
+    if (!scrolls && body.scrollHeight <= body.clientHeight) this.padBody(body, 0);   // bought no range: taken back
+    list.style.height = Math.max(body.scrollHeight - body.clientHeight + track.clientHeight, out.bottom + CARD_GAP) + "px";
+    this.placed = new Map(out.placed.map((p) => [p.key, p]));
+    this.cardsEnd = out.bottom + CARD_GAP;
+    this.syncTrack();
+  }
+  /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
+   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+  private layoutOff(): void {
+    this.margin = false;
+    this.root?.classList.remove("fc-margin");
+    this.padBody(this.ctx.body(), 0);
+    this.placed = new Map(); this.cardsEnd = 0;
+    this.cardSizer?.disconnect();
+  }
+  /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
+   *  next pass read a different content height and write again). The track's box ends a footer's height above the
+   *  body's — Accept all · Reject all, Send and the Log stand under it — so a mark in the text's last lines had its card
+   *  under the footer with the body at its end, where no scroll reached it, and a card hanging below the content's end
+   *  could be scrolled to only on the track, which the next pass pulled back (the 2026-09-07 review). The padding lets
+   *  the body scroll that much further, so the two scrollers keep one range and the body reaches every card's end. */
+  private padBody(body: HTMLElement, px: number): void {
+    if (px === this.bodyPad) return;
+    this.bodyPad = px;
+    body.style.paddingBottom = px ? px + "px" : "";
+  }
+  /** In the margin layout the track holds cards alone. Every ROW the list held — the foot (Accept all · Reject all), a
+   *  wait's loader, a refusal's row, the "… N more changes" and Resolved folds, the empty note — stands in the footer
+   *  above Send: the foot first (so the footer begins with the changes' buttons; the sheet's rule stands on the section's
+   *  top edge, so the footer begins under a rule whichever row comes first), then the other rows in the list's order. The
+   *  track's scroll is the body's, so a row placed loose at the top of the track was out of view for a reader anywhere but the top of the text: the reload's loader and its
+   *  deadline row with Reload among them, and the fold that says why a painted change has no card beside it (the
+   *  2026-09-07 review; ui/CLAUDE.md: the loader first, an error where it can be acted on, no dead end). `kids`: the
+   *  list's element children. */
+  private moveRows(kids: HTMLElement[]): void {
+    const rows = kids.filter((k) => !k.classList.contains("fc-card") && !k.classList.contains("fc-group"));
+    if (!rows.length) return;
+    const send = this.sections.send;
+    const foot = rows.find((k) => k.classList.contains("fc-foot")) || null;
+    const box = (Array.from(send.childNodes).filter((k) => k.nodeType === 1) as HTMLElement[]).find((k) => k.classList.contains("fc-send")) || null;
+    this.moving(rows, () => {
+      if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
+      for (const r of rows) if (r !== foot) send.insertBefore(r, box);
+    });
+  }
+  /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
+   *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
+   *  focus to the body (the browser's focus-fixup rule), and render's refocus ran BEFORE this pass, on the fresh Accept
+   *  all or Reject all in the list; moved to the footer, it had lost the keyboard again (the 2026-09-07 review). */
+  private moving(nodes: HTMLElement[], move: () => void): void {
+    const held = document.activeElement as HTMLElement | null;
+    const kept = held && nodes.some((k) => k.contains(held)) ? held : null;
+    move();
+    if (kept) kept.focus({ preventScroll: true });
+  }
+  /** The body's content — the rendered markdown's box, the Raw view's, a picture, the pages' host — joins the size
+   *  observer each pass, as the body's children stand then (a mode switch or a re-fetch replaces them). The body is a
+   *  flex-sized scroller: its own box does not change when its CONTENT grows, so a reflow inside it — a <details>
+   *  opened, an embed sized late — moved every mark below the change while the cards kept their tops until some
+   *  unrelated event re-ran the pass (the 2026-09-07 review). The content's box does change. */
+  private watchContent(body: HTMLElement): void {
+    if (!this.sizer) return;
+    const now = Array.from(body.childNodes).filter((k) => k.nodeType === 1) as Element[];
+    for (const k of this.contentWatched) if (!now.includes(k)) { this.sizer.unobserve(k); this.contentWatched.delete(k); }
+    for (const k of now) if (!this.contentWatched.has(k)) { this.sizer.observe(k); this.contentWatched.add(k); }
+  }
+  /** The track's cards in the order they are read: the DOM's, which the pass sorts into placement order — or, in the
+   *  margin layout between a render and its pass, the last pass's order, since the fresh list stands in the model's
+   *  order until placeCards re-sorts it, and a place kept by index (focusKey, focusNear) must name the same card before
+   *  the rebuild and after. Cards the last pass did not place (new ones) follow, in the DOM's order. */
+  private cardsInOrder(): HTMLElement[] {
+    const all = Array.from(this.sections.cards.querySelectorAll(".fc-card")) as HTMLElement[];
+    if (!this.margin || !this.placed.size) return all;
+    const rank = new Map<string, number>();
+    for (const k of this.placed.keys()) rank.set(k, rank.size);
+    const at = (c: HTMLElement): number => { const r = rank.get(c.dataset.id || ""); return r === undefined ? rank.size + all.indexOf(c) : r; };
+    return all.slice().sort((a, b) => at(a) - at(b));
+  }
+  /** The top of a card's mark in the viewport: the highest of its highlight rows, its framed figure, its region
+   *  rectangle or its change marks — whichever the view paints; null when it paints none, or the mark has no box
+   *  yet (a figure not loaded, a page not drawn): the loose group, until the load or the draw re-runs the pass. */
+  private markTop(key: string): number | null {
+    const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let top: number | null = null;
+    for (const m of this.ownMarks(act, id)) {
+      const r = m.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (top === null || r.top < top) top = r.top;
+    }
+    return top;
+  }
+  /** The lock: the scroller that moved writes its scrollTop onto the other, and the other's echo — the scroll
+   *  event a write raises, on the next frame — is let through without a write back. `syncFrom` names the echo's
+   *  source; a write that changed nothing raises no echo, so it is cleared at once then (writeScroll). An event
+   *  attributed to the wrong scroller costs one write and no more: a genuine event taken for the echo is let through
+   *  unmirrored, an echo taken for genuine writes the older position back once — and every write copies an absolute
+   *  scrollTop, so the next genuine event puts both scrollers at the same position again. */
+  private mirrorScroll(from: "body" | "track"): void {
+    if (!this.margin || !this.open) return;
+    if (this.syncFrom !== null && this.syncFrom !== from) { this.syncFrom = null; return; }
+    this.syncFrom = null;
+    if (from === "body") this.followBody();
+    else this.writeScroll(this.ctx.body(), this.sections.cards.scrollTop, "track");
+  }
+  private writeScroll(dst: HTMLElement, want: number, from: "body" | "track"): void {
+    const before = dst.scrollTop;
+    if (before === want) return;
+    this.syncFrom = from;
+    dst.scrollTop = want;
+    if (dst.scrollTop === before) this.syncFrom = null;   // clamped to where it was: no echo will come
+  }
+  /** The track to the body's position at once (the pass, centerOn), not on the body's event a frame later. */
+  private syncTrack(): void {
+    if (this.margin) this.followBody();
+  }
+  /** The body's position onto the track — except past the body's end. The body's end padding (padBody) gives the two
+   *  scrollers one range wherever the body scrolls at all; where it does not (a short file, a picture sized to the
+   *  box) the track's content still reaches the last card's end, and a card under the footer's band or hanging past
+   *  the content shows only when the track scrolls on alone (a wheel over the cards; centerOn). With the body at its
+   *  end the track is left where it stands, as far as the last card's end — beyond that it shows nothing, and is
+   *  brought back to it; before this, a pass or a status reply pulled the track back to the body and hid the card's
+   *  end the person had just scrolled to (the 2026-09-07 review). Below the end the track follows the body as
+   *  always, so the next scroll up puts every card level again. */
+  private followBody(): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    const at = body.scrollTop;
+    let want = at;
+    if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
+    this.writeScroll(track, want, "body");
+  }
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
+   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
+   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
+   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
+   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
+   *  loose card moves nothing, afterRender).
+   *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
+   *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
+   *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
+   *  added on top scrolled the header's height too far, and an opened card that fit the track landed with its head
+   *  — the fold control, the reference link — under the panel's header (the 2026-09-07 review). */
+  private centerOn(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired === null) return false;
+    const body = this.ctx.body(), track = this.sections.cards;
+    const offset = track.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    const markY = p.desired + offset;                  // the mark's top in the body's content
+    const view = body.clientHeight;
+    let want = markY - view / 2;
+    const showCard = p.top + p.height + CARD_GAP - track.clientHeight;   // the least scroll that shows the card's bottom (track content: no header term)
+    if (showCard > want) want = Math.min(showCard, markY - CARD_GAP);
+    this.scrollBoth(want);
+    return true;
+  }
+  /** A loose card (no mark: the group at the top of the track) into the track's box, by the least scroll that shows it
+   *  whole — what scrollIntoView's `nearest` scrolls the track by — written onto the body AND the track at once, as
+   *  centerOn writes them. scrollIntoView moved the track alone, and the lock carries a track scroll onto the body only
+   *  on the track's scroll EVENT: the browser delivers one per element per frame, so the render's own write onto the
+   *  track (the echo the lock lets through unmirrored) and the scroll to the card arrived as one event, the body never
+   *  followed, and the frame's pass brought the track back to the body — the card the save had scrolled to was out of
+   *  view again (the 2026-09-07 review, in a real engine). False for a card with a mark (centerOn's) or one the pass did
+   *  not place (the list layout; a card not yet rendered): the caller scrolls it into view as a list item. */
+  private showLoose(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired !== null) return false;
+    const track = this.sections.cards;
+    const at = track.scrollTop, box = track.clientHeight;
+    let want = at;
+    if (p.top - CARD_GAP < at) want = p.top - CARD_GAP;
+    else if (p.top + p.height + CARD_GAP > at + box) want = p.top + p.height + CARD_GAP - box;
+    this.scrollBoth(want);
+    return true;
+  }
+  /** The composer's box into view where it stands (startReply; render, after a move while the person was typing). In the
+   *  margin layout a reply's box stands in its card in the track (placeComposer), whose scroll is the body's: a
+   *  scrollIntoView moved the track alone, the lock let the event through as the pass's echo, and the frame's pass brought
+   *  the track back to the body (showLoose says the same of a card), so the least scroll that shows the box whole is
+   *  written onto both scrollers (scrollBoth), as a loose card is shown. The box is read where the pass has just placed
+   *  its card — render runs this after afterRender — and the pass never moves the box itself: it is a descendant of its
+   *  card, not a child of the list, so the sheet's absolute positioning and moveRows leave it, and the card's observer
+   *  covers its growth. In the slot above the track, or in the list layout, scrollIntoView's nearest as before. */
+  private showComposer(): void {
+    const box = this.composerBox, track = this.sections.cards;
+    if (!this.margin || !track.contains(box)) { box.scrollIntoView({ block: "nearest" }); return; }
+    const r = box.getBoundingClientRect(), top = r.top - track.getBoundingClientRect().top + track.scrollTop;
+    const at = track.scrollTop, view = track.clientHeight;
+    let want = at;
+    if (top - CARD_GAP < at) want = top - CARD_GAP;
+    else if (top + r.height + CARD_GAP > at + view) want = top + r.height + CARD_GAP - view;
+    this.scrollBoth(want);
+  }
+  /** Both scrollers to `want`, a position in the one range the two share: the body as far as it can go, and the track to
+   *  the body's position — or on alone, as far past the body's end as `want` and no further than the last card's end,
+   *  where the body's padding could not lengthen it (padBody; followBody keeps it there). */
+  private scrollBoth(want: number): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    want = Math.max(0, want);
+    body.scrollTop = Math.min(want, body.scrollHeight - body.clientHeight);
+    const at = body.scrollTop;                         // where the body could go
+    this.writeScroll(track, want > at ? Math.min(want, Math.max(at, this.cardsEnd - track.clientHeight)) : at, "body");
   }
   /** The absolute path the kernel acts on, as far as the panel can know it. The kernel resolves the viewer's
    *  path (`~`, a relative chat or todo token against the session's cwd, then realpath) and builds the sent
@@ -2772,9 +3155,13 @@ class Panel {
     // (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the comment's own card, among the comment
     // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
     // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
-    // keyboard elsewhere leaves the view where the person put it
-    if (typing && this.composerBox.parentElement !== home) this.composerBox.scrollIntoView({ block: "nearest" });
+    // keyboard elsewhere leaves the view where the person put it. After the margin pass (afterRender): in the margin layout
+    // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
+    // card would not stand, and the track's scroll is the body's (showComposer)
+    const moved = typing && this.composerBox.parentElement !== home;
     if (keep) this.refocus(keep, want);
+    this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
    *  that card too, the nodes between the section and the box — the list, the card, and for a hosted comment its box on
@@ -2845,13 +3232,16 @@ class Panel {
       : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
     if (!k) return null;
     const cards = this.sections.cards;
-    if (cards.contains(a) && typeof a.closest === "function") {
+    if (typeof a.closest === "function") {
       // where in the list it sat: its card and that card's place; for the foot (Accept all, Reject all, the confirm),
-      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes
-      const all = Array.from(cards.querySelectorAll(".fc-card"));
+      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes.
+      // The foot follows the change cards in the list, and stands in the footer in the margin layout (placeCards): the
+      // last change card is the place before it either way — its index in the order the cards are read (cardsInOrder),
+      // which in the margin layout is the placement's, not the list's
+      const all = this.cardsInOrder();
       const card = a.closest(".fc-card"), foot = a.closest(".fc-foot");
-      if (card) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card); }
-      else if (foot) k.at = Math.max(0, Array.from(cards.querySelectorAll(".fc-card, .fc-foot")).indexOf(foot) - 1);
+      if (card && cards.contains(card)) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card as HTMLElement); }
+      else if (foot) { const changes = all.filter((c) => c.classList.contains("fc-change")); k.at = changes.length ? all.indexOf(changes[changes.length - 1]) : 0; }
     }
     return k;
   }
@@ -2859,7 +3249,7 @@ class Panel {
    *  too, but no tabindex. */
   private findControl(k: FocusKey): HTMLElement | null {
     if (!this.root) return null;
-    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;
+    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;   // the panel's own option names, never a sidecar's text
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
@@ -2889,8 +3279,8 @@ class Panel {
     const head = (c: Element | null | undefined): HTMLElement | null => (c ? (c.querySelector(".fc-card-head") as HTMLElement | null) : null);
     const picks: Array<HTMLElement | null> = [];
     if (k.card) picks.push(head(cards.querySelector('.fc-card[data-id="' + cssId(k.card) + '"]')));   // a comment id may hold a quote (cssId)
-    if (typeof k.at === "number") { const all = Array.from(cards.querySelectorAll(".fc-card")); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
-    picks.push(...(Array.from(cards.querySelectorAll(".fc-foot button")) as HTMLElement[]));
+    if (typeof k.at === "number") { const all = this.cardsInOrder(); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
+    picks.push(...(Array.from(this.root.querySelectorAll(".fc-foot button")) as HTMLElement[]));   // in the list, or in the margin layout's footer
     picks.push(this.root.querySelector('[data-act="fcsend"]') as HTMLElement | null, this.root.querySelector('[data-act="fcfile"]') as HTMLElement | null);
     for (const n of picks) {
       if (n && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return n; }
