@@ -11763,9 +11763,14 @@ class SdkBackend:
             # under the new one (a blind feed, and the next --resume writes to the wrong place). The
             # transcript's location decides, exactly as the boot heal decides a kernel death mid-move.
             why = err or ("unexpected reply to set_cwd: %r" % (r,))
-            self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old})
-            after = read_reg(self.state_dir, sid) or {}
-            if after.get("cwd") == target and not after.get("cwdPending"):
+            # The heal releases the claim itself when it finds the move never happened, so it is handed
+            # _stand_down_move as its release (review round 6, 2026-09-08): the arm this move raised is
+            # lowered before the claim goes, as at every other standing-down exit. Its answer is the heal's
+            # own outcome, not a re-read of the reg: once the claim is released the reg may already carry a
+            # second mover's claim, which a re-read took for this move's flag still standing.
+            outcome = self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old},
+                                             release=lambda: self._stand_down_move(s, sid))
+            if outcome == "moved":
                 # It moved, and the CLI's turn-less result is still expected: the arm stands, and with it
                 # the feeder's hold on the queue (inputs(), round 4). A hold that outlives move()'s return
                 # is announced on the problem ring (review round 5, 2026-09-08): a CLI that relocated and
@@ -11777,11 +11782,14 @@ class SdkBackend:
                           "stands, and queued sends wait for the CLI's result of it; they go on when it arrives "
                           "or at the session's next reconnect" % (sid[:8], s.name, why, target), problem=True)
                 return ""
-            s._disarm_move_settle()
-            if after.get("cwdPending"):
+            if outcome == "kept":
+                # the claim stays, and refuses a second mover at the claim, so the arm standing is this move's
+                s._disarm_move_settle()
                 return ("the move's outcome is uncertain: %s — the transcript was not found under exactly one of "
                         "%s and %s, so nothing was changed; the next kernel start re-checks (see the kernel log)"
                         % (why, old or "its folder", target))
+            if outcome != "released":     # nothing was pending: not a state move() reaches after its own claim
+                s._disarm_move_settle()
             return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
         if r.get("changed") is False or new == old:
@@ -11801,7 +11809,9 @@ class SdkBackend:
         that order let the second mover claim and arm in the gap and then lowered ITS arm, leaving its
         relocation with the queue unheld (round 4's hazard). The disarm no longer raises, and the finally
         keeps round 5's guarantee regardless: whatever the disarm does, the claim is dropped. The
-        uncertain-outcome exit is not one of these: its claim is decided by _heal_cwd_pending."""
+        uncertain-outcome exit reaches this through _heal_cwd_pending's release hook, when the heal finds
+        the move never happened; when the heal keeps the claim, no second mover can arm, and when it
+        finishes the move the arm stands for the CLI's turn-less result."""
         try:
             s._disarm_move_settle()
         finally:
@@ -11879,42 +11889,54 @@ class SdkBackend:
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
 
-    def _heal_cwd_pending(self, reg: dict) -> None:
+    def _heal_cwd_pending(self, reg: dict, release=None) -> str:
         """Settle a reg the previous kernel left mid-move (cwdPending set: the request went out, the reg
         never learned the answer). The transcript's location is the fact that decides it — exactly ONE
         of the two project slugs should hold `<lastSid>.jsonl`: under the pending cwd the CLI said `ok`
         and only romp's half is missing (finish it); still under the old cwd the move never happened
         (drop the flag). Neither or both is a state this code must not guess at: say so loudly and
-        leave the flag for a person."""
+        leave the flag for a person.
+
+        `release` is how the flag is dropped when the move never happened: the boot path's plain drop by
+        default; move() passes _stand_down_move so the arm it raised is lowered before the claim goes
+        (review round 6, 2026-09-08). Returns the outcome, for move() to answer from: "moved" (romp's
+        half finished; the arm stands), "released" (the flag dropped through `release`), "kept" (the flag
+        left for a person), "" (nothing was pending)."""
         sid = str(reg.get("sid") or "")
         pend = str(reg.get("cwdPending") or "")
         cur = str(reg.get("cwd") or "")
         fsid = str(reg.get("lastSid") or sid)
         if not sid or not pend:
-            return
+            return ""
+        if release is None:
+            def release():
+                self._update_reg_dropping(sid, ("cwdPending",))
         if pend == cur:
             # a move to the folder the session was already in, cut mid-flight (a reg from before move()
             # short-circuited that case): nothing moved and nothing can be learned from the location
             # test below — both slugs are ONE slug, so it would read "under BOTH" and file a problem
             # on every boot for as long as the flag lived
             self._log("boot reconcile: %s had a move to its own folder pending — nothing to settle; cleared" % sid[:8])
-            self._update_reg_dropping(sid, ("cwdPending",))
-            return
+            release()
+            return "released"
         at_new = os.path.exists(transcript_path(pend, fsid))
         at_old = bool(cur) and os.path.exists(transcript_path(cur, fsid))
         if at_new and not at_old:
             self._log("boot reconcile: %s was mid-move to %s — the transcript is there; finishing romp's half"
                       % (sid[:8], pend))
             self._finish_move(self.sessions.get(sid), sid, cur, pend)
+            return "moved"
         elif at_old and not at_new:
             self._log("boot reconcile: %s had a move to %s pending that never happened — cleared" % (sid[:8], pend))
-            self._update_reg_dropping(sid, ("cwdPending",))
+            release()
+            return "released"
         else:
             self._log("boot reconcile: %s has cwdPending=%s but its transcript %s is %s — leaving the flag; "
                       "check %s and %s by hand"
                       % (sid[:8], pend, fsid, "under BOTH slugs" if at_new else "under NEITHER slug",
                          transcript_path(cur, fsid) if cur else "(no cwd)", transcript_path(pend, fsid)),
                       problem=True)
+            return "kept"
 
     def set_model(self, sid: str, value: str) -> bool:
         """Change the session's model. Persisted in the registry (so a reconnect keeps it) and applied

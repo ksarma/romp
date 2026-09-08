@@ -58,10 +58,12 @@ Round 5 (2026-09-08) pinned two more:
     problem ring (the session named, queued sends wait for the move's result); the chip shows the text queued,
     busy() reads it, and the hold ends on the exact event that lowers the arm, never on a timer.
 Round 6 (2026-09-08) pinned one more:
-  * move()'s standing-down exits (rejected, nothing changed, no control sender) lower the arm and THEN drop
-    the claim: the claim keeps a second move() of the sid out, and a second mover claims and arms the moment
-    it is released, so round 5's drop-first order lowered the second move's arm and left its relocation with
-    the queue unheld. The drop still happens whatever the disarm does.
+  * move()'s standing-down exits (rejected, nothing changed, no control sender, and the uncertain outcome whose
+    heal finds the move never happened) lower the arm and THEN drop the claim: the claim keeps a second move()
+    of the sid out, and a second mover claims and arms the moment it is released, so round 5's drop-first order
+    lowered the second move's arm and left its relocation with the queue unheld. The drop still happens
+    whatever the disarm does, and the uncertain exit names its answer from the heal's own outcome, not from a
+    re-read of a reg the released claim no longer guards.
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -1267,8 +1269,10 @@ class OneFedTextAtATime(unittest.TestCase):
         mover claims the instant the flag is gone and arms for its own request, and the first move's disarm
         then lowers THAT arm, leaving the second move's relocation with the queue unheld (round 4's hazard
         again). The arm is settled before the claim that guards it is released, and the drop still happens
-        whatever the disarm does. The second mover's claim-and-arm is simulated inside the drop, the
-        instant the flag is gone, so the probe is exact and not a timing."""
+        whatever the disarm does. The uncertain-outcome exit's "never happened" branch had the same window
+        through a second door (the heal dropped the claim itself, ahead of move()'s disarm) and takes the same
+        shape through the heal's release hook. The second mover's claim-and-arm is simulated inside the drop,
+        the instant the flag is gone, so the probe is exact and not a timing."""
         s, c = self.s, self._idle_after_the_first_turn()
         second = os.path.join(self.state, "moved-again")
         real_drop, real_claim = self.be._update_reg_dropping, self.be._claim_cwd_pending
@@ -1306,6 +1310,20 @@ class OneFedTextAtATime(unittest.TestCase):
             c._query = object()                            # an SDK client without the private sender
             self.assertEqual(self.be.move(SID, os.path.join(self.state, "moved")), sb._NO_CONTROL_SENDER)
             after_the_first_moves_exit("no control sender", None)
+        with self.subTest(exit="uncertain outcome, the move never happened"):
+            # the CLI never answers and did not relocate: the request's own timeout returns move() to the
+            # heal, which finds the transcript still under the old folder and releases the claim
+            from unittest import mock
+            with mock.patch.object(sb, "MOVE_CONTROL_TIMEOUT", 0.7):   # the pre-existing round-trip bound, shortened
+                new, t, out = self._start_move(c, None)
+                self.assertTrue(s._move_settle_expected, "the first move armed before its request")
+                t.join(10)
+            c._query.gate.set()                            # the late answer lands on a future move() stopped waiting on
+            self.assertFalse(t.is_alive(), "move() returned on the control request's timeout")
+            after_the_first_moves_exit("uncertain outcome", None)
+            self.assertTrue(str(out.get("r", "")).startswith("the move failed: "),
+                            "the answer comes from the heal's own outcome, not a re-read of a reg the released "
+                            "claim no longer guards: %r" % (out.get("r"),))
 
     def test_a_lost_reply_after_the_cli_relocated_announces_the_hold_it_leaves(self):
         """Round 5: the CLI relocated the transcript for the set_cwd and never answered (a hang after the
