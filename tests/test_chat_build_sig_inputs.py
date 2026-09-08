@@ -787,6 +787,31 @@ class Differential(_World):
         (subdir / "agent-a2222222222222222.meta.json").write_text(json.dumps({"toolUseId": "toolu_x", "agentType": "Explore"}))
         self.assertEqual(self.moved(b, self.sig(deps=deps)), ("taskout",), "a sidecar landed: the directory's identity moved")
 
+    def test_an_agent_transcript_landing_in_a_sibling_fsids_directory_misses_under_taskout(self):
+        """Re-review nit (a): _subagent_file falls back to a glob over the project's sibling fsid directories
+        (a /clear fork moves the sidecar dir), an unrecorded read before this. A miss records the absent
+        beside-path and every sibling subagents directory it scanned, so the transcript landing in one of
+        them moves the key; the resolved file is then read, and recorded, by _agent_steps."""
+        aid = "a3333333333333333"
+        sibling = self.tpath.parent / "88888888-9999-aaaa-bbbb-cccccccccc01" / "subagents"
+        sibling.mkdir(parents=True)
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}
+        try:
+            self.assertIsNone(km._subagent_file(str(self.tpath), aid), "nowhere yet")
+            rec = dict(km._chat_dep_scope.deps["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        beside = str(km._subagents_dir(str(self.tpath)) / ("agent-%s.jsonl" % aid))
+        self.assertEqual(set(rec), {beside, str(sibling)}, "the absent beside-path and the scanned sibling directory")
+        self.assertIsNone(rec[beside]); self.assertEqual(rec[str(sibling)], km._chat_stat_key(str(sibling)))
+        deps = {"task_outs": list(rec.items()), "pl_pending": [], "postal_any": False, "postal_cards": [], "at_build": None}
+        a = self.sig(deps=deps)
+        self.assertEqual(self.sig(deps=deps), a)
+        landed = sibling / ("agent-%s.jsonl" % aid)
+        landed.write_text(json.dumps(dict(_uline(T0 + 5, "Do the delegated work.", "a3-u0"), isSidechain=True)) + "\n")
+        self.assertEqual(self.moved(a, self.sig(deps=deps)), ("taskout",), "the sibling directory's identity moved")
+        self.assertEqual(km._subagent_file(str(self.tpath), aid), landed, "…and the fallback now resolves it")
+
     def test_a_pending_path_token_whose_file_appears_misses_under_pathlink(self):
         md = "the numbers are in report.md now"
         self.assertEqual(km._path_links(md, SID, "u9", {}), {}, "tokens exist, none resolved: the retry is armed")

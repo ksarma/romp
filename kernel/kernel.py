@@ -23905,13 +23905,20 @@ def _subagent_meta(path, agent_id):
 
 def _subagent_file(path, agent_id):
     """The agent's own transcript beside the parent transcript `path`, or — when the sidecar dir has moved
-    under a /clear fork's fsid — the one file of that name anywhere in the project dir. None when missing."""
+    under a /clear fork's fsid — the one file of that name anywhere in the project dir. None when missing.
+    A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
+    re-review 2026-09-08): the absent beside-path and the identity of every sibling subagents directory the
+    fallback scanned are recorded for the running build, so the file landing in any of them moves the key
+    (a resolved file is recorded by _agent_steps when it is read)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ap = _subagents_dir(path) / ("agent-%s.jsonl" % agent_id)
     if ap.exists():
         return ap
+    _chat_dep_note_taskout(str(ap), None)
     try:
+        for d in Path(str(path)).parent.glob("*/subagents"):
+            _chat_dep_note_taskout(str(d), _chat_stat_key(str(d)))
         for cand in Path(str(path)).parent.glob("*/subagents/agent-%s.jsonl" % agent_id):
             return cand
     except OSError:
