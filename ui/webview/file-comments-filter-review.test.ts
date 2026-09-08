@@ -594,6 +594,7 @@ test("while the editor is up the filter row is offered (its list half is the poi
 // ── a comment saved while Changes is chosen ────────────────────────────────────────────────────────
 
 test("a whole-file comment saved under Changes: the box closes, the card is hidden as the choice says, and a line at the top of the list says the comment is saved and where its card is; All shows the card and ends the line, and a return to Changes does not bring it back", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });   // the poll's re-render below is driven, not simulated
   store.set(SETTINGS_KEY, JSON.stringify({ commentsFilter: "changes" }));
   const w = world(); t.after(() => w.close());
   const { aside, button } = await openPanel(w, full());
@@ -612,13 +613,22 @@ test("a whole-file comment saved under Changes: the box closes, the card is hidd
   assert.equal(line!.dataset.id, fresh.id);
   assert.equal(line!.textContent, "Your comment is saved; its card is hidden while Changes is chosen above (All or Comments shows it).✕", "a whole-file comment has no mark in the file: the card alone");
   assert.equal(aside.querySelector(".fc-cards")!.childNodes[0], line, "first in the list, where the box was");
-  assert.ok(line!.classes.includes("fc-note") && line!.classes.includes("fc-row"), "the note's dress on a row");
+  // the row's shape (the third review, and file-comments-filter-saved-line.test.ts): .fc-note on the words alone, the row
+  // unsized, so the ✕, a .fileview-btn, renders at the panel buttons' size and not compounded under a 0.86em row
+  assert.deepEqual(line!.classes, ["fc-row", "fc-saved-hidden"], "the row unsized: .fc-row and the line's own class, never .fc-note");
+  assert.deepEqual((line!.childNodes[0] as El).classes, ["fc-note"], ".fc-note on the words' span");
   assert.equal(act(line!, "fchiddenx")!.getAttribute("aria-label"), "Dismiss");
   assert.deepEqual(chosen(aside), ["changes"], "the kept choice stands");
   assert.equal(stored()!.commentsFilter, "changes");
-  // the poll's re-render keeps it
-  answer(w, withComments([...ALL_COMMENTS, fresh], { storeMtimeNs: "1757145600000000006" })); await flush();
-  assert.ok(savedLine(aside), "still there after a status");
+  // the poll's re-render keeps it: the sidecar moved, the poll re-asks status, and the answer's render still holds the line
+  // (a result posted with no ask outstanding is dropped by the panel, so it must be the poll's own ask that is answered)
+  const asks = w.posted.filter((m) => m.type === "fileComments" && m.verb === "status").length;
+  w.mtimes[STORE_PATH] = "1757145600000000007";
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(w.posted.filter((m) => m.type === "fileComments" && m.verb === "status").length, asks + 1, "the moved sidecar re-asks status");
+  answer(w, withComments([...ALL_COMMENTS, fresh], { storeMtimeNs: "1757145600000000007" })); await flush(); await flush();
+  assert.ok(savedLine(aside), "still there after the poll's status");
+  assert.equal(savedLine(aside)!.dataset.id, fresh.id, "the same comment's line");
   // All: the card, and the line is over
   await pick(aside, "all");
   assert.ok(card(aside, fresh.id), "All shows the card");
@@ -744,7 +754,8 @@ test("pins: replyAway takes the filter into account before the change fold; the 
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   assert.match(head, /let filterRow: HTMLElement \| null = null;/);
   assert.match(head, /head\.appendChild\(seg\);\n\s+filterRow = seg;/);
-  assert.match(head, /const underToggles = \(n: HTMLElement\): void => \{ head\.insertBefore\(n, filterRow\); \};/, "a confirm row goes before the filter's row, or at the end with none");
+  assert.match(head, /const underToggles = \(n: HTMLElement\): void => \{ head\.insertBefore\(n, filterRow\); \};/, "a confirm row goes before the anchor: the filter's row when offered, else the first of the head's other rows (set below, the second round's fix), else at the end");
+
   assert.match(head, /underToggles\(pick\);/); assert.match(head, /underToggles\(stop\);/);
   assert.match(head, /for \(const n of Array\.from\(head\.childNodes\)\) if \(n\.nodeType === 1 && \(n as HTMLElement\)\.dataset\.slot === "track"\) underToggles\(n as HTMLElement\);/, "the track slot's rows, built with the head's others, are moved under the toggle — the head's own children, never a row's ✕");
   assert.ok(head.indexOf("head.appendChild(seg);") < head.indexOf("if (this.trackChoice && s) {"), "the source order the filter suite pins is unchanged");
