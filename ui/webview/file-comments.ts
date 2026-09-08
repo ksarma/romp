@@ -773,8 +773,10 @@ class Panel {
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
-  // ── the margin layout (the user 2026-09-07, after walking the loop: a comment's card should sit level with the
-  // passage it is about and move with the text). Beside the body the aside is laid out as a document editor's margin:
+  // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
+  // comments might move with the window when possible, each trying to stay centered near its place in the text; the
+  // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
+  // with the user's word still to come). Beside the body the aside is laid out as a document editor's margin:
   // the head and the composer stay put at the top, Accept all · Reject all, Send and the Log at the bottom, and between
   // them the cards section is a TRACK whose scroll is locked to the body's — the body's scrollTop is mirrored onto the
   // track on its scroll event and the reverse on the track's (syncFrom guards the echo) — with every card absolutely
@@ -2518,11 +2520,21 @@ class Panel {
     // the body's end padding: the footer's height (the part of the body's box the track's box does not reach), plus how
     // far the last card hangs past the content's end. The content's height is the body's scroll height less the padding
     // it holds — known only while the body scrolls at all (scrollHeight floors at the box); a body that does not scroll
-    // is padded by the footer alone, and its track goes on past it for the rest (followBody).
+    // is padded by the footer alone, and its track goes on past it for the rest (followBody). That padding is KEPT only
+    // where it lengthens the body. A box's padding comes out of its content box, and content sized to the box by a
+    // `min-height: 100%` — the standalone picture's box (.fileview-imgbox, which centers the picture in itself), the Raw
+    // view's — shrinks by the padding instead of scrolling: the body gained no range, and the picture rose by half the
+    // footer at every open of the panel and fell back at the close, on no new information about it (the 2026-09-07
+    // review, round 3). So the padding is written, then measured: where it bought the body no range it is taken back the
+    // same pass (the content box is whole again before the frame paints, so no observer sees a change). A picture nearly
+    // the box's height is the band where it does buy range — its own box outgrows the padded content box — and there it
+    // stays, as the padding that lets the body reach a card at the picture's foot.
     const footer = Math.max(0, bodyRect.bottom - trackRect.bottom);
-    const content = body.scrollHeight > body.clientHeight ? body.scrollHeight - this.bodyPad : null;
+    const scrolls = body.scrollHeight > body.clientHeight;
+    const content = scrolls ? body.scrollHeight - this.bodyPad : null;
     const hang = content === null ? 0 : Math.max(0, out.bottom + CARD_GAP + offset - content);
     this.padBody(body, Math.ceil(footer + hang));
+    if (!scrolls && body.scrollHeight <= body.clientHeight) this.padBody(body, 0);   // bought no range: taken back
     list.style.height = Math.max(body.scrollHeight - body.clientHeight + track.clientHeight, out.bottom + CARD_GAP) + "px";
     this.placed = new Map(out.placed.map((p) => [p.key, p]));
     this.cardsEnd = out.bottom + CARD_GAP;

@@ -1639,32 +1639,41 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-log-row { display: flex; gap: 8px; align-items: baseline; }
 .fc-log-row > :not(.fc-time) { font-size: 0.86em; }
 .fc-log-row .fc-time { margin-left: 0; }
-/* the margin layout (the user 2026-09-07, after walking the loop: a card should sit level with the passage it is about
-   and move with the text). Beside the body the aside wears `fc-margin` (file-comments.ts placeCards): the head and the
-   composer stay put at the top, Accept all · Reject all (moved out of the list), Send and the Log at the bottom, and the
-   cards section between them is the one scroller — its scroll locked to the body's, its own bar hidden since the body's
-   is the control for both — with every card absolutely positioned at the top the pass computed (card-layout.ts). The
-   overflow moves from the aside to that track; the panel's padding moves onto the fixed parts. A card pushed down from
-   its mark by the card above draws a dashed leader up the gutter to its mark's height (--fc-push, set per card). The
-   paragraph titles are hidden: a card's place beside its paragraph says it. Off (the narrow fold, edit mode) nothing
-   here applies and the list above is the layout. */
+/* the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that comments
+   might move with the window when possible, each trying to stay centered near its place in the text; the build put each
+   card level with its passage instead, and the plan's margin-layout note under Slice 2 records both). Beside the body the
+   aside wears `fc-margin` (file-comments.ts placeCards): the head and the composer stay put at the top, Accept all ·
+   Reject all (moved out of the list), Send and the Log at the bottom, and the cards section between them is the one
+   scroller — its scroll locked to the body's, its own bar hidden since the body's is the control for both — with every
+   card absolutely positioned at the top the pass computed (card-layout.ts). The overflow moves from the aside to that
+   track; the panel's padding moves onto the fixed parts. A card pushed down from its mark by the card above draws a
+   dashed leader up the gutter to its mark's height (--fc-push, set per card). The paragraph titles are hidden: a card's
+   place beside its paragraph says it. Off (the narrow fold, edit mode) nothing here applies and the list above is the
+   layout. */
 .fc-panel.fc-margin { overflow: hidden; padding: 0; gap: 0; }
-.fc-margin > .fc-sec-head { flex: 0 0 auto; padding: 10px 12px 0; }
-.fc-margin > .fc-composer { flex: 0 0 auto; padding: 10px 12px 0; }
+/* The sections must add up to the panel, always. The panel clips (a panel that scrolled would carry the track away from
+   the body and every card off its mark), so a control past its bottom edge is out of reach — and a Tab onto one scrolls
+   the clipped panel anyway: the head goes under the top edge and every card sits above its mark by that amount until
+   the next pass. The first cut let only the track yield, down to its floor, then the Send section while its confirm was
+   up and the Log while it had rows; every other growth — the composer, the Track file/folder choice, the Reject all
+   confirm, a refusal row under the foot, a fold row, the tooling warning — still pushed Send and the Log toggle off the
+   bottom (the 2026-09-07 review, twice). So every section but the track can shrink, and scrolls inside itself when it
+   does, in two tiers. The sections holding what grew give first: the composer while it shows, and the head, the Send
+   section and the Log while they hold anything beyond their controls (the head's button row; Accept all · Reject all
+   and the Send button with its caption; the Log toggle). Their flex-shrink is a million times the others', so the
+   collapsed sections keep their size to within a layout unit, and they stop at a floor of one control row (15% of a
+   panel too short for that: four grown sections and the track's 30% still fit). Only then do the collapsed sections
+   give, in proportion, scrolling too. The track's basis is 0 with a floor of 30%: it takes the free space when the rest
+   is short and keeps about two cards when it is tall. The Log toggle sticks to the top of its scroller so the fold is in
+   reach while the rows scroll. */
+.fc-margin > .fc-sec-head, .fc-margin > .fc-composer { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 10px 12px 0; }
+.fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 12px; }
+.fc-margin > .fc-sec-log { padding-bottom: 10px; }
+.fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2)),
+.fc-margin > .fc-sec-send:has(> :not(.fc-foot, .fc-send), .fc-foot > :nth-child(n+2), .fc-send > :nth-child(n+2):not(.fc-note)),
+.fc-margin > .fc-sec-log:has(.fc-log > :nth-child(n+2)) { flex-shrink: 1000000; min-height: min(15%, 2.4em); }
 .fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }
 .fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
-.fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 0 auto; padding: 0 12px; }
-.fc-margin > .fc-sec-log { padding-bottom: 10px; }
-/* a footer taller than the panel: the panel clips (a panel that scrolled would carry the track away from the body and
-   every card off its mark), and the track is the one section that yields — so an open Send confirm (fifteen comments
-   listed, the message preview under them) or an open Log (up to the host's 200 rows) pushed its own controls past the
-   panel's bottom edge with nothing to scroll them back (found 2026-09-07). The rule: the track's basis is 0 with a
-   floor of 30% of the panel, so it takes the free space when the footer is short and keeps about two cards when it is
-   tall, and never gives up the floor; and a section yields only while it holds the content that grew — the Send
-   section while its confirm is up, the Log section while it has rows — becoming a scroller of its own, its collapsed
-   controls (Accept all · Reject all, Send, the Log toggle) never squeezed since a collapsed section keeps flex 0 0 auto.
-   The Log toggle sticks to the top of its scroller so the fold is in reach while the rows scroll. */
-.fc-margin > .fc-sec-send:has(.fc-confirm), .fc-margin > .fc-sec-log:has(.fc-log-row) { flex: 0 1 auto; min-height: 0; overflow: auto; }
 .fc-margin .fc-log > .fc-sec { position: sticky; top: 0; background: var(--bg); }
 .fc-margin .fc-sec-send > .fc-foot { padding-top: 8px; border-top: 1px solid var(--card-border); }
 .fc-margin .fc-cards { display: block; position: relative; }
