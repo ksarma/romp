@@ -20,6 +20,11 @@ absolute path.
   the stored spelling and the OS agree (DotDotAcrossADirectorySymlink).
 - The lifecycle log's `lost` line carries the todo's `file` like every other line of a todo that names
   one (TheLostLineCarriesTheFile) — the documented shape, pinned through _reopen_user_todo.
+- The fixtures restore through addCleanup, never tearDown: unittest skips tearDown when setUp raises, and
+  AKeptAsGivenPathAndTheKernelsCwd asserts in setUp AFTER chdir'ing the process and after _World rebound
+  jd.STATE (one object for every module in the worker) and three kernel functions — so the very
+  regression it guards against would have left every later test in the xdist worker running inside a
+  stale temp tree with the sandbox as its state (ASetUpThatFailsLeaksNothing pins the restores).
 
 SYNTHETIC fixtures only: private placeholder sids, the notes-api demo world under a temp dir.
 """
@@ -77,9 +82,14 @@ class _World(unittest.TestCase):
     PSID's cwd recorded as its root, PSID2 with no recorded cwd, and the routes' pusher stubbed."""
 
     def setUp(self):
+        # Every restore is an addCleanup registered BEFORE the change it undoes (cleanups run when
+        # setUp raises; tearDown does not), in the order tearDown kept: kernel functions, STATE and
+        # the caches, then the temp tree — and a subclass's chdir back runs before all of these.
         self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
         self.tmp = os.path.realpath(self.td.name)
         self.saved = jd.STATE
+        self.addCleanup(self._restore_state)
         jd.STATE = Path(self.tmp) / "state"
         jd.STATE.mkdir()
         km._user_todos_cache.clear()
@@ -92,17 +102,19 @@ class _World(unittest.TestCase):
             f.write("# Findings\n")
         self.cwds = {PSID: self.root}
         self._saved = (km._cwd_of, km._push_all, km._push_soon)
+        self.addCleanup(self._restore_kernel)
         km._cwd_of = lambda sid: self.cwds.get(sid, "")
         km._push_all = lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("synchronous _push_all on a postal-called route"))
         km._push_soon = lambda: None
 
-    def tearDown(self):
+    def _restore_kernel(self):
         km._cwd_of, km._push_all, km._push_soon = self._saved
+
+    def _restore_state(self):
         jd.STATE = self.saved
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
-        self.td.cleanup()
 
     def post(self, body):
         code, out = _serve_post("/usertodo", body, {"X-Romp-Token": km.TOKEN})
@@ -213,13 +225,10 @@ class AKeptAsGivenPathAndTheKernelsCwd(_World):
         with open(self.kfile, "w") as f:
             f.write("# An unrelated report\n")
         self._cwd = os.getcwd()
+        self.addCleanup(os.chdir, self._cwd)         # before the chdir: the asserts below may fail
         os.chdir(self.kernelcwd)
         self.tid = km._add_user_todo(PSID2, "Need a look at the findings report", file="docs/report.md")
         self.assertEqual(km._user_todos()[PSID2][0]["file"], "docs/report.md", "kept as given")
-
-    def tearDown(self):
-        os.chdir(self._cwd)
-        super().tearDown()
 
     def test_a_relative_stored_file_never_matches_a_file_under_the_kernels_cwd(self):
         self.assertEqual(self.naming(PSID2, self.kfile), [], "the kernel's own directory is no frame")
@@ -247,6 +256,66 @@ class AKeptAsGivenPathAndTheKernelsCwd(_World):
     def test_an_absolute_stored_file_is_matched_as_before(self):
         t2 = km._add_user_todo(PSID2, "Need a look at the other note", file=self.kfile)
         self.assertEqual([t["id"] for t in self.naming(PSID2, self.kfile)], [t2])
+
+
+class ASetUpThatFailsLeaksNothing(unittest.TestCase):
+    """AKeptAsGivenPathAndTheKernelsCwd asserts in setUp after chdir'ing the PROCESS and after _World
+    rebound jd.STATE and the kernel copy's _cwd_of/_push_all/_push_soon. unittest skips tearDown when
+    setUp raises, so with the restores in tearDown the regression the class guards against (a relative
+    `file` with no recorded cwd resolved against the process cwd) left the xdist worker chdir'd into a
+    TemporaryDirectory that was never cleaned, with the sandbox as the process-shared STATE and the
+    patches in place, for every later test in the process — five clean failures turned into cascading
+    noise (the review, 2026-09-07). Every restore is an addCleanup now. This runs the class against two
+    setUp failures — the injected regression (an assertion) and an error out of the filing call — and
+    reads what the process is left with. Nested runs: the case's own result object, so the failure
+    under test never reaches this run's report."""
+
+    def _snapshot(self):
+        return os.getcwd(), jd.STATE, (km._cwd_of, km._push_all, km._push_soon)
+
+    def _run_one(self, name="test_it_matches_nothing_while_the_session_has_no_cwd"):
+        case = AKeptAsGivenPathAndTheKernelsCwd(name)
+        result = unittest.TestResult()
+        case.run(result)
+        return case, result
+
+    def _assert_nothing_leaked(self, case, before):
+        cwd, state, fns = before
+        self.assertEqual(os.getcwd(), cwd, "the process cwd is the worker's again")
+        self.assertIs(jd.STATE, state, "the shared STATE is out of the sandbox")
+        self.assertEqual((km._cwd_of, km._push_all, km._push_soon), fns, "the kernel copy is unpatched")
+        self.assertFalse(os.path.exists(case.tmp), "the sandbox (the process's cwd for the test) is gone")
+
+    def test_the_filing_regression_the_class_guards_against_leaks_nothing(self):
+        orig = km._user_todo_file
+
+        def regressed(value, sid):        # a relative path with no recorded cwd: abspath'd, no warning
+            stored, warning = orig(value, sid)
+            if isinstance(stored, str) and warning and "no working directory" in warning:
+                return os.path.abspath(stored), None
+            return stored, warning
+
+        before = self._snapshot()
+        with mock.patch.object(km, "_user_todo_file", regressed):
+            case, result = self._run_one()
+        self.assertEqual(len(result.failures), 1, "setUp's own assertion is the failure reported")
+        self.assertIn("kept as given", result.failures[0][1])
+        self.assertEqual(result.errors, [], "and no cleanup added an error of its own")
+        self._assert_nothing_leaked(case, before)
+
+    def test_an_error_out_of_the_filing_call_leaks_nothing(self):
+        before = self._snapshot()
+        with mock.patch.object(km, "_add_user_todo", side_effect=OSError("no space left on device")):
+            case, result = self._run_one()
+        self.assertEqual(len(result.errors), 1)
+        self.assertEqual(result.failures, [])
+        self._assert_nothing_leaked(case, before)
+
+    def test_the_control_run_passes_and_restores_the_same(self):
+        before = self._snapshot()
+        case, result = self._run_one()
+        self.assertTrue(result.wasSuccessful(), result.failures + result.errors)
+        self._assert_nothing_leaked(case, before)
 
 
 class DotDotAcrossADirectorySymlink(_World):

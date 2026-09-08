@@ -5577,11 +5577,15 @@ def _user_todo_file(value, sid):
     lists as linkable, and one the CLIENT converts before a clicked link reaches the kernel
     (fileUriToPath), so nothing downstream of this store would — becomes its path here: scheme off,
     percent-decoded, and it must carry an absolute path (file:///…), never joined onto the cwd as if
-    `file:` were a directory. A value that cannot become a path on this disk — a relative path for a
-    session with no recorded cwd, a URI without an absolute path, another URL scheme, a body value that
-    is not a string — is stored AS GIVEN with a warning that names the reason; never a refusal: the
-    todo is the person's to see, and a path that does not resolve is worth a line in the tool's reply,
-    not a lost request (the todo-file follow-on, 2026-09-07)."""
+    `file:` were a directory. RFC 8089's no-authority spelling, file:/…, is the same URI and converts the
+    same way (the review, 2026-09-07: it has no `://`, so it slipped past both the URI branch and the
+    URL check and was joined onto the cwd as `<cwd>/file:/…` — absolute, hence silently wrong). A value
+    that cannot become a path on this disk — a relative path for a session with no recorded cwd, a URI
+    without an absolute path, another URL scheme, a body value that is not a string, a spelling holding
+    a NUL byte (no path holds one, and Python 3.12's os.path.realpath RAISES on it rather than answering,
+    so a stored one is matched by nothing) — is stored AS GIVEN with a warning that names the reason;
+    never a refusal: the todo is the person's to see, and a path that does not resolve is worth a line
+    in the tool's reply, not a lost request (the todo-file follow-on, 2026-09-07)."""
     if value is None:
         return None, None
     if not isinstance(value, str):                   # a hand-built POST: not a path, so not resolved
@@ -5594,9 +5598,12 @@ def _user_todo_file(value, sid):
         return None, None
     tail = ("so it was kept as given; pass the file's absolute path so it opens from the request and "
             "its comments can answer it")
-    if raw[:7].lower() == "file://":
-        p = unquote(raw[7:])
-        if not os.path.isabs(p):                     # file://host/x, file://docs/x: no local absolute path
+    if raw[:5].lower() == "file:":
+        # file:///x (an empty authority, the client's own spelling) and file:/x (no authority, RFC 8089)
+        # both name /x; file://host/x and file://docs/x carry no local absolute path
+        rest = raw[5:]
+        p = unquote(rest[2:] if rest[:2] == "//" else rest)
+        if not os.path.isabs(p):
             return raw, ("the file path %s did not resolve to an absolute path (a file:// URI must carry "
                          "the absolute path, as file:///…), %s" % (raw, tail))
     elif _URL_SCHEME_RE.match(raw):
@@ -5604,19 +5611,30 @@ def _user_todo_file(value, sid):
                      "this machine's disk), %s" % (raw, tail))
     else:
         p = _resolve_open_path(raw, sid)
+    if "\x00" in p:
+        # checked on the converted spelling, so a percent-encoded %00 in a URI is caught too; shown with
+        # the byte spelled out, since a NUL in the reply's text is invisible
+        return raw, ("the file path %s did not resolve to a path on this machine's disk (it holds a NUL "
+                     "byte, which no path can), %s" % (raw.replace("\x00", "\\0"), tail))
     if os.path.isabs(p):
         return _normpath_keeping_links(p), None
     return raw, ("the file path %s did not resolve to an absolute path (it is relative and no working "
                  "directory is recorded for this session), %s" % (raw, tail))
 
 
-def _add_user_todo(sid, text, detail="", file=None):
-    """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
-    for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
-    optional longer context; empty means the short line carries it all and no key is stored. `file`
-    is the optional path of the file the todo is about, resolved here (_user_todo_file) and stored
-    under `file` when given; the route reads the same helper for the warning an unresolved path earns."""
-    stored = _user_todo_file(file, sid)[0]
+def _register_user_todo(sid, text, detail="", file=None):
+    """Register a user todo for `sid`: (tid, stored, warning) — the minted id ("ut-" + 8 hex, the
+    agent's handle for withdraw_user_todo, so it must never collide within the session's list), the
+    `file` as the record keeps it (None when none was given), and the warning an unresolved one earns,
+    all from the ONE resolution (_user_todo_file) the record was written from. The /usertodo route
+    answers from this triple and never resolves again: a second resolution for the reply re-read the
+    session's cwd from the names registry, and a cwd that became known between the two reads (a
+    comment thread promoted while its todo was filing) stored the relative spelling — which no Send
+    can ever match — while the reply carried no warning, so the agent was never told to pass the
+    absolute path; the reverse order stored the absolute path and warned falsely (the review,
+    2026-09-07). `detail` is the optional longer context; empty means the short line carries it all
+    and no key is stored."""
+    stored, warning = _user_todo_file(file, sid)
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
         cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
@@ -5634,7 +5652,12 @@ def _add_user_todo(sid, text, detail="", file=None):
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "filed", rec["text"], rec.get("detail", ""),   # after the store landed
                              file=rec.get("file"))
-    return tid
+    return tid, rec.get("file"), warning
+
+
+def _add_user_todo(sid, text, detail="", file=None):
+    """_register_user_todo's minted id alone — the form every in-process filer uses."""
+    return _register_user_todo(sid, text, detail, file)[0]
 
 
 # Per-sid bound on RESOLVED rows (round 2, 2026-08-22): on a self-hosted box sessions live for
@@ -5818,6 +5841,10 @@ def _user_todos_naming_file(sid, real):
         try:
             same = os.path.realpath(f) == real
         except (OSError, ValueError):
+            # ValueError: a stored spelling holding a NUL byte — absolute to isabs, kept as given and
+            # warned about at filing (_user_todo_file), and realpath under 3.12 raises on it. One such
+            # todo must not fail every comments reply of its session (this loop runs on each), so the
+            # arm stays: narrowing it to OSError breaks the panel for the whole session.
             same = False
         if same:
             out.append({"id": t["id"], "text": t["text"]})
@@ -47919,8 +47946,13 @@ class Handler(BaseHTTPRequestHandler):
                 # `file` (the todo-file follow-on, 2026-09-07) is resolved against the session's cwd
                 # and stored absolute (_user_todo_file: a file:// URI becomes its path); a value that
                 # does not resolve — a relative path with no cwd to join, a URL, a body value that is
-                # not a string (handed on AS IS, not str()'d, so the helper can name the shape) — is kept
-                # as given and named in `warning`. The todo is filed either way, never refused for its file.
+                # not a string (handed on AS IS, not str()'d, so the helper can name the shape; a falsy
+                # one — 0, false, [], {} — no differently from a truthy one: `fraw or None` once dropped
+                # it while the reply said it was kept, the review 2026-09-07) — is kept as given and
+                # named in `warning`. The
+                # todo is filed either way, never refused for its file. The reply echoes `file` as the
+                # record keeps it, from the same resolution (_register_user_todo) — never a second one,
+                # which could read a different cwd and describe a store the filing did not make.
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -47937,26 +47969,47 @@ class Handler(BaseHTTPRequestHandler):
                     # kernel's own copy of this route applies its own answer to a forwarded ask.
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 fraw = body.get("file")
-                fraw = fraw.strip() if isinstance(fraw, str) else fraw
+                if isinstance(fraw, str):
+                    fraw = fraw.strip() or None                     # absent, null and blank all mean: no file
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     fwd = {"id": sid, "text": text, "detail": str(body.get("detail") or "")}
-                    if fraw:
+                    if fraw is not None:
                         fwd["file"] = fraw                          # the remote kernel resolves it against ITS disk
                     res = _remote_forward(r, "/usertodo", fwd)
                     tid = str((res or {}).get("todoId") or "")
                     out = {"ok": bool(tid), "todoId": tid}
-                    if isinstance(res, dict) and res.get("warning"):
-                        out["warning"] = str(res["warning"])        # the remote's account of an unresolved path
+                    if isinstance(res, dict):
+                        if res.get("file"):
+                            out["file"] = str(res["file"])          # the path as the remote's record keeps it
+                        if res.get("warning"):
+                            out["warning"] = str(res["warning"])    # the remote's account of an unresolved path
+                        elif "file" in fwd and tid and "file" not in res:
+                            # Version skew (the review, 2026-09-07): a kernel that predates a todo's
+                            # file reads id/text/detail alone and answers {ok, todoId}, so the file was
+                            # neither stored there nor warned about — and a kernel that takes it echoes
+                            # `file` (or warns), so a reply with neither is the older route. Named here
+                            # rather than swallowed: the todo stands there without its file, and the
+                            # caller would otherwise hear plain success. Through the postal tool this
+                            # branch is out of reach (a session's tool posts to its own host's kernel,
+                            # whose GET /sessions lists local sessions only); API for any token holder.
+                            host = r.get("host") or "that host"
+                            out["warning"] = ("the file path %s was not recorded (the kernel on %s predates a "
+                                              "todo's file: update romp there and restart it); the todo stands "
+                                              "there without it, so name the path in its detail meanwhile"
+                                              % (fwd["file"], host))
+                            sys.stderr.write("user-todos: %s's file not recorded on %s: its kernel predates a "
+                                             "todo's file\n" % (sid[:8], host))
                     return self._send(200, json.dumps(out), "application/json")
-                tid = _add_user_todo(sid, text, str(body.get("detail") or ""), file=fraw or None)
+                tid, stored, warning = _register_user_todo(sid, text, str(body.get("detail") or ""), file=fraw)
                 # ack-fast (the push-architecture rule, 2026-07-05): wake the pusher, never build the
                 # whole payload set synchronously on this handler thread — the postal bus times its
                 # POST out at 2s, so an inline _push_all here turned a SAVED todo into a loud false
                 # "will NOT see it — try again" at the agent, whose retry then filed a duplicate.
                 _push_soon()                                        # the split card shows the new row at once
                 out = {"ok": True, "todoId": tid}
-                warning = _user_todo_file(fraw, sid)[1]             # the same resolution the filing made
+                if stored:
+                    out["file"] = stored                            # what the record carries — the same resolution
                 if warning:
                     out["warning"] = warning
                 return self._send(200, json.dumps(out), "application/json")

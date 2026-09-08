@@ -162,8 +162,14 @@ test("the chat's todo card and its Reply modal still link the note against the t
   // the detail's linker is the transcript's with the figure pass, DELEGATED: the card rebuilds every push
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   assert.match(RENDER, /reply\.dataset\.sid = renderingSid \|\| "";/);               // the buttons act where the paths resolve
-  const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\")"),
-                             RENDER.indexOf("input.className = \"ut-reply-input\""));
+  // the modal is sliced from its full signature — the five-argument form since the todo-file follow-on
+  // (plans/file-review.md, decision 35: `todoFile` is the file the todo names, shown as a chip) — and the
+  // anchor is checked before the slice: an indexOf of -1 slices to "" and fails the match below with an
+  // empty input, which says nothing about WHAT went stale (the 2026-09-07 review round)
+  const modalSig = "function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\", todoFile = \"\"): void {";
+  const modalAt = RENDER.indexOf(modalSig);
+  assert.notEqual(modalAt, -1, "showUserTodoReply's signature moved — re-anchor this slice (and any sibling pin) on the new one");
+  const modal = RENDER.slice(modalAt, RENDER.indexOf("input.className = \"ut-reply-input\"", modalAt));
   assert.match(modal, /dd\.textContent = todoDetail; linkTodoDetailPaths\(dd, sid\);/);
   // the one-line text links its paths too (the user 2026-09-07), through the same binder but without the
   // figure pass: a one-line row is the compact form, so never linkifyFileUris there (user-todo-title-links.test.ts)

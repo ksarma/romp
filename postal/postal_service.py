@@ -3175,10 +3175,10 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI)"},
                                     "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"},
-                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; it becomes the link in the request and lets the person's comments on that file answer this todo"}},
+                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; the person sees it as a link that opens the file, and their comments on that file can answer this todo"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
-     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",
+     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a need that no longer stands.",
      "inputSchema": {"type": "object",
                      "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
                      "required": ["id"]}},
@@ -3317,9 +3317,16 @@ def _mcp_call(name, args):
         # given. The KERNEL resolves it (a relative path against the session's cwd) and stores
         # the absolute path; it never refuses a todo for its file, and says in `warning` when
         # the path did not resolve — surfaced below, never swallowed, so the agent can fix the
-        # path while the need already stands.
-        file_ = str(args.get("file") or "").strip()
-        if file_:
+        # path while the need already stands. A string is stripped; anything else (the schema
+        # says string, but nothing between the model and this call enforces it) rides the post
+        # AS GIVEN, never str()'d: the kernel keeps a non-string as its text with a warning that
+        # names the shape, whereas its repr — "['/x/y.md']" — is a relative spelling the kernel
+        # would join onto the cwd and store as an absolute path naming nothing, silently (the
+        # review's catch, 2026-09-07). None and a blank string are no file, as before.
+        file_ = args.get("file")
+        if isinstance(file_, str):
+            file_ = file_.strip()
+        if file_ is not None and file_ != "":
             body["file"] = file_
         res = _kernel_post("/usertodo", body)
         tid = res.get("todoId") if isinstance(res, dict) else None
