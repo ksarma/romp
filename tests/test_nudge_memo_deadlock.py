@@ -58,8 +58,8 @@ class MemoDeadlock(unittest.TestCase):
             "_interrupt_suppresses_nudge", "_backend_queued", "_backend_rewind_pending",
             "_last_state", "_session_awaiting", "_closer_settled", "_revivers_pending",
             "_pending_ops", "_last_assistant_report", "_all_outstanding_delegated")}
-        self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "_segs",
-                                                     "plan_units", "nudge_redundant")}
+        self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "load_goals_shared",
+                                                     "_segs", "plan_units", "nudge_redundant")}
         self._orig_backend = km.Sessions.backend_for
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid: False
@@ -83,6 +83,10 @@ class MemoDeadlock(unittest.TestCase):
         jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}
         self.store = _store()
         jd.load_goals = lambda sid: self.store
+        # the walk decides on jd.load_goals_shared since performance round 5 (2026-09-08); the stub follows
+        # whatever jd.load_goals the test installs, so the walk's snapshot is the stub's first answer and a
+        # store file another test left under the shared GOALDIR is never read instead
+        jd.load_goals_shared = lambda sid: jd.load_goals(sid)
         self.sent = []
         self.reports = [("working through the queue", ARM_T + 50),
                         ("working through the queue", ARM_T + 50)]

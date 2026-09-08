@@ -1455,8 +1455,8 @@ class ViewBuilder(unittest.TestCase):
         import inspect
         src = inspect.getsource(km)
         self.assertIn('elif t == "cancelQueued" and msg.get("md"):', src)
-        self.assertIn("err = _cancel_parked(sid, -1, md)", src)
-        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md)", src)
+        self.assertIn("err = _cancel_parked(sid, -1, md, send_id=_sid_id)", src)   # the ✕ names its send by id too (2026-09-08)
+        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id)", src)
 
     def test_tmux_echo_the_transcript_OVERTOOK_is_not_counted_as_queued(self):
         # The reported bug (the user 2026-08-26): a busy session's queued header counted sends from DAYS

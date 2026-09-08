@@ -374,6 +374,19 @@ one of 70, 80, 90, 100, 115, 130, 150, 175 or 200 percent, set by the **A−** /
 its headings, the code and the Raw view together, and the prose measure with
 them; a value outside the table reads as 100.
 
+### The tab strip's per-browser choices
+
+The chat tab strip keeps its grouping choices in the browser's own storage, under
+`romp:tabgroups`, not on the kernel: whether the tabs are grouped by tag, which groups
+are folded, which tabs show while their group is folded (**Show when folded**), and
+which sessions are hidden inside their group (**Hide**, in the section's at-a-glance
+view). A pin or a hide names the session and its group (the tag's name, and the tag's id
+when it is this kernel's), follows the tag through a rename, and is dropped at the next
+pin or hide change once the session has left the group or closed; a fold or an open
+carries it as it is. Folding or opening a group never changes which of
+its sessions are hidden. A store written before hiding existed reads as nothing hidden.
+A key in the store that this build does not know is carried through its writes unchanged.
+
 ### Model and effort, from the statusline or a typed command
 
 Typing `/model X` or `/effort X` into the chat composer, or sending one with
@@ -1639,8 +1652,13 @@ and `key:managed` name sources whose material the kernel never holds.
   is the response time. A clock step moves it; a reader that wants a freshness
   check a clock step cannot fake uses `seq`.
 - `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
-  `/version` and `X-Romp-Boot` carry. A changed `bootId` means a restart, and
-  the windows restarted with it.
+  `/version` and `X-Romp-Boot` carry. `bootAt` is the boot's stamp in this
+  signal: the kernel's start truncated to the millisecond, the precision of
+  every other stamp in the payload, or, when the previous kernel's last
+  transition overlaps the start, one millisecond past that row; every bucket
+  the boot seeded carries this same number as its `stateSince`, and so does
+  every row the boot filed. `/version`'s `started` is the whole-second boot
+  time. A changed `bootId` means a restart, and the windows restarted with it.
 - `complete`: true once the longest window (900 s) fits inside the uptime.
 - `seq`: count of ring events (attempts, successful responses and give-ups)
   ingested since boot. Monotonic within a boot: two reads with the same `seq`
@@ -1876,11 +1894,16 @@ tail, so it stays bounded however many transitions pass; per-request events
 are never written. The event ring itself is in memory only, so a restart
 empties the windows: `seq` restarts at 0, `bootId` changes, `complete` stays
 false until each window fits inside the new uptime, and every bucket the state
-file knows comes back `unknown` with `stateSince` at the boot time. For each
+file knows comes back `unknown` with `stateSince` at the boot's stamp. For each
 bucket whose persisted state was not already `unknown` the reload files
-`<state> -> unknown` at boot, so the transitions list is continuous across the
-restart, and the first read with enough evidence records `unknown -> <state>`
-after it. The pre-restart state is not carried over: an empty ring is no
+`<state> -> unknown` at that stamp, so the transitions list is continuous across
+the restart, and the first read with enough evidence records `unknown -> <state>`
+after it. The boot's stamp is the kernel's start truncated to the millisecond,
+or one millisecond past the newest transition the file carries when that one
+is not before the start (the previous kernel filed it after this one started,
+or the clock stepped), so the restart row is always the newest row; the payload
+serves that stamp as `bootAt`, and the kernel log says when it was moved. The
+pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the SDK backend from starting.
 
@@ -1942,6 +1965,33 @@ unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
 and engages the `spend` pause in the same cycle.
 
+The cell's hover and its click detail carry a **History** section read from
+this signal: the shell fetches `GET /api-health` when the hover or the detail
+opens, and again when a frame lands on an open one, authenticating with the
+dashboard's own cookie the way its other reads do. Nothing polls; the frame
+carries no history and is unchanged. The section shows `overall.state` with
+the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
+count when there is more than one; a bucket the boot seeded is `unknown`
+since `bootAt`: the boot time or, when an older kernel's last row overlaps
+it, one millisecond past that row, because the backend seeds its `stateSince`
+with the stamp it serves as `bootAt`, the one the tail uses for the boot),
+one row per window from `config.windows` (`requests` plus `noStatus` as the
+attempts, saying how many of them had no status when there are any, `rate429`
+and `rate5xx` as percentages over the attempts with a status, `gaveUp`, and
+`sessionsRetrying` as the sessions that retried in the window; a window
+reads `no attempts` only when every one of those is zero; a window whose
+`complete` is false says how long the kernel has been up), up to six rows
+of `transitions` newest first with the state entered and how long it held
+(until the same bucket's next transition, `so far` for the current one; a
+hold from before `bootAt` ends at the boot, since every bucket comes back
+`unknown` at a restart), and the payload's `asOf`. A row the boot filed
+(`<state> -> unknown`, its `why` the restart reason) reads `kernel
+restarted`; where the tail crosses `bootAt` without such a row (the bucket
+was already `unknown` when the previous kernel stopped, so the boot filed
+nothing), a `kernel restarted` divider is inserted, and it takes none of the
+six slots. A read that fails (a non-2xx, or no answer) shows one line saying
+so in place of the rows, never the previous numbers.
+
 ## Kernel performance counters
 
 `GET /perf` returns one JSON document of counters the kernel keeps at all
@@ -1950,8 +2000,9 @@ started. The route takes the serve token. The counters cost a lock and a few
 dictionary increments per event, so they stay on; nothing is formatted or
 serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
-one screen: pusher cycles and wakes per second, cycle time percentiles, the
-share of cycle time in each stage, CPU split between the pusher thread, the
+one screen: pusher cycles and wakes per second, the cycles the minimum
+interval between cycle starts held and the watched-tab wakes exempt from it,
+cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
@@ -1993,10 +2044,24 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
   memos report their own occupancy under `memos`.
 - `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
-  cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
-  `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
-  `cycle_cpu_ms_sum` (the pusher thread's own CPU time), and `cycle_ms_p50`,
-  `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n` from the last 256 cycles.
+  cycle), `wakes_live` (the wakes that carried a session id: that session's
+  live tail changed), `wakes_event` and `wakes_backstop` (how the cycle came
+  to run: a wake arrived before it started, or none did and the 0.5 s backstop
+  ran it), `held` and `held_ms` (cycles the minimum interval between cycle
+  starts delayed, and the total delay), `exempt` (cycles that ran inside the
+  interval because a watched chat tab's live tail changed; a cycle released
+  early from a hold counts in both), `cycle_ms_sum`, `cycle_ms_max` (since
+  start), `cycle_ms_last`, `cycle_cpu_ms_sum` (the pusher thread's own CPU
+  time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
+  from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
+  the kernel): a cycle starts no sooner than that after the previous one
+  began unless the live tail of a chat tab a connected client is watching
+  changed (an SDK session's streamed text, an echo, a turn's end, the
+  session ending), which runs its cycle at once. A tmux session's mid-turn
+  output has no event: it refreshes on the backstop cycle, which runs at the
+  later of the previous cycle's end plus 0.5 s and its start plus the
+  interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's environment
+  overrides it; 0 removes the bound.
 - `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,
@@ -2128,7 +2193,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   launch unresolved: an upper bound on what a negative walk cache would
   save), `idx_build` (placement indexes built, one per store object asked, a
   writer's private copy included) and the gauge `entries` (sessions holding a
-  map). `goals_shared`
+  map). `nudge_walk` is the auto-nudge walk's per-cycle cost (it runs
+  for every alive session every cycle, wake-only when the toggle is off):
+  `walked` and `gated` (session-cycles visited, and the ones a session gate
+  returned on), `loads` and `shared` (store reads taken for the decision, and
+  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
+  `plan_bypass` (the planner-placement gate served from its memo, computed and
+  memoized, or computed uncached over a non-shared store), `deleg_hit` and
+  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
+  wake-only dead-man filed), `evict` (entries dropped for sessions that left
+  the alive set), `stale` (entries released because the parse cache no longer
+  holds the pinned turns) and the gauge `entries`. `goals_shared`
   is the shared read-only goal-store cache the pusher's read-only sites load
   through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
   did not), `refuse` (a fill under a moving archive, served but not

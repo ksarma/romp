@@ -31,8 +31,59 @@ jd = km.jd
 
 SID = "11111111-2222-3333-4444-00000000c001"
 
+# The kernel under test's own state root: bound when it loaded under this module's XDG_STATE_HOME, and
+# where its import-time constants (RESTART_CUTS_FILE) live.
+STATE_ROOT = km.RESTART_CUTS_FILE.parent
+
+
+def _own_state_root(case):
+    """Aim the shared judge module's STATE at this kernel's own root for one test, and put the previous
+    binding back afterwards; returns the audit path both sides now use. The kernel writes the restart
+    audit through jd.STATE at CALL time, and the judge module is shared by every test module in the
+    worker, so the binding at run time is whatever the last test left there: a path captured at import
+    points at a root a later module's kernel load rebound away from (an xdist-only failure, 2026-09-06),
+    and a path read at run time inherits a preceding class's leak. test_judge's FailureContract (before
+    2026-09-08) rebound STATE to a tempdir and removed it without restoring; the kernel's open() then
+    failed inside its never-raises guard and every reader here saw no file, in 39 tests, only when that
+    module's slice ran earlier in the same worker. Binding our own root removes the dependence on what
+    ran before and on which module loaded the judge last. addCleanup runs after tearDown, so the unlinks
+    there still see these paths."""
+    saved = jd.STATE
+    STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    jd._rebind_state(STATE_ROOT)
+    case.addCleanup(jd._rebind_state, saved)
+    return STATE_ROOT / "restart-audit.jsonl"
+
+
+class OwnStateRoot(unittest.TestCase):
+    """_own_state_root: the binding a preceding test left behind decides nothing about where this
+    module's kernel writes, and comes back untouched afterwards."""
+
+    def test_a_dangling_binding_left_by_an_earlier_test_is_not_inherited(self):
+        saved = jd.STATE
+        gone = Path(tempfile.mkdtemp())
+        gone.rmdir()
+        jd._rebind_state(gone)          # a tempdir root removed and never restored, as FailureContract left it
+        try:
+            case = unittest.TestCase()
+            audit = _own_state_root(case)
+            self.assertEqual(jd.STATE, STATE_ROOT)
+            self.assertEqual(audit.parent, STATE_ROOT)
+            self.assertTrue(audit.parent.is_dir())
+            km._audit_unrequested_signal(signal.SIGTERM, now=1)
+            self.assertEqual(len(audit.read_text().strip().splitlines()), 1,
+                             "the kernel wrote where this module reads")
+            audit.unlink()
+            case.doCleanups()
+            self.assertEqual(jd.STATE, gone, "the previous binding comes back, whatever it was")
+        finally:
+            jd._rebind_state(saved)
+
 
 class CutRow(unittest.TestCase):
+    def setUp(self):
+        self.AUDIT = _own_state_root(self)
+
     def test_row_shape_from_a_cutting_drain(self):
         row = km._restart_cut_row({"stopped": 3, "inflight": 2, "unjoined": 1, "reaped": 1,
                                    "cutTurns": [{"sid": SID, "name": "web"}]},
@@ -64,7 +115,7 @@ class CutRow(unittest.TestCase):
         # T240 nit: an in-place converge (main-converge-skip) writes an audit row but restarts nothing;
         # reading only the LAST row labeled a real cut (the parked p2p deploy from 3 min earlier) as
         # the skip. Rows that request no restart are walked past.
-        audit = jd.STATE / "restart-audit.jsonl"
+        audit = self.AUDIT
         audit.write_text("".join(json.dumps(r) + "\n" for r in [
             {"t": 1000, "action": "p2p-update", "reason": "from X to abc1234", "when": "quiet"},
             {"t": 1150, "action": "main-converge-skip", "tag": "def5678"},
@@ -82,7 +133,7 @@ class CutRow(unittest.TestCase):
     def test_a_consumed_audit_row_never_names_a_later_anonymous_cut(self):
         # a quiet p2p row stays inside its 20-minute window long after its restart landed; the cut
         # that consumed it records auditT, and an unaudited SIGTERM 15 min later reads anonymous
-        audit = jd.STATE / "restart-audit.jsonl"
+        audit = self.AUDIT
         audit.write_text(json.dumps({"t": 1000, "action": "p2p-update", "reason": "from X to abc1234",
                                      "when": "quiet"}) + "\n")
         try:
@@ -106,7 +157,7 @@ class CutRow(unittest.TestCase):
             km.RESTART_CUTS_FILE.unlink()
 
     def test_reason_joins_the_recent_audit_tail_only(self):
-        audit = jd.STATE / "restart-audit.jsonl"
+        audit = self.AUDIT
         audit.write_text(json.dumps({"t": 1000, "action": "kernel-asks-manager-restart-all",
                                      "reason": "self-update"}) + "\n")
         # `started`: the rows are synthetic and predate this test process, whose start is the default bound
@@ -161,10 +212,7 @@ class UnrequestedSignal(unittest.TestCase):
     gets no siginfo), so the row says so by what it omits."""
 
     def setUp(self):
-        # Resolved at RUN time, never at import: a later test module's kernel load re-executes the
-        # shared judge module and rebinds jd.STATE, so a path captured at class definition points at
-        # a state root the code under test no longer writes to (an xdist-only failure otherwise).
-        self.AUDIT = jd.STATE / "restart-audit.jsonl"
+        self.AUDIT = _own_state_root(self)   # this kernel's root, whatever an earlier test left bound
         for f in (self.AUDIT, km.RESTART_CUTS_FILE):
             if f.exists():
                 f.unlink()
@@ -453,7 +501,7 @@ class RequestOnRecord(unittest.TestCase):
     REFRESH_CLI_ROW = {"ppid": 4242, "parent": "bash", "sid": "", "name": "", "tty": "/dev/pts/0", "tmux": ""}
 
     def setUp(self):
-        self.AUDIT = jd.STATE / "restart-audit.jsonl"
+        self.AUDIT = _own_state_root(self)
         if self.AUDIT.exists():
             self.AUDIT.unlink()
 
@@ -636,7 +684,7 @@ class ParentGone(unittest.TestCase):
     `parent-gone`) and a cut row with the drained turns, like every other exit."""
 
     def setUp(self):
-        self.AUDIT = jd.STATE / "restart-audit.jsonl"
+        self.AUDIT = _own_state_root(self)
         for f in (self.AUDIT, km.RESTART_CUTS_FILE):
             if f.exists():
                 f.unlink()

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { newPending, type PendingSend } from "./send-pending";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
@@ -58,9 +59,35 @@ test("sending with a GOAL citation routes as an askFollowUp (reopen) and consume
   // owner for the live send and the staged release; deliver feeds it activeId as the sid
   assert.match(RENDER, /const cites = composerCitations\.get\(activeId\);/);
   assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);   // + the echo's thumbnail paths (2026-08-25)
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
-  assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
+  assert.match(RENDER, /else \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /if \(cites\) \{ composerCitations\.delete\(activeId\); renderComposerChips\(activeId\); \}/);
+});
+
+test("a goal-cited follow-up posts its bubble's sendId, registered first, like every other composer send (review round 2, 2026-09-08)", () => {
+  // The kernel's askFollowUp handler wraps the text in the goal body and hands it to _send_or_park with
+  // this id, so the parked op or the backend queue entry names the bubble the chat shows and the bubble's
+  // ✕ (cancelQueued sendId) finds exactly that entry. Before, the follow-up posted no id while its bubble
+  // wore one, so a ✕ on a still-queued follow-up missed by id and toasted 'too late' with the follow-up
+  // still queued. The branch is executed as written: the id posted is the id of the bubble registered.
+  const m = RENDER.match(/if \(goalCite\?\.itemId\) \{ (const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\);) \}/);
+  assert.ok(m, "the follow-up branch registers the bubble first, then posts with its id");
+  const calls: string[] = [];
+  const posted: { type: string; itemId: string; text: string; sid: string; sendId?: string }[] = [];
+  let registered: PendingSend | undefined;
+  const run = new Function("goalCite", "sid", "text", "imgPaths", "registerOptimistic", "vscodeApi", m![1]);
+  run({ itemId: "11111111-2222-3333-4444-555555555555:g1", title: "Ship the notes API" }, "11111111-2222-3333-4444-555555555555", "and the tests?", undefined,
+    (id: string, text: string) => { calls.push("register"); registered = newPending(text, undefined, 1_700_000_000_000); return registered; },
+    { postMessage: (msg: any) => { calls.push("post"); posted.push(msg); } });
+  assert.deepEqual(calls, ["register", "post"], "registered FIRST, so the id exists to post");
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].type, "askFollowUp");
+  assert.equal(posted[0].itemId, "11111111-2222-3333-4444-555555555555:g1");
+  assert.equal(posted[0].text, "and the tests?", "the typed words: the kernel does the goal wrapping");
+  assert.ok(registered!.sendId, "the bubble wears an id");
+  assert.equal(posted[0].sendId, registered!.sendId, "the kernel receives the id the bubble wears");
+  // no composer route posts a user message without the bubble's id any more
+  assert.doesNotMatch(RENDER, /type: "askFollowUp", itemId: goalCite\.itemId, text, sid \}/, "the id-less follow-up post is gone");
 });
 
 test("a citation follow-up carries its SID, so a reply to a REMOTE card reaches that card's kernel", () => {
@@ -71,7 +98,7 @@ test("a citation follow-up carries its SID, so a reply to a REMOTE card reaches 
   // sid from the itemId, owns no such session, and hands it to tmux by uuid — dropped in silence. The card
   // still flashed to Working (the kernel's cardPredict fires before any of that) and snapped back on the
   // ok:false ack, so the only visible trace was a bounce.
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);   // deliver's sid IS the active session
   // every OTHER card-addressed op already routes this way — the citation follow-up was the lone omission
   assert.match(FEED, /type: "askClear", itemId: it\.itemId, sid: it\.sid/);
@@ -204,11 +231,11 @@ test("closing a session clears its composer reply context — chip, draft, and e
 });
 
 test("quote chips send a plain message wrapped by quoteReplyBody — never askFollowUp (no goal to reopen)", () => {
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
   // the quote branch echoes the COMPOSED body — byte-identical to what lands, so the reconcile's
   // includes() match is exact (the user 2026-08-23, whose quoted sends painted nothing until the
   // kernel round-tripped while plain sends painted instantly)
-  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body \}\); registerOptimistic\(sid, body, imgPaths\); \}/);
+  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); const p = registerOptimistic\(sid, body, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body, sendId: p\.sendId \}\); \}/);
   // the wrap: one section per stacked chip (lead-in + the highlighted text as a markdown quote block), in
   // strip order, then the typed message — a single chip composes byte-identically to the pre-stack form
   // a context-only body (staged with an empty box) carries no dangling blank tail

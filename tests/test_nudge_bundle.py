@@ -259,7 +259,8 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
             "_interrupt_suppresses_nudge", "_backend_queued", "_backend_rewind_pending",
             "_last_state", "_session_awaiting", "_turn_romp_injected", "_closer_settled",
             "_revivers_pending", "_pending_ops")}
-        self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "_segs", "plan_units")}
+        self._orig_jd = {n: getattr(jd, n) for n in ("parsed_session", "load_goals", "load_goals_shared",
+                                                     "_segs", "plan_units")}
         self._orig_backend = km.Sessions.backend_for
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid: False
@@ -281,6 +282,10 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         self.store = _store({G1: _node(G1, "Ship the auth refactor"),
                              G2: _node(G2, "Write the migration guide")})
         jd.load_goals = lambda sid: self.store
+        # the walk decides on jd.load_goals_shared since performance round 5 (2026-09-08); the stub follows
+        # whatever jd.load_goals the test installs, so the walk's snapshot is the stub's first answer and a
+        # store file another test left under the shared GOALDIR is never read instead
+        jd.load_goals_shared = lambda sid: jd.load_goals(sid)
         self.sent = []
         test = self
 
