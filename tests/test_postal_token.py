@@ -335,6 +335,7 @@ class _PostalTokenFile(unittest.TestCase):
     def setUp(self):
         self.f = ps.STATE.parent / "serve-token"
         self.lock = self.f.with_name("serve-token.lock")
+        self.f.parent.mkdir(parents=True, exist_ok=True)
         self._env = self._umask = None
         self.addCleanup(self._restore)      # registered FIRST: a failing _clear() must not leak a zeroed umask
         self._env = os.environ.pop("ROMP_SERVE_TOKEN", None)

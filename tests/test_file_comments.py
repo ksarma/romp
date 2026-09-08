@@ -262,6 +262,35 @@ class TheDiskOp(_Harness):
         self.assertIn("TypeError: boom", r["error"], "the tail of stderr rides the error")
         self.assertLess(len(r["error"]), 700, "…bounded, never the whole trace")
 
+    def test_what_the_host_says_on_stderr_while_it_answers_reaches_the_kernel_log(self):
+        # a call that succeeds can still leave something undone that its reply does not carry — the refresh kept
+        # positions past its budget (refreshAnchorAts) — and the host says so on stderr; only a FAILED call put that
+        # tail in its error, so a successful write that left positions stale said so to nobody (the review,
+        # 2026-09-08). Logged with the verb and the file, bounded like the failure tail; a quiet host logs nothing.
+        note = ("file-comments-host: 3 comment(s) kept their stored position: locating them would scan past the "
+                "refresh's budget for one write\n")
+        self.stub(stderr=note)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r = self.op()
+        self.assertEqual(r["type"], "fileCommentsResult", "the call succeeded")
+        self.assertNotIn("error", r)
+        self.assertIn("kept their stored position", err.getvalue(), "the host's note reaches the log")
+        self.assertIn("file-comments status on ", err.getvalue(), "with the verb, as the other kernel notes are")
+        self.assertIn("report.md", err.getvalue(), "and the file")
+        self.stub(stderr="x" * 2000 + "\nthe last line\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.op()
+        self.assertIn("the last line", err.getvalue())
+        self.assertLess(len(err.getvalue()), 700, "bounded, never the whole trace")
+        self.stub()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r = self.op()
+        self.assertEqual(r["type"], "fileCommentsResult")
+        self.assertEqual(err.getvalue(), "", "a quiet host logs nothing")
+
     def test_bad_stdout_is_a_host_error(self):
         for out in ("not json at all", "[1, 2]", ""):
             self.stub(stdout=out, stderr="warn: something")

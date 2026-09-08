@@ -102,10 +102,63 @@ export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | unde
   return names.length ? { count: names.length, names } : null;
 }
 
-/** The flag's hover text: the sessions by name, and what the click does. */
-export function sectionTodoTitle(flag: SectionTodoFlag): string {
+/** THE NON-FOLDING DOOR's click phrase (round 1 of the tabhide review, 2026-09-08): what a press on one of an OPEN
+ *  header's doors does (render.ts show-group): the section's snapshot in the pane, the fold as it was. The count is
+ *  a door on every open header (round 2) and wears this phrase over the members hidden inside the section (with
+ *  nothing hidden its words say what the pane is for, sectionDoorTitle); the pip and the flag, which the header
+ *  wears over those members, wear it too. */
+export const SHOW_GROUP_CLICK = "click to show this group's sessions";
+
+/** THE WAY BACK's click phrase: what a press does while the pane already shows the section (render.ts show-transcript,
+ *  leaveSnapshot). The header's second click says it (tab-groups.ts headWords, `back`: open, holding the tab being
+ *  read) and so do the three doors of any open header whose section the pane shows, holding that tab or not: the
+ *  count, the pip and the flag (doorClick `shown`, through sectionDoorTitle, the pip's title and sectionTodoTitle;
+ *  round 3 of the tabhide review): one voice for one act. */
+export const BACK_TO_TRANSCRIPT_CLICK = "click to go back to the transcript";
+
+/** THE DOORS' click clause, from one place for the three controls of an OPEN header (the count, the pip, the flag;
+ *  render.ts makeGroupHead): the pane (SHOW_GROUP_CLICK), or, while the pane already shows the section (`shown`), the
+ *  way back (BACK_TO_TRANSCRIPT_CLICK; round 3 of the tabhide review). The act follows the same bit there (doorAct). */
+export function doorClick(shown: boolean): string {
+  return shown ? BACK_TO_TRANSCRIPT_CLICK : SHOW_GROUP_CLICK;
+}
+
+/** EVERY OPEN header's count, as the button it is there (render.ts makeGroupHead): what a reader hears and the
+ *  hover. The words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count: "K hidden" over hidden members, the
+ *  total otherwise), so the name a voice control hears contains the label it sees (round 2 of the tabhide
+ *  review). Over hidden members the click shows the group's sessions in the pane; with nothing hidden they are
+ *  all on the strip already, so the words say what the pane is for instead (round 2: the door existed only once
+ *  something was hidden, and the first hide of a group went through the header's click, which folds the group
+ *  over its reader). The fold's own words for the hidden members are hiddenFoldWords (tab-snapshot.ts).
+ *  WHILE THE PANE ALREADY SHOWS THE SECTION (`shown`; round 3: the door's click then changed nothing and its words
+ *  still promised the pane), the door mirrors the header's way back: the words say the sessions are shown below and
+ *  the click goes back to the transcript (BACK_TO_TRANSCRIPT_CLICK), still led by the visible count. */
+export function sectionDoorTitle(hidden: number, total: number, shown = false): string {
+  if (shown) {
+    const lead = hidden > 0 ? `${hidden} hidden from the strip while this group is open; the group's sessions are shown below`
+                            : `${total} session${total === 1 ? "" : "s"}, shown below`;
+    return `${lead}; ${doorClick(true)}`;
+  }
+  if (hidden > 0) return `${hidden} hidden from the strip while this group is open; ${doorClick(false)}`;
+  return total === 1 ? "1 session; click to see it at a glance and hide it from the strip"
+                     : `${total} sessions; click to see them at a glance and hide any from the strip`;
+}
+
+/** The flag's phrase alone: the sessions by name, no click clause. The header's spoken label appends THIS (round 2
+ *  of the tabhide review): the header's own click folds the group or puts the transcript back, so a label that
+ *  ended with the flag's click clause announced the door's instruction as the header's own. */
+export function sectionTodoPhrase(flag: SectionTodoFlag): string {
   const who = flag.count === 1
     ? `${flag.names[0]} flagged something it needs from you`
     : `${flag.count} sessions flagged something they need from you: ${flag.names.join(", ")}`;
-  return `waiting on you — ${who}; click to open this group`;
+  return `waiting on you — ${who}`;
+}
+
+/** The flag's hover text: the phrase, and what the click does. On a folded header the click opens the group
+ *  (render.ts open-group); on an open one (`door`) it shows the group's sessions in the pane and leaves the fold
+ *  alone (show-group), or, while the pane already shows the section (`shown`), goes back to the transcript, as the
+ *  count does (doorClick; round 3 of the tabhide review). Round 1: the flag on an open header promised to open a
+ *  group that was already open. */
+export function sectionTodoTitle(flag: SectionTodoFlag, door = false, shown = false): string {
+  return `${sectionTodoPhrase(flag)}; ${door ? doorClick(shown) : "click to open this group"}`;
 }

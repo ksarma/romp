@@ -7794,6 +7794,12 @@ class FailureContract(unittest.TestCase):
     event (the turn gaining atoms / the top set changing)."""
 
     def setUp(self):
+        # Rebind, and put the binding BACK in tearDown: the judge module is shared by every test module in
+        # the worker, and removing this tempdir with STATE still aimed at it left a dangling root for
+        # whatever ran next. tests/test_restart_cuts.py read no audit rows (its kernel's open() failed
+        # inside a never-raises guard) whenever an xdist slice of this module ended at this class; the
+        # whole module hid it, because the next class mkdirs under STATE and recreated the path.
+        self._saved_state = jd.STATE
         self._td = tempfile.mkdtemp()
         jd._rebind_state(Path(self._td))
         # the model-health latch is process-global, keyed by model: the failing calls below push "model-x"
@@ -7804,6 +7810,7 @@ class FailureContract(unittest.TestCase):
                             {m: dict(st) for m, st in jd._CALL_HEALTH["stats"].items()})
 
     def tearDown(self):
+        jd._rebind_state(self._saved_state)
         shutil.rmtree(self._td, ignore_errors=True)
         with jd._health_lock:
             jd._CALL_HEALTH["degraded"].clear()
@@ -8286,6 +8293,29 @@ class FailureContract(unittest.TestCase):
         self.assertTrue(out.endswith("TAIL"), "the goal menu at the back survives")
         self.assertIn("chars elided", out)
         self.assertEqual(jd._mid_elide("short", 400), "short")
+
+
+class FailureContractLeavesStateAsFound(unittest.TestCase):
+    """FailureContract rebinds the shared judge module's STATE to a tempdir it removes in tearDown. Until
+    2026-09-08 it never put the previous binding back, so every test after it in the same worker ran
+    against a root that no longer existed. The whole module hid this (the next class mkdirs under STATE
+    and so recreated the path); an xdist slice of this module ending at FailureContract did not, and
+    tests/test_restart_cuts.py then read no audit rows in 39 tests. setUp and tearDown are exercised
+    directly: the class must leave STATE, and the paths derived from it, as it found them."""
+
+    def test_setup_rebinds_and_teardown_restores(self):
+        before = jd.STATE
+        case = FailureContract("test_courier_cap_pinned_in_source")
+        case.setUp()
+        try:
+            self.assertNotEqual(jd.STATE, before)
+            self.assertTrue(jd.STATE.is_dir(), "the class works under a root that exists")
+            self.assertEqual(jd.ERRORS, jd.STATE / "judge-errors.jsonl", "the derived paths moved with it")
+        finally:
+            case.tearDown()
+        self.assertEqual(jd.STATE, before, "the binding it found is the binding it leaves")
+        self.assertEqual(jd.ERRORS, before / "judge-errors.jsonl")
+        self.assertFalse(Path(case._td).exists(), "its own tempdir is gone")
 
 
 class OrphanedHistory(unittest.TestCase):

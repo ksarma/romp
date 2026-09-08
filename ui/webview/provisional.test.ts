@@ -115,7 +115,7 @@ test("a send on a provisional tab is HELD, not posted to a session that doesn't 
 
 test("adoption flushes the held messages FOR REAL and carries the draft across", () => {
   assert.match(RENDER, /if \(adoptsProvisional\(existed, msg\.name, pendingNewSession\)\) \{\s*\n\s*adoptProvisional\(msg\.id\);/);
-  assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "sendMessage", id: realId, text \}\);/);
+  assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "sendMessage", id: realId, text, sendId: p\.sendId \}\);/);
   assert.match(RENDER, /registerOptimistic\(realId, text\);/);
   // the draft must be set BEFORE the switch — setActive fills the box from `drafts`
   const adopt = RENDER.slice(RENDER.indexOf("function adoptProvisional"));

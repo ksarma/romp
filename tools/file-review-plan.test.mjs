@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateTarget, FILE_HASH_CAP, EMBEDDED_HASH_CAP } from './file-comments-host.mjs';
+import { validateTarget, FILE_HASH_CAP, EMBEDDED_HASH_CAP, locateExact, uniqueAnchor, ANCHOR_CTX, ANCHOR_CTX_STEP, ANCHOR_CTX_CAP } from './file-comments-host.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -214,6 +214,54 @@ test('Security posture says the reply hashes what the sidecar holds, on status, 
   assert.ok(posture.includes('the Risks bullet on figure paths names the trade'));
   assert.ok(risks.includes('**A figure path the client names** (Slice 3)'));
   assert.ok(risks.includes('refusing such srcs on a reply is the follow-up'));
+});
+
+// ── the anchors follow-on (2026-09-07): the anchor rule the plan states, kept by the host, the model and the panel ──
+// Each plan sentence is pinned here up to the clause the host check or the fixture below demonstrates; the rest of
+// the sentence as the follow-on's review left it (the refresh's three cases and budget, the refusal of an offset that
+// sits on no tied copy) is pinned in tools/file-review-plan-anchors.test.mjs. The review rewrote these sentences once
+// and this module kept pinning the pre-review wording, so both modules were red or green only together (2026-09-08).
+
+test('the contract names anchorAt as the second optional field with its rule, and the host sets, refreshes and bounds it as stated', () => {
+  assert.ok(contract.includes('a second, `anchorAt`, a position'));
+  assert.ok(contract.includes('`anchorAt: <number>`, sits beside `anchor` on a passage comment and holds the offset the anchor located at'));
+  assert.ok(contract.includes('the host script refreshes it on every sidecar write it makes, against the text the sidecar is saved for, by where the whole anchor sits in that text'));
+  assert.ok(contract.includes('A comment without an anchor never carries it'));
+  // the host: set at creation after the widened anchor; refreshed first thing in the one function every sidecar
+  // write goes through; skipped for a comment with no usable anchor
+  assert.ok(/anchor: uniqueAnchor\(text, loc\.from, loc\.to\)\.anchor,\s*\n\s*anchorAt: loc\.from,/.test(host), 'set at creation, after the anchor');
+  assert.ok(/function stageSidecar\(root, storePath, store, text\) \{\s*\n\s*refreshAnchorAts\(store, text\);/.test(host), 'stageSidecar, the one function every sidecar write goes through, calls refreshAnchorAts first');
+  assert.ok(/if \(!c \|\| !c\.anchor \|\| typeof c\.anchor !== 'object' \|\| typeof c\.anchor\.quote !== 'string' \|\| !c\.anchor\.quote\) continue;/.test(host), 'never on a comment without an anchor');
+  assert.ok(/const loc = locateExact\(text, c\.anchor, undefined\);\s*\n\s*if \(!loc\.error\) c\.anchorAt = loc\.from;/.test(host), "an anchor that sits in whole nowhere is placed by the engine's scoring, hintless (unique or an error), under the write's scan budget");
+  // the model and the panel: the field rides on the store comment and the card beside an anchor, and is the painter's hint
+  assert.ok(model.includes('anchor?: Anchor | null; anchorAt?: number;'), 'the store comment type');
+  assert.ok(/const anchorAt = anchor && typeof c\.anchorAt === "number" && Number\.isFinite\(c\.anchorAt\) \? c\.anchorAt : null;/.test(model), 'the card carries it only beside an anchor');
+  assert.ok(/const at = this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/.test(panel), 'the painter passes it as the hint, in the view\'s coordinates');
+  assert.ok(/if \(card\.anchorAt === null\) return undefined;\s*\n\s*return this\.status && this\.status\.bom \? card\.anchorAt - 1 : card\.anchorAt;/.test(panel), 'viewAt: 0 is a position, and a BOM file\'s runs one ahead');
+  assert.ok(ux.includes('with the comment\'s stored `anchorAt` as the tie-break'), 'the painting paragraph says so');
+});
+
+test('the host paragraph and the commenting section state the widening and the refusal as the host does them, on the fixture', () => {
+  assert.ok(op.includes("with the smallest context, from 24 characters in steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the whole text"));
+  assert.ok(op.includes("`anchor-ambiguous` when two candidates tie and the request's offset cannot settle it: no offset was sent"));
+  assert.ok(op.includes("a stored comment's anchor is located with its `anchorAt` as the hint"));
+  assert.ok(/locateExact\(text, validateAnchor\(c\.anchor\), hintOf\(c\)\)/.test(host) && /locateExact\(text, anchor, hintOf\(c\)\)/.test(host), 'retarget and the passage-figure read use the stored hint');
+  assert.deepEqual([ANCHOR_CTX, ANCHOR_CTX_STEP, ANCHOR_CTX_CAP], [24, 24, 480]);
+  assert.ok(ux.includes("widens the stored anchor's context until it is unique in the file, stores the offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when two candidates tie and the offset cannot settle it"));
+  // behavior, on the fixture whose "Ship it." recurs with the same 24 characters either side
+  const text = read('tests', 'fixtures', 'file_comments', 'report.md');
+  const a = text.indexOf('Ship it.'), b = text.indexOf('Ship it.', a + 1);
+  assert.ok(b > a);
+  const at24 = { quote: 'Ship it.', prefix: text.slice(b - 24, b), suffix: text.slice(b + 8, b + 32) };
+  assert.deepEqual(locateExact(text, at24, undefined), { error: 'anchor-ambiguous' }, 'a tie with no offset');
+  assert.deepEqual(locateExact(text, at24, b), { from: b, to: b + 8 }, 'the offset settles it');
+  const u = uniqueAnchor(text, b, b + 8);
+  assert.deepEqual([u.unique, u.anchor.prefix.length], [true, 48], 'one step wider is unique');
+  assert.ok(host.includes('and ${unsent} was not sent to tell the copies apart') && host.includes(`"the selection's position"`) && host.includes(`"the region's position"`), 'the refusal text states the rule as it is now, in the words of the gesture (a passage selected, a region drawn)');
+  // the follow-on note stands beside the Slice 2 build notes; the Tests section names the module, which exists
+  assert.ok(section('### Slice 2: the session', '### Slice 3: region comments on images').includes('The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that recurs'));
+  assert.ok(tests.includes('`tools/file-comments-host-anchors.test.mjs`'));
+  assert.ok(fs.existsSync(path.join(HERE, 'file-comments-host-anchors.test.mjs')));
 });
 
 // ── Tests: the plan names the modules that exist ────────────────────

@@ -255,7 +255,10 @@ class _FakeForwardBackend:
 
 class SdkForwardsAndBatch(unittest.TestCase):
     """The user 2026-07-17: get typed messages in AS SOON AS POSSIBLE (no interrupt), and when a pile is
-    queued, send them ALL AT ONCE — the SDK folds them into one turn, tmux merges them. A backend that
+    queued, send them ALL AT ONCE: the kernel drains the pile in one pass. tmux merges them into one
+    message; the SDK enqueues each and its inputs() hands them to the CLI one message each, in order
+    (2026-09-08, when two texts sent during one turn reached the agent as one fused message; that
+    incident superseded the one-turn fold for SDK sessions). A backend that
     forwards its own sends (forwards_sends) takes a composer send even MID-TURN, instead of the kernel
     parking it until the turn ends; slash-command drive ops still park in press order — except a model
     pick on a backend that declares model_switches_live, which fires and keeps order by going first
@@ -290,7 +293,7 @@ class SdkForwardsAndBatch(unittest.TestCase):
         for t in ("one", "two", "three"):
             km._send_or_park(self.fbe, SID, t, echo="human")
         self.assertEqual(self.fbe.calls, [("send", "one"), ("send", "two"), ("send", "three")],
-                         "all three reach the SDK queue → its inputs() folds them into one turn")
+                         "all three reach the SDK queue → its inputs() hands them to the CLI one message each, in order")
         self.assertNotIn(SID, km._pending_ops)
 
     def test_a_send_after_a_live_model_pick_still_reaches_the_model_second(self):
@@ -327,12 +330,12 @@ class SdkForwardsAndBatch(unittest.TestCase):
                          "tmux has no fold → the run merges into a single blank-line-separated message")
         self.assertNotIn(SID, km._pending_ops, "the whole run delivered at once")
 
-    def test_sdk_delivers_a_run_as_separate_sends_to_fold(self):
+    def test_sdk_delivers_a_run_as_separate_sends_one_message_each(self):
         km.Sessions.backend_for = lambda sid: self.fbe
         km._pending_ops[SID] = [("send", "a", None), ("send", "b", None), ("send", "c", None)]
         km._apply_pending_ops()
         self.assertEqual(self.fbe.calls, [("send", "a"), ("send", "b"), ("send", "c")],
-                         "the SDK enqueues each — its inputs() folds them into one turn, no merge")
+                         "the SDK enqueues each: its inputs() hands them to the CLI one message each, in order; no merge")
         self.assertNotIn(SID, km._pending_ops)
 
     def test_a_drive_op_then_a_run_applies_the_op_then_batches_the_sends(self):
@@ -398,7 +401,7 @@ class SendPathsPark(unittest.TestCase):
     def test_ws_drive_paths_use_the_parks(self):
         with open(os.path.join(BIN, "romp-kernel")) as f:
             src = f.read()
-        self.assertIn('_send_or_park(be, sid, str(msg["text"]), echo="human")', src,
+        self.assertIn('_send_or_park(be, sid, str(msg["text"]), echo="human", send_id=str(msg.get("sendId") or ""))', src,
                       "the composer send parks mid-compaction")
         self.assertIn("_send_or_park(be, sid, body,", src, "the follow-up/nudge send parks mid-compaction")
         self.assertIn("_send_or_park(be, sid, cmd)", src, "the timeline sendCommand parks mid-compaction")
@@ -424,8 +427,13 @@ class QueuedBubble(unittest.TestCase):
         import inspect
         src = inspect.getsource(km._drive)
         self.assertIn('t == "cancelQueued" and msg.get("park") is not None', src)
-        self.assertIn('_cancel_parked(sid, int(msg["park"]), str(msg.get("md") or ""))', src)
-        self.assertIn('_cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""))', src,
+        # both cancels also carry the client's send id (2026-09-08), so a ✕ names its own entry exactly
+        self.assertIn('err = _cancel_parked(sid, int(msg["park"]), md, send_id=_sid_id)', src)
+        # …and a park cancel whose id names no parked op looks in the backend queue by that id before
+        # answering the miss: the send may have drained there since the push (review round 2, 2026-09-08)
+        self.assertIn('and _cancel_backend_queued(be, sid, -1, md, send_id=_sid_id) is None:', src)
+        self.assertIn('_cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""),\n'
+                      '                                     send_id=str(msg.get("sendId") or "") or None)', src,
                       "the backend-queue cancel goes through the drift guard now")
 
     def test_a_body_only_cancel_that_finds_nothing_is_logged(self):

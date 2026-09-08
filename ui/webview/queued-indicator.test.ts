@@ -13,7 +13,7 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 test("a queued ChatEvent carries the pending messages (backend-agnostic, per-message md)", () => {
   // idx = backend-queue position (SDK); park = _pending_ops position (compaction/model parking, any backend)
   // `optimistic` (romp's own unconfirmed echo) rides along at the end — see optimistic-send.test.ts
-  assert.match(RENDER, /kind: "queued"; texts: \{ md: string; followUp\?: boolean; goal\?: string; fuCtx\?: string; idx\?: number; park\?: number; cancelable\?: boolean; optimistic\?: boolean; romp\?: boolean; rompSystem\?: boolean; rompAuto\?: boolean; imgPaths\?: string\[\]; lost\?: string; qts\?: number; hiddenByPending\?: boolean \}\[\]/);   // imgPaths: the echo's dragged-image thumbnails (2026-08-25); romp flags: T243; lost + qts: the pending entry's connection-drop state and its identity for the ✕ (2026-09-06)
+  assert.match(RENDER, /kind: "queued"; texts: \{ md: string; followUp\?: boolean; goal\?: string; fuCtx\?: string; idx\?: number; park\?: number; cancelable\?: boolean; optimistic\?: boolean; romp\?: boolean; rompSystem\?: boolean; rompAuto\?: boolean; imgPaths\?: string\[\]; lost\?: string; qts\?: number; sendId\?: string; hiddenByPending\?: boolean \}\[\]/);   // imgPaths: the echo's dragged-image thumbnails (2026-08-25); romp flags: T243; lost + qts: the pending entry's connection-drop state and its identity for the ✕ (2026-09-06); sendId: the send's identity on both sides (2026-09-08); hiddenByPending: the kernel's copy of a send drawn at its own slot (T252)
 });
 
 test("renderQueued draws a wireframe-hourglass header (singular/plural) + one markdown bubble per queued message", () => {
@@ -96,7 +96,7 @@ test("the kernel answers every cancelQueued with an authoritative cancelResult f
 test("the ✕ only renders while a recall can still win (queue_recallable gates cancelable)", () => {
   assert.match(KERNEL, /cancelable = hasattr\(_cbe, "unqueue"\) and _queue_recallable\(_cbe, sid\)/);
   assert.match(SDKBE, /def queue_recallable\(self, sid: str\) -> bool:/);
-  assert.match(SDKBE, /def unqueue\(self, idx: int, expect: str \| None = None\)/,
+  assert.match(SDKBE, /def unqueue\(self, idx: int, expect: str \| None = None, send_id: str \| None = None\)/,
     "the pop re-verifies the exact text under the session lock — never a wrong-message cancel");
 });
 
@@ -247,7 +247,7 @@ test("the kernel flags a romp-injected queued entry from the same markers as a l
 });
 
 test("what romp itself queued wears the LANDED romp grammar, split as landed: notice card vs gray romp bubble (T243)", () => {
-  assert.match(RENDER, /romp\?: boolean; rompSystem\?: boolean; rompAuto\?: boolean; imgPaths\?: string\[\]; lost\?: string; qts\?: number; hiddenByPending\?: boolean \}\[\]/, "the queued text shape carries the flags");
+  assert.match(RENDER, /romp\?: boolean; rompSystem\?: boolean; rompAuto\?: boolean; imgPaths\?: string\[\]; lost\?: string; qts\?: number; sendId\?: string; hiddenByPending\?: boolean \}\[\]/, "the queued text shape carries the flags");
   const body = RENDER.split("function renderQueued(")[1].split("\nfunction ")[0];
   assert.match(body, /const bubble = el\("div", "queued-bubble md" \+ \(t\.cancelable \? " cancelable" : ""\)\s*\n\s*\+ \(t\.romp \? " queued-romp" : ""\) \+ \(t\.rompSystem \? " queued-sys" : ""\)\);/);
   // a SYSTEM notice → the landed card's own builder, nested; a one-line notice gets no body repeating its head

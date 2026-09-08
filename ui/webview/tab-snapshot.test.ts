@@ -235,9 +235,9 @@ test("executed: the words — the heading's count and label, the row's spoken la
 test("pinned: render.ts shows the snapshot on a header click — snapView set BEFORE the fold write, then the pane swaps; a session pick clears it", () => {
   assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);\s*\n\s*showActive\(\);/,
     "one rule for open and folded headers: fold or open, and look at the section");
-  assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);\s*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
-    "setActive: the pick ends the snapshot, opens a folded-away tab's section, and puts the transcript back even when the pick is the tab already active");
-  assert.match(RENDER, /if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
+  assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
+    "setActive: the pick ends the snapshot, opens a folded-away tab's section (not a hidden one's: tab-hide.test), and puts the transcript back even when the pick is the tab already active");
+  assert.match(RENDER, /const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
   // T251 (upstream, folded 2026-09-08; catch-up 2 ui DECISION 1): the header's name is the shared tag chip, coloured
   // inline, so the fork's prose-tone rule for .snap-shown (the name's lift to --fg) could not win and went. The cue
   // has a successor on the HEADER, which the chip's inline style never reaches (the round-2 ruling): the accent wash
@@ -252,7 +252,7 @@ test("pinned: render.ts shows the snapshot on a header click — snapView set BE
 test("pinned: the open-from-card path — a real button per row, data-act=open on the ONE stable host's delegate, opens + focuses the session", () => {
   assert.match(SNAP, /host = el\("div", "tab-snapshot"\);\s*\n\s*host\.id = "tab-snapshot";\s*\n\s*host\.setAttribute\("role", "region"\);/, "made once");
   // round 2 put a guard between the id and setActive (rowStillOpen, tab-snapshot-view.ts; the pane test pins it)
-  assert.match(SNAP, /delegate\(host, \{ open: \(node\) => \{\s*\n\s*const id = node\.dataset\.id;\s*\n\s*if \(!id\) return;[\s\S]*?setActive\(id\); focusActiveTab\(\);\s*\n\s*\} \}\);/, "installed once, with the host (click-safe: rows are rebuilt)");
+  assert.match(SNAP, /delegate\(host, \{ open: once\(\(node\) => \{\s*\n\s*const id = node\.dataset\.id;\s*\n\s*if \(!id\) return;[\s\S]*?setActive\(id\); focusActiveTab\(\);\s*\n\s*\}\),/, "installed once, with the host (click-safe: rows are rebuilt), once per gesture (tab-hide.test); the Hide, Show and fold acts follow in the same map");
   assert.equal(SNAP.split("delegate(host").length - 1, 1, "one delegate, never in the render");
   assert.match(SNAP, /const btn = document\.createElement\("button"\);\s*\n\s*btn\.type = "button";/, "a real button: Tab reaches it, Enter opens");
   assert.match(SNAP, /btn\.dataset\.act = "open"; btn\.dataset\.id = r\.id;/);
@@ -268,8 +268,8 @@ test("pinned: the open-from-card path — a real button per row, data-act=open o
 });
 
 test("pinned: a no-change push rebuilds nothing — same object → only the ago texts tick in place; the section gone → the transcript", () => {
-  assert.match(SNAP, /const next = snapshotModel\(head\.head, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\);\s*\n\s*if \(next === snapModel && host\.childElementCount\) \{/,
-    "the same-object check gates the rebuild");
+  assert.match(SNAP, /const next = snapshotModel\(\{ \.\.\.head\.head, hides: head\.hides \}, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\);\s*\n\s*if \(next === snapModel && host\.childElementCount\) \{/,
+    "the same-object check gates the rebuild (the plan's hides ride the section: tab-hide.test)");
   assert.match(SNAP, /for \(const w of host\.querySelectorAll<HTMLElement>\("\.snap-when\[data-t\]"\)\) \{\s*\n\s*const t = Number\(w\.dataset\.t\); if \(!t\) continue;\s*\n\s*w\.textContent = agehms\(now - t\) \+ " ago"; w\.style\.color = ageColorReadable\(now - t\);/,
     "the model carries epochs, not text: the clock is the renderer's");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence from the strip is the event that ends the view");

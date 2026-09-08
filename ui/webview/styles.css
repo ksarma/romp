@@ -528,6 +528,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-flag .tab-usertodo { color: inherit; }
 .tab-group-flag:hover { background: var(--accent-wash); }
 .tab-group-flag:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* the open header's count as THE NON-FOLDING DOOR to the section's snapshot (round 1 of the tabhide review,
+   2026-09-08; render.ts makeGroupHead): a real button in the count's own dress (the header's size and dim tone
+   through font: inherit and the count's 0.7 opacity; the header's letter-spacing, which a button resets), the
+   flag's accent wash on hover and its accent ring on keyboard focus, full opacity under either. No new font-size. */
+.tab-group-door { margin: 0; padding: 1px 3px; border: 0; border-radius: 3px; background: none; color: inherit; font: inherit; letter-spacing: inherit; line-height: 1; cursor: pointer; }
+.tab-group-door:hover { background: var(--accent-wash); opacity: 1; }
+.tab-group-door:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
 /* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
    is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
    getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its
@@ -845,6 +852,38 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    token a step quieter, one line, indented past the pip and its gap so it sits under the name */
 .snap-note { flex: 1 0 100%; min-width: 0; padding-left: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; color: var(--dim); opacity: 0.7; }
 .snap-when { flex: 0 0 auto; font-size: 0.82em; font-variant-numeric: tabular-nums; color: var(--dim); }
+/* HIDE AND SHOW (the user 2026-09-08): each item is the open button and, beside it, a small word button (the
+   button vocabulary's small box and the sheet's one sub-line size; pattern A hover; the accent focus ring). The
+   Hidden fold sits under the shown rows: its head wears the heading's dress as a button, the strip's caret turned
+   by .open, the needs-you chip in the row's own red; its list is a second .snap-list. Tokens only. */
+.snap-item { display: flex; align-items: flex-start; gap: 6px; }
+.snap-item > .snap-row { flex: 1 1 auto; width: auto; }
+.snap-act { flex: 0 0 auto; margin-top: 3px; padding: var(--btn-pad-sm); border: 1px solid var(--box-border); border-radius: var(--radius-pill);
+  background: transparent; color: var(--dim); font: inherit; font-size: 0.82em; cursor: pointer; opacity: 0;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+/* PROGRESSIVE DISCLOSURE (round 1 of the review): a permanent Hide on every row grew the pane's compact form by one
+   control per session, the one control most rows never need. The act shows on its item's hover and while anything
+   in the item has keyboard focus (opacity, never display: Tab still reaches it and a reader still hears it), and
+   stands always where hover is not a thing (hover: none) AND wherever ANY pointing device is a finger
+   (any-pointer: coarse). any-pointer, not pointer: `pointer` and `hover` describe the PRIMARY pointing device, and a
+   laptop with a trackpad and a touchscreen reports pointer: fine and hover: hover, so neither clause fired there
+   (round 3 of the review; round 2 had written pointer: coarse for exactly that laptop). `any-pointer` is the union
+   of every pointing device present, and the touchscreen makes it coarse. The reason it matters (round 2): opacity 0
+   does not stop a tap, so a finger near the row's right end hid the session through a control it could not see. */
+.snap-item:hover .snap-act, .snap-item:focus-within .snap-act { opacity: 1; }
+@media (hover: none), (any-pointer: coarse) { .snap-act { opacity: 1; } }
+.snap-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
+.snap-act:active { transform: scale(0.96); }
+.snap-act:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.snap-hidden { margin-top: 10px; }
+.snap-hidden-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px;
+  background: none; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; letter-spacing: 0.04em; text-align: left; cursor: pointer; }
+.snap-hidden-head:hover { border-color: var(--accent); background: var(--accent-wash); }
+.snap-hidden-head:hover .tab-group-caret { color: var(--accent); }
+.snap-hidden-head:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.snap-hidden.open .tab-group-caret { transform: rotate(90deg); }
+.snap-hidden-needs { font-weight: 400; letter-spacing: 0; }
+.snap-hidden-list { margin-top: 2px; }
 
 /* ---------- ledger: rolling per-session digest, just below the tabs ---------- */
 #ledger {
@@ -4132,7 +4171,9 @@ body.filebrowse-open { overflow: hidden; }
   border-left: 1px dashed var(--text-faint); }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
-   wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet
+   wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts
+   copyUnsure: the passage recurs and the stored position names none of the copies); the composer's pending target
+   wears the accent. Adapted from the Obsidian host's stylesheet
    with romp's tokens in place of its palette. Each highlight is a <mark>, and the UA sheet gives a mark its own ink
    (`mark { color: MarkText }`, black in every engine) — a declaration on the element, so it beats whatever the
    passage inherits; without `color: inherit` the passage's glyphs went black over the wash, and a code token or a

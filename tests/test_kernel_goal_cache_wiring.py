@@ -53,6 +53,16 @@ SHARED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read":
 # the same boundary around the writer's loader); the decision body (_lift_decisions) loads nothing and
 # writes nothing.
 TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
+# The auto-nudge walk (performance round 5, 2026-09-08) has the same two-phase shape in the other
+# spelling: its decision reads the shared view once, through the boundary (a store that cannot be read
+# stands the session down for the tick: the fold's fault stand-down, tests/test_goal_store_fault_boundary),
+# and its three writer loads are the fire path's send-moment re-reads on the bare writer loader: the store
+# _nudge_fire_list judges the due set against, the redundancy gate's node read (the session's last report
+# against each due goal), and the pre-send status/confirming re-read that drops a card resolved or blocked
+# at send; _wake_goal's one writer load is the fresh read the lift or the check-in is filed on. The writer
+# re-reads stay bare (neither the round-5 walk nor the fold repointed them; they sit inside the tick's
+# per-session try/except), so this pin counts them as jd.load_goals(, unlike the lift's writer load above.
+WALK = {"_auto_nudge_session": (1, 3), "_wake_goal": (0, 1)}
 # Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
 # has a place to be named; the test over it passes vacuously while it is empty.
 UNWIRED = ()
@@ -87,6 +97,14 @@ class WiringPins(unittest.TestCase):
             self.assertEqual(src.count("jd.load_goals_or_fault("), writer, "%s: the phase-2 writer load" % name)
             self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals("), 0,
                              "%s: no bare load outside the boundary" % name)
+
+    def test_the_nudge_walk_probes_the_shared_view_once_and_re_reads_the_writers_copy_at_send(self):
+        for name, (shared, writer) in WALK.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), shared, "%s: the shared-view probe" % name)
+            self.assertEqual(src.count("jd.load_goals("), writer, "%s: the send-moment writer re-reads" % name)
+            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals_or_fault("), 0,
+                             "%s: no bare shared load, no boundary writer load" % name)
 
     def test_the_lifts_decision_body_loads_nothing_and_writes_nothing(self):
         # every rule of the lift is decided here, on whichever store the caller hands in (the shared view

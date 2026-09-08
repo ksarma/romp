@@ -65,7 +65,7 @@ class ShimWatchdogSourcePins(unittest.TestCase):
         self.assertIn("KEEPALIVE_S", KSRC)
         self.assertIn("def _heartbeat", KSRC)
         self.assertIn("threading.Thread(target=_heartbeat, daemon=True).start()", KSRC)
-        pusher_src = KSRC.split("def _pusher():", 1)[1].split("\ndef ", 1)[0]
+        pusher_src = KSRC.split("def _pusher(", 1)[1].split("\ndef ", 1)[0]   # the loop takes a clock and a wake for its tests
         self.assertNotIn("_keepalive_all", pusher_src, "the pusher must never grow the inline beat back")
 
     def test_the_one_shared_shim_stamps_lastrecv_and_watchdog_reconnects(self):
