@@ -2102,7 +2102,7 @@ function reply(ctx, state, extra, opts) {
   // null src), so the panel can say which figure could not be checked and what stopped it. On a
   // text file, beside them, which comments name their figure by their passage (derivedSrcs) and
   // why the rest of that shape could not (derivedSrcReasons), per comment id. The same reasons go
-  // to stderr, which the kernel keeps when a call fails. The estimate stands the hashes in (no figure's
+  // to stderr, which the kernel puts in the error when a call fails and logs when it answers. The estimate stands the hashes in (no figure's
   // bytes are read to measure a reply) and keeps the derived srcs, which come from the text already read.
   if (o.estimate) {
     if (media) { out.fileHash = null; out.fileHashReason = null; }

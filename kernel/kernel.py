@@ -37756,6 +37756,12 @@ def _file_comments_call(path, verb, args=None, fence=None):
     except ValueError:
         return None, ("host-error", "the comments helper answered with something other than one JSON "
                                     "object for %s%s" % (_tilde(path), _file_comments_tail(err_b or stdout)))
+    if err_b:
+        # What the host said on stderr while it answered: a refresh that kept positions past its budget
+        # (refreshAnchorAts), an unreadable log line skipped, a figure it could not hash. The reply carries
+        # none of the first, and only a FAILED call put the tail in its error, so a successful write that
+        # left positions stale said so to nobody (the review, 2026-09-08). Logged, bounded like that tail.
+        sys.stderr.write("file-comments %s on %s%s\n" % (verb, _tilde(path), _file_comments_tail(err_b)))
     if not out.get("ok"):
         return out, (str(out.get("code") or "host-error"),
                      str(out.get("error") or "the comments helper refused %s without saying why" % _tilde(path)))
@@ -37885,7 +37891,10 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
     {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
-    (on "<passage>", on this file, on the region at …); `body` is the comment's unsent turns
+    (on "<passage>" — for a passage the host widened because it recurs, followed by the copy's
+    surroundings, `, the one after "…" and before "…"`, or past the model's bound by the short clause
+    that it appears more than once (file-comments-model.ts passageDesc); on this file; on the region
+    at …); `body` is the comment's unsent turns
     verbatim. The path and every request-supplied string are marker-neutralized; on the two command
     lines the path is then one shell word (_sh_word), in the prose it stays plain. The second
     "To respond" bullet depends on the file: track-edit for a TRACKED text file, edit-normally for
