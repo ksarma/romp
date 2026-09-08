@@ -144,7 +144,11 @@ const head = () => ev(() => { const h = document.querySelector("#ah-tip .ah-hist
            names: Array.from(h ? h.querySelectorAll(".ru-tip-name span:first-child") : []).map((n) => n.textContent) }; });
 const shown = () => ev(() => document.getElementById("ah-tip").style.display === "block");
 const described = () => ev(() => document.getElementById("rail-api").getAttribute("aria-describedby"));
-const enter = () => ev(() => { const el = document.getElementById("rail-api"); el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 })); });
+// the mouseenter and the look at what it painted are ONE task: the read fires on the show, so its answer cannot land
+// before this returns, and the loader state read here is what the user sees before the answer (a separate round trip
+// let the local server answer in between, and the dots were already rows)
+const enter = () => ev(() => { const el = document.getElementById("rail-api"); el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, clientX: el.getBoundingClientRect().left + 10 }));
+  return { wait: !!document.querySelector("#ah-tip .ah-hist .ah-wait"), described: el.getAttribute("aria-describedby"), fetchN: window.__fetchN }; });
 const leave = () => ev(() => { document.getElementById("rail-api").dispatchEvent(new MouseEvent("mouseleave")); });
 const waitRows = () => page.waitForFunction(() => document.querySelectorAll("#ah-tip .ah-hist .ah-hrow").length > 0, null, { timeout: 8000 });
 const waitSel = (s) => page.waitForFunction((s) => !!document.querySelector(s), s, { timeout: 8000 });
@@ -158,8 +162,8 @@ await ev(() => { const real = window.fetch; window.__fetchN = 0; window.__realFe
 await ev((f) => { window.__rompApiHealth(f); }, frame());
 await step("storm", async () => {
   // 1. the hover: the loader's dots first, the rows when the read lands; the cell is described by the tip
-  await enter();
-  R.stormWaitFirst = (await head()).wait; R.stormDescribed = await described(); R.stormFetchN0 = await fetchN();
+  const first = await enter();
+  R.stormWaitFirst = first.wait; R.stormDescribed = first.described; R.stormFetchN0 = first.fetchN;
   await waitRows();
   R.storm = { head: await head(), rows: await rows(), fetchN: await fetchN(), shown: await shown() };
   await leave();
