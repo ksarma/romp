@@ -2041,11 +2041,17 @@ class PrTierWorkflow(unittest.TestCase):
         """The fork's copy of .github/workflows/tier-policy.yml, upstream's second check, carries a
         job-level `if:` that runs the Tier policy job only on the upstream repository: on the fork the
         job evaluates nothing and posts no Tier policy verdict, so a batch PR with no tier label is not
-        marked failing. The guard is the fork's one change to upstream's file, and this pin exists so a
-        future fold that takes upstream's workflow whole fails here instead of silently dropping it."""
+        marked failing. The guard is the fork's one functional change to upstream's file (the header
+        paragraph explaining it is the other addition), and this pin exists so a future fold that takes
+        upstream's workflow whole fails here instead of silently dropping it. The pattern tolerates
+        GitHub's `${{ }}` wrapper, either quote style and extra spaces; the four-space indent keeps the
+        guard job-level."""
         text = (ROOT / ".github" / "workflows" / "tier-policy.yml").read_text(encoding="utf-8")
         self.assertIn("\njobs:", text, "the jobs block is what this test slices")
         head, jobs = text.split("\njobs:", 1)
-        self.assertRegex(jobs, r"\n    if: github\.repository == 'romp-on/romp'")
+        self.assertRegex(
+            jobs, r"\n    if:\s*(\$\{\{\s*)?github\.repository\s*==\s*['\"]romp-on/romp['\"]",
+            "the job-level `if:` guard is the fork's divergence from upstream's workflow; a fold that takes "
+            "upstream's file whole must put it back")
         self.assertIn("Fork divergence", head)
         self.assertIn("scripts/batch.py", head)
