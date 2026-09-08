@@ -41,8 +41,13 @@ WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 
          "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
 #                                  snapshot (B5) stays as it is and serves the mid-pass builds
 # TWO-PHASE (performance plan 4, P16): one shared PROBE, one writer load taken only when the probe found
-# a lift due; the decision body (_lift_decisions) loads nothing and writes nothing.
-TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
+# a lift due; the decision body (_lift_decisions) loads nothing and writes nothing. The auto-nudge walk
+# (performance round 5, 2026-09-08) has the same shape: its decision reads the shared view once, and its
+# three writer loads are the fire path's send-moment re-reads: the store _nudge_fire_list judges the due set
+# against, the redundancy gate's node read (the session's last report against each due goal), and the
+# pre-send status/confirming re-read that drops a card resolved or blocked at send; _wake_goal's one writer
+# load is the fresh read the lift or the check-in is filed on.
+TWO_PHASE = {"_lift_spent_awaiting": (1, 1), "_auto_nudge_session": (1, 3), "_wake_goal": (0, 1)}
 # Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
 # has a place to be named; the test over it passes vacuously while it is empty.
 UNWIRED = ()

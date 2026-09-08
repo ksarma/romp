@@ -2143,7 +2143,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   launch unresolved: an upper bound on what a negative walk cache would
   save), `idx_build` (placement indexes built, one per store object asked, a
   writer's private copy included) and the gauge `entries` (sessions holding a
-  map). `goals_shared`
+  map). `nudge_walk` is the auto-nudge walk's per-cycle cost (it runs
+  for every alive session every cycle, wake-only when the toggle is off):
+  `walked` and `gated` (session-cycles visited, and the ones a session gate
+  returned on), `loads` and `shared` (store reads taken for the decision, and
+  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
+  `plan_bypass` (the planner-placement gate served from its memo, computed and
+  memoized, or computed uncached over a non-shared store), `deleg_hit` and
+  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
+  wake-only dead-man filed), `evict` (entries dropped for sessions that left
+  the alive set), `stale` (entries released because the parse cache no longer
+  holds the pinned turns) and the gauge `entries`. `goals_shared`
   is the shared read-only goal-store cache the pusher's read-only sites load
   through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
   did not), `refuse` (a fill under a moving archive, served but not

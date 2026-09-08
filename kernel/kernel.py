@@ -460,7 +460,19 @@ class _PerfStats:
                                    writer (session-ticks that loaded the writer's copy because a
                                    lift was due) / noop (writer loads whose fresh decision filed
                                    nothing) and the gauge
-                                   entries (sids remembered); bg_tops (the placed-launch memo
+                                   entries (sids remembered); nudge_walk (the auto-nudge walk's
+                                   per-cycle cost, see _nudge_walk_report) -> walked / gated
+                                   (session-cycles the walk visited, and the ones a session gate
+                                   returned on), loads / shared (store reads taken for the
+                                   decision, and the ones the shared read-only cache answered),
+                                   plan_hit / plan_miss / plan_bypass (the planner-placement gate
+                                   served from its memo, computed and memoized, or computed
+                                   uncached over a non-shared store), deleg_hit / deleg_miss (the
+                                   delegated-work check, same memo), lifted (lifts the wake-only
+                                   dead-man filed), evict (entries dropped for sids that left the
+                                   alive set), stale (entries released because the parse cache no
+                                   longer holds the pinned turns) and the gauge entries; bg_tops
+                                   (the placed-launch memo
                                    behind the lift and the feed's task classification,
                                    _bg_placed_tops, keyed on the parse and store objects) -> hit /
                                    miss (calls answered from the per-version map vs looked up),
@@ -749,7 +761,7 @@ class _PerfStats:
             goals = {}
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
-                             ("bg_tops", _bg_tops_report),
+                             ("nudge_walk", _nudge_walk_report), ("bg_tops", _bg_tops_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
                              ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
@@ -10082,7 +10094,14 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     the way _interrupt_block_tick runs every push independent of the toggle; and in that mode a due
     dead-man INJECTS NOTHING (the user said no unprompted messages): it files the stamp's lift instead,
     the row the orphan lift files (see _wake_goal). The plain nudge, the compaction suggestion, the debt
-    ladder and the dormant-owner sweep keep the toggle as before."""
+    ladder and the dormant-owner sweep keep the toggle as before.
+
+    THE WALK'S COST (performance round 5, 2026-09-08). Running every cycle for every alive session, the
+    walk paid a private store parse (jd.load_goals) and the placement gate's plan_units over every turn
+    per session-cycle, 30% of the live kernel's samples with the toggle off. It now decides on the shared
+    read-only store (jd.load_goals_shared) and serves the placement gate from an identity memo
+    (_nudge_plan_gate); an unchanged session costs a shared read and four stats. Same gates in the same
+    order, same filings on the same cycle, same journal rows: only the cost changed."""
     if not _AUTO_NUDGE_TICK_LOCK.acquire(blocking=False):
         return                                            # a pass is in flight: it owns this world's sends
     try:
@@ -10125,12 +10144,14 @@ def _auto_nudge_pass(now, tmux, run_dead_wait):
         # TypeError in _session_awaiting (a subagents LIST fed to %d) killed 1333 consecutive
         # ticks over two days before anyone noticed; every session after the bad one in the
         # iteration lost its nudges. The failure still logs loudly, per session.
+        _nudge_walk_stats["walked"] += 1                  # /perf memos.nudge_walk (see _nudge_walk_report)
         try:
             r = _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids, wake_only=not on)
             fired = (r is True) or fired
             # the walk->sweep handoff journal (the user 2026-08-24): a session gate names itself as
             # the return value; the sweep owns gate-held records by the GATE'S CLASS, never by age
             if isinstance(r, str):
+                _nudge_walk_stats["gated"] += 1
                 _put_walk_gate(s["sid"], r, now)
             else:
                 _pop_walk_gate(s["sid"])
@@ -10142,6 +10163,22 @@ def _auto_nudge_pass(now, tmux, run_dead_wait):
         except Exception:
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
+    for sid in list(_NUDGE_GATE_MEMO):
+        if sid not in alive_ids:
+            del _NUDGE_GATE_MEMO[sid]                     # the sid left the alive set: nothing to gate
+            _nudge_walk_stats["evict"] += 1
+            continue
+        # RELEASE A STALE PIN (review 2026-09-08). A session gated upstream of the placement gate (working,
+        # closer-unsettled, awaiting-dispatch, ...) never reaches the memo, so its entry would hold the parse
+        # and the store it was last judged under until its next idle cycle. The _bg_placed_tops rule: keep
+        # the entry only while its held turns object IS the parse cache's current one (then it costs no
+        # memory beyond what the cache holds anyway); a re-parsed transcript, or nothing cached, is the
+        # stale pin. A conservative drop costs one recomputation, never a wrong answer.
+        p = _NUDGE_GATE_MEMO[sid].get("plan")
+        cur = jd._PARSE_CACHE.get(sid)
+        if p is None or cur is None or (cur[1] or {}).get("turns") is not p[0]:
+            del _NUDGE_GATE_MEMO[sid]
+            _nudge_walk_stats["stale"] += 1
     try:
         if on:
             _debt_backstop_tick(now)                   # reminder outcomes for debtors the walk can't reach
@@ -11003,7 +11040,7 @@ def _dead_wait_block(sid, gid, at, why, nudged, now, blk_why=None):
     return False
 
 
-def _file_wake_answer(store, sid, gid, now):
+def _file_wake_answer(sid, gid, now):
     """The answered wake's outcome becomes a FILED event (the user 2026-08-25, closing the awaiting
     audit's last live mechanism): the answer IS new information, and new information that files no
     diary row is invisible to every reader that matters — the response segment was often placed
@@ -11013,8 +11050,13 @@ def _file_wake_answer(store, sid, gid, now):
     and patience never churn) — the row's arrival moves _newest_filed past closerLookT, so the
     closer re-audits WITH the answer in view and rules it — done, lift, block, or keep — from real
     evidence. Runs once per answer by construction (the answered leg itself runs once per record).
-    Returns True when the row landed."""
+    Returns True when the row landed.
+    Loads the WRITER's copy itself (performance round 5, 2026-09-08): the walk decides on the shared
+    read-only view (jd.load_goals_shared), which must never reach record_verdict or save_goals, so the
+    row is filed on the store as written at the filing moment, the two-phase shape every other filing
+    in the walk already has (_wake_goal's fresh read, _nudge_fire_list's, _mark_nudge_failed's)."""
     try:
+        store = jd.load_goals(sid)
         nodes = store.get("nodes", {})
         kids = {}
         for x, n in nodes.items():
@@ -11104,7 +11146,7 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux, wake_only=F
             # the judges ruled on the answer and the stamp still stands → the wait was re-affirmed
             nudged[gid] = dict(rec, answeredAt=(resp.get("t") or int(now)))
             _put_nudged(gid, nudged[gid])
-            _file_wake_answer(store, sid, gid, now)   # the answer becomes a FILED event → the closer
+            _file_wake_answer(sid, gid, now)          # the answer becomes a FILED event → the closer
             return False                              #   re-audits with it in view (see the helper)
         _sdefer = _revivers_pending(sid, store, turns, gid)
         if _sdefer and not _nudge_deferred_ok(gid, _sdefer, now, sid):
@@ -11168,6 +11210,7 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux, wake_only=F
         jd.rollup_status(_fresh, False)
         jd.save_goals(sid, _fresh)
         _mark_views_dirty()
+        _nudge_walk_stats["lifted"] += 1
         _drop_auto_nudge_rec(gid)                    # the spent episode's residue goes with the wait
         return True
     Sessions.backend_for(sid).send(sid, _followup_body(gid, None, AWAITING_BACKSTOP_TEXT,
@@ -11230,7 +11273,7 @@ def _awaiting_wake_outcomes(now, walked=None):
                 # answered and ruled — re-arm from the answer, exactly as the walk's eval would have (the
                 # walk never got to: its session gates held, e.g. an api-error AFTER the judged response)
                 _put_nudged(gid, dict(rec, answeredAt=(resp.get("t") or int(now))))
-                _file_wake_answer(store, sid, gid, now)   # …and the answer files, same as the walk's leg
+                _file_wake_answer(sid, gid, now)          # …and the answer files, same as the walk's leg
                 continue
             if resp is not None:
                 continue                             # visible but not ruled yet — the judges own it
@@ -11729,6 +11772,112 @@ def _nudge_response_ready(turns, store, rec, gid, now):
     return True, resp
 
 
+# ── the walk's planner-placement gate memo (performance round 5, 2026-09-08) ──────────────────────
+# _auto_nudge_session's placement gate recomputed jd.plan_units and jd._segs over every turn of every
+# alive session on every pusher cycle. Once the dead-man walk ran with the toggle off (upstream
+# 4a3160e3 and 6275443d, 2026-09-05), that was 30% of the live kernel's GIL samples, spent on a gate
+# whose inputs move a few times an hour per session. The gate's answer is a pure function of exactly
+# these inputs, each in the key:
+#   turns     the parsed session's turn list, by IDENTITY, held in the entry so the identity cannot be
+#             recycled. jd.parsed_session serves one object per (fileset, cut) version, so a new parse
+#             is a new object; _segs and plan_units read the turns' ids, ended, t/end, trigger, atoms.
+#   store     the shared read-only store, by IDENTITY, held. jd.load_goals_shared serves one FrozenStore
+#             per store version (store bytes, override journal, archive); placements, seams and nodes
+#             are what _segs (apply_seams), plan_units and _placed_key read. A store that is NOT a
+#             FrozenStore (no file, an unreadable journal, the cache off) is a private mutable object
+#             that could change under an entry: computed uncached (plan_bypass), as before the memo.
+#   episodes  the identity of the sid's episodes log (_placed_key's fuzzy path reads episode_floor).
+#   cleared   the identity of cleared.jsonl (plan_units -> _live_anchor_gone -> _view_cleared).
+# Nothing else reaches the computation: this is the plan tier's _sig_inputs list (judge.py) minus the
+# reads that belong to the planner around plan_units (captions for _prompt_gist, the gone marker and
+# reg for _cli_epoch, the task store for _sync_declared_plan, the stall slice for rollup_status). The
+# two file identities are taken BEFORE the computation, so a row landing during it costs one extra
+# recomputation next cycle, never a stale answer; an identity that cannot be stat'd is a fresh sentinel
+# that matches nothing, so the gate recomputes until it can. The same entry memoizes
+# _all_outstanding_delegated per top goal on the store object alone (it reads nodes only). One entry per
+# sid, touched only under _AUTO_NUDGE_TICK_LOCK (the pass is single-flight); sids that leave the alive
+# set are evicted by the pass, and an entry whose held turns object is no longer the parse cache's current
+# one is released at the end of every walk (the stale pin of a session gated upstream of this gate; see
+# the pass); past 512 entries the memo is cleared whole (the _PARSE_CACHE idiom).
+_NUDGE_GATE_MEMO = {}   # sid -> {"plan": (turns, store, episodes ident, cleared ident, unplanned),
+#                                 "deleg": (store, {top gid: all-delegated})}
+_nudge_walk_stats = {"walked": 0, "gated": 0, "loads": 0, "shared": 0, "plan_hit": 0, "plan_miss": 0,
+                     "plan_bypass": 0, "deleg_hit": 0, "deleg_miss": 0, "lifted": 0, "evict": 0, "stale": 0}
+
+
+def _nudge_walk_report():
+    """The walk's counters plus the memo's occupancy, for /perf (memos.nudge_walk): `walked` session-cycles
+    the walk visited, `gated` the ones a session gate returned on (muted through planner-queue), `loads`
+    store reads taken for the decision and `shared` the ones the shared read-only cache answered,
+    `plan_hit` / `plan_miss` / `plan_bypass` placement-gate evaluations served from the memo, computed and
+    memoized, or computed uncached over a non-shared store, `deleg_hit` / `deleg_miss` the delegated-work
+    check's, `lifted` lifts the wake-only dead-man filed, `evict` entries dropped for sids that left the
+    alive set, `stale` entries released at the end of a walk because the parse cache no longer holds the
+    pinned turns (a session gated upstream of the placement gate whose transcript was re-parsed), and the
+    gauge `entries` (sids holding an entry)."""
+    out = dict(_nudge_walk_stats)
+    out["entries"] = len(_NUDGE_GATE_MEMO)
+    return out
+
+
+def _nudge_file_ident(p):
+    """(ino, mtime_ns, size) of `p`; None when absent; a fresh object when it cannot be stat'd for any
+    other reason, so the key it joins matches nothing and the gate recomputes."""
+    try:
+        st = os.stat(str(p))
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return object()
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+def _nudge_plan_gate(sid, turns, store):
+    """The walk's PLANNER-PLACEMENT gate: True while some planner unit of `turns` has no placement in
+    `store` (see the call site in _auto_nudge_session for why the walk waits on it). Memoized per sid on
+    the inputs the memo's comment names; raises whatever the uncached computation raises (the caller's
+    except owns it, and a raise memoizes nothing)."""
+    shared = isinstance(store, jd.FrozenStore)
+    epi = _nudge_file_ident(jd.EPIDIR / (sid + ".jsonl"))
+    cleared = _nudge_file_ident(jd.STATE / "cleared.jsonl")
+    if shared:
+        p = (_NUDGE_GATE_MEMO.get(sid) or {}).get("plan")
+        if p is not None and p[0] is turns and p[1] is store and p[2] == epi and p[3] == cleared:
+            _nudge_walk_stats["plan_hit"] += 1
+            return p[4]
+    live = {sg["id"] for tn in turns for sg in jd._segs(tn, store)}
+    unplanned = any(not jd._placed_key(store.get("placements") or {}, jd._unit_key(u[0], u[1]), live)
+                    for u in jd.plan_units({"turns": turns}, store))
+    if not shared:
+        _nudge_walk_stats["plan_bypass"] += 1
+        return unplanned
+    _nudge_walk_stats["plan_miss"] += 1
+    if len(_NUDGE_GATE_MEMO) > 512 and sid not in _NUDGE_GATE_MEMO:
+        _NUDGE_GATE_MEMO.clear()
+    _NUDGE_GATE_MEMO.setdefault(sid, {})["plan"] = (turns, store, epi, cleared, unplanned)
+    return unplanned
+
+
+def _nudge_all_delegated(sid, store, nodes, gid):
+    """_all_outstanding_delegated(nodes, gid) — pure over `nodes`, which is `store`'s — memoized per top
+    goal while `store` is the shared frozen view, in the placement gate's entry for the sid (the gate
+    runs first for every session that reaches the goal loop, so the cap is checked there); a non-shared
+    store is computed uncached."""
+    if not isinstance(store, jd.FrozenStore):
+        return _all_outstanding_delegated(nodes, gid)
+    ent = _NUDGE_GATE_MEMO.setdefault(sid, {})
+    d = ent.get("deleg")
+    if d is None or d[0] is not store:
+        d = (store, {})
+        ent["deleg"] = d
+    if gid in d[1]:
+        _nudge_walk_stats["deleg_hit"] += 1
+        return d[1][gid]
+    _nudge_walk_stats["deleg_miss"] += 1
+    d[1][gid] = _all_outstanding_delegated(nodes, gid)
+    return d[1][gid]
+
+
 def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only=False):
     """One session's slice of the auto-nudge tick: the session-level gates, then the fire/stamp
     walk over its still-'working' top goals. Split from _auto_nudge_tick so the tick isolates
@@ -11815,7 +11964,18 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
     # deliberately NOT the arm: a romp-injected turn can never become the arm, so a verdict about one is
     # newer than the arm FOREVER (see _nudge_fire_list's deadlock note).
     seen = next((tn for tn in reversed(turns) if tn.get("ended")), None)
-    store = jd.load_goals(sid)
+    # THE DECISION READS THE SHARED VIEW (performance round 5, 2026-09-08). Everything below up to a
+    # filing is read-only over the store: the closer and placement gates, the stamp and delegation
+    # walk, and _wake_goal's decision legs. Every row this walk files is written on a fresh writer's
+    # copy taken at the filing moment (_wake_goal's re-read, _nudge_fire_list's, _mark_nudge_failed's,
+    # _file_wake_answer's own load), so the frozen view never reaches record_verdict or save_goals
+    # (both would raise and switch the shared cache off). With the toggle OFF this walk runs every
+    # cycle for every alive session (the dead-man, see _auto_nudge_tick) and paid a private parse
+    # plus the journal replay per session-cycle to decide, almost always, nothing.
+    store = jd.load_goals_shared(sid)
+    _nudge_walk_stats["loads"] += 1
+    if isinstance(store, jd.FrozenStore):
+        _nudge_walk_stats["shared"] += 1
     # Don't nudge until the CLOSER has classified this turn AT ITS CURRENT SIZE (session-level gate). A turn
     # that ENDS by asking you a question is "working" only in the window before the closer marks its goal
     # blocked; nudging there is pointless (it's waiting on YOU) and churns. _closer_settled mirrors the
@@ -11832,9 +11992,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
     # event the nudge-failed stamp below already waits on; require the queue empty before ANY fire.
     # Event-based: the placement's landing opens the gate on the next tick.
     try:
-        _live = {sg["id"] for tn in turns for sg in jd._segs(tn, store)}
-        _unplanned = any(not jd._placed_key(store.get("placements") or {}, jd._unit_key(u[0], u[1]), _live)
-                         for u in jd.plan_units({"turns": turns}, store))
+        _unplanned = _nudge_plan_gate(sid, turns, store)   # memoized on its inputs' identities (the memo above)
     except Exception:
         _unplanned = False                       # minimal/legacy turn shapes → the closer gate stands alone,
         sys.stderr.write("auto-nudge placement gate (session %s): %s\n"   # but never SILENTLY (the user
@@ -11887,7 +12045,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
         # peer wait — the enum postdates it) keeps the gates, exactly as before.
         _own_wait = bool(_stamp) and _stamp[2] in ("job", "agents", "task", "timer")
         if not _own_wait:
-            if _all_outstanding_delegated(nodes, gid):
+            if _nudge_all_delegated(sid, store, nodes, gid):
                 _put_walk_gate(gid, "all-delegated", now)   # a wake record here is walk-unreachable → the sweep owns it
                 continue                             # all open work handed to peers → nothing for THIS session
             if sid in waitfor and nd.get("t", 0) <= waitfor[sid]["since"]:
