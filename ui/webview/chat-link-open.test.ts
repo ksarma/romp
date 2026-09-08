@@ -8,6 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LINK_SEL, XLINK_NS, linkHref } from "./md-links";
+import { userContentTarget, USER_CONTENT_PREFIX } from "./md-sanitize";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 
@@ -19,18 +20,19 @@ test("the chat has a global link click handler", () => {
   assert.match(HANDLER, /e\.preventDefault\(\)/);
 });
 
-// The handler owns every element a sanitized message can carry a navigating href on, not only <a href>: an image
-// map's <area href> and an SVG <a xlink:href> both survive the sanitizer's html + svg profiles, and neither is an
-// `a[href]` (an area is not an anchor; `[href]` matches only the null-namespace attribute, and XLink's is namespaced),
-// so a click on either used to run the default action and navigate the chat document itself (the 2026-09-07 review
-// of the markdown viewer's Slice 1). md-sanitize-chat-links-browser.test.ts clicks both over the real bundle; this
-// pins the selector and the href read at the source, where the pin runs without a browser.
+// The handler owns every element a sanitized message can carry a navigating href on, not only <a href>: an SVG
+// <a xlink:href> survives the sanitizer's svg profile and is no `a[href]` (`[href]` matches only the null-namespace
+// attribute, and XLink's is namespaced), and an image map's <area href> did too until the sanitizer forbade map, area
+// and usemap (md-sanitize.ts); the selector keeps the area as a second guard. A click on either used to run the
+// default action and navigate the chat document itself (the 2026-09-07 review of the markdown viewer's Slice 1).
+// md-sanitize-chat-links-browser.test.ts clicks both over the real bundle; this pins the selector and the href read
+// at the source, where the pin runs without a browser.
 test("the selector names the anchor in any namespace and the image map's area, and the href read falls back to xlink:href", () => {
   // both come from md-links.ts, the module the viewer's mdBlock reads them from too (md-sanitize-viewer-links.test.ts),
   // so the chat and the viewer cannot drift apart on which elements are links; render.ts keeps no copy of its own
   assert.match(RENDER, /import \{[^}]*\bLINK_SEL\b[^}]*\blinkHref\b[^}]*\} from "\.\/md-links";/, "the delegate imports the shared selector and href read");
   assert.doesNotMatch(RENDER, /const LINK_SEL =|const XLINK_NS =|function linkHref\(/, "no local copy in render.ts");
-  assert.equal(LINK_SEL, "a[*|href], area[href]", "a[*|href] covers href and xlink:href; area[href] the image map");
+  assert.equal(LINK_SEL, "a[*|href], area[href]", "a[*|href] covers href and xlink:href; area[href] the image map, which the sanitizer now drops (a second guard)");
   assert.equal(XLINK_NS, "http://www.w3.org/1999/xlink");
   const stub = (attrs: Record<string, string>, xlink?: string) => ({
     getAttribute: (n: string) => (n in attrs ? attrs[n] : null),
@@ -72,4 +74,47 @@ test("the web path is checked before the vscode path (web origin wins)", () => {
   const web = HANDLER.indexOf("window.open(href");
   const code = HANDLER.indexOf('type: "openLink"');
   assert.ok(web > -1 && code > -1 && web < code, "window.open branch precedes the openLink branch");
+});
+
+// An in-page anchor in a message: the sanitizer prefixes every author id and name user-content- (md-sanitize.ts,
+// GitHub's rule) and leaves the href as written, and the browser's default lookup reads the bare name, so a footnote's
+// back link or a `[section](#install)` over the reply's own `<a name>`, which scrolled the transcript on the base, did
+// nothing once the prefix landed (the 2026-09-07 review of Slice 1). The handler now resolves a `#` href the way
+// GitHub's page script does, through the one lookup the viewer's fragmentTarget reads too (md-sanitize.ts
+// userContentTarget): the message's own body first, then the document; found, scrollIntoView and preventDefault;
+// not found, the click is the browser's, as before. The real click runs in md-sanitize-chat-links-browser.test.ts.
+test("a `#` href in a message is resolved under the user-content- prefix, in the message first and then the document, before the scheme test", () => {
+  assert.match(RENDER, /import \{[^}]*\buserContentTarget\b[^}]*\} from "\.\/md-sanitize";/, "the lookup is the sanitizer's own, shared with the viewer's fragmentTarget");
+  const at = HANDLER.indexOf('if (href.startsWith("#")) {');
+  assert.ok(at > 0, "the fragment branch exists");
+  assert.ok(at > HANDLER.indexOf("const href = linkHref(a);") && at < HANDLER.indexOf("/^[a-z][a-z0-9+.-]*:/i.test(href)"), "after the href is read, before the scheme test that used to leave every fragment to the browser");
+  const branch = HANDLER.slice(at, HANDLER.indexOf("/^[a-z][a-z0-9+.-]*:/i.test(href)"));
+  assert.match(branch, /if \(e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey\) return;/, "a modified click asked for a tab and keeps the browser's");
+  assert.match(branch, /const msg = a\.closest\("\.md"\);\n\s*if \(!msg\) return;/, "a link outside a message body (the file viewer's own section links) is not this handler's");
+  assert.match(branch, /let frag = href\.slice\(1\);\n\s*try \{ frag = decodeURIComponent\(frag\); \} catch \{[^}]*\}/, "the fragment is decoded, a malformed escape kept as written (the viewer's scrollToFragment rule)");
+  assert.match(branch, /const target = frag \? userContentTarget\(msg, frag\) \|\| userContentTarget\(document, frag\) : undefined;/, "the message's own body first, then the whole document");
+  assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n\s*target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "found: scrolled to and the default cancelled; not found: left to the browser");
+  assert.doesNotMatch(branch, /location\.hash|stopPropagation/, "the hash is not touched (the target is not a page location) and the event still reaches the body's delegates");
+  // the scheme test that follows is the same line as before: every relative href is still left alone
+  assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
+});
+
+test("userContentTarget: an id under the prefix or bare, then an <a name> under either, in document order; nothing otherwise", () => {
+  // a stand-in with what the lookup reads: querySelectorAll over "[id]" and "a[name]", getAttribute
+  type Fake = { tag: string; attrs: Record<string, string>; getAttribute(n: string): string | null };
+  const fake = (tag: string, attrs: Record<string, string>): Fake => ({ tag, attrs, getAttribute: (n) => (n in attrs ? attrs[n] : null) });
+  const root = (els: Fake[]) => ({
+    querySelectorAll: (sel: string) => (sel === "[id]" ? els.filter((e) => "id" in e.attrs) : sel === "a[name]" ? els.filter((e) => e.tag === "a" && "name" in e.attrs) : []),
+  }) as unknown as ParentNode;
+  assert.equal(USER_CONTENT_PREFIX, "user-content-", "GitHub's prefix, the one SANITIZE_NAMED_PROPS writes");
+  const fn1 = fake("sup", { id: "user-content-fn1" }), install = fake("a", { name: "user-content-install" }), bare = fake("p", { id: "plain" }), typed = fake("p", { id: "user-content-user-content-x" });
+  const dupName = fake("a", { name: "user-content-dup" }), dupId = fake("div", { id: "user-content-dup" });
+  const r = root([fn1, install, bare, dupName, dupId, typed]);
+  assert.equal(userContentTarget(r, "fn1"), fn1, "an author's id, under the prefix the sanitizer gave it");
+  assert.equal(userContentTarget(r, "install"), install, "an author's <a name>, under the prefix");
+  assert.equal(userContentTarget(r, "plain"), bare, "a bare id (the viewer's minted md- ids, the page's own) still answers");
+  assert.equal(userContentTarget(r, "user-content-x"), typed, "an author who typed the prefix: the sanitizer prefixed it again, and the ask finds it");
+  assert.equal(userContentTarget(r, "dup"), dupId, "an id wins over a name, whatever the document order (the browser's fragment rule)");
+  assert.equal(userContentTarget(r, "nowhere"), undefined);
+  assert.equal(userContentTarget(r, ""), undefined, "an empty fragment names nothing (the prefix alone matches no element here)");
 });

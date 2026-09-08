@@ -3,7 +3,7 @@
 // `<td background=URL>` or `<table background=URL>` makes Chromium fetch the URL as a background image the moment
 // the note renders: a tracking pixel with no click and no gate, on the chat and in the viewer alike, and outside
 // every path decision 8's figure gate (rewriteFigureSrcs, `img[src]`) will ever see. GitHub's own allowlist has no
-// `background`, so MD_PURIFY forbids it outright (FORBID_ATTR, the profile's one forbidden attribute); `bgcolor`
+// `background`, so MD_PURIFY forbids it outright (FORBID_ATTR; `usemap`, the image map's binding, is the other); `bgcolor`
 // fetches nothing and stays, the way a colour-only inline style does (decision 6). The leg adopts sanitizeMd's
 // output into a live page and reads the page's own request events: a remote `<img src>` in the same fixture is the
 // positive control (it still loads on open today; the plan's Low, Slice 4's gate), so the recorder is proven live
@@ -29,8 +29,8 @@ const FIXTURE = [
 
 // ── the profile (node) ──────────────────────────────────────────────────────────────────────────────
 
-test("the profile forbids the `background` attribute outright, and nothing else", () => {
-  assert.deepEqual([...MD_FORBID_ATTR], ["background"], "id and name are prefixed, style is filtered by the hook; background is the one attribute with no safe value");
+test("the profile forbids the `background` attribute outright (and `usemap`, the image map's binding), and nothing else", () => {
+  assert.deepEqual([...MD_FORBID_ATTR], ["background", "usemap"], "id and name are prefixed, style is filtered by the hook; background is the attribute with no safe value, usemap binds a map the sanitizer drops (md-sanitize-viewer-links-browser.test.ts)");
   assert.deepEqual(MD_PURIFY.FORBID_ATTR, [...MD_FORBID_ATTR]);
   assert.ok(!MD_FORBID_ATTR.includes("bgcolor"), "bgcolor fetches nothing: a colour survives, as it does in an inline style");
 });

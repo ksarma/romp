@@ -300,8 +300,9 @@ viewer's own controls. A `background=` attribute is dropped, since it would load
 image the moment the file opens. An inline `svg`, a `canvas` or a `video` shrinks to the
 column, as a picture does. An element's `id` or `name` is prefixed `user-content-`, as on
 GitHub; the viewer's own heading ids are not, so a link to a heading inside the file still
-lands on it. A link in the file opens in a new tab whatever element carries it, an image
-map's region or a link drawn inside an inline SVG included.
+lands on it, and a link to an element's own `id` or `<a name>` lands on it under the prefix.
+A link in the file opens in a new tab whatever element carries it, a link drawn inside an
+inline SVG included; an image map (`<map>`, `usemap`) is dropped, as on GitHub.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or

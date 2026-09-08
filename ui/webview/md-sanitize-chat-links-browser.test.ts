@@ -3,12 +3,14 @@
 // document-level click handler (render.ts) opens it in the user's own browser and cancels the default action,
 // so the chat document never leaves. Two shapes the old `closest("a[href]")` missed (the 2026-09-07 review of
 // plans/markdown-viewer.md Slice 1): an image map's `<area href>` (not an anchor) and an SVG `<a xlink:href>`
-// (`[href]` matches only the null-namespace attribute, and the XLink spelling is namespaced). Both survive the
+// (`[href]` matches only the null-namespace attribute, and the XLink spelling is namespaced). Both survived the
 // sanitizer's html + svg profiles, and a click on either took the chat page to the attacker's URL, losing the
-// pane until a reload. Two legs: the delegate's contract over raw markup (what it must do with each shape,
-// whatever the sanitizer lets through), and the chat's own markdown pipeline (marked + sanitizeMd, as md() runs
-// it) end to end: whatever survives, a click never navigates the document. Skips LOUDLY without a playwright
-// browser (CI installs none), as the other browser legs do. Synthetic values only: example.invalid URLs.
+// pane until a reload. Since the round-1 fold the sanitizer forbids map, area and usemap outright (GitHub's rule;
+// a prefixed map name could never bind), so the area is a second guard in the delegate's selector. Two legs: the
+// delegate's contract over raw markup (what it must do with each shape, whatever a profile lets through), and the
+// chat's own markdown pipeline (marked + sanitizeMd, as md() runs it) end to end: whatever survives, a click never
+// navigates the document, and the image map is gone. Skips LOUDLY without a playwright browser (CI installs none),
+// as the other browser legs do. Synthetic values only: example.invalid URLs.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -37,11 +39,13 @@ const SHAPES: { name: string; html: string; sel: string; hit: string; href: stri
   { name: "an SVG anchor with a plain href (contrast)", sel: ".fx-body svg text", hit: "text", href: "https://example.invalid/svghref",
     html: '<p><svg width="300" height="60"><a href="https://example.invalid/svghref"><text x="5" y="40" font-size="30">svg href text</text></a></svg></p>' },
 ];
-// the same two hostile shapes as a message's own HTML, for the pipeline leg
-const MESSAGES: { name: string; md: string; sel: string }[] = [
-  { name: "an image map", sel: ".fx-body img",
+// the same two hostile shapes as a message's own HTML, for the pipeline leg: the image map, spelled as an author spells it,
+// is dropped whole by the sanitizer (map, area and usemap are forbidden, md-sanitize.ts: GitHub's rule, and the prefixed
+// map name could never bind), so the picture is inert and the click opens nothing; the SVG anchor survives and opens
+const MESSAGES: { name: string; md: string; sel: string; hit: string; opens: "link" | "none"; dropped: RegExp | null }[] = [
+  { name: "an image map", sel: ".fx-body img", hit: "IMG", opens: "none", dropped: /<map|<area|usemap/,
     md: `<img src="${PNG}" width="200" height="200" usemap="#m" alt="pic"><map name="m"><area href="https://example.invalid/area" shape="default" alt="a"></map>\n\nafter` },
-  { name: "an SVG xlink anchor", sel: ".fx-body svg text",
+  { name: "an SVG xlink anchor", sel: ".fx-body svg text", hit: "text", opens: "link", dropped: null,
     md: `<svg width="300" height="60" xmlns:xlink="${XLINK}"><a xlink:href="https://example.invalid/xlink"><text x="5" y="40" font-size="30">xlink text</text></a></svg>\n\nafter` },
 ];
 
@@ -141,14 +145,99 @@ test("the chat's link delegate: an image map's area and an SVG xlink:href anchor
       assert.equal(page.url(), "http://romp.test/chat", s.name + ": the chat page is where it was");
     }
     // 2. the chat's own pipeline: a message carrying either shape, through marked and sanitizeMd as md() runs
-    //    them; whatever the sanitizer lets through, a click never moves the document
+    //    them; whatever the sanitizer lets through, a click never moves the document, and what it drops is gone
     for (const m of MESSAGES) {
       const html = await show(page, m.md, true);
+      if (m.dropped) assert.doesNotMatch(html, m.dropped, m.name + " in a message: the sanitizer drops the image map whole (map, area, usemap): " + html);
       const r = await clickCentre(page, m.sel);
+      assert.equal(r.hit, m.hit, m.name + " in a message: precondition, the click lands on the element (elementFromPoint)");
       assert.equal(r.left, false, m.name + " in a message: the chat document did not navigate; sanitized as " + html);
-      for (const o of r.opens as string[][]) assert.match(o[0], /^https:\/\/example\.invalid\//, m.name + ": what did open was the link itself");
+      if (m.opens === "none") assert.deepEqual(r.opens, [], m.name + " in a message: the picture is inert, nothing opens");
+      else assert.deepEqual(r.opens, [["https://example.invalid/xlink", "_blank", "noopener,noreferrer"]], m.name + " in a message: the link opened in the user's browser");
       assert.equal(page.url(), "http://romp.test/chat", m.name + " in a message: the chat page is where it was");
     }
+    assert.deepEqual(navs.filter((u) => !u.startsWith("http://romp.test/")), [], "the main frame never navigated off the dashboard");
+    assert.deepEqual(errors, [], "no page errors");
+  });
+});
+
+// ── in-page anchors in a message ─────────────────────────────────────────────────────────────────────
+// A reply's own `<sup id="fn1">` and `<a href="#fn1">` (a footnote's back link), or `[install](#install)` over its own
+// `<a name="install">`: the sanitizer prefixes the id and the name user-content- and leaves the href alone, so the
+// browser's default lookup finds nothing and the click died where the base scrolled (the 2026-09-07 review of Slice 1).
+// The delegate resolves the fragment itself now (render.ts; md-sanitize.ts userContentTarget): the message's own body
+// first, then the document; found, scrollIntoView and preventDefault (the hash stays); not found, the browser's click.
+const FILLER = Array.from({ length: 80 }, (_, i) => "Filler paragraph " + (i + 1) + " so the transcript scrolls.").join("\n\n");
+const FOOTNOTES = [
+  '<a name="install"></a>Claim.<sup id="fn1"><a href="#fnref1" class="fx-fwd">1</a></sup> <a href="#nowhere" class="fx-none">missing</a> <a href="#dup" class="fx-dup">dup</a>',
+  '<p id="dup" class="fx-dup-here">this message\'s dup</p>',
+  FILLER,
+  '<p id="fnref1">1. a note <a href="#fn1" class="fx-back">back</a>, and <a href="#install" class="fx-install">the install anchor</a>.</p>',
+].join("\n\n");
+// an OLDER message carrying the same id: the click in the newer one must land in its own body, not here
+const OLDER = '<p id="dup" class="fx-dup-older">the older dup</p>\n\nolder text';
+
+test("a footnote's back link and a link over the reply's own <a name> land again: resolved under the prefix, in the message first, hash untouched; a fragment with no target is left to the browser", { timeout: 90000 }, async (t) => {
+  await inBrowser(t, async (page, errors, navs) => {
+    // two messages through the chat's own pipeline (marked + sanitizeMd, as md() runs them): the older one first
+    const shape = await page.evaluate(([older, newer]: [string, string]) => {
+      document.querySelectorAll(".fx-turn").forEach((n) => n.remove());
+      const content = document.getElementById("content") as HTMLElement;
+      for (const [cls, src] of [["fx-older", older], ["fx-newer", newer]] as const) {
+        const turn = document.createElement("div"); turn.className = "turn turn-assistant fx-turn";
+        const body = document.createElement("div"); body.className = "assistant md " + cls;
+        body.innerHTML = (window as any).__mdProbe(src);
+        turn.appendChild(body); content.appendChild(turn);
+      }
+      const ids = Array.from(content.querySelectorAll(".fx-turn [id], .fx-turn a[name]")).map((e) => e.getAttribute("id") || ("name=" + e.getAttribute("name")));   // the two messages' own; the chat's chrome wears ids too
+      const cs = getComputedStyle(content);
+      return { ids, scrollable: content.scrollHeight > content.clientHeight, overflowY: cs.overflowY, hrefs: Array.from(content.querySelectorAll(".fx-newer a[href]")).map((a) => a.getAttribute("href")) };
+    }, [OLDER, FOOTNOTES] as [string, string]);
+    assert.deepEqual(shape.ids, ["user-content-dup", "name=user-content-install", "user-content-fn1", "user-content-dup", "user-content-fnref1"], "precondition: every author id and name reached the DOM prefixed (SANITIZE_NAMED_PROPS)");
+    assert.deepEqual(shape.hrefs, ["#fnref1", "#nowhere", "#dup", "#fn1", "#install"], "precondition: the hrefs are as written, unprefixed");
+    assert.ok(shape.scrollable && /auto|scroll/.test(shape.overflowY), "precondition: the transcript scrolls (" + shape.overflowY + ")");
+
+    const state = () => page.evaluate(() => {
+      const content = document.getElementById("content") as HTMLElement;
+      const top = (sel: string) => { const e = document.querySelector(sel); return e ? Math.round(e.getBoundingClientRect().top - content.getBoundingClientRect().top) : null; };
+      return { scrollTop: content.scrollTop, hash: location.hash, fn1: top("#user-content-fn1"), install: top('a[name="user-content-install"]'), dupHere: top(".fx-dup-here"), dupOlder: top(".fx-dup-older") };
+    });
+    // 1. scrolled to the bottom, the back link is clicked: the claim's footnote mark comes to the top of the transcript
+    await page.evaluate(() => { const c = document.getElementById("content") as HTMLElement; c.scrollTop = c.scrollHeight; });
+    const before = await state();
+    assert.ok(before.scrollTop > 0 && before.fn1! < 0, "the footnote mark is scrolled away above: " + JSON.stringify(before));
+    let r = await clickCentre(page, ".fx-back");
+    assert.equal(r.hit, "A", "the click lands on the back link");
+    let after = await state();
+    assert.ok(after.scrollTop < before.scrollTop && after.fn1! >= -1 && after.fn1! < 40, "the transcript scrolled the footnote mark to its top: " + JSON.stringify(after));
+    assert.equal(after.hash, "", "the default was cancelled: no #fn1 on the page's location");
+    assert.deepEqual(r.opens, [], "nothing opened");
+
+    // 2. from the bottom again, the link over the reply's own <a name>: the named anchor comes to the top
+    await page.evaluate(() => { const c = document.getElementById("content") as HTMLElement; c.scrollTop = c.scrollHeight; });
+    r = await clickCentre(page, ".fx-install");
+    after = await state();
+    assert.ok(after.install! >= -1 && after.install! < 40, "the named anchor is at the top: " + JSON.stringify(after));
+    assert.equal(after.hash, "", "hash untouched");
+
+    // 3. the message's own body first: `#dup` from the newer message lands on ITS <p id="dup">, not the older message's
+    await page.evaluate(() => { const c = document.getElementById("content") as HTMLElement; c.scrollTop = c.scrollHeight; });
+    await page.evaluate(() => { (document.querySelector(".fx-dup") as HTMLElement).scrollIntoView({ block: "center" }); });
+    r = await clickCentre(page, ".fx-dup");
+    after = await state();
+    assert.ok(after.dupHere! >= -1 && after.dupHere! < 40, "the newer message's own element is at the top: " + JSON.stringify(after));
+    assert.ok(after.dupOlder! < after.dupHere!, "the older message's same-named element stayed above, unchosen");
+
+    // 4. a fragment with no target anywhere: the click is the browser's (its default sets the hash), the transcript does not move
+    await page.evaluate(() => { (document.querySelector(".fx-none") as HTMLElement).scrollIntoView({ block: "center" }); });
+    const mid = await state();
+    r = await clickCentre(page, ".fx-none");
+    assert.equal(r.hit, "A", "the click lands on the link");
+    after = await state();
+    assert.equal(after.hash, "#nowhere", "left to the browser: its default action set the hash");
+    assert.equal(after.scrollTop, mid.scrollTop, "and nothing scrolled");
+    assert.equal(page.url(), "http://romp.test/chat#nowhere", "the chat page is where it was, hash aside");
+
     assert.deepEqual(navs.filter((u) => !u.startsWith("http://romp.test/")), [], "the main frame never navigated off the dashboard");
     assert.deepEqual(errors, [], "no page errors");
   });

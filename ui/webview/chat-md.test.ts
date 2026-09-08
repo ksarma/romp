@@ -89,7 +89,7 @@ test("userMd() renders through the breaks:true instance and the SAME sanitizer a
   assert.match(fn, /const clean = sanitizeMd\(userMdHtml\(src\)\);/);
   const mdFn = RENDER.match(/function md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.match(mdFn, /const clean = sanitizeMd\(dirty\);/, "md() sanitizes through the same shared call");
-  assert.match(RENDER, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.doesNotMatch(RENDER, /from "dompurify"|DOMPurify\.sanitize|MD_PURIFY/, "render.ts holds no sanitizer of its own");
   const SAN = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-sanitize.ts"), "utf8");
   assert.match(SAN, /USE_PROFILES: \{ html: true, svg: true \},\n\s*ADD_DATA_URI_TAGS: \["img"\],\n\s*ALLOW_DATA_ATTR: false,/);

@@ -1,6 +1,5 @@
 import { marked } from "marked";
-import { sanitizeMd } from "./md-sanitize";   // the one sanitizer every markdown surface shares (md-sanitize.ts)
-import { renderMathPlaceholders } from "./math";   // KaTeX renders into marked's placeholders AFTER the sanitizer (render-math.test.ts)
+import { sanitizeMd, userContentTarget } from "./md-sanitize";   // the one sanitizer every markdown surface shares, and the lookup for a message's own `#` links (md-sanitize.ts)
 import hljs from "highlight.js/lib/core";
 import { highlightHtml } from "./highlight-cache";
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
@@ -1096,7 +1095,9 @@ function el(tag: string, cls?: string): HTMLElement {
 // no <style>, no form controls, prefixed ids, colour-only inline styles) and returns the sanitized <body>
 // for the DOM walk below. KaTeX is rendered AFTER the sanitizer, into the inert placeholders the math
 // extensions emit (math.ts renderMathPlaceholders): its layout is all inline style, which the colour-only
-// rule would strip, so it never passes through DOMPurify (plans/markdown-viewer.md, Slice 1 review).
+// rule would strip, so it never passes through DOMPurify; the fill is a post-pass sanitizeMd itself runs,
+// registered by chat-md.ts beside the grammar, so neither renderer here calls it (plans/markdown-viewer.md,
+// Slice 1 review).
 function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal
   // bodies) is UNTRUSTED and `marked` emits raw HTML verbatim, so its output
@@ -1112,8 +1113,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
     // (pr-links.ts; the user 2026-09-06). Text inside code, pre or an existing anchor is skipped, so
     // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice. The
     // profile is sanitizeMd's, the one shared with userMd below and the file viewer.
-    const clean = sanitizeMd(dirty);   // the sanitized <body>
-    renderMathPlaceholders(clean);
+    const clean = sanitizeMd(dirty);   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, repo);
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1127,8 +1127,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
 // here too (md() above): the words are the reading session's own, so its repository is the one they mean.
 function userMd(src: string): string {
   try {
-    const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>
-    renderMathPlaceholders(clean);
+    const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>, its math rendered
     linkifyPrRefs(clean, prRepoFor());
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1295,13 +1294,14 @@ function preEl(text: string, scrollKey?: string): HTMLElement {
 //     the host extension, which openExternal()s normal URLs and feeds vscode://romp.romp-chat-view deep
 //     links into its own URI handler.
 // DOMPurify already stripped dangerous schemes (javascript:, etc.) in md(), so a surviving href is safe.
-// The delegate owns EVERY element a sanitized message can carry a navigating href on, not just <a href>: an
-// image map's <area href> (the html profile keeps map and area, and an area is not an anchor) and an SVG <a>
-// whose href is spelled xlink:href (the svg profile keeps XLink, and a bare `[href]` matches only the
-// null-namespace attribute, so the SVG 1.1 spelling is not `a[href]`). `*|href` names the attribute in any
-// namespace, which covers both spellings of an anchor. Before this, a click on either shape ran the default
-// action and the chat document itself navigated to the URL, losing the pane until a reload (web dashboard;
-// the 2026-09-07 review of the markdown viewer's Slice 1). md-sanitize-chat-links-browser.test.ts clicks both.
+// The delegate owns EVERY element a sanitized message can carry a navigating href on, not just <a href>: an SVG
+// <a> whose href is spelled xlink:href (the svg profile keeps XLink, and a bare `[href]` matches only the
+// null-namespace attribute, so the SVG 1.1 spelling is not `a[href]`), and an image map's <area href> as a
+// second guard (the sanitizer forbids map, area and usemap now, md-sanitize.ts; an area is not an anchor, and
+// before that rule it was a shape this delegate missed). `*|href` names the attribute in any namespace, which
+// covers both spellings of an anchor. Before this, a click on either shape ran the default action and the chat
+// document itself navigated to the URL, losing the pane until a reload (web dashboard; the 2026-09-07 review of
+// the markdown viewer's Slice 1). md-sanitize-chat-links-browser.test.ts clicks both.
 // LINK_SEL and linkHref (the href, else xlink:href) are md-links.ts's, the same two the viewer's mdBlock stamps
 // its links with, so a link the one handles the other handles too (md-sanitize-viewer-links.test.ts).
 document.addEventListener("click", (e) => {
@@ -1322,7 +1322,28 @@ document.addEventListener("click", (e) => {
   // is right: a press on SVG text selects it.
   if (!(a as HTMLElement).draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
   const href = linkHref(a);
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
+  if (href.startsWith("#")) {
+    // An in-page anchor in a message (a footnote's back link, `[section](#install)` over the reply's own `<a name>`): the
+    // sanitizer prefixes every author id and name user-content- (md-sanitize.ts, GitHub's rule) and leaves the href as
+    // written, so the browser's default lookup, which reads the bare name, finds nothing, and a click that scrolled the
+    // transcript on main did nothing (the 2026-09-07 review of Slice 1). Resolved here the way GitHub's page script
+    // does: the target is looked up under the prefix or bare (userContentTarget), in the message's own rendered body
+    // first (its note before a same-named element in an older message), then the whole document; found, it is scrolled
+    // into view and the default action cancelled (the hash stays as it was: the target is not a page location). Not
+    // found, the click is left to the browser, as it was. A modified click asked for a tab and keeps the browser's. A
+    // link outside a message (the file viewer's own section links) is not this handler's: the viewer lands those itself.
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const msg = a.closest(".md");
+    if (!msg) return;
+    let frag = href.slice(1);
+    try { frag = decodeURIComponent(frag); } catch { /* a malformed escape: the spelling as written */ }
+    const target = frag ? userContentTarget(msg, frag) || userContentTarget(document, frag) : undefined;
+    if (!target) return;
+    e.preventDefault();
+    target.scrollIntoView({ block: "start" });
+    return;
+  }
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // relative: leave alone (a bare fragment was resolved above)
   e.preventDefault();
   e.stopPropagation();
   if (location.protocol === "http:" || location.protocol === "https:") {

@@ -124,34 +124,47 @@ test("render.ts wires the math extensions into marked, through the shared chat g
   // chat-md.ts owns the extension list (shared with the breaks:true user-text instance, so a user
   // message with math renders exactly as before); render.ts applies it to the singleton.
   const grammar = UI("chat-md.ts");
-  assert.match(grammar, /import \{ mathBlock, mathInline \} from "\.\/math";/);
+  assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
   assert.match(grammar, /export const chatMdExtensions: MarkedExtension\[\] = \[delDoubleTilde, \{ extensions: \[mathBlock, mathInline\] \}\];/);
   const src = UI("render.ts");
   assert.match(src, /import \{ chatMdExtensions, userMdHtml \} from "\.\/chat-md";/);
   assert.match(src, /marked\.use\(\.\.\.chatMdExtensions\);/);
 });
 
-test("KaTeX renders AFTER the sanitizer: md() and userMd() run renderMathPlaceholders on the sanitized body", () => {
+test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md.ts registers renderMathPlaceholders once, and no renderer calls it by hand", () => {
   // KaTeX's output is inline styles (height, top, vertical-align on struts and vlist rows) plus inline
   // <svg> for stretchy glyphs, and the shared sanitizer keeps only colour declarations in a style
   // attribute (md-sanitize.ts, decision 6), so KaTeX output run through it collapses. The extension
-  // therefore emits a placeholder and render.ts renders KaTeX into it on the DOM sanitizeMd returns,
-  // BEFORE the PR-reference walk (which then meets the .katex shape it always did) and the
-  // serialization; the sanitizer's rules stay as they are.
+  // therefore emits a placeholder, and KaTeX is rendered into it on the DOM sanitizeMd returns, inside
+  // sanitizeMd itself (a registered post-pass, md-sanitize.ts registerMdPostPass), BEFORE the PR-reference
+  // walk (which then meets the .katex shape it always did) and the serialization. ONE mechanism: the
+  // first cut had md() and userMd() call the fill by hand, and the viewer's mdBlock, which parses with the
+  // same marked singleton inside the chat page, showed a note's formulas as bare TeX (review round 1;
+  // md-sanitize-viewer-math-browser.test.ts opens such a note in both bundles). The grammar's module
+  // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
   assert.match(math, /katex\.render\(tex, el, \{ displayMode: display, throwOnError: false, output: "html", trust: false \}\);/, "the one katex call, html-only and untrusted");
   assert.doesNotMatch(math, /renderToString/, "marked's output holds no KaTeX markup: the extension emits placeholders only");
+  const grammar = UI("chat-md.ts");
+  assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
+  assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
+  assert.equal((grammar.match(/registerMdPostPass\(renderMathPlaceholders\);/g) || []).length, 1, "registered once, at load, beside the extension list");
+  assert.ok(grammar.indexOf("export const chatMdExtensions") < grammar.indexOf("registerMdPostPass(renderMathPlaceholders);"), "the fill is registered where the grammar is defined");
   const render = UI("render.ts");
-  const imports = render.split("\n").filter((l) => l.startsWith("import ")).join("\n");
-  assert.match(imports, /import \{[^}]*\brenderMathPlaceholders\b[^}]*\} from "\.\/math";/, "render.ts imports the post-pass from math.ts");
+  assert.doesNotMatch(render, /renderMathPlaceholders\(/, "render.ts calls no fill of its own: sanitizeMd runs it");
+  assert.doesNotMatch(render, /from "\.\/math"/, "render.ts imports nothing from math.ts; the grammar module carries it");
+  const view = UI("file-view.ts");
+  assert.doesNotMatch(view, /from "\.\/math"|from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill: it renders math only where a bundle armed the grammar (Slice 4 gives the files and feed bundles both)");
   // match on the two function bodies, not the file, so a failure prints the function and not render.ts
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
-  assert.match(mdFn, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*renderMathPlaceholders\(clean\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);/, "md(): sanitize, render math, then link PR refs");
+  assert.match(mdFn, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);/, "md(): sanitize (math rendered inside it), then link PR refs");
   const userFn = render.match(/function userMd\(src: string\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(userFn, "userMd() must exist");
-  assert.match(userFn, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*renderMathPlaceholders\(clean\);[^\n]*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/, "userMd(): the same order");
+  assert.match(userFn, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/, "userMd(): the same order");
+  const san = UI("md-sanitize.ts");
+  assert.match(san, /for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "sanitizeMd runs every registered pass on the sanitized body before handing it back");
 });
 
 test("executed: why the order matters: KaTeX's own output is inline styles and svg", () => {

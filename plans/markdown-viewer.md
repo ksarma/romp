@@ -62,8 +62,8 @@ The Rendered/Raw toggle drifts about 600px (`file-view.ts:948`); a sized `<img>`
 (`styles.css:3724`); the modal title bar clips at 380px (`styles.css:3544`); the Comment float
 ignores body scroll (`file-comments.ts:1598`); the note bar scrolls away with the body
 (`file-view.ts:874`); task items show bullet plus checkbox (`styles.css:3698`);
-light-theme notes are monospace (`styles.css:275`); math renders only from the chat
-(`render.ts:103`); fenced code lacks a wrap gutter and Copy, ten grammars (`file-view.ts:1699`);
+light-theme notes are monospace (`styles.css:275`); math renders only in the chat page, its
+viewer included, and the Files and feed panes' viewers show TeX as text (`render.ts:103`); fenced code lacks a wrap gutter and Copy, ten grammars (`file-view.ts:1699`);
 table alignment is discarded (`styles.css:3722`); print gives one clipped grey page
 (`files-pane.css:6`); Obsidian syntax stays literal: `[[Note]]`, `![[img]]`, `==mark==`,
 `> [!note]`, `[^1]` (`file-view.ts:81`); inline math makes its paragraph uncommentable in the chat
@@ -114,22 +114,33 @@ built departs from the text above, and why:
    without a re-parse). The source pins moved with it; `md-sanitize.test.ts` holds the one-call rule.
 2. *`SANITIZE_NAMED_PROPS: true` instead of `FORBID_ATTR: id, name`.* GitHub's own rule: an author's `id` and
    `name` are kept, prefixed `user-content-`, so `<a name="install">` and `<p id="top">` remain link targets under
-   their prefixed names once fork PR #347 (links inside viewed files) compares the prefixed form; clobbering and
-   collisions with the viewer's own ids are prevented either way. The viewer's heading ids (`md-<slug>`) are minted
-   after the sanitize and never gain the prefix (md-url-view.test.ts pins the order). Nothing regresses on main
-   today: `scrollToFragment` matches heading ids only, so an author's id was never a link target here. One cost,
-   GitHub's too: an inline SVG's `fill="url(#g)"` no longer finds its `<linearGradient id="g">`, since the id is
-   prefixed and the reference is not. #347 is folded at merge time; file-view-links.ts is untouched by this build.
+   their prefixed names; clobbering and collisions with the viewer's own ids are prevented either way. The viewer's
+   heading ids (`md-<slug>`) are minted after the sanitize and never gain the prefix (md-url-view.test.ts pins the
+   order). Fork PR #347 (links inside viewed files) was folded on 2026-09-08: `userContentTarget` (md-sanitize.ts)
+   is the one lookup for an author's target, the first element whose `id` is the prefixed spelling or the bare one,
+   else the first `<a name>` with either, and `fragmentTarget` (file-view-links.ts) is that lookup plus its
+   heading-slug arm, so `[go](#top)`, `[install](#install)` and a link to an author's id spelled like the viewer's
+   own chrome (`#fileview-save-err`) all land on the author's element under its prefix, which is never the chrome's
+   id at all; `data-frag` and the `Go to` title keep the fragment as typed. Before the fold, #347's browser leg
+   dressed those three links dead (fragmentTarget compared the bare spelling). The chat resolves a message's own
+   `#` links with the same lookup (item 10). One cost, GitHub's too: an inline SVG's `fill="url(#g)"` no longer
+   finds its `<linearGradient id="g">`, since the id is prefixed and the reference is not.
 3. *A wider forbidden list.* The text names style, form, button, select, textarea. The build forbids every
    form-associated element (form, button, select, option, optgroup, textarea, fieldset, legend, label, datalist,
    output, meter, progress) and `dialog` (a `<dialog open>` paints a modal box over the note). `input` stays
    allowed for marked's task checkbox, and a post-pass in `sanitizeMd` removes every input that is not a checkbox
    and forces `disabled` on a checkbox that lacks it, so no control in a note is live. A forbidden element's text
    stays as prose (DOMPurify's KEEP_CONTENT); a `<style>` block's text goes with it (DEFAULT_FORBID_CONTENTS).
-   One attribute is forbidden outright (`FORBID_ATTR: background`, added in review): `<td background=URL>` makes
-   the browser fetch the URL the moment the note renders, with no click and no gate, and decision 8's `img[src]`
-   gate would never see it; DOMPurify's html list keeps the attribute, GitHub's allowlist does not. `bgcolor`
-   fetches nothing and stays. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video poster>`,
+   Two attributes are forbidden outright. `background` (added in review): `<td background=URL>` makes the browser
+   fetch the URL the moment the note renders, with no click and no gate, and decision 8's `img[src]` gate would
+   never see it; DOMPurify's html list keeps the attribute, GitHub's allowlist does not. `bgcolor` fetches nothing
+   and stays. `usemap`, with the `map` and `area` tags (added between review rounds 1 and 2): an image map is
+   dropped whole, as GitHub drops it. The prefix rule renames `<map name="nav">` to `user-content-nav` and leaves
+   `usemap="#nav"` as written, so no map an author writes could bind to its picture (the round-1 fixtures had
+   spelled the prefix by hand, which is how the promise survived a review); and once #347 was folded, the file
+   kind's links were dressed by `linkMarkdownAnchors`, a walk over `a`, so a surviving `<area href>` in a file
+   document navigated the pane again (the fold's own browser leg caught it). `LINK_SEL` (item 8) keeps naming
+   `area[href]` as a second guard. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video poster>`,
    `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a
    `style` attribute only `color` and `background-color` declarations whose value is a literal colour: a bare
@@ -162,11 +173,17 @@ built departs from the text above, and why:
    child: `.fileview-md > :where(:not(table))` caps a direct child at the prose measure.
    Content wider than the md box is ink overflow the body cannot scroll to (on the base commit the body scrolled
    sideways to it), so the media a note draws itself is capped at the column the way `img` already was: `svg`,
-   `canvas` and `video` under `.fileview-md` take `max-width: 100%; height: auto`, written through `:where()` at
-   zero class specificity so KaTeX's own `.katex svg` rule wins once Slice 4 renders math in a note, and the
-   direct-child measure rule covers them too. A no-viewBox svg wider than the column is cropped rather than
-   scrolled to, the one case where the base's sideways scroll showed more. Byte-equal in both sheets; the parity
-   test pins the three heads; md-sanitize-wide-media-browser.test.ts lays the fixtures out at 900 and 380px.
+   `canvas` and `video` under `.fileview-md` take `max-width: 100%`, and a PIXEL-sized one (a `width` attribute
+   not ending in `%`) takes `height: auto` so it keeps its ratio as the cap shrinks it; a percentage-width element
+   the cap never shrinks keeps the author's explicit height (round 1's unconditional `height: auto` grew a
+   full-width `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to
+   Chromium's default 150, the review's recheck). Both rules are written inside `:where()` at zero class
+   specificity, so KaTeX's own `.katex svg` rule wins once math renders in a note (its stretchy glyphs carry
+   `width="400em"`, pixel-like to the attribute test), and the direct-child measure rule covers them too. A
+   no-viewBox svg wider than the column is cropped rather than scrolled to, the one case where the base's sideways
+   scroll showed more. Byte-equal in both sheets; the parity test pins the four heads;
+   md-sanitize-wide-media-browser.test.ts lays the fixtures, the two author-sized shapes included, out at 900 and
+   380px.
 6. *The submit backstop* is one `submit` listener calling `preventDefault` on `.fileview-body`, in `openFileView`
    and in `openUrlView`, installed once per open beside the click delegate. The sanitizer never lets a form
    through, so the browser leg exercises the listener by inserting a real form after render.
@@ -179,23 +196,42 @@ built departs from the text above, and why:
    runs, and `renderMathPlaceholders` (math.ts, a plain exported function) renders KaTeX into each placeholder on
    the sanitized DOM with `katex.render(tex, el, { displayMode, throwOnError: false, output: "html", trust: false })`
    and unwraps it, so the `.katex` root stands where marked's output used to stand and KaTeX's styles never meet
-   DOMPurify. `md()` and `userMd()` call it between `sanitizeMd` and the PR-link walk. An author who hand-writes
-   the placeholder gets only what KaTeX renders from TeX under `trust: false` (no \href, \htmlStyle,
+   DOMPurify. The fill is a POST-PASS `sanitizeMd` itself runs: md-sanitize.ts keeps a small registry
+   (`registerMdPostPass`, idempotent per function), and chat-md.ts, the module that defines the math grammar,
+   registers `renderMathPlaceholders` at load, so every `sanitizeMd` call in a bundle that carries the grammar
+   renders math and a bundle without it (files.js, feed.js) has neither the grammar nor the fill nor KaTeX. Round
+   1's first cut had `md()` and `userMd()` call the fill by hand, and the viewer's `mdBlock`, which parses with the
+   same marked singleton inside the chat page, showed a note's formulas as bare TeX where main rendered KaTeX (the
+   recheck's probe; md-sanitize-viewer-math-browser.test.ts opens such a note in both bundles). An author who
+   hand-writes the placeholder gets only what KaTeX renders from TeX under `trust: false` (no \href, \htmlStyle,
    \includegraphics, \htmlClass). The colour-only rule is unchanged and no class name is special-cased; the svg
-   profile now serves a note's own inline SVG, not KaTeX. Slice 4 calls the same post-pass from `mdBlock` once
-   KaTeX ships in the files and feed bundles (decision 1).
-8. *Every link element* (review round 1). DOMPurify's html profile keeps `<map>` and `<area>`, and its svg
+   profile now serves a note's own inline SVG, not KaTeX. Slice 4 imports the grammar module into the files and
+   feed bundles (decision 1) and the fill comes with it; `mdBlock` calls nothing.
+8. *Every link element* (review round 1). DOMPurify's html profile kept `<map>` and `<area>`, and its svg
    profile keeps an SVG `<a>` with `href` or SVG 1.1's `xlink:href`; `mdBlock`'s two link passes and the chat's
    click delegate ran over `a[href]`, which reaches only an HTML anchor (an area is not an anchor, and `[href]`
    matches the null-namespace attribute alone), so an `<area href>` or an SVG `<a xlink:href>` in a note or a
    chat message navigated the pane's document to its URL in the same frame. md-links.ts exports `LINK_SEL`
    (`a[*|href], area[href]`) and `linkHref` (`href`, else `xlink:href`); `mdBlock` copies an xlink-only href to
-   a plain `href` first, runs both passes over `LINK_SEL`, and writes `target`, `rel` and `title` with
-   `setAttribute` (an SVGAElement's `target` property is a read-only SVGAnimatedString, so the property write
-   was dropped without a word); the chat's delegate keys on the same selector and reads the same function. A
-   relative `<area href="sibling.md">` therefore rides fv-open into the viewer like a relative `<a>`. `map` and
-   `area` stay allowed: every link element the profile admits is now stamped or delegated.
-9. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
+   a plain `href` first, and writes `target` and `rel` with `setAttribute` (an SVGAElement's `target` property is
+   a read-only SVGAnimatedString, so the property write was dropped without a word); the chat's delegate keys on
+   the same selector and reads the same function. After the #347 fold, `mdBlock`'s two `LINK_SEL` passes serve a
+   URL document (resolution against the URL; the fv-anchor stamp and the new-tab stamps), and a file document's
+   links are dressed by `linkMarkdownAnchors` (file-view-links.ts), whose walk over `a` reaches the SVG anchor too
+   because its `xlink:href` was copied to `href` first: an SVG `<a href="sibling.md">` becomes the same path link a
+   relative `<a>` becomes and opens the sibling in the viewer. Image maps are dropped (item 3); `area[href]` stays
+   in `LINK_SEL` as a second guard.
+10. *In-page anchors in a chat reply* (between review rounds 1 and 2). A reply's own `<sup id="fn1">` and
+   `<a href="#fn1">`, or `[install](#install)` over its `<a name="install">`, scrolled the transcript on main
+   through the browser's default fragment lookup; with the id and name prefixed and the href left as written,
+   that lookup found nothing and the click died. render.ts's capture-phase link delegate now resolves a `#` href
+   inside a message body (`.md`) the way GitHub's page script does: `userContentTarget` over the message's own body
+   first (its footnote before a same-named element in an older message), then over the document; found, the target
+   is scrolled into view (`block: "start"`) and the default cancelled, so the hash stays as it was; not found, the
+   click is left to the browser as before. A modified click keeps the browser's tab, and a link outside a message
+   body (the viewer's own section links, which the viewer lands itself) is not this branch's. The scheme test that
+   follows is unchanged, so every relative href is still left alone.
+11. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
    pins, the guide's paragraph), `md-sanitize-guide.test.ts` (the guide's `<style>` clause) and
    `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over the real files bundle, with an
    author's `data-*` fixture and a whole-leg log of main-frame navigations and off-host requests). On the base
@@ -206,10 +242,19 @@ built departs from the text above, and why:
    the post-pass; an author's style beside them keeps only colour; hand-written placeholders under trust: false;
    the forced-disabled checkbox clicked), `md-sanitize-katex-browser.test.ts` (the rendered `.katex` is
    byte-identical to katex.render's own output; the userMd path; idempotence),
-   `md-sanitize-viewer-links.test.ts` and `-browser.test.ts` (LINK_SEL in mdBlock; an area, an SVG anchor and a
-   fragment clicked in the viewer), `md-sanitize-chat-links-browser.test.ts` (the same shapes clicked in the
-   chat), `md-sanitize-background-browser.test.ts` (no `background=` survives and no request leaves the host) and
-   `md-sanitize-wide-media-browser.test.ts` (the media caps at two pane widths).
+   `md-sanitize-viewer-links.test.ts` and `-browser.test.ts` (LINK_SEL in mdBlock; an SVG anchor's absolute,
+   fragment and relative hrefs clicked in the viewer, and a dropped image map's inert picture),
+   `md-sanitize-chat-links-browser.test.ts` (the same shapes clicked in the chat; a footnote's back link, a link
+   over the reply's own `<a name>`, a same-named target in an older message and a fragment with no target),
+   `md-sanitize-background-browser.test.ts` (no `background=` survives and no request leaves the host) and
+   `md-sanitize-wide-media-browser.test.ts` (the media caps at two pane widths, the author-sized shapes keeping
+   their height). Between rounds 1 and 2: `md-sanitize-viewer-math-browser.test.ts` (a note with a fraction, a
+   radical and a display sum opened from a chat message renders KaTeX in the chat page's viewer, with its layout
+   styles and the numerator above the denominator; the same note through the files bundle keeps its TeX as
+   literal text, and files.js carries neither the grammar nor KaTeX), the registry's idempotence executed in
+   `md-sanitize-katex-browser.test.ts`, `userContentTarget` executed in `chat-link-open.test.ts`, and #347's
+   `file-view-links.test.ts` and `-browser.test.ts` asserting the prefixed shapes (an author's id equal to a chrome
+   id renders prefixed and is never the scroll target).
 
 ### Slice 2: layout follows the pane, reader keeps their place
 

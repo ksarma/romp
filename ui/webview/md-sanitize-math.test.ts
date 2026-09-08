@@ -85,7 +85,7 @@ test("closing $ may still touch trailing punctuation and emphasis", () => {
 
 // --- the post-pass and its wiring ---
 
-test("renderMathPlaceholders is a plain exported function (the file viewer reuses it in Slice 4)", () => {
+test("renderMathPlaceholders is a plain exported function (chat-md.ts registers it as sanitizeMd's post-pass)", () => {
   assert.equal(typeof renderMathPlaceholders, "function");
   assert.equal(renderMathPlaceholders.length, 1);
 });
@@ -97,19 +97,24 @@ test("math.ts renders with katex.render into the sanitized DOM, html output, err
   assert.match(src, /el\.replaceWith\(\.\.\.Array\.from\(el\.childNodes\)\);/, "the placeholder is unwrapped: the .katex root stands where marked's output used to");
 });
 
-test("render.ts renders the math placeholders after sanitizeMd, in md() and in userMd(), before the PR-link walk", () => {
-  // The chat is the surface that renders math today. Both renderers take the sanitized <body> back from sanitizeMd;
-  // the math post-pass runs on it BEFORE linkifyPrRefs (the order KaTeX's output and the PR-link walk always had)
-  // and before the serialization to innerHTML.
+test("the math fill is sanitizeMd's post-pass, registered by chat-md.ts: md() and userMd() sanitize and then walk PR links, calling no fill of their own", () => {
+  // The chat bundle is where the grammar lives. Both renderers take the sanitized <body> back from sanitizeMd with
+  // its math already rendered (the registered pass runs inside sanitizeMd), BEFORE linkifyPrRefs (the order KaTeX's
+  // output and the PR-link walk always had) and before the serialization to innerHTML. The viewer's mdBlock in the
+  // chat page takes the same sanitizeMd and so renders math too, which the hand call in md() and userMd() missed
+  // (review round 1; md-sanitize-viewer-math-browser.test.ts).
+  const grammar = read("chat-md.ts");
+  assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
+  assert.equal((grammar.match(/registerMdPostPass\(renderMathPlaceholders\);/g) || []).length, 1, "chat-md.ts registers the fill once, at load");
   const src = read("render.ts");
-  const imports = src.split("\n").filter((l) => l.startsWith("import ")).join("\n");
-  assert.match(imports, /import \{[^}]*\brenderMathPlaceholders\b[^}]*\} from "\.\/math";/, "render.ts imports the post-pass from math.ts");
+  assert.doesNotMatch(src, /renderMathPlaceholders\(|from "\.\/math"/, "render.ts neither imports nor calls the fill (its comments may name it)");
   const md = src.slice(src.indexOf("function md("), src.indexOf("function userMd("));
-  assert.match(md, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*renderMathPlaceholders\(clean\);\s*\n\s*linkifyPrRefs\(clean, repo\);/,
-    "md(): sanitizeMd, then renderMathPlaceholders(clean), then linkifyPrRefs");
+  assert.match(md, /const clean = sanitizeMd\(dirty\);[^\n]*\n\s*linkifyPrRefs\(clean, repo\);/, "md(): sanitizeMd (the fill inside it), then linkifyPrRefs");
   const userMd = src.slice(src.indexOf("function userMd("), src.indexOf("function userMd(") + 800);
-  assert.match(userMd, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*renderMathPlaceholders\(clean\);\s*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/,
-    "userMd(): sanitizeMd, then renderMathPlaceholders(clean), then linkifyPrRefs");
+  assert.match(userMd, /const clean = sanitizeMd\(userMdHtml\(src\)\);[^\n]*\n\s*linkifyPrRefs\(clean, prRepoFor\(\)\);/, "userMd(): the same order");
+  const san = read("md-sanitize.ts");
+  assert.match(san, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/);
+  assert.match(san, /keepOnlyInertCheckboxes\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "every registered pass runs on the sanitized body, after the sanitizer's own input pass");
 });
 
 test("chat-md.ts and math.ts no longer claim KaTeX's output passes the sanitizer unchanged", () => {

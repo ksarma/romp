@@ -24,25 +24,23 @@ const UI = path.resolve(EXT, "..", "ui", "webview");
 const KATEX_DIST = path.join(EXT, "node_modules", "katex", "dist");
 const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8");
 
-// render.ts's md() minus the PR-link walk, over the real modules: the chat grammar on marked, sanitizeMd, then the
-// math post-pass on the sanitized body, then the serialization to innerHTML. `renderMathPlaceholders?.` so the
-// bundle also builds on a tree without the post-pass, where the pipeline is sanitize-only and the geometry
-// assertions below show the collapse instead of an import error.
+// render.ts's md() minus the PR-link walk, over the real modules: the chat grammar on marked (importing chat-md.ts
+// registers the math fill as sanitizeMd's post-pass), sanitizeMd, then the serialization to innerHTML. No call to the
+// fill here: the pipeline is exactly what every sanitizeMd caller in the chat bundle gets, and on a tree where the
+// registration is missing the geometry assertions below show the collapse.
+// `__sanitizeOnly` is the PROFILE alone (DOMPurify under MD_PURIFY with the style hook, no post-pass): what the sanitizer
+// hands the fill, which sanitizeMd itself no longer exposes once the grammar's module has registered the fill.
 const ENTRY = `
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { chatMdExtensions } from "./chat-md";
-import { sanitizeMd } from "./md-sanitize";
-import * as math from "./math";
+import { sanitizeMd, MD_PURIFY, installMdSanitizeHooks } from "./md-sanitize";
 marked.setOptions({ gfm: true, breaks: false });
 marked.use(...chatMdExtensions);
 const w = window as any;
-w.__mdPipe = (src: string): string => {
-  const clean = sanitizeMd(marked.parse(src) as string);
-  (math as any).renderMathPlaceholders?.(clean);
-  return clean.innerHTML;
-};
+w.__mdPipe = (src: string): string => sanitizeMd(marked.parse(src) as string).innerHTML;
 w.__markedOnly = (src: string): string => marked.parse(src) as string;
-w.__sanitizeOnly = (html: string): string => sanitizeMd(html).innerHTML;
+w.__sanitizeOnly = (html: string): string => { installMdSanitizeHooks(); return (DOMPurify.sanitize(html, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement).innerHTML; };
 `;
 
 function bundleEntry(): string {
@@ -104,7 +102,8 @@ test("math keeps its KaTeX layout when rendered after the sanitizer, while an au
       'A <span class="fx-red" style="color: rgb(200, 0, 0); position: fixed; top: 0; font-size: 80px">red</span> word.',
       "",
     ].join("\n");
-    // 1. what reaches the sanitizer is the placeholder, not KaTeX: no style attribute for the colour rule to strip
+    // 1. what reaches the sanitizer is the placeholder, not KaTeX: no style attribute for the colour rule to strip, and the
+    //    profile alone (no post-pass) hands the placeholders on as the elements with text they are
     const before = await page.evaluate((src: string) => {
       const w = window as any;
       const marked = w.__markedOnly(src) as string;

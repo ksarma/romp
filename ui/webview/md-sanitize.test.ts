@@ -85,13 +85,13 @@ test("the profile: html + svg, data: on img, no data-*, GitHub's forbidden tags,
   assert.equal(MD_PURIFY.ALLOW_DATA_ATTR, false);
   assert.equal(MD_PURIFY.SANITIZE_NAMED_PROPS, true, "GitHub's rule: an author's id and name are prefixed user-content-, never FORBID_ATTR (departure 2 in the plan's Slice 1 build note)");
   assert.deepEqual(MD_PURIFY.FORBID_TAGS, [...MD_FORBID_TAGS]);
-  for (const tag of ["style", "dialog", "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress"]) {
+  for (const tag of ["style", "dialog", "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress", "map", "area"]) {
     assert.ok(MD_FORBID_TAGS.includes(tag), tag + " is forbidden");
   }
   assert.ok(!MD_FORBID_TAGS.includes("input"), "input is allowed by the profile; sanitizeMd's post-pass keeps only a disabled checkbox");
   assert.ok(!MD_FORBID_TAGS.includes("details") && !MD_FORBID_TAGS.includes("summary"), "details/summary are prose structure GitHub keeps");
   assert.deepEqual(MD_PURIFY.FORBID_ATTR, [...MD_FORBID_ATTR]);
-  assert.deepEqual([...MD_FORBID_ATTR], ["background"], "the one forbidden attribute: a background image fetches on render with no click and no gate; id/name are prefixed, style is filtered by the hook");
+  assert.deepEqual([...MD_FORBID_ATTR], ["background", "usemap"], "two forbidden attributes: a background image fetches on render with no click and no gate; usemap binds an image map, which is dropped as GitHub drops it (the prefixed map name could never match it anyway); id/name are prefixed, style is filtered by the hook");
 });
 
 // ── source pins: one sanitizer ──────────────────────────────────────────────────────────────────────
@@ -104,10 +104,11 @@ test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.
   assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1);
   assert.match(SAN, /export function sanitizeMd\(dirty: string\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
     "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM");
-  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*return clean;/, "the input post-pass runs on the sanitized DOM before it is handed back");
+  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "the input post-pass, then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
+  assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));
   assert.deepEqual(importers, ["md-sanitize.ts"]);
-  assert.match(read("render.ts"), /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(read("render.ts"), /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.match(read("file-view.ts"), /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
   assert.equal((read("render.ts").match(/sanitizeMd\(/g) || []).length, 2, "md() and userMd()");
   assert.equal((read("file-view.ts").match(/sanitizeMd\(/g) || []).length, 1, "mdBlock");

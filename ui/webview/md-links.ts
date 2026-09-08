@@ -124,14 +124,16 @@ export function urlTitleParts(href: string): { dir: string; base: string } {
 
 // ── which elements are links ───────────────────────────────────────────────────────────────────────
 
-/** Every element a sanitized note can follow a link from, for querySelectorAll and closest: an HTML <a>, an
- *  inline SVG <a> (its link spelled `href` or, SVG 1.1's way, `xlink:href`) and an image map's <area>. DOMPurify's
- *  html profile keeps <map>, <area> and usemap, and its svg profile keeps XLink, and a pass over `a[href]` reached
- *  only the first of the three: an area is not an anchor, and a bare `[href]` matches the null-namespace attribute
- *  alone. `*|href` names the attribute in any namespace, so one selector covers both spellings of an anchor. The
- *  chat's click delegate (render.ts) and the viewer's mdBlock (file-view.ts) key on this one string, so a link the
- *  one handles the other handles too (review of plans/markdown-viewer.md Slice 1, 2026-09-07: an <area href> or
- *  an SVG <a xlink:href> in a note took the pane's document to its URL in the same frame). */
+/** Every element a sanitized note can follow a link from, for querySelectorAll and closest: an HTML <a> and an
+ *  inline SVG <a> (its link spelled `href` or, SVG 1.1's way, `xlink:href`), plus an image map's <area> as a second
+ *  guard. DOMPurify's svg profile keeps XLink, and a pass over `a[href]` reached only the HTML anchor: a bare `[href]`
+ *  matches the null-namespace attribute alone. `*|href` names the attribute in any namespace, so one selector covers
+ *  both spellings of an anchor. The chat's click delegate (render.ts) and the viewer's mdBlock (file-view.ts) key on
+ *  this one string, so a link the one handles the other handles too (review of plans/markdown-viewer.md Slice 1,
+ *  2026-09-07: an <area href> or an SVG <a xlink:href> in a note took the pane's document to its URL in the same
+ *  frame). The sanitizer forbids <map>, <area> and usemap outright now (md-sanitize.ts: a prefixed map name can never
+ *  bind, and GitHub drops image maps), so no area reaches either delegate; the selector keeps naming it so that a
+ *  loosened profile cannot reopen the same-frame navigation on its own. */
 export const LINK_SEL = "a[*|href], area[href]";
 
 /** The XLink namespace, the one an SVG 1.1 `xlink:href` lives in. */

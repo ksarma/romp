@@ -27,6 +27,7 @@ const RULES = [
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",
+  ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only
   ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",

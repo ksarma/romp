@@ -15,8 +15,10 @@
 // placeholder markup: KaTeX renders only what TeX says, under `trust: false` (no \href, \url,
 // \includegraphics, \htmlClass, \htmlStyle, \htmlData), which is KaTeX's own safety model. KaTeX
 // renders with output: "html" ONLY, no MathML twin. The KaTeX layout CSS ships via styles.css
-// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). The file viewer's
-// mdBlock will call the same post-pass once KaTeX ships in its bundle (decision 1, Slice 4).
+// (@import "katex/dist/katex.min.css"; fonts emitted to dist/fonts/ by esbuild). chat-md.ts registers the
+// post-pass with the sanitizer (md-sanitize.ts registerMdPostPass), so every sanitizeMd call in the chat
+// bundle renders math, the file viewer's mdBlock included when it runs in the chat page; the files and feed
+// bundles take the grammar, the fill and KaTeX together in Slice 4 (decision 1).
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -118,8 +120,8 @@ export const mathInline: TokenizerAndRendererExtension = {
  *  and the anchor map see the shape they always did. throwOnError: false renders bad TeX as
  *  visibly-flagged source instead of throwing; the catch is a belt for the residual throws (an internal
  *  error), falling back to the TeX as a code span so a formula can never blank a message. A second run
- *  over the same root is a no-op: no placeholder survives the first. Plain and exported so the file
- *  viewer can call it too (Slice 4). */
+ *  over the same root is a no-op: no placeholder survives the first. Plain and exported: chat-md.ts
+ *  registers it as sanitizeMd's post-pass, and the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
   root.querySelectorAll("." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS).forEach((node) => {
     const el = node as HTMLElement;

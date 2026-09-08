@@ -3,8 +3,11 @@
 // the body cannot scroll to it, so before the fix a 1500px <svg> diagram nested in a paragraph, a <canvas> or a
 // <video> was painted, clipped at the body's edge and unreachable (the base commit scrolled the body sideways to
 // it). The sheets now cap svg, canvas and video at the column the way `.fileview-md img` already was, with
-// `height: auto` so each keeps its own ratio, and a direct child carries the prose measure like a direct-child
-// <img> (at 380px the bare 860px cap would itself overflow). The rule sits at zero class specificity (:where) so
+// `height: auto` on a PIXEL-sized one so it keeps its own ratio as it shrinks (a percentage-width element the cap
+// never shrinks keeps the author's explicit height: the first cut's unconditional height: auto grew a full-width
+// `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to Chromium's default 150;
+// review round 1), and a direct child carries the prose measure like a direct-child
+// <img> (at 380px the bare 860px cap would itself overflow). Both rules sit at zero class specificity (:where) so
 // KaTeX's own `.katex svg { height: inherit }` still wins over its stretchy glyphs once math renders here (Slice 4);
 // the last step holds that cascade with the KaTeX sheet inlined where the built styles.css carries it. A 12-column
 // table is the control: its own overflow-x scroll is untouched. Skips LOUDLY without a playwright browser (CI
@@ -43,6 +46,15 @@ const NOTE = [
   'Canvas: <canvas class="fx-canvas" width="1500" height="40"></canvas>',
   "",
   'Video: <video class="fx-video" src="/nope.mp4" width="1500" height="40"></video>',
+  "",
+  // sized by the author with a percentage width and an explicit height: the cap shrinks nothing, the height must stand
+  'Banner: <svg class="fx-pct" width="100%" height="30" viewBox="0 0 100 30" preserveAspectRatio="none"><rect width="100" height="30" fill="#c60"/></svg>',
+  "",
+  'Square box: <svg class="fx-pct-sq" width="100%" height="40" viewBox="0 0 100 100"><rect width="100" height="100" fill="#606"/></svg>',
+  "",
+  'Wide video: <video class="fx-vidh" src="/nope.mp4" width="100%" height="120"></video>',
+  "",
+  'Tall video: <video class="fx-vidonly" src="/nope.mp4" height="120"></video>',
   "",
   'Glyph: <span class="katex"><span class="hide-tail fx-tail"><svg class="fx-katex" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M0 0h400000v1080H0z"/></svg></span></span>',
   "",
@@ -108,6 +120,8 @@ type Facts = {
   table: { scrollWidth: number; clientWidth: number; maxScrollLeft: number; lastCellRight: number; right: number };
 };
 const MEDIA = ["fx-block", "fx-nested", "fx-canvas", "fx-video"];
+// the author-sized shapes and the height each keeps: a percentage width the cap never shrinks, an explicit height
+const SIZED: Record<string, number> = { "fx-pct": 30, "fx-pct-sq": 40, "fx-vidh": 120, "fx-vidonly": 120 };
 
 // measured in the page: the body's sideways scroll range, each fixture's box against the body's edge, the table's own scroll
 function measure(): Facts {
@@ -116,7 +130,7 @@ function measure(): Facts {
   body.scrollLeft = 100000; const maxScrollLeft = body.scrollLeft; body.scrollLeft = 0;
   const br = body.getBoundingClientRect();
   const els: Record<string, Box> = {};
-  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video"]) {
+  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly"]) {
     const el = md.querySelector("." + cls) as HTMLElement | null;
     if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false }; continue; }
     const r = el.getBoundingClientRect();
@@ -152,6 +166,14 @@ function check(f: Facts, at: string): void {
   for (const cls of MEDIA) {
     const b = f.els[cls];
     assert.ok(Math.abs(b.height - b.width * RATIO) <= 1, at + ": ." + cls + " keeps its 1500:40 ratio as it shrinks (height: auto, not a letterboxed 40px): " + b.width + " by " + b.height);
+  }
+  // an author's explicit height on a percentage-width element (or on an unloaded video with no width) stands: the cap
+  // shrinks nothing there, so height: auto has no ratio to keep and would only discard the attribute
+  for (const [cls, h] of Object.entries(SIZED)) {
+    const b = f.els[cls];
+    assert.ok(b.present && b.width > 0, at + ": ." + cls + " survives the sanitizer with a box");
+    assert.ok(Math.abs(b.height - h) <= 1, at + ": ." + cls + " keeps its height attribute of " + h + "px: " + b.width + " by " + b.height);
+    assert.ok(b.right <= f.body.right + 0.5, at + ": ." + cls + " ends inside the body");
   }
   // the control: a 12-column table still scrolls inside its own box, and its last cell is reachable there
   assert.ok(f.table.scrollWidth > f.table.clientWidth, at + ": the wide table overflows its own box (" + f.table.scrollWidth + " > " + f.table.clientWidth + ")");

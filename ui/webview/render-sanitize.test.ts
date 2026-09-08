@@ -17,7 +17,7 @@ const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview"
 const SANITIZE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-sanitize.ts"), "utf8");
 
 test("md() sanitizes marked output with DOMPurify before returning HTML", () => {
-  assert.match(RENDER, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.match(SANITIZE, /import DOMPurify from "dompurify";/);
   assert.match(SANITIZE, /export function sanitizeMd\(dirty: string\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)

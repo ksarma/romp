@@ -525,7 +525,12 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   named.setAttribute("name", "anchor");
   const fragName = A("#anchor", "to the name");
   const target = el("h2", "", "Top"); target.setAttribute("id", "top");
-  const box = el("div", "fileview-md", target, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named, fragName, sect, ip, lh));
+  // what the sanitizer hands the module (md-sanitize.ts, SANITIZE_NAMED_PROPS): an author's id and name arrive prefixed user-content-
+  const pre = el("p", "", "Pre"); pre.setAttribute("id", "user-content-pre");
+  const preName = el("a", "", ""); preName.setAttribute("name", "user-content-named");
+  const chrome = el("p", "", "Collide"); chrome.setAttribute("id", "user-content-fileview-save-err");   // an author's id spelled like the viewer's notice bar
+  const toPre = A("#pre", "pre"), toNamed = A("#named", "named"), toChrome = A("#fileview-save-err", "collide"), typedPrefix = A("#user-content-pre", "typed");
+  const box = el("div", "fileview-md", target, pre, preName, chrome, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named, fragName, sect, ip, lh, toPre, toNamed, toChrome, typedPrefix));
   linkMarkdownAnchors(box as unknown as HTMLElement, md);
   for (const a of [web, mail, proto]) { assert.equal(a.getAttribute("target"), "_blank", a.href); assert.equal(a.getAttribute("rel"), "noopener"); assert.equal(a.dataset.act, undefined); }
   assert.equal(web.href, "https://example.invalid/x", "the href stays");
@@ -565,6 +570,15 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(fragName.dataset.frag, "anchor"); assert.equal(fragName.getAttribute("title"), "Go to anchor");
   const { fragmentTarget } = await import("./file-view-links");
   assert.equal(fragmentTarget(box as unknown as HTMLElement, "anchor"), named); assert.equal(fragmentTarget(box as unknown as HTMLElement, "top"), target);
+  // the prefixed shapes: live, by the fragment as typed (never the prefixed spelling in data-frag or the title), and the lookup lands on the
+  // prefixed element; an author's id spelled like the viewer's chrome is a target too, under the prefix, so it never answers to the chrome's id
+  for (const [a, id, hit] of [[toPre, "pre", pre], [toNamed, "named", preName], [toChrome, "fileview-save-err", chrome], [typedPrefix, "user-content-pre", pre]] as const) {
+    assert.ok(a.classes.includes("fv-frag") && !a.classes.includes("fv-dead"), a.className);
+    assert.equal(a.dataset.frag, id, "the fragment as typed, never the prefixed spelling"); assert.equal(a.getAttribute("title"), "Go to " + id);
+    assert.equal(fragmentTarget(box as unknown as HTMLElement, id), hit);
+  }
+  assert.equal(preName.getAttribute("class"), null, "a prefixed named target is still a target, never dressed dead");
+  assert.equal(fragmentTarget(box as unknown as HTMLElement, "user-content-user-content-pre"), undefined, "the prefix is added once: a doubly prefixed ask finds nothing");
   const both = el("div", "", el("a", "", ""), el("h2", "", "x")); (both.childNodes[0] as El).setAttribute("name", "dup"); (both.childNodes[1] as El).setAttribute("id", "dup");
   assert.equal(fragmentTarget(both as unknown as HTMLElement, "dup"), both.childNodes[1], "an id wins over a name, as the browser's fragment rule has it");
   assert.equal(fragmentTarget(box as unknown as HTMLElement, "nowhere"), undefined);
@@ -808,8 +822,12 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)|querySelectorAll\("\[id\]"\)|getElementById/, "never the whole box (a colliding author id scrolled the notice bar), and never a lookup of its own: the one in file-view-links.ts");
   assert.match(VIEW, /const target = fragmentTarget\(box\.querySelector\("\.fileview-md"\) \|\| box, frag\);/, "scrollToFragment (both viewers land through it): the rendered box, through the one lookup");
   assert.match(MOD, /const hit = id \? fragmentTarget\(root, id\) : undefined;/, "mark time reads the same root, the .fileview-md box, through the one lookup");
-  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => e\.getAttribute\("name"\) === id\)\n\s*\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/,
-    "an id first, then a GitHub-style <a name>, then the heading whose slug it is (the viewer mints md-<slug> ids; md-url-view.test.ts)");
+  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return userContentTarget\(root, id\)\n\s*\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/,
+    "the sanitizer's own lookup first (an id, then a GitHub-style <a name>, each under the user-content- prefix or bare: the minted md- ids), then the heading whose slug it is (md-url-view.test.ts)");
+  assert.match(MOD, /import \{ userContentTarget \} from "\.\/md-sanitize";/, "one lookup and one spelling of the prefix, the sanitizer's (the chat's delegate reads the same function, chat-link-open.test.ts)");
+  const SAN = read("md-sanitize.ts");
+  assert.match(SAN, /export function userContentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*const own = USER_CONTENT_PREFIX \+ id;\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("id"\); return v === own \|\| v === id; \}\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("name"\); return v === own \|\| v === id; \}\);/,
+    "the lookup: an id under the prefix or bare, then an <a name> under either, in document order");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
   assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null, x\.dataset\.frag \|\| null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");

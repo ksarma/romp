@@ -24,26 +24,37 @@ const UI = path.resolve(EXT, "..", "ui", "webview");
 const KATEX_CSS = fs.readFileSync(path.join(EXT, "node_modules", "katex", "dist", "katex.min.css"), "utf8");
 
 // the chat's two renderers, rebuilt from the real modules exactly as render.ts composes them (md() and userMd()
-// are not exported; render-math.test.ts pins render.ts to this order), plus KaTeX's own rendering for comparison
+// are not exported; render-math.test.ts pins render.ts to this order): marked with the chat grammar, then sanitizeMd,
+// which runs the math fill itself (chat-md.ts registers renderMathPlaceholders as a sanitizeMd post-pass at load, so
+// importing the grammar is what arms it; no call here by hand), plus KaTeX's own rendering for comparison
 const ENTRY = `
 import { Marked } from "marked";
 import katex from "katex";
 import { chatMdExtensions, userMdHtml } from "./chat-md";
-import { sanitizeMd } from "./md-sanitize";
+import { sanitizeMd, registerMdPostPass } from "./md-sanitize";
 import { renderMathPlaceholders } from "./math";
 const assistant = new Marked({ gfm: true, breaks: false }, ...chatMdExtensions);
-function md(src: string): string { const clean = sanitizeMd(assistant.parse(src) as string); renderMathPlaceholders(clean); return clean.innerHTML; }
-function userMd(src: string): string { const clean = sanitizeMd(userMdHtml(src)); renderMathPlaceholders(clean); return clean.innerHTML; }
+function md(src: string): string { return sanitizeMd(assistant.parse(src) as string).innerHTML; }
+function userMd(src: string): string { return sanitizeMd(userMdHtml(src)).innerHTML; }
 function twice(src: string): { once: string; again: string } {
-  const clean = sanitizeMd(assistant.parse(src) as string); renderMathPlaceholders(clean); const once = clean.innerHTML;
+  const clean = sanitizeMd(assistant.parse(src) as string); const once = clean.innerHTML;
   renderMathPlaceholders(clean); return { once, again: clean.innerHTML };
+}
+// the registry: a pass registered twice runs once per sanitize; a second pass runs too, after the sanitizer's own
+function registry(): { runs: number; other: number; sawKatex: boolean } {
+  let runs = 0, other = 0, sawKatex = false;
+  const counting = (root: ParentNode) => { runs++; sawKatex = sawKatex || root.querySelectorAll(".katex").length > 0; };
+  const second = () => { other++; };
+  registerMdPostPass(counting); registerMdPostPass(counting); registerMdPostPass(second);
+  sanitizeMd(assistant.parse("one $x$ formula") as string);
+  return { runs, other, sawKatex };
 }
 // KaTeX's own output for the same TeX, by the same DOM path (katex.render into a fresh element, the browser serializing):
 // renderToString differs in serialization only (no space after a colon, no empty class attribute), so it is not the reference
 function direct(tex: string, display: boolean): string {
   const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false }); return el.innerHTML;
 }
-(window as any).__math = { md, userMd, twice, direct };
+(window as any).__math = { md, userMd, twice, direct, registry };
 `;
 
 function bundle(): string {
@@ -132,6 +143,11 @@ test("the math the chat renders after the sanitizer is KaTeX's own output, byte 
     // 5. a second pass over the same DOM changes nothing: no placeholder survives the first
     const again = await page.evaluate(() => (window as any).__math.twice("$\\frac{a}{b}$ and $$\\sum_i x_i$$"));
     assert.equal(again.again, again.once, "renderMathPlaceholders is idempotent");
+
+    // 6. the registry behind all of the above: a pass registered twice runs once per sanitize, a second pass runs as
+    //    well, and each sees the body after the math fill registered before it (the fill is chat-md.ts's, at load)
+    const reg = await page.evaluate(() => (window as any).__math.registry());
+    assert.deepEqual(reg, { runs: 1, other: 1, sawKatex: true }, "registerMdPostPass: idempotent per function, every distinct pass runs, in registration order");
 
     assert.deepEqual(errors, [], "no page errors");
   });

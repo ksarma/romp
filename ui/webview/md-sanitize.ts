@@ -14,44 +14,73 @@
 //   • an author's id and name are PREFIXED `user-content-` (SANITIZE_NAMED_PROPS, the rule GitHub applies):
 //     a `<p id="tabs">` can no longer dress itself in the page's #tabs CSS or shadow getElementById for the
 //     page's own controls, and `<a name="install">` still exists under its prefixed name. An `href="#install"`
-//     is NOT rewritten to match: the viewer's fragment handler is the place that compares the prefixed form
-//     (the #347 fold), and in the chat a `#` click falls to the browser's default lookup, which searches the
-//     raw name and finds nothing (GitHub resolves the same gap in its page script). Rewriting hrefs here
-//     would break the viewer's `<a name="results">` before `## Results` pattern, whose `#results` link lands
-//     on the heading id `md-results`. The viewer's own heading ids (`md-<slug>`, mdBlock) are minted AFTER
-//     the sanitize and never gain the prefix.
+//     is NOT rewritten to match: the two click handlers compare the prefixed form instead, through one lookup
+//     (userContentTarget below: the viewer's fragmentTarget in file-view-links.ts, and the chat's delegate in
+//     render.ts, which resolves a message's `#` click the way GitHub's page script does, since the browser's
+//     default lookup reads the bare name and finds nothing). Rewriting hrefs here would break the viewer's
+//     `<a name="results">` before `## Results` pattern, whose `#results` link lands on the heading id
+//     `md-results`. The viewer's own heading ids (`md-<slug>`, mdBlock) are minted AFTER the sanitize and never
+//     gain the prefix.
 //   • an inline `style` keeps only `color` and `background-color` declarations whose value is a literal
 //     colour (the user 2026-09-07, decision 6: coloured spans in existing notes survive; positioning and
 //     layout never reach the page). Everything else in the attribute is dropped, and the attribute goes
 //     when nothing is left: colourOnlyStyle below is the whole grammar, applied by a DOMPurify
 //     uponSanitizeAttribute hook on every element, inline SVG included.
 //   • data-* never rides in (ALLOW_DATA_ATTR: false): both pages key their delegated actions off data-act.
-//   • the `background` attribute is forbidden outright (FORBID_ATTR, the profile's one forbidden attribute):
-//     `<td background=URL>` makes the browser fetch the URL the moment the note renders, a tracking pixel with
-//     no click and no gate, on both pages; DOMPurify's html list keeps it, GitHub's allowlist does not, and it
-//     has no safe value here. `bgcolor` fetches nothing and stays, as a colour-only inline style does. Remote
-//     figures (`<img src>`, video, audio, source) are decision 8's: gated in Slice 4, where their src is rewritten.
+//   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser fetch
+//     the URL the moment the note renders, a tracking pixel with no click and no gate, on both pages; DOMPurify's
+//     html list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
+//     stays, as a colour-only inline style does. Remote figures (`<img src>`, video, audio, source) are decision
+//     8's: gated in Slice 4, where their src is rewritten.
+//   • no image map: `<map>`, `<area>` and `usemap` go (FORBID_TAGS, FORBID_ATTR), as GitHub drops them. The prefix
+//     rule above renames `<map name="nav">` to user-content-nav and leaves `usemap="#nav"` as written, so no map an
+//     author writes can bind to its picture (review round 1, found in the tests' own fixtures, which had spelled the
+//     prefix by hand); an <area> that did bind was a link element neither page's link passes reached until round 1
+//     (md-links.ts LINK_SEL), and in a file document it is a shape the module that dresses the file's links
+//     (file-view-links.ts linkMarkdownAnchors, an `a` walk) does not see. Dropped, the picture is inert prose.
 //   • html + svg profiles (the user 2026-08-19, when KaTeX's stretchy glyphs came through here as inline <svg>;
 //     a note's own inline SVG still does), data: URIs on <img> (the CSP allows them; inline transcript images
 //     rely on them).
 //
 // What does NOT pass through here: KaTeX. Its layout is all inline style, which the colour-only rule would
-// strip, so the math extensions emit an inert placeholder and the caller renders KaTeX into it on the
-// sanitized DOM afterwards (math.ts renderMathPlaceholders; the chat's md() and userMd() today, the viewer
-// once KaTeX ships in its bundle). A renderer romp itself runs never goes through the sanitizer; only what
-// an author wrote does.
+// strip, so the math extensions emit an inert placeholder and KaTeX is rendered into it on the sanitized
+// DOM afterwards (math.ts renderMathPlaceholders), as a POST-PASS this module runs at the end of sanitizeMd
+// for every caller: the module that installs the math grammar (chat-md.ts) registers the fill at load
+// (registerMdPostPass), so the chat's md() and userMd() and the viewer's mdBlock, when it runs inside the
+// chat page whose marked singleton carries that grammar, all render math, and a bundle without the grammar
+// (files.js, feed.js) never sees the pass or KaTeX. A renderer romp itself runs never goes through the
+// sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent } from "dompurify";
 
-/** Tags a note may not keep: the style sheet, the dialog, and every form-associated element. */
+/** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
 export const MD_FORBID_TAGS: readonly string[] = [
   "style", "dialog",
   "form", "button", "select", "option", "optgroup", "textarea", "fieldset", "legend", "label", "datalist", "output", "meter", "progress",
+  "map", "area",
 ];
 
-/** Attributes a note may not keep at all: `background`, a remote fetch on render with no safe value. Every other
- *  attribute the profiles allow either is safe as written or is rewritten (id and name prefixed, style filtered). */
-export const MD_FORBID_ATTR: readonly string[] = ["background"];
+/** Attributes a note may not keep at all: `background`, a remote fetch on render with no safe value, and `usemap`, the
+ *  image map's binding (the map itself is forbidden above). Every other attribute the profiles allow either is safe as
+ *  written or is rewritten (id and name prefixed, style filtered). */
+export const MD_FORBID_ATTR: readonly string[] = ["background", "usemap"];
+
+/** The prefix SANITIZE_NAMED_PROPS puts on an author's id and name (DOMPurify's own constant is not exported). A
+ *  section link inside a note and a `#fragment` clicked in a chat message are looked up under it (userContentTarget
+ *  below); the viewer's minted `md-` heading ids are set after the sanitize and never carry it. */
+export const USER_CONTENT_PREFIX = "user-content-";
+
+/** The element an author's `#id` names in `root` after the sanitize: the first whose `id` is the prefixed spelling or
+ *  the bare one, else the first `<a name>` with either, in document order (the browser's own fragment rule, applied to
+ *  both spellings). The bare arm serves ids the sanitizer never saw: the viewer's minted `md-` heading ids, the page's
+ *  own ids when `root` is the document (what the browser's default would have scrolled to), and an author who typed
+ *  the prefix. Nothing when neither is found. The viewer's fragmentTarget (file-view-links.ts) adds its heading-slug arm
+ *  to this; the chat's click delegate (render.ts) reads it as is, the message's body first and then the document. */
+export function userContentTarget(root: ParentNode, id: string): Element | undefined {
+  const own = USER_CONTENT_PREFIX + id;
+  return Array.from(root.querySelectorAll("[id]")).find((e) => { const v = e.getAttribute("id"); return v === own || v === id; })
+    || Array.from(root.querySelectorAll("a[name]")).find((e) => { const v = e.getAttribute("name"); return v === own || v === id; });
+}
 
 /** The one profile. Spread `RETURN_DOM: true` onto it to take the sanitized <body> back (sanitizeMd does). */
 export const MD_PURIFY: Config = {
@@ -133,13 +162,27 @@ function keepOnlyInertCheckboxes(root: ParentNode): void {
   });
 }
 
+const postPasses: Array<(root: ParentNode) => void> = [];
+/** Register a DOM pass sanitizeMd runs on every sanitized body before handing it back. For the module that installs a
+ *  marked extension whose output needs a render AFTER the sanitize (chat-md.ts: the math placeholders KaTeX fills,
+ *  math.ts renderMathPlaceholders), registered at load: the grammar and its fill travel together, so every sanitizeMd
+ *  caller in a bundle that parses with the grammar renders the same way (the chat's md() and userMd(); the viewer's
+ *  mdBlock when it runs inside the chat page, whose marked singleton carries the extensions), and a bundle that never
+ *  imports the module (files.js, feed.js) has neither the grammar nor the pass nor the library behind it. One
+ *  mechanism, no per-caller call to forget: the first cut had md() and userMd() call the fill by hand and the chat
+ *  page's viewer showed bare TeX (the 2026-09-07 review, round 1). Idempotent: a pass registered twice runs once. */
+export function registerMdPostPass(pass: (root: ParentNode) => void): void {
+  if (!postPasses.includes(pass)) postPasses.push(pass);
+}
+
 /** Sanitize marked's HTML under the profile above and return the sanitized <body>: its children are the
  *  nodes to adopt (mdBlock) or its innerHTML the string to set (md, userMd), after any DOM post-pass of
- *  the caller's own (the math placeholders, PR links, heading ids). The only DOMPurify.sanitize call in
- *  the dashboard's source. */
+ *  the caller's own (PR links, heading ids). The registered passes (the math fill) have run by then. The
+ *  only DOMPurify.sanitize call in the dashboard's source. */
 export function sanitizeMd(dirty: string): HTMLElement {
   installMdSanitizeHooks();
   const clean = DOMPurify.sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
   keepOnlyInertCheckboxes(clean);
+  for (const pass of postPasses) pass(clean);
   return clean;
 }

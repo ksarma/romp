@@ -1,20 +1,22 @@
 // The viewer's links after the sanitize: every element a note can follow a link from, not only <a href>
-// (plans/markdown-viewer.md, Slice 1: sanitize as GitHub does; the 2026-09-07 review). DOMPurify's html profile
-// keeps an image map (<map>, <area href>, usemap) and its svg profile keeps an inline SVG <a> spelled `href` or
-// `xlink:href`. mdBlock's link passes (file-view.ts) ran over `a[href]`: an <area> is not an anchor, `[href]`
-// matches only the null-namespace attribute, and `a.target = "_blank"` on an SVGAElement is a silent no-op (its
-// `target` is a read-only SVGAnimatedString, and the bundle is not strict there), so a click on any of the three
-// took the Files document to the URL in the same frame, the defect class the slice closes for <form>. Now one
-// shared selector (LINK_SEL, md-links.ts) and one href reader (linkHref) serve mdBlock and the chat's click
-// delegate, and the viewer stamps target and rel with setAttribute. Executed here: linkHref. Pinned at the source
-// (file-view.ts has no jsdom harness, as every viewer test notes): the selector in both of mdBlock's passes, the
-// attribute writes, the xlink normalisation before the doc gate, and the chat delegate keying on the same
-// selector. The clicks themselves run in headless Chromium: md-sanitize-viewer-links-browser.test.ts.
+// (plans/markdown-viewer.md, Slice 1: sanitize as GitHub does; the 2026-09-07 review). DOMPurify's svg profile
+// keeps an inline SVG <a> spelled `href` or `xlink:href`, and its html profile kept an image map (<map>, <area href>,
+// usemap) until the slice forbade all three (md-sanitize.ts: a prefixed map name can never bind, and GitHub drops
+// them). mdBlock's link passes (file-view.ts) ran over `a[href]`: an <area> is not an anchor, `[href]` matches only
+// the null-namespace attribute, and `a.target = "_blank"` on an SVGAElement is a silent no-op (its `target` is a
+// read-only SVGAnimatedString, and the bundle is not strict there), so a click on any of the three took the Files
+// document to the URL in the same frame, the defect class the slice closes for <form>. Now one shared selector
+// (LINK_SEL, md-links.ts) and one href reader (linkHref) serve mdBlock and the chat's click delegate, and the viewer
+// stamps target and rel with setAttribute. Executed here: linkHref. Pinned at the source (file-view.ts has no jsdom
+// harness, as every viewer test notes): the selector in both of mdBlock's passes, the attribute writes, the xlink
+// normalisation before the doc gate, and the chat delegate keying on the same selector. The clicks themselves run in
+// headless Chromium: md-sanitize-viewer-links-browser.test.ts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LINK_SEL, XLINK_NS, linkHref } from "./md-links";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR } from "./md-sanitize";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -40,10 +42,15 @@ test("linkHref: href, else xlink:href, else empty; href wins when both are prese
   assert.equal(XLINK_NS, "http://www.w3.org/1999/xlink");
 });
 
-test("LINK_SEL names every element a sanitized note can follow a link from: an anchor in any href namespace, and an area", () => {
+test("LINK_SEL names every element a sanitized note can follow a link from: an anchor in any href namespace, and an area as a second guard behind the sanitizer's forbid", () => {
   assert.equal(LINK_SEL, "a[*|href], area[href]");
   // `*|href` covers a[href] too (any namespace includes none), so a plain `a[href]` alongside it would be redundant
   assert.doesNotMatch(LINK_SEL, /(^|, )a\[href\]/);
+  // the image map itself is dropped by the sanitizer (GitHub's rule; the prefixed map name could never bind to an
+  // author's usemap), so no <area> reaches either delegate: in a file document the module that dresses the file's links
+  // walks `a` alone, and a surviving <area href> navigated the pane again after the #347 fold (the fold's own leg caught it)
+  for (const tag of ["map", "area"]) assert.ok(MD_FORBID_TAGS.includes(tag), tag + " is forbidden");
+  assert.ok(MD_FORBID_ATTR.includes("usemap"), "usemap is forbidden");
 });
 
 test("mdBlock's two link passes select LINK_SEL and read linkHref; no `a[href]` pass is left in the viewer", () => {
