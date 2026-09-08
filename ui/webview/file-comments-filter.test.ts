@@ -789,7 +789,7 @@ test("the kind cue: every card head names its kind before the author's chip — 
 
 // ── a reply's box when the filter hides its card ───────────────────────────────────────────────────
 
-test("a reply being written on a comment card that Changes hides: the box returns to the slot with a line saying so, and Cancel hands the keyboard to All; a reply on a comment on a change follows the comment between its own card and the change's", async (t: TestContext) => {
+test("a reply being written on a comment card that Changes hides: the box returns to the slot with a line saying so, and Cancel moves the focus to All; a reply on a comment on a change follows the comment between its own card and the change's", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, full());
@@ -829,7 +829,8 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   const pos = (s: string) => { const i = head.indexOf(s); assert.ok(i >= 0, s); return i; };
   assert.ok(pos('row.appendChild(btn("Comment on this file", "fcfile"));\n    head.appendChild(row);') < pos("if (filterOffered(s)) {"), "the filter's row comes after the toggles' row");
-  assert.ok(pos('const seg = el("div", "fc-row fc-filter");') < pos("head.appendChild(seg);") && pos("head.appendChild(seg);") < pos("if (this.trackChoice && s) {"), "…and before the track-scope rows");
+  assert.ok(pos('const seg = el("div", "fc-row fc-filter");') < pos("head.appendChild(seg);") && pos("head.appendChild(seg);") < pos("if (this.trackChoice && s) {"), "…and, in the SOURCE, before the track-scope rows: the DOM puts those rows above it (underToggles inserts them before the filter's row; the review suite drives that order)");
+
   assert.match(head, /\["all", "All", [^\]]+\],\n\s+\["comments", "Comments " \+ n\.comments, [^\]]+\],\n\s+\["changes", "Changes " \+ n\.changes, [^\]]+\],/, "All · Comments N · Changes M, in that order, counted from cardCounts");
   assert.match(head, /const n = cardCounts\(s\);/);
   assert.match(head, /b\.dataset\.on = this\.filter === key \? "1" : "0";\n\s+b\.setAttribute\("aria-pressed", this\.filter === key \? "true" : "false"\);/, "the toggles' state, per option");

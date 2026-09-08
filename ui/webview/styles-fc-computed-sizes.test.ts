@@ -139,7 +139,8 @@ const TIMES: Record<string, string> = {
 };
 const LEAVES: Record<string, string> = {
   ...TIMES,
-  "card head kind": HEAD + " > span.fc-kind",   // the kind cue (the filter follow-on, 2026-09-07): the note's size, beside the ref's
+  "card head kind": HEAD + " > span.fc-kind",   // the kind cue (the filter follow-on, 2026-09-07): .fc-note's size, beside .fc-ref's
+
   "card head chip": HEAD + " > span.fc-chip",
   "card head ref": HEAD + " > span.fc-ref",
   "card head tag": HEAD + " > span.fc-tag",
