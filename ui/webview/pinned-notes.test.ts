@@ -390,8 +390,9 @@ test("the rows reach the strip through the chat frames the pane already reads, a
   assert.match(upsert, /renderBgTasks\(\);\s*\n\s*renderPinnedNotes\(\);\s*\/\/ a full frame on an existing tab/);
   const update = RENDER.slice(RENDER.indexOf("function update(msg: any)"), RENDER.indexOf("function ", RENDER.indexOf("function update(msg: any)") + 10));
   assert.match(update, /if \(msg\.id === activeId\) \{\s*\n\s*appendActive\(\);\s*\n\s*renderLedger\(\);[^\n]*\n\s*renderPinnedNotes\(\);/);
-  // the chatTail merge: the userTodos comment stays with the userTodos line it explains
-  assert.match(tail, /the tab glyph \(next slice\) reads this field, not the event\n\s*if \("userTodos" in msg\) s\.userTodos = msg\.userTodos;\n\s*if \("pinnedNotes" in msg\) s\.pinnedNotes = msg\.pinnedNotes;/);
+  // the chatTail merge: the pinnedNotes line sits ABOVE the userTodos comment block, so that comment
+  // stays with the userTodos line it explains (and tab-group-flags.test.ts's window after that line holds)
+  assert.match(tail, /if \("pinnedNotes" in msg\) s\.pinnedNotes = msg\.pinnedNotes;[^\n]*\n\s*\/\/ the top-level userTodos seam rides every delta[\s\S]{0,400}?reads this field, not the event\n\s*if \("userTodos" in msg\) s\.userTodos = msg\.userTodos;/);
   // the gate: same rows, same key, no repaint; a pin, an unpin or a tab switch changes the key
   const rows = notes(2);
   assert.equal(pinnedNotesKey(SID, rows), pinnedNotesKey(SID, rows.map((n) => ({ ...n }))));
