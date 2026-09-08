@@ -100,15 +100,14 @@ caret move away and back, do not reopen it. In the sent message, a name that mat
 session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
-step, and the chat places it at the time you sent it, above the steps that were already
-running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
-note says when the session took it (to the minute), with a link that jumps to it. In an SDK
-session, send several messages during one turn (a composer message, then a todo reply) and
-each reaches the session as its own message, in the order you sent them: the next one
-waits, shown as queued, until the session has taken the one before it, so two messages are
-never joined into one. A tmux session takes a message only while it is idle, so messages
-sent during its turn wait, shown as queued, and arrive together when the turn ends, as one
-message.
+step. In an SDK session the message stays where you sent it: it sits below everything that
+had already happened, the steps the session runs in the meantime appear below it, and when
+the session takes it, it lands in that same place. Send several messages during one turn (a
+composer message, then a todo reply) and each reaches the session as its own message, in
+the order you sent them: the next one waits, shown as queued, until the session has taken
+the one before it, so two messages are never joined into one. A tmux session takes a
+message only while it is idle, so messages sent during its turn wait, shown as queued, and
+arrive together when the turn ends, as one message.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
@@ -905,6 +904,15 @@ sessions. The token is 144-bit random and lives at
 user account). Local tools (the CLI, hooks, the bus, the editor extension) read
 that file and send it automatically, so you never type it. Only liveness probes
 (`/healthz`, `/version`, `/busy`, and the bus's `/ping`) are exempt.
+
+The kernel and the bus mint that file when it is missing, one mint between them
+under a sibling lock file, `serve-token.lock`. An existing token is never
+replaced: a file left looser than `0600` is tightened at the next start (its
+value is kept, so every client stays valid), and a token that exists but cannot
+be read, or a symlink at that path, refuses to start instead of minting a
+replacement nobody else holds. Under the service that refusal repeats in
+`manager.log` every 10 seconds until you repair the file; the kernel then comes
+back on its own.
 
 A browser cannot read that file, which is why the link `romp` prints carries the
 token in it. The first visit trades it for a year-long cookie, so the bare

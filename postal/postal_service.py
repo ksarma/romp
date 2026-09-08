@@ -36,6 +36,8 @@
 # ~/.claude/romp-postal-nopush; disable everything with ~/.claude/romp-postal-off.
 
 import base64
+import errno
+import fcntl
 import hashlib
 import hmac
 import json
@@ -45,6 +47,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -86,25 +89,150 @@ USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's pe
 # through an ssh forward authorizes with the DIALED machine's token (?token=), which rides the
 # kernel's /peer notifies only (never /tunnels rows, which a page reads too; since 2026-09-08 a
 # restarted bus gets every token re-notified, see peers_snapshot).
+#
+# _serve_token_read_or_mint is a COPY of the kernel's (kernel.py, same name; KEEP IN SYNC): the bus
+# imports nothing from kernel/ by design, and the two daemons boot together, so they must agree on
+# the whole contract, not just the path. Why it is shaped this way is in the kernel's docstring; in
+# one line: FileNotFoundError is the only mint trigger, the mint lands by rename of a 0600 temp,
+# and it all happens under serve-token.lock. A fault raises RuntimeError, which at import refuses to
+# start the bus (or a session's MCP process): the old loader minted its OWN token on any read fault
+# and every request it then made was a silent 403. The refusal is not one message: the bus is started
+# again by whatever needs it (a kernel boot's _ensure_postal_bus, a session's MCP process running
+# `ensure`), and the kernel's own copy of this refusal repeats on bin/romp-manager's respawn backoff
+# (a traceback in manager.log every 10 s at the cap), so both repeat until the file is repaired and
+# stop by themselves once it is, with the token every client holds untouched throughout (review
+# find, 2026-09-08).
+def _serve_token_read_or_mint(f, who):
+    lock = f.with_name(f.name + ".lock")
+
+    def fault(path, what, e, fix="Make the file yours and mode 0600 (or set ROMP_SERVE_TOKEN)"):
+        code = getattr(e, "errno", None)
+        why = ("%s, errno %s" % (errno.errorcode.get(code, type(e).__name__), code) if code is not None
+               else type(e).__name__)
+        raise RuntimeError(
+            "%s: cannot %s (%s). romp did NOT replace the serve token, so every client holding it "
+            "stays valid. %s, then start again." % (path, what, why, fix)) from e
+
+    def read():
+        try:
+            if stat.S_ISLNK(os.lstat(f).st_mode):
+                # refused BEFORE anything reads or chmods through it: both land on the target, some
+                # other file (review find, 2026-09-08). lstat sees a dangling link too; read_text
+                # would call that absent and mint over it.
+                fault(f, "use it: the token path is a symlink, and romp reads or tightens no token "
+                         "through a link", OSError(errno.ELOOP, os.strerror(errno.ELOOP)),
+                      fix="Replace the link with a regular file that is yours and mode 0600 (or set "
+                          "ROMP_SERVE_TOKEN)")
+            return f.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError) as e:   # a token that is not text is a fault too, never a mint
+            fault(f, "read it", e)
+
+    def mode():
+        try:
+            return stat.S_IMODE(os.lstat(f).st_mode)   # lstat, like read(): the file's own mode, never a link target's
+        except OSError as e:
+            fault(f, "stat it", e)
+
+    def loose(m):
+        return m & ~0o600                    # any bit outside rw-------: group, other, execute, set-id, sticky
+
+    def mint(why):
+        if why:
+            print("[%s] serve token %s: %s; minting a fresh one" % (who, f, why), file=sys.stderr)
+        v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+        tmp = f.with_name("%s.%d.tmp" % (f.name, os.getpid()))
+        fd = None
+        try:
+            for stale in f.parent.glob(f.name + ".*.tmp"):
+                try:
+                    os.unlink(stale)         # under the lock, so any temp here is a crashed earlier attempt, any pid's
+                except FileNotFoundError:
+                    pass
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            data = v.encode()
+            n = os.write(fd, data)
+            if n != len(data):
+                raise OSError(errno.EIO, "short write, %d of %d bytes" % (n, len(data)))
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+            os.replace(str(tmp), str(f))
+        except OSError as e:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            fault(f, "mint it (via %s)" % tmp.name, e)
+        return v
+
+    lfd = None
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # another starter (the kernel and the bus boot together) is reading or minting: say so
+            # once, then wait for it. The blocking take is the right wait; it was just silent, and a
+            # starter stuck behind a wedged holder looked hung (review find, 2026-09-08).
+            print("[%s] serve token: waiting for the holder of %s (another starter is reading or "
+                  "minting it)" % (who, lock), file=sys.stderr)
+            fcntl.flock(lfd, fcntl.LOCK_EX)
+    except OSError as e:
+        if lfd is not None:
+            try:
+                os.close(lfd)
+            except OSError:
+                pass
+        v = read()                           # a read fault is its own RuntimeError
+        m = mode() if v else None
+        if v and not loose(m):
+            print("[%s] serve token: could not lock %s (%s); using the existing token as is (mode "
+                  "%04o, nothing to tighten)" % (who, lock, e, m), file=sys.stderr)
+            return v
+        # the refusal names the LOCK, the fault, and what the lock was needed for. It used to send the
+        # operator to make the token file 0600, also when no such file existed (review find, 2026-09-08).
+        need = ("that minting a token needs; no token file exists to fall back on" if v is None else
+                "that minting a token needs; the token file is empty, a torn earlier mint" if not v else
+                "that tightening the token file from mode %04o needs" % m)
+        fault(lock, "take the lock %s" % need, e,
+              fix="Make the lock file yours, or remove it (or set ROMP_SERVE_TOKEN)")
+    try:
+        v = read()
+        if v is None:
+            return mint(None)
+        if not v:
+            return mint("the file is empty, a torn earlier mint that no client can be holding")
+        m = mode()
+        if loose(m):
+            want = m & 0o600                 # strip what is loose, add nothing: 0640 -> 0600, 0444 -> 0400
+            try:
+                os.chmod(f, want)
+            except OSError as e:
+                fault(f, "tighten its mode from %04o to %04o" % (m, want), e)
+            print("[%s] serve token %s was mode %04o; tightened to %04o" % (who, f, m, want), file=sys.stderr)
+        return v
+    finally:
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lfd)
+
+
 def _load_serve_token():
     t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
     if t:
         return t
-    f = STATE.parent / "serve-token"              # ~/.local/state/romp/serve-token (STATE is romp/postal)
-    try:
-        v = f.read_text().strip()
-        if v:
-            return v
-    except OSError:
-        pass
-    v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
-    try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(v)
-        os.chmod(f, 0o600)
-    except OSError:
-        pass
-    return v
+    # ~/.local/state/romp/serve-token (STATE is romp/postal): the kernel's file, shared.
+    return _serve_token_read_or_mint(STATE.parent / "serve-token", "postal")
 
 
 SERVE_TOKEN = _load_serve_token()
@@ -481,6 +609,9 @@ def _queue_read_receipt(meta, unread=False, dmid=""):
 #      "" for local delivery, the origin host for relayed mail — so a row WITHOUT the key is one
 #      from before that, whose sender may be either; a reader that needs the distinction (the
 #      kernel's postal card, for the sender's repository) treats absence as unknown, not as local.
+#      A CROSS-HOST relay row has to_id "peer:<host>" and adds toName ("<host>:<name>") + to_sid
+#      (the recipient's stable id — the wait readers key on it; rows from before 2026-09-08 lack it
+#      and fall back to the name alias).
 # The HUMAN-FACING prose (banner text, headers, the "⏸ parked" tag, REPLY_HINT) is
 # NOT a contract — consumers must not parse it, so it stays free to change.
 
@@ -1070,9 +1201,15 @@ def _recall(from_id, to, mid):
     mail has left `new/` and can't be recalled. Returns [{to, id, body}] removed."""
     if not from_id:
         return []
-    rows = local_agents(threads=True)            # ONE listing per recall; every name lookup below reads it
+    listing = []                                 # ONE listing per recall, at first need; every name lookup reads it
+
+    def _rows():
+        if not listing:
+            listing.append(local_agents(threads=True))
+        return listing[0]
+
     if to:
-        rid = _recip_id_for(to, rows=rows)
+        rid = _recip_id_for(to, rows=_rows())
         if not rid and MAILROOT.is_dir():
             # Addressing is live-only, but RECALL is not addressing: the sender is unsending their
             # own bytes, not raising the dead. Mail parked for a session that has since died sits
@@ -1080,7 +1217,7 @@ def _recall(from_id, to, mid):
             # durable name map so parked mail stays recallable (sighting 2026-08-29: a handoff
             # parked for a dead session could not be unsent by name; only the raw id worked).
             hits = [b.name for b in MAILROOT.iterdir()
-                    if b.is_dir() and _name_for_id(b.name, rows=rows) == to]
+                    if b.is_dir() and _name_for_id(b.name, rows=_rows()) == to]
             rid = hits[0] if len(hits) == 1 else None    # two dead boxes, one name: refuse, stay scoped
         boxes = [rid] if rid else []
     elif MAILROOT.is_dir():
@@ -1109,7 +1246,7 @@ def _recall(from_id, to, mid):
                 f.unlink()
             except Exception:
                 continue
-            removed.append({"to": _name_for_id(rid, rows=rows), "id": f.name, "body": " ".join(body.split())[:120]})
+            removed.append({"to": _name_for_id(rid, rows=_rows()), "id": f.name, "body": " ".join(body.split())[:120]})
             _tl_append("messages.jsonl", {"t": int(time.time()), "ev": "recall", "id": f.name})
         _mark_pending(rid)         # recall may have emptied new/ -> reconcile the marker
     if peers_on() and OUTBOX.is_dir():
@@ -1866,10 +2003,17 @@ class Handler(BaseHTTPRequestHandler):
                     if ua:
                         relay_msg["userAsk"] = ua
                 outbox_put(phost, relay_msg)
+                # `to_sid` (2026-09-08): the recipient's STABLE id, the same value the wire's toId
+                # carries. The row used to name the recipient only ("<host>:<name>"), so every
+                # reader of the wait (the kernel's wait maps, the judge's ask maps) had to join it
+                # back to a sid through a name→sid alias learned from the peer's own rows — and a
+                # name reused by a NEW session re-keyed every OLD message to the new sid. With the
+                # sid on the row the join is exact; the alias stays the fallback for older rows.
                 _tl_append("messages.jsonl", {"t": int(time.time()), "ev": "sent", "id": mid,
                                               "from": frm, "from_id": frm_id,
                                               "to_id": "peer:%s" % phost,
                                               "toName": "%s:%s" % (phost, hit.get("name") or to),
+                                              "to_sid": str(hit.get("id") or ""),
                                               "body": body, "kind": kind})
                 if PEERS.get(phost, {}).get("up"):
                     return self._send({"ok": True, "id": mid,
@@ -1981,9 +2125,15 @@ def _idle_tick(n, idle, answered=True):
     outage as presence; with those loops ended in peer mode the gate reads the bit itself. A bus
     that never saw an answered non-empty listing — a kernel-less `romp mail` bus, a box whose kernel
     stopped after its sessions had all gone — keeps the autostop: the count advances every poll and
-    stops at IDLE_GRACE. In production an answered listing implies a live kernel (both are the same
-    process), so `answered and n == 0` with the kernel down is reached only through the
-    ROMP_SESSIONS_FILE seam; the stop that matters is the unanswered one without evidence."""
+    stops at IDLE_GRACE. The kernel-less case holds only on a box whose twin holds no rows: a twin left
+    by an earlier kernel primes the hold in a bus spawned later the same way. The hold has ONE release,
+    the next answered listing (which rewrites the twin): a kernel gone for good after listing sessions
+    leaves the bus up until a manual stop or the returning kernel's first answer, and a code-staleness
+    re-exec does not end it (the fresh process re-primes the hold from the twin, which outlives the
+    re-exec by design) (review find, 2026-09-08; pinned by tests/test_postal_bus_lifetime.py). In
+    production an answered listing implies a live kernel (both are the same process), so `answered and
+    n == 0` with the kernel down is reached only through the ROMP_SESSIONS_FILE seam; the stop that
+    matters is the unanswered one without evidence."""
     if n > 0 or _kernel_up():
         return 0, False
     if not answered and _sessions_were_listed():
@@ -2715,17 +2865,28 @@ def fleet_presence(exclude_host):
 # cards (fast, bus-down-resilient); mutations go through the bus routes below (delivery is postal's).
 QUARANTINE = STATE / "quarantine"
 
-def _quarantine_put(origin, m, to_id, via=""):
+def _quarantine_put(origin, m, to_id, via="", wire_id=None):
     """Hold one inbound relay from a directed host: quarantine/<mid>.json with everything approve needs
     to replay deliver(). Idempotent by mid (a resend overwrites the same file, never double-holds).
     `via` is the DIRECT peer it arrived from — kept so an approved delivery still carries the
-    read-receipt route (older held records lack it; approve falls back to the origin)."""
+    read-receipt route (older held records lack it; approve falls back to the origin).
+    `wire_id` (2026-09-08) is the sid the WIRE message was addressed to (intake's sanitized toId),
+    stored as `toWireId` so approve knows whether the sender chose a sid or a name: the record used
+    to keep only the RESOLVED local sid, and once that session ended approve re-matched by NAME —
+    handing id-addressed mail to whatever session wore the name, the very swap intake refuses. None
+    reads the wire toId off `m`; either way a malformed shape is dropped (never a path, never a
+    match key), exactly as intake blanks it."""
     mid = m.get("mid") or ""
     if not _safe_id(mid):
         return False
+    wire = str((m.get("toId") if wire_id is None else wire_id) or "")
+    if wire and _ID_FORM_RE.fullmatch(wire) is None:
+        wire = ""
     rec = {"mid": mid, "to": m.get("to") or "", "toId": to_id, "frm": m.get("frm") or "?",
            "frmId": m.get("frm_id") or "", "body": m.get("body") or "", "kind": m.get("kind") or "",
            "origin": origin, "via": via or origin, "at": int(time.time())}
+    if wire:
+        rec["toWireId"] = wire
     if isinstance(m.get("userAsk"), dict):
         rec["userAsk"] = m["userAsk"]                # held with its provenance; approve replays it (T126)
     try:
@@ -2808,7 +2969,30 @@ def quarantine_decide(mid, action, text=None, feedback=None):
             return False, ("the liveness source (the romp kernel) didn't answer — likely "
                            "mid-restart. The held message is untouched; retry the approve shortly.")
         live = {a["id"] for a in agents}
-        if to_id not in live:                         # session renamed/revived since it was held → re-match by name
+        if to_id not in live:                         # the held sid is gone: renamed/revived, or ended
+            wire = str(rec.get("toWireId") or "")
+            if wire:
+                # ID-ADDRESSED mail (2026-09-08): the sender chose a sid, so only that sid may take
+                # it — the same id-strict rule intake applies (_relay_in: "never a name fallback,
+                # which could hand the mail to a same-named sibling"). Before this, approve
+                # re-matched by NAME unconditionally, and id-addressed mail whose recipient had
+                # ended went to whatever session now wore the name. The held sid IS the wire id
+                # (intake matched the wire's toId exactly and held that match), so a held sid the
+                # listing no longer carries means nothing live answers to the id the sender chose:
+                # there is no second candidate to look for (review find, 2026-09-08: a re-match on
+                # the wire id here could never succeed). Refuse loudly; the record stays held (deny
+                # carries a note back to the sender). Worded on what the listing proved, no live
+                # session by that id, never "ended": a dormant session is absent from it too.
+                return False, ("no live session carries the id this message was addressed to ('%s', "
+                               "id %s), and a session that now wears the name is not the one the "
+                               "sender chose, so it was not delivered. It stays held: deny it (with a "
+                               "note, so the sender hears) or leave it."
+                               % (rec.get("to") or "?", wire[:8]))
+            # NAME-addressed (an older sender): the name still rules. A record held BEFORE
+            # 2026-09-08 lands here too even when its wire chose a sid, the hold kept only the
+            # resolved sid then, so nothing on the record can tell the two apart; that name
+            # re-match is a known residual for holds from before the upgrade, and it drains with
+            # their next approve/deny (review find, 2026-09-08).
             match = [a for a in agents if a["name"] == rec.get("to") and not _postal_off(a["id"])]
             if not match:
                 return False, "recipient '%s' is no longer a live local session" % (rec.get("to") or "?")
@@ -2889,7 +3073,9 @@ def _relay_in(host, m, token_proven=False):
                     relay_mid=mid, relay_via=host,       # read-receipt route: back through the direct peer
                     user_ask=m.get("userAsk"))           # origin-kernel walked record rides through (T126)
         elif trust == "directed":
-            _quarantine_put(origin, m, match[0]["id"], via=host)   # HELD for human approve/deny/edit; never injects
+            _quarantine_put(origin, m, match[0]["id"], via=host, wire_id=to_id)   # HELD for human approve/deny/edit;
+            #                                                                        never injects; remembers whether
+            #                                                                        the wire chose a sid (approve is id-strict then)
         # else isolated → drop: ack so the sender stops resending, but deliver nothing (no communication).
         # An isolated host normally never peers at all (the kernel forces its notify down), so this is a
         # defensive backstop for the checkin-peer path where the mobile dials our /peer-exchange.
@@ -3308,7 +3494,9 @@ def looks_remote():
     return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
 
 def _unreachable_hint():
-    if is_client_only() or looks_remote():
+    # the tunnel hint belongs to the legacy singleton scheme: in peer mode (the default) an SSH'd box runs
+    # its own bus and `romp mail remote` refuses, so pointing at it would be a dead end (review find, 2026-09-08)
+    if not peers_on() and (is_client_only() or looks_remote()):
         return "can't reach your laptop's Romp Postal Service bus — is the SSH tunnel up? run: romp mail remote"
     return "can't reach the Romp Postal Service bus (see ~/.local/state/romp/postal/server.log)"
 
@@ -3387,7 +3575,10 @@ def _heartbeat_once():
     per-call beat: there the bus behind BASE is this box's own for the life of the process, so the
     verdict cannot go stale. It is never latched from an unanswered or false answer, and never in
     legacy singleton mode (ROMP_POSTAL_PEERS=0), where `romp mail remote` can replace the local bus
-    with the hub's over an -R tunnel under a running session — the beats are then its only presence."""
+    with the hub's over an -R tunnel under a running session — the beats are then its only presence.
+    The peer-mode premise, that `romp mail remote` never swaps the bus behind BASE there, is enforced:
+    setup_remote refuses in peer mode, --force included (review find, 2026-09-08: run after the latch
+    it silenced the session on the hub), as _remote_nudge already treated the command as moot."""
     sid, name = _self_identity()
     if not sid:
         return False
@@ -3412,7 +3603,16 @@ def _heartbeat_loop(interval=None, stop=None):
     replaces the local bus with the hub's over an -R tunnel while sessions run, and from then on these
     beats are the only presence the hub sees. A remote (client-only box) session never hears "local"
     from the hub's bus in either mode. `interval` and `stop` (a threading.Event) are test seams; the
-    defaults are the production cadence and no external stop."""
+    defaults are the production cadence and no external stop.
+
+    What the ended loop changes for a peer's send during a KERNEL BLINK (review find, 2026-09-08): a
+    local session's beat that landed while the listing was unanswered used to be filed as remote
+    presence (the bus could not call it local), so a send to its name during the blink resolved to that
+    row and delivered into its mailbox with no wake, and the mail sat there unannounced until the
+    kernel returned. With the loop ended and the per-call beat skipped no such row appears, and
+    resolve_recipient's standing blink refusal (503, retry shortly, never a death ruling) covers every
+    local peer alike: the mail stays with the sender, who is told so. Pinned by
+    tests/test_postal_heartbeat_fetches.py."""
     if interval is None:
         interval = max(15, HEARTBEAT_TTL // 3)
     while not (stop is not None and stop.is_set()):
@@ -4120,7 +4320,25 @@ def cli_drain(argv):
 def setup_remote(force=False):
     """Point THIS machine at the laptop's Romp Postal Service over an SSH reverse
     tunnel: configure the client side automatically, then guide + verify the one
-    manual step (the tunnel, which can only be opened from the laptop)."""
+    manual step (the tunnel, which can only be opened from the laptop). Legacy
+    singleton scheme only: peer mode refuses, --force included (see below)."""
+    if peers_on():
+        # Peer mode (the default since 2026-07-20) has no laptop bus to point at, and since the
+        # heartbeat latch (2026-09-06) the command would do harm here: a local session's MCP stops
+        # beating for good once its own bus confirms it local, so a hub's bus swapped in behind the
+        # port would never hear of this box's sessions, and the local bus this command stops is the
+        # one carrying their mail. Refuse before any side effect, --force included, and say why
+        # (review find, 2026-09-08: `romp mail remote --force` after the latch silenced the session
+        # on the hub). _remote_nudge already treats the command as moot in peer mode.
+        print("romp mail remote is off in peer mode (the default): every machine runs its own Romp")
+        print("Postal Service bus and cross-host mail rides the kernel's peer tunnels, so there is no")
+        print("laptop bus to point this machine at. Nothing was changed.")
+        print("")
+        print("--force does not override this: a session's heartbeats end for good once its own bus")
+        print("confirms it local, so a hub's bus swapped in behind the port would never see this box's")
+        print("sessions, and the local bus this command would stop is what carries their mail.")
+        print("This command belongs to the legacy singleton scheme (ROMP_POSTAL_PEERS=0).")
+        return 2
     if not force and not looks_remote():
         print("This looks like your Romp Postal Service host (no SSH session detected);")
         print("the bus runs here automatically, so there's nothing to set up.")
@@ -4174,7 +4392,7 @@ USAGE = """romp-postal-service — the Romp Postal Service
   romp mail working <text>          publish what you're working on (empty to clear)
   romp mail sent                    show your sent messages + whether each was read
   romp mail recall <to> [id]        unsend an unread message you sent to <to>
-  romp mail remote                  connect this (remote) machine to your laptop's bus
+  romp mail remote                  connect this (remote) machine to your laptop's bus (legacy scheme, ROMP_POSTAL_PEERS=0)
 (internal: serve | ensure | restart | mcp | drain --id <id> | wake --id <id> | picker-check --name <n> --id <id>)"""
 
 def main(argv):

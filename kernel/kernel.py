@@ -12,7 +12,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
 import math
-import contextlib, json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
+import contextlib, json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc, fcntl
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1519,37 +1519,184 @@ def _dist_ver():
         return 0
 
 
+def _serve_token_read_or_mint(f, who):
+    """Read the serve token at `f`, or mint one: under a lock, born 0600, never rotated by a fault.
+
+    Every client holds a COPY of this token (bin/romp and the hooks read the file, the bus and each
+    session's MCP process load it at their own start, peers fetch it at attach), so the one thing
+    this must never do is quietly replace it: a rotated token strands all of them with a credential
+    the daemon no longer accepts, and nothing says why. The old loader did exactly that on ANY read
+    fault (an EACCES or EIO fell through to the mint), minted by truncating the live file in place (a
+    concurrent reader saw an empty file and minted its own), and took no lock (two starters each
+    wrote their own). The contract now — KEEP IN SYNC with postal_service.py's copy; the bus imports nothing
+    from kernel/ by design, so it carries the same shape rather than this function:
+      - FileNotFoundError is the ONLY mint trigger. Any other read fault (a file that is not UTF-8
+        text included) raises RuntimeError naming the path and the errno. At import that refuses to
+        start the daemon. Under bin/romp-manager that is not one message: the manager respawns on
+        its crash-loop backoff, so the traceback repeats in manager.log (every 10 s at the cap)
+        until the file is repaired, and then the kernel comes back by itself; the token every
+        client holds stays valid throughout (review find, 2026-09-08).
+      - A SYMLINK at the token path is refused the same way, by lstat before any read: a read or a
+        chmod through a link lands on its target, some other file, whose bytes and mode are not
+        this gate's (review find, 2026-09-08). A dangling link is refused too, not minted over.
+      - An EMPTY or whitespace-only file is a torn earlier mint (no client can hold a token that was
+        never written), so it is minted over, and said on stderr.
+      - The mint sweeps any `serve-token.*.tmp` a crashed attempt left (safe under the lock), writes
+        its own with O_EXCL at 0600, checks the write length, fsyncs, and os.replace()s it onto the
+        path: the live file appears with the token already inside, at 0600 from its first byte, and
+        the live path is never opened for writing at all.
+      - A non-empty token with any mode bit outside 0600 (group, other, the owner's execute) has
+        those bits stripped in place, and said on stderr; a TIGHTER mode (0400) is left alone. The
+        check was equality with 0600, which widened 0400 and called it a repair (review find,
+        2026-09-08).
+      - `serve-token.lock` (0600) is flock'd around all of that, so the kernel and the bus booting
+        together mint once between them. The lock is probed LOCK_NB first: a starter that finds it
+        held says so on stderr, then waits for the holder (the silent block looked like a hang:
+        review find, 2026-09-08). When the lock itself cannot be taken, an existing non-empty token
+        with nothing to tighten is returned as is (nothing to mint either) and every other case is
+        a fault naming the LOCK and what it was needed for: minting or tightening without the lock
+        is the race this exists to close, and the token file is not the thing to repair."""
+    lock = f.with_name(f.name + ".lock")
+
+    def fault(path, what, e, fix="Make the file yours and mode 0600 (or set ROMP_SERVE_TOKEN)"):
+        code = getattr(e, "errno", None)
+        why = ("%s, errno %s" % (errno.errorcode.get(code, type(e).__name__), code) if code is not None
+               else type(e).__name__)
+        raise RuntimeError(
+            "%s: cannot %s (%s). romp did NOT replace the serve token, so every client holding it "
+            "stays valid. %s, then start again." % (path, what, why, fix)) from e
+
+    def read():
+        try:
+            if stat.S_ISLNK(os.lstat(f).st_mode):
+                # refused BEFORE anything reads or chmods through it: both land on the target, some
+                # other file (review find, 2026-09-08). lstat sees a dangling link too; read_text
+                # would call that absent and mint over it.
+                fault(f, "use it: the token path is a symlink, and romp reads or tightens no token "
+                         "through a link", OSError(errno.ELOOP, os.strerror(errno.ELOOP)),
+                      fix="Replace the link with a regular file that is yours and mode 0600 (or set "
+                          "ROMP_SERVE_TOKEN)")
+            return f.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError) as e:   # a token that is not text is a fault too, never a mint
+            fault(f, "read it", e)
+
+    def mode():
+        try:
+            return stat.S_IMODE(os.lstat(f).st_mode)   # lstat, like read(): the file's own mode, never a link target's
+        except OSError as e:
+            fault(f, "stat it", e)
+
+    def loose(m):
+        return m & ~0o600                    # any bit outside rw-------: group, other, execute, set-id, sticky
+
+    def mint(why):
+        if why:
+            print("[%s] serve token %s: %s; minting a fresh one" % (who, f, why), file=sys.stderr)
+        v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+        tmp = f.with_name("%s.%d.tmp" % (f.name, os.getpid()))
+        fd = None
+        try:
+            for stale in f.parent.glob(f.name + ".*.tmp"):
+                try:
+                    os.unlink(stale)         # under the lock, so any temp here is a crashed earlier attempt, any pid's
+                except FileNotFoundError:
+                    pass
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            data = v.encode()
+            n = os.write(fd, data)
+            if n != len(data):
+                raise OSError(errno.EIO, "short write, %d of %d bytes" % (n, len(data)))
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+            os.replace(str(tmp), str(f))
+        except OSError as e:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            fault(f, "mint it (via %s)" % tmp.name, e)
+        return v
+
+    lfd = None
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # another starter (the kernel and the bus boot together) is reading or minting: say so
+            # once, then wait for it. The blocking take is the right wait; it was just silent, and a
+            # starter stuck behind a wedged holder looked hung (review find, 2026-09-08).
+            print("[%s] serve token: waiting for the holder of %s (another starter is reading or "
+                  "minting it)" % (who, lock), file=sys.stderr)
+            fcntl.flock(lfd, fcntl.LOCK_EX)
+    except OSError as e:
+        if lfd is not None:
+            try:
+                os.close(lfd)
+            except OSError:
+                pass
+        v = read()                           # a read fault is its own RuntimeError
+        m = mode() if v else None
+        if v and not loose(m):
+            print("[%s] serve token: could not lock %s (%s); using the existing token as is (mode "
+                  "%04o, nothing to tighten)" % (who, lock, e, m), file=sys.stderr)
+            return v
+        # the refusal names the LOCK, the fault, and what the lock was needed for. It used to send the
+        # operator to make the token file 0600, also when no such file existed (review find, 2026-09-08).
+        need = ("that minting a token needs; no token file exists to fall back on" if v is None else
+                "that minting a token needs; the token file is empty, a torn earlier mint" if not v else
+                "that tightening the token file from mode %04o needs" % m)
+        fault(lock, "take the lock %s" % need, e,
+              fix="Make the lock file yours, or remove it (or set ROMP_SERVE_TOKEN)")
+    try:
+        v = read()
+        if v is None:
+            return mint(None)
+        if not v:
+            return mint("the file is empty, a torn earlier mint that no client can be holding")
+        m = mode()
+        if loose(m):
+            want = m & 0o600                 # strip what is loose, add nothing: 0640 -> 0600, 0444 -> 0400
+            try:
+                os.chmod(f, want)
+            except OSError as e:
+                fault(f, "tighten its mode from %04o to %04o" % (m, want), e)
+            print("[%s] serve token %s was mode %04o; tightened to %04o" % (who, f, m, want), file=sys.stderr)
+        return v
+    finally:
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lfd)
+
+
 def _load_token():
     """The serve token, baked into launch so the human never passes --token: ROMP_SERVE_TOKEN if
     set, else a stable random token persisted under the state dir at 0600 — file perms are the
     same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
     reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
     sessions. Local clients read the file (same user) and send X-Romp-Token; browsers carry
-    ?token= once and ride the auto-set cookie."""
+    ?token= once and ride the auto-set cookie. The file is read or minted by
+    _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
+    import refuses to start the kernel rather than hand out a token no client holds (under
+    bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
+    kernel returns by itself). The result, TOKEN, is the ONE value this kernel serves: the request
+    gate compares against it and the check-in handshake announces it. Nothing re-reads the file at
+    runtime: a re-read could mint a token the gate rejects (review find, 2026-09-08)."""
     t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
     if t:
         return t
-    f = jd.STATE / "serve-token"
-    try:
-        v = f.read_text().strip()
-        if v:
-            return v
-    except OSError:
-        pass
-    v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
-    try:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
-        # 0600 from birth, not written-then-chmod'd: between those two calls the file carried the
-        # token at the umask's mercy, and the whole same-user gate is this file's mode.
-        fd = os.open(str(f), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, v.encode())
-        finally:
-            os.close(fd)
-        os.chmod(f, 0o600)                       # a PRE-EXISTING file keeps its old mode through O_CREAT
-    except OSError:
-        pass
-    return v
+    return _serve_token_read_or_mint(jd.STATE / "serve-token", "kernel")
 
 TOKEN = _load_token()
 
@@ -1603,7 +1750,8 @@ def _persist_repo_root():
     _discover_remote_clone): the running kernel knows exactly where it lives, so probes read this
     file over ssh FIRST instead of guessing conventional dirs — the guess list missed a clone at
     ~/projects/romp while that machine's kernel was literally up, reporting "romp not installed"
-    (the user 2026-08-11). Best-effort, like the serve-token mint above."""
+    (the user 2026-08-11). Best-effort, unlike the serve-token mint above, which refuses rather
+    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client."""
     try:
         jd.STATE.mkdir(parents=True, exist_ok=True)
         (jd.STATE / "repo-root").write_text(str(ROOT) + "\n")
@@ -3278,7 +3426,7 @@ def _debt_asks(sid, alive_ids):
     asks this session OWES: the exact inverse of _wait_for_graph's sender edge, from the same maps. An
     ask counts only while the ASKER is alive (answering a dead session releases nobody), and any later
     message back — whatever its kind — already answered it (same rule as the sender's chip)."""
-    last_any, last_ask = _postal_wait_maps()
+    last_any, last_ask, _aw = _postal_wait_maps()
     out = []
     for (f, t_), rec in last_ask.items():
         if t_ != str(sid) or f not in (alive_ids or ()):
@@ -3408,7 +3556,7 @@ def _debt_reminder_outcomes(sid, lt, now):
     dn0 = _auto_nudge_data().get("debtNudged") or {}
     if not dn0:
         return
-    last_any, _ask = _postal_wait_maps()
+    last_any, _ask, _aw = _postal_wait_maps()
     lt_end = (lt.get("end", lt.get("t", 0)) or 0) if lt else 0
     drop = []
     for key, fire_t in dn0.items():
@@ -3440,7 +3588,7 @@ def _debt_backstop_tick(now):
     dn0 = _auto_nudge_data().get("debtNudged") or {}
     if not dn0:
         return
-    last_any, _ask = _postal_wait_maps()
+    last_any, _ask, _aw = _postal_wait_maps()
     drop = []
     for key, fire_t in dn0.items():
         parsed = _debt_key_parse(key)
@@ -14011,6 +14159,164 @@ def _live_names(tmux):
     return {n: sid for sid in (tmux or {}) for n in [_name_of(sid)] if n}
 
 
+def _live_names_now():
+    """_live_names(_tmux_sessions()) read NOW, past any pusher-cycle scope on this thread. On the pusher
+    thread _tmux_sessions() serves the cycle-start liveness map (_live_scope.snapshot) and _name_of the
+    cycle-start registry (_live_scope.names), and the comment-create door runs there through
+    _retry_parked_creates: its claim read a cycle-old world, so a same-name session created, registered
+    and released earlier in the same cycle was in neither the snapshot nor the claims dict, and the parked
+    thread was minted beside it (review find, 2026-09-08). A claim's snapshot must postdate every released
+    registration, so both scopes are suspended for exactly this read and restored after: the rest of the
+    cycle keeps its one honest snapshot. Off the pusher thread the scopes are unset and this is the plain
+    read. Cost: one tmux fork plus one registry read per claim on that thread, only while a create is
+    parked there."""
+    saved = getattr(_live_scope, "snapshot", None), getattr(_live_scope, "names", None)
+    _live_scope.snapshot = _live_scope.names = None
+    try:
+        return _live_names(_tmux_sessions())
+    finally:
+        _live_scope.snapshot, _live_scope.names = saved
+
+
+# ─── name reservation: one holder per session name while its registration is in flight (2026-09-08) ───
+# Every kernel door that gives a session a name — POST /new, /fork, /rename, the WS createSession /
+# forkSession / renameSession ops, a comment thread's create and break-out, a revive — used to read the
+# live snapshot and then act, with nothing between the two: two same-name creates both passed the check
+# and both spawned, a rename landed on a name whose session was still being created, and the WS fork and
+# rename ops had no live check at all. _claim_name is the one atomic step every door now takes before it
+# acts; _release_name frees the name once the registration is durable or the attempt has failed.
+# COVERAGE (review find, 2026-09-08): the KERNEL's doors, every path that reaches _claim_session_name. The
+# CLI's terminal launcher run from a shell (`romp new -t <name>`, `romp resume`, in bin/romp) checks tmux
+# alone (`tmux has-session`) and writes the names/ registry with no claim, and a tmux-native rename
+# (prefix-$, choose-tree, :rename-session) publishes through the `romp _renamed` hook the same way; a
+# namesake made by either is refused by the kernel's doors only once a later snapshot lists it as
+# "already running". The kernel's OWN tmux spawn is covered: _spawn_session_start holds the claim across
+# the `romp new -t --detach` it runs, which is also why bin/romp cannot take a claim of its own without a
+# bypass for that launch and a lease for a launcher that dies mid-way, so the CLI stays outside by design.
+_NAME_CLAIMS = {}                       # name -> {"kind": create|fork|rename|promote|revive|thread, "sid": the claimant's sid, "" when unknown}
+_name_claims_lock = threading.Lock()    # guards _NAME_CLAIMS ONLY: never held across a tmux fork, a store read or a backend call
+_CLAIM_HELD_TEXT = {                    # the refusal for a name another door holds right now, by what that door is doing
+    "rename": 'another session is being renamed to "%s" right now',
+    "revive": 'a session named "%s" is being revived right now',
+}
+_CLAIM_HELD_DEFAULT = 'a session named "%s" is being created right now'   # create / fork / promote / thread
+
+
+def _taken_refusal(nm, kind, held=None):
+    """The refusal for a name that is not free: `held` is the claims row of the door holding it (the text
+    names what that door is doing), None means a live session already wears it. Shared by _claim_name
+    (the dict check) and _claim_session_name (the post-claim snapshot check), so the refusal reads the
+    same whichever check fires."""
+    if held is not None:
+        text = _CLAIM_HELD_TEXT.get(held.get("kind"), _CLAIM_HELD_DEFAULT) % nm
+    else:
+        text = 'a session named "%s" is already running' % nm
+    # a revive cannot pick another name — the dead session's own is the one being asked for
+    return text if kind == "revive" else text + " — pick another name"
+
+
+def _claim_name(nm, live_names, kind="create", sid=""):
+    """Reserve `nm` for ONE in-flight registration. Returns "" when the caller now holds the name (and
+    must _release_name it in a `finally`), else the refusal text: the name is held by a registration in
+    flight, or the snapshot the caller passed already lists it. `kind` records what the holder is doing
+    (the refusal a second claimant reads names it); `sid` is the claimant's session when known.
+
+    DESIGN POINT: the lock guards only the claims dict. The EXPENSIVE snapshot (_live_names(_tmux_sessions())
+    forks tmux, _thread_names() walks every comments store) is never taken under it, or every create door
+    would serialize behind one fork. What makes that sound is the ORDER the doors take: claim FIRST, then
+    snapshot while holding the claim, then verify (_claim_session_name). Any registration of `nm` happens
+    only under a claim that is released once the registration is durable, so a snapshot taken while we
+    hold the claim necessarily lists every earlier registration: an earlier creator either still holds
+    the claim (we are refused by the dict) or released after a durable registration (our post-claim
+    snapshot lists it). The first cut took the snapshot BEFORE the claim and argued that a session going
+    live in between could only come from a claimant that "holds it still": false, since a creator that
+    claimed, registered and released entirely inside that gap left the dict empty and the rival's
+    snapshot stale, and two sessions named "web" were minted (review find, 2026-09-08, reproduced by a
+    deterministic probe). `live_names` is therefore a PRE-CHECK only, for a caller that happens to hold
+    a snapshot: an "already running" it lists is refused under the lock without inserting; it is not
+    what makes the claim safe, and every door passes () and verifies under the claim instead.
+    Every door claims through _claim_session_name, whose snapshot is the live set AND the thread names:
+    a thread is never in the live set, so the live set alone was not the whole namespace."""
+    with _name_claims_lock:
+        held = _NAME_CLAIMS.get(nm)
+        if held is not None:
+            return _taken_refusal(nm, kind, held)
+        if nm in (live_names or ()):
+            return _taken_refusal(nm, kind)
+        _NAME_CLAIMS[nm] = {"kind": kind, "sid": str(sid or "")}
+        return ""
+
+
+def _release_name(nm):
+    """Free `nm`, in the claimant's `finally`: once its registration is DURABLE — the SDK reg and names/
+    entry written, the tmux session up, the Codex row in its registry, the rename or promote landed, the
+    revive registered, the thread's row saved — so the next live snapshot already lists it; or on any
+    failure path (a creator that raised, a backend that answered False, a launch thread that would not
+    start), so a failed attempt leaves the name free for the retry."""
+    with _name_claims_lock:
+        _NAME_CLAIMS.pop(nm, None)
+
+
+def _claim_session_name(nm, kind, sid="", own=""):
+    """Claim `nm` in the session namespace for a door (create / fork / rename / promote / revive, and the
+    comment thread's create, whose names share the namespace), in the ORDER that makes the claim sound:
+    the dict FIRST (_claim_name against no snapshot: a rival holder refuses), then, holding the claim and
+    OUTSIDE the claims lock, BOTH snapshots: the live sessions (_live_names_now(), a tmux fork read past
+    any pusher-cycle scope) and the comment threads (_thread_names(), a walk of every comments store);
+    then verify. Any registration of `nm` happens only under a claim released once it is durable, so a
+    snapshot taken while we hold the claim lists every earlier one; taking it BEFORE the claim let a
+    creator register and release inside the gap unseen, and both minted (review find, 2026-09-08). A
+    thread is never in the live set — live_sessions skips threadOf regs — so a claim against the live set
+    alone let a session land on a thread's name (review find, 2026-09-08); with both sets verified under
+    the claim the argument holds for threads too. `own` is the claimant's sid: its own live row (a revive
+    of a session already up) and its own thread rows (a thread promoting under the name it wears) are not
+    rivals. Returns "" (held: the caller must _release_name in a `finally`) or the refusal, the claim
+    already released: a thread's name says so in the T223 words, worded for what `kind` can do; an
+    unreadable thread store refuses (never mint blind). A snapshot that raises releases and re-raises."""
+    refusal = _claim_name(nm, (), kind, sid)
+    if refusal:
+        return refusal
+    try:
+        live = _live_names_now()
+        names = _thread_names()
+        if names is None:
+            refusal = _thread_name_refusal(nm, None, kind)
+        else:
+            if own:
+                live = {n: s for n, s in live.items() if s != own}
+                names = {n: v for n, v in names.items() if v[0] != own}
+            refusal = _thread_name_refusal(nm, names, kind)
+            if not refusal and nm in live:
+                refusal = _taken_refusal(nm, kind)
+    except BaseException:
+        _release_name(nm)
+        raise
+    if refusal:
+        _release_name(nm)
+    return refusal
+
+
+def _rename_claimed(be, sid, nm):
+    """The rename door's one act, shared by POST /rename and the WS renameSession op (not _rename_session:
+    that name is the tmux backend's own rename helper further down) — `nm` already
+    NAME_RE-valid and not a comment thread's. The session's OWN name is a no-op ack: (True, "") with
+    nothing written and never a refusal (the pre-claim route refused it as "already running"). Any
+    other name is claimed (kind rename) and verified against a live snapshot taken under the claim,
+    outside the claims lock; be.rename runs under the claim — it rewrites the reg and the names/ entry,
+    so the next snapshot answers the new name — and the claim is released either way. Returns
+    (ok, refusal): a non-empty refusal names a taken or in-flight name; ok False with no refusal is the
+    backend declining (a sid it does not know), which the doors already report."""
+    if _name_of(sid) == nm:
+        return True, ""
+    refusal = _claim_session_name(nm, "rename", sid)
+    if refusal:
+        return False, refusal
+    try:
+        return bool(be and be.rename(sid, nm)), ""
+    finally:
+        _release_name(nm)
+
+
 PICKER_WINDOW = 30 * 86400      # how far back the + picker reaches, vs jd.WINDOW's 48h CAPTION horizon (the
 PICKER_CAP = 600                # user 2026-07-24: scroll back through the last month, not just two days).
 #   The picker sends this whole list at once rather than paging it in. It can afford to because it asks
@@ -14350,10 +14656,38 @@ def _reap_if_cancelled(name):
             _end_pending_sid(sid)
 
 
+def _spawn_session_start(nm, cwd):
+    """The tmux create door's front half, on the ASKING thread (POST /new and the WS createSession op
+    both come through here, so neither can skip the claim): claim `nm` (kind create), verified against a
+    live snapshot taken under the claim and outside the claims lock, then run _spawn_session on its own
+    thread — the seconds-long `romp new` launch must not block a WS recv loop or an HTTP handler — which
+    releases the name once the launch has settled either way (the tmux session is up and in the next
+    snapshot, or the launch failed and the name is free again). Returns "" or the refusal text, so the door
+    answers the request that asked; a claim taken on the launch thread could only refuse into a log
+    line after the door had already acked "pending". A Thread.start that fails releases the name first
+    and then raises — loud, and never a held name with no launch behind it."""
+    refusal = _claim_session_name(nm, "create")
+    if refusal:
+        return refusal
+
+    def run():
+        try:
+            _spawn_session(nm, cwd)
+        finally:
+            _release_name(nm)
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except BaseException:
+        _release_name(nm)
+        raise
+    return ""
+
+
 def _spawn_session(name, cwd=None):
     """Create a detached romp session named `name` — the same launch the old TS backend ran
-    (`romp new -t --detach <name>`, tmux-backend.ts). Threaded so the ~seconds-long launch never blocks the WS
-    recv loop; the targeted push below then delivers the new tab. Scrub
+    (`romp new -t --detach <name>`, tmux-backend.ts). Runs on the thread _spawn_session_start hands it —
+    the starter is the only door in, and it holds the name's claim for the whole launch (_claim_name) —
+    so the ~seconds-long launch never blocks the WS recv loop; the targeted push below then delivers the new tab. Scrub
     TMUX* so the child launcher never thinks it is already inside a tmux client. `cwd` is the session's
     working directory (validated by _resolve_create_dir); None falls back to the kernel default."""
     cwd = cwd or _default_create_dir()
@@ -14523,6 +14857,24 @@ def _apply_new_session_prefs(sid, body):
 
 
 def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None, parent="", tags=()):
+    """The SDK create door — POST /new and the WS createSession op both land here, so neither can skip
+    the claim. `nm` is claimed (kind create) and verified against a live snapshot taken under the claim,
+    outside the claims lock; the create runs under the claim and the name is released once the
+    registration is durable (spawn wrote the reg and the names/ entry, so the next snapshot lists it) or
+    the create failed (a raise, a refusal), leaving the name free for the retry. A refused name answers
+    ("", {"error": text, "nameTaken": True}) — the (sid, echo) shape the doors already read as a failed
+    create, the flag letting POST /new answer it as a 409 rather than a generic failure."""
+    refusal = _claim_session_name(nm, "create")
+    if refusal:
+        return "", {"error": refusal, "nameTaken": True}
+    try:
+        return _create_sdk_session_inner(nm, cwd, auth=auth, prefs=prefs, client=client, env=env,
+                                         parent=parent, tags=tags)
+    finally:
+        _release_name(nm)
+
+
+def _create_sdk_session_inner(nm, cwd, auth="", prefs=None, client=None, env=None, parent="", tags=()):
     """Create + open a new SDK-backed session, ACK-FAST (the user 2026-07-14, who asked why it took so long
     to open a new SDK session). spawn() is file writes and connect() is threaded (~0.4s to a booting
     CLI) — the 7-10s the user waited was the handler's inline _push_all(): a new session invalidates the
@@ -14574,7 +14926,18 @@ def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None, par
 
 
 def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
-    return _create_codex_session_inner(nm, cwd, client=client, parent=parent, tags=tags)
+    """The Codex create door — the same claim contract as _create_sdk_session (both doors land here):
+    `nm` claimed (kind create) and verified against a live snapshot taken under the claim, outside the
+    lock, released once spawn has the row in the Codex registry and the shared names/ entry (the next
+    snapshot lists it) or the create failed; a refused name answers ("", {"error": text, "nameTaken":
+    True})."""
+    refusal = _claim_session_name(nm, "create")
+    if refusal:
+        return "", {"error": refusal, "nameTaken": True}
+    try:
+        return _create_codex_session_inner(nm, cwd, client=client, parent=parent, tags=tags)
+    finally:
+        _release_name(nm)
 
 
 def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
@@ -14608,7 +14971,22 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
 
 
 def _fork_session(parent_sid, cut_msg_uuid, new_name, now=None, client=None):
-    return _fork_session_inner(parent_sid, cut_msg_uuid, new_name, now=now, client=client)
+    """The fork door — POST /fork and the WS forkSession op both land here (the op had no live-name
+    check of its own before this). A bad name is refused before anything is claimed; a good one is
+    claimed (kind fork), verified against a live snapshot taken under the claim and outside the claims
+    lock, and held through _fork_session_inner — be.fork writes the names/ entry, so the next snapshot
+    lists the fork before the release — then released on every exit, the inner's own refusals included.
+    Returns the refusal text for the caller to warn-toast, None on success (the inner's contract)."""
+    nm = (new_name or "").strip()
+    if not NAME_RE.match(nm):
+        return "session names use letters, digits, . _ - only."
+    refusal = _claim_session_name(nm, "fork", parent_sid)
+    if refusal:
+        return refusal
+    try:
+        return _fork_session_inner(parent_sid, cut_msg_uuid, new_name, now=now, client=client)
+    finally:
+        _release_name(nm)
 
 
 def _fork_session_inner(parent_sid, cut_msg_uuid, new_name, now=None, client=None):
@@ -15653,6 +16031,16 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     col = str(color or "").strip()
     if col and not re.fullmatch(r"#[0-9a-fA-F]{6}", col):
         col = ""                                   # not a palette hex → let the backend hash one
+    # a thread's name shares the SESSION namespace: the create and relabel doors consult _thread_names
+    # (T223's namesakes ran that way), so the reverse holds too — a thread takes neither a live
+    # session's name nor another thread's nor one being registered right now, and the claim (kind
+    # thread) is what serializes it against every other door. It goes through _claim_session_name like
+    # every session door: the dict first, then both snapshots taken UNDER the claim, outside the claims
+    # lock AND the comments lock (a tmux fork and a walk of every comments store). The first cut took
+    # the snapshots up here, before the claim, so a same-name session that was created, registered and
+    # released while this create built its row and waited on the comments lock was in neither the
+    # snapshot nor the dict; and on the pusher thread (_retry_parked_creates) the live snapshot was the
+    # cycle-start one, a gap as wide as everything the cycle had done so far (review find, 2026-09-08).
     tsid = str(uuid.uuid4())
     row = {"tid": tsid, "sid": tsid, "anchorUuid": str(anchor_uuid or ""), "cutUuid": cut,
            "anchorT": cut_t,   # the commented message's own time — the timeline square's x
@@ -15660,33 +16048,57 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
            "createdT": int(now), "lastSeenT": int(now)}
     if isinstance(meta, dict) and (meta.get("thread") or meta.get("note")):
         row["meta"] = {k: str(meta.get(k) or "")[:500] for k in ("thread", "note") if meta.get(k)}
-    with _comments_lock:
+    if nm:
+        refusal = _claim_session_name(nm, "thread", tsid)
+        if refusal:
+            return refusal, None
+    else:
+        # the default name counts the threads this session has had, then skips every taken or
+        # in-flight name — a deleted thread's number must not hand a namesake to the next. The count is
+        # read outside the comments lock: it only says where the candidates START, and each candidate
+        # is claimed and verified in turn. An unreadable thread store refuses the first candidate as
+        # unverifiable and would refuse every next one the same way, so that refusal is returned, not
+        # bumped past.
         data = _load_comments(parent_sid)
-        if not nm:
-            nm = "%s-comment-%d" % (sess["name"], len(data.get("threads") or []) + 1)
-        row["name"] = nm
-        if col:
-            row["color"] = col                     # the comment's identity color (the dialog's name tint)
-        data.setdefault("threads", []).append(row)
-        _save_comments(parent_sid, data)
-    model, effort, fast = _comment_launch_prefs(model, effort, fast)
+        n = len(data.get("threads") or []) + 1
+        while True:
+            nm = "%s-comment-%d" % (sess["name"], n)
+            refusal = _claim_session_name(nm, "thread", tsid)
+            if not refusal:
+                break
+            if refusal == _thread_name_refusal(nm, None, "thread"):
+                return refusal, None
+            n += 1
+    # the try begins AT the claim: a _save_comments that raises (an atomic write re-raises) must
+    # release the name too, or every later create of it is refused as in flight for the kernel's life
     try:
-        be.fork(nm, parent_sid, cut, bg=col, fg=(pal.fg_for(col) if col else ""), sid=tsid, thread_of=parent_sid,
-                model=model, effort=effort, fast=fast)
-        be.connect(tsid)
-        be.send(tsid, text if raw_opener else _comment_first_message(exact, text))
-    except Exception as e:
-        with _comments_lock:                       # loud + lossless: no half-born thread row
+        with _comments_lock:
             data = _load_comments(parent_sid)
-            data["threads"] = [t for t in data.get("threads") or [] if t.get("tid") != tsid]
+            row["name"] = nm
+            if col:
+                row["color"] = col                 # the comment's identity color (the dialog's name tint)
+            data.setdefault("threads", []).append(row)
             _save_comments(parent_sid, data)
+        model, effort, fast = _comment_launch_prefs(model, effort, fast)
         try:
-            be.kill(tsid)                          # and no orphaned reg/CLI behind the removed row
-        except Exception:
-            pass
-        return "thread not created: %s" % e, None
-    _push_soon()
-    return None, tsid
+            be.fork(nm, parent_sid, cut, bg=col, fg=(pal.fg_for(col) if col else ""), sid=tsid, thread_of=parent_sid,
+                    model=model, effort=effort, fast=fast)
+            be.connect(tsid)
+            be.send(tsid, text if raw_opener else _comment_first_message(exact, text))
+        except Exception as e:
+            with _comments_lock:                       # loud + lossless: no half-born thread row
+                data = _load_comments(parent_sid)
+                data["threads"] = [t for t in data.get("threads") or [] if t.get("tid") != tsid]
+                _save_comments(parent_sid, data)
+            try:
+                be.kill(tsid)                          # and no orphaned reg/CLI behind the removed row
+            except Exception:
+                pass
+            return "thread not created: %s" % e, None
+        _push_soon()
+        return None, tsid
+    finally:
+        _release_name(nm)   # saved (its registration), removed again, or never written — settled either way
 
 
 def _comment_reply(parent_sid, tid, text):
@@ -15878,6 +16290,28 @@ def _comment_kill_all(parent_sid, be):
 
 
 def _comment_promote(parent_sid, tid, new_name, now=None, client=None):
+    """The promote door — the WS commentPromote op and POST /fork-promote both land here. NAME_RE first;
+    then the name is checked against the OTHER comment threads (a break-out onto another thread's name
+    makes the T223 namesake; the thread's own names — its row's and its reg's — are left out, since a
+    thread most often promotes under the name it already wears) and claimed (kind promote), verified
+    against a live snapshot taken under the claim and outside the claims lock. The claim holds through
+    _comment_promote_inner — be.promote_thread writes the names/ entry, so the next snapshot lists the
+    new session before the release — and is released on every exit. Returns an error string or None
+    (the inner's contract)."""
+    nm = (new_name or "").strip()
+    if not NAME_RE.match(nm):
+        return "session names use letters, digits, . _ - only."
+    tsid = str((_comment_thread(parent_sid, tid) or {}).get("sid") or tid)
+    refusal = _claim_session_name(nm, "promote", tsid, own=tsid)
+    if refusal:
+        return refusal
+    try:
+        return _comment_promote_inner(parent_sid, tid, nm, now=now, client=client)
+    finally:
+        _release_name(nm)
+
+
+def _comment_promote_inner(parent_sid, tid, new_name, now=None, client=None):
     """Break a thread out into a FULL board session. Ordering contract (same as _fork_session):
     judge stores are seeded BEFORE promote_thread writes the names/ entry. The seeds run against
     the PARENT transcript at the ORIGINAL cut (the history the two transcripts share, verbatim),
@@ -17577,8 +18011,18 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": "session names use letters, digits, . _ - only."}))
         elif _thread_name_refusal(new, _thread_names()):     # a thread's name — never relabel onto it (T223)
             client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(new, _thread_names())}))
-        elif be.rename(sid, new):                         # live → tmux rename hook / SDK reg; dead → names file
-            client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
+        else:
+            # the live-name check this op never had: _rename_claimed claims the name (kind rename)
+            # before be.rename — a running session's name, or one being created right now, is refused
+            # aloud; the session's own name is an ack with nothing written; a backend that declines
+            # is said too, where it used to answer nothing
+            ok, refusal = _rename_claimed(be, sid, new)   # live → tmux rename hook / SDK reg; dead → names file
+            if refusal:
+                client["send"](json.dumps({"type": "warn", "text": refusal}))
+            elif ok:
+                client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
+            else:
+                client["send"](json.dumps({"type": "warn", "text": "the rename did not take — is that session known to this kernel?"}))
     elif t == "moveSession" and msg.get("dir"):
         # Move the session's working directory (the user 2026-09-01: a subproject was promoted to its own
         # repo and the session should follow it). The dir is resolved and canonicalised HERE like a
@@ -17784,6 +18228,28 @@ def _open_or_revive(sid, live=False, client=None):
 
 
 def _revive_session(sid, client=None):
+    """The revive door (the WS reviveSession op, on its own thread). The dead session's name is claimed
+    (kind revive) and verified against a live snapshot taken under the claim, outside the claims lock,
+    with the session's OWN row left out of it (a revive of a session that is already up is not a
+    collision with itself). A name another live session has taken since this one died, or one being
+    registered right now, refuses with a reviveFailed to the asker — the failure shape every other revive
+    refusal takes — instead of bringing up a second session under a name every by-name surface resolves
+    to one of them. The claim holds through _revive_session_inner (resume writes the reg alive, or the
+    tmux session comes up, so the next snapshot lists it) and is released either way."""
+    name = _name_of(sid) or sid
+    refusal = _claim_session_name(name, "revive", sid, own=sid)
+    if refusal:
+        sys.stderr.write("revive '%s' (%s): refused — %s\n" % (name, sid, refusal))
+        _send_to_view("chat", {"type": "reviveFailed", "id": sid, "name": name, "text": refusal},
+                      (client or {}).get("wid") or "")
+        return
+    try:
+        _revive_session_inner(sid, client)
+    finally:
+        _release_name(name)
+
+
+def _revive_session_inner(sid, client=None):
     """Bring a DEAD session back, per backend, then un-hide its tab and focus the chat on it — the chat
     of the dashboard that clicked Revive (`client`), not every open window's (the per-viewer rule; the
     reviveFailed notice is aimed the same way, since only the asker has a revive loader up). SDK-owned
@@ -17992,13 +18458,17 @@ class TmuxBackend(sb.SessionBackend):
         self._fire(["kill-session", "-t", name], t)
 
     def rename_by_name(self, old, new, t=5):
+        """True when tmux took the rename — _rename_session publishes the names/ entry on that answer
+        alone, so a name tmux refused is never published (fail loudly, 2026-09-08)."""
         if not self.available():          # no tmux → nothing to rename; stay inert like every primitive above
-            return
+            return False
         try:
-            subprocess.run(["tmux", "rename-session", "-t", old, new], timeout=t,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            r = subprocess.run(["tmux", "rename-session", "-t", old, new], timeout=t,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return getattr(r, "returncode", 1) == 0
         except Exception:
             sys.stderr.write("tmux rename '%s': %s\n" % (old, traceback.format_exc()))
+            return False
 
     def record_permission_mode(self, name, mode):
         """Persist the permission mode we just cycled to in @claude-permission-mode — CC doesn't expose it in
@@ -18672,17 +19142,23 @@ def _set_name(sid, name):
 def _rename_session(sid, name):
     """Apply a renameSession from the chat tab strip (the browser's host is THIS kernel — VS Code's host
     is the extension, so this path only existed there before; the browser's rename silently no-op'd).
-    A LIVE session is renamed in tmux — the after-rename-session hook resyncs the names file + Claude's
-    pill; a DEAD (read-only) tab has no tmux session, so rewrite the names file directly. The names-file
-    change is what _producer_sig watches, so the new name re-pushes to every surface. Returns the
-    accepted name, or None if rejected (bad chars). Split out so it's unit-testable. (the user 2026-06-16)"""
+    A LIVE session is renamed in tmux, and the names file is rewritten HERE, synchronously, as well
+    (2026-09-08): the after-rename-session hook (`romp _renamed`) resyncs it and Claude's pill later,
+    detached, and the rename door releases its name claim the moment this returns — between that
+    release and the hook's write the live snapshot still lacked the new name, so a second claimant
+    could create a session under it. The hook's later write is idempotent. A rename tmux refused is
+    reported (None) and publishes nothing, where it used to read as renamed. A DEAD (read-only) tab
+    has no tmux session, so only the names file is written. The names-file change is what
+    _producer_sig watches, so the new name re-pushes to every surface. Returns the accepted name, or
+    None if rejected (bad chars, or tmux declined). Split out so it's unit-testable. (the user 2026-06-16)"""
     name = (name or "").strip()
     if not NAME_RE.match(name):
         return None
     live = _tmux_name_of(sid)
     if live:
-        if live != name:
-            _TMUX.rename_by_name(live, name)
+        if live != name and not _TMUX.rename_by_name(live, name):
+            return None                                # tmux declined: nothing renamed, nothing published
+        _set_name(sid, name)                           # publish now — the live snapshot answers before the claim frees
     else:
         cx = _codex()
         if cx is not None and cx._session(sid) is not None:
@@ -19783,8 +20259,13 @@ def _via_forward(body, path):
 
 
 def _checkin_payload(r):
+    # TOKEN, the value the request gate compares against (ROMP_SERVE_TOKEN already folded in at
+    # import): the payload carries the SERVED token and never touches the file at runtime. A
+    # `_load_token()` here minted onto disk when the file was missing (a token this kernel did not
+    # serve, handed to the hub and every local reader) and swallowed a read fault into the 15 s
+    # handshake retry (review find, 2026-09-08).
     return {"host": _self_host(), "kernelPort": r.get("rk_port"), "busPort": r.get("rb_port"),
-            "token": _load_token()}
+            "token": TOKEN}
 
 
 def _handshake_due(r, ssh_pid, now):
@@ -23774,15 +24255,19 @@ def _thread_names():
     return out
 
 
-def _thread_name_refusal(nm, names):
-    """The refusal text for a create/relabel door hitting a thread's name (None names = unverifiable)."""
+def _thread_name_refusal(nm, names, kind="create"):
+    """The refusal text for a create/relabel door hitting a thread's name (None names = unverifiable).
+    `kind` is the claiming door's (see _claim_name): a revive asks for the dead session's OWN name and
+    cannot pick another, so its tail says what a revive can do, rename the dead tab first (review find,
+    2026-09-08)."""
     if names is None:
         return "couldn't verify \"%s\" against the comment threads — try again in a moment" % nm
     hit = names.get(nm)
     if not hit:
         return ""
-    return ("\"%s\" is a comment thread of %s — open it from that session's comments, or pick another "
-            "name" % (nm, _name_of(hit[1]) or hit[1][:8]))
+    text = "\"%s\" is a comment thread of %s — open it from that session's comments" % (
+        nm, _name_of(hit[1]) or hit[1][:8])
+    return text + (", or rename this session first" if kind == "revive" else ", or pick another name")
 
 
 # ── inbox-socket delivery (Claude Code ≥ 2.1.224) ──
@@ -25236,17 +25721,37 @@ def _peer_identity(psid):
     wait names the ACTUAL session — 'a peer' is a bug to trace, not a style). Accepts the three
     recorded shapes — a bare sid, the courier's cross-host "<host>:<tail>" composite, the wait map's
     "peer:<host>:<name>" key — and resolves {name, host, sid, color}: the names REGISTRY first
-    (identity persists for DORMANT sessions; liveness is never a prerequisite for naming), else the
+    (identity persists for DORMANT sessions; liveness is never a prerequisite for naming), else, a
+    bare sid another kernel owns (review find, 2026-09-08: the wait maps key a cross-host ask on the
+    row's to_sid, and the registry knows no remote sid, so every such chip read an eight-hex stub with
+    no host), what its host calls it in the tunnel supervisor's snapshot of that host's /sessions
+    (_remote_name_of, the ladder the user ruled on 2026-09-06 for a federated session), else the
+    "<host>:<name>" the postal log itself paired with the sid (_postal_peer_names: the relay row's
+    to_sid + toName, or the peer's own from_host + from stamp, the only source for a host reached
+    through gossip, which the supervisor never polls), else the
     composite's own parts (display-join on the canonical pair, per the federation rule — a name tail
-    reads whole, a sid tail stubs to 8), else the sid stub. Color is registry-only: a peer another
-    kernel owns keeps color None (its identity colors live on its home kernel), so the UIs render an
-    uncolored host-prefixed name rather than a guessed hue."""
+    reads whole, a sid tail stubs to 8), else the sid stub, host-prefixed when the supervisor at
+    least knows which host owns the sid. Color is registry-only: a peer another kernel owns keeps
+    color None (its identity colors live on its home kernel), so the UIs render an uncolored
+    host-prefixed name rather than a guessed hue."""
     raw = str(psid or "")
     if raw.startswith("peer:"):
         raw = raw[len("peer:"):]
     pn = _name_of(raw)
     if pn:
         return {"name": pn, "host": "", "sid": raw, "color": _name_color(raw)}
+    if _UUIDISH_RE.match(raw):
+        r = _host_for_sid(raw)
+        host = str((r or {}).get("host") or "")
+        rn = _remote_name_of(host, raw) if r else None
+        if rn:
+            return {"name": rn, "host": host, "sid": raw, "color": None}
+        hn = _postal_peer_names().get(raw) or ""
+        if hn:
+            h, _, tail = hn.partition(":")
+            return {"name": tail or raw[:8], "host": h, "sid": raw, "color": None}
+        if host:
+            return {"name": raw[:8], "host": host, "sid": raw, "color": None}   # owner known, name not (yet)
     if ":" in raw:
         h, _, tail = raw.partition(":")
         return {"name": (tail[:8] if _UUIDISH_RE.match(tail) else tail) or raw[:8],
@@ -35212,12 +35717,13 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
 # word). Rows that CARRY a kind use it directly — the sender's declared intent is the designed source; the
 # body regex is only the fallback for old log rows (the user 2026-06-22 / the 2026-07-22 unification).
 _WAIT_Q_RE = re.compile(r"^\s*(?:QUESTION|ASK|Q)\b", re.I)
-_POSTAL_WAIT_CACHE = [None, None]   # (mtime_ns, size) , (last_any, last_ask) — one log scan per file change
+_POSTAL_WAIT_CACHE = [None, None]   # (mtime_ns, size) , (last_any, last_ask, last_await) — one log scan per file change
+_POSTAL_PEER_NAMES = [None, {}]     # (mtime_ns, size) , {remote sid: "<host>:<name>"}: the same scan's display join
 
 
 def _postal_wait_maps():
-    """(last_any, last_ask) from the postal log, cached on the file's (mtime, size): per ordered pair
-    (from_id, to_id), last_any holds the latest t of ANY message, last_ask the latest (t, kind) of a
+    """(last_any, last_ask, last_await) from the postal log, cached on the file's (mtime, size): per ordered
+    pair (from_id, to_id), last_any holds the latest t of ANY message, last_ask the latest (t, kind) of a
     reply-EXPECTING ask — a QUESTION only (an answer is definitionally required). A DELEGATE transfers
     OWNERSHIP and sets no edge (the user 2026-08-15: a handoff whose body said "no reply needed" still
     parked its sender as awaiting-peer, and a sender with many outstanding handoffs read as permanently
@@ -35227,42 +35733,75 @@ def _postal_wait_maps():
     who genuinely needs a report-back asks with kind=question). COORDINATE/FYI rows never make last_ask.
     Rows carrying the schema `kind` use it; kindless legacy rows fall back to the QUESTION/ASK body
     prefix. Shared by _wait_for_graph (twice per push) and _peer_answered_at (the stamp readers), which
-    each re-scanned the log per call before this cache."""
+    each re-scanned the log per call before this cache.
+
+    last_await (2026-09-08): per pair, the latest t of a reply-REQUIRING send — a QUESTION or a DELEGATE
+    (tracked or not; the sender acts on the report either way), never a COORDINATE. It is the clock the
+    answered-supersede reads (_peer_answered_at / _peer_answered): those used to walk last_any, so a
+    coordinate the asker sent AFTER receiving the answer ("thanks", "one more thing") re-opened the
+    pair — the reply now predated the newest outbound — and a stamp the answer had ended stood until the
+    6h backstop. The chip edge stays question-only (last_ask), exactly as before.
+
+    Cross-host rows key on the recipient's STABLE id: `to_sid` when the row carries it (relay rows since
+    2026-09-08), else the name alias AT the row's own send time (jd._alias_at — last-write-wins re-keyed
+    every old message to whichever session most recently wore the name), else the raw
+    "peer:<host>:<name>".
+
+    The sid is the KEY, not the label (review find, 2026-09-08): a bare remote sid names nothing on this
+    kernel (the names registry is local), so a to_sid-keyed wait's chip fell to the eight-hex stub with no
+    host. The same scan therefore keeps the display join beside the maps, _POSTAL_PEER_NAMES, {remote
+    sid: "<host>:<name>"} from every row that pairs the two (a relay row's to_sid + toName, a remote
+    sender's from_id + from_host + from), newest sighting winning, and _peer_identity reads it
+    (_postal_peer_names) so the chip names the peer the row named."""
     try:
         st = jd.MESSAGES.stat()
         key = (st.st_mtime_ns, st.st_size)
     except OSError:
-        return {}, {}
+        _POSTAL_PEER_NAMES[:] = [None, {}]
+        return {}, {}, {}
     if _POSTAL_WAIT_CACHE[0] == key:
         return _POSTAL_WAIT_CACHE[1]
-    last_any, last_ask = {}, {}
+    last_any, last_ask, last_await = {}, {}, {}
+    peer_names = {}   # remote sid -> (t, "<host>:<name>"): the display join, newest sighting wins
+
+    def _saw(sid, at, hn):
+        if sid and hn and at >= peer_names.get(sid, (-1, ""))[0]:
+            peer_names[sid] = (at, hn)
     try:
         rows = []
-        alias = {}   # "host:name" -> sid, learned from every row a remote sender stamped
+        alias = {}   # "host:name" -> [(t, sid), …], learned from every row a remote sender stamped
         for o in _messages_rows():                    # append-incremental rows (2026-09-03); the fold
             if not isinstance(o, dict):               # itself stays whole-log: aliases learned from LATER
                 continue                              # rows resolve EARLIER peer: rows
             rows.append(o)
-            if o.get("from_host") and o.get("from") and o.get("from_id"):
-                alias[str(o["from_host"]) + ":" + str(o["from"])] = str(o["from_id"])
+            jd._learn_alias(alias, o)
+        jd._alias_settle(alias)
+        for hn, hist in alias.items():                # the peer's own stamps, inverted: sid -> what it wore
+            for at, sid in hist:
+                _saw(sid, at, hn)
         for o in rows:
             f, t_, ts = o.get("from_id"), o.get("to_id"), o.get("t")
             if not (f and t_ and ts):
                 continue
+            ts = int(ts)
             # a CROSS-HOST row is addressed to the RELAY ("peer:<host>"), not the recipient's sid —
             # so the (from,to) pair could never close and the asker wore "Awaiting <peer>" forever
             # (obsidian↔lab_manager, 2026-08-15: the reply landed, the edge never cleared). The row's
-            # toName ("<host>:<name>") resolves to the real sid through the alias map above; an
-            # unresolvable relay keeps the raw id and behaves exactly as before.
-            if isinstance(t_, str) and t_.startswith("peer:") and o.get("toName"):
-                # unresolvable (the peer never sent a row, so the alias map can't know its sid) →
-                # key on the NAMED recipient rather than the bare relay: two asks to different
-                # sessions on one detached host used to collapse onto the single (from, relay)
-                # pair, the later silently overwriting the earlier (the 2026-08-18 audit found a
-                # 29.6h-invisible ask eaten this way). The maps rebuild from the full log, so the
-                # moment the peer speaks the alias resolves and every row re-keys to the real sid.
-                t_ = alias.get(str(o["toName"]), "peer:" + str(o["toName"]))
-            ts = int(ts)
+            # own to_sid names the recipient exactly; an older row's toName ("<host>:<name>")
+            # resolves through the alias history at the row's send time; an unresolvable relay
+            # keeps the raw id and behaves exactly as before.
+            if isinstance(t_, str) and t_.startswith("peer:"):
+                if o.get("to_sid"):
+                    t_ = str(o["to_sid"])
+                    _saw(t_, ts, str(o.get("toName") or ""))   # the send resolved this name for this sid
+                elif o.get("toName"):
+                    # unresolvable (the peer never sent a row, so the alias map can't know its sid) →
+                    # key on the NAMED recipient rather than the bare relay: two asks to different
+                    # sessions on one detached host used to collapse onto the single (from, relay)
+                    # pair, the later silently overwriting the earlier (the 2026-08-18 audit found a
+                    # 29.6h-invisible ask eaten this way). The maps rebuild from the full log, so the
+                    # moment the peer speaks the alias resolves and every row re-keys to the real sid.
+                    t_ = jd._alias_at(alias, str(o["toName"]), ts) or "peer:" + str(o["toName"])
             last_any[(f, t_)] = max(last_any.get((f, t_), 0), ts)
             k = o.get("kind")                            # the sender's DECLARED intent (schema field) wins
             is_ask = (k == "question") if k else bool(_WAIT_Q_RE.match(o.get("body") or ""))
@@ -35270,10 +35809,22 @@ def _postal_wait_maps():
                 # the ask's HEAD rides along (the user 2026-07-26): the debt reminder quotes the asker's
                 # own first words back at the debtor, so the reminder needs no second log scan
                 last_ask[(f, t_)] = (ts, k or "question", str(o.get("body") or "")[:300])
+            is_await = (k in ("question", "delegate")) if k else is_ask   # reply-requiring; kindless rows by the ask prefix
+            if is_await:
+                last_await[(f, t_)] = max(last_await.get((f, t_), 0), ts)
     except OSError:
         pass
-    _POSTAL_WAIT_CACHE[:] = [key, (last_any, last_ask)]
-    return last_any, last_ask
+    _POSTAL_PEER_NAMES[:] = [key, {sid: hn for sid, (_at, hn) in peer_names.items()}]
+    _POSTAL_WAIT_CACHE[:] = [key, (last_any, last_ask, last_await)]
+    return last_any, last_ask, last_await
+
+
+def _postal_peer_names():
+    """{remote sid: "<host>:<name>"}: the postal log's own display join for the recipients the wait maps
+    key by stable id (review find, 2026-09-08; see _postal_wait_maps). Warms the maps' scan when the log
+    changed (a no-op on the cached key), so it costs a stat per call."""
+    _postal_wait_maps()
+    return _POSTAL_PEER_NAMES[1]
 
 
 def _wait_for_graph(now, alive_sids):
@@ -35287,7 +35838,7 @@ def _wait_for_graph(now, alive_sids):
     DELEGATE edges since 2026-07-25: a handoff previously made no edge, so the card fell through to the
     judge's generic ⏳ stamp ("Awaiting background agents") and, with no edge to clear, the peer's actual
     reply lifted nothing — a card read awaiting for 5h after the answer landed. Best-effort {}."""
-    last_any, last_ask = _postal_wait_maps()
+    last_any, last_ask, _aw = _postal_wait_maps()
     edge = {}                                            # X → Y: X's most-recent UNANSWERED ask to a LIVE peer
     for (f, t_), (ts, _k, _h) in last_ask.items():
         if t_ not in alive_sids:                         # dead peer won't reply → not a wait
@@ -35321,19 +35872,21 @@ def _peer_answered_at(sid):
     AFTER the reply survives — the closer's verdict is fresher than the answer it already saw. If the
     stamp was really about non-peer work (subagents, a build), the LIVE sources that outrank it still
     carry the wait, and the closer's next pass can re-stamp with a fresh awaitingAt."""
-    last_any, last_ask = _postal_wait_maps()
+    last_any, _ask, last_await = _postal_wait_maps()
     best = 0
-    # OUTBOUND rides last_any, not last_ask (2026-08-18 audit): the 2026-08-15 change that stopped
+    # OUTBOUND rides last_await, not last_ask (2026-08-18 audit): the 2026-08-15 change that stopped
     # DELEGATES from making chip edges also emptied last_ask of them — which silently removed this
     # release, so a delegated peer's reply no longer superseded a judge kind=peer stamp (a cross-host
     # handoff answered in 23 minutes still wore Awaiting six hours later, with the 6h wake as the
-    # only exit). Reading every outbound restores the designed exact ending event for questions and
-    # handoffs alike; the chip edge stays question-only, exactly as #430 intended.
-    for (f, t_), sent in last_any.items():
+    # only exit). Reading every reply-requiring outbound (question or delegate) restores the designed
+    # exact ending event for both; the chip edge stays question-only, exactly as #430 intended. Not
+    # last_any (2026-09-08): a COORDINATE the asker sent after the answer landed ("thanks") counted as
+    # a newer outbound awaiting a reply, so the answer read as stale and the stamp stood.
+    for (f, t_), sent in last_await.items():
         if f != sid:
             continue
         r = last_any.get((t_, f), 0)
-        if r >= sent:                                    # the pair's newest outbound is answered
+        if r >= sent:                                    # the pair's newest reply-requiring send is answered
             best = max(best, r)
     return best
 
@@ -35347,9 +35900,9 @@ def _peer_answered(sid):
     (sids, or "peer:<host>:<name>" for an unresolved cross-host recipient) — the same alias re-key
     the admit gate derives them from, so the two sides can never disagree."""
     best = _peer_answered_at(sid)        # the scalar rides the existing name — the tests' stub seam
-    last_any, _la = _postal_wait_maps()
+    last_any, _la, last_await = _postal_wait_maps()
     per = {}
-    for (f, t_), sent in last_any.items():
+    for (f, t_), sent in last_await.items():   # reply-requiring sends only — see _peer_answered_at
         if f != sid:
             continue
         r = last_any.get((t_, f), 0)
@@ -53695,10 +54248,13 @@ class Handler(BaseHTTPRequestHandler):
                     # agnostic), so the echo below carries the same `tags` the CLI checks
                     sid, extra = _create_codex_session(nm, cwd, parent=psid, tags=tags_req)
                     if not sid:
-                        return self._send(200, json.dumps({"ok": False,
-                                                           "error": "the Codex session could not "
-                                                                    "be created — is the codex "
-                                                                    "app-server running?"}),
+                        # a taken or in-flight name is a CONFLICT (409) naming the holder, not a
+                        # create that failed (the claim inside _create_codex_session ruled)
+                        return self._send(409 if (extra or {}).get("nameTaken") else 200,
+                                          json.dumps({"ok": False,
+                                                      "error": (extra or {}).get("error")
+                                                      or "the Codex session could not be created — is "
+                                                         "the codex app-server running?"}),
                                           "application/json")
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **pextra, **extra}),
                                       "application/json")
@@ -53712,9 +54268,12 @@ class Handler(BaseHTTPRequestHandler):
                                                      env=env_req,   # env is born into the spawn's reg
                                                      parent=psid, tags=tags_req)   # tags before the first push
                     if not sid:
-                        return self._send(200, json.dumps({"ok": False,
-                                                           "error": (extra or {}).get("error")
-                                                           or "the session could not be created"}),
+                        # a taken or in-flight name is a CONFLICT (409) naming the holder, not a
+                        # create that failed (the claim inside _create_sdk_session ruled)
+                        return self._send(409 if (extra or {}).get("nameTaken") else 200,
+                                          json.dumps({"ok": False,
+                                                      "error": (extra or {}).get("error")
+                                                      or "the session could not be created"}),
                                           "application/json")
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **pextra, **extra}),
                                       "application/json")
@@ -53728,7 +54287,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         "tags and parent need an SDK or Codex session — a terminal session's id is not "
                         "known until it starts"}), "application/json")
-                threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
+                # the claim is taken on THIS thread (kind create), so a taken or in-flight name refuses
+                # the request that asked as a 409 — the launch itself runs threaded, as before
+                refusal = _spawn_session_start(nm, cwd)
+                if refusal:
+                    return self._send(409, json.dumps({"ok": False, "error": refusal}), "application/json")
                 return self._send(200, json.dumps({"ok": True, "pending": True, "dir": cwd}),
                                   "application/json")
             if u.path == "/fork":
@@ -53792,13 +54355,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         "session names use letters, digits, . _ - only"}), "application/json")
                 live = _live_names(_tmux_sessions())
-                if nm in live:
-                    return self._send(200, json.dumps({"ok": False, "error":
-                        'a session named "%s" is already running — pick another name' % nm}),
-                                      "application/json")
-                tref = _thread_name_refusal(nm, _thread_names())
-                if tref:                             # a comment thread's name — never relabel onto it (T223)
-                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 tsid = live.get(target) or ""
                 if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
                     tsid = target
@@ -53806,8 +54362,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'no live session named "%s" (a dormant one can be renamed by sid)' % target}),
                                       "application/json")
+                if _name_of(tsid) == nm:              # its own name: nothing to do, and never a refusal
+                    return self._send(200, json.dumps({"ok": True, "id": tsid, "name": nm}),
+                                      "application/json")
+                tref = _thread_name_refusal(nm, _thread_names())
+                if tref:                             # a comment thread's name — never relabel onto it (T223)
+                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 be = Sessions.backend_for(tsid)
-                if not (be and be.rename(tsid, nm)):      # live → backend reg; dead → names file
+                # the live-name guard is the CLAIM inside _rename_claimed (kind rename): the old
+                # check-then-act here let a rename land on a name whose session was still being created
+                ok, refusal = _rename_claimed(be, tsid, nm)   # live → backend reg; dead → names file
+                if refusal:
+                    return self._send(200, json.dumps({"ok": False, "error": refusal}), "application/json")
+                if not ok:
                     return self._send(200, json.dumps({"ok": False, "error":
                         "the rename did not take — is that session known to this kernel?"}),
                                       "application/json")
@@ -55428,7 +55995,12 @@ class Handler(BaseHTTPRequestHandler):
                         # push, so the new tab lands sectioned under its group (see _create_sdk_session)
                         _sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
                                                           client=client, parent=psid or "", tags=ctags)
-                        if extra.get("tagError"):
+                        if not _sid:
+                            # a name taken or being registered since the live check above (the claim
+                            # inside _create_sdk_session ruled): there is nothing to focus yet, so the
+                            # refusal is said — never a second session under the name
+                            client["send"](json.dumps({"type": "warn", "text": extra.get("error") or "the session could not be created"}))
+                        elif extra.get("tagError"):
                             client["send"](json.dumps({"type": "warn", "text": "tagging the new session: %s" % extra["tagError"]}))
                     else:
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
@@ -55453,7 +56025,10 @@ class Handler(BaseHTTPRequestHandler):
                             except Exception:
                                 pass
                         else:
-                            if extra.get("tagError"):
+                            if not _sid:   # a taken or in-flight name — the claim inside _create_codex_session ruled
+                                client["send"](json.dumps({"type": "warn", "text": extra.get("error")
+                                                           or "the Codex session could not be created — is the codex app-server running?"}))
+                            elif extra.get("tagError"):
                                 client["send"](json.dumps({"type": "warn", "text": "tagging the new session: %s" % extra["tagError"]}))
                     else:
                         # same rule as SDK: the user asked for Codex — refuse loudly, never a
@@ -55468,7 +56043,9 @@ class Handler(BaseHTTPRequestHandler):
                     client["send"](json.dumps({"type": "warn", "text":
                         "tags and parent need an SDK or Codex session — a terminal session's id is not known until it starts"}))
                 else:
-                    threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
+                    refusal = _spawn_session_start(nm, cwd)   # claimed on THIS thread: the refusal reaches the asker
+                    if refusal:
+                        client["send"](json.dumps({"type": "warn", "text": refusal}))
         elif msg and msg.get("type") == "cancelCreate" and msg.get("name"):
             # The webview's "Opening…" cue was cancelled (the ✕/Esc/backdrop — the spawn hung/failed, or the
             # user changed their mind). We only know the NAME (no id yet). Tear down a matching LOCAL session
