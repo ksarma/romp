@@ -28,7 +28,7 @@ test("a ✕ on a provisional-tab bubble forgets the send from provisionalQueue a
   assert.match(qx, /restoreToComposer\(qmd\);/);
   assert.match(qx, /if \(!provisional\) pendingCancelRestores\.set\(activeId \+ " " \+ qmd,/);
   // adoption re-sends only what remains in the queue (unchanged: it reads provisionalQueue via dropProvisional)
-  assert.match(RENDER, /for \(const text of queued\) \{\s*\n\s*vscodeApi\?\.postMessage\(\{ type: "sendMessage", id: realId, text \}\);\s*\n\s*registerOptimistic\(realId, text\);/);
+  assert.match(RENDER, /for \(const text of queued\) \{\s*\n\s*const p = registerOptimistic\(realId, text\);\s*\n\s*vscodeApi\?\.postMessage\(\{ type: "sendMessage", id: realId, text, sendId: p\.sendId \}\);/);
 });
 
 test("forgetProvisionalSend removes exactly one matching text and reports whether it did (executed)", () => {

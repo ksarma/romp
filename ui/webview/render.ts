@@ -108,7 +108,8 @@ type TaskOutputs = Record<string, { command: string; output: string }>;
 type ChatEvent = (
   // mid/mids: postal message ids the kernel could NOT resolve into cards, carried on the raw turn so a
   // timeline arc into it still lands (see _hydrate_postal's unresolved path)
-  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }
+  // sendIds: the client send id(s) a user event stands for (an echo's own; a landed record's every send) — send-pending.ts matches a pending bubble on them
+  | { kind: "user"; md: string; uuid?: string; ts?: string; reminders?: string[]; taskOutputs?: TaskOutputs; human?: boolean; romp?: boolean; rompAuto?: boolean; rompSystem?: boolean; followUp?: boolean; goal?: string; fuCtx?: string; canned?: string; tag?: string; mid?: string; mids?: string[]; images?: { src: string; path?: string }[]; undelivered?: boolean; echoT?: number; sendIds?: string[]; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }
   | { kind: "assistant"; md: string; uuid?: string; ts?: string; spacePaths?: string[]; pathLinks?: Record<string, string>; pathPins?: Record<string, string> }   // spacePaths: backticked filenames WITH spaces the kernel verified exist (build_session _space_paths) → whole-span links. pathLinks: path-shaped tokens the kernel verified against the filesystem, token → real open target (build_session _path_links) — the linkifier's gate
   | { kind: "thinking"; text: string; encrypted: boolean; uuid?: string; ts?: string }
   | {
@@ -189,7 +190,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; imgPaths?: string[]; lost?: string; qts?: number }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: client-only, the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; imgPaths?: string[]; lost?: string; qts?: number; sendId?: string }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: client-only, the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts); sendId: the send's identity on both sides — minted at the press, carried by the kernel's queued copy — so the ✕ and the reconcile name exactly this send
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -407,7 +408,7 @@ function reconcileOptimistic(s: Session): void {
   // `lost` rides along so the bubble can say "not confirmed" after a connection drop (markPendingLost).
   // `qts` is the entry's identity: the ✕ removes THAT entry, never the first with the same text (two
   // identical sends can sit in different states — one lost, one received).
-  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts });
+  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts, sendId: p.sendId });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -420,8 +421,10 @@ function reconcileOptimistic(s: Session): void {
   settle(inject.map((p) => p.text));
 }
 
-// Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push).
-function registerOptimistic(id: string, text: string, imgPaths?: string[]): void {
+// Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push). Returns
+// the entry: its `sendId` is posted WITH the send (routeUserMessage), so every kernel copy of this send
+// — its queued entry, its echo, the record that lands it — names this bubble (send-pending.ts, 2026-09-08).
+function registerOptimistic(id: string, text: string, imgPaths?: string[]): PendingSend {
   const arr = pendingSent.get(id) || [];
   const p = newPending(text, imgPaths);
   arr.push(p);   // the anchor (`at`) is stamped by the reconcile just below
@@ -431,7 +434,7 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
   // is pending — selectable, composer live). The first upsert stamps the entry, against a frame that may
   // already hold this send's own echo or landing; `late` tells stampBase to read the events' own stamps,
   // so only what the kernel stamped before the press is background (send-pending.ts).
-  if (!s) { p.late = true; return; }
+  if (!s) { p.late = true; return p; }
   reconcileOptimistic(s);
   // The reconcile can mutate the tail IN PLACE — merging into an existing queued group, or pop+push
   // on a repeat send — which leaves s.events.length unchanged, and syncView's no-op fast path
@@ -453,6 +456,7 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
     appendActive();
     if (content && wasAtBottom) content.scrollTop = content.scrollHeight;
   }
+  return p;
 }
 
 // A landing just retired a pending bubble. When the landed atom is ABSORBED (kernel ev.absorbed: a
@@ -4246,6 +4250,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
       if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
       if (t.qts !== undefined) x.dataset.qts = String(t.qts);   // OUR entry's identity: the ✕ removes this bubble's entry, not the first with its text
+      if (t.sendId) x.dataset.qsid = t.sendId;   // the send's identity on BOTH sides: our entry and the kernel's copy (cancelQueued sendId)
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       xHost.appendChild(x);
@@ -7065,14 +7070,18 @@ function dropProvisional(): { queued: string[]; draft: string } {
 
 // The real session arrived: move everything the provisional tab was holding onto it and focus it. The
 // queued messages send FOR REAL here — they were never sent before, because there was no session to send
-// them to; the dashed bubbles you saw were this client saying "received", not the kernel.
+// them to; the dashed bubbles you saw were this client saying "received", not the kernel. Each one is
+// registered FIRST and posted WITH its bubble's id, like the plain and quote sends (routeUserMessage): the
+// kernel's queue entry, echo and landed record then name the bubble the user sees, so two identical texts
+// typed into the provisional tab stay two sends, and a ✕ on either removes exactly that one at the kernel.
+// This path used to post the text alone and mint the bubble's id afterwards (2026-09-08 review).
 function adoptProvisional(realId: string): void {
   const { queued, draft } = dropProvisional();
   if (draft) drafts.set(realId, draft);    // set BEFORE the switch — setActive fills the box from drafts
   setActive(realId);
   for (const text of queued) {
-    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text });
-    registerOptimistic(realId, text);      // …and the bubble carries over to the tab that now owns it
+    const p = registerOptimistic(realId, text);
+    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text, sendId: p.sendId });
   }
   if (draft) { persistDrafts(); const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; if (ta) growComposer(ta); }
 }
@@ -13900,9 +13909,15 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
   // inconsistency reported). The quote branch echoes the COMPOSED body, which is byte-identical to
   // what lands (quoteReplyBody IS the send path), so the reconcile's includes() match is exact; the
   // follow-up echoes the typed words, a substring of the goal-wrapped landing.
-  if (goalCite?.itemId) { vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid }); registerOptimistic(sid, text, imgPaths); }
-  else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body }); registerOptimistic(sid, body, imgPaths); }
-  else { vscodeApi.postMessage({ type: "sendMessage", id: sid, text }); registerOptimistic(sid, text, imgPaths); }
+  // Every branch posts the bubble's own `sendId` (registered FIRST, so the id exists to post): the kernel
+  // carries it on the queue entry, the echo and the landed record, and the reconcile matches this bubble
+  // on it (send-pending.ts). The follow-up goes through the kernel's own wrapping path, which carries the
+  // id onto the parked op or queue entry it makes of the wrapped body, so the bubble's ✕ cancels exactly
+  // that entry (review round 2, 2026-09-08); its bubble keeps the text match as well, a substring of the
+  // goal-wrapped landing.
+  if (goalCite?.itemId) { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid, sendId: p.sendId }); }
+  else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); const p = registerOptimistic(sid, body, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body, sendId: p.sendId }); }
+  else { const p = registerOptimistic(sid, text, imgPaths); vscodeApi.postMessage({ type: "sendMessage", id: sid, text, sendId: p.sendId }); }
   // One breadcrumb per composer send (client-diag.jsonl): sid, when, how long, which route — never the
   // text. A send that "vanished" can then be traced from the press through the kernel's own logs
   // instead of reconstructed from memory (the 2026-09-05/06 audits had to).
@@ -17011,7 +17026,7 @@ setupSettings();
         // drops the first pending send with the text — the one the kernel's first copy covers.
         const list = pendingSent.get(sidQ) || [];
         const qts = el.dataset.qts !== undefined ? Number(el.dataset.qts) : undefined;
-        if (dropPending(list, qmd, qts)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        if (dropPending(list, qmd, qts, el.dataset.qsid)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
         echoShownSig.delete(sidQ);
       }
       // a PROVISIONAL tab's send has never left the client (T244): forget it from the queue adoption would
@@ -17020,6 +17035,7 @@ setupSettings();
       const provisional = isProvisionalId(sidQ);
       if (provisional && qmd) forgetProvisionalSend(qmd);
       const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
+      if (el.dataset.qsid) msg.sendId = el.dataset.qsid;   // the kernel removes exactly this send's entry (queued or parked)
       if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
       if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
       if (!provisional) vscodeApi.postMessage(msg);
