@@ -51023,8 +51023,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
-            _pusher_wake.set()                 # …and that push starts when the in-flight cycle ends, not
-            return                             #    after the 0.5 s backstop (the tab switch IS the event)
+            _pusher_wake.set()                 # …and the pusher wakes now (the tab switch IS the event): that
+            return                             #    push starts when the in-flight cycle ends if the minimum
+            #                                       interval has passed or the new tab's live tail changed since
+            #                                       the last cycle (the hold re-tests every recorded sid against
+            #                                       the active tabs; see _pusher), else at the interval's deadline
         if msg and msg.get("type") == "needSlot" and msg.get("slot") in _DELTA_SLOTS:
             # The shim could not apply a view delta (its base revision did not match what it holds — a
             # frame it never saw, a reload mid-stream): forget what we believe it holds and re-send the
