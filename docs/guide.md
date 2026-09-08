@@ -59,6 +59,15 @@ A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
 directory has as its `origin` remote; when that remote is not on GitHub, the number stays
 plain text.
 
+**Pinned notes.** A session can pin a short note for you above its transcript: where things
+stand, a warning, a summary. The notes appear in a strip between the tab bar and the transcript,
+oldest first, one line each, and the strip is absent while a session has pinned nothing. Click a
+row that shows a *details* hint to read the rest (a cut line's full text is there too); when more
+than three notes are pinned, the older ones fold behind a *+N more* row, and the strip scrolls once
+it is a few rows tall. Paths and pull request numbers in a note are links. **Unpin**, clicked
+twice, removes a note; a session can also unpin its own. A note stays until unpinned, across
+restarts and revivals, and a session keeps at most eight; a ninth drops the oldest.
+
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
 file served from the dashboard's own address (a published report, an evidence doc). Figures
@@ -356,7 +365,15 @@ the file in both views: an insertion is tinted, a deletion is struck at its poin
 substitution shows both, the struck old text before the tinted new text. **Show changes
 inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
 the file reads as it is and the cards alone show the changes. The setting is kept for every
-file you open. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
+appear under those two toggles and choose what the panel lists; Comments and Changes show
+their counts. **Comments** lists only the comments, including comments on changes, and hides
+the change marks in the file; **Changes** lists only the changes, each with the comments made
+on it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+choice is kept like the marks setting and changes only what is shown: **Send to session**
+still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
+**Region**, before the author's chip, and its left edge is colored by kind, the accent for a
+comment and a muted tone for a change, so the two are told apart at a glance. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
 text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
 all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
 deletion, since a point is easy to miss; a change the current view does not mark, because it

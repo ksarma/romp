@@ -390,3 +390,64 @@ test('the Tests section names the follow-on\'s modules, and they exist', () => {
   }
   assert.ok(tests.includes('The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts`'));
 });
+
+// ── the filter follow-on (2026-09-07) ───────────────────────────────
+
+const settingsTs = read('ui', 'webview', 'settings.ts');
+const filterNote = (() => {
+  const a = plan.indexOf('The filter follow-on (2026-09-07):');
+  assert.ok(a >= 0, 'the plan carries the filter follow-on note');
+  const b = plan.indexOf('\n\n', a);
+  return plan.slice(a, b).replace(/\s+/g, ' ');
+})();
+
+test('the filter follow-on note stands beside the other follow-on notes under Slice 2, says what the user hit, and names the control, the setting, the counts and the cue as the panel and the store build them', () => {
+  const slice2At = plan.indexOf('### Slice 2: the session\'s changes as accept/reject cards and inline marks');   // offsets: the section text is `slice2` above
+  const slice3At = plan.indexOf('### Slice 3: region comments on images');
+  const at = plan.indexOf('The filter follow-on (2026-09-07):');
+  assert.ok(slice2At < at && at < slice3At, 'under Slice 2, before Slice 3');
+  assert.ok(plan.indexOf('The composer follow-on (2026-09-07):') < at, 'after the composer follow-on note');
+  assert.ok(filterNote.includes('dozens of routine changes'), 'what the user hit: the comments buried among routine changes');
+  assert.ok(filterNote.includes('could not tell a comment card from a change card at a glance'));
+  // the control, as the panel builds it
+  assert.ok(filterNote.includes('**All · Comments N · Changes M**'));
+  assert.ok(/\["all", "All", [^\]]+\],\s*\["comments", "Comments " \+ n\.comments, [^\]]+\],\s*\["changes", "Changes " \+ n\.changes, [^\]]+\],/.test(panel), 'the panel offers the three options in that order');
+  assert.ok(filterNote.includes('offered once the file has a card to filter (`filterOffered`)') && /export function filterOffered\(/.test(model) && /if \(filterOffered\(s\)\) \{/.test(panel));
+  // the setting, as the store keeps it
+  assert.ok(filterNote.includes('kept as `commentsFilter` in the shared webview settings (`settings.ts`, "all" by default)'));
+  assert.ok(/^\s+commentsFilter: CommentsFilter;/m.test(settingsTs), 'settings.ts has the field');
+  assert.ok(/export const DEFAULT_SETTINGS: RompSettings = \{[^\n]*\bcommentsFilter: "all"[,\s}]/.test(settingsTs), '"all" by default');
+  assert.ok(/saveSettings\(\{ commentsFilter: f \}\);/.test(panel), 'written on each pick');
+  assert.ok(/live\.filter !== s\.commentsFilter/.test(panel), 'a pick elsewhere reaches the open panel');
+  // the counts, one source with the label
+  assert.ok(filterNote.includes('`cardCounts` in `file-comments-model.ts`'));
+  assert.ok(/export function cardCounts\(/.test(model) && /const \{ comments: open, changes: n \} = cardCounts\(s\);/.test(model), 'actionLabel reads the same counts');
+  assert.ok(/const n = cardCounts\(s\);/.test(panel), 'the header reads them too');
+  // the three states, as the list and the painters build them
+  assert.ok(filterNote.includes('paints no change mark in the text') && /if \(this\.activeFilter\(\) === "comments"\) return;/.test(panel));
+  assert.ok(filterNote.includes('paints no comment highlight or region rectangle') && /this\.activeFilter\(\) === "changes" \? \[\] : this\.cards\(\)/.test(panel) && /const hideRegions = this\.activeFilter\(\) === "changes";/.test(panel));
+  assert.ok(filterNote.includes('an "on a change" tag') && /el\("span", "fc-tag", "on a change"\)/.test(panel));
+  assert.ok(filterNote.includes('Send to session is not filtered'));
+  // the cue
+  assert.ok(filterNote.includes('Comment, Change, or Region') && /el\("span", "fc-kind", c\.kind === "region" \? "Region" : "Comment"\)/.test(panel) && /el\("span", "fc-kind", "Change"\)/.test(panel));
+  assert.ok(filterNote.includes('(`data-cue`; both sheets, tokens only)'));
+  for (const sheet of ['styles.css', 'feed.css']) {
+    const css = read('ui', 'webview', sheet);
+    assert.ok(css.includes('.fc-card[data-cue="comment"]:not(.fc-card-detached) { border-left: 3px solid var(--accent); }'), sheet + ': the comment edge');
+    assert.ok(css.includes('.fc-card[data-cue="change"]:not(.fc-card-detached) { border-left: 3px solid var(--text-muted); }'), sheet + ': the change edge');
+  }
+  // the keyboard
+  assert.ok(filterNote.includes('an arrow chooses the next or previous option, wrapping at the ends, and Home and End the first and last'));
+  assert.ok(/const FILTER_KEYS = new Set\(\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"\]\);/.test(panel));
+  // the tests it names exist
+  for (const rel of ['ui/webview/file-comments-filter.test.ts', 'tests/test_guide_files_filter.py']) {
+    assert.ok(filterNote.includes('`' + rel + '`'), 'the note names ' + rel);
+    assert.ok(fs.existsSync(path.join(REPO, rel)), rel + ' exists');
+  }
+});
+
+test('the UX paragraph names the filter beside Show changes inline, and the Tests section carries its bullet', () => {
+  assert.ok(surface.includes('**All · Comments · Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and the marks to one kind'));
+  assert.ok(surface.includes('Send to session is not narrowed'));
+  assert.ok(tests.includes('- The filter follow-on (2026-09-07): `ui/webview/file-comments-filter.test.ts`'));
+});

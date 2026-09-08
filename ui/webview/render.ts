@@ -32,6 +32,7 @@ import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { buildPinnedNotes, pinnedNotesKey, pinnedMeasureCut, pinnedWatchWidth, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
 import { awaitWord, awaitBreakdown, groupRows, GROUP_TITLE, workingFor, type AwaitRow } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
@@ -282,7 +283,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
+interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; pinnedNotes?: PinnedNote[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
 // A SUBAGENT VIEWER pseudo-session (plans/subagent-transcripts.md): a read-only tab whose events are one
 // agent's own transcript, fed by {type:"subagent"} frames. Client-only — the kernel never lists it in
 // tabOrder (reconcileTabOrder keeps a known, never-kernel-seen id), so it lives exactly as long as the
@@ -11073,6 +11074,7 @@ function showActive() {
   placeReviveLoader();   // session-local: shows over THIS pane only while the reviving tab is active
   notifyActive();
   renderLedger();  // swap in the active session's digest box (or hide if none)
+  renderPinnedNotes();   // swap in the active session's pinned notes (hidden when it has none)
   renderLiveAsk(); // swap in the active session's pending picker (or hide if none)
   renderBgTasks(); // swap in the active session's background-task box (or hide if none)
   let empty = document.getElementById("empty-state");
@@ -11778,6 +11780,54 @@ function toggleLedgerCollapsed() {
   try { if (vscodeApi && vscodeApi.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), ledgerCollapsed }); } catch { /* ignore */ }
   renderLedger();
   renderTabs(); // refresh the ▾/▸ glyph
+}
+
+// ── PINNED NOTES (the user 2026-09-08) ──────────────────────────────────────────────────────────
+// The strip between the tab bar and the transcript (#pinned-notes, a sibling of #content in both page
+// skeletons): the notes the active session pinned for the person it works for, built by pinned-notes.ts
+// from the session payload's `pinnedNotes` field. Hidden, taking no space, while the session has none.
+// Repaints ONLY when pinnedNotesKey changes (a pin, an unpin, a tab switch): the frame that carries the
+// rows is the event, and a frame carrying the same rows is not one, so an open fold survives every push
+// in between. An armed Unpin does NOT survive a repaint: the row it sat on is gone, so the arm and its
+// listeners go with it (pnDisarm, before the paint). After a confirmed Unpin the latch (latchedNotes)
+// keeps a frame built before the unpin landed from painting the row back for one cycle. The fold states
+// persist across repaints (keyed by note id / session id, the openFolds idiom); the three controls are
+// delegated to the stable host (below, installed once). A path in a note's text or detail links like one
+// on a user-todo row (linkTodoLinePaths / linkTodoDetailPaths, the same session resolving relative
+// paths), and a `#123` links to the session's PR (linkifyPrRefs): the one pair of linkers, no second
+// code path. Which rows are CUT by the one-line layout (and so offer the fold with their full text) is
+// measured on the painted rows (pinnedMeasureCut) at every paint and again on the events that re-width a
+// row (pinnedWatchWidth: the strip's box, a font load, a settings change), not counted.
+const pnFolds: PinnedFoldState = { openDetails: new Set(), moreOpen: new Set() };
+let pnPainted = "";   // pinnedNotesKey of what the strip shows; "" forces the next call to paint
+let pnLatch: UnpinLatch | null = null;   // the unpin(s) the kernel has not confirmed yet (latchUnpinAt)
+let pnArmed: (() => void) | null = null;  // the disarm of the one armed Unpin (armUnpin), if any
+function pnDisarm(): void { const f = pnArmed; pnArmed = null; if (f) f(); }
+function renderPinnedNotes(force = false): void {
+  const host = document.getElementById("pinned-notes");
+  if (!host) return;
+  const s = activeId && !snapView ? sessions.get(activeId) : null;   // a section snapshot shows no transcript, so no strip
+  const seen = latchedNotes(pnLatch, s ? s.id : "", s && !s.sub ? (s.pinnedNotes || []) : []);   // a subagent viewer has no notes of its own
+  pnLatch = seen.latch;
+  const notes = seen.notes;
+  const key = pinnedNotesKey(s ? s.id : "", notes);
+  if (!force && key === pnPainted) return;
+  pnPainted = key;
+  pnDisarm();   // the armed row, if any, is about to be replaced: its arm and listeners go with it
+  const strip = s && notes.length ? buildPinnedNotes(document, s.id, notes, pnFolds, {
+    line: (n) => { linkTodoLinePaths(n, s.id); linkifyPrRefs(n, prRepoFor(s.id)); },
+    detail: (n) => { linkTodoDetailPaths(n, s.id); linkifyPrRefs(n, prRepoFor(s.id)); },
+  }) : null;
+  if (strip) host.replaceChildren(strip); else host.replaceChildren();
+  host.style.display = strip ? "" : "none";
+  if (strip) {
+    // which rows the one-line layout cuts is read off the painted rows, never guessed from a character
+    // count (review round 2, 2026-09-08): now, for the rows this frame carries, and again when the
+    // strip's box, the fonts or the settings change (pinnedWatchWidth, installed once: the tab bar's
+    // ResizeObserver idiom, plus the fonts' loadingdone and the settings event)
+    pinnedMeasureCut(host);
+    pinnedWatchWidth(host);
+  }
 }
 
 function renderLedger() {
@@ -14411,6 +14461,9 @@ function upsert(msg: any) {
     // must not fall back to prev — the "in msg" form, like bgTasks. The split card itself renders
     // from the todo EVENT; this field is the seam a later slice's tab glyph derives from.
     userTodos: ("userTodos" in msg) ? msg.userTodos : (prev ? prev.userTodos : undefined),
+    // pinned notes (the user 2026-09-08): the strip above the transcript reads this field; an empty
+    // array is a real value (the last note unpinned), so the "in msg" form again
+    pinnedNotes: ("pinnedNotes" in msg) ? msg.pinnedNotes : (prev ? prev.pinnedNotes : undefined),
     hideFromFeed: ("hideFromFeed" in msg) ? !!msg.hideFromFeed : (prev ? prev.hideFromFeed : undefined),
     postalServiceOff: ("postalServiceOff" in msg) ? !!msg.postalServiceOff : (prev ? prev.postalServiceOff : undefined),
     notify: ("notify" in msg) ? !!msg.notify : (prev ? prev.notify : undefined),
@@ -14493,6 +14546,7 @@ function upsert(msg: any) {
       }
     }
     renderBgTasks();
+    renderPinnedNotes();   // a full frame on an existing tab (a client behind the tail) carries the field too
   }
   // A non-active session's view is left to sync lazily when it's next shown.
   // The session the user just created has ARRIVED: the provisional tab hands over its queued messages
@@ -14518,6 +14572,7 @@ function update(msg: any) {
   if (msg.id === activeId) {
     appendActive();
     renderLedger(); // refresh the summary box (ages + any new items) as the active session works
+    renderPinnedNotes();
     if (awaitKey(s.status) !== before) renderBgTasks();   // the box rides the chip's own frame (T225; see chatTail)
   } else {
     const v = views.get(msg.id);
@@ -14631,6 +14686,7 @@ function chatTail(msg: any) {
   if (typeof msg.total === "number") s.headTotal = msg.total;
   const before = awaitKey(s.status);
   if (msg.status) s.status = msg.status;
+  if ("pinnedNotes" in msg) s.pinnedNotes = msg.pinnedNotes;   // the pinned-notes strip's seam (2026-09-08): the userTodos shape below
   // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
   // steady state is chatTail frames, so a caught-up client that only merged the field from full
   // session frames kept it stale — the tab glyph (next slice) reads this field, not the event
@@ -14645,6 +14701,7 @@ function chatTail(msg: any) {
     }
     appendActive();
     renderLedger();
+    renderPinnedNotes();   // the strip rides the same frame as the field (a pin lands with no event change)
     // THIS is the frame that flips the chip (T225): a status-only change reaches a caught-up client as a
     // chatTail with an empty suffix and the full status — awaitingWhy/Kind/Count/Tasks included. The box
     // rendered only from the full-session path, so the chip read "Awaiting agents" with no box until a
@@ -16940,7 +16997,9 @@ setupSettings();
     // focus return) rather than stop it; a viewer link that reaches here, as one does when the viewer's
     // unsaved-comment ask declined the open and the span stayed in the document, must not open the file a
     // second time (the 2026-09-07 review, round 2).
-    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt")) openLinkedPath(elx, ev as MouseEvent); },
+    // …and the pinned-notes strip (2026-09-08), whose spans are delegated the same way. This line is lifted
+    // verbatim by two tests (its trailing comma stripped), so nothing may follow the handler on it.
+    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt, #pinned-notes")) openLinkedPath(elx, ev as MouseEvent); },
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);
@@ -17173,6 +17232,57 @@ setupSettings();
     if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
     else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
     tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)
+  });
+})();
+(() => {
+  // PINNED NOTES (the user 2026-09-08): the strip rebuilds on every pin / unpin / tab switch, so its
+  // three controls are delegated to the stable #pinned-notes host (the click-safety rule, ui/CLAUDE.md;
+  // pinned-notes.ts hangs no listener). A path link inside a row carries data-act openpath, which this
+  // delegate has no handler for, so the click goes on to the body delegate's openpath above.
+  const host = document.getElementById("pinned-notes");
+  if (!host) return;
+  delegate(host, {
+    // the row's text, or its "details" button (the keyboard's way in): fold / unfold the row's detail.
+    // The state keys by note id (pnFolds) so the next repaint paints the same fold; the body appearing
+    // and the hint flipping ARE the acknowledgement, local.
+    [PINNED_ACT.toggle]: (elx) => {
+      const nid = elx.dataset.nid; if (!nid) return;
+      const open = !pnFolds.openDetails.has(nid);
+      if (open) pnFolds.openDetails.add(nid); else pnFolds.openDetails.delete(nid);
+      const item = elx.closest(".pn-item");
+      item?.querySelector(".pn-detail")?.classList.toggle("open", open);
+      const more = item?.querySelector<HTMLElement>("." + UT_HINT_CLASS);
+      if (more) { applyUtHint(more, utHintFor(open)); more.setAttribute("aria-expanded", open ? "true" : "false"); }
+      // the text's title stays the full text (the builder set it); only the hint's words flip
+    },
+    // the "+N more" fold over the older rows: keyed by session id; a forced repaint flips the label
+    // and shows the rows (the todo card's completed-fold idiom)
+    [PINNED_ACT.more]: (elx) => {
+      const sid = elx.dataset.sid; if (!sid) return;
+      if (pnFolds.moreOpen.has(sid)) pnFolds.moreOpen.delete(sid); else pnFolds.moreOpen.add(sid);
+      renderPinnedNotes(true);
+    },
+    // Unpin arms then confirms in place (the utdismiss idiom). The arm ends on an event (armUnpin: the
+    // next press elsewhere, a blur, the pointer leaving; and a repaint of the strip, pnDisarm), never
+    // a timer, so a tap left behind on a phone cannot unpin in one step minutes later. The confirm
+    // posts the kernel's unpinNote op (the same _unpin_note the postal tool's route lands on) and
+    // repaints the strip without the row under the latch (latchUnpinAt): a frame still carrying the
+    // pre-unpin list is old news, and the kernel's next list is what releases it. A refused unpin
+    // warns from the kernel.
+    [PINNED_ACT.unpin]: (elx) => {
+      const nid = elx.dataset.nid, sid = elx.dataset.sid || activeId;
+      if (!nid || !sid) return;
+      if (!elx.classList.contains("armed")) {
+        pnDisarm();                                       // one armed control at a time
+        pnArmed = armUnpin(elx, document, isCoarsePointer());
+        return;
+      }
+      pnDisarm();
+      vscodeApi?.postMessage({ type: "unpinNote", id: sid, noteId: nid });
+      const s = sessions.get(sid);
+      if (s) pnLatch = latchUnpinAt(pnLatch, sid, s.pinnedNotes || [], nid);   // against the list as the last frame carried it
+      renderPinnedNotes(true);
+    },
   });
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy

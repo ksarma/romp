@@ -95,7 +95,7 @@ test("styles.css: the grown tier — the composer, and each other section while 
   // the head's, the Send section's and the Log's tiers key on the section holding anything beyond its controls — a
   // structural test, so a new kind of row counts as growth without a rule of its own
   const tier = marginRules().filter((r) => r.decls.has("flex-shrink")).flatMap((r) => r.selectors).join(" | ");
-  assert.match(tier, /\.fc-sec-head:has\(\.fc-head > :nth-child\(n\+2\)\)/, "the head beyond its button row: " + tier);
+  assert.match(tier, /\.fc-sec-head:has\(\.fc-head > :nth-child\(n\+2\):not\(\.fc-filter\)\)/, "the head beyond its button row and the filter's row (All · Comments · Changes, a control row, not growth): " + tier);
   assert.match(tier, /\.fc-sec-send:has\(.*?\.fc-foot > :nth-child\(n\+2\)/, "the foot beyond Accept all · Reject all: " + tier);
   assert.match(tier, /\.fc-sec-send:has\(> :not\(\.fc-foot, \.fc-send\)/, "rows moved into the footer: " + tier);
   assert.match(tier, /\.fc-sec-log:has\(\.fc-log > :nth-child\(n\+2\)\)/, "the Log beyond its toggle: " + tier);
@@ -247,6 +247,23 @@ const toView = (page: any, sec: string, sel: string): Promise<void> => page.eval
 const boxOf = (page: any, sel: string): Promise<Box> => page.evaluate((sel: string) => { const r = (document.querySelector(".fileview-aside " + sel) as HTMLElement).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height, left: r.left, right: r.right }; }, sel);
 const active = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? (a.dataset.act || a.tagName) : "none"; });
 const inside = (b: Box, of: Box, what: string): void => assert.ok(b.top >= of.top - 0.5 && b.bottom <= of.bottom + 0.5, what + " is inside the aside's box: " + b.top + ".." + b.bottom + " vs " + of.top + ".." + of.bottom);
+/** The collapsed tier gives: with the grown sections at their floors and the track at its, the room left falls short of the
+ *  collapsed sections' content, and they give the difference in proportion to their content, scrolling inside themselves
+ *  — the two-tier rule's last step. Since the filter follow-on the head is three rows at 340px (the toggles wrap; All ·
+ *  Comments · Changes stands under them), and at 330px that row is what brings the composer-open and confirm states here:
+ *  with a two-row head the head, Send and the Log were uncut in both. `atMost`: the give the state can ask, the filter
+ *  row's height and a little. */
+const gaveShare = (f: Fit, names: string[], when: string, atMost: number): void => {
+  const secs = names.map((n) => { const s = f.sections[n]; assert.ok(s, "the " + n + " section"); return { n, s }; });
+  const content = secs.reduce((a, x) => a + x.s.scrollHeight, 0), room = secs.reduce((a, x) => a + x.s.clientHeight, 0);
+  const short = content - room;
+  assert.ok(short >= 0 && short <= atMost, when + ": the collapsed sections are short of their content by " + short + "px, within " + atMost);
+  for (const { n, s } of secs) {
+    assert.equal(s.overflowY, "auto", when + ": the " + n + " section scrolls inside itself");
+    // within 2px: the shrink runs on the content boxes (no padding), and both heights are integers
+    assert.ok(s.scrollHeight - s.clientHeight <= short * s.scrollHeight / content + 2, when + ": the " + n + " section gave no more than its share: " + (s.scrollHeight - s.clientHeight) + " of " + short);
+  }
+};
 const uncut = (f: Fit, name: string): void => { const s = f.sections[name]; assert.ok(s, "the " + name + " section"); assert.ok(s.scrollHeight <= s.clientHeight + 1, "the " + name + " section kept its content's height (nothing to scroll): " + s.scrollHeight + " in " + s.clientHeight); };
 const gave = (f: Fit, name: string): void => { const s = f.sections[name]; assert.ok(s, "the " + name + " section"); assert.equal(s.overflowY, "auto", "the " + name + " section is a scroll container of its own"); assert.ok(s.scrollHeight > s.clientHeight + 1, "the " + name + " section gave and scrolls inside itself: " + s.scrollHeight + " in " + s.clientHeight); };
 /** Nothing past the aside's edge: the sections add up to the aside, so there is nothing for a focus to scroll to. */
@@ -263,7 +280,11 @@ const fits = (f: Fit, when: string): void => {
 async function reachable(page: any, sel: string, sec: string, f: Fit, what: string): Promise<void> {
   let b = await boxOf(page, sel);
   let cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-  if (!(await hit(page, cx, cy, sel))) {
+  // whole in its section's box, or scrolled there: a control the section's edge cuts (the Log toggle's bottom at 200px, the
+  // filter row's at 330px with the composer open, since the filter follow-on made the head a row taller) still hits at its
+  // center, and the first cut scrolled only on a miss, so it read a cut control as in reach
+  const sb = await boxOf(page, sec);
+  if (!(await hit(page, cx, cy, sel)) || b.top < sb.top - 0.5 || b.bottom > sb.bottom + 0.5) {
     await toView(page, sec, sel);
     await frames(page);
     b = await boxOf(page, sel); cx = (b.left + b.right) / 2; cy = (b.top + b.bottom) / 2;
@@ -317,7 +338,11 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(f.composer, true, "the composer is open");
       fits(f, "composer open");
       gave(f, "composer");
-      for (const s of ["head", "send", "log"]) uncut(f, s);
+      // the composer at its floor, and the room short of the head's, Send's and the Log's content by the filter row's height:
+      // they give it in proportion (gaveShare), and the head's buttons, the filter's, Send and the Log toggle stay in reach
+      gaveShare(f, ["head", "send", "log"], "composer open", 30);
+      await reachable(pg, '[data-act="fcfile"]', ".fc-sec-head", f, "Comment on this file");
+      await reachable(pg, '[data-act="fcfilter"][data-key="all"]', ".fc-sec-head", f, "the filter's All");
       await reachable(pg, '[data-act="fclog"]', ".fc-sec-log", f, "the Log toggle");
       await reachable(pg, '[data-act="fcsend"]', ".fc-sec-send", f, "the Send button");
       // Reject all: its confirm row joins the foot. The review measured Send 37px and the Log 68px past the aside here.
@@ -327,7 +352,8 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(f.confirm, true, "the Reject all confirm is up");
       fits(f, "composer and confirm");
       gave(f, "composer"); gave(f, "send");
-      uncut(f, "head"); uncut(f, "log");
+      gaveShare(f, ["head", "log"], "composer and confirm", 30);   // the Send section at its floor too: a few px short, the head's and the Log's share
+      await reachable(pg, '[data-act="fcfilter"][data-key="all"]', ".fc-sec-head", f, "the filter's All");
       await reachable(pg, '[data-act="fclog"]', ".fc-sec-log", f, "the Log toggle");
       await reachable(pg, '[data-act="fcsend"]', ".fc-sec-send", f, "the Send button");
       await reachable(pg, '[data-act="fcrejectallgo"]', ".fc-sec-send", f, "the confirm's Reject all");

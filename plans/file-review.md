@@ -693,7 +693,10 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
   it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
   every change mark off in both views and back on, at once and without a status round trip, and
-  the choice is kept in the shared webview settings across opens and pages. An unpainted change
+  the choice is kept in the shared webview settings across opens and pages. **All · Comments ·
+  Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and
+  the marks to one kind, Comments and Changes carrying their counts and All none, and is kept the
+  same way; Send to session is not narrowed. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -1357,6 +1360,83 @@ chat's todo card and its Reply modal show the same chip (render.ts `todoFileChip
 which the review found missing: the class named no rule, so the card's chip was a plain link). The guide's Waiting on
 you and Files sections say both.
 
+The filter follow-on (2026-09-07): reviewing a document with dozens of routine changes, the user found
+the few comments that mattered buried among the change cards, and could not tell a comment card from a
+change card at a glance. The panel header gained a filter on the row under the two toggles, one group of
+the toggles' buttons, **All · Comments N · Changes M**, offered once the file has a card to filter
+(`filterOffered`) and kept as `commentsFilter` in the shared webview settings (`settings.ts`, "all" by
+default) the way `changesInline` is: read when a panel opens, written on each pick, and reaching an open
+panel elsewhere through the settings signal. Its counts are the action-row label's (`cardCounts` in
+`file-comments-model.ts`: the open comments and the pending changes), so the label and the control
+agree; All carries no count. A detached change is neither an open comment nor a pending change, so the
+Changes option carries the label's detached count after its own, "Changes 0 · 1 detached", and its title
+says the detached changes are listed in a group of their own: a file holding detached changes alone does
+not read as one with nothing to show (the review, 2026-09-07). **Comments** lists every comment card on
+its own, a comment bound to a pending change included
+(with the change's words as its reference and an "on a change" tag), with no change card, group, fold or
+Accept all · Reject all foot, and paints no change mark in the text; **Changes** lists the change cards
+alone, each with the comments made on it, and paints no comment highlight or region rectangle; **All**
+is the list as before. Show changes inline applies on top ("Changes" with the marks off shows the cards
+and no mark), the keyed expand state is untouched by a pick, and Send to session is not filtered: the
+confirm lists everything unsent as before. The buttons are one group for the keyboard: an arrow chooses
+the next or previous option, wrapping at the ends, and Home and End the first and last. Every card head
+names its kind, Comment, Change, or Region, in a word before the author's chip, styled like `.fc-note`
+(`--dim`, 0.86em; the `.fc-kind` rule), and the card's left edge is colored by kind, a 3px border in the
+accent for a comment (a region is one) and in `--text-muted` for a change (`data-cue`; both sheets,
+tokens only); a detached card keeps its dashed edge. A reply's box whose card the filter hides returns to
+the panel's slot with a line saying so, and Escape or Cancel moves the focus to the All button, the one
+that brings the card back. The review of 2026-09-07 settled five more behaviors. Under Comments a comment
+bound to a change is read as one on no change when the reply's box is placed (`replyAway`), so a resolved
+bound comment's line names the Resolved fold, where its card is, and Cancel focuses that fold; Comments
+never names a "… N more changes" row it does not render. The "on a change" tag's title says the change is
+pending only when it is among the status's hunks and says detached otherwise, naming the Detached changes
+group, and a detached change card's kind cue offers no accept or reject. A comment saved while Changes is
+chosen is hidden by the choice, its highlight or rectangle with it, and a save that shows nothing reads
+as one that failed: the panel keeps the saved comment's id (`hiddenSaved`) and renders a dismissable line
+at the top of the list saying the comment is saved and that All or Comments shows it (`hiddenSavedRow`);
+the line ends once the card shows, the comment is gone from the file, the ✕ is clicked, or the panel
+closes, a later return to Changes does not bring it back, and the kept choice is unchanged; a comment
+made from a change card's Reply rides that card under Changes and gets no line. Under the margin layout
+(the margin-layout follow-on, above) the line is one of the list's rows and stands in the footer above Send
+with the foot and the folds (`moveRows`), in view wherever the text is scrolled, where a row at the top of the
+locked track is not; the margin's scroll to a saved card (`scrollToSaved`) finds no card for a comment the
+filter hides and moves nothing. The filter hides a card by leaving it out of the list (`renderCards`), never by
+styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
+repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
+of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
+collapsed tier while that row is all the head holds beyond its buttons (`:has(.fc-head > :nth-child(n+2):not(.fc-filter))`
+in both sheets), so the head gives only in the collapsed tier's turn while it holds its two control rows alone;
+a Track choice or a refusal row still counts as growth. While the Slice 5 editor
+is up the filter row is offered all the same (Show changes inline is not: the editor draws every change
+itself), and the option titles say the editor keeps every change marked in its text rather than that the
+marks are hidden. The rows answering a click on the toggles' row, the Track scope choice, the folder Stop
+confirm and the track slot's loader and refusal, are inserted above the filter's row, directly under the
+toggles (`underToggles`), and the filter's row is under the toggles again once the question is answered;
+the other head rows keep their place below it. The second review round (2026-09-07) settled two more.
+With no filter row to stand above (a file with nothing to filter, or no status) the track slot's loader
+and refusal are inserted above the head's other rows, the status refusal's, the poll's and the editor's,
+rather than appended after them, so the answer to a Track click never stands below a row about the
+file. Under Comments the read view paints no change mark whatever Show changes inline says, so the
+toggle stays offered (its setting is shared with All, Changes and the other panels) and its title says the
+filter hides the marks and that the setting governs All and Changes, never that the text carries marks it
+does not. Tests: `ui/webview/file-comments-filter.test.ts` (driven),
+`ui/webview/file-comments-filter-review.test.ts` (the first round's fixes, driven over the same stand-in,
+with source pins) and `ui/webview/file-comments-filter-fixes.test.ts` (the second round's, driven the same
+way: the track rows with and without a filter row, the Changes empty state's stray rows, the saved line's
+rectangle wording and its end when the comment comes to ride a change card, and the inline toggle's title
+under each filter); the third round (2026-09-07) added `ui/webview/file-comments-filter-saved-line.test.ts`
+(driven the same way: the saved line's pick among several fresh comments in one status, and the row's
+shape, `.fc-note` on the words alone so the ✕ keeps the panel buttons' size) and
+`ui/webview/file-comments-saved-line-sizes.test.ts` (the saved row's ✕ and words resolved through both
+sheets' real cascade); `ui/webview/feed-css-kind-cue.test.ts` holds the sheets' kind-cue comment to the
+terms above and to the declarations it describes, and `ui/webview/file-comments-filter-wording.test.ts`
+holds the four driven suites' and the two size probes' titles, assertion messages and comments to the same
+terms (the rule by its selector, the token by name, the focus move by where the focus goes, no figure for
+any); `tools/file-review-plan.test.mjs`,
+`tools/file-review-plan-kind-cue.test.mjs`, `tools/file-review-plan-filter-review.test.mjs`,
+`tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
+the guide's paragraph to the source.
+
 ### Slice 3: region comments on images
 
 User-visible: on a standalone image, or on a figure embedded in a rendered markdown file, the
@@ -1943,6 +2023,40 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   scripting option; the installed build has no `eval`, `new Function`, or `isEvalSupported`, and
   its major is the one the section names; the caps are the section's 25 MB and 5,000 pages; the
   fallback is the frame; the worker asset is served behind `_authorize`.
+
+- The filter follow-on (2026-09-07): `ui/webview/file-comments-filter.test.ts` drives the panel through
+  the three states (the cards each shows, the marks each paints, the inline toggle on top), the default
+  and the kept choice, a pick elsewhere, the arrow keys, Send unchanged, the kind cue, and the counts
+  against the label's, and pins the delegate action, the header's order, the paint guards, the store's
+  key and default and the sheets' rules at source; `ui/webview/file-comments-filter-review.test.ts`
+  drives the review's six fixes over the same stand-in (the bound comment's reply under Comments in
+  three paths, the tag and cue titles for a detached change, the editor-up titles, the line for a
+  comment saved under Changes, the detached clause on the Changes option, and the head rows above the
+  filter's) and pins their source; `ui/webview/file-comments-filter-fixes.test.ts` drives the second
+  round's cases the same way (the track slot's loader and refusal with and without a filter row, the
+  Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
+  rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
+  under each filter) and pins the anchor and the title at source;
+  `ui/webview/file-comments-filter-saved-line.test.ts` drives the third round's cases the same way (a
+  status answering a save with several fresh comments, a session's among them, and the saved row's shape:
+  `.fc-note` on the words' span, the ✕ a `.fileview-btn` under the unsized row) and pins the row at
+  source; `ui/webview/file-comments-saved-line-sizes.test.ts` resolves the saved row's ✕ and words through
+  both sheets' whole cascade, holding them to `.fileview-btn`'s and `.fc-note`'s sizes;
+  `ui/webview/feed-css-kind-cue.test.ts`
+  holds the sheets' kind-cue comment to the note's terms and to the declarations it describes, byte-equal
+
+  across the two sheets, and `ui/webview/file-comments-filter-wording.test.ts` holds the four driven
+  suites' and the two size probes' titles, assertion messages and comments to the same terms (the rule by
+  its selector, the token by name, the focus move by where the focus goes, and none of the figures the
+  plan's review replaced); `tools/file-review-plan.test.mjs` and
+
+  `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
+  the source, `tools/file-review-plan-kind-cue.test.mjs` holds the note's kind-cue and focus
+  sentences to the sheets and the panel, `tools/file-review-plan-filter-review.test.mjs` holds the
+  note's review sentences and the UX paragraph's counts to the panel, the model and the guide, and
+  `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
+  and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
+  here and in the note.
 
 ## Docs
 

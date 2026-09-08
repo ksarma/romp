@@ -47,11 +47,14 @@ function sheet(): string {
   // `.fileview` is the viewer's card, the ancestor the fold's container query resolves against (its container-type)
   return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
 }
-// the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts
+// the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts.
+// 530px: the review's 500px plus the filter's row (All · Comments · Changes, under the toggles), so the track holds what it did
+// then — the reply case below centers paragraph 3's card while the reply's box still stands in it, and a card taller than the
+// track is clipped at its head by the excess (file-comments-margin-fixes.test.ts), which the box's leaving does not undo
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 body { margin: 0; padding: 0; font: 14px/1.5 sans-serif; background: #1e1e1e; color: #ccc; --card-border: #444; --fg: #ccc; --dim: #999; --text-faint: #777; --accent: #9cd2ff; --accent-fg: #0c1a2e; --accent-wash: rgba(156,210,255,0.15); --warn: #e0a030; --green: #7c7; --bg: #1e1e1e; --overlay-05: rgba(255,255,255,0.05); --radius-pill: 999px; --surface-raised: #252526; --shadow-menu: none; }
 ${sheet()}
-#wrap { width: 1000px; height: 500px; }</style></head><body><div class="fileview" id="wrap"><div class="fileview-main" id="main"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div><script src="/dist/margin-fixes.js"></script></body></html>`;
+#wrap { width: 1000px; height: 530px; }</style></head><body><div class="fileview" id="wrap"><div class="fileview-main" id="main"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div><script src="/dist/margin-fixes.js"></script></body></html>`;
 
 // ── the document and its comments (synthetic prose) ────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";

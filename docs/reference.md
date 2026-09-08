@@ -78,6 +78,28 @@ path, a URL of another scheme, and a spelling no path can have (a NUL byte in it
 machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
 names one.
 
+**Pinned notes.** A session can pin a short note above its own transcript: what you should see
+first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
+a strip between the tab bar and the transcript, oldest first, and the strip takes no space while a
+session has none. Each row is one line, and every row's full text is its title, so a hover reads
+any note whole on a desktop. A text the row cannot show whole ends in an ellipsis; its full text
+sits behind the row's *details* hint, as does any detail the session added, and a row that shows
+its whole text has no hint. Whether a row is cut is measured on the page, so the same note can fit
+a desktop and offer the hint on a phone or in a narrow pane.
+Click the row or the hint to read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
+pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
+scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request
+number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
+twice; a tap elsewhere, or leaving the control, takes the first click back); a session unpins its
+own notes with `unpin_note`, and unpinning a note that is already down is a plain answer, not an
+error. A note's line takes at most 300 characters and its detail 4000; a terminal escape sequence
+is dropped whole, and control characters other than a newline or a tab are dropped. At most eight
+notes stay pinned per session; a ninth drops the
+oldest, and the session is told which. The notes live in `pinned-notes.json` under Romp's state
+directory, keyed by session, so they survive a kernel restart and reappear when a session is
+revived. There is no switch: the two tools are always offered, since a pinned note asks nothing of
+you.
+
 These are for scripting and for agents rather than daily use:
 
 | Command | What it does |
@@ -307,6 +329,8 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `list_agents()` | The live sessions, each with its branch and working-note |
 | `set_working(text)` | Publish what you hold so peers steer clear |
 | `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
+| `pin_note(text, detail?)` | Pin a short note above the session's own transcript for you (where things stand, a warning, a summary); the line takes at most 300 characters and the detail 4000; returns its id, what is pinned now, and any note the eight-per-session bound dropped |
+| `unpin_note(id)` | Take a pinned note down; one already down is a plain answer, not an error |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 | `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about (User todos, above) |
@@ -1987,7 +2011,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   and rebuilds when a component moved), `bg_miss`, a map from each labelled component of the
   chat-build signature (the kernel's `_CHAT_SIG_LABELS`: the transcript, the
   states files, the goal store and its hold, the archive, episodes, sdk
-  registry and death marker, the task and user-todo stores, the pending cut,
+  registry and death marker, the task and user-todo stores, the pinned notes, the pending cut,
   the working note, the needs-you bit, the live tail's revision, the liveness
   row, the clock booleans, the backend's queue and brackets, the parked ops,
   the limit hold, the retry state, the live task rows, the watches, the

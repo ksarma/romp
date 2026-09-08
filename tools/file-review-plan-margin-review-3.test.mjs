@@ -45,11 +45,10 @@ const noteAt = slice2.indexOf(LABEL);
 assert.ok(noteAt >= 0, 'the note is in the Slice 2 section');
 const builtAt = slice2.indexOf(' Built: ', noteAt);
 assert.ok(builtAt > noteAt, 'the note turns to what was built');
-// ...to the note's end: the next follow-on note in the section (the anchors follow-on stands after this one, by its
-// time, since the 2026-09-08 merge), or the section's end when none follows.
-const nextNote = slice2.slice(noteAt + LABEL.length).search(/ The [a-z-]+ follow-on \(\d{4}-\d{2}-\d{2}\)/);
-const noteEnd = nextNote === -1 ? slice2.length : noteAt + LABEL.length + nextNote;
-const built = slice2.slice(builtAt, noteEnd);
+// ...to the next follow-on note under Slice 2 (the anchors follow-on's, then the todo-file's, then the filter's, in date
+// order since main merged the three branches), or the section's end when none follows.
+const builtEnd = (() => { const m = / The [a-z-]+ follow-on \(20\d\d-\d\d-\d\d\)/.exec(slice2.slice(builtAt)); return m ? builtAt + m.index : slice2.length; })();
+const built = slice2.slice(builtAt, builtEnd);
 const testsAt = built.lastIndexOf(' Tests: ');
 assert.ok(testsAt > 0, 'the Built account ends with the modules that pin it');
 const noteTests = built.slice(testsAt);
