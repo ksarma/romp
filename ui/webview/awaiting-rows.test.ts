@@ -283,9 +283,10 @@ test("the box's fold state survives the idle↔working flip: the renderer only R
   assert.ok(key.includes("st.awaitingWhy") && key.includes("st.awaitingItems"), "the flip and the rows both re-render the box");
   // …and the kernel ships the SAME rows in both states, so only the header changes on the flip
   assert.match(KERNEL, /def _awaiting_live_rows\(sid, path, live\):/);
-  assert.match(KERNEL, /def _session_background_items\(sid, path\):/);
-  assert.match(KERNEL, /def _awaiting_items_payload\(aw, sid, path, tmux=None\):[\s\S]*?if aw:\s*\n\s*return list\(aw\.get\("items"\) or \[\]\)\s*\n\s*with _serve_live\(tmux\):\s*\n\s*return _session_background_items\(sid, path\)/,
-    "the wait's own rows, else everything in flight — read under the caller's snapshot (no fresh liveness read on the working path)");
+  assert.match(KERNEL, /def _session_background_items\(sid, path, live=_LIVE_UNSET\):/,
+    "the mid-turn read takes the row the caller holds (the chat build's handed row), else reads the snapshot");
+  assert.match(KERNEL, /def _awaiting_items_payload\(aw, sid, path, tmux=None\):[\s\S]*?if aw:\s*\n\s*return list\(aw\.get\("items"\) or \[\]\)\s*\n\s*with _serve_live\(tmux\):\s*\n(?:\s*#[^\n]*\n)*\s*return _session_background_items\(sid, path, live=\(tmux\.get\(str\(sid\)\) if tmux is not None else _LIVE_UNSET\)\)/,
+    "the wait's own rows, else everything in flight — from the handed map's row, under the caller's snapshot (no fresh liveness read on the working path)");
   assert.match(KERNEL, /def _awaiting_join_items\(agents, commands, watch\):/, "one concatenation for the idle read and the turn-agnostic read");
 });
 

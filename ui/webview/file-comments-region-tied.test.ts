@@ -68,7 +68,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -345,7 +345,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: (n) => { offsets.push(n); }, reload: noop,
     ...ctxOver,
@@ -382,7 +382,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     /** The tags on a card's head, in order. */
     tags: (id: string) => main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!.querySelectorAll(".fc-tag").map((t) => t.textContent),
     float: () => { const f = doc.body.querySelectorAll(".fc-float"); return f[f.length - 1]; },
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -454,7 +454,7 @@ test("a region on the SECOND twin, the file changed at both ends: 'passage recur
   for (const args of drawn) assert.equal(args[0], b, "every thumbnail since the repaint is cut from the picture the region was drawn on, never from a twin now shown");
   assert.equal(h.input().value, "Crop the y axis.", "the note stands");
   assert.ok(h.q('.fc-composer [data-act="fcsave"]'), "Save is offered: the host rules on the tie");
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -476,7 +476,7 @@ test("a region on the SECOND twin, the file changed at both ends: 'passage recur
   assert.equal(pendingOn(b2), true);
   assert.equal(pendingOn(a2), false);
   assert.equal(h.input().value, "Crop the y axis.", "the note stays across the redraw");
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const again = h.last();
   assert.notEqual(again, c);
@@ -505,7 +505,7 @@ test("a region on the SECOND twin, that embed's line rewritten while the first s
   assert.equal(pendingOn(a2), false, "the first twin is the anchor's one hit, and not the figure drawn on");
   assert.equal(pendingOn(b2), false);
   const posted = h.posted.length;
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.posted.length, posted, "nothing posted: the host would place the one hit on the first twin");
   assert.ok(h.q(".fc-composer .fc-err")!.textContent.startsWith(EMBED_ELSEWHERE_SAVE), "the refusal row (its text, before the dismiss glyph)");
@@ -515,7 +515,7 @@ test("a region on the SECOND twin, that embed's line rewritten while the first s
   assert.equal(composerTag(h), null);
   assert.equal(pendingOn(b2), true);
   assert.equal(pendingOn(a2), false);
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -543,7 +543,7 @@ test("the same text back after a tie (the edit reverted): the pair is exact agai
   assert.equal(composerTag(h), null, "the pair's own text: no tag");
   assert.equal(pendingOn(b3), true, "the rectangle is back on the second twin");
   assert.equal(pendingOn(a3), false);
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().args.hintOffset, SECOND_AT, "the offset is sent again: it indexes the text the host will read");
   h.dispose();

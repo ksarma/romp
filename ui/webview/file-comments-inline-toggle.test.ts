@@ -342,7 +342,7 @@ function world(over: WorldOpts = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: an async GET in the real seam — held here until the test lands it (deferReload), else at once

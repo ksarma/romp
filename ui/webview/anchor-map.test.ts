@@ -256,7 +256,9 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   assert.match(VIEW, /const lines = html\.split\("\\n"\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/);
   assert.match(VIEW, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
   assert.match(VIEW, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
-  assert.match(VIEW, /const dirty = marked\.parse\(text\) as string;/);
+  // the viewer's parse carries its link-target hook (file-view-links.ts viewerWalkTokens) as a PER-CALL option: the tokens are
+  // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render
+  assert.match(VIEW, /const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/);   // the file kind's alone since the 2026-09-07 fold: a URL document takes marked's defaults
   const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map never reconfigures marked");
@@ -489,20 +491,20 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   const anchor = makeAnchor(source, r.range);
   assert.deepEqual(locateComment(source, anchor, r.range.start), { state: "located", range: r.range });
   assert.deepEqual(locateComment(source, anchor), { state: "located", range: { start: first, end: first + needle.length } }, "without the hint the engine takes the earliest tie");
-  // Enter with no edit in between: Save sends the anchor and the pair's start (saveComposer), and the host settles the
+  // A save with no edit in between: Save sends the anchor and the pair's start (saveComposer), and the host settles the
   // tie by that hint because it sits on a tied copy in the text the host read — the selected one. No offset: refused.
   const host = (await import(pathToFileURL(HOST).href)) as HostModule;
   const span = (at: number) => ({ from: at, to: at + needle.length });
   assert.deepEqual(host.locateExact(source, anchor, r.range.start, { exact: true }), span(second));
   assert.deepEqual(host.locateExact(source, anchor, undefined, { exact: true }), { error: "anchor-ambiguous" }, "a tie the request cannot settle");
-  // The session inserts two lines above the passage between the selection and Enter. The pair the composer holds
+  // The session inserts two lines above the passage between the selection and the save. The pair the composer holds
   // indexes the text the selection was made over; two paths reach the host from here.
   const at = source.indexOf("def put_note");
   assert.ok(first < at && at < second, "the insertion lands between the copies");
   const inserted = "# reviewed\r\n# twice\r\n";
   const edited = source.slice(0, at) + inserted + source.slice(at);
   const moved = second + inserted.length;
-  // (a) The panel saw the edit before Enter — the poll or Reload repainted over the new text: retargetComposer follows
+  // (a) The panel saw the edit before the save — the poll or Reload repainted over the new text: retargetComposer follows
   // the pair with its copy, exactly, by the edit's common prefix and suffix rather than by the anchor, and Save builds
   // the anchor over the edited text at the followed range and sends its start. The host places it on the selected copy,
   // and the panel paints the saved comment there with its stored anchorAt as the hint.
@@ -514,7 +516,7 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   assert.deepEqual(host.locateExact(edited, followed, f.range.start, { exact: true }), span(moved));
   assert.equal(edited.slice(moved, moved + needle.length), needle);
   assert.deepEqual(locateComment(edited, followed, moved), { state: "located", range: f.range });
-  // (b) Enter fired before the panel saw the edit: the hint is the pre-edit offset, which sits on no copy now. The
+  // (b) The save fired before the panel saw the edit: the hint is the pre-edit offset, which sits on no copy now. The
   // engine's nearest-wins from it happens to pick the selected copy here (the insertion is shorter than the gap between
   // the copies), a coincidence the host does not take: the request refuses (`anchor-moved`, surfaced by the comment
   // verb as `anchor-ambiguous` naming the moved text), nothing is written, and the note stays in the composer to be

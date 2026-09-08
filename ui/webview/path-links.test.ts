@@ -40,6 +40,10 @@ class TextNode {
 class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
 class Elm {
   className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
+  // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  attrs: Record<string, string> = {};
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   childNodes: (Elm | TextNode)[] = [];
   tabIndex = -1; role: string | null = null; onkeydown: ((e: unknown) => void) | null = null;
   clicks = 0;
@@ -103,7 +107,8 @@ test("a path link is a tab stop announced as a link, and Enter or Space clicks i
   assert.match(LINKS, /a\.tabIndex = 0;/);
   assert.match(LINKS, /a\.role = "link";/);
   assert.match(LINKS, /a\.onkeydown = pathLinkKey;/);
-  assert.match(LINKS, /function pathLinkKey\(e: KeyboardEvent\): void \{\n\s*if \(e\.key !== "Enter" && e\.key !== " "\) return;\n\s*e\.preventDefault\(\);\n\s*\(e\.currentTarget as HTMLElement\)\.click\(\);/);
+  // a held Cmd/Ctrl rides into the click as the same modifier (the file viewer reads it as "in a tab of its own"); a plain key is element.click()
+  assert.match(LINKS, /function pathLinkKey\(e: KeyboardEvent\): void \{\n\s*if \(e\.key !== "Enter" && e\.key !== " "\) return;\n\s*e\.preventDefault\(\);\n\s*const a = e\.currentTarget as HTMLElement;\n\s*if \(e\.metaKey \|\| e\.ctrlKey\) a\.dispatchEvent\(new MouseEvent\("click", \{ bubbles: true, cancelable: true, metaKey: e\.metaKey, ctrlKey: e\.ctrlKey \}\)\);\n\s*else a\.click\(\);/);
 });
 
 test("the walk's links carry the keyboard route too", async () => {

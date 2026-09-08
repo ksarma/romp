@@ -352,7 +352,7 @@ test('a passage the host commented on is replied to by track-reply and its ancho
 test('a quote that occurs several times with different surroundings anchors to the selected one, even with a stale hint', () => {
   const w = world();
   const { anchor, hintOffset, idx } = anchorAt(w.text, 'retry on timeout', 2);
-  // Two lines land above the passage between the selection and Enter: the offset is stale, the
+  // Two lines land above the passage between the selection and the save: the offset is stale, the
   // context is not, and the third occurrence is still the one commented on.
   const inserted = 'Added line one.\nAdded line two.\n';
   fs.writeFileSync(w.report, inserted + w.text);

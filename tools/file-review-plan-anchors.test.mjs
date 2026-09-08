@@ -138,7 +138,7 @@ test('the host paragraph and the commenting section state the refusal of an offs
   assert.ok(op.includes("`anchor-ambiguous` when two candidates tie and the request's offset cannot settle it: no offset was sent, or the offset sent sits on none of the tied copies in the text the host read, because the text moved after the selection"));
   assert.ok(op.includes('that offset is refused, with a message that says the text moved, rather than placed on the nearest copy'));
   assert.ok(ux.includes('two candidates tie and the offset cannot settle it: none was sent, or the one sent sits on no tied copy because the text moved after the selection, and the note is then refused rather than placed on the nearest copy'));
-  assert.ok(ux.includes('The typed note is never discarded by a refusal'));
+  assert.ok(ux.includes('The typed comment is never discarded by a refusal'));
   // the host: the creation path asks for an exact hit, with the request's offset mapped into the text the
   // host read (the second review, 2026-09-08: the browser measures against the fetch's BOM-stripped text,
   // the host keeps the BOM, so on a BOM file the correct selection was refused as moved), and maps

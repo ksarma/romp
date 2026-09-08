@@ -6,9 +6,9 @@
 // "passage recurs" tag and the card's words (copyUnsure), never as the copy that was chosen; the
 // follow-on note and the contract said the tie-break keeps the highlight on the chosen copy without that
 // condition. And the Raw acceptance criterion on a quote that occurs twice stated one outcome of two lines
-// inserted between the selection and Enter — anchors to the selected occurrence — while the system meets it
-// only when the panel painted the edit before Enter (followPassage moves the offset from a repaint); Enter
-// first sends the selection-time offset, which sits on no copy, and the host refuses anchor-ambiguous with
+// inserted between the selection and the save — anchors to the selected occurrence — while the system meets it
+// only when the panel painted the edit before the save (followPassage moves the offset from a repaint); the
+// save first sends the selection-time offset, which sits on no copy, and the host refuses anchor-ambiguous with
 // the note kept rather than place it on the nearest copy. The plan now states the fourth state, the
 // condition on the tie-break and both outcomes; this module holds each sentence to the source that makes it
 // true: the panel's paint pass, copyUnsure and its words, the tag and the note on the card; the host's
@@ -138,11 +138,11 @@ test('the contract and the follow-on note condition the tie-break on the positio
 
 // ── the Raw criterion: both outcomes, on its own fixture ────────────
 
-test('the Raw criterion states both outcomes of an insertion between the selection and Enter, and the old unconditional wording is gone', () => {
-  assert.ok(ux.includes('- Raw: a quote that occurs twice, with the same 24 characters around each copy so only the offset can tell them apart, anchors to the selected occurrence, including when two lines are inserted above the passage between the selection and Enter, provided the panel painted the edited text before Enter (the poll\'s reload, Reload, a refresh: `followPassage` moves the pending pair with its copy, exactly, and Save sends the moved offset, which the host finds on the selected copy).'));
-  assert.ok(ux.includes('When Enter comes before the panel has shown the edit, the offset sent indexes the old text and sits on no copy, and the host refuses `anchor-ambiguous` with a message that says the text moved, writes nothing, and the note stays in the composer to be placed by selecting the passage again, never on the nearest copy'));
-  assert.ok(!flat.includes('between the selection and Enter.'), 'the criterion no longer states one outcome unconditionally');
-  assert.ok(note.includes('The Raw acceptance criterion on a quote that occurs twice states both outcomes of lines inserted between the selection and Enter: the note lands on the selected copy when the panel painted the edit before Enter, since the follow moves the offset only from a repaint (`retargetComposer`, on `onRendered`), and is refused with the note kept when Enter came first'));
+test('the Raw criterion states both outcomes of an insertion between the selection and the save, and the old unconditional wording is gone', () => {
+  assert.ok(ux.includes('- Raw: a quote that occurs twice, with the same 24 characters around each copy so only the offset can tell them apart, anchors to the selected occurrence, including when two lines are inserted above the passage between the selection and the save, provided the panel painted the edited text before the save (the poll\'s reload, Reload, a refresh: `followPassage` moves the pending pair with its copy, exactly, and Save sends the moved offset, which the host finds on the selected copy).'));
+  assert.ok(ux.includes('When the save comes before the panel has shown the edit, the offset sent indexes the old text and sits on no copy, and the host refuses `anchor-ambiguous` with a message that says the text moved, writes nothing, and the note stays in the composer to be placed by selecting the passage again, never on the nearest copy'));
+  assert.ok(!flat.includes('between the selection and the save.'), 'the criterion no longer states one outcome unconditionally');
+  assert.ok(note.includes('The Raw acceptance criterion on a quote that occurs twice states both outcomes of lines inserted between the selection and the save: the note lands on the selected copy when the panel painted the edit before the save, since the follow moves the offset only from a repaint (`retargetComposer`, on `onRendered`), and is refused with the note kept when the save came first'));
 });
 
 test('on the Raw fixture, the host places the moved offset on the selected copy and refuses the selection-time one, as the criterion states', () => {
@@ -154,22 +154,22 @@ test('on the Raw fixture, the host places the moved offset on the selected copy 
   const anchor = at24(second);
   assert.deepEqual(anchor, at24(first), 'the copies tie at 24: only the offset can tell them apart');
   const span = (i) => ({ from: i, to: i + needle.length });
-  // Enter with no edit in between: the selection's start sits on the second copy, and the host places it there
+  // a save with no edit in between: the selection's start sits on the second copy, and the host places it there
   assert.deepEqual(locateExact(text, anchor, second, { exact: true }), span(second));
   assert.deepEqual(locateExact(text, anchor, undefined, { exact: true }), { error: 'anchor-ambiguous' }, 'no offset: a tie the request cannot settle');
-  // two lines inserted above the passage, between the copies, between the selection and Enter
+  // two lines inserted above the passage, between the copies, between the selection and the save
   const at = text.indexOf('def put_note');
   assert.ok(first < at && at < second, 'the insertion lands between the copies');
   const inserted = '# reviewed\r\n# twice\r\n';
   const edited = text.slice(0, at) + inserted + text.slice(at);
   const moved = second + inserted.length;
   assert.equal(edited.slice(moved, moved + needle.length), needle);
-  // (a) the panel painted the edit before Enter: the follow shifts the pair by the edit's length (followPassage,
+  // (a) the panel painted the edit before the save: the follow shifts the pair by the edit's length (followPassage,
   // pinned below), Save builds the anchor over the edited text at the moved pair and sends its start, and the host
   // places it on the selected copy
   const followed = { quote: needle, prefix: edited.slice(moved - 24, moved), suffix: edited.slice(moved + needle.length, moved + needle.length + 24) };
   assert.deepEqual(locateExact(edited, followed, moved, { exact: true }), span(moved), 'placed on the selected copy');
-  // (b) Enter came first: the selection-time offset indexes the old text and sits on no copy now; the engine's
+  // (b) the save came first: the selection-time offset indexes the old text and sits on no copy now; the engine's
   // nearest-wins from it would pick the selected copy here (the insertion is shorter than the gap), by luck
   // the host does not take
   assert.deepEqual(locateExact(edited, anchor, second), span(moved), 'nearest-wins, right by luck: what a stored position keeps');

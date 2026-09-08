@@ -83,7 +83,7 @@ class NudgeFailedRespectsTheStamp(unittest.TestCase):
         km.jd.GOALDIR.mkdir(parents=True)
         km._autonudge_cache.clear()
         self.gid = SID + ":g1"
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None   # the LIVE sources are dark (post-restart)
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None   # the LIVE sources are dark (post-restart)
         km._path_of = lambda sid, now=None: "/nonexistent"
         (td / "auto-nudge.json").write_text(json.dumps(
             {"enabled": True, "nudged": {self.gid: {"count": 1, "lastTurnId": "t1"}}}))
@@ -495,7 +495,7 @@ class AwaitingWake(unittest.TestCase):
         km._revivers_pending = lambda *a, **k: ""           # no other reviver holds the wake
         km._peer_answered_at = lambda sid: 0
         km._path_of = lambda sid, now=None: "/p"
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         km._pending_ops.pop(SID, None)
         self.gid = SID + ":g1"
         self.turns = [{"id": "t1", "ended": True, "end": 100, "t": 90, "atoms": []}]
@@ -694,7 +694,7 @@ class AwaitingWakeOutcomeSweep(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         km._session_working = lambda turns: False
         km._path_of = lambda sid, now=None: "/p"
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         km._peer_answered_at = lambda sid: 0
         km._log_nudge_event = lambda *a, **k: None
         km._push_all = lambda *a, **k: None

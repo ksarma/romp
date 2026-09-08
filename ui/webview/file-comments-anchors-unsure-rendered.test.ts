@@ -340,7 +340,7 @@ async function harness(over: { mode: "rendered" | "raw"; src: string; html?: str
     media: () => null, pdfPages: () => [], mediaElement: () => null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: noop, scrollToOffset: noop, reload: noop,
   };

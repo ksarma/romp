@@ -24,6 +24,9 @@ const RULES = [
   "a.fileview-gh-note {", ".fileview-body {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
+  // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file
+  ".fileview-body .file-uri-link, .fileview-body .fv-url {", ".fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover {",
+  ".fileview-md a.file-uri-link {", ".fileview-md a.file-uri-link:hover {", ".fileview-md a.fv-dead {",
   ".fileview-imgbox {", ".fileview-img {", ".fileview-frame {",
   // the PDF pages (Slice 4): the chunk's host, root, page and canvas, and the frame fallback's column
   ".fileview-pdfhost {", ".fileview-pdf {", ".fileview-pdf-page {", ".fileview-pdf-canvas {", ".fileview-pdffall {", ".fileview-pdffall .fileview-frame {",

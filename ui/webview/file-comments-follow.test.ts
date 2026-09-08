@@ -28,7 +28,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -305,7 +306,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: () => { /* inert */ },   // the viewer's close ask (main, 2026-09-07): the stand-in asks nothing
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
@@ -371,7 +372,8 @@ function startCommentInRow(w: World, row: number, quote: string): void {
   float.click();
 }
 const input = (aside: El): El => aside.querySelector(".fc-input")!;
-const press = (el: El, key: string) => dispatch(el, new Ev("keydown", { key }));
+/** The save chord (Ctrl+Enter; Cmd+Enter is the same key policy): a plain Enter is a newline in the box now. */
+const chord = (el: El) => dispatch(el, new Ev("keydown", { key: "Enter", ctrlKey: true }));
 const preselRows = (w: World): Array<[number, string]> => w.code.querySelectorAll(".fc-presel").map((m) => [w.code.childNodes.indexOf(m.closest(".fv-cl")!), m.textContent] as [number, string]);
 const tag = (aside: El): El | null => aside.querySelector(".fc-composer-ref .fc-tag");
 const SECOND_ROW = 4;   // title, blank, first, blank, second
@@ -423,7 +425,7 @@ test("a note on the second of three identical paragraphs, a long paragraph inser
   assert.deepEqual(preselRows(w), [[SECOND_ROW + 2, MARKER]], "the presel moved two rows down with ITS copy, not to the first");
   assert.equal(tag(aside), null, "followed: no tag");
   assert.equal(input(aside).value, "Say it once.", "the note stands");
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.ok(post, "Enter saves");
   assert.equal(post.args.hintOffset, SECOND + SHIFT, "the hint is the second copy's offset in the new text");
@@ -444,7 +446,7 @@ test("edits on both sides of the selected copy: the composer says the passage re
   assert.equal(tg!.title, PASSAGE_TIED);
   assert.equal(aside.querySelector(".fc-quote")!.textContent, MARKER, "the chip still names the passage");
   assert.deepEqual(preselRows(w), [], "no presel: which copy is not known");
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.ok(post, "Save is offered and Enter saves: the host rules");
   assert.equal(post.args.anchor.quote, MARKER);
@@ -458,7 +460,7 @@ test("edits on both sides of the selected copy: the composer says the passage re
   assert.equal(tag(aside), null, "a fresh pair: no tag");
   assert.deepEqual(preselRows(w), [[SECOND_ROW, MARKER]]);
   assert.equal(input(aside).value, "Say it once.");
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const again = lastOf(w, "fileComments", "comment");
   assert.notEqual(again, post);
   const secondNow = BOTH.indexOf(MARKER, BOTH.indexOf(MARKER) + 1);
@@ -478,7 +480,7 @@ test("a tie noted at one reload is dropped when the text is the pair's own again
   w.disk = DOC; w.ctx.reload();
   assert.equal(tag(aside), null, "the pair indexes the text shown: no tag");
   assert.deepEqual(preselRows(w), [[SECOND_ROW, MARKER]]);
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.equal(post.args.hintOffset, SECOND, "the offset is sent again: it indexes the text the host will read");
 });
@@ -494,7 +496,7 @@ test("a reload over the same text, and one whose only change is below the passag
   assert.deepEqual(preselRows(w), [[SECOND_ROW, MARKER]], "the offsets hold: the change is after the passage");
   assert.equal(tag(aside), null);
   input(aside).value = "Say it once.";
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   assert.equal(lastOf(w, "fileComments", "comment").args.hintOffset, SECOND);
 });
 

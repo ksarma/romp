@@ -906,6 +906,19 @@ class TheMessage(unittest.TestCase):
         for a, r in ((0, 0), (None, None), (0, None)):
             self.assertNotIn("I accepted", km._file_comments_message(REPORT, ONE, a, r, True, True), (a, r))
 
+    def test_a_body_with_a_line_break_keeps_it(self):
+        # The panel's box takes several lines (Enter adds one; Cmd+Enter or Ctrl+Enter saves, 2026-09-07): the body
+        # travels verbatim, the break inside it kept. ui/webview/file-comments.test.ts pins the webview's builder to
+        # this SAME text, so a change on either side fails one suite.
+        two = [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"', "body": "Which cache?\nSay which."}]
+        want = ("[obsidian-diff] I left 1 comment on %s.\n"
+                "\n"
+                "Comment 1781100000000-0 (on \"shipping the cache in v1.2\"):\n"
+                "Which cache?\n"
+                "Say which.\n"
+                "\n" % REPORT) + TAIL_TRACKED % (REPORT, REPORT)
+        self.assertEqual(km._file_comments_message(REPORT, two, 0, 0, True, True), want)
+
     def test_an_untracked_text_file_says_edit_normally(self):
         body = km._file_comments_message(REPORT, ONE, 0, 0, False, True)
         self.assertIn("  • to revise the text: edit the file normally, then say what you changed with the "
