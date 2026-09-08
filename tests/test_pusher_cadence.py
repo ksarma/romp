@@ -416,6 +416,13 @@ class SdkBackendSites(unittest.TestCase):
         init = inspect.getsource(sb.SdkBackend.__init__)
         self.assertIn("self._push_live_cb = push_live", init)
 
+    def test_the_session_death_carries_its_sid(self):
+        # the process ending is the sid's event (review 2026-09-08, should-fix 3): after the retire, which wakes
+        # only when it popped, the death itself wakes with the sid so a watched tab repaints at once
+        src = inspect.getsource(sb.SdkBackend._on_session_gone)
+        self.assertIn("self._wake_push_live(sess.sid)", src)
+        self.assertLess(src.index("self.retire_live_work(sess.sid)"), src.index("self._wake_push_live(sess.sid)"))
+
     def test_every_live_tail_site_carries_its_sid(self):
         # the sites that follow a change to ONE sid's live tail (_stash_live / _touch_live): a streamed
         # atom, the send echo, an unqueued echo, a dismissed echo, the dropped-echo flags, a command chip

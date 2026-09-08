@@ -12243,10 +12243,10 @@ class SdkBackend:
 
     def _wake_push_live(self, sid: str):
         """The wake for a change to `sid`'s live tail (a streamed atom; an echo added, retired or flagged; a
-        command chip): the kernel's cause-carrying callback when it wired one, else the plain wake. Every
-        _wake_push site that follows a _touch_live / _stash_live of one sid uses this; the sites that wake
-        for something else (a fast-mode or env change) keep _wake_push. tests/test_pusher_cadence.py pins
-        the split."""
+        command chip; the session process ending): the kernel's cause-carrying callback when it wired one,
+        else the plain wake. Every _wake_push site that follows a _touch_live / _stash_live of one sid uses
+        this, and _on_session_gone names its sid the same way; the sites that wake for something else (a
+        fast-mode or env change) keep _wake_push. tests/test_pusher_cadence.py pins the split."""
         cb = getattr(self, "_push_live_cb", None)
         if not cb:
             self._wake_push()
@@ -12667,6 +12667,10 @@ class SdkBackend:
         # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
         self._heal_stale_awaiting(sess.sid)
         self.retire_live_work(sess.sid)   # no stream left → unlanded work atoms must not hold the turn open
+        self._wake_push_live(sess.sid)    # the death is this sid's event and the tab it belongs to shows it (the
+        #                                   chip, the tail's end); the plain _poke below carries no sid, so a
+        #                                   watched tab's repaint would wait out the pusher's minimum interval
+        #                                   (review 2026-09-08); the retire's own wake fires only when it popped
         if sess._model_pending:           # a switch that never resolved before the thread died → don't trap the dots
             sess._model_pending = ""
             try:

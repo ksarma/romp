@@ -42325,8 +42325,8 @@ _producer_wake = _CountedEvent(lambda: _PERF_STATS.judge_wake())
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
 _pusher_wake = _CountedEvent()      # a threading.Event; set() also counts the wake for /perf
-# The CAUSE a wake carries (perf round 5, 2026-09-08): the sids whose in-memory live tail changed since the
-# pusher loop last read this set. The loop's minimum interval between cycle starts (PUSH_MIN_INTERVAL_S)
+# The CAUSE a wake carries (perf round 5, 2026-09-08): the sids whose in-memory live tail changed, or whose
+# session process ended, since the pusher loop last read this set. The loop's minimum interval between cycle starts (PUSH_MIN_INTERVAL_S)
 # holds every other wake; a wake for a tab a connected chat client is watching runs its cycle at once, so
 # the chat pane is as live as before the interval. Recorded at the wake site BEFORE the set(), read and
 # cleared by the loop AFTER its clear(): a sid recorded between the two is read next time, never lost.
