@@ -430,7 +430,7 @@ test("the default: All, the three buttons on their own row under the toggles, of
   assert.equal(seg.getAttribute("role"), "group"); assert.equal(seg.getAttribute("aria-label"), "Show");
   const btns = seg.childNodes as El[];
   assert.deepEqual(btns.map((b) => [b.tagName, b.dataset.act, b.dataset.key, b.textContent]), [["BUTTON", "fcfilter", "all", "All"], ["BUTTON", "fcfilter", "comments", "Comments 4"], ["BUTTON", "fcfilter", "changes", "Changes 5"]]);
-  for (const b of btns) assert.ok(b.classes.includes("fileview-btn") && b.classes.includes("fc-toggle"), "the toggles' dress: the chosen one is the accent fill");
+  for (const b of btns) assert.ok(b.classes.includes("fileview-btn") && b.classes.includes("fc-toggle"), "every button wears .fileview-btn.fc-toggle, the toggles' own classes, so the chosen one takes the accent fill (.fc-toggle[data-on=\"1\"])");
   assert.deepEqual(btns.map((b) => [b.dataset.on, b.getAttribute("aria-pressed")]), [["1", "true"], ["0", "false"], ["0", "false"]], "All is chosen");
   assert.equal(button.textContent, "Comments · 4 · 5 changes", "the label…");
   assert.deepEqual(cardCounts(full()), { comments: 4, changes: 5 }, "…and the counts are one source");
@@ -858,7 +858,7 @@ test("pins: the delegate action, the header's order, the paint guards, the store
   assert.doesNotMatch(literal[0].replace('commentsFilter: "all"', 'commentsFilter: "changes"'), DEFAULT_ALL);
 });
 
-test("pins: the sheets carry the cue's rules — the note's dress for the word, the accent edge for a comment, the muted edge for a change, the detached edge left alone — the same bytes in styles.css and feed.css, tokens only", () => {
+test("pins: the sheets carry the cue's rules — .fc-kind styled like .fc-note (--dim, 0.86em), a 3px left border in the accent for a comment and in --text-muted for a change, the detached edge left alone — the same bytes in styles.css and feed.css, tokens only", () => {
   const rules = [
     "\n.fc-kind { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }\n",
     '\n.fc-card[data-cue="comment"]:not(.fc-card-detached) { border-left: 3px solid var(--accent); }\n',

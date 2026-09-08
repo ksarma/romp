@@ -1078,10 +1078,24 @@ itself), and the option titles say the editor keeps every change marked in its t
 marks are hidden. The rows answering a click on the toggles' row, the Track scope choice, the folder Stop
 confirm and the track slot's loader and refusal, are inserted above the filter's row, directly under the
 toggles (`underToggles`), and the filter's row is under the toggles again once the question is answered;
-the other head rows keep their place below it. Tests: `ui/webview/file-comments-filter.test.ts` (driven)
-and `ui/webview/file-comments-filter-review.test.ts` (the review's fixes, driven over the same stand-in,
-with source pins); `tools/file-review-plan.test.mjs`, `tools/file-review-plan-kind-cue.test.mjs`,
-`tools/file-review-plan-filter-review.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
+the other head rows keep their place below it. The second review round (2026-09-07) settled two more.
+With no filter row to stand above (a file with nothing to filter, or no status) the track slot's loader
+and refusal are inserted above the head's other rows, the status refusal's, the poll's and the editor's,
+rather than appended after them, so the answer to a Track click never stands below a row about the
+file. Under Comments the read view paints no change mark whatever Show changes inline says, so the
+toggle stays offered (its setting is shared with All, Changes and the other panels) and its title says the
+filter hides the marks and that the setting governs All and Changes, never that the text carries marks it
+does not. Tests: `ui/webview/file-comments-filter.test.ts` (driven),
+`ui/webview/file-comments-filter-review.test.ts` (the first round's fixes, driven over the same stand-in,
+with source pins) and `ui/webview/file-comments-filter-fixes.test.ts` (the second round's, driven the same
+way: the track rows with and without a filter row, the Changes empty state's stray rows, the saved line's
+rectangle wording and its end when the comment comes to ride a change card, and the inline toggle's title
+under each filter); `ui/webview/feed-css-kind-cue.test.ts` holds the sheets' kind-cue comment to the
+terms above and to the declarations it describes, and `ui/webview/file-comments-filter-wording.test.ts`
+holds the three driven suites' titles and assertion messages to the same terms (the rule by its selector,
+the token by name, no figure for either); `tools/file-review-plan.test.mjs`,
+`tools/file-review-plan-kind-cue.test.mjs`, `tools/file-review-plan-filter-review.test.mjs`,
+`tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
 ### Slice 3: region comments on images
@@ -1559,11 +1573,22 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   drives the review's six fixes over the same stand-in (the bound comment's reply under Comments in
   three paths, the tag and cue titles for a detached change, the editor-up titles, the line for a
   comment saved under Changes, the detached clause on the Changes option, and the head rows above the
-  filter's) and pins their source; `tools/file-review-plan.test.mjs` and
+  filter's) and pins their source; `ui/webview/file-comments-filter-fixes.test.ts` drives the second
+  round's cases the same way (the track slot's loader and refusal with and without a filter row, the
+  Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
+  rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
+  under each filter) and pins the anchor and the title at source; `ui/webview/feed-css-kind-cue.test.ts`
+  holds the sheets' kind-cue comment to the note's terms and to the declarations it describes, byte-equal
+  across the two sheets, and `ui/webview/file-comments-filter-wording.test.ts` holds the three driven
+  suites' titles and assertion messages to the same terms (the rule by its selector, the token by name,
+  and neither figure the plan's review replaced); `tools/file-review-plan.test.mjs` and
   `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
   the source, `tools/file-review-plan-kind-cue.test.mjs` holds the note's kind-cue and focus
-  sentences to the sheets and the panel, and `tools/file-review-plan-filter-review.test.mjs` holds the
-  note's review sentences and the UX paragraph's counts to the panel, the model and the guide.
+  sentences to the sheets and the panel, `tools/file-review-plan-filter-review.test.mjs` holds the
+  note's review sentences and the UX paragraph's counts to the panel, the model and the guide, and
+  `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
+  and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
+  here and in the note.
 
 ## Docs
 

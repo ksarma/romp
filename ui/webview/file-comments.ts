@@ -3264,9 +3264,13 @@ class Panel {
     const card = this.cards().find((c) => c.id === id);
     if (!card || filter !== "changes" || card.hunk !== null) { this.hiddenSaved = null; return null; }
     const mark = card.target ? "rectangle" : card.anchor ? "highlight" : null;   // a whole-file comment has no mark in the file
-    const row = el("div", "fc-row fc-note fc-saved-hidden");
+    // .fc-note (0.86em) goes on the words alone, never on the row: a .fileview-btn (0.82em) under it would compound to
+    // 0.705em, smaller than every other panel button and than the ✕ of an err row the same list can show a line below
+    // (ui/CLAUDE.md, font sizes: nested em compounds; prefer flat contexts) — the Track scope and Reject all confirms put
+    // the class on their span the same way
+    const row = el("div", "fc-row fc-saved-hidden");
     row.dataset.id = card.id;
-    row.appendChild(el("span", undefined, "Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")
+    row.appendChild(el("span", "fc-note", "Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")
       + " hidden while Changes is chosen above (All or Comments shows " + (mark ? "them" : "it") + ")."));
     const x = btn("✕", "fchiddenx", "fileview-btn fc-x"); x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
     return row;
@@ -3365,7 +3369,7 @@ class Panel {
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
     card.dataset.id = c.id;
-    card.dataset.cue = "comment";                      // the left edge's colour: a comment's (a region is one) — the sheets' [data-cue] rules
+    card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
     // is text to select and copy (the sheet gives it cursor: text), and a click there must not fold the card
     // away from under the selection. The head is a Tab stop and takes Enter/Space (KEY_ACTS).
@@ -3547,7 +3551,7 @@ class Panel {
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
-    card.dataset.cue = "change";                       // the left edge's colour: a change's muted tone — the sheets' [data-cue] rules
+    card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
     if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
     head.dataset.id = c.key; head.dataset.act = "fccard";
