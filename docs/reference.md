@@ -68,16 +68,19 @@ link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a p
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
 a strip between the tab bar and the transcript, oldest first, and the strip takes no space while a
-session has none. Each row is one line; a longer text ends in an ellipsis and its full text is
-behind the row's *details* hint, as is any detail the session added. Click the row or the hint to
-read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
+session has none. Each row is one line. A text the row cannot show whole ends in an ellipsis; its
+full text is the row's title and sits behind the row's *details* hint, as does any detail the
+session added, and a row that shows its whole text has no hint. Whether a row is cut is measured on
+the page, so the same note can fit a desktop and offer the hint on a phone or in a narrow pane.
+Click the row or the hint to read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
 pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
 scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request
 number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
 twice; a tap elsewhere, or leaving the control, takes the first click back); a session unpins its
 own notes with `unpin_note`, and unpinning a note that is already down is a plain answer, not an
-error. A note's line takes at most 300 characters and its detail 4000; control characters other
-than a newline or a tab are dropped. At most eight notes stay pinned per session; a ninth drops the
+error. A note's line takes at most 300 characters and its detail 4000; a terminal escape sequence
+is dropped whole, and control characters other than a newline or a tab are dropped. At most eight
+notes stay pinned per session; a ninth drops the
 oldest, and the session is told which. The notes live in `pinned-notes.json` under Romp's state
 directory, keyed by session, so they survive a kernel restart and reappear when a session is
 revived. There is no switch: the two tools are always offered, since a pinned note asks nothing of

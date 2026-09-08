@@ -11,8 +11,11 @@ a summary). Kernel side, pinned here:
   store is sid-keyed, or one it never held: loud), "unreadable" (the store file is not a store: the fault
   named, never "no note of yours"); the tombstone that makes "already" possible and its bound;
 - the bounds: a session id (_safe_id) at the store and the routes, since one row under any other key
-  reads the whole file as not-a-store for every session; the text and detail lengths; control characters
-  dropped; a non-object JSON body a 400;
+  reads the whole file as not-a-store for every session; the text and detail lengths; ANSI escape
+  sequences dropped whole and then control characters (the cleaner the postal tool carries an identical
+  copy of, pinned equal here); a non-object JSON body a 400, and a non-string text or detail too (never
+  stored as its repr); a pin against a store file that is not a store answers the fault by name (the
+  unpin side's "unreadable" account), never a 500 traceback;
 - the POST routes (/pinnote, /unpinnote): the serve token, the answers (the evicted notes named), the
   ack-fast contract (never a synchronous push), the remote forward for a session an attached kernel owns
   and the 502 when that forward lands nothing (the wording shared with /usertodo/withdraw);
@@ -419,10 +422,68 @@ class Routes(_RouteLab):
                                             "detail": "d\x07\n keep"})
         self.assertEqual(code, 200)
         rec = km._pinned_notes_for(SID)[-1]
-        self.assertEqual(rec["text"], "line1\nline2\ttabnul[31mred", "control characters dropped; newline and tab kept; ends trimmed")
+        self.assertEqual(rec["text"], "line1\nline2\ttabnulred",
+                         "control characters dropped, an escape sequence dropped WHOLE; newline and tab kept; ends trimmed")
         self.assertEqual(rec["detail"], "d\n keep")
         self.assertEqual(self._post("/pinnote", {"id": SID, "text": "\x1b\x07"})[0], 400, "control characters alone clean to nothing")
         self.assertEqual(km._pinned_note_clean(None), "")
+        # a pasted terminal line (review round 2, 2026-09-08): before this the ESC byte alone was dropped and
+        # its parameters were pinned as the note ('[0m')
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "\x01\x02 \x1b[0m"})[0], 400,
+                         "controls plus an escape sequence clean to nothing: a blank, never a note reading '[0m'")
+        self.assertEqual(km._pinned_note_clean("\x1b[1;32mgreen\x1b[0m \x1b[?25lbold\x1b[K done"), "green bold done",
+                         "parameters, private-mode and erase sequences all go whole")
+        self.assertEqual(km._pinned_note_clean("\x1b]8;;x\x07link"), "]8;;xlink",
+                         "only CSI sequences are known here; a stray ESC still drops as a control character")
+
+    def test_the_tool_and_the_kernel_share_one_cleaner(self):
+        # the bus imports nothing from the kernel, so the tool carries a copy; the two SOURCES are pinned
+        # equal, so the tool refuses exactly what the kernel would (a text that cleans to nothing) instead of
+        # posting it and reporting the kernel's 400 as "try again shortly" (review round 2, 2026-09-08)
+        self.assertEqual(km._PINNED_ANSI_RE.pattern, pm._PINNED_ANSI_RE.pattern)
+        self.assertEqual(km._PINNED_CTRL_RE.pattern, pm._PINNED_CTRL_RE.pattern)
+        self.assertEqual(inspect.getsource(km._pinned_note_clean), inspect.getsource(pm._pinned_note_clean))
+        for raw in ("  ", "\x01\x02 \x1b[0m", "\x1b[31mred\x1b[0m alert", " line\nbreak\ttab\x00 "):
+            with self.subTest(raw=raw):
+                self.assertEqual(km._pinned_note_clean(raw), pm._pinned_note_clean(raw))
+
+    def test_a_non_string_text_or_detail_is_a_400_never_a_repr(self):
+        # a list, a dict or a number in the body pinned as "['a', 'b']" before (review round 2, 2026-09-08)
+        for body, field in (({"id": SID, "text": ["a", "b"]}, "text"),
+                            ({"id": SID, "text": 12345}, "text"),
+                            ({"id": SID, "text": {"k": 1}}, "text"),
+                            ({"id": SID, "text": "fine", "detail": {"k": 1}}, "detail"),
+                            ({"id": SID, "text": "fine", "detail": ["x"]}, "detail"),
+                            ({"id": SID, "text": "fine", "detail": 7}, "detail")):
+            with self.subTest(body=body):
+                code, out = self._post("/pinnote", body)
+                self.assertEqual(code, 400)
+                self.assertEqual(out["error"], "%s must be a string" % field)
+        self.assertEqual(km._pinned_notes_for(SID), [], "nothing was stored")
+        self.assertEqual(self.pushed_soon, [])
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "fine", "detail": None})[0], 200, "an explicit null detail is no detail")
+        self.assertNotIn("detail", km._pinned_notes_for(SID)[-1])
+
+    def test_pin_against_an_unreadable_store_answers_the_fault_not_a_traceback(self):
+        # before this the write's RuntimeError reached do_POST's outer handler: a 500 with a traceback body,
+        # which the tool folded into "try again shortly", never true until the file is fixed (review round 2,
+        # 2026-09-08). Now the unpin side's account: a 200 naming the fault, nothing changed, no wake.
+        p = jd.STATE / km.PINNED_NOTES_FILE
+        p.write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, out = self._post("/pinnote", {"id": SID, "text": "Waiting on CI"})
+        self.assertEqual(code, 200)
+        self.assertEqual((out["ok"], out["state"], out["notes"]), (False, "unreadable", []))
+        self.assertIn("not readable", out["error"])
+        self.assertIn(str(p), out["error"], "the fault names the file")
+        self.assertNotIn("noteId", out)
+        self.assertEqual(self.pushed_soon, [], "nothing changed, so no wake")
+        self.assertEqual(p.read_text(), "{not json", "the file is untouched")
+        p.unlink()                                       # fixed (removed): the same pin lands
+        code, out = self._post("/pinnote", {"id": SID, "text": "Waiting on CI"})
+        self.assertEqual(code, 200)
+        self.assertTrue(out["ok"])
+        self.assertEqual(self.pushed_soon, [True])
 
     def test_a_ninth_pin_names_the_note_it_dropped(self):
         for i in range(8):
@@ -528,6 +589,18 @@ class RemoteForward(_RouteLab):
         self.answer = (200, {"ok": True, "noteId": "pn-0badcafe", "notes": [], "dropped": [{"id": "pn-00000000", "text": "old"}]})
         code, res = self._post("/pinnote", {"id": RSID, "text": "remote note"})
         self.assertEqual(res["dropped"], [{"id": "pn-00000000", "text": "old"}])
+
+    def test_a_remote_kernels_unreadable_store_is_its_account_not_a_502_about_the_tunnel(self):
+        # the remote answered, with its own store fault: that rides through (as an unpin's account does), so
+        # the tool names the fault instead of a tunnel that is fine (review round 2, 2026-09-08)
+        self.answer = (200, {"ok": False, "state": "unreadable", "notes": [],
+                             "error": "the pinned-notes store (/elsewhere/pinned-notes.json) is not readable; nothing changed"})
+        code, res = self._post("/pinnote", {"id": RSID, "text": "remote note"})
+        self.assertEqual(code, 200)
+        self.assertEqual((res["ok"], res["state"], res["notes"], res["host"]), (False, "unreadable", [], "TESTHOST"))
+        self.assertIn("not readable", res["error"])
+        self.assertNotIn("noteId", res)
+        self.assertEqual(self.pushed_soon, [])
 
     def test_unpin_for_a_remote_session_is_forwarded_with_its_account(self):
         self.answer = (200, {"ok": False, "state": "already", "at": NOW, "dropped": False, "error": "already unpinned", "notes": []})

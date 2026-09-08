@@ -13,17 +13,18 @@
 // each (the sheet cuts a long text with an ellipsis; the strip itself is capped at a few rows and
 // scrolls past the cap, so the transcript and the composer stay on screen: review round 1, 2026-09-08),
 // the detail folded behind a click on the row's text or on its "details" hint (the user-todo row's
-// vocabulary; the hint is a button, so the keyboard reaches the fold), and a text long enough to be cut
-// carried in full inside that fold; at most PINNED_VISIBLE rows showing, the NEWEST, since the kernel's
-// own bound drops the oldest first, and the older rows behind one "+N more" fold that sits where they
-// live, above the visible rows. An empty list renders nothing (null), so the strip takes no space.
+// vocabulary; the hint is a button, so the keyboard reaches the fold), and a text the row cuts carried
+// in full inside that fold and as the row's title. WHICH rows are cut is decided by measurement, not by a
+// character count (below, pinnedMeasureCut). At most PINNED_VISIBLE rows showing, the NEWEST, since the
+// kernel's own bound drops the oldest first, and the older rows behind one "+N more" fold that sits where
+// they live, above the visible rows. An empty list renders nothing (null), so the strip takes no space.
 //
 // Click safety (ui/CLAUDE.md): no listener is hung on any node the BUILDER makes. Every control declares
 // a data-act (PINNED_ACT) for the delegate render.ts installs ONCE on the stable #pinned-notes host, and
 // the fold states are keyed by note id / session id in the state the caller holds, so a rebuild on the
 // next push paints the same open folds. The one listener set this module knows is armUnpin's, hung on a
 // GESTURE (the arming click) and taken down by the disarm, never by a render.
-import { utDetailHint, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 
 export interface PinnedNote { id: string; text: string; detail?: string; createdT?: number }
 export interface PinnedFoldState { openDetails: Set<string>; moreOpen: Set<string> }
@@ -39,12 +40,22 @@ export const PINNED_VISIBLE = 3;
 export const PINNED_ACT = { toggle: "pntoggle", more: "pnmore", unpin: "pnunpin" } as const;
 export const PINNED_UNPIN_LABEL = "Unpin";
 export const PINNED_UNPIN_ARMED = "Unpin?";
-// A row is one line, and the sheet cuts a longer text with an ellipsis; a text past this many characters
-// (or one with a line break) is carried IN FULL inside the row's fold, so nothing a session wrote is out
-// of reach. An approximation of the cut (the sheet cuts by width, which the builder cannot see): a phone
-// shows about fifty characters, a desktop column well over a hundred, so a text this long may be cut
-// somewhere and a shorter one shows whole on any surface the strip has.
-export const PINNED_LINE_CHARS = 72;
+// A row is one line, and the sheet cuts a longer text with an ellipsis. Which rows it cuts is a LAYOUT fact
+// (the pane's width, the font, the hint and Unpin controls beside the text) that the builder cannot see and
+// no character count predicts: a 72-character bound left a 60-character note cut on a phone with no hint,
+// no fold and no title, so the rest of it could not be read (review round 2, 2026-09-08). So every row
+// carries its full text as its title, every row is BUILT with a fold holding the full text (and the detail),
+// and the fold is OFFERED by measurement: pinnedMeasureCut reads each row's overflow after the paint
+// (scrollWidth > clientWidth) and marks the cut rows with PINNED_CUT_CLASS; the sheet shows the hint, the
+// click target and the fold's full text on a row wearing that class (or PINNED_BREAK_CLASS, a line break
+// the one-line row shows as a space, which the builder does know; or PINNED_DETAIL_CLASS, a detail), and
+// nothing on a row wearing none. render.ts runs the measure on the frame that carries the notes and on a
+// width change of the strip (pinnedWatchWidth: a ResizeObserver, the tab bar's idiom; no timer).
+export const PINNED_CUT_CLASS = "pn-over";
+export const PINNED_BREAK_CLASS = "pn-break";
+export const PINNED_DETAIL_CLASS = "pn-with-detail";
+/** The classes that mean "this row has something behind its fold", in one place for the sheet's test. */
+export const PINNED_FOLD_CLASSES: readonly string[] = [PINNED_CUT_CLASS, PINNED_BREAK_CLASS, PINNED_DETAIL_CLASS];
 
 /** The repaint gate: what the strip shows is a function of the active session and its rows, so the
  *  strip repaints only when this string changes: new information (a pin, an unpin, a tab switch) and
@@ -66,13 +77,57 @@ export function pinnedSplit<T>(notes: readonly T[]): { hidden: T[]; shown: T[] }
   return { hidden: notes.slice(0, notes.length - PINNED_VISIBLE), shown: notes.slice(notes.length - PINNED_VISIBLE) };
 }
 
-/** What the row's fold holds: the detail, and, first, the full text when the one-line row may cut it
- *  (PINNED_LINE_CHARS, or a line break, which the one-line row shows as a space). "" means no fold. */
-export function pinnedFoldText(n: PinnedNote): string {
-  const detail = (n.detail || "").trim();
-  const cut = n.text.length > PINNED_LINE_CHARS || /\n/.test(n.text);
-  if (!cut) return detail;
-  return detail ? n.text + "\n\n" + detail : n.text;
+/** Whether the row has anything behind its fold: a cut text (measured, or a line break) or a detail. */
+export function pinnedHasFold(item: { classList: { contains(c: string): boolean } }): boolean {
+  return PINNED_FOLD_CLASSES.some((c) => item.classList.contains(c));
+}
+
+/** The row's one-line text overflows its box: the cut, read after paint (a layout fact, never a count). */
+export function pinnedRowOverflows(txt: { scrollWidth: number; clientWidth: number }): boolean {
+  return txt.scrollWidth > txt.clientWidth;
+}
+
+/** The row's text is the fold's click target exactly when the row has a fold: a bare row's text is not a
+ *  control (nothing would open), so it declares no data-act and the delegate never fires for it. */
+function setFoldTarget(item: { classList: { contains(c: string): boolean } }, txt: HTMLElement): void {
+  if (pinnedHasFold(item)) txt.dataset.act = PINNED_ACT.toggle;
+  else delete txt.dataset.act;
+}
+
+/** What pinnedMeasureCut needs of a painted strip: the host, or a stand-in with the two query methods. */
+export interface PinnedStripRoot { querySelectorAll(sel: string): ArrayLike<HTMLElement> }
+
+/** Measure every row of a painted strip and mark the cut ones (PINNED_CUT_CLASS), so the hint, the click
+ *  target and the fold's full text show exactly where the one-line row does not show it all. Idempotent
+ *  (a row keeps its class while its measurement holds; a hidden row, in a closed "+N more" fold, measures
+ *  0 and 0 and wears nothing until the repaint that shows it). Returns how many rows changed. The events
+ *  that call it: the paint that carries the rows, and a width change of the strip (pinnedWatchWidth). */
+export function pinnedMeasureCut(root: PinnedStripRoot): number {
+  let changed = 0;
+  for (const item of Array.from(root.querySelectorAll(".pn-item"))) {
+    const txt = item.querySelector<HTMLElement>(".pn-text");
+    if (!txt) continue;
+    const over = pinnedRowOverflows(txt);
+    if (over !== item.classList.contains(PINNED_CUT_CLASS)) {
+      if (over) item.classList.add(PINNED_CUT_CLASS); else item.classList.remove(PINNED_CUT_CLASS);
+      changed++;
+    }
+    setFoldTarget(item, txt);
+  }
+  return changed;
+}
+
+const pnWatched = new WeakSet<object>();
+/** Re-measure the rows when the strip's width changes: one ResizeObserver per host, installed once (the
+ *  tab bar's idiom, render.ts ensureTabRowObserver), and once more when the document's fonts finish
+ *  loading, since a font swap re-widths every row without moving the host's box. Events, not timers. A
+ *  host without ResizeObserver (a stand-in) keeps the paint-time measure alone. */
+export function pinnedWatchWidth(host: HTMLElement): void {
+  if (pnWatched.has(host)) return;
+  pnWatched.add(host);
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => { pinnedMeasureCut(host); }).observe(host);
+  const fonts = (host.ownerDocument as any)?.fonts;
+  if (fonts && fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => { pinnedMeasureCut(host); }, () => {});
 }
 
 function make(doc: PinnedDoc, tag: string, cls: string): HTMLElement {
@@ -84,29 +139,28 @@ function make(doc: PinnedDoc, tag: string, cls: string): HTMLElement {
 function noteItem(doc: PinnedDoc, sid: string, n: PinnedNote, state: PinnedFoldState, link: PinnedLinkers): HTMLElement {
   const item = make(doc, "div", "pn-item");
   item.dataset.nid = n.id;
+  const detail = (n.detail || "").trim();
+  if (detail) item.classList.add(PINNED_DETAIL_CLASS);
+  if (/\n/.test(n.text)) item.classList.add(PINNED_BREAK_CLASS);   // the one-line row shows the break as a space
   const line = make(doc, "div", "pn-line");
   const txt = make(doc, "span", "pn-text");
   txt.textContent = n.text;
+  txt.title = n.text;   // the whole text on hover, whatever the one-line row shows of it
+  txt.dataset.nid = n.id;
   link.line(txt);   // paths and PR numbers link inside the one-line text
   const open = state.openDetails.has(n.id);
-  const fold = pinnedFoldText(n);
-  const hint = utDetailHint(fold, open);
-  if (hint) {
-    txt.classList.add("pn-has-detail");
-    txt.dataset.act = PINNED_ACT.toggle; txt.dataset.nid = n.id;
-    txt.title = hint.title;
-  }
+  const hint = utHintFor(open);
   line.appendChild(txt);
-  if (hint) {
-    // the hint is a BUTTON beside the text, not inside it: a keyboard reaches the fold through it
-    // (Enter / Space are a button's own click), and the ellipsis on a long text cannot swallow it
-    const more = make(doc, "button", UT_HINT_CLASS);
-    more.setAttribute("type", "button");
-    more.dataset.act = PINNED_ACT.toggle; more.dataset.nid = n.id;
-    more.setAttribute("aria-expanded", open ? "true" : "false");
-    applyUtHint(more, hint);
-    line.appendChild(more);
-  }
+  // the hint is a BUTTON beside the text, not inside it: a keyboard reaches the fold through it (Enter /
+  // Space are a button's own click), and the ellipsis on a long text cannot swallow it. Built on every
+  // row; the sheet shows it on a row with a fold (pinnedHasFold), and display:none keeps a bare row's
+  // out of the tab order.
+  const more = make(doc, "button", UT_HINT_CLASS);
+  more.setAttribute("type", "button");
+  more.dataset.act = PINNED_ACT.toggle; more.dataset.nid = n.id;
+  more.setAttribute("aria-expanded", open ? "true" : "false");
+  applyUtHint(more, hint);
+  line.appendChild(more);
   const unpin = make(doc, "button", "pn-unpin");
   unpin.setAttribute("type", "button");
   unpin.dataset.act = PINNED_ACT.unpin; unpin.dataset.nid = n.id; unpin.dataset.sid = sid;
@@ -114,12 +168,19 @@ function noteItem(doc: PinnedDoc, sid: string, n: PinnedNote, state: PinnedFoldS
   unpin.title = "take this note down (click twice)";
   line.appendChild(unpin);
   item.appendChild(line);
-  if (hint) {
-    const d = make(doc, "div", "pn-detail" + (open ? " open" : ""));
-    d.textContent = fold;
-    link.detail(d);
-    item.appendChild(d);
+  // the fold: the full text first (shown when the row is cut), then the detail (when there is one)
+  const d = make(doc, "div", "pn-detail" + (open ? " open" : ""));
+  const full = make(doc, "div", "pn-full");
+  full.textContent = n.text;
+  d.appendChild(full);
+  if (detail) {
+    const rest = make(doc, "div", "pn-more");
+    rest.textContent = detail;
+    d.appendChild(rest);
   }
+  link.detail(d);
+  item.appendChild(d);
+  setFoldTarget(item, txt);
   return item;
 }
 

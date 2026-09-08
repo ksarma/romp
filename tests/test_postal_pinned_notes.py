@@ -12,9 +12,13 @@ Pinned here:
   so a subagent's pin lands on its parent session, as documented);
 - pin echoes the kernel-minted id, the unpin contract, and the list pinned now, in the same breath;
 - the bounds are checked before the POST (a plain answer naming the bound, never the kernel's 400
-  folded into "couldn't pin that"), and the notes a pin evicted are named;
+  folded into "couldn't pin that"), and the notes a pin evicted are named; the text is cleaned with the
+  kernel's own cleaner first (a copy pinned equal by test_pinned_notes.py), so a text of whitespace,
+  control characters or escape sequences alone is refused HERE as blank, and a pasted escape sequence
+  goes whole; a non-string text or detail is refused, never pinned as its repr;
 - every failure is LOUD: no session identity, no text, an unreachable kernel, an id that is unknown or
-  another session's, a store that could not be read; never a silent success. A note of this session's
+  another session's, a store that could not be read (named, on a pin as on an unpin, with no "try again"
+  a retry cannot honour); never a silent success. A note of this session's
   that was ALREADY taken down (the person unpinned it from the strip) is a plain answer, not an error:
   the state the agent wanted holds (the #325 lesson).
 
@@ -108,9 +112,33 @@ class Dispatch(unittest.TestCase):
         self.assertIn("- pn-0badcafe: Read docs/plan.md before replying", out)
 
     def test_pin_without_text_is_refused_before_any_post(self):
-        out, err = pm._mcp_call("pin_note", {"text": "   "})
-        self.assertTrue(err)
-        self.assertEqual(self.posts, [])
+        for blank in ("   ", "\x1b\x07", "\x01\x02 \x1b[0m", "\x1b[0m\x1b[K"):
+            with self.subTest(text=blank):
+                out, err = pm._mcp_call("pin_note", {"text": blank})
+                self.assertTrue(err)
+                self.assertIn("Need 'text'", out, "the plain 'need text' answer, the same as for whitespace")
+                self.assertEqual(self.posts, [], "the kernel would refuse it too; it is never asked")
+
+    def test_a_pasted_escape_sequence_is_dropped_whole_before_the_post(self):
+        # before this only the ESC byte went and '[0m' reached the kernel as part of the note (review round 2,
+        # 2026-09-08); the tool now runs the kernel's own cleaner, so what it posts is what the kernel keeps
+        out, err = pm._mcp_call("pin_note", {"text": " \x1b[31mred\x1b[0m alert ", "detail": "\x1b[1mbold\x1b[0m\x00 line"})
+        self.assertFalse(err)
+        self.assertEqual(self.posts, [("/pinnote", {"id": SID, "text": "red alert", "detail": "bold line"})])
+        self.assertEqual(pm._pinned_note_clean("\x01\x02 \x1b[0m"), "")
+
+    def test_a_non_string_text_or_detail_is_refused_before_any_post(self):
+        for args, field in (({"text": ["a", "b"]}, "text"), ({"text": 12345}, "text"),
+                            ({"text": "fine", "detail": {"k": 1}}, "detail"), ({"text": "fine", "detail": 7}, "detail")):
+            with self.subTest(args=args):
+                out, err = pm._mcp_call("pin_note", args)
+                self.assertTrue(err)
+                self.assertIn("'%s'" % field, out)
+                self.assertIn("Nothing was pinned", out)
+                self.assertEqual(self.posts, [])
+        out, err = pm._mcp_call("pin_note", {"text": "fine", "detail": None})
+        self.assertFalse(err, "an explicit null detail is no detail")
+        self.assertEqual(self.posts[-1][1]["detail"], "")
 
     def test_an_over_long_pin_is_refused_plainly_before_any_post(self):
         out, err = pm._mcp_call("pin_note", {"text": "x" * 301})
@@ -148,6 +176,18 @@ class Dispatch(unittest.TestCase):
         out, err = pm._mcp_call("pin_note", {"text": "Waiting on CI"})
         self.assertTrue(err)
         self.assertIn("NOT", out, "says plainly the person will not see it")
+        self.assertIn("try again", out, "an unreachable kernel may be back shortly")
+
+    def test_a_pin_against_an_unreadable_store_names_the_fault_and_asks_for_no_retry(self):
+        # the kernel's account (review round 2, 2026-09-08; before it a 500 the tool read as "try again")
+        self.canned = {"ok": False, "state": "unreadable", "notes": [],
+                       "error": "the pinned-notes store (x) is not readable; nothing changed"}
+        out, err = pm._mcp_call("pin_note", {"text": "Waiting on CI"})
+        self.assertTrue(err)
+        self.assertIn("Couldn't pin that: the pinned-notes store (x) is not readable", out, "the fault, by name")
+        self.assertIn("NOT see it", out)
+        self.assertNotIn("try again", out, "a retry does nothing until the file is fixed")
+        self.assertNotIn("Pinned", out)
 
     def test_an_older_kernel_that_sends_no_list_gets_no_invented_account(self):
         self.canned = {"ok": True, "noteId": "pn-9f2c1a34"}

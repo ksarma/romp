@@ -1,19 +1,21 @@
 // Pinned notes (the user 2026-09-08): a session pins short notes above its own transcript for the
 // person it works for; the strip between the tab bar and the transcript shows them. The strip's
 // builder (pinned-notes.ts) is EXECUTED here against a small DOM stand-in (the pr-links.test.ts
-// convention): order, the three-row fold, the detail fold (with a long line's full text), the linkers,
-// the escaping and the unpin control, plus the armed Unpin's event-driven disarm (armUnpin) and the
-// unpin latch (latchedNotes) against stand-ins; the wiring into render.ts, the two page skeletons, the
-// kernel's frames and the styles are pinned at the source, the way the other webview tests pin the chat
-// renderer. The strip's height cap and the one-line rows are measured in a real browser by
+// convention): order, the three-row fold, the detail fold (with a cut line's full text, the cut MEASURED
+// on the painted row through stand-in widths, never counted), the linkers, the escaping and the unpin
+// control, plus the armed Unpin's event-driven disarm (armUnpin) and the unpin latch (latchedNotes)
+// against stand-ins; the wiring into render.ts, the two page skeletons, the kernel's frames and the
+// styles are pinned at the source, the way the other webview tests pin the chat renderer. The strip's
+// height cap, the one-line rows and the real cut on a phone's width are measured in a real browser by
 // pinned-notes-browser.test.ts; here the sheet's rules are pinned as text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedFoldText, armUnpin, latchUnpinAt, latchedNotes,
-  PINNED_VISIBLE, PINNED_LINE_CHARS, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED,
-  type PinnedNote, type PinnedFoldState, type PinnedLinkers, type UnpinLatch } from "./pinned-notes";
+import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedMeasureCut, pinnedRowOverflows, pinnedHasFold,
+  armUnpin, latchUnpinAt, latchedNotes,
+  PINNED_VISIBLE, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED, PINNED_CUT_CLASS, PINNED_BREAK_CLASS, PINNED_DETAIL_CLASS, PINNED_FOLD_CLASSES,
+  type PinnedNote, type PinnedFoldState, type PinnedLinkers, type UnpinLatch, type PinnedStripRoot } from "./pinned-notes";
 import { linkifyPrRefs } from "./pr-links";
 
 const read = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
@@ -39,6 +41,7 @@ class E {
   parentNode: E | null = null;
   childNodes: Array<E | T> = [];
   href = ""; target = ""; rel = ""; title = ""; className = "";
+  scrollWidth = 0; clientWidth = 0;   // the measured widths (a test sets them to stand for a layout)
   style: Record<string, string> = {};
   dataset: Record<string, string | undefined> = {};
   attrs: Record<string, string> = {};
@@ -84,6 +87,8 @@ class E {
     return out;
   }
   elements(): E[] { return this.childNodes.filter((c): c is E => c instanceof E); }
+  querySelectorAll(sel: string): E[] { return this.all(sel); }
+  querySelector(sel: string): E | null { return this.all(sel)[0] || null; }
 }
 (globalThis as any).document = {
   createElement: (tag: string) => new E(tag.toUpperCase()),
@@ -105,6 +110,7 @@ function spies() {
 const build = (ns: PinnedNote[], st = state(), link = spies().link) =>
   buildPinnedNotes(doc, SID, ns, st, link) as unknown as E | null;
 const rowsOf = (strip: E) => strip.all(".pn-item");
+const measure = (strip: E) => pinnedMeasureCut(strip as unknown as PinnedStripRoot);   // the stand-in's widths stand for a layout
 const textOf = (row: E) => row.all(".pn-text")[0];
 
 test("nothing pinned renders nothing, and the strip takes no space", () => {
@@ -151,13 +157,16 @@ test("at most three rows show, the newest; the older fold behind one '+N more' r
   assert.equal(build(notes(3))!.all(".pn-rest").length, 0);
 });
 
-test("the detail folds behind a click on the row or its hint BUTTON (the keyboard's way in), with the user-todo row's words; a bare row has neither", () => {
+test("the detail folds behind a click on the row or its hint BUTTON (the keyboard's way in), with the user-todo row's words; a bare row offers neither", () => {
   const strip = build([note(0, { detail: "The api tests flake on the auth step" }), note(1)])!;
   const [withDetail, bare] = rowsOf(strip);
+  assert.equal(PINNED_DETAIL_CLASS, "pn-with-detail");
+  assert.ok(withDetail.classList.contains(PINNED_DETAIL_CLASS), "the row wears the class the sheet keys the offer on");
+  assert.ok(pinnedHasFold(withDetail));
   const t = textOf(withDetail);
-  assert.ok(t.classList.contains("pn-has-detail"));
   assert.equal(t.dataset.act, PINNED_ACT.toggle);
   assert.equal(t.dataset.nid, "pn-00000000");
+  assert.equal(t.title, "note 0", "the text's title is the text itself, whole");
   assert.equal(t.all(".ut-more").length, 0, "the hint is not inside the text: a long line's ellipsis must not swallow it");
   const more = withDetail.all(".ut-more")[0];
   assert.equal(more.tagName, "BUTTON", "a real button: Enter and Space are its own click, and Tab reaches it");
@@ -168,11 +177,22 @@ test("the detail folds behind a click on the row or its hint BUTTON (the keyboar
   assert.equal(more.textContent, "▸ details", "the same hint vocabulary as a user-todo row");
   assert.deepEqual(withDetail.all(".pn-line")[0].elements().map((e) => e.className.split(" ")[0]), ["pn-text", "ut-more", "pn-unpin"], "text, hint, Unpin, in the line");
   const d = withDetail.all(".pn-detail")[0];
-  assert.equal(d.textContent, "The api tests flake on the auth step");
+  assert.equal(d.all(".pn-more")[0].textContent, "The api tests flake on the auth step");
+  assert.equal(d.all(".pn-full")[0].textContent, "note 0", "the fold carries the full text too, shown only when the row is cut");
   assert.ok(!d.classList.contains("open"), "folded by default: the one-line version first");
+  // a bare row: built with the same hint and fold (so a later measure can offer them without a rebuild),
+  // wearing none of the fold classes, so the sheet hides both and the text is no click target
   assert.equal(textOf(bare).dataset.act, undefined, "a bare row has no click target for a fold");
-  assert.equal(bare.all(".pn-detail").length, 0);
-  assert.equal(bare.all(".ut-more").length, 0);
+  assert.ok(!pinnedHasFold(bare));
+  assert.deepEqual(PINNED_FOLD_CLASSES, ["pn-over", "pn-break", "pn-with-detail"]);
+  for (const c of PINNED_FOLD_CLASSES) assert.ok(!bare.classList.contains(c), "bare: no " + c);
+  assert.equal(bare.all(".ut-more").length, 1);
+  assert.equal(bare.all(".pn-detail").length, 1);
+  assert.equal(bare.all(".pn-more").length, 0, "no detail, no detail node");
+  assert.match(CSS, /\.pn-line \.ut-more \{ display: none;/, "the hint is hidden (and out of the tab order) unless the row offers a fold");
+  assert.match(CSS, /\.pn-over \.ut-more, \.pn-break \.ut-more, \.pn-with-detail \.ut-more \{ display: inline-block; \}/);
+  assert.match(CSS, /\.pn-over \.pn-detail\.open, \.pn-break \.pn-detail\.open, \.pn-with-detail \.pn-detail\.open \{ display: block; \}/);
+  assert.match(CSS, /\.pn-full \{ display: none; \}\n\.pn-over \.pn-full, \.pn-break \.pn-full \{ display: block; \}/, "the full text shows in the fold of a cut row only");
   // open state survives a rebuild through the keyed set
   const st = state(); st.openDetails.add("pn-00000000");
   const again = rowsOf(build([note(0, { detail: "more" })], st)!)[0];
@@ -184,29 +204,58 @@ test("the detail folds behind a click on the row or its hint BUTTON (the keyboar
   assert.match(DELEGATE, /more\.setAttribute\("aria-expanded", open \? "true" : "false"\)/);
 });
 
-test("a row is one line: a long text (or one with a line break) is carried in full inside the fold, before any detail", () => {
-  assert.equal(PINNED_LINE_CHARS, 72);
+test("a row is one line: a text the layout cuts is carried in full inside the fold and as the title; the cut is MEASURED after paint, never counted", () => {
   const long = "The staging deploy is blocked on the schema migration: run docs/migrate.md step 3 first, then re-run the api suite";
-  assert.ok(long.length > PINNED_LINE_CHARS);
-  assert.equal(pinnedFoldText(note(0)), "", "a short bare note has no fold");
-  assert.equal(pinnedFoldText(note(0, { detail: " d " })), "d");
-  assert.equal(pinnedFoldText(note(0, { text: long })), long, "the full text");
-  assert.equal(pinnedFoldText(note(0, { text: long, detail: "and the detail" })), long + "\n\nand the detail", "the text first, then the detail");
-  assert.equal(pinnedFoldText(note(0, { text: "two\nlines" })), "two\nlines", "a line break the one-line row shows as a space");
-  const [row] = rowsOf(build([note(0, { text: long })])!);
-  assert.equal(textOf(row).textContent, long, "the line carries the text; the sheet cuts it, not the builder");
-  assert.equal(textOf(row).dataset.act, PINNED_ACT.toggle, "so the row folds open");
-  assert.equal(row.all(".ut-more").length, 1);
-  assert.equal(row.all(".pn-detail")[0].textContent, long);
+  const strip = build([note(0, { text: long }), note(1, { text: "two\nlines" }), note(2)])!;
+  const [cut, broken, fits] = rowsOf(strip);
+  assert.equal(textOf(cut).textContent, long, "the line carries the text; the sheet cuts it, not the builder");
+  assert.equal(textOf(cut).title, long, "the whole text on hover, on every row");
+  assert.equal(textOf(fits).title, "note 2");
   assert.match(CSS, /\.pn-text \{ flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/, "one line, cut with an ellipsis");
+  // built: nothing is cut yet (no layout has happened), except the line break the builder does know
+  assert.equal(PINNED_CUT_CLASS, "pn-over");
+  assert.equal(PINNED_BREAK_CLASS, "pn-break");
+  assert.ok(!cut.classList.contains(PINNED_CUT_CLASS));
+  assert.equal(textOf(cut).dataset.act, undefined, "no fold offered before the measure");
+  assert.ok(broken.classList.contains(PINNED_BREAK_CLASS), "a line break the one-line row shows as a space: a cut the builder knows");
+  assert.equal(textOf(broken).dataset.act, PINNED_ACT.toggle);
+  assert.equal(broken.all(".pn-full")[0].textContent, "two\nlines");
+  // measured: the layout says the first row overflows (stand-in widths), the others fit
+  assert.equal(pinnedRowOverflows({ scrollWidth: 318, clientWidth: 302 }), true);
+  assert.equal(pinnedRowOverflows({ scrollWidth: 302, clientWidth: 302 }), false);
+  textOf(cut).scrollWidth = 318; textOf(cut).clientWidth = 302;
+  textOf(broken).scrollWidth = 60; textOf(broken).clientWidth = 302;
+  textOf(fits).scrollWidth = 40; textOf(fits).clientWidth = 302;
+  assert.equal(measure(strip), 1, "one row changed");
+  assert.ok(cut.classList.contains(PINNED_CUT_CLASS));
+  assert.ok(pinnedHasFold(cut));
+  assert.equal(textOf(cut).dataset.act, PINNED_ACT.toggle, "so the row folds open");
+  assert.equal(cut.all(".pn-full")[0].textContent, long, "the fold carries the full text");
+  assert.ok(!fits.classList.contains(PINNED_CUT_CLASS));
+  assert.equal(textOf(fits).dataset.act, undefined);
+  assert.equal(measure(strip), 0, "idempotent: the same layout changes nothing");
+  // the pane widens: the row fits, the offer is withdrawn (the hint and the fold hide, the text is no target)
+  textOf(cut).scrollWidth = 302;
+  assert.equal(measure(strip), 1);
+  assert.ok(!cut.classList.contains(PINNED_CUT_CLASS));
+  assert.equal(textOf(cut).dataset.act, undefined);
+  assert.ok(broken.classList.contains(PINNED_BREAK_CLASS), "the measure never takes the builder's break away");
+  // no character count anywhere in the module: the cut is a layout fact (review round 2, 2026-09-08)
+  const code = MODULE.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")).join("\n");
+  assert.doesNotMatch(code, /PINNED_LINE_CHARS|text\.length|textContent\.length/, "no count of the text decides the fold");
+  // render.ts measures at every paint that shows rows, and watches the strip's width (once), no timer
+  assert.match(RENDER_FN, /host\.style\.display = strip \? "" : "none";\s*\n\s*if \(strip\) \{[\s\S]*?pinnedMeasureCut\(host\);\s*\n\s*pinnedWatchWidth\(host\);\s*\n\s*\}/);
+  assert.match(MODULE, /new ResizeObserver\(\(\) => \{ pinnedMeasureCut\(host\); \}\)\.observe\(host\)/);
+  assert.doesNotMatch(code, /setTimeout|setInterval|requestAnimationFrame/, "events, not timers");
 });
 
-test("paths and PR references link through the caller's linkers: the line pass on every row, the detail pass on every detail", () => {
+test("paths and PR references link through the caller's linkers: the line pass on every row, the detail pass on every row's fold", () => {
   const sp = spies();
   const strip = build([note(0, { detail: "see docs/plan.md" }), note(1)], state(), sp.link)!;
   assert.deepEqual(sp.line.map((n) => n.classList.contains("pn-text")), [true, true], "the one-line text of every row");
   assert.deepEqual(sp.line.map((n) => n.childNodes[0].textContent), ["note 0", "note 1"], "the text is in place when the linker runs");
-  assert.deepEqual(sp.detail.map((n) => n.classList.contains("pn-detail")), [true], "the detail of the row that has one");
+  assert.deepEqual(sp.detail.map((n) => n.classList.contains("pn-detail")), [true, true], "the fold of every row: its full text, and the detail when there is one");
+  assert.deepEqual(sp.detail.map((n) => n.all(".pn-more").length), [1, 0]);
   assert.equal(strip.all(".pn-text").length, 2);
   // the real PR linker over a row: `#12` becomes an anchor into the session's repository
   const link: PinnedLinkers = { line: (n) => { linkifyPrRefs(n as unknown as Node, "acme/notes-api"); }, detail: () => {} };
@@ -268,7 +317,7 @@ test("the strip sits below the tab strip and above the transcript, on BOTH page 
   assert.match(SKELETON, /<div id="pinned-notes" style="display:none"><\/div>/);
   assert.match(CSS, /#pinned-notes \{ flex: 0 0 auto;/);
   assert.match(CSS, /\.pn-detail \{ display: none;/);
-  assert.match(CSS, /\.pn-detail\.open \{ display: block; \}/);
+  assert.match(CSS, /\.pn-with-detail \.pn-detail\.open \{ display: block; \}/);
   assert.match(CSS, /\.pn-rest \{ display: none; \}/);
   assert.match(CSS, /\.pn-unpin\.armed \{/);
   // the sizes are the user-todo row's, no new font size on the surface (ui/CLAUDE.md)

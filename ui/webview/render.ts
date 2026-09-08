@@ -32,7 +32,7 @@ import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
-import { buildPinnedNotes, pinnedNotesKey, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
+import { buildPinnedNotes, pinnedNotesKey, pinnedMeasureCut, pinnedWatchWidth, armUnpin, latchUnpinAt, latchedNotes, PINNED_ACT, type PinnedNote, type PinnedFoldState, type UnpinLatch } from "./pinned-notes";
 import { awaitWord, awaitBreakdown, groupRows, GROUP_TITLE, workingFor, type AwaitRow } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
@@ -11768,7 +11768,8 @@ function toggleLedgerCollapsed() {
 // delegated to the stable host (below, installed once). A path in a note's text or detail links like one
 // on a user-todo row (linkTodoLinePaths / linkTodoDetailPaths, the same session resolving relative
 // paths), and a `#123` links to the session's PR (linkifyPrRefs): the one pair of linkers, no second
-// code path.
+// code path. Which rows are CUT by the one-line layout (and so offer the fold with their full text) is
+// measured on the painted rows (pinnedMeasureCut) at every paint and on a width change, not counted.
 const pnFolds: PinnedFoldState = { openDetails: new Set(), moreOpen: new Set() };
 let pnPainted = "";   // pinnedNotesKey of what the strip shows; "" forces the next call to paint
 let pnLatch: UnpinLatch | null = null;   // the unpin(s) the kernel has not confirmed yet (latchUnpinAt)
@@ -11791,6 +11792,13 @@ function renderPinnedNotes(force = false): void {
   }) : null;
   if (strip) host.replaceChildren(strip); else host.replaceChildren();
   host.style.display = strip ? "" : "none";
+  if (strip) {
+    // which rows the one-line layout cuts is read off the painted rows, never guessed from a character
+    // count (review round 2, 2026-09-08): now, for the rows this frame carries, and again on a width
+    // change of the strip (pinnedWatchWidth, installed once: the tab bar's ResizeObserver idiom)
+    pinnedMeasureCut(host);
+    pinnedWatchWidth(host);
+  }
 }
 
 function renderLedger() {
@@ -17216,8 +17224,7 @@ setupSettings();
       item?.querySelector(".pn-detail")?.classList.toggle("open", open);
       const more = item?.querySelector<HTMLElement>("." + UT_HINT_CLASS);
       if (more) { applyUtHint(more, utHintFor(open)); more.setAttribute("aria-expanded", open ? "true" : "false"); }
-      const txt = item?.querySelector<HTMLElement>(".pn-text");
-      if (txt) txt.title = utHintFor(open).title;
+      // the text's title stays the full text (the builder set it); only the hint's words flip
     },
     // the "+N more" fold over the older rows: keyed by session id; a forced repaint flips the label
     // and shows the rows (the todo card's completed-fold idiom)

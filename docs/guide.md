@@ -62,7 +62,7 @@ plain text.
 **Pinned notes.** A session can pin a short note for you above its transcript: where things
 stand, a warning, a summary. The notes appear in a strip between the tab bar and the transcript,
 oldest first, one line each, and the strip is absent while a session has pinned nothing. Click a
-row that shows a *details* hint to read the rest (a long line's full text is there too); when more
+row that shows a *details* hint to read the rest (a cut line's full text is there too); when more
 than three notes are pinned, the older ones fold behind a *+N more* row, and the strip scrolls once
 it is a few rows tall. Paths and pull request numbers in a note are links. **Unpin**, clicked
 twice, removes a note; a session can also unpin its own. A note stays until unpinned, across

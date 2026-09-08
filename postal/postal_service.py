@@ -3222,6 +3222,20 @@ USER_TODOS_OFF_WITHDRAW = ("User todos are turned off on this machine, so there 
 # 400 folded into "couldn't pin that" and a retry of the same text.
 PIN_TEXT_MAX = 300
 PIN_DETAIL_MAX = 4000
+# The cleaner the kernel and the postal tool share (the tool carries an identical copy, since the bus imports
+# nothing from the kernel; tests/test_pinned_notes.py pins the two sources equal): a pasted terminal line
+# arrives with ANSI escape sequences, and dropping only the control bytes left their parameters as the note
+# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So a whole CSI sequence (ESC [ parameters,
+# intermediates, one final byte) goes first, then the remaining control characters.
+_PINNED_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")           # one ANSI CSI sequence, whole
+_PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # control characters, except newline and tab
+
+
+def _pinned_note_clean(s):
+    """A note's text or detail as stored: ANSI escape sequences dropped whole, then control characters
+    (a NUL, a stray ESC) except newline and tab, then the surrounding whitespace. A value that is nothing
+    but those cleans to "", which is refused as a blank is."""
+    return _PINNED_CTRL_RE.sub("", _PINNED_ANSI_RE.sub("", str(s or ""))).strip()
 
 
 def _pinned_notes_words(notes):
@@ -3421,8 +3435,15 @@ def _mcp_call(name, args):
         # the id. `mid` is the calling SESSION (a subagent's pin lands on its parent; see MCP_TOOLS).
         if not mid:
             return "Not inside a romp session.", True
-        text = str(args.get("text") or "").strip()
-        detail = str(args.get("detail") or "").strip()
+        for field in ("text", "detail"):
+            # a list, a dict or a number is refused, never pinned as its repr (review round 2, 2026-09-08)
+            if args.get(field) is not None and not isinstance(args.get(field), str):
+                return "Need '%s' as a plain string. Nothing was pinned." % field, True
+        # the kernel's own cleaner (one copy each side, pinned equal), so the tool refuses exactly what the
+        # kernel would: a text of whitespace, control characters or escape sequences alone is blank here too,
+        # and never reaches the kernel's 400 to come back as "try again shortly"
+        text = _pinned_note_clean(args.get("text"))
+        detail = _pinned_note_clean(args.get("detail"))
         if not text:
             return "Need 'text': one short line the person you work for should see first.", True
         if len(text) > PIN_TEXT_MAX:
@@ -3435,6 +3456,11 @@ def _mcp_call(name, args):
         nid = res.get("noteId") if isinstance(res, dict) else None
         if not nid:
             # LOUD, never a silent drop: a note the agent believes is up, and is not, misleads twice
+            if isinstance(res, dict) and res.get("error"):
+                # the kernel's account of why (its notes could not be read): the fault by name, and no
+                # "try again", since a retry does nothing until it is fixed (review round 2, 2026-09-08)
+                return ("Couldn't pin that: %s. The person you work for will NOT see it. Say it in your "
+                        "next reply instead." % res["error"]), True
             return ("Couldn't pin that. The person you work for will NOT see it. Say it in your next "
                     "reply instead, or try again shortly."), True
         words = ("Pinned (id %s). The person you work for sees it above this conversation. Unpin it "

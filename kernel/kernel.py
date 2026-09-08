@@ -6082,14 +6082,27 @@ PINNED_DETAIL_MAX = 4000
 # unpin of the same id is told "already unpinned" (the withdraw route's #325 shape: a met need is not the
 # caller's error) while an id that was never this session's stays a loud refusal. Bounded per sid.
 PINNED_TOMBSTONES_MAX = 16
+# The cleaner the kernel and the postal tool share (the tool carries an identical copy, since the bus imports
+# nothing from the kernel; tests/test_pinned_notes.py pins the two sources equal): a pasted terminal line
+# arrives with ANSI escape sequences, and dropping only the control bytes left their parameters as the note
+# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So a whole CSI sequence (ESC [ parameters,
+# intermediates, one final byte) goes first, then the remaining control characters.
+_PINNED_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")           # one ANSI CSI sequence, whole
 _PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # control characters, except newline and tab
 
 
 def _pinned_note_clean(s):
-    """A note's text or detail as stored: control characters dropped (a NUL, an escape sequence) except
-    newline and tab, then the surrounding whitespace. A value that is nothing but control characters
-    cleans to "", which the route refuses as it refuses a blank."""
-    return _PINNED_CTRL_RE.sub("", str(s or "")).strip()
+    """A note's text or detail as stored: ANSI escape sequences dropped whole, then control characters
+    (a NUL, a stray ESC) except newline and tab, then the surrounding whitespace. A value that is nothing
+    but those cleans to "", which is refused as a blank is."""
+    return _PINNED_CTRL_RE.sub("", _PINNED_ANSI_RE.sub("", str(s or ""))).strip()
+
+
+class PinnedNotesUnreadable(RuntimeError):
+    """The store file on disk is not a store (see _pinned_notes), so a write was refused and nothing
+    changed. A route answers it as an account naming the fault (state "unreadable", the unpin side's
+    shape), never a 500 with a traceback the tool folds into "try again shortly" (review round 2,
+    2026-09-08: a retry does nothing until the file is fixed)."""
 _pinned_notes_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 _pinned_notes_bad = {}     # str(path) -> (mtime_ns,size) of a file VERSION that is not a store (read as empty, loudly)
 _pinned_notes_lock = threading.RLock()   # every read-modify-write below holds it: routes, drive ops and the
@@ -6129,9 +6142,9 @@ def _pinned_notes():
 
 
 def _write_pinned_notes(cur):
-    """Publish the store. REFUSES (RuntimeError, loud) while the file on disk is still the version
-    _pinned_notes flagged as not-a-store: every writer copies the (empty) read and would otherwise
-    replace the unreadable file with a one-row one."""
+    """Publish the store. REFUSES (PinnedNotesUnreadable, a RuntimeError, loud) while the file on disk is
+    still the version _pinned_notes flagged as not-a-store: every writer copies the (empty) read and would
+    otherwise replace the unreadable file with a one-row one."""
     p = jd.STATE / PINNED_NOTES_FILE
     bad = _pinned_notes_bad.get(str(p))
     if bad is not None:
@@ -6142,7 +6155,7 @@ def _write_pinned_notes(cur):
         if key == bad:
             sys.stderr.write("pinned-notes: refusing to overwrite %s: it is not a pinned-notes store (see the "
                              "earlier line). Fix or remove the file first.\n" % p)
-            raise RuntimeError("pinned-notes store is not a store; write refused (%s)" % p)
+            raise PinnedNotesUnreadable("the pinned-notes store (%s) is not readable; nothing changed" % p)
     _atomic_write(p, json.dumps(cur, sort_keys=True))
 
 
@@ -6173,7 +6186,9 @@ def _pin_note(sid, text, detail=""):
     usually none). `detail` is the optional longer text; empty means the line carries it all and no key
     is stored. Past PINNED_NOTES_MAX the oldest notes go, each leaving a tombstone marked dropped so a
     later unpin of its id is told what became of it. `sid` must be a session id (_safe_id): one row under
-    any other key would make the whole file read as not-a-store for every session."""
+    any other key would make the whole file read as not-a-store for every session. Raises
+    PinnedNotesUnreadable (from the write) while the store file is not a store: the route answers the
+    fault by name."""
     sid = str(sid)
     if not _safe_id(sid):
         raise ValueError("pinned-notes: %r is not a session id" % sid[:80])
@@ -50127,6 +50142,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(body, dict):                      # a JSON string or list is a 400, never a traceback
                     return self._send(400, json.dumps({"ok": False, "error": "a JSON object body is required"}), "application/json")
                 sid = str(body.get("id") or "")
+                for field in ("text", "detail"):
+                    # a list, a dict or a number is a 400, never stored as its repr (review round 2, 2026-09-08)
+                    if body.get(field) is not None and not isinstance(body.get(field), str):
+                        return self._send(400, json.dumps({"ok": False, "error": "%s must be a string" % field}), "application/json")
                 text = _pinned_note_clean(body.get("text"))
                 detail = _pinned_note_clean(body.get("detail"))
                 if not sid or not text:
@@ -50144,6 +50163,12 @@ class Handler(BaseHTTPRequestHandler):
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     st, res = _remote_forward_status(r, "/pinnote", {"id": sid, "text": text, "detail": detail})
+                    if isinstance(res, dict) and res.get("state") == "unreadable":
+                        # the remote kernel's own store fault: its account rides through (as on /unpinnote),
+                        # not a 502 about the tunnel, so the tool names the fault
+                        return self._send(200, json.dumps({"ok": False, "state": "unreadable", "notes": res.get("notes") or [],
+                                                           "error": str(res.get("error") or "the pinned-notes store there is not readable"),
+                                                           "host": r.get("host") or ""}), "application/json")
                     if not isinstance(res, dict) or not res.get("noteId"):
                         why = _remote_no_answer_why(r, st, "/pinnote")
                         sys.stderr.write("pinned-notes: pin for %s not forwarded: %s\n" % (sid[:8], why))
@@ -50152,7 +50177,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "noteId": str(res.get("noteId")),
                                                        "notes": res.get("notes") or [],
                                                        "dropped": res.get("dropped") or []}), "application/json")
-                nid, notes, dropped = _pin_note(sid, text, detail)
+                try:
+                    nid, notes, dropped = _pin_note(sid, text, detail)
+                except PinnedNotesUnreadable as e:
+                    # the store file is not a store: the fault, named, as _unpin_note's account names it (a
+                    # 200 the tool reads, since it folds every non-2xx into "try again shortly"; nothing
+                    # changed, so no wake). Before this a 500 traceback (review round 2, 2026-09-08).
+                    return self._send(200, json.dumps({"ok": False, "state": "unreadable", "notes": [], "error": str(e)}),
+                                      "application/json")
                 _push_soon()                                        # ack-fast: the strip repaints on the pusher's
                 #                                                     woken cycle; the bus's 2s POST never waits
                 #                                                     behind a synchronous build of every payload

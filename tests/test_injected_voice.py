@@ -886,6 +886,9 @@ class PinnedNoteToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["pin: made room"] = pm._mcp_call("pin_note", {"text": "the ninth"})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["pin: couldn't pin"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
+            results["pin: not a string"] = pm._mcp_call("pin_note", {"text": ["a"]})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["pin: unreadable"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
             results["unpin: unreachable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
             results["unpin: no id"] = pm._mcp_call("unpin_note", {})[0]
             canned["res"] = {"ok": True, "state": "unpinned", "notes": []}
@@ -909,6 +912,8 @@ class PinnedNoteToolDescriptionsKeepTheVeil(unittest.TestCase):
         self.assertIn("came down", results["pin: made room"])
         self.assertIn("not readable", results["unpin: unreadable"])
         self.assertIn("NOT see it", results["pin: couldn't pin"])
+        self.assertIn("not readable", results["pin: unreadable"])
+        self.assertIn("Nothing was pinned", results["pin: not a string"])
         for name, text in results.items():
             for word, why in ROMP_WORDS:
                 with self.subTest(result=name, word=word):
