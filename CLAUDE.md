@@ -195,8 +195,12 @@ broad `git add` will sweep up your work). Conventions:
   `docs/pr-tiers.md`. The fork's copy of the first check (`.github/workflows/pr-tier.yml`)
   counts the same labels plus one of its own: a batch PR (`scripts/batch.py`,
   `docs/batching.md`) carries `batch` alone and no tier, so adding a tier to a batch PR
-  turns the check red. Every other fork PR carries one tier label, and on the fork every
-  PR lands through a batch whatever its tier. The author picks the tier at filing time:
+  turns the check red. The fork's copy of the second check
+  (`.github/workflows/tier-policy.yml`) is gated to the upstream repository by its
+  job-level `if:` (the header comment there says why), so on the fork it evaluates nothing
+  and posts no Tier policy verdict; a fork PR has the label check alone. Every other fork
+  PR carries one tier label, and on the fork every PR lands through a batch whatever its
+  tier. The author picks the tier at filing time:
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): no behavior change. On the fork that is tests, docs
     and repo plumbing, landing through a batch like every PR. Upstream the tier means
