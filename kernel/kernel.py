@@ -48886,11 +48886,18 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # nothing was sent, and the fresh page showed T215's loss toast (tests/test_ship_reship.py ServedWedge, red once
 # the core arrived). Ruling: both stand, the heal first. The chat page publishes window.__rompReloadHold while any
 # ship awaits its ack (ui/webview/reload-hold.ts, a boolean word in the style of the paint gate's
-# window.__rompPaneHidden); busyHere reads it as the 'ships' hold, so the shell's composition across its panes
-# covers it too. The page has no ending event the core listens to, so tryFire re-checks the hold on a short timer
-# (shipsHold, 500 ms) and reloads once it clears; after HOLD_MAX (60 s) it reloads anyway and says why in a console
-# line (the fresh page's loss toast then names what was lost). tests/test_dashboard_auto_reload.py ShipsHoldExecuted
-# runs the hold in node; the served order (heal, then reload) is ServedWedge's executed pin.
+# window.__rompPaneHidden); busyHere reads it as the 'ships' hold, after the gesture holds, and busy() answers 'ships'
+# only when no gesture in the shell or any pane holds: a gesture has an ending event and no deadline, the ships word
+# has a deadline and no ending event, so a gesture anywhere outranks it (upstream's first-match walk returned the
+# chat pane's 'ships', the landing's first iframe, and past the deadline the shell reloaded over a later pane's
+# drag; the fold's review, K1). The page has no ending event the core listens to, so tryFire re-checks the hold on a
+# short timer (shipsHold, 500 ms) and reloads once it clears; after HOLD_MAX (60 s) it reloads anyway and says why
+# in a console line (the fresh page's loss toast then names what was lost). The 60 s count the current episode, the
+# consecutive time the ships hold has been THE blocker: tryFire zeroes the clock whenever anything else answers, so
+# a ship raised after an earlier hold cleared gets its own 60 s (the review's F1: one clock for the page's life
+# reloaded a new ship out at once), and a user who keeps interacting during a stuck upload defers the reload, as
+# upstream's gesture holds already do. tests/test_dashboard_auto_reload.py ShipsHoldExecuted runs the hold in node;
+# the served order (heal, then reload) is ServedWedge's executed pin.
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,ptr=0,drag=false,owed=null,fired=false;
 var holdT=0,holdTimer=null,HOLD_MAX=60000;/*fork: the ships hold (see the comment above)*/
@@ -48902,7 +48909,7 @@ try{if(window.__rompReloadHold===true)return 'ships';}catch(e){}/*fork: uploads 
 return '';}
 function panes(){var out=[],fs=document.querySelectorAll?document.querySelectorAll('iframe'):[];
 for(var i=0;i<fs.length;i++){try{var w=fs[i].contentWindow;if(w&&w.__rompReload)out.push(w);}catch(e){}}return out;}
-function busy(){var b=busyHere();if(b)return b;var ps=panes();for(var i=0;i<ps.length;i++){b=ps[i].__rompReload.busyHere();if(b)return b;}return '';}
+function busy(){var b=busyHere(),sh=b==='ships';if(b&&!sh)return b;var ps=panes();for(var i=0;i<ps.length;i++){b=ps[i].__rompReload.busyHere();if(b&&b!=='ships')return b;if(b)sh=true;}return sh?'ships':'';}/*fork: a gesture anywhere outranks the ships word*/
 function persist(){try{if(window.__rompPersistForReload)window.__rompPersistForReload();}catch(e){}
 var ps=panes();for(var i=0;i<ps.length;i++){try{if(ps[i].__rompPersistForReload)ps[i].__rompPersistForReload();}catch(e){}}}
 function fire(){if(fired)return;fired=true;
@@ -48913,7 +48920,7 @@ try{location.reload();}catch(e){fired=false;R.waiting='refused';if(R.refused)R.r
 function shipsHold(){var now=Date.now();if(!holdT)holdT=now;
 if(now-holdT>=HOLD_MAX){try{console.warn('romp: reloading with uploads still awaiting their ack after '+Math.round((now-holdT)/1000)+' s; the hold did not clear, and the next load names what was lost');}catch(e){}return '';}
 if(!holdTimer)holdTimer=setTimeout(function(){holdTimer=null;tryFire();},500);return 'ships';}
-function tryFire(){if(!owed||fired)return;var b=busy();if(b==='ships')b=shipsHold();if(b){R.waiting=b;return;}R.waiting='';fire();}
+function tryFire(){if(!owed||fired)return;var b=busy();if(b==='ships')b=shipsHold();else holdT=0;if(b){R.waiting=b;return;}R.waiting='';fire();}/*fork: shipsHold, and its clock counts the current episode*/
 function request(reason,detail){var s=shell();if(s){s.request(reason,detail);return;}if(fired)return;
 if(!owed)owed={reason:reason,detail:detail||''};tryFire();}
 function noteDv(dv){if(LOADED&&dv&&dv>LOADED)request('build',String(dv));}

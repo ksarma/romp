@@ -16,7 +16,11 @@ The fix, both faces:
     it restarts), the page also publishes a hold on that reload while any ship awaits its ack
     (ui/webview/reload-hold.ts, window.__rompReloadHold; the core's shipsHold defers and re-checks),
     so the heal runs first and the reload follows it. Without the hold the reload landed about 1.7 s
-    after the relaunch and took the payload with it (the fork's 2026-09-08 fold).
+    after the relaunch and took the payload with it (the fork's 2026-09-08 fold). The notices raised
+    when the LAST ship retires (a nack: the file was not saved, the held message not sent; the ack of
+    a held send on another tab) would die with that reload, which follows within the core's 500 ms
+    re-check, so the page snapshots the toasts on screen into the persisted state on the pre-reload
+    hook and the fresh page shows them again once (render.ts persistNoticesForReload, reload-hold.ts).
   * reload (the VS Code pipe reloads its webview on kernel reconnect): the payload dies with
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.
@@ -24,6 +28,9 @@ The fix, both faces:
 Two guards here:
   * SourcePins — runs everywhere, CI included: the wiring above, pinned in the sources (the
     webview-side twins live in ui/webview/pending-attach.test.ts).
+  * NackNoticeSurvivesReload: the notice's executed guard, the same choreography with the state
+    dir's drops path made a regular file before the relaunch, so the re-ship is NACKed; the old
+    page's nack toast is latched, the reload follows, and the fresh page must show the notice, once.
   * ServedWedge — the executed guard: boots the hermetic kernel, opens the real /chat page,
     SIGSTOPs the kernel so the dropFile is shipped on a live socket that will never answer,
     holds a send behind the ship gate, SIGKILLs and relaunches the kernel — and asserts the
@@ -80,6 +87,16 @@ class SourcePins(unittest.TestCase):
     def test_a_reload_loss_is_loud_never_a_silent_vanish(self):
         self.assertIn("shipsInFlight: [...pendingShips.values()].flat().map((p) => p.name)", RENDER)
         self.assertIn("still uploading when this page reloaded, so it was NOT attached", RENDER)
+
+    def test_the_last_retirements_notice_rides_the_reload_that_follows_it(self):
+        # the fork's 2026-09-08 fold, review F2: the toasts on screen are snapshotted on the CORE's pre-reload hook
+        # (not on pagehide: a navigation of the user's own says nothing twice, ReloadLossToast) and replayed once at load
+        self.assertIn("function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }", RENDER)
+        self.assertIn("(window as any).__rompPersistForReload = persistForReload;", RENDER)
+        self.assertIn('window.addEventListener("pagehide", persistScrollForReload);', RENDER)
+        self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts"))', RENDER)
+        self.assertIn("const taken = takePendingNotices(vscodeApi?.getState?.());", RENDER)
+        self.assertIn("for (const text of taken.notices) warnToast(text);", RENDER)
 
 
 def _free_port():
@@ -422,6 +439,146 @@ fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
 """
+
+
+DRIVER_NACK = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import { spawn } from "node:child_process";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+const out = {};
+const die = async (why) => {
+  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  await browser.close();
+  process.exit(0);
+};
+await page.goto(cfg.url);
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+const tab = await page.waitForSelector("#tabs .tab, #tabs [data-sid]", { timeout: 20000 }).catch(() => null);
+if (!tab) await die("no session tab: the lab seed never reached the chat payload");
+await page.waitForTimeout(500);
+// the same wedge as ServedWedge: a ship on a live socket the stopped kernel never answers, the send held on the gate
+process.kill(cfg.kernelPid, "SIGSTOP");
+await page.setInputFiles("body > input[type=file]", cfg.file);
+await page.waitForSelector(".composer-file-pending", { timeout: 10000 }).catch(() => {});
+out.chipUpAfterShip = await page.locator(".composer-file-pending").count();
+await page.fill("#composer-input", cfg.msg);
+await page.click("#composer-send");
+await page.waitForSelector(".confirm-btn", { timeout: 10000 }).catch(() => {});
+const waitBtn = page.locator(".confirm-btn", { hasText: "Wait for the upload" });
+out.gateOffered = await waitBtn.count();
+if (out.gateOffered) await waitBtn.click();
+// the latch: this document records the nack toast the moment it appears (sessionStorage survives the reload)
+const bootBefore = await page.evaluate(() => {
+  window.__probe = 1;
+  sessionStorage.removeItem("probe:nackSeen");
+  const look = () => {
+    if (sessionStorage.getItem("probe:nackSeen")) return;
+    const toasts = document.getElementById("warn-toasts")?.textContent || "";
+    if (toasts.includes("couldn't be saved"))
+      sessionStorage.setItem("probe:nackSeen", JSON.stringify({ text: toasts, hold: window.__rompReloadHold,
+        waiting: window.__rompReload ? window.__rompReload.waiting : null }));
+  };
+  new MutationObserver(look).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+  setInterval(look, 20);
+  return window.__rompReload ? window.__rompReload.boot : null;
+});
+out.bootBefore = bootBefore;
+// the drops path becomes a regular file: the relaunched kernel's _save_dropped_file fails and NACKs the re-ship
+fs.rmSync(cfg.drops, { recursive: true, force: true });
+fs.writeFileSync(cfg.drops, "not a directory");
+process.kill(cfg.kernelPid, "SIGKILL");
+const k2 = spawn(cfg.relaunch.cmd, [], { env: cfg.relaunch.env, detached: true,
+  stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
+k2.unref();
+fs.writeSync(1, "KPID:" + k2.pid + "\n");
+const settle = async (fn, arg, ms) => {
+  const t0 = Date.now();
+  for (;;) {
+    let v = false;
+    try { v = await page.evaluate(fn, arg); } catch (e) { /* mid-navigation */ }
+    if (v) return v;
+    if (Date.now() - t0 > ms) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+// the OLD page saw the nack (the re-ship failed to save), then the reload core's turn
+out.nackSeen = await settle(() => JSON.parse(sessionStorage.getItem("probe:nackSeen") || "null"), null, 45000) || null;
+out.reloaded = await settle(
+  (boot) => window.__probe !== 1 && !!window.__rompReload && window.__rompReload.boot !== boot, bootBefore, 30000);
+await page.waitForSelector("#composer-input", { timeout: 20000 }).catch(() => {});
+out.bootAfter = await page.evaluate(() => window.__rompReload ? window.__rompReload.boot : null).catch(() => null);
+// the FRESH page: the notice again (the replay is synchronous at load; the toast lives 12 s, so read it at once)
+out.freshToasts = await settle(() => {
+  const t = document.getElementById("warn-toasts")?.textContent || "";
+  return t.includes("couldn't be saved") ? t : false;
+}, null, 5000) || (await page.evaluate(() => document.getElementById("warn-toasts")?.textContent || "").catch(() => null));
+// the draft comes back ONE time after load, once the tab has landed (restoreActiveDraftOnce): a poll, not a read
+out.freshInput = await settle(() => document.getElementById("composer-input")?.value || false, null, 15000);
+out.freshPending = await page.locator(".composer-file-pending").count();
+out.freshFiles = await page.locator(".composer-file").count();
+// one replay: the record is out of the persisted state as soon as the toasts are raised
+out.recordAfterReplay = await page.evaluate(() => {
+  const k = Object.keys(localStorage).find((x) => x.startsWith("romp-vscode-state-"));
+  const st = k ? JSON.parse(localStorage.getItem(k) || "{}") : null;
+  return st ? { hasKey: "pendingNotices" in st, notices: st.pendingNotices ?? null } : "no-state";
+}).catch(() => null);
+// dismissed, then a load the USER asks for: nothing to replay (the pagehide snapshot finds no toast on screen)
+await page.keyboard.press("Escape");
+out.toastsAfterEscape = await page.locator("#warn-toasts .warn-toast").count();
+await page.goto(cfg.url);
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+await page.waitForTimeout(800);
+out.secondLoadToasts = await page.evaluate(() => document.getElementById("warn-toasts")?.textContent || "");
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+
+class NackNoticeSurvivesReload(_ShipLab):
+    """The fork's 2026-09-08 fold, review F2, executed: the reload core's restart reload follows the LAST pending
+    ship's retirement within its 500 ms re-check, and the nack toast raised at that same moment (the file was not
+    saved, the held message NOT sent) is DOM only: it died with the page, and the fresh page's loss toast had nothing
+    to say (shipsInFlight was already empty), so a failed attachment and an unsent message went unannounced. The page
+    now snapshots the toasts on screen into the persisted state on the pre-reload hook and the fresh page shows them
+    again once. The drops path is made a regular file before the relaunch so the re-ship's save fails and the kernel
+    NACKs it (_save_dropped_file); the old page's toast is latched in sessionStorage, which survives the reload."""
+
+    def test_the_nack_of_the_last_ship_is_shown_again_by_the_fresh_page_once(self):
+        r = self._run_driver(DRIVER_NACK, {
+            "url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "kernelPid": self.kernel.pid,
+            "relaunch": {"cmd": os.path.join(BIN, "romp-kernel"),
+                         "env": {k: v for k, v in self.env.items()}, "log": self.klog},
+            "file": self.png, "msg": "hold this message for the upload F2",
+            "drops": os.path.join(self.state, "drops")})
+        self.assertEqual(r["chipUpAfterShip"], 1, "the pending chip must be up after the ship: %r" % r)
+        self.assertEqual(r["gateOffered"], 1, "the ship gate must offer to wait for the upload: %r" % r)
+        # the old page: the re-ship was nacked, the toast named the file and the unsent message
+        self.assertTrue(r["nackSeen"], "the relaunched kernel must NACK the re-ship (drops is a file): %r (kernel log tail: %s)"
+                        % (r, Path(self.klog).read_text()[-500:]))
+        self.assertIn("shot.png couldn't be saved", r["nackSeen"]["text"])
+        self.assertIn("Your message was NOT sent", r["nackSeen"]["text"], "the held send did not fire without its file")
+        # then the reload the core owed (held while the ship awaited its answer)
+        self.assertTrue(r["reloaded"], "the reload core reloads once the ships settled: %r" % r)
+        self.assertNotEqual(r["bootAfter"], r["bootBefore"], "the fresh page carries the relaunched kernel's boot id: %r" % r)
+        # the heart of F2: the fresh page says it again, and the draft is still there to act on
+        self.assertIn("shot.png couldn't be saved", r["freshToasts"] or "",
+                      "the nack the reload wiped must be shown again by the fresh page: %r" % r)
+        self.assertIn("Your message was NOT sent", r["freshToasts"] or "", "with the unsent message named: %r" % r)
+        self.assertEqual(r["freshInput"], "hold this message for the upload F2", "the draft survives the reload as before: %r" % r)
+        self.assertEqual([r["freshPending"], r["freshFiles"]], [0, 0], "no chip and no attachment over a file that was not saved: %r" % r)
+        # once: the record is consumed by the replay, and a load after the toast is dismissed says nothing
+        self.assertEqual(r["recordAfterReplay"], {"hasKey": False, "notices": None}, "the replay clears the record: %r" % r)
+        self.assertEqual(r["toastsAfterEscape"], 0, "Escape dismisses the toasts: %r" % r)
+        self.assertNotIn("couldn't be saved", r["secondLoadToasts"], "nothing on screen at the next navigation, nothing replayed: %r" % r)
 
 
 class ReloadLossToast(_ShipLab):

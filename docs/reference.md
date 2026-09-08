@@ -34,13 +34,18 @@ update` starts a session called "update".
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
 *Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. The
-reload prompt that reads "A newer romp build is available" is separate and stays on in every
-mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
-A page also reloads itself when the kernel serving it restarts, once any gesture in progress has ended. A
-chat page with an attachment still uploading first finishes the upload and sends any message waiting on it,
-then reloads; if the upload has not finished within a minute, the page reloads anyway and reports the lost
-attachment on the next load.
+hears nothing about it and keeps running what it has until they restart Romp themselves. Reloads
+are separate from that control and happen in every mode: a page the kernel serves reloads itself
+when the kernel serving it restarts or serves a newer build than the page runs, once any gesture
+in progress has ended and any file still shipping has settled, and the notification center's one
+line says which happened. The banner that reads "A newer romp build is available" appears only
+where the page cannot reload itself, such as a host that forbids it; the VS Code panes keep their
+own prompt, because their bundle comes from the installed extension. A chat page with an
+attachment still uploading first finishes the upload, then reloads. The message waiting on the
+upload is sent if that session's tab is the active one; otherwise it stays in that tab's composer
+with the file attached, and a notice says so. A notice still on screen when the page reloads,
+that one or a failed save's, is shown again on the fresh page. If the upload has not finished
+within a minute, the page reloads anyway and reports the lost attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -1984,11 +1989,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cost a conditional tail save would remove); `romp perf` prints it as a rate
   on the `goals` line so that item can be judged from a measurement.
   `unreadable_stores` is a gauge, not a counter: the goals files currently in
-  a read-failure episode (the file exists and did not read or parse on its
-  last read, so `load_goals` answers an empty fallback, every judge stage
-  stands down on the session and `save_goals` refuses to publish over it until
-  it reads). `romp perf` prints it on the `goals` line when it is not zero, and
-  the kernel warns the chat pane once per episode for a listed session.
+  a fault episode. A read-failure episode is a file that exists and did not
+  read; bytes that do not parse are no episode (`load_goals` quarantines them
+  aside and answers a fresh store). `load_goals` raises on a read fault, never
+  an empty store; the per-session boundary (`load_goals_or_fault`) contains
+  the fault to that session, files one `store-unreadable` judge-errors row per
+  episode and skips the session's goal-derived work for that build or pass; a
+  judge pass that meets the fault files a `pass-crash` row for the session;
+  nothing is published over the file, and the next good read or publish
+  through the boundary ends the episode. A publish that failed
+  (`store-unwritable`) stands in the same table. `romp perf` prints it on the
+  `goals` line when it is not zero, and the kernel warns the chat pane once
+  per episode for a listed session.
   `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
   session's whole states file: the episode-boundary check consults it only for
   a head the memoized episode log does not hold yet, so at steady state the

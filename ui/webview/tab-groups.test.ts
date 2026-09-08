@@ -232,10 +232,11 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir > 0 \? 1 : -1\);\s*\n\s*if \(nb\) setActive\(nb\);/,
     "cycleTab (the host's nextTab/prevTab commands, not the window's keys, which the test below pins)");
   assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir\);\s*\n\s*if \(nb\) \{ setActive\(nb\); focusActiveTab\(\); \}/, "onTabKey (a focused tab's ←/→)");
-  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{/,
-    "setActive opens the picked tab's section before its early return (not for a tab hidden inside its section, whose pick brings no tab on screen: tab-hide.test)");
-  assert.match(RENDER, /function unfoldSectionOf\(id: string\): void \{\s*\n\s*const home = homeSectionOf\(lastStripItems, id\);\s*\n\s*if \(home && home\.name !== null\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), home\.name, false\)\);/);
-  assert.match(RENDER, /collapsedTabIds = plan\.folded;\s*\n\s*hiddenTabIds = [^\n]*\n\s*lastStripItems = plan\.items;/, "the plan the stand-in rules read is the one the strip rendered");
+  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);[^\n]*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{/,
+    "setActive opens a folded-away tab's section before its early return (which holder, and whether any, is unfoldSectionOf's per-holder rule: the T264b test below, tab-hide.test)");
+  assert.match(RENDER, /function unfoldSectionOf\(id: string\): void \{\s*\n\s*const holder = lastStripItems\.find\(\(it\) => "head" in it && it\.head\.name !== null && it\.folded && it\.head\.ids\.includes\(id\) && !it\.hides\.includes\(id\)\);\s*\n\s*if \(holder && "head" in holder && holder\.head\.name !== null\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), holder\.head\.name, false\)\);/,
+    "the first folded holder whose hides do not list the tab opens (T264b: per holder, not the first holder, which may be the one hiding it)");
+  assert.match(RENDER, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan the stand-in rules read is the one the strip rendered");
 });
 
 test("executed: a create in flight sections under EVERY requested tag from the first paint (T264b)", () => {
@@ -1877,6 +1878,44 @@ test("executed: activating a session under several tags springs no fold (T264b r
   // a single holder is unchanged: marked whatever the fold, and the fold stands (the header is the stand-in)
   assert.deepEqual(marks("s3", both), ["#web(folded)", "#archived(active)(folded)"]);
   assert.deepEqual(marks("s3", st), ["#web", "s1", "s2", "#archived(active)(folded)"]);
+});
+
+test("executed + pinned: a pick of a folded-away session under several tags opens a holder that can show it (T264b meets the fork's hide; the fourth fold's review, UI-1): hidden in one holder and folded in another, the other opens; hidden in every holder, nothing does", () => {
+  // web=[s1,s2], archived=[s2,s3], archived folded by default. render.ts setActive unfolds through unfoldSectionOf, which
+  // scans the rendered plan's headers for the first FOLDED holder whose `hides` does not list the tab and opens that one; a
+  // holder hiding the tab is passed over (opening it brings no tab), so a tab hidden in every holder leaves every fold
+  // alone. Before this the gate read the union of every header's hides as "this session is hidden", so a hide in web
+  // blocked archived's unfold, and the unfold itself took the first holder, web, the very one hiding the tab.
+  const unions = viewTagUnion({ tags: [{ id: "t-web", name: "web", color: "#1EA1EB", members: ["s1", "s2"] },
+                                       { id: "t-arch", name: "archived", color: "#4EA8A9", members: ["s2", "s3"] }] });
+  const st = parseTabGroups(null, unions);
+  const WEB: SectionRef = { name: "web", localId: "t-web" }, ARCH: SectionRef = { name: "archived", localId: "t-arch" };
+  // the rule as render.ts runs it, over the plan's items: the text below is the source's own (pinned at the end)
+  const pick = (state: TabGroupsState, id: string) => {
+    const lastStripItems = planStrip(["s1", "s2", "s3"], unions, state, id, false).items;
+    const holder = lastStripItems.find((it) => "head" in it && it.head.name !== null && it.folded && it.head.ids.includes(id) && !it.hides.includes(id));
+    return { foldedAway: planStrip(["s1", "s2", "s3"], unions, state, id, false).folded.has(id), opens: holder && "head" in holder ? holder.head.name : null };
+  };
+  // hidden in web (open, the first holder), folded in archived: the pick opens archived, the holder that can show it
+  assert.deepEqual(pick(setHidden(st, WEB, "s2", true), "s2"), { foldedAway: true, opens: "archived" }, "the hiding first holder is passed over");
+  assert.equal(homeSectionOf(planStrip(["s1", "s2", "s3"], unions, setHidden(st, WEB, "s2", true), "s2", false).items, "s2")?.name, "web",
+    "homeSectionOf (focusActiveTab's stand-in) still answers the first holder; the unfold no longer reads it");
+  // hidden in archived, web folded: the pick opens web
+  const archHides = setHidden(setSectionCollapsed(st, "web", true), ARCH, "s2", true);
+  assert.deepEqual(pick(archHides, "s2"), { foldedAway: true, opens: "web" });
+  // hidden in both, web folded: nothing opens (the transcript shows with a header as stand-in)
+  assert.deepEqual(pick(setHidden(archHides, WEB, "s2", true), "s2"), { foldedAway: true, opens: null });
+  // one holder, hidden inside it: nothing opens (the case the gate was written for; tab-hide.test's single-holder pins)
+  assert.deepEqual(pick(setHidden(st, ARCH, "s3", true), "s3"), { foldedAway: true, opens: null });
+  // a copy on screen: not folded away, so setActive never asks (its gate is collapsedTabIds alone)
+  assert.deepEqual(pick(st, "s2"), { foldedAway: false, opens: "archived" }, "the scan would answer, but the gate does not ask for a tab that is on screen");
+  // plain folds, no hide: the first folded holder in the strip's order, as before
+  assert.deepEqual(pick(setSectionCollapsed(st, "web", true), "s2"), { foldedAway: true, opens: "web" });
+  assert.deepEqual(pick(st, "s3"), { foldedAway: true, opens: "archived" });
+  // the source runs this very text, and the gate reads collapsedTabIds alone (no union of hides anywhere)
+  assert.ok(RENDER.includes('const holder = lastStripItems.find((it) => "head" in it && it.head.name !== null && it.folded && it.head.ids.includes(id) && !it.hides.includes(id));'), "unfoldSectionOf's scan");
+  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);/, "setActive's gate");
+  assert.doesNotMatch(RENDER, /hiddenTabIds/, "the union set is gone: a hide is per (tab, section) and is read per holder");
 });
 
 test("the guide states the every-tag rule (T264b)", () => {

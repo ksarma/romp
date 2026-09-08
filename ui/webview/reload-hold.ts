@@ -17,3 +17,31 @@ export function publishReloadHold(shipsPending: number, w: ReloadHoldHost = glob
   w.__rompReloadHold = held;
   return held;
 }
+
+// The notices a reload wipes (the same fold, the review's F2). The hold above makes the restart reload FOLLOW the last
+// pending ship's retirement, within the core's 500 ms re-check; the two user notices raised at that same moment (a
+// dropSaveFailed nack: the attachment was not saved, the held message not sent; the other-tab ack: the held message
+// was not sent) are DOM-only toasts that die with the page, and the fresh page's loss toast reads shipsInFlight,
+// which that retirement already emptied. So render.ts snapshots the texts of the toasts on screen into the persisted
+// state as `pendingNotices` on the CORE's pre-reload hook alone (persistNoticesForReload, called from persistForReload,
+// the function window.__rompPersistForReload names; pagehide keeps upstream's scroll record alone, so a load of the
+// user's own says nothing twice) and shows them again once at load. Pure here so the two readings run in node; the
+// wiring is pinned in reload-hold.test.ts and executed on the served page in tests/test_ship_reship.py.
+/** The toast container as the reading needs it: anything with querySelectorAll (a DOM element in the page). */
+export interface NoticeBox { querySelectorAll(selectors: string): ArrayLike<{ textContent: string | null }>; }
+/** The texts of the warning toasts on screen (#warn-toasts .warn-toast-msg, in DOM order), blanks dropped; none
+ *  when the container was never created. */
+export function liveNotices(box: NoticeBox | null | undefined): string[] {
+  if (!box) return [];
+  return Array.from(box.querySelectorAll(".warn-toast-msg"), (n) => (n.textContent || "").trim()).filter((t) => !!t);
+}
+/** Take the persisted notices out of a state object: the non-empty strings among `pendingNotices` (anything else
+ *  reads as none), and the state without the key, for the one-shot write-back. */
+export function takePendingNotices(st: unknown): { notices: string[]; rest: Record<string, unknown> } {
+  const s = (st && typeof st === "object" ? st : {}) as Record<string, unknown>;
+  const raw = s.pendingNotices;
+  const notices = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string" && !!x) : [];
+  const rest = { ...s };
+  delete rest.pendingNotices;
+  return { notices, rest };
+}

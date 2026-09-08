@@ -73,7 +73,7 @@ import { retainLiveOmitted } from "./tab-order";
 import { userTurnShows } from "./user-turn-content";
 import { ScrollDiagBudget, classifyScroll, scrollWriteRow } from "./scroll-write";
 import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
-import { publishReloadHold } from "./reload-hold";   // the chat page's hold on the reload core while ships await their ack (T215 meets T265)
+import { publishReloadHold, liveNotices, takePendingNotices } from "./reload-hold";   // the chat page's hold on the reload core while ships await their ack, and the notices its reload would wipe (T215 meets T265)
 import { keepResidentEvents } from "./frame-merge";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -890,11 +890,8 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // stand-in — focusActiveTab lands there, ←/→ step from its position (neighborOfFolded over the last
 // plan's items, kept here for both), and the pane shows the section's snapshot (renderSnapshot).
 let collapsedTabIds = new Set<string>();
-// the ids hidden INSIDE their section by their own flag (the snapshot's Hide, the user 2026-09-08): a subset of
-// collapsedTabIds in either fold state. A pick of one shows its transcript with the header as stand-in and
-// leaves its section's fold alone (setActive): the gesture named the session, and a hidden tab comes on screen
-// through Show, not through a pick
-let hiddenTabIds = new Set<string>();
+// (a member hidden INSIDE its section by its own flag, the snapshot's Hide, is among them in either fold state;
+// which section a pick of one opens, if any, is unfoldSectionOf's per-holder rule)
 let lastStripItems: StripItem[] = [];
 /** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
  *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
@@ -5933,7 +5930,6 @@ function renderTabs() {
   const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
-  hiddenTabIds = new Set(plan.items.flatMap((it) => ("head" in it ? it.hides : [])));
   lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
   // AN UNCHANGED STRIP IS NOT REBUILT (2026-09-06). The signature is every input the loop below and the
   // controls after it paint — the plan (ids in order, section headers with their folds and hidden members),
@@ -7009,11 +7005,16 @@ function focusActiveTab() {
   if (!home || home.name === null || !bar) return;
   Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name)?.focus();
 }
-/** Open the section a folded-away tab is homed in (a session pick names the tab, so its tab must be on
- *  screen). The store write notifies (TABGROUPS_EVENT) and the listener re-renders the strip. */
+/** Open a section that puts a folded-away tab on screen (a session pick names the tab, so its tab must be on
+ *  screen). Per holder, since a session under several tags has a copy under each and every copy's fold and hide
+ *  stand on their own (T264b; the fork's 2026-09-08 fold): the first folded holder in the strip's order whose
+ *  `hides` (the snapshot's Hide) does not list the tab opens. A holder hiding the tab is passed over, because
+ *  opening it brings no tab (a hidden tab comes on screen through Show, not through a pick), so a tab hidden in
+ *  every holder leaves every fold alone: the gesture named the session, whose transcript shows with a header as
+ *  its stand-in. The store write notifies (TABGROUPS_EVENT) and the listener re-renders the strip. */
 function unfoldSectionOf(id: string): void {
-  const home = homeSectionOf(lastStripItems, id);
-  if (home && home.name !== null) writeTabGroups(setSectionCollapsed(tabGroups(), home.name, false));
+  const holder = lastStripItems.find((it) => "head" in it && it.head.name !== null && it.folded && it.head.ids.includes(id) && !it.hides.includes(id));
+  if (holder && "head" in holder && holder.head.name !== null) writeTabGroups(setSectionCollapsed(tabGroups(), holder.head.name, false));
 }
 // "Enter to start typing" lands on whatever's actually showing below the transcript: when a live
 // AskUserQuestion picker is up the PICKER CARD owns the keyboard (↑/↓ step the options, Enter confirms), so
@@ -11908,7 +11909,20 @@ function persistScrollForReload(): void {
   const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureScrollAnchor(content, v));
   try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), reloadScroll: rec }); } catch { /* ignore */ }
 }
-(window as any).__rompPersistForReload = persistScrollForReload;
+// The warning toasts on screen when the CORE reloads the page (the fork's 2026-09-08 fold, T215 meets T265). A toast
+// is DOM only and lives 12 s, and the core's restart reload follows the last pending ship's retirement within half a
+// second (it held for the ship; see publishReloadHold), so the nack saying an attachment was not saved and the message
+// not sent, or the ack saying a held message on another tab was not sent, was gone before it could be read, and the
+// fresh page's loss toast had nothing to say (shipsInFlight was already empty). Their texts ride the persisted state
+// beside the drafts as pendingNotices and the fresh page shows them again once (the load-time block after the loss
+// toast; reload-hold.ts liveNotices reads them, takePendingNotices consumes them). The core's synchronous hook alone
+// writes them: a reload of the user's own (pagehide) says nothing twice, the way the loss toast fires once and not on
+// every load (tests/test_ship_reship.py ReloadLossToast), while the scroll record rides both, as upstream wrote it.
+function persistNoticesForReload(): void {
+  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), pendingNotices: liveNotices(document.getElementById("warn-toasts")) }); } catch { /* ignore */ }
+}
+function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }   // the core's hook: both records
+(window as any).__rompPersistForReload = persistForReload;
 window.addEventListener("pagehide", persistScrollForReload);
 
 function captureScrollAnchor(content: HTMLElement, v: View): { uuid: string; y: number } | null {
@@ -14381,6 +14395,16 @@ try {
 // here, since the ships this page may have lost were named just above and no payload survived to re-ship them, so
 // a reload the core owes at startup is never held on their account. Every change to pendingShips republishes it.
 publishReloadHold(pendingShips.size);
+// The notices the last page was showing when a reload took it (persistNoticesForReload, the fork's 2026-09-08 fold):
+// shown again once, after the loss toast above, and the record cleared in the same breath so a later load says
+// nothing (one reload, one replay: the reloadScroll idiom).
+try {
+  const taken = takePendingNotices(vscodeApi?.getState?.());
+  if (taken.notices.length) {
+    vscodeApi?.setState?.(taken.rest);
+    for (const text of taken.notices) warnToast(text);
+  }
+} catch { /* ignore */ }
 
 // Composer EDIT mode (per session): set when the user clicks a bubble's edit affordance — the composer
 // then sends a rewindSend (branch from just before that message) instead of a plain message. The chip
@@ -15049,7 +15073,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // the header) opens its section — the gesture named that session, so the strip follows it.
   const leavingSnap = snapView !== null;
   snapView = null;
-  if (collapsedTabIds.has(id) && !hiddenTabIds.has(id)) unfoldSectionOf(id);   // not a hidden tab's: see hiddenTabIds
+  if (collapsedTabIds.has(id)) unfoldSectionOf(id);   // per holder: see unfoldSectionOf
   if (activeId === id && anchor == null && anchorT == null) {   // already active, nothing to do…
     if (leavingSnap) { renderTabs(); showActive(); }             // …except put its transcript back
     return;

@@ -44,7 +44,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   // showed the transcript again: every view display:none, the composer disabled under the snapshot's
   // placeholder, until the user happened to click a tab. The absence from the plan is the event; the same
   // renderTabs answers it with showActive, which re-enables the composer.
-  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*hiddenTabIds = [^\n]*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
+  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
   assert.match(TABS, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");

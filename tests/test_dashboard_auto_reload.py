@@ -241,6 +241,8 @@ class ShipsHoldExecuted(unittest.TestCase):
     """The fork's 'ships' hold (the 2026-09-08 fold, T215 meets T265): a chat page with uploads awaiting their ack
     publishes window.__rompReloadHold (ui/webview/reload-hold.ts); the core defers a reload it owes while the word is
     true, re-checks on a 500 ms timer, reloads once it clears, and after 60 s reloads anyway with a console line.
+    A gesture anywhere (the shell or any pane) outranks the word, and the 60 s count the current episode: the time
+    the ships hold has been THE blocker, zeroed whenever anything else answers (the fold's review, F1 and K1).
     The timers, the clock and the console are the scenario's own fakes (the core calls setTimeout, Date.now and
     console.warn by name, so a bare assignment in the sloppy-mode script replaces the global)."""
 
@@ -310,6 +312,81 @@ out({ held: held, armed: armed, after: state() });""")
         self.assertEqual(s["held"]["waiting"], "ships", "a pane's ships hold holds the shell's reload")
         self.assertEqual(s["armed"], 1, "the shell re-checks on its own timer")
         self.assertEqual(s["after"]["reloads"], 1)
+
+    def test_a_re_raised_hold_gets_its_own_deadline_and_the_console_line_measures_that_episode(self):
+        # The fold's review, F1 (2026-09-08): holdT was set on the first sight of the hold and never cleared, so a
+        # ship raised after an earlier episode had cleared was reloaded out at once as soon as the FIRST sight was
+        # 60 s old, with the console line naming that stale age. The clock now counts consecutive time the ships
+        # hold has been the blocker: tryFire zeroes it whenever anything else answers (another hold, or nothing).
+        episode = """
+var R = window.__rompReload;
+window.__rompReloadHold = true;
+R.noteVersion({ boot: "2.2", dist_ver: 7 }); var first = state();            // the first episode: held, one re-check
+NOW += 5000; window.__rompReloadHold = false; COMPOSER.value = "a draft"; document.activeElement = COMPOSER;
+runTimers(); var typing = state(); var typingTimers = TIMERS.length;          // the re-check finds the composer instead
+NOW += 61000; window.__rompReloadHold = true; document.activeElement = null; emit("focusout");   // a new ship, then the blur
+var reheld = state(); var reheldTimers = TIMERS.length; var reheldWarns = WARNS.length;
+"""
+        s = run_core(self.FAKES + episode + """
+window.__rompReloadHold = false; runTimers();
+out({ first: first, typing: typing, typingTimers: typingTimers, reheld: reheld, reheldTimers: reheldTimers,
+      reheldWarns: reheldWarns, after: state(), warns: WARNS, left: TIMERS.length });""")
+        self.assertEqual(s["first"]["waiting"], "ships")
+        self.assertEqual(s["typing"]["reloads"], 0)
+        self.assertEqual(s["typing"]["waiting"], "composer", "the hold cleared; the composer is what holds now")
+        self.assertEqual(s["typingTimers"], 0, "no ships hold, no re-check timer")
+        self.assertEqual(s["reheld"]["reloads"], 0, "the new ship is 0 s old: it holds, whatever the first sighting's age")
+        self.assertEqual(s["reheld"]["waiting"], "ships")
+        self.assertEqual(s["reheldTimers"], 1, "one re-check timer for the new episode")
+        self.assertEqual(s["reheldWarns"], 0)
+        self.assertEqual(s["after"]["reloads"], 1, "the second episode clears: the next re-check reloads")
+        self.assertEqual(s["warns"], [], "no deadline line in either episode")
+        self.assertEqual(s["left"], 0)
+        # the second episode runs its own full 60 s, and the console line measures it, not the page's first sighting
+        s2 = run_core(self.FAKES + episode + """
+NOW += 59000; runTimers(); var under = state(); var underWarns = WARNS.length;
+NOW += 1000; runTimers();
+out({ under: under, underWarns: underWarns, after: state(), warns: WARNS, left: TIMERS.length });""")
+        self.assertEqual(s2["under"]["reloads"], 0, "59 s into the second episode: still held")
+        self.assertEqual(s2["under"]["waiting"], "ships")
+        self.assertEqual(s2["underWarns"], 0)
+        self.assertEqual(s2["after"]["reloads"], 1, "60 s into the second episode: reloads anyway")
+        self.assertEqual(len(s2["warns"]), 1, s2["warns"])
+        self.assertIn("after 60 s", s2["warns"][0], "the line measures this episode, not the 125 s since the first sight")
+        self.assertEqual(s2["left"], 0)
+
+    def test_a_gesture_in_a_later_pane_outranks_a_ships_hold_past_its_deadline(self):
+        # The fold's review, K1 (2026-09-08): busy() returned the first pane's 'ships' without reading the panes
+        # behind it, and past HOLD_MAX tryFire traded that word for shipsHold()'s '' and fired, so the shell reloaded
+        # while a later pane was mid-gesture (the chat pane is the landing's first iframe, so this was the live
+        # ordering). busy() now returns any other reason from the shell or any pane first, and 'ships' only when
+        # nothing else held; the gesture's end hands the hold back to the ships word, whose clock runs from there.
+        for gesture in ("drag", "pointer", "selection", "composer"):
+            with self.subTest(gesture=gesture):
+                s = run_core(self.FAKES + """
+var R = window.__rompReload; var chatHold = "ships", paneGesture = "";
+IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; } } } },
+           { contentWindow: { __rompReload: { busyHere: function () { return paneGesture; } } } }];
+R.request("restart", "2.2"); var held = state();
+NOW += 61000; paneGesture = %s; runTimers();            // the deadline has passed, and a later pane is mid-gesture
+var mid = state(); var midTimers = TIMERS.length; var midWarns = WARNS.length;
+paneGesture = ""; R.tryFire();                            // the gesture's ending event calls the shell's tryFire
+var ended = state(); var endedTimers = TIMERS.length;
+NOW += 60000; runTimers();
+out({ held: held, mid: mid, midTimers: midTimers, midWarns: midWarns, ended: ended, endedTimers: endedTimers,
+      after: state(), warns: WARNS, left: TIMERS.length });""" % json.dumps(gesture))
+                self.assertEqual(s["held"]["waiting"], "ships")
+                self.assertEqual(s["mid"]["reloads"], 0, "never mid-gesture, whatever the first pane says")
+                self.assertEqual(s["mid"]["waiting"], gesture, "the gesture is the reason reported, not the ships word")
+                self.assertEqual(s["midTimers"], 0, "a gesture has an ending event: no re-check timer")
+                self.assertEqual(s["midWarns"], 0, "the deadline did not fire")
+                self.assertEqual(s["ended"]["reloads"], 0, "the gesture's end hands the hold back to the ships word")
+                self.assertEqual(s["ended"]["waiting"], "ships")
+                self.assertEqual(s["endedTimers"], 1, "...which starts its own re-check and its own clock")
+                self.assertEqual(s["after"]["reloads"], 1, "60 s after the gesture ended: reloads anyway")
+                self.assertEqual(len(s["warns"]), 1, s["warns"])
+                self.assertIn("after 60 s", s["warns"][0], "the clock ran from the gesture's end, not the first request")
+                self.assertEqual(s["left"], 0)
 
     def test_a_page_with_no_hold_reloads_at_once_and_arms_no_timer(self):
         s = run_core(self.FAKES + """

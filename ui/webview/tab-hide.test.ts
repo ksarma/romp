@@ -219,7 +219,7 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.match(TABS, /ledgers\.get\(id\)\?\.needsInput === true\];/, "the verdict is in the strip's signature (tab-strip-skip.test lists it)");
   assert.match(HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/, "the flag over the same set");
   assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block: an open header with hidden members carries the marks too");
-  assert.match(TABS, /hiddenTabIds = new Set\(plan\.items\.flatMap\(\(it\) => \("head" in it \? it\.hides : \[\]\)\)\);/, "the hidden ids, for setActive");
+  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan's headers, hides included, for setActive's unfold (read per holder: tab-groups.test, T264b)");
   assert.match(TABS, /it\.folded, it\.active, it\.hidden, it\.hides\] : it\.id\)\)/, "a hide flip changes the plan's signature, so the strip repaints");
 });
 
@@ -297,8 +297,10 @@ test("executed + pinned: a hidden session's needs-you is reachable. The fold's c
   // would bring no tab on screen (the hide stands) and the pick named the session, not the group
   const { p, infra } = strip(apiHidden, "api");
   assert.deepEqual([infra.active, infra.folded, p.folded.has("api")], [true, false, true]);
-  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\) && !hiddenTabIds\.has\(id\)\) unfoldSectionOf\(id\);/, "setActive: the unfold is for a folded-away tab, not a hidden one");
-  assert.match(RENDER, /^let hiddenTabIds = new Set<string>\(\);/m, "the ids hidden by their own flag, kept from the last plan beside collapsedTabIds");
+  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);/, "setActive: the unfold is for a folded-away tab");
+  assert.match(RENDER, /const holder = lastStripItems\.find\(\(it\) => "head" in it && it\.head\.name !== null && it\.folded && it\.head\.ids\.includes\(id\) && !it\.hides\.includes\(id\)\);/,
+    "unfoldSectionOf opens a folded holder that does NOT hide the tab; api's only holder hides it, so nothing opens (per holder since T264b: tab-groups.test)");
+  assert.doesNotMatch(RENDER, /hiddenTabIds/, "no union of every header's hides: a hide is per (tab, section)");
   // the same for a hidden member of a FOLDED section: the fold stays as the user left it
   const folded = strip(setSectionCollapsed(apiHidden, "infra", true), "api");
   assert.deepEqual([folded.infra.active, folded.infra.folded, folded.p.folded.has("api")], [true, true, true]);
