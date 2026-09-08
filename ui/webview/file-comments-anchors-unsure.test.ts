@@ -407,7 +407,7 @@ const tagsOf = (head: El): El[] => head.querySelectorAll(".fc-tag");
 test("followPassage: rewriting the selected copy of a sentence that recurs is `elsewhere`, never a move onto the other copy; deleting it likewise; a unique passage rewritten is `gone`; a hit inside the edited span still moves, and an insertion above is exact as before", async () => {
   const { followPassage } = await import("./file-comments");
   const range = { start: DAY2, end: DAY2 + SHIP.length };
-  // the trap: the anchor's one best hit in the rewritten text is Day 1's sentence, whole context and all
+  // what the re-find got wrong: the anchor's one best hit in the rewritten text is Day 1's sentence, whole context and all
   assert.equal(locateComment(SOON, makeAnchor(REPORT, range), DAY2).range!.start, DAY1, "the engine alone re-finds the other copy");
   assert.deepEqual(followPassage(REPORT, range, SOON), { state: "elsewhere" });
   // Day 2's sentence deleted outright (with the space before it): the same

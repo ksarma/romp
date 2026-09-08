@@ -226,7 +226,7 @@ assert.ok(FIRST > 0 && SECOND > FIRST && THIRD > SECOND, "the fixture has three 
 const RANGE = { start: SECOND, end: SECOND + MARKER.length };
 const GAP = SECOND - FIRST;
 // the session's paragraph, inserted above the first copy: longer than half the gap between copies, so the engine's
-// nearest tied hit to the OLD offset is the first copy (the trap)
+// nearest tied hit to the OLD offset is the first copy (the wrong one)
 const INSERTED = "The session added this paragraph meanwhile. ".repeat(13).trim();
 const ABOVE = "# Report\n\n" + INSERTED + "\n\n" + PARA + "\n\n" + PARA + "\n\n" + PARA + "\n";
 const SHIFT = ABOVE.length - DOC.length;
@@ -381,10 +381,10 @@ const PASSAGE_TIED = "The file changed and this passage now occurs in it more th
 
 test("followPassage: a paragraph inserted above a recurring passage moves the pair with ITS copy, exactly; the engine's nearest tied hit to the old offset was the other copy", async () => {
   const { followPassage } = await import("./file-comments");
-  // the trap the re-find fell into: the 24-character anchor ties on every copy, and nearest to the OLD offset is the first
-  const trap = locateComment(ABOVE, makeAnchor(DOC, RANGE), SECOND);
-  assert.equal(trap.state, "located");
-  assert.equal(trap.range!.start, FIRST + SHIFT, "the engine, hinted by an offset into other text, picks the other copy");
+  // what the re-find got wrong: the 24-character anchor ties on every copy, and nearest to the OLD offset is the first
+  const wrong = locateComment(ABOVE, makeAnchor(DOC, RANGE), SECOND);
+  assert.equal(wrong.state, "located");
+  assert.equal(wrong.range!.start, FIRST + SHIFT, "the engine, hinted by an offset into other text, picks the other copy");
   assert.deepEqual(followPassage(DOC, RANGE, ABOVE), { state: "moved", range: { start: SECOND + SHIFT, end: SECOND + SHIFT + MARKER.length } });
   assert.equal(ABOVE.slice(SECOND + SHIFT, SECOND + SHIFT + MARKER.length), MARKER);
   // the same, over a text whose only change is below the passage: the offsets hold

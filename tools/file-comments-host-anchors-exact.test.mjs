@@ -11,7 +11,7 @@
 // nearest copy, and only while the text is as the sidecar's last writer left it; a change nobody
 // recorded leaves it as it is. Before, a tied anchor was never refreshed,
 // and the highlight drifted to the wrong paragraph after a tracked insertion above; a refresh by
-// nearest-wins would have baked the same wrong copy in.
+// nearest-wins would have stored the same wrong copy.
 // (3) hintOf is behavior, not text: status tells a src-less region comment's figure from its stored
 // position where the anchor ties, and retarget re-places it.
 // (4) The refresh is bounded: a write on a near-cap file of repeated text with hundreds of cap-width tied

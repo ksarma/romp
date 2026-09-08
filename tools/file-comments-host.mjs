@@ -1811,7 +1811,7 @@ function affordable(budget, text, anchor) {
 // EVERY sidecar write this script performs — first thing in stageSidecar, the one function every sidecar
 // write goes through, and once more before the reply is measured (checkReplyFits), so the bytes the
 // refresh adds are counted — against the text the sidecar is saved for: an edit above the passage moves
-// it, and the next write catches up. A comment whose whole anchor still sits at its position needs
+// it, and the next write recomputes it. A comment whose whole anchor still sits at its position needs
 // nothing (sitsAt) and costs no scan. The rest are told apart by where the whole anchor sits in the text
 // (fullMatches). At one place, and the comment has no position, or its quote occurs nowhere else: that
 // place is the position, since nothing else can be the passage. At one place while the quote recurs:
