@@ -359,9 +359,10 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
     _active_chat_sig, beside the background tabs' file-stat key; the fork's complete per-session signature
     (_chat_build_sig, round-4 plan P4) is ONE key for every tab, and these tests — upstream's, rewritten
     against that key — pin the same observable: an identical world yields the same key and any moved
-    payload input moves it. Two of upstream's inputs are no longer keyed, because build_session reads
-    neither (tests/test_chat_build_sig_inputs.py is the census): the per-session captions store and the
-    in-flight judge set. Synthetic session, private sid."""
+    payload input moves it. Of upstream's inputs, the captions store is keyed through what the payload
+    embeds from it (the postal cards' caption values, the postal component; tests/test_chat_build_sig_inputs.py
+    moves one), and the in-flight judge set is not keyed because build_session does not read it (the
+    census there is the check). Synthetic session, private sid."""
 
     SID = "11111111-2222-3333-4444-999999999941"
 
@@ -413,8 +414,9 @@ class EveryTabIsServedOnTheCompleteKey(_StateSandbox):
         s2 = self.sig()
         self.assertNotEqual(s1, s2, "a states row")
         # the judge's OUTPUT the payload reads is the goal store (the ledger, the seams, the awaiting stamps):
-        # a publish moves the key at once, through the store's live identity — upstream keyed the captions
-        # store and the in-flight judge set here, neither of which build_session reads
+        # a publish moves the key at once, through the store's live identity. Upstream keyed the captions
+        # store here (its captions reach the payload only as the postal cards' caption values, keyed by the
+        # postal component) and the in-flight judge set (not an input of build_session)
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         gs = jd.GOALDIR / (self.SID + ".json")
         try:

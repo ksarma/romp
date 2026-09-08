@@ -811,6 +811,28 @@ class Differential(_World):
         nodeps = self.sig()
         self.assertIsNone(nodeps[km._CHAT_SIG_LABELS.index("postal")], "a tab with no postal traffic ignores the log")
 
+    def test_a_changed_caption_of_a_postal_card_misses_under_postal(self):
+        """Re-review should-fix 2 (2026-09-08): the captions store IS a chat input, through the caption map
+        the postal cards embed (a judge's caption of the segment a peer message triggered); the component
+        carries each card's caption value, so a caption changing under an embedded mid moves the key with
+        the log's identity unchanged. Upstream stat'd the per-session captions file for the watched tab."""
+        card = {"kind": "postal-service", "mid": "m-cap", "direction": "in"}
+        deps = {"task_outs": [], "pl_pending": [], "postal_any": True, "postal_cards": [card], "at_build": None}
+        saved, saved_slot = km._msg_summaries, getattr(km._live_scope, "msgsum", None)
+        km._live_scope.msgsum = None                           # no cycle slot: the direct path to the map
+        caps = {"m-cap": "asked for the api tests"}
+        km._msg_summaries = lambda: dict(caps)
+        try:
+            a = self.sig(deps=deps)
+            self.assertEqual(a[km._CHAT_SIG_LABELS.index("postal")][1], (("m-cap", "asked for the api tests", None, None),),
+                             "the card's mid and the caption it embeds")
+            self.assertEqual(self.sig(deps=deps), a, "the same caption: no move")
+            caps["m-cap"] = "asked for the api tests, then the docs"   # the judge re-captioned the segment
+            self.assertEqual(self.moved(a, self.sig(deps=deps)), ("postal",), "a changed caption is a changed card")
+        finally:
+            km._msg_summaries = saved
+            km._live_scope.msgsum = saved_slot
+
 
 class RealBuildIdleBoard(_World):
     """The real build_session through _push over a quiet world: the first push builds the tab, every later
