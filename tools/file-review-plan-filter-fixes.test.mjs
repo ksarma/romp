@@ -92,7 +92,26 @@ test('the note and the Tests bullet name the second round\'s two suites and this
   assert.ok(cue.includes('assert.equal(kindCueComment(CHAT), kindCueComment(FEED)'), 'and styles.css\'s comment byte-equal to feed.css\'s');
 });
 
+test('the note and the Tests bullet name the third round\'s two suites, each exists, and the wording pin scans both with the driven suites', () => {
+  // the consolidation after the third round (2026-09-07): the round's driven suite is named file-comments-filter… and the
+  // readdir guard below caught its absence; its size probe is not (it sits with the other styles-*-sizes probes), so it is
+  // named here by hand, and the wording pin's scan is held to cover both — the pin's own readdir test covers the driven ones
+  for (const rel of ['ui/webview/file-comments-filter-saved-line.test.ts', 'ui/webview/file-comments-saved-line-sizes.test.ts']) {
+    assert.ok(note.includes('`' + rel + '`'), 'the note names ' + rel);
+    assert.ok(bullet.includes('`' + rel + '`'), 'the Tests bullet names ' + rel);
+    assert.ok(fs.existsSync(path.join(REPO, rel)), rel + ' exists');
+  }
+  assert.ok(bullet.includes('drives the third round\'s cases the same way'), 'the bullet says the saved-line suite drives the round over the same stand-in');
+  assert.ok(note.includes('holds the four driven suites\' and the two size probes\' titles, assertion messages and comments'), 'the note says what the wording pin scans');
+  const wording = read('ui', 'webview', 'file-comments-filter-wording.test.ts');
+  for (const f of ['file-comments-filter-saved-line.test.ts', 'file-comments-saved-line-sizes.test.ts', 'styles-fc-computed-sizes.test.ts']) {
+    assert.ok(wording.includes('"' + f + '"'), 'the wording pin scans ' + f);
+  }
+  assert.match(wording, /assert\.doesNotMatch\(src, \/hands the keyboard\//, 'the wording pin bans the focus figure the plan\'s kind-cue pin bans in the note');
+});
+
 test('the inventory is held to the tree: every file-comments-filter suite under ui/webview is named in the note and in the Tests bullet', () => {
+
   const suites = fs.readdirSync(path.join(REPO, 'ui', 'webview')).filter((f) => /^file-comments-filter.*\.test\.ts$/.test(f)).sort();
   assert.ok(suites.length >= 3, 'the follow-on\'s driven suites are in the tree: ' + suites.join(', '));
   for (const f of suites) {

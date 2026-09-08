@@ -1090,10 +1090,15 @@ does not. Tests: `ui/webview/file-comments-filter.test.ts` (driven),
 with source pins) and `ui/webview/file-comments-filter-fixes.test.ts` (the second round's, driven the same
 way: the track rows with and without a filter row, the Changes empty state's stray rows, the saved line's
 rectangle wording and its end when the comment comes to ride a change card, and the inline toggle's title
-under each filter); `ui/webview/feed-css-kind-cue.test.ts` holds the sheets' kind-cue comment to the
+under each filter); the third round (2026-09-07) added `ui/webview/file-comments-filter-saved-line.test.ts`
+(driven the same way: the saved line's pick among several fresh comments in one status, and the row's
+shape, `.fc-note` on the words alone so the ✕ keeps the panel buttons' size) and
+`ui/webview/file-comments-saved-line-sizes.test.ts` (the saved row's ✕ and words resolved through both
+sheets' real cascade); `ui/webview/feed-css-kind-cue.test.ts` holds the sheets' kind-cue comment to the
 terms above and to the declarations it describes, and `ui/webview/file-comments-filter-wording.test.ts`
-holds the three driven suites' titles and assertion messages to the same terms (the rule by its selector,
-the token by name, no figure for either); `tools/file-review-plan.test.mjs`,
+holds the four driven suites' and the two size probes' titles, assertion messages and comments to the same
+terms (the rule by its selector, the token by name, the focus move by where the focus goes, no figure for
+any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-kind-cue.test.mjs`, `tools/file-review-plan-filter-review.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
@@ -1577,11 +1582,20 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   round's cases the same way (the track slot's loader and refusal with and without a filter row, the
   Changes empty state and the "Nothing decided" row under it, a region comment's saved line naming the
   rectangle, the line's end when the comment comes to ride a change card, and the inline toggle's title
-  under each filter) and pins the anchor and the title at source; `ui/webview/feed-css-kind-cue.test.ts`
+  under each filter) and pins the anchor and the title at source;
+  `ui/webview/file-comments-filter-saved-line.test.ts` drives the third round's cases the same way (a
+  status answering a save with several fresh comments, a session's among them, and the saved row's shape:
+  `.fc-note` on the words' span, the ✕ a `.fileview-btn` under the unsized row) and pins the row at
+  source; `ui/webview/file-comments-saved-line-sizes.test.ts` resolves the saved row's ✕ and words through
+  both sheets' whole cascade, holding them to `.fileview-btn`'s and `.fc-note`'s sizes;
+  `ui/webview/feed-css-kind-cue.test.ts`
   holds the sheets' kind-cue comment to the note's terms and to the declarations it describes, byte-equal
-  across the two sheets, and `ui/webview/file-comments-filter-wording.test.ts` holds the three driven
-  suites' titles and assertion messages to the same terms (the rule by its selector, the token by name,
-  and neither figure the plan's review replaced); `tools/file-review-plan.test.mjs` and
+
+  across the two sheets, and `ui/webview/file-comments-filter-wording.test.ts` holds the four driven
+  suites' and the two size probes' titles, assertion messages and comments to the same terms (the rule by
+  its selector, the token by name, the focus move by where the focus goes, and none of the figures the
+  plan's review replaced); `tools/file-review-plan.test.mjs` and
+
   `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
   the source, `tools/file-review-plan-kind-cue.test.mjs` holds the note's kind-cue and focus
   sentences to the sheets and the panel, `tools/file-review-plan-filter-review.test.mjs` holds the
