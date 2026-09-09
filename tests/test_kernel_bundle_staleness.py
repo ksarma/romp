@@ -87,14 +87,18 @@ class BundleInputs(unittest.TestCase):
 
 
 class ServedLabsKeyTheSameInputs(unittest.TestCase):
-    """tests/lab_dist.py keys the served labs' one build of dist on the sources it derives from esbuild.js
-    (entry points, then the trees their relative imports reach), not on this list. The two must agree at
-    the file level: an input the kernel would rebuild for that the labs' key does not cover leaves them
-    asserting against stale bundles with nothing saying so. Here, where the kernel is already loaded under
-    isolation, every path _bundle_inputs reads is checked against the harness's keyed set."""
+    """tests/lab_dist.py keys the served labs' one build of dist on the sources it derives from esbuild.js's
+    exported configs (read through node; then the trees their relative imports reach), not on this list. The
+    two must agree at the file level: an input the kernel would rebuild for that the labs' key does not cover
+    leaves them asserting against stale bundles with nothing saying so. Here, where the kernel is already
+    loaded under isolation, every path _bundle_inputs reads is checked against the harness's keyed set."""
 
     def test_every_kernel_bundle_input_is_keyed_by_the_served_labs_build(self):
         cv = km.ROOT / "vscode-extension"
+        if not os.path.isdir(str(cv / "node_modules" / "esbuild")):
+            # the derivation requires esbuild.js under node, and esbuild.js requires esbuild at its top, so a
+            # checkout without the extension's deps (CI's pytest job) skips here as every served lab does
+            self.skipTest("extension deps absent (npm ci not run here): node cannot load esbuild.js's exports")
         keyed = {os.path.realpath(p) for p in lab_dist.default()._input_files()}
         self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
         missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)

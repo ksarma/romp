@@ -24,20 +24,28 @@ This module owns the build. The rules:
   either). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
   exits 0, and the build state is computed BEFORE the build and recorded after it, so the marker never
   claims inputs newer than what the build read: a source edited mid-build is caught by the next call.
-- The trees the build state covers are DERIVED from esbuild.js, not listed here, by a rule that reads no
-  array or object out of the config and parses nothing: two scans over the file, every path-shaped token
-  (a maximal run of letters, digits, dot, slash, underscore and hyphen, quoted or not, in code or in a
-  comment) and every quoted string literal (either quote kind or a backtick, any characters), feed one
-  candidate set, and every candidate that names a file or directory on disk inside the checkout
-  contributes the top-level tree that holds it (ui/ and vscode-extension/ today; one under node_modules is
-  a dependency, keyed by the lock files; one naming nothing on disk contributes nothing), and then, to a
-  fixed point, the top-level tree of every relative import a keyed source makes out of the keyed trees
-  (vendor/ today: ui/webview/anchor-map.ts imports vendor/track-changents/engine.js). Over-approximation
-  is safe for a staleness key (more files keyed means a rebuild more often, never less);
-  under-approximation is guarded by the kernel's `_bundle_inputs`, which reads the same trees:
-  tests/test_kernel_bundle_staleness.py pins that every file it reads is keyed here. node_modules and
-  out-tests (the test build's output) are pruned at any depth, and the dist being built is pruned at the
-  top level only: a source directory named dist at depth is keyed like any other.
+- The trees the build state covers are DERIVED from esbuild.js, not listed here, and read from what the
+  config EXPORTS, never from its text (review round 6, the repo's authoritative-source rule). esbuild.js
+  exports its configs for the extension's own tests (`module.exports = { extension, webview, testBuild,
+  ... }`) and builds only under `require.main === module`, so node can require the module and print
+  module.exports as JSON without building (esbuild_roots). Every string value in the exported objects, at
+  any depth, is resolved against the extension dir, and one that names a file or directory on disk inside
+  the checkout contributes the top-level tree that holds it (ui/ and vscode-extension/ today; one under
+  node_modules is a dependency, keyed by the lock files; one naming nothing on disk, a format or a glob,
+  contributes nothing); then, to a fixed point, the top-level tree of every relative import a keyed source
+  makes out of the keyed trees (vendor/ today: ui/webview/anchor-map.ts imports
+  vendor/track-changents/engine.js). Five rounds of text scans (quoted literals, then path tokens, then
+  their union) each missed a quoting corner the next review found; the export has no quoting to get wrong,
+  and a value built at require time is plain data. Its one limit: a path that stands only in code (a
+  plugin's body, a comment) is not exported data and is not keyed; the kernel's `_bundle_inputs` reads the
+  same trees and tests/test_kernel_bundle_staleness.py pins that every file it reads is keyed here, so
+  drift of that shape is caught. Over-approximation is safe for a staleness key (more files keyed means a
+  rebuild more often, never less). The read needs node on PATH and the extension's node_modules (esbuild.js
+  requires esbuild at its top), which any checkout that can build has; without them, or when the module
+  exports nothing, esbuild_roots raises with node's stderr, and nothing falls back to the text: a silent
+  fallback would hide the breakage it papers over. node_modules and out-tests (the test build's output)
+  are pruned at any depth, and the dist being built is pruned at the top level only: a source directory
+  named dist at depth is keyed like any other.
 - Every build and every copy holds the same file lock (fcntl.flock: xdist workers are separate
   processes, so a threading lock would see one worker at a time). The lock is exclusive for readers
   too: flock's shared-to-exclusive upgrade is not atomic (the lock is dropped and retaken, and a
@@ -121,22 +129,15 @@ _SKIP_DIRS = {"node_modules", "out-tests", "__pycache__"}
 _IMPORTING_SUFFIXES = (".ts", ".js", ".mjs", ".css")
 _RELATIVE_LITERAL = re.compile(r"""["'](\.\.?/[^"'\n]*)["']""")
 _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+url\()?)\s*\(?\s*$""")
-# The two scans over esbuild.js whose union is the candidate set esbuild_roots tests on disk. Neither parses the
-# file, each reads the shape the other cannot, and a candidate that names nothing on disk is noise, so reading both
-# costs a stat sweep and nothing else.
-# 1. A path-shaped token: a maximal run of the characters a relative path is usually made of (`./x`, `../y/z.ts`,
-#    `src/extension.ts`, `dist`), wherever it stands: inside a string of either quote kind, a template literal, a
-#    regex literal, a comment, or bare in code. It ignores quoting and comments on purpose: a scan of quoted
-#    literals alone was thrown off by a stray quote earlier on the same line (an apostrophe in a comment, a double
-#    quote in a regex literal, both of which esbuild.js carries) and swallowed the path literal after it in silence.
-#    What it cannot read is a path holding any other character (a space, an @, a +): the run is cut there, and the
-#    fragments name nothing on disk.
-_PATH_TOKEN = re.compile(r"[A-Za-z0-9._/-]+")
-# 2. A quoted string literal, any characters, escapes kept whole: a single- or double-quoted string on one line (a
-#    JS string cannot span lines) or a template literal (which can). It reads the path the token scan cuts
-#    (`../ui/web view/render.ts`, `../lib@2/entry.ts`), and it is the scan that depends on the quotes before it on
-#    the line balancing, which the union makes matter only for such a path; esbuild.js holds none today.
-_STRING_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"' r"|'((?:[^'\\\n]|\\.)*)'" r"|`((?:[^`\\]|\\[\s\S])*)`")
+# The reader of esbuild.js's exports, run as `node -e <reader> <config>` from the extension dir: it requires the
+# module and prints module.exports as JSON. The module builds only under `require.main === module` (the guard at
+# the end of esbuild.js), which is false under -e, so the require builds nothing. Functions are not JSON and drop
+# out of the print, which is the point: no exported function is called (buildAll would build; testBuild's entries
+# are the test files beside the sources, in trees the two configs name). A module.exports that is not an object
+# (a bare function) prints as null, the exports-nothing error in esbuild_roots.
+_EXPORTS_READER = "const m = require(process.argv[1]); process.stdout.write(JSON.stringify(m) ?? 'null');"
+# The bound on the require, in seconds: a config module loads in well under a second, so only a wedge reaches it.
+_EXPORTS_TIMEOUT = 60
 # The dependency state, relative to the extension dir. package-lock.json moves at checkout time (a merge, a
 # pull); node_modules/.package-lock.json is npm's hidden lockfile, rewritten by every `npm install` and `npm
 # ci`, and it is the one that moves when the installed tree changes AFTER the checkout did (the pull moves the
@@ -176,48 +177,89 @@ def _sources(tree, skip=()):
                 yield os.path.join(dirpath, name)
 
 
-def esbuild_roots(root=ROOT, ext=EXT):
-    """The top-level trees of the checkout `root` that esbuild.js names, as absolute paths, sorted.
+def _exported_strings(value):
+    """Every string value in a JSON-shaped export, at any depth: a string itself, the items of an array, the
+    values of an object (never its keys, which are option names: a loader suffix, an alias, a define name)."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _exported_strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _exported_strings(item)
 
-    The rule is deliberately conservative and reads no array or object out of the config: two scans feed one
-    candidate set, EVERY path-shaped token in the file (_PATH_TOKEN: a maximal run of letters, digits, dot,
-    slash, underscore and hyphen, whether it stands in a quoted string, a template literal, a regex literal,
-    a comment or bare code) and EVERY quoted string literal (_STRING_LITERAL: either quote kind or a
-    backtick, any characters). Each candidate is joined to the extension dir and normalized, and one that
-    names a file or directory on disk inside the checkout contributes the top-level tree that holds it
-    ("src/extension.ts" and "dist" contribute vscode-extension, "../ui/webview/render.ts" contributes ui).
-    Everything else contributes nothing: a candidate naming nothing on disk (a format, a target, a loader
-    key, a URL, a glob, a word of a message or a comment, an identifier, a path in a comment that no longer
-    exists), an empty or absolute one, one under node_modules (a dependency, keyed by the lock files), and
-    one that resolves to the checkout root itself (a top-level tree is the unit this key walks).
 
-    Each scan reads the shape the other cannot, and their union can only add candidates, the safe
-    direction (below). The token scan ignores quoting and comments on purpose: a scan of quoted literals
-    alone depended on the quotes on a line balancing, and a stray quote before a path (an apostrophe in a
-    comment, a double quote in a regex literal) opened a literal that swallowed the path and dropped its
-    tree in silence; a token is found wherever it stands. The literal scan reads the path the token scan
-    cuts: a quoted path holding a character outside the token class (a space, an @, a +) is one literal but
-    several tokens, none of which names the path (`../ui/web view/render.ts` splits into `../ui/web` and
-    `view/render.ts`), and the token scan alone dropped its tree in silence.
-
-    Over-approximation is SAFE for a staleness key: a tree named only in a comment is keyed too, and more
-    files keyed means a rebuild more often, never less. Under-approximation is the failure this module
-    exists to prevent, and the parity test in tests/test_kernel_bundle_staleness.py is the guard against
-    it: on the real tree, every file the kernel's `_bundle_inputs` reads must be keyed here (a guard that
-    reaches only the trees the kernel's own list names, so a tree added to esbuild.js alone rests on the
-    scans). The one shape neither scan sees is an input whose path appears nowhere in the file in one
-    piece (a path assembled from parts at run time); none names a tree of its own today.
-
-    Loud in two cases: a candidate that names an existing path OUTSIDE the checkout, which no top-level
-    tree can key and the parity test cannot see either; and a config naming no path inside the checkout at
-    all, which means the wrong file was read."""
+def esbuild_exports(ext=EXT):
+    """module.exports of `ext`/esbuild.js as node sees it, decoded from JSON, as (config path, exports). Loud,
+    and never falling back to the file's text, when node is not on PATH, when the module does not load (a
+    syntax error; `require("esbuild")` failing on a checkout without the extension's node_modules, which
+    cannot build either) or does not finish loading inside _EXPORTS_TIMEOUT, and when the reader prints no
+    JSON; each error carries node's stderr."""
     config = os.path.join(ext, "esbuild.js")
-    with open(config, encoding="utf-8") as f:
-        src = f.read()
+    try:
+        r = subprocess.run(["node", "-e", _EXPORTS_READER, config], cwd=ext, capture_output=True, text=True,
+                           timeout=_EXPORTS_TIMEOUT)
+    except FileNotFoundError as e:
+        raise ValueError("%s cannot be read: node is not on PATH (%s); the build's inputs are derived from the "
+                         "config's exports, never from its text" % (config, e)) from e
+    except subprocess.TimeoutExpired as e:
+        raise ValueError("%s did not finish loading under node in %g s; stderr tail: %s"
+                         % (config, _EXPORTS_TIMEOUT, _text(e.stderr)[-500:].strip())) from e
+    if r.returncode != 0:
+        raise ValueError("%s did not load under node (exit %d), so the build's inputs cannot be keyed (nothing "
+                         "falls back to the file's text); node said:\n%s"
+                         % (config, r.returncode, r.stderr.strip()[-2000:]))
+    try:
+        return config, json.loads(r.stdout)
+    except ValueError as e:
+        raise ValueError("%s: the exports reader printed no JSON (%r); node said: %s"
+                         % (config, r.stdout[:200], r.stderr.strip()[-500:])) from e
+
+
+def esbuild_roots(root=ROOT, ext=EXT):
+    """The top-level trees of the checkout `root` that esbuild.js's exported configs name, as absolute paths,
+    sorted.
+
+    The source is the config's EXPORT, not its text. esbuild.js exports its configs for the extension's own
+    tests (`module.exports = { buildAll, failureSummary, extension, webview, testBuild, oneCodeMirror }`) and
+    runs its build only under `require.main === module`, the guard at the end of the file, so a `node -e`
+    script that requires the module and prints module.exports as JSON (_EXPORTS_READER, run from the
+    extension dir) reads the objects the build reads and builds nothing. Functions are not JSON and drop out
+    of the print; none is called (buildAll would build; testBuild's entries are the test files beside the
+    sources, in trees the two configs name). The exported objects are walked recursively (_exported_strings:
+    the values of an object, never its keys; the items of an array; a string itself), and every string value
+    is joined to the extension dir and normalized. One that names a file or directory on disk inside the
+    checkout contributes the top-level tree that holds it ("src/extension.ts" and "dist" contribute
+    vscode-extension, "../ui/webview/render.ts" contributes ui). Everything else contributes nothing: a value
+    naming nothing on disk (a format, a target, a loader, a glob, a define value), an empty or absolute one
+    (the resolver paths under node_modules today; a `publicPath` would be a URL, not a file of this checkout),
+    one under node_modules (a dependency, keyed by the lock files), and one that resolves to the checkout
+    root itself (a top-level tree is the unit this key walks).
+
+    Reading the export replaced five rounds of text scans (round 6): a quoted-literal scan, then a path-token
+    scan, then their union, each missed a quoting corner the next review found (a stray quote before a path,
+    a path with a space, an escaped quote, a backtick pairing across lines), and a value built at require
+    time (`${dir}/x.ts`) was beyond all of them; through the export those are plain data. The one limit of
+    the export: a path that stands only in code, a plugin's body or a comment, is not exported data and is
+    not keyed. The kernel's `_bundle_inputs` reads the same trees, and the parity pin in
+    tests/test_kernel_bundle_staleness.py checks on the real tree that every file it reads is keyed here, so
+    drift of that shape is caught. Over-approximation is SAFE for a staleness key (more files keyed means a
+    rebuild more often, never less); under-approximation is the failure this module exists to prevent.
+
+    Loud, with no fallback to the file's text, in five cases: node is not on PATH; the module does not load
+    (a syntax error, or `require("esbuild")` failing on a checkout without the extension's node_modules,
+    which cannot build either, and where the served labs skip before reaching here); module.exports holds no
+    string value (nothing exported, or only functions); a value names an existing path OUTSIDE the checkout,
+    which no top-level tree can key and the parity pin cannot see; and a config naming no path inside the
+    checkout at all, which means the wrong file was read."""
+    config, exports = esbuild_exports(ext)
+    candidates = set(_exported_strings(exports))
+    if not candidates:
+        raise ValueError("%s exports no string value (module.exports prints as %s): the build's inputs are derived "
+                         "from the config's exports, never from its text, so they cannot be keyed"
+                         % (config, json.dumps(exports)[:200]))
     node_modules = os.path.join(ext, "node_modules")
-    candidates = set(_PATH_TOKEN.findall(src))
-    for m in _STRING_LITERAL.finditer(src):
-        candidates.add(m.group(m.lastindex))       # the one quote kind that matched
     roots = set()
     for candidate in sorted(candidates):
         if not candidate or os.path.isabs(candidate):
@@ -227,7 +269,7 @@ def esbuild_roots(root=ROOT, ext=EXT):
             continue
         top = _top_tree(path, root)
         if top is None:
-            raise ValueError("%s names %r, an existing path outside the checkout %s, which cannot be keyed"
+            raise ValueError("%s exports %r, an existing path outside the checkout %s, which cannot be keyed"
                              % (config, candidate, root))
         roots.add(top)
     if not roots:
@@ -436,9 +478,9 @@ _DEFAULT = None
 
 
 def default():
-    """The checkout's own DistBuild, made on first use: deriving its inputs reads esbuild.js and scans the
-    keyed trees for imports (about a tenth of a second), which every process that imports this module need
-    not pay (tests/__init__.py imports it to register the name)."""
+    """The checkout's own DistBuild, made on first use: deriving its inputs starts node to read esbuild.js's
+    exports and scans the keyed trees for imports (a node start and about a tenth of a second), which every
+    process that imports this module need not pay (tests/__init__.py imports it to register the name)."""
     global _DEFAULT
     if _DEFAULT is None:
         _DEFAULT = DistBuild()
