@@ -206,7 +206,10 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone. The author picks the tier at filing time:
+  the label check alone. The author picks the tier at filing time; upstream's tier workflow
+  also reads a `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who
+  cannot label and applies the label (a label already present wins; maintainers re-tier by
+  relabeling):
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): documentation. On the fork that is tests, docs and
     repo plumbing, landing through a batch like every PR. Upstream, to the check it is

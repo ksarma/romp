@@ -224,6 +224,7 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default keeps this high-volume work cheap: effort low on models with adaptive thinking (Fable, Opus 4.6 and later, Sonnet 4.6 and later); Haiku, Sonnet 4.5 and Opus 4.5 have none, so they run with thinking off and no flag. Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Judge concurrency <span class=rs-mixed hidden></span></b><span class=rs-sub>How many judge calls run at once, across every tier. Default is 6, or the ROMP_JUDGE_CONCURRENCY the kernel's service environment sets. Applies on the judges' next pass; no restart. Follows to every connected machine's kernel.</span><select id=rs-judgeconc></select></div>" +
   '<div class=rs-sec>Updates & debug</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Updates and update notices <span class=rs-mixed hidden></span></b>" +
   '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted); one banner covers both, and acting on it converges every attached machine. Check and ask (the default) shows that banner with an Update button; Install automatically converges by itself: a change to kernel code restarts at once (turns in flight are cut and resume with their history) and anything else (the UI, the docs, the CLI, the postal bus) converges in place with no restart; Off stops the checks and the banners about new commits and releases: romp keeps running what it has until you restart it yourself. The separate reload prompt (“A newer romp build is available”) is not an update notice and stays on: it means this page is running older code than the kernel. Kernel-side setting.</span>' +
@@ -299,6 +300,7 @@ function initGear(post) {
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
     jf = document.getElementById('rs-judgefast'),
     ie = document.getElementById('rs-indexeffort'), upm = document.getElementById('rs-updates'),
+    jc = document.getElementById('rs-judgeconc'),
     dm = document.getElementById('rs-distillmodel'), de = document.getElementById('rs-distilleffort'),
     cmm = document.getElementById('rs-cmtmodel'), cme = document.getElementById('rs-cmteffort'),
     cmf = document.getElementById('rs-cmtfast'),
@@ -508,6 +510,7 @@ function initGear(post) {
   selectPick(bk, 'margin-top:5px');
   selectPick(je, 'flex:0 0 auto;width:45%');
   selectPick(ie, 'flex:0 0 auto;width:45%');
+  selectPick(jc, 'flex:0 0 auto;width:45%');   // T277: the concurrency select wears the same facade as the effort picks
   selectPick(de, 'flex:0 0 auto;width:45%');
   selectPick(cme, 'flex:0 0 auto;width:45%');
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
@@ -781,6 +784,7 @@ function initGear(post) {
   if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: gclock.stamp('judge-effort') }); });
   if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', on: jf.checked }); });
   if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: gclock.stamp('index-effort') }); });
+  if (jc) jc.addEventListener('change', function () { post({ type: 'setJudgeConcurrency', value: jc.value, gt: gclock.stamp('judge-concurrency') }); });
   if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: gclock.stamp('distill-model') }); });
   if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: gclock.stamp('distill-effort') }); });
   // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
@@ -861,7 +865,7 @@ function initGear(post) {
   var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'compact-suggest': 'Suggest /compact',
     'file-editing': 'File editing',
     'update-mode': 'Updates and update notices', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
-    'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
+    'index-model': 'Indexing model', 'index-effort': 'Indexing effort', 'judge-concurrency': 'Judge concurrency',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
     'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
     'comment-fast': 'Fast comment threads', 'thinking-summaries': 'Thinking summaries',
@@ -873,7 +877,7 @@ function initGear(post) {
     'file-editing': 'setFileEditing', 'update-mode': 'setUpdateMode', 'thinking-summaries': 'setThinkingSummaries',
     'user-todos': 'setUserTodos',
     'judge-model': 'setJudgeModel', 'judge-effort': 'setJudgeEffort',
-    'index-model': 'setIndexModel', 'index-effort': 'setIndexEffort',
+    'index-model': 'setIndexModel', 'index-effort': 'setIndexEffort', 'judge-concurrency': 'setJudgeConcurrency',
     'distill-model': 'setDistillModel', 'distill-effort': 'setDistillEffort',
     'comment-model': 'setCommentModel', 'comment-effort': 'setCommentEffort', 'comment-fast': 'setCommentFast' };
   // store name → the words its select shows for the sentinel options whose value is not the word. The
@@ -881,7 +885,7 @@ function initGear(post) {
   // refused Default pick drew the value-less copy and a plain Apply anyway — in the frozen-tab case, the
   // one pick the user most needs to see named (#967 review). Kept in step with paintChoices' option
   // lists: setting-stale.test.ts pins every literal sentinel there against this map.
-  var STALE_WORDS = { 'judge-effort': { '': 'Default' }, 'index-effort': { '': 'Default' },
+  var STALE_WORDS = { 'judge-effort': { '': 'Default' }, 'index-effort': { '': 'Default' }, 'judge-concurrency': { '': 'Default' },
     'distill-model': { 'triage': 'Follow triage' }, 'distill-effort': { 'triage': 'Follow triage', 'none': 'Default' },
     'comment-model': { 'session': 'Same as the session', 'default': 'Default' }, 'comment-effort': { 'session': 'Same as the session' } };
   // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
@@ -1056,6 +1060,10 @@ function initGear(post) {
     }).join('');
     var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
     var eo = '<option value="">Default</option>' + eff;
+    // judge concurrency: the kernel's exact range (1..16, its _CONCURRENCY_VALUES) behind the same Default
+    // sentinel — the empty value clears the setting back to the variable, else 6 (T277)
+    var co = '<option value="">Default</option>';
+    for (var ci = 1; ci <= 16; ci++) co += '<option value="' + ci + '">' + ci + '</option>';
     function put(sel, html) {
       if (!sel) return;
       var held = sel.value;
@@ -1064,6 +1072,7 @@ function initGear(post) {
     }
     put(jm, mo); put(im, mo);
     put(je, eo); put(ie, eo);
+    put(jc, co);
     // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
     // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
     // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
@@ -1142,7 +1151,7 @@ function initGear(post) {
   function fillMixedMarks(v, rows) {
     var mine = (v && v.settings) || null;
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
-     ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
+     ['indexEffort', ie], ['judgeConcurrency', jc], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
      ['compactSuggest', csg],
      ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf]].forEach(function (pair) {
       var key = pair[0], el = pair[1];
@@ -1199,6 +1208,7 @@ function initGear(post) {
     if (typeof v.judgeEffort === 'string') setShow(je, v.judgeEffort);
     if (jf) jf.checked = !!v.judgeFast;   // server-side toggle: the kernel's state is authoritative
     if (typeof v.indexEffort === 'string') setShow(ie, v.indexEffort);
+    if (typeof v.judgeConcurrency === 'string') setShow(jc, v.judgeConcurrency);   // RAW: "" selects Default (the variable, else 6)
     if (typeof v.distillModel === 'string') setShow(dm, v.distillModel);   // RAW: "triage" selects the Follow-triage option
     if (typeof v.distillEffort === 'string') setShow(de, v.distillEffort);
     if (typeof v.commentModel === 'string') setShow(cmm, v.commentModel);   // RAW: "session" selects Same as the session

@@ -21,6 +21,7 @@ seeded stateSince and the restart row are one number clamp or not, and a restore
 the whole history (review round 4).
 
 Synthetic only: a private synthetic sid, invented key material assembled at run time, a fixed epoch."""
+import hashlib
 import inspect
 import io
 import json
@@ -47,7 +48,7 @@ sb = load_source("romp_sdk_backend_apih_hover", os.path.join(BIN, "romp_sdk_back
 
 SID = "88888888-aaaa-4bbb-8ccc-000000000001"     # this module's private synthetic sid
 KEY_MATERIAL = "test-key-material-" + "h" * 28    # invented; not shaped like any provider's key
-KEY_FP = sb._keysrc.fingerprint(KEY_MATERIAL)      # what _options records at a keyed launch (_launched_key_fp)
+KEY_FP = hashlib.sha256(KEY_MATERIAL.encode()).hexdigest()[:12]   # a synthetic 12-hex identity for the pure label; romp records none at launch (2026-09-08)
 T0 = 1_756_800_000.0                              # a fixed synthetic epoch: the derivation is pure in `now`
 TOK = km.TOKEN
 JS = km._LANDING_APIH_JS

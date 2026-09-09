@@ -199,9 +199,8 @@ class RedactionRule(_WithConftest):
                "GITHUB_WORKSPACE": p, "RUNNER_TEMP": p, "RUNNER_TOOL_CACHE": p, "pythonLocation": p,
                "Python_ROOT_DIR": p, "Python3_ROOT_DIR": p, "LD_LIBRARY_PATH": p, "PKG_CONFIG_PATH": p,
                "XDG_DATA_DIRS": p + os.pathsep + p,
-               # this conftest's own floors: the pre-floor Claude settings dir the live move test reads,
-               # and the selector path under the state root that is never created
-               "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": p, "ROMP_CREDENTIAL_SELECTOR_FILE": p}
+               # this conftest's own floor: the pre-floor Claude settings dir the live move test reads
+               "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": p}
         self.assertEqual(self.cf.env_values_to_redact(env), set(), "a traceback quotes these paths")
         env = {"PWD_TOKEN": p, "ANTHROPIC_PWD": p, "MY_SECRET_PATH": p}
         self.assertEqual(self.cf.env_values_to_redact(env), {p}, "a credential-shaped name is never exempt")
@@ -210,8 +209,6 @@ class RedactionRule(_WithConftest):
                          "the private tmux socket dir conftest mints is a path a failure may quote")
         self.assertFalse(self.cf.env_value_qualifies("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", p),
                          "the pre-floor settings dir is a path the live test's skip reason quotes")
-        self.assertFalse(self.cf.env_value_qualifies("ROMP_CREDENTIAL_SELECTOR_FILE", p),
-                         "the selector floor names a path that is never created, so the path rule alone would take it")
 
     def test_pytests_own_bookkeeping_names_are_exempt(self):
         # pytest writes PYTEST_CURRENT_TEST (`<node id> (setup|call|teardown)`) for every phase of

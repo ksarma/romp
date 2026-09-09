@@ -1384,82 +1384,36 @@ MOCK
     grep -q 'tmux attach-session -t myproject' "$MOCK_LOG"
 }
 
-# The tmux SERVER's globals are what a new pane inherits; when romp itself runs `op` (a reference is
-# configured) the launcher unsets op's credential names AND the manager's startup ANTHROPIC_API_KEY
-# there before `new-session` — a pane on a reference-governed box never bills a stale key (2026-09-06).
+# The tmux SERVER's globals are what a new pane inherits. romp holds no API key (2026-09-08), so a leftover
+# ANTHROPIC_API_KEY there is refused before the pane exists: the kernel alone refusing to boot on the same
+# variable left this path open (a review find), and a quiet scrub would hide the misconfiguration.
 _stale_server_globals() {
     export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
     printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "OP_SESSION_acct=synthetic-session" \
         "ANTHROPIC_API_KEY=synthetic-stale-key" "PATH=/usr/bin" "HOME=/nonexistent" > "$MOCK_TMUX_GLOBALS_FILE"
 }
 
-@test "new -t: a reference in the CLIENT env scrubs op's names and ANTHROPIC_API_KEY from the tmux server" {
+@test "new -t: a leftover ANTHROPIC_API_KEY in the tmux server's globals refuses the session, loudly, without scrubbing" {
     _stale_server_globals
-    ROMP_API_KEY_REF="op://test-vault/test-item/credential" run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
-    grep -q 'tmux set-environment -gu OP_SESSION_acct' "$MOCK_LOG"
-    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
-    run grep -q 'tmux set-environment -gu PATH' "$MOCK_LOG"
+    run run_romp new -t myproject
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ANTHROPIC_API_KEY"* ]]
+    [[ "$output" == *"apiKeyHelper"* ]]
+    [[ "$output" != *"synthetic-stale-key"* ]]
+    run grep -q 'new-session' "$MOCK_LOG"          # `run` + status, not a bare `! grep`: `!` is exempt from set -e mid-test
     [ "$status" -ne 0 ]
-    run grep -q 'tmux set-environment -gu HOME' "$MOCK_LOG"
+    run grep -q 'set-environment' "$MOCK_LOG"
     [ "$status" -ne 0 ]
-    # the scrub comes BEFORE the pane exists
-    [ "$(grep -n 'set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG" | cut -d: -f1)" -lt \
-      "$(grep -n 'tmux new-session' "$MOCK_LOG" | cut -d: -f1)" ]
 }
 
-@test "new -t: a reference in the env FILE alone (a keyswap with no restart) scrubs the tmux server too" {
-    # Regression (2026-09-06): the guard read only the client's ROMP_API_KEY_REF, which a kernel-spawned
-    # `romp new` lacks when the reference was swapped into service.env after the manager started.
-    _stale_server_globals
-    unset ROMP_API_KEY_REF
-    # Name the file explicitly: CI runners export XDG_CONFIG_HOME, so "$HOME/.config" is not where the
-    # launcher would look (the keyswap tests pin the path the same way).
-    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
-    printf '%s\n' "# the service env" "ROMP_PERF=1" "  ROMP_API_KEY_REF=op://test-vault/test-item/credential" \
-        > "$ROMP_SERVICE_ENV_FILE"
+@test "new -t: clean server globals (op's names, a login token) start the session and touch nothing" {
+    export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
+    printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "ANTHROPIC_AUTH_TOKEN=synthetic-bearer" \
+        "PATH=/usr/bin" > "$MOCK_TMUX_GLOBALS_FILE"
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
-    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
-    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
-}
-
-@test "new -t: a key command line (ROMP_API_KEY_CMD) in the env FILE alone is a provider too and scrubs the tmux server" {
-    # 2026-09-07: the generic provider. With a key command governing, ANTHROPIC_API_KEY must still leave
-    # the server's globals (a keyswap retired it), and op's names go too if they are present.
-    _stale_server_globals
-    unset ROMP_API_KEY_REF ROMP_API_KEY_CMD
-    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"     # CI runners export XDG_CONFIG_HOME: pin the path
-    printf '%s\n' "ROMP_PERF=1" "ROMP_API_KEY_CMD=fetch-synthetic-key --field api" > "$ROMP_SERVICE_ENV_FILE"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
-    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
-    [ "$(grep -n 'set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG" | cut -d: -f1)" -lt \
-      "$(grep -n 'tmux new-session' "$MOCK_LOG" | cut -d: -f1)" ]
-}
-
-@test "new -t: a key command in the CLIENT env scrubs the tmux server too" {
-    _stale_server_globals
-    unset ROMP_API_KEY_REF
-    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
-    printf '%s\n' "ROMP_PERF=1" > "$ROMP_SERVICE_ENV_FILE"
-    ROMP_API_KEY_CMD="fetch-synthetic-key --field api" run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
-}
-
-@test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
-    _stale_server_globals
-    unset ROMP_API_KEY_REF
-    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
-    printf '%s\n' "ANTHROPIC_API_KEY=synthetic-static-key" > "$ROMP_SERVICE_ENV_FILE"
-    run run_romp new -t myproject
-    [ "$status" -eq 0 ]
-    run grep -q 'set-environment -gu' "$MOCK_LOG"
-    [ "$status" -ne 0 ]
-    run grep -q 'show-environment' "$MOCK_LOG"
+    grep -q 'new-session' "$MOCK_LOG"
+    run grep -q 'set-environment' "$MOCK_LOG"
     [ "$status" -ne 0 ]
 }
 
@@ -3426,153 +3380,27 @@ PY
     [[ "$output" == *"--env NAME=VALUE"* ]]
 }
 
-# ─── romp keyswap — the sessions' API key, by fingerprint; the named swap refused ──────
-# This fork does not write API keys to files (the user 2026-09-05): `romp keyswap <name>`
-# — upstream's rewrite of service.env from service.env.<name> — is refused with exit 2
-# and touches nothing; the bare report and --cycle still dispatch to romp-keyswap.
-# End-to-end through the dispatcher and the real cli/keyswap.py, against a temp
-# env file (ROMP_SERVICE_ENV_FILE): the mock-PATH shadowing other dispatch tests
-# use cannot shadow romp-keyswap, since bin/romp prepends its own bin dir. Fake
-# keys only, and the point of the assertions is that no key value is printed.
-
-_keyswap_files() {
+# ─── romp keyswap is retired (2026-09-08): romp holds no API key ──────
+@test "keyswap: retired; prints the rotation procedure and exits 2 without touching anything" {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
-    # romp keyswap now asks the running kernel which key it reads (a /keycycle read) on every run, and
-    # honours ROMP_KERNEL_PORT as the ONLY port it probes — pin a dead port so a developer box with a
-    # live kernel on the default port stays out of these cases (CI has no kernel either way)
-    export ROMP_KERNEL_PORT=1
-    printf 'ROMP_PERF=1\nANTHROPIC_API_KEY=sk-ant-TEST-0000\nROMP_EXPECTED_AUTH=key\n' \
-        > "$ROMP_SERVICE_ENV_FILE"
-    chmod 600 "$ROMP_SERVICE_ENV_FILE"
-    printf 'ANTHROPIC_API_KEY=sk-ant-TEST-1111\n' > "$ROMP_SERVICE_ENV_FILE.lowprio"
-    chmod 600 "$ROMP_SERVICE_ENV_FILE.lowprio"
-}
-
-@test "keyswap: bare reports the live key and its candidates, by fingerprint only" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_files
-    run run_romp keyswap
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"sha256:"* ]]
-    [[ "$output" == *"lowprio"* ]]
-    [[ "$output" != *"sk-ant-TEST"* ]]          # never a key value on a surface
-    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # read-only
-}
-
-@test "keyswap: a named source is refused (the fork writes no key files) and touches nothing" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_files
-    before="$(stat -c %Y "$ROMP_SERVICE_ENV_FILE" 2>/dev/null || stat -f %m "$ROMP_SERVICE_ENV_FILE")"
-    run run_romp keyswap lowprio
+    printf 'ROMP_EXPECTED_AUTH=key\n' > "$TEST_DIR/service.env"
+    run "$ROMP_SCRIPT" keyswap anything --cycle-all
     [ "$status" -eq 2 ]
-    [[ "$output" == *"refused"* ]]
-    [[ "$output" == *"does not write API keys to files"* ]]
-    [[ "$output" != *"this installation"* ]]                 # a fork policy, not a claim about one box
+    [[ "$output" == *"romp keyswap is retired"* ]]
     [[ "$output" == *"apiKeyHelper"* ]]
-    [[ "$output" == *"romp keyswap --cycle-all"* ]]          # what to run instead, after a rotation
-    [[ "$output" != *"no manager restart needed"* ]]         # upstream's success line never prints
-    [[ "$output" != *"sk-ant-TEST"* ]]                       # never a key value on a surface
-    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # the file is untouched…
-    grep -q 'ROMP_PERF=1' "$ROMP_SERVICE_ENV_FILE"
-    grep -q 'ROMP_EXPECTED_AUTH=key' "$ROMP_SERVICE_ENV_FILE"
-    after="$(stat -c %Y "$ROMP_SERVICE_ENV_FILE" 2>/dev/null || stat -f %m "$ROMP_SERVICE_ENV_FILE")"
-    [ "$before" = "$after" ]                                  # …not even rewritten in place
+    [[ "$output" == *"ROMP_EXPECTED_AUTH=key"* ]]
+    [ "$(cat "$TEST_DIR/service.env")" = "ROMP_EXPECTED_AUTH=key" ]
 }
 
-@test "keyswap: an unknown source gets the same refusal, not upstream's per-file message" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_files
-    run run_romp keyswap nosuch
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"does not write API keys to files"* ]]
-    [[ "$output" != *"no such key file"* ]]                  # the answer does not depend on the filesystem
-    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
-}
-
-@test "keyswap: --cycle-all still dispatches to romp-keyswap and reaches the kernel step" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_files                                            # ROMP_KERNEL_PORT=1: no kernel answers there
-    run run_romp keyswap --cycle-all
-    [ "$status" -eq 1 ]                                       # the cycle could not run — said so, non-zero
-    [[ "$output" == *"cycle       NOT DONE"* ]]
-    [[ "$output" == *"no running kernel"* ]]
-    [[ "$output" != *"refused"* ]]                            # the bare cycle is not the refused form
-    [[ "$output" != *"already swapped"* ]]                    # nothing is ever swapped here
-    [[ "$output" != *"sk-ant-TEST"* ]]
-    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
-}
-
-# Command mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py): the same dispatcher, the same
-# cli/keyswap.py, against a fake credential command in the test dir whose set depends on $1. The
-# values are assembled at run time (no credential-shaped literal in this file), and the point of the
-# assertions is again that none of them is ever printed.
-_keyswap_command_mode() {
-    export ROMP_KERNEL_PORT=1                                 # no kernel answers there
-    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/no-such-service.env"
-    KS_HP="romp-test-fixture-hp-$RANDOM$RANDOM$RANDOM"
-    KS_LP="romp-test-fixture-lp-$RANDOM$RANDOM$RANDOM"
-    cat > "$TEST_DIR/cred.sh" <<EOF
-#!/bin/sh
-case "\$1" in
-  hp) echo "ANTHROPIC_API_KEY=$KS_HP" ;;
-  lp) echo "ANTHROPIC_API_KEY=$KS_LP" ;;
-esac
-echo "ROLE_TOKEN=romp-test-fixture-role-$RANDOM"
-EOF
-    chmod 700 "$TEST_DIR/cred.sh"
-    export ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\""
-    export ROMP_CREDENTIAL_SELECTOR_FILE="$TEST_DIR/selector"
-    export ROMP_CREDENTIAL_NAMES=hp,lp
-    export CLAUDE_CONFIG_DIR="$TEST_DIR/claude"               # no settings.json: no apiKeyHelper
-    printf 'hp\n' > "$ROMP_CREDENTIAL_SELECTOR_FILE"
-}
-
-@test "keyswap (command mode): the bare report names the source, the selector and fingerprints, never a value" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_command_mode
-    run run_romp keyswap
+@test "keyswap: the help table no longer lists it, and no romp entry point reads the retired provider names" {
+    run "$ROMP_SCRIPT" help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"key source  command (ROMP_CREDENTIAL_COMMAND is set)"* ]]
-    [[ "$output" == *"candidates  hp <- selected, lp"* ]]
-    [[ "$output" == *"live key    sha256:"* ]]
-    [[ "$output" == *"kernel      not running"* ]]
-    [[ "$output" != *"refused"* ]]
-    [[ "$output" != *"fixture"* ]]                            # never a value on a surface
-    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "hp" ]      # a report writes nothing
+    [[ "$output" != *"keyswap"* ]]
+    # the only mention left in bin/romp is the retirement note itself
+    local hits
+    hits="$(grep -c 'ROMP_API_KEY_CMD\|ROMP_API_KEY_REF\|_romp_op_consumer' "$ROMP_SCRIPT" || true)"
+    [ "$hits" -le 1 ]
+    run grep -q 'serviceEnvHasRef\|PROVIDER_VARS' "$(dirname "$ROMP_SCRIPT")/romp-manager"   # run + status, never a bare `! grep`
+    [ "$status" -ne 0 ]
 }
 
-@test "keyswap (command mode): a declared name writes the selector; an undeclared one is refused, unechoed" {
-    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-    touch "$MOCK_LOG"
-    _keyswap_command_mode
-    run run_romp keyswap lp
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"selector    hp -> lp"* ]]
-    [[ "$output" == *"live key    sha256:"* ]]
-    [[ "$output" == *"(was sha256:"* ]]
-    [[ "$output" != *"fixture"* ]]
-    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]
-    run run_romp keyswap nosuch
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"not declared in ROMP_CREDENTIAL_NAMES"* ]]
-    [[ "$output" != *"nosuch"* ]]                             # an undeclared name is never echoed
-    [[ "$output" != *"does not write API keys to files"* ]]   # not the file-mode refusal
-    [ "$(cat "$ROMP_CREDENTIAL_SELECTOR_FILE")" = "lp" ]      # untouched by the refusal
-}
-
-@test "keyswap: help names the whole form (name, --refresh, the cycle)" {
-    run run_romp -h
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"romp keyswap [<name>] [--refresh] [--cycle <session,…>|--cycle-all]"* ]]
-}
-
-@test "keyswap: help names it (the presence-checked command list)" {
-    run run_romp -h
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"romp keyswap"* ]]
-}

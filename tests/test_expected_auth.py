@@ -408,7 +408,7 @@ class DeclarationSeedsTheUnpickedDefault(_Declared):
 
     def test_declared_key_seeds_the_unpicked_intent_without_writing_a_pick(self):
         os.environ["ROMP_EXPECTED_AUTH"] = "key"
-        self.assertFalse(self.be.work_key_configured, "the helper box: romp holds no key of its own")
+        self.assertFalse(self.be.key_available, "no apiKeyHelper in the test's settings: the box reads as keyless")
         self.assertEqual(self._sess(1).effective_auth(), "key")
         sid = self.be.spawn("n", "/tmp")
         self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "a seeded default is not a pick")
@@ -494,6 +494,17 @@ class DeclarationSeedsTheUnpickedDefault(_Declared):
             self.assertTrue(all(r["auth"] == "login" for r in rows.values()), "and the new pick is what is read")
 
 
+class _KeyToggleBackend(sb.SdkBackend):
+    """A backend whose key_available reads a pinned bool. romp holds no key of its own (2026-09-08); the box's
+    key is Claude Code's apiKeyHelper, which the real property reads from the settings files. The matrix below
+    needs both worlds in one process, so it pins the answer instead of writing settings."""
+    key_here = False
+
+    @property
+    def key_available(self) -> bool:
+        return self.key_here
+
+
 class KernelReadersShareTheBackendsRule(unittest.TestCase):
     """_bills_login's fallback for a row that reports nothing and _auth_avail's picker default read the
     backend's ONE rule (SdkBackend.new_session_auth, called directly) on a REAL backend. Review round 1
@@ -501,13 +512,12 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
     consulted it after, so a keyed box declaring login seeded the picker on Login for sessions that
     launched keyed; and found no test executing the backend method the kernel reached through a getattr
     guard, so a rename restored the pre-fix readers with every test green. The matrix below runs every
-    reader over key held or not, declaration key/login/unset and pick none/login/key, and states the one
-    answer for each of the two questions: what an UNPICKED reg bills (unpicked_auth: the key first) and
+    reader over a key available or not, declaration key/login/unset and pick none/login/key, and states the
+    one answer for each of the two questions: what an UNPICKED reg bills (unpicked_auth: the key first) and
     what a session SPAWNED NOW bills (new_session_auth: the seed a spawn writes first). They differ in one
     cell only, a remembered login pick on a keyed box: the reg a spawn writes carries the pick, an older
-    unpicked reg launches keyed."""
-
-    KEY = "romp-test-fixture-key-not-real"   # the documented pin: work_key_configured reads True, nothing validates it
+    unpicked reg launches keyed. Since 2026-09-08 romp holds no key of its own: the key the rule reads is
+    the box's apiKeyHelper (SdkBackend.key_available), toggled here without writing a settings file."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -516,8 +526,7 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         km.jd.STATE = Path(self.d)
         km._claude_account = lambda: "aaaaaaaaaaaa"
         km._claude_account_label = lambda: "user@example.com"
-        self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
-        self.be.work_key = ""
+        self.be = _KeyToggleBackend(self.d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
         km._sdk = lambda: self.be
 
     def tearDown(self):
@@ -536,7 +545,7 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
             p.write_text(json.dumps({"auth": pick}))
         else:
             p.unlink(missing_ok=True)
-        self.be.work_key = self.KEY if key else ""
+        self.be.key_here = key
 
     def test_every_reader_gives_one_answer_over_the_matrix(self):
         n = 0
@@ -565,9 +574,9 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
                                      tag + ": the picker default IS what a spawn without a pick bills")
 
     def test_a_keyed_box_declaring_login_reads_the_key_everywhere(self):
-        # the cell review round 1 found split: the boot check flags this declaration as a contradiction but
-        # does not refuse it, and _options injects the configured key for every unpicked session, so every
-        # reader must say key (the base commit did; the fix's two kernel readers said login)
+        # the cell review round 1 found split: the declaration is a contradiction the init check rings about,
+        # not a refusal, and every unpicked session launches on the box's key, so every reader must say key
+        # (the base commit did; the fix's two kernel readers said login)
         self._world("login", "", key=True)
         self.assertEqual(sb.unpicked_auth(Path(self.d), True), "key")
         self.assertEqual(self.be.new_session_auth(), "key")
@@ -601,7 +610,7 @@ class KernelReadersShareTheBackendsRule(unittest.TestCase):
         self.assertEqual(km._unpicked_default(), "key")
         self.assertFalse(km._bills_login({"state": "idle"}))
         self.assertEqual(km._auth_avail()["default"], "key")
-        km._sdk = lambda: type("B", (), {"work_key_configured": False})()   # a backend without the method
+        km._sdk = lambda: type("B", (), {"key_available": False})()   # a backend without the method
         with self.assertRaises(AttributeError):
             km._unpicked_default()
         km._sdk = lambda: None
@@ -721,52 +730,6 @@ class RefreshUsageAllKeyed(_Declared):
         self.be.sessions = {dormant.sid: dormant}
         self.be.refresh_usage()
         self.assertEqual(self._lines(), [], "nothing connected — nothing to say")
-
-
-class DeclarationInTheKeySourceVerdict(unittest.TestCase):
-    """The declaration's two new readers in the boot verdict (sdk_backend.key_source_verdict, 2026-09-05):
-    =login while the credential command prints a key, and =key with nothing to inject and no
-    apiKeyHelper. Pure calls on an explicit environ; the developer's shell never reaches them."""
-
-    CMD = {"ROMP_CREDENTIAL_COMMAND": "credential-cmd \"$1\""}
-
-    def _snap(self, has_key):
-        return {"configured": True, "ok": True, "reason": "", "at": 1.0, "exitCode": 0, "durationS": 0.1,
-                "names": ["ANTHROPIC_API_KEY"] if has_key else ["A_TOKEN"], "dropped": [], "setFp": "0123456789ab",
-                "keyFp": "abcdefabcdef" if has_key else "", "hasKey": has_key, "stale": False, "selector": ""}
-
-    def _problems(self, v):
-        return [ln["text"] for ln in v["lines"] if ln["problem"]]
-
-    def test_login_declared_while_the_command_prints_a_key_rings(self):
-        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="login"), snapshot=self._snap(True))
-        hit = [t for t in self._problems(v) if "ROMP_EXPECTED_AUTH=login while" in t]
-        self.assertEqual(len(hit), 1, self._problems(v))
-        self.assertIn("sha256:abcdefabcdef", hit[0])
-        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="login"), snapshot=self._snap(False))
-        self.assertEqual([t for t in self._problems(v) if "while" in t], [], "no key printed: the declaration holds")
-        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="key"), snapshot=self._snap(True), work_key_present=True)
-        self.assertEqual(self._problems(v), [], "key declared and a key printed: the intended, quiet state")
-
-    def test_key_declared_with_nothing_to_inject_needs_a_helper_in_command_mode(self):
-        env = dict(self.CMD, ROMP_EXPECTED_AUTH="key")
-        v = sb.key_source_verdict(env, snapshot=self._snap(False))
-        hit = [t for t in self._problems(v) if "names no apiKeyHelper" in t]
-        self.assertEqual(len(hit), 1, self._problems(v))
-        self.assertIn("land on the login", hit[0])
-        v = sb.key_source_verdict(env, snapshot=self._snap(False), helper_command="the-helper")
-        self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [])
-        self.assertEqual(v["sessionKeyPath"], "helper")
-        # file mode says nothing new at boot: the init-time mismatch line (this file's other classes)
-        # already covers a declaration the live auth does not meet
-        v = sb.key_source_verdict({"ROMP_EXPECTED_AUTH": "key"})
-        self.assertEqual(self._problems(v), [])
-        self.assertEqual(v["sessionKeyPath"], "login")
-
-    def test_undeclared_or_login_declared_says_nothing_about_the_helper(self):
-        for env in ({}, {"ROMP_EXPECTED_AUTH": "login"}, {"ROMP_EXPECTED_AUTH": "junk"}):
-            v = sb.key_source_verdict(env)
-            self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [], env)
 
 
 class UsageTelemetryUnavailable(unittest.TestCase):

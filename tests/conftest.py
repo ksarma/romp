@@ -134,46 +134,40 @@ os.environ["ROMP_MANAGER_PORT"] = "1"
 # ...and no test may reach the REAL kernel either (2026-09-06): a shell of a romp session inherits the
 # live kernel's ROMP_KERNEL_PORT (and ROMP_SERVE_PORT, the same value under the manager's name), so
 # every reader of the kernel port that a test forgot to point elsewhere dialled the running kernel:
-# postal_service.py's KERNEL_BASE and kernel.py's PORT resolve it at import time; cli/keyswap.py's
-# _kernel_base reads either name per call. Same shape as the manager floor, for the same reason: a
+# postal_service.py's KERNEL_BASE and kernel.py's PORT resolve it at import time. Same shape as the
+# manager floor, for the same reason: a
 # dead value is the one state every consumer treats safely (absent means the default, the live
 # port), and import-time so collection-time code is floored too. Tests that need a kernel start
 # their own on an ephemeral port and pass it explicitly.
 os.environ["ROMP_KERNEL_PORT"] = "1"
 os.environ["ROMP_SERVE_PORT"] = "1"
 
-# No test may read the REAL service.env (2026-09-04): sdk_backend.work_api_key now reads the manager
-# env file LIVE (kernel/keysource.py) instead of popping os.environ once, so on a machine running a
-# live romp every auth test would otherwise resolve the developer's ACTUAL API key — quietly billing
-# nothing, but making the key material a test input, putting it one assertion message away from a
-# terminal, and making the pinned fixture-key tests pass or fail on whether this box happens to have
-# a key configured. Pointed at a path inside the temp state root that is never created, so every read
-# is the "no file" case and the startup-pop fallback governs, exactly as before the live source
-# existed. Both spellings, because keysource accepts both. Import-time (collection is floored too)
-# plus a per-test re-assert below, on the same reasoning as the manager port.
+# No test may read the REAL service.env (2026-09-04; the reason changed on 2026-09-08): the kernel's boot
+# check (kernel/credentials.py) reads the manager env file for retired provider lines, so on a machine whose
+# file still carries one every kernel-loading test would refuse to start. Pointed at a path inside the temp
+# state root that is never created, so every read is the "no file" case. Both spellings, because the
+# path resolver accepts both. Import-time (collection is floored too) plus a per-test re-assert below, on
+# the same reasoning as the manager port.
 _NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
-# No test starts with a KEY SOURCE the developer's shell configured (2026-09-08). Every session shell
-# under a romp-managed manager inherits the manager's credentials: ANTHROPIC_API_KEY (the startup key
-# sdk_backend.startup_api_key claims), ROMP_API_KEY_CMD and ROMP_API_KEY_REF (the runtime providers
-# keysource._env_provider selects straight from the environment when the isolated env file above is
-# absent), ROMP_EXPECTED_AUTH (the box-wide auth declaration), the competing token credentials
-# sdk_backend.startup_auth_env claims, and 1Password's own names keysource.claim_op_env takes. A
-# test that constructs a backend, resolves a key or asks default_auth then reads the DEVELOPER'S
-# configuration: 73 tests across eight modules went red on a box running the command key source
-# while CI, which exports none of these, stayed green (the manager's full run, 2026-09-08). Popped at
-# import so module-level loads see the clean baseline, and re-asserted per test below; a test that
-# wants a source sets a synthetic one itself in setUp, which runs after the fixture. The list is the
-# code's own constants (tests/test_key_source_floor.py pins it against keysource.SOURCE_VARS,
-# keysource.OP_ENV_NAMES / OP_ENV_PREFIX and sdk_backend.AUTH_ENV_NAMES).
+# No test starts with a CREDENTIAL the developer's shell configured (2026-09-08). Every session shell under
+# a romp-managed manager inherits the manager's environment: the retired provider names (which the boot
+# check now refuses outright), ROMP_EXPECTED_AUTH (the box-wide auth declaration), the login tokens
+# sdk_backend.startup_auth_env claims, and the 1Password CLI's own names. A test that constructs a backend
+# or asks default_auth would otherwise read the DEVELOPER'S configuration: 73 tests across eight modules
+# went red on a box running a key command while CI, which exports none of these, stayed green (the
+# manager's full run, 2026-09-08). Popped at import so module-level loads see the clean baseline, and
+# re-asserted per test below; a test that wants a credential sets a synthetic one itself in setUp, which
+# runs after the fixture. The list is the code's own (tests/test_key_source_floor.py pins it against
+# credentials.FLOOR_ENV_NAMES / FLOOR_ENV_PREFIXES and sdk_backend.AUTH_ENV_NAMES).
 KEY_SOURCE_ENV_NAMES = (
-    "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF", "ROMP_API_KEY_CMD",          # keysource.SOURCE_VARS
-    "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",                     # sdk_backend.AUTH_ENV_NAMES (the rest)
+    "ROMP_API_KEY_CMD", "ROMP_API_KEY_REF", "ANTHROPIC_API_KEY",          # credentials.RETIRED_VARS
+    "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",                     # credentials.LOGIN_TOKEN_VARS
     "ROMP_EXPECTED_AUTH",                                                  # the auth declaration
-    "OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT",   # keysource.OP_ENV_NAMES
+    "OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT",   # credentials.OP_ENV_NAMES
 )
-KEY_SOURCE_ENV_PREFIXES = ("OP_SESSION_",)                                # keysource.OP_ENV_PREFIX
+KEY_SOURCE_ENV_PREFIXES = ("OP_SESSION_",)                                # credentials.OP_ENV_PREFIX
 
 
 def _scrub_key_source_env():
@@ -185,23 +179,29 @@ def _scrub_key_source_env():
 
 _scrub_key_source_env()
 # Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
-# unit exports it), and keysource gives that variable authority: a supervised manager reads the env
-# file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
-# suite ran from inside a romp session while CI stayed green (review find, 2026-09-05). The floor is
-# the unsupervised case; a test that wants supervision sets the variable itself.
+# unit exports it). The variable used to give the retired key-source module authority over a startup key;
+# it is still popped so a test's world is the unsupervised baseline (review find, 2026-09-05), and a test
+# that wants supervision sets the variable itself.
 os.environ.pop("ROMP_SUPERVISED", None)
 
 
-def _reset_keysource_state():
-    """keysource remembers which path selected which source for the PROCESS (that is the resurrection
-    guard); under one pytest process that memory would leak between test modules. Every loaded copy of
-    the module (each SourceFileLoader name is its own module object) is reset."""
+# No test may read the box's REAL managed settings (2026-09-08): credentials.py reads
+# /etc/claude-code/managed-settings.json (or the macOS path) as the top of Claude Code's precedence, so a
+# test asserting "no helper" would lie on a box whose administrator set one there. Every loaded copy of the
+# module is pointed at a path inside the temp state root that is never created; a test that wants a managed
+# file stubs managed_settings_path itself in setUp, after this fixture.
+_NO_MANAGED_SETTINGS = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-managed-settings.json")
+
+
+def _reset_credential_state():
+    """credentials.py memoizes the helper's value in process memory for its TTL; under one pytest process
+    that memo would leak between test modules. Every loaded copy of the module is reset, and its managed
+    settings path floored (above)."""
     import sys
     for name, m in list(sys.modules.items()):
-        if "keysource" in name and hasattr(m, "_AUTHORITATIVE_PATHS"):
-            m._AUTHORITATIVE_PATHS.clear()
-            getattr(m, "_ENV_PROVIDER_PATHS", set()).clear()
-            m._CACHE = ((), "")
+        if "credentials" in name and hasattr(m, "forget_helper_key"):
+            m.forget_helper_key()
+            m.managed_settings_path = lambda: _NO_MANAGED_SETTINGS
 
 
 @pytest.fixture(autouse=True)
@@ -214,7 +214,7 @@ def _no_real_service_env():
         os.environ[var] = _NO_SERVICE_ENV
     _scrub_key_source_env()
     os.environ.pop("ROMP_SUPERVISED", None)
-    _reset_keysource_state()
+    _reset_credential_state()
     yield
 
 
@@ -250,12 +250,12 @@ os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 
 # No test kernel may fetch the Models API (2026-09-02): the kernel's lazy _sdk() build (_sdk_locked)
 # fires the T222 catalog refresh, `_refresh_model_catalog("boot")` — an async GET to
-# api.anthropic.com on any credential the process carries: the manager-env key
-# sdk_backend.work_api_key claimed, else a bare ANTHROPIC_API_KEY, else an ANTHROPIC_AUTH_TOKEN
+# api.anthropic.com on the credential the kernel resolves: the apiKeyHelper Claude Code's settings
+# name (kernel/credentials.py helper_key, run in-process), else a claimed ANTHROPIC_AUTH_TOKEN
 # bearer. A DEFENSIVE floor: no test reached the network before this line (checked, not assumed —
 # the one in-process _sdk() driver, test_kernel_headless_ops' SdkSingleFlight, runs the refresh
 # inside the test process with the module loader mocked, and it stopped only because the mocked
-# module's work_api_key handed http.client a credential it rejects before a socket opens), but any
+# module handed http.client a credential it rejects before a socket opens), but any
 # in-process _sdk() call is one exported key away from a real request no test asserts on, on a key
 # the test never chose. The kernel-SPAWNING tests floor it in their subprocess env
 # (test_gear_select_matrix, test_ship_reship, test_awaiting_box_sync); this floors every test,
@@ -303,107 +303,19 @@ def _no_cli_scope():
     yield
 
 
-# No test may run the REAL credential command (2026-09-05): kernel/envsource.py runs
-# ROMP_CREDENTIAL_COMMAND — an installation's secret-store command — at backend construction and on every
-# stale read, and a self-hosted romp's tool shells inherit the manager's environment, variable
-# included. Popped, so every test starts in file mode with no command, no names and the default
-# timeout; a test that exercises the command source writes its own fake script and sets the
-# variables in setUp (which runs after this fixture). Import-time for collection, per-test re-assert
-# below, on the same reasoning as the manager-port floor. The env-file floor above already keeps the
-# same lines from being read out of the real service.env.
-_CREDENTIAL_VARS = ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S")
-for _v in _CREDENTIAL_VARS:
-    os.environ.pop(_v, None)
-
-# ...and no test may read the REAL selector file (2026-09-06): envsource.selector_path defaults to
-# ${XDG_CONFIG_HOME:-~/.config}/romp/credential-selector, so a command-mode test that wrote its fake
-# command and forgot this variable read this machine's mode file — its token as `$1`, its stat
-# identity in the cache key — and passed or failed on what the box had selected. FLOORED to a path
-# under the state root that is never created, not popped like the three above: an absent variable is
-# the one unsafe state here, since absent means the default. The "no selector" case is the result —
-# read_selector() answers ("", ""), the command runs with an empty `$1` — exactly as on a box that
-# never ran `romp keyswap <name>`. A test that needs a selector points the variable at a temp path in
-# setUp, which runs after the fixture; tests/test_envsource.py's Floor class pins this.
-_NO_SELECTOR = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-credential-selector")
-os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
-
-
-@pytest.fixture(autouse=True)
-def _no_credential_command():
-    for var in _CREDENTIAL_VARS:
-        os.environ.pop(var, None)
-    os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
-    yield
-
-
-_SELECTOR_FLOOR_VIOLATION = None   # the refusal below, held for pytest_runtest_setup when this process is an xdist worker
-
-
-def _selector_floor_violation():
-    """The refusal's text when ROMP_CREDENTIAL_SELECTOR_FILE is absent or names a file that exists; None
-    while the floor holds."""
-    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
-    if p and not os.path.exists(p):
-        return None
-    return ("ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
-            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
-            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
-
-
-def pytest_collection_finish(session):
-    """The import-time half of the selector floor, checked where it can fail: collection runs every test
-    module's top level after the floor above, and a module that pops ROMP_CREDENTIAL_SELECTOR_FILE there
-    (or points it at a file that exists) undoes the floor for every module collected after it — a
-    later module reading the selector at import would read the developer's own mode file, the read the
-    floor exists to prevent, before any per-test re-assert runs. Refused here, naming the fix, rather
-    than left to pass on what the box has selected (2026-09-06: tests/test_envsource.py popped it at
-    import, from before the floor existed).
-
-    Refused two ways, because a pytest-xdist worker cannot refuse here. The controller never collects
-    (xdist skips its collection), so this hook runs only in the workers, and a UsageError raised there
-    ends the worker before it reports anything: the controller then died on an internal assertion,
-    forty lines that never named the variable or the fix (2026-09-06, under `-n 8`). In a worker the
-    refusal is held instead, and every item fails at setup with it (pytest_runtest_setup below), which
-    the controller reports as it reports any failure. When nothing is selected (a `-k` that deselects
-    everything) no setup runs, so the worker asks for the stop itself: session.shouldfail, the field
-    `-x` sets, which xdist carries to the controller at the worker's finish and the controller reports
-    as `Interrupted: <the refusal>`, exit status 2 (2026-09-06: the held refusal went unreported and
-    the run ended `no tests ran`, exit status 5, saying nothing). session.items is final by this hook
-    (deselection runs in pytest_collection_modifyitems, before it) and the same on every worker, so an
-    empty list means no item can run anywhere; a worker the scheduler happens to give no item while
-    others run theirs says nothing, since their items carry it. Serially the UsageError stands: one line,
-    nothing runs, a `-k` that deselects everything included; `--collect-only` is serial too, xdist
-    leaves it alone. tests/test_envsource.py's Floor class pins all three."""
-    global _SELECTOR_FLOOR_VIOLATION
-    msg = _selector_floor_violation()
-    if msg is None:
-        return
-    if hasattr(session.config, "workerinput"):     # an xdist worker: the message would die with the process
-        _SELECTOR_FLOOR_VIOLATION = msg
-        if not session.items:                      # nothing will reach pytest_runtest_setup
-            session.shouldfail = msg
-        return
-    raise pytest.UsageError(msg)
-
-
-def pytest_runtest_setup(item):
-    """The worker half of the refusal above when items were selected: every item fails with the message,
-    none runs."""
-    if _SELECTOR_FLOOR_VIOLATION:
-        pytest.fail(_SELECTOR_FLOOR_VIOLATION, pytrace=False)
-
-
-# No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05):
-# constructing the SDK backend takes the key-source verdict (sdk_backend.key_source_verdict), which
-# reads the systemd unit and its drop-ins, the launchd plist and $CLAUDE_CONFIG_DIR/settings*.json —
-# so every backend construction in the suite would otherwise read this machine's unit and the
-# developer's own apiKeyHelper setting (and envsource.helper_fingerprint could RUN that helper). The
-# three are floored to empty temp dirs under the state root: no unit, no plist, no settings. The one
-# test that deliberately borrows the user's own apiKeyHelper command (the opt-in live move test)
-# reads the pre-floor location through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, saved above beside the
-# CLAUDE_CONFIG_DIR floor, before any floor touched the variable. Import-time plus a per-test
-# re-assert, on the same reasoning as the manager-port floor; a test that needs its own dirs points
-# the vars at temp paths in setUp, which runs after the fixture.
+# No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05; the reason
+# changed on 2026-09-08): the key side of every billing question is now whether Claude Code's settings
+# carry an apiKeyHelper (kernel/credentials.py settings_files / key_available read
+# $CLAUDE_CONFIG_DIR/settings*.json, and helper_key RUNS the helper for the kernel's catalog fetch and its
+# fast-mode probe), and bin/romp-service reads the systemd unit and the launchd plist, so a backend
+# construction or a service check in the suite would otherwise read this machine's unit and the
+# developer's own apiKeyHelper setting, or run it. The three are floored to empty temp dirs under the
+# state root: no unit, no plist, no settings. The one test that deliberately borrows the user's own
+# apiKeyHelper command (the opt-in live move test) reads the pre-floor location through
+# ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, saved above beside the CLAUDE_CONFIG_DIR floor, before any floor
+# touched the variable. Import-time plus a per-test re-assert, on the same reasoning as the manager-port
+# floor; a test that needs its own dirs points the vars at temp paths in setUp, which runs after the
+# fixture.
 _EMPTY_DIRS = {
     "ROMP_SYSTEMD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-systemd-user"),
     "ROMP_LAUNCHD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-launch-agents"),
@@ -421,13 +333,12 @@ def _no_real_unit_or_settings():
     yield
 
 
-# No test may reach the machine's REAL tmux server (2026-09-06): keysource.claim_op_env scrubs the tmux
-# server's globals the moment romp becomes the op consumer, which any test that configures a reference
-# and constructs the SDK backend (or resolves a key) does — and on a developer's box that `tmux
-# set-environment -gu` would land on the live server every session runs in. The same private socket
-# directory the bats suites use (tests/tmux-private.bash): tmux puts every socket, `-L` ones included,
-# under $TMUX_TMPDIR/tmux-<uid>/, and the directory must exist or tmux 3.4 silently falls back to the
-# default. No server ever exists there, so a scrub from a test exits with "no server running".
+# No test may reach the machine's REAL tmux server (2026-09-06; the reason changed on 2026-09-08): the
+# retired key-source module used to scrub the live server's globals from inside a test, and any tmux-backed
+# test still runs its commands somewhere. The same private socket directory the bats suites use
+# (tests/tmux-private.bash): tmux puts every socket, `-L` ones included, under $TMUX_TMPDIR/tmux-<uid>/,
+# and the directory must exist or tmux 3.4 silently falls back to the default. No server ever exists
+# there, so a tmux command from a test exits with "no server running" instead of touching the live one.
 os.environ["TMUX_TMPDIR"] = tempfile.mkdtemp(prefix="romp-tests-tmux-")
 os.environ.pop("TMUX", None)
 os.environ.pop("ROMP_TMUX_SOCKET", None)
@@ -501,9 +412,9 @@ _ENV_VALUE_PATH_NAMES = frozenset((
     "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
     "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
     "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "TMUX_TMPDIR", "ROMP_TESTS_SYSTEM_TMPDIR",
-    # this conftest's own floors that the offer upstream does not carry: the pre-floor Claude settings
-    # dir the live move test reads, and the selector path under the state root that is never created
-    "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", "ROMP_CREDENTIAL_SELECTOR_FILE",
+    # this conftest's own floor that the offer upstream does not carry: the pre-floor Claude settings
+    # dir the live move test reads
+    "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
     # GitHub Actions: the runner's workspace and tool cache, and the interpreter prefix setup-python
     # exports under six names (every stdlib and site-packages frame of a CI traceback is under it)
     "GITHUB_WORKSPACE", "RUNNER_WORKSPACE", "RUNNER_TEMP", "RUNNER_TOOL_CACHE", "pythonLocation",
