@@ -20,8 +20,9 @@ test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs
   assert.match(RENDER, /if \(Array\.isArray\(tabs\)\) \{\s*tabMeta\.clear\(\);/);
   // the frame's provenance rides along since T233 (captureViews still runs FIRST)
   // (the kernel's own name, selfHost, is adopted first, pr-links.test.ts pins that line; the frame's live
-  // set rides into applyTabOrder, T258)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*\}/);
+  // set rides into applyTabOrder, T258; the open tab menu's views hook runs LAST, after the rebuild and the strip's
+  // repaint: round 4 of the tab menu review, 2026-09-09)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*tabMenuViewsHook\(\);[^\n]*\n\s*\}/);
 });
 
 test("renderTabs renders the union of arrived sessions and tabMeta, placeholders for the rest", () => {
