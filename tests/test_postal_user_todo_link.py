@@ -152,12 +152,32 @@ class TheTwoChecksAgree(unittest.TestCase):
                     self.assertIn("whitespace or a control character", err, side)
                     self.assertIn(esc, err, side + ": the character is spelled out")
                     self.assertTrue(err.isprintable(), side + ": no unprintable character rides the reason")
+
                     self.assertEqual(err.count("example.invalid"), 1, side + ": the address is shown once, spelled")
         # the two spellers agree above U+FFFF too (Python's \UNNNNNNNN), and on a printable character they are not asked
         for side in (pm, km):
             self.assertEqual(side._todo_link_spell("\U000e0001"), "\\U000e0001")
             self.assertFalse(side._todo_link_bad_char("\u00e9"))
             self.assertTrue(side._todo_link_bad_char(" "), "the ordinary space is refused, as before")
+
+    def test_a_long_refused_link_keeps_its_count_suffix_unspelled_and_names_a_character_past_the_cut(self):
+        # round 3's spelling pass ran over the shown string AFTER the 80-character cut had appended "... (N characters)",
+        # so the suffix's own spaces read \x20 (the round-3 review); the address is spelled, the suffix is not, and a
+        # refused character past the cut is named after the count so the reason always names one
+        early = "https://example.invalid/" + "x" * 6 + " " + "x" * 70          # 101 characters, the space at 30
+        late = "https://example.invalid/" + "x" * 50 + "\u200b" + "x" * 40     # 115 characters, the ZWSP at 74
+        for side, check in (("the tool", pm._todo_link_error), ("the kernel", lambda v: km._user_todo_link(v)[1])):
+            with self.subTest(side=side, link="early"):
+                err = check(early)
+                self.assertIn("... (%d characters) holds whitespace" % len(early), err, "the suffix keeps its spaces")
+                self.assertNotIn("\\x20(", err, "the suffix is never spelled")
+                self.assertEqual(err.count("\\x20"), 1, "the address's own space is spelled once")
+                self.assertNotIn("past the cut", err, "nothing hidden past the cut")
+            with self.subTest(side=side, link="late"):
+                err = check(late)
+                self.assertIn("... (%d characters) (past the cut: \\u200b) holds whitespace" % len(late), err,
+                              "a refused character past the cut is named after the count")
+                self.assertTrue(err.isprintable(), "no unprintable character rides the reason")
 
     def test_the_text_and_detail_bounds_are_the_same_constants_and_the_pinned_notes(self):
         # the 2026-09-09 review: neither had a cap, and the webview links every open todo's text and detail on every

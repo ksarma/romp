@@ -93,7 +93,7 @@ names one. A todo can carry a web address of its own as well, through the tool's
 https address, shown as a chip beside the file's on the session's card and in the pane alike, opening in a new
 tab. The chip's label keeps the part that tells two addresses apart: a GitHub `pull/N` or `issues/N` address
 reads `owner/repo#N`, any other address as its host and last two path segments; the whole address is on hover. Only
-such an address is taken: anything else (another scheme, a bare host, a value with whitespace in it, one past
+such an address is taken: anything else (another scheme, a bare host, a value with whitespace or a character that does not print in it, one past
 2048 characters) is refused, the todo is not filed, and the tool's reply says why. The kernel does not fetch the
 address, so a mistyped host is stored as typed. The handed-back list shows the address after the path. A todo's
 text takes at most 300 characters and its detail 4000, a pinned note's bounds; a longer one is refused before

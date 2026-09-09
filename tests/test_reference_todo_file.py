@@ -253,8 +253,8 @@ class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
                       "is refused before anything is filed, and the tool's reply names the bound.", self.para)
         self.assertEqual((km.USER_TODO_TEXT_MAX, km.USER_TODO_DETAIL_MAX), (300, 4000))
         self.assertIn("Only such an address is taken: anything else (another scheme, a bare host, a value with whitespace "
-                      "in it, one past 2048 characters) is refused, the todo is not filed, and the tool's reply says why.",
-                      self.para)
+                      "or a character that does not print in it, one past 2048 characters) is refused, the todo is not "
+                      "filed, and the tool's reply says why.", self.para)
         self.assertIn("The kernel does not fetch the address, so a mistyped host is stored as typed.", self.para)
         self.assertIn("The handed-back list shows the address after the path.", self.para)
         self.assertEqual(km._TODO_LINK_MAX, 2048, "the number the paragraph states")
@@ -263,7 +263,8 @@ class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
         self.assertEqual(km._user_todo_link(self.LINK), (self.LINK, None))
         self.assertEqual(km._user_todo_link("http://example.invalid/notes"), ("http://example.invalid/notes", None))
         for value, why in (("ftp://example.invalid/x", "another scheme"), ("example.invalid/x", "a bare host"),
-                           ("https://example.invalid/a b", "whitespace"), ("https://example.invalid/" + "x" * 2048, "past 2048")):
+                           ("https://example.invalid/a b", "whitespace"), ("https://example.invalid/a\u200bb", "does not print"),
+                           ("https://example.invalid/" + "x" * 2048, "past 2048")):
             with self.subTest(case=why):
                 stored, err = km._user_todo_link(value)
                 self.assertIsNone(stored)

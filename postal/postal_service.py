@@ -4454,10 +4454,17 @@ def _todo_link_error(value):
     raw = value.strip()
     if not raw:
         return None
-    shown = raw if len(raw) <= 80 else raw[:60] + "... (%d characters)" % len(raw)
+    # the address as shown: whole to 80 characters, else its first 60 and a count. The spelling below runs
+    # over the address's own characters only, never over this suffix (round 3's pass spelled the suffix's
+    # spaces as \x20 once the ordinary space became a refused character; review round 3, 2026-09-09)
+    head, tail = (raw, "") if len(raw) <= 80 else (raw[:60], "... (%d characters)" % len(raw))
+    shown = head + tail
     if any(_todo_link_bad_char(c) for c in raw):
-        # every refused character spelled out (_todo_link_spell), by the one predicate that refused it
-        shown = "".join(_todo_link_spell(c) if _todo_link_bad_char(c) else c for c in shown)
+        # every refused character spelled out (_todo_link_spell), by the one predicate that refused it; a
+        # refused character past the cut is named after the count, so the reason always names one
+        spelled = "".join(_todo_link_spell(c) if _todo_link_bad_char(c) else c for c in head)
+        hidden = sorted({_todo_link_spell(c) for c in raw[len(head):] if _todo_link_bad_char(c)})
+        shown = spelled + tail + (" (past the cut: %s)" % " ".join(hidden) if hidden else "")
         return "the link %s holds whitespace or a control character, which no web address does%s" % (shown, fix)
     if len(raw) > TODO_LINK_MAX:
         return "the link %s is longer than %d characters, the most an address here may be%s" % (shown, TODO_LINK_MAX, fix)
