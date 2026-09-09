@@ -18,12 +18,16 @@ import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-wr
 import { hostOf, bareId } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
 
-/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on the pages the kernel pushes
- *  frames to; null on the Files pane, whose content is fetched on demand with no frames pushed to it, so there
- *  is nothing to time and a long frame there would only add an unexplained pane to `romp perf client`.
- *  start() installs through this; exported so the test can check the decision without start()'s timers. */
+/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on every kernel page, the Files
+ *  pane included. That pane gets no frames pushed to it (its content is fetched on demand), so it used to get no
+ *  collector either; but its viewer's paint pass over a large reviewed file is the dashboard's costliest
+ *  main-thread work (a divider drag with a big note open blocked for about 20 s on 2026-09-09, and no pane
+ *  recorded a long frame), and the viewer times that pass through this collector as `fileview:<why>`
+ *  (file-view.ts perfTimed), so the row carries the pass cost, the free sample after it, and the long frames
+ *  the pane's own observer sees. start() installs through this; exported so the test can check the decision
+ *  without start()'s timers. */
 export function perfCollectorFor(app: string): RompPerf | null {
-  return app === "files" ? null : installPerfTelemetry(app);
+  return installPerfTelemetry(app);
 }
 
 export const SEP = ":";

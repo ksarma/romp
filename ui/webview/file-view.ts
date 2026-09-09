@@ -108,6 +108,20 @@ marked.use({
 // file — per-browser view state, the same call feed-view-state.ts makes for the feed's open sections (it
 // must survive a kernel restart without a round-trip to the thing that just restarted). RENDERED is the
 // default for markdown (the user 2026-08-09); Raw stays one click away.
+/** Run a paint pass of the viewer as one timed frame of the page's performance collector (ui/webview/perf-telemetry.ts,
+ *  window.__rompPerf), under the type `fileview:<why>`: `paint` for a text body painted anew, `reflow` for the panel's
+ *  re-paint after the body's width moved. The Files pane gets no frames pushed to it, so this is the only work its
+ *  collector times; the cost of a large reviewed file (the panel re-wraps every highlight per pass) then shows per
+ *  minute in `romp perf client` under app "files", with the main-thread-free sample the collector takes after an
+ *  outermost bracket, instead of a long frame nobody attributed (2026-09-09: a divider drag with a big note open
+ *  blocked the main thread for about 20 s and no pane recorded it). On the chat page the same brackets count under the
+ *  chat's collector. No collector (a page without one, a stand-in): the pass runs untimed, exactly as before. */
+export function perfTimed<T>(why: string, fn: () => T): T {
+  let p: any = null;
+  try { p = typeof window !== "undefined" ? (window as any).__rompPerf : null; } catch { p = null; }
+  return p && typeof p.timed === "function" ? p.timed("fileview:" + why, fn) : fn();
+}
+
 const FMT_KEY = "romp:fileviewFmt";
 // wrap is GONE from the format state (the user 2026-08-24: "there doesn't need to be a button for
 // that") — long lines always soft-wrap; a stored wrap key from the toggle era is simply ignored.
@@ -1227,7 +1241,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       frame = 0;
       if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
       paintedWidth = seenWidth;
-      if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
+      if (textShowing()) perfTimed("reflow", () => { fireRenderedKeepingSelection(); seat(place); });   // the place read before the width moved (see notePlace); timed as fileview:reflow (perfTimed)
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
@@ -1381,10 +1395,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
-    body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
-    fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
-    shownText = text;
-    seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+    const painting: string = text;              // the guard above, kept for the closure below
+    perfTimed("paint", () => {                  // the whole pass, body and hooks, as one fileview:paint frame of the page's collector (perfTimed)
+      body.replaceChildren(rendered ? mdBlock(painting, { kind: "file", path, sid: sid || null }) : codeBlock(painting, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      fireRendered();                           // the seam's onRendered: every text paint, so highlights follow the view
+      shownText = painting;
+      seat(kept);                               // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+    });
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
