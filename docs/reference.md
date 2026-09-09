@@ -535,8 +535,12 @@ chat shows the CLI's own reply.
 The backends apply the change differently. A Claude Code session switches
 model live but reloads to apply a new effort: the chat shows "Reloading
 session…" and the effort badge shows switching-dots until the reload completes,
-and a session that is mid-turn reloads when the turn ends. A Claude Code (tmux)
-session gets the CLI's own command typed into its pane. `/model` there asks for a
+and a session that is mid-turn reloads when the turn ends. A session with live
+subagents or background tasks reloads when the last of them finishes: the pick
+waits for them rather than cutting them off, and a pick equal to what the
+session already runs with (the same effort, the same billing) reloads nothing.
+A Claude Code (tmux) session
+gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never
 left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
 apply in place.

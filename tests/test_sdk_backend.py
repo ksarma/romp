@@ -5212,7 +5212,7 @@ class LiveSubagentsRetire(unittest.TestCase):
         self.assertEqual(notes[0], sb.task_death_notice([{"desc": "review sweep"}, {"desc": "watch the build"}],
                                                         cause=sb.SdkSession._RECONNECT_CAUSE),
                          "the very copy the session reads, with the cause named truthfully")
-        self.assertIn("settings switch", notes[0])
+        self.assertIn("a rewind or a key cycle", notes[0])
         self.assertNotIn("crash", notes[0], "a reconnect is neither a crash nor an unexplained restart")
         self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("bgTasks"), [], "mirror cleared: reported once")
         self.assertTrue(any("dropped 2 subagents and 2 background tasks on reconnect" in str(m) for m in self.logs), self.logs)
@@ -5263,6 +5263,357 @@ class LiveSubagentsRetire(unittest.TestCase):
         s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [
             self._wf(1, "a1", "done"), self._wf(2, "a2", "progress")]})
         self.assertEqual(set(s._subagents), {"a2"})
+
+
+class SettingsPickWaitsForLiveWork(unittest.TestCase):
+    """A settings pick (effort, permission mode into bypass, fast mode's first opt-in, billing) applies by
+    reconnecting the CLI, and the reconnect abandons every subagent, Workflow run and background task
+    inside that process (_drop_live_work). Until 2026-09-09 the arm read only the open turn: a session
+    idle between its own turns while a background agent ran read quiet, the teardown fired at once, and
+    the work died (26 subagents and 10 background tasks across four sessions in one day, to picks that
+    changed nothing). Now a settings-driven reconnect waits for the live sets to empty, and the EXACT
+    events that empty them (a SubagentStop, a task's terminal notification, a run's end) arm it; a pick
+    equal to the launched value requests no reconnect at all. A rewind keeps its old behaviour: it
+    replaces the conversation from a point, and the work inside the old process is what it discards.
+    Private synthetic sid; every id and name here is invented."""
+
+    SID = "11111111-2222-3333-4444-777777777777"
+
+    class _Now:
+        """A loop double: request_reconnect's call_soon_threadsafe runs the callback at once, here."""
+        def call_soon_threadsafe(self, cb, *a):
+            cb(*a)
+
+    class _Res:
+        uuid = "r1"
+        num_turns = 1
+
+    def _sess(self, **reg):
+        self.logs, self.pokes = [], []
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=self.logs.append,
+                           poke=lambda: self.pokes.append(1))
+        sb.write_reg(be.state_dir, self.SID, {"sid": self.SID, "name": "web", "cwd": "/tmp", "alive": True, **reg})
+        s = sb.SdkSession(be, sb.read_reg(be.state_dir, self.SID))
+        s.inflight = 0                                          # idle between its own turns
+        s.loop = self._Now()
+        be.sessions[self.SID] = s
+        return s
+
+    @staticmethod
+    def _start(s, aid, kind="general-purpose"):
+        asyncio.run(s._subagent_start_hook({"agent_id": aid, "agent_type": kind}, None, None))
+
+    @staticmethod
+    def _stop(s, aid):
+        asyncio.run(s._subagent_stop_hook({"agent_id": aid, "agent_type": "general-purpose"}, None, None))
+
+    def _held(self):
+        return [str(m) for m in self.logs if "held for" in str(m)]
+
+    def _armed(self):
+        return [str(m) for m in self.logs if "live work finished" in str(m)]
+
+    def test_a_an_effort_pick_over_a_live_subagent_holds_the_reconnect(self):
+        s = self._sess()
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertFalse(s._reconnect, "the teardown must not arm while a subagent runs inside the CLI")
+        self.assertTrue(s._reconnect_when_idle, "the pick waits for the live work to end")
+        self.assertEqual(s._effort_pending, "max", "the badge shows the pick applying meanwhile")
+        held = self._held()
+        self.assertEqual(len(held), 1, self.logs)
+        self.assertIn("effort (web): set to max; reconnect held for 1 subagent and 0 background tasks", held[0])
+
+    def test_b_the_last_subagents_stop_hook_arms_the_held_reconnect(self):
+        s = self._sess()
+        self._start(s, "a1"); self._start(s, "a2")
+        s.backend.set_effort(self.SID, "max")
+        self.assertFalse(s._reconnect)
+        self._stop(s, "a1")
+        self.assertFalse(s._reconnect, "one subagent still runs: not yet")
+        self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(self._armed(), [])
+        self._stop(s, "a2")
+        self.assertTrue(s._reconnect, "the set emptied: THIS event arms the reconnect")
+        self.assertFalse(s._reconnect_when_idle)
+        armed = self._armed()
+        self.assertEqual(len(armed), 1, self.logs)
+        self.assertIn("reconnect (web): live work finished; the held effort pick reconnects now", armed[0])
+
+    def test_b2_a_background_tasks_terminal_notification_arms_it_the_same_way(self):
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash", "description": "watch the build"})
+        s.backend.set_effort(self.SID, "max")
+        self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
+        self.assertIn("reconnect held for 0 subagents and 1 background task", self._held()[0])
+        s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
+        self.assertTrue(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "b2", "task_type": "local_bash"})
+        s.backend.set_effort(self.SID, "max")
+        s._on_task_event("task_updated", {"task_id": "b2", "patch": {"status": "killed"}})   # a terminal patch, too
+        self.assertTrue(s._reconnect, "a terminal task_updated status is the same end")
+
+    def test_b3_not_while_the_other_set_is_still_populated(self):
+        s = self._sess()
+        self._start(s, "a1")
+        s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
+        s.backend.set_effort(self.SID, "max")
+        self.assertIn("1 subagent and 1 background task", self._held()[0])
+        s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
+        self.assertFalse(s._reconnect, "the task ended; the subagent still runs")
+        self.assertTrue(s._reconnect_when_idle)
+        self._stop(s, "a1")
+        self.assertTrue(s._reconnect)
+        # and the mirror image
+        s = self._sess()
+        self._start(s, "a1")
+        s._on_task_event("task_started", {"task_id": "b1", "task_type": "local_bash"})
+        s.backend.set_effort(self.SID, "max")
+        self._stop(s, "a1")
+        self.assertFalse(s._reconnect, "the subagent ended; the task still runs")
+        s._on_task_event("task_notification", {"task_id": "b1", "status": "completed"})
+        self.assertTrue(s._reconnect)
+
+    def test_b4_a_workflow_runs_end_arms_it_once_its_roster_retires(self):
+        s = self._sess()
+        s._on_task_event("task_started", {"task_id": "w1", "task_type": "local_workflow"})
+        self._start(s, "a1", "workflow-subagent")
+        row = {"type": "workflow_agent", "index": 1, "label": "reader", "state": "start", "queuedAt": 1,
+               "agentId": "a1", "startedAt": 2}
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [row]})
+        s.backend.set_effort(self.SID, "max")
+        self.assertFalse(s._reconnect)
+        s._on_task_event("task_progress", {"task_id": "w1", "workflow_progress": [dict(row, state="error")]})
+        self.assertEqual(s._subagents, {}, "the failed agent retired on its error state")
+        self.assertFalse(s._reconnect, "the run itself is still a live background task")
+        s._on_task_event("task_notification", {"task_id": "w1", "status": "completed"})
+        self.assertEqual(s._bg_tasks, {})
+        self.assertTrue(s._reconnect, "the run's end emptied the last set: quiet now")
+
+    def test_c_the_turn_end_settle_leaves_a_pick_held_while_work_runs(self):
+        s = self._sess()
+        async def _noop(): pass
+        s._do_refresh_usage = _noop
+        s._do_refresh_context = _noop
+        self._start(s, "a1")
+        s.inflight = 1
+        s._reconnect_when_idle = True        # the pick landed mid-turn: deferred to the turn's end
+        out = {}
+
+        async def run():
+            s.loop = asyncio.get_running_loop()
+            s._input_wake = asyncio.Event()
+            s._wake = asyncio.Event()
+            out["ok"] = s._handle_stream_message(self._Res(), _AssistantMessage, self._Res, type("S", (), {}))
+            await asyncio.sleep(0)
+            out.update(reconnect=s._reconnect, deferred=s._reconnect_when_idle, wake=s._wake.is_set())
+        asyncio.run(run())
+        self.assertTrue(out["ok"])
+        self.assertEqual(s.inflight, 0, "the turn settled")
+        self.assertFalse(out["reconnect"], "the turn ended, but the subagent still runs: no arm")
+        self.assertTrue(out["deferred"], "the arm stays deferred until the work ends")
+        self.assertFalse(out["wake"])
+        held = self._held()
+        self.assertEqual(len(held), 1, "the turn's end is where this pick became held for live work: one line")
+        self.assertIn("reconnect (web): held for 1 subagent and 0 background tasks", held[0])
+        s.loop = self._Now()
+        self._stop(s, "a1")
+        self.assertTrue(s._reconnect and not s._reconnect_when_idle, "the stop hook arms it")
+        self.assertEqual(len(self._held()), 1, "held once, said once")
+
+    def test_c2_a_quiet_settle_still_arms_at_once(self):
+        # the designed path is untouched: no live work, the deferred arm fires at the turn's end
+        s = self._sess()
+        async def _noop(): pass
+        s._do_refresh_usage = _noop
+        s._do_refresh_context = _noop
+        s.inflight = 1
+        s._reconnect_when_idle = True
+        out = {}
+
+        async def run():
+            s.loop = asyncio.get_running_loop()
+            s._input_wake = asyncio.Event()
+            s._wake = asyncio.Event()
+            s._handle_stream_message(self._Res(), _AssistantMessage, self._Res, type("S", (), {}))
+            await asyncio.sleep(0)
+            out.update(reconnect=s._reconnect, deferred=s._reconnect_when_idle, wake=s._wake.is_set())
+        asyncio.run(run())
+        self.assertTrue(out["reconnect"] and not out["deferred"] and out["wake"])
+        self.assertEqual(self._held(), [])
+
+    def test_d_a_billing_pick_over_live_work_holds_the_same_way(self):
+        s = self._sess(auth="key")
+        s._launched_auth = "key"
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_auth(self.SID, "login"))
+        self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
+        self.assertEqual(s._auth_pending, "login")
+        self.assertIn("auth (web): set to login; reconnect held for 1 subagent and 0 background tasks", self._held()[0])
+        self._stop(s, "a1")
+        self.assertTrue(s._reconnect)
+        self.assertIn("the held auth pick reconnects now", self._armed()[0])
+
+    def test_d2_two_held_picks_are_named_together_when_they_arm(self):
+        s = self._sess(auth="key")
+        s._launched_auth = "key"
+        self._start(s, "a1")
+        s.backend.set_effort(self.SID, "max")
+        s.backend.set_auth(self.SID, "login")
+        self.assertEqual(len(self._held()), 2, "each pick says it is held")
+        self._stop(s, "a1")
+        self.assertIn("the held effort and auth picks reconnect now", self._armed()[0])
+
+    def test_e_a_rewind_still_reconnects_over_live_work(self):
+        # a rewind replaces the conversation from a point; the work inside the old process is what it
+        # discards, and _RECONNECT_CAUSE still names it. Only the settings picks wait.
+        s = self._sess()
+        self._start(s, "a1")
+        s._rewind_to = "22222222-3333-4444-5555-666666666666"
+        s._rewind_armed = False
+        s.request_reconnect()
+        self.assertTrue(s._reconnect, "a rewind's queue cannot start until the reconnect arms it")
+        self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(self._held(), [])
+
+    def test_e2_the_key_cycles_immediate_only_branch_is_untouched(self):
+        # tests/test_keyswap.py CycleReconnects pins the whole contract; this is the one line that matters
+        # here: defer=False over live work drops the request with its own log line and arms nothing
+        s = self._sess()
+        self._start(s, "a1")
+        s._do_request_reconnect(defer=False)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertTrue(any("live work registered before the reconnect ran" in str(m) for m in self.logs))
+        self.assertEqual(self._held(), [])
+
+    def test_f_the_launched_effort_picked_again_requests_no_reconnect(self):
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertEqual(asked, [], "the CLI already runs at this effort: nothing to apply")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("effort"), "high")
+        self.assertFalse(reg.get("effortPending"))
+        self.assertEqual(s._effort_pending, "")
+        chips = [a for a in s.backend._live.get(self.SID, {}).values() if a.get("command") == "/effort"]
+        self.assertEqual(len(chips), 1, "the pick is still acknowledged in the chat")
+        self.assertTrue(any("effort (web): set to high; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+
+    def test_f2_repicking_the_launched_effort_reverts_a_different_pending_pick(self):
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertEqual(asked, [1]); self.assertEqual(s._effort_pending, "max")
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertEqual(asked, [1], "no second request: the deferred arm, if it fires, relaunches the same shape")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("effort"), "high"); self.assertFalse(reg.get("effortPending"))
+        self.assertEqual(s._effort_pending, ""); self.assertEqual(s.effort, "high")
+        self.assertTrue(any("reverted the pending max; no reconnect" in str(m) for m in self.logs), self.logs)
+
+    def test_f3_ultracode_is_its_own_launch_shape_and_a_fresh_session_has_none(self):
+        # xhigh and ultracode both hand the CLI --effort xhigh; ultracode adds the settings key, so a
+        # pick of one over the other is a change. A session that has not connected has no launched
+        # shape, so the guard never swallows the pick its first connect must read from the reg.
+        self.assertNotEqual(sb.effort_launch_shape("xhigh"), sb.effort_launch_shape("ultracode"))
+        self.assertEqual(sb.effort_launch_shape(""), sb.effort_launch_shape(sb.DEFAULT_EFFORT))
+        s = self._sess(effort="high")
+        self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_auth)
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        s.backend.set_effort(self.SID, "high")
+        self.assertEqual(asked, [1], "unlaunched: the pick persists and requests as before")
+
+    def test_f4_the_launched_billing_picked_again_requests_no_reconnect(self):
+        s = self._sess(auth="login")
+        s._launched_auth = "login"
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.assertTrue(s.backend.set_auth(self.SID, "login"))
+        self.assertEqual(asked, [])
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("auth"), "login"); self.assertFalse(reg.get("authPending"))
+        self.assertEqual(s._auth_pending, "")
+        chips = [a for a in s.backend._live.get(self.SID, {}).values() if a.get("command") == "/auth"]
+        self.assertEqual(len(chips), 1)
+        self.assertTrue(any("auth (web): set to login; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+
+    def test_f5_repicking_the_launched_billing_reverts_a_pending_switch(self):
+        s = self._sess(auth="login")
+        s._launched_auth = "login"
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        with mock.patch.object(sb.SdkBackend, "work_key_configured", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertEqual(asked, [1]); self.assertEqual(s._auth_pending, "key")
+            self.assertTrue(s.backend.set_auth(self.SID, "login"))
+        self.assertEqual(asked, [1], "no second request")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("auth"), "login"); self.assertFalse(reg.get("authPending"))
+        self.assertEqual(s._auth_pending, ""); self.assertEqual(s.auth, "login")
+
+    def test_g_every_setter_logs_the_pick_and_its_outcome(self):
+        s = self._sess(effort="high", mode="default")
+        s.perm_mode = "default"
+        s.set_mode_live = lambda mode, prev="default": None
+        s.backend.set_mode(self.SID, "plan")
+        self.assertTrue(any("mode (web): set to plan; applied live" in str(m) for m in self.logs), self.logs)
+        s.backend.set_mode(self.SID, "bypassPermissions")
+        self.assertTrue(any("mode (web): set to bypassPermissions; reconnecting to apply" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(s._reconnect, "quiet and no live work: the bypass pick reconnects at once")
+        s._reconnect = False
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.backend.send = lambda sid, text, **kw: True
+        s._fast_unlocked = True
+        s.backend.set_fast(self.SID, "on")
+        self.assertTrue(any("fast (web): set to on; applied live" in str(m) for m in self.logs), self.logs)
+        s._fast_unlocked = False
+        s.backend.set_fast(self.SID, "off")
+        self.assertTrue(any("fast (web): set to off; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
+        self._start(s, "a1")
+        s.backend.set_fast(self.SID, "on")
+        self.assertTrue(any("fast (web): set to on; reconnect held for 1 subagent and 0 background tasks" in str(m)
+                            for m in self.logs), self.logs)
+        self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
+        s.inflight = 1                                          # a turn opens: a pick now defers to its end
+        s.backend.set_effort(self.SID, "max")
+        self.assertTrue(any("effort (web): set to max; reconnect held for 1 subagent" in str(m) for m in self.logs),
+                        "live work outranks the open turn in the outcome: the turn's end alone will not fire it")
+        self._stop(s, "a1")
+        s.backend.set_effort(self.SID, "low")
+        self.assertTrue(any("effort (web): set to low; reconnect deferred to the end of the open turn" in str(m)
+                            for m in self.logs), self.logs)
+
+    def test_g2_mode_and_fast_no_op_shapes_request_no_reconnect(self):
+        # set_mode and set_fast already skip the reconnect on their no-op shapes; pinned here so the
+        # unchanged-value guards on effort and billing have their counterparts on record
+        s = self._sess(mode="bypassPermissions")
+        s.perm_mode = "bypassPermissions"
+        asked = []
+        s.request_reconnect = lambda: asked.append("reconnect")
+        s.set_mode_live = lambda mode, prev="default": asked.append(("live", mode))
+        self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
+        self.assertEqual(asked, [("live", "bypassPermissions")], "already launched with the flag: the live call, never a reconnect")
+        asked.clear()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.backend.send = lambda sid, text, **kw: True
+        s._fast_unlocked = True
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertEqual(asked, [], "an unlocked connection takes the literal send")
+        s._fast_unlocked = False
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertEqual(asked, [], "off on a flagless connection is already the state")
+
+    def test_h_the_drop_notice_names_what_still_reconnects_over_live_work(self):
+        # a settings switch no longer reaches _drop_live_work with work alive; the cause names what can
+        self.assertNotIn("settings switch", sb.SdkSession._RECONNECT_CAUSE)
+        self.assertIn("rewind", sb.SdkSession._RECONNECT_CAUSE)
+        self.assertIn("key cycle", sb.SdkSession._RECONNECT_CAUSE)
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):

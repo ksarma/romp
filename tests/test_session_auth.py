@@ -208,6 +208,25 @@ class OptionsInjection(_OptionsHarness):
         self._options_kw(s2)
         self.assertFalse(s2._launched_keyed)
 
+    def test_options_stamps_the_whole_launched_shape_for_the_unchanged_guards(self):
+        # set_effort and set_auth compare a pick against what the CLI was LAUNCHED with, never against
+        # the reg (which the pick itself rewrites): the stamps are None until a connect, so a session
+        # that has not launched still takes every pick (2026-09-09)
+        s = self._sess(5, auth="key", effort="ultracode", mode="plan", fast=True)
+        self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode)
+        self.assertIsNone(s._launched_fast); self.assertIsNone(s._launched_auth)
+        kw = self._options_kw(s)
+        self.assertEqual(s._launched_effort, sb.effort_launch_shape("ultracode"))
+        self.assertEqual(s._launched_effort, (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
+        self.assertEqual(s._launched_mode, "plan")
+        self.assertTrue(s._launched_fast)
+        self.assertEqual(s._launched_auth, "key")
+        s2 = self._sess(6, auth="login", effort="xhigh")
+        self._options_kw(s2)
+        self.assertEqual(s2._launched_effort, ("xhigh", False))
+        self.assertEqual(s2._launched_auth, "login")
+        self.assertFalse(s2._launched_fast)
+
     def test_the_claimed_login_tokens_ride_every_launch_that_bills_the_login(self):
         """The kernel claims ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN out of its environment at boot;
         they ride a login pick AND an unpicked session on a box with no helper (its billing IS the login, and

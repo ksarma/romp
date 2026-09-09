@@ -33424,16 +33424,23 @@ def _park_op_locked(sid, op):
     """_park_op's mutation + mirror write, for a caller that already holds _pending_ops_lock and will wake
     the pusher itself after releasing (_park_behind_queue)."""
     q = _pending_ops.setdefault(str(sid), [])
+    replaced = False
     if op[0] in ("model", "effort", "fast", "env", "cwd"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
+                replaced = True
                 break
         else:
             q.append(op)
     else:
         q.append(op)
     _save_pending_ops()               # mirror the park to disk (survives a kernel death)
+    # one line per park (2026-09-09): a pick that queued behind an open turn and fired minutes later left
+    # no trace here, so the backend's own setter line was the first sign the pick had happened at all
+    sys.stderr.write("parked-op: %s parked for %s (%s; depth %d)\n"
+                     % (op[0], str(sid)[:8], "replaced the earlier %s in place" % op[0] if replaced else "queued",
+                        len(q)))
 
 
 def _parked_md(op):

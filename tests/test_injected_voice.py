@@ -789,7 +789,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                       "ended (a restart or crash): a; b. Their completion notifications will never arrive. Check "
                       "whether each is still running before relaunching it; if they aren't needed, carry on.", three)
         # the reconnect cause reads as the parenthesis after "ended", with "it" the process that ended
-        self.assertIn("ended (a settings switch or a rewind restarted it): a",
+        self.assertIn("ended (a rewind or a key cycle restarted it): a",
                       sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
 
     def test_the_crash_resume_notices_speak_plainly_past_their_prefix(self):
