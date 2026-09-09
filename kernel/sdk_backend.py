@@ -5624,8 +5624,14 @@ class SdkSession:
         self._reconnect = True
         self._wake_set()
         names = self._pick_names()
+        # THE ARM is where a surface flips (review round 3, 2026-09-09), whether it is this immediate arm
+        # for an idle pick or the settle's for a deferred or held one; no setter flips at pick time. Flipped
+        # at the pick, a mid-turn pick whose turn then spawned work began its hold with the picked value in
+        # place: the fast badge read on under the held mark ("the badge shows what the session runs now",
+        # false) and the delivery turn's init flipped it back with the mark standing; the billing row lost
+        # the report it names as what bills until the work finishes
         if self.fast_opt and "fast" in names:
-            self.fast = "on"   # the badge's optimism, moved from the pick to the arm: the flag rides this connect
+            self.fast = "on"   # the badge's optimism: the flag rides this connect; the next init re-asserts
         if "auth" in names:
             self.auth_live = ""   # the CLI's report described the process this reconnect replaces (set_auth)
         names_line = self._held_pick_phrase()
@@ -12844,12 +12850,10 @@ class SdkBackend:
             return True
         outcome = s._note_reconnect_ask("fast")   # the one line per pick, in set_env's voice (2026-09-09)
         s.request_reconnect()                  # first opt-in: the flag applies at the (re)connect
-        if not s._reconnect_held_for_work:
-            # optimistic for the badge; init re-asserts the truth. NOT while the pick is held for live
-            # work (review round 2, 2026-09-09): the badge then shows the running state with the hold as
-            # its pending mark (snapshot pickHeld), and the arm flips it when the flagged connect is due;
-            # flipped here, the first turn's init during the hold read it back to off and the pick looked lost
-            s.fast = "on"
+        # No flip here: the badge's optimism is the ARM's (_arm_reconnect_if_quiet), at once for an idle
+        # pick and at the settle for a deferred or held one, so the badge shows the running state until the
+        # flagged connect is due (review round 3, 2026-09-09; round 2 had skipped the flip on the held path
+        # only, and a mid-turn pick whose turn then spawned work began its hold reading on)
         self._log("fast (%s): set to on; %s" % (s.name, outcome))
         self._wake_push()
         return True
@@ -13144,12 +13148,16 @@ class SdkBackend:
                 s.auth = value
                 s._auth_pending = value
                 outcome = s._note_reconnect_ask("auth")
-                if not s._reconnect_held_for_work:
-                    s.auth_live = ""   # the last init's report predates this switch: the Billing row shows
-                    #   the plain intent (no "CLI reports" parenthetical) until the next init re-confirms.
-                    #   NOT while the pick is held for live work (review round 2, 2026-09-09): the report
-                    #   still describes the process that keeps running, and the Billing row names it as
-                    #   what bills until the work finishes; the arm clears it (_arm_reconnect_if_quiet)
+                # auth_live is NOT cleared here on a live session: the last init's report describes the
+                # process that keeps running until the reconnect, and the Billing row names it as what bills
+                # until then. The ARM clears it (_arm_reconnect_if_quiet), at once for an idle pick and at
+                # the settle for a deferred or held one, so the row shows the plain intent from the moment
+                # the reconnect is due until the next init re-confirms (review round 3, 2026-09-09; round 2
+                # had kept the report on the held path only). A session request_reconnect will refuse (no
+                # loop yet, or ended) has no arm coming and no process running: the pick applies at the next
+                # connect, and the report is history, so it is cleared now
+                if s.loop is None or s.ended:
+                    s.auth_live = ""
                 s.request_reconnect()
                 self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
         if s:

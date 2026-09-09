@@ -548,8 +548,8 @@ class LiveTail(unittest.TestCase):
 
     def test_set_fast_first_opt_in_reconnects_to_apply_the_flag(self):
         # The current connection was made WITHOUT the flag, so the CLI would refuse the literal send;
-        # the opt-in applies at the (re)connect that carries it — request_reconnect, the /effort
-        # machinery: immediately if idle, at the end of the current turn if busy.
+        # the opt-in applies at the (re)connect that carries it (request_reconnect, the /effort machinery:
+        # at once when the session is quiet, else at the turn settle that finds it quiet).
         d = tempfile.mkdtemp()
         sid = "11111111-2222-3333-4444-888888888888"
         be, s = self._live_fast_session(d, sid, unlocked=False)
@@ -559,7 +559,8 @@ class LiveTail(unittest.TestCase):
         self.assertEqual(len(reconnects), 1, "the flag is connect-time here → reconnect to apply")
         self.assertEqual(s.pending(), [], "no literal send — this connection would refuse it")
         self.assertTrue(s.fast_opt, "the next _options carries the flag")
-        self.assertEqual(s.fast, "on", "optimistic for the badge; init re-asserts")
+        self.assertEqual(s.fast, "", "no flip at the pick: the ARM flips the badge when the flagged connect is due "
+                         "(review round 3; SettingsPickWaitsForLiveWork.test_m drives it)")
         self.assertTrue(sb.read_reg(d, sid)["fast"])
 
     def test_set_fast_off_on_a_locked_connection_is_a_no_op_beyond_the_reg(self):
@@ -6455,6 +6456,52 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(len(armed), 1, self.logs)
         self.assertIn("the held auth pick reconnects now", armed[0])
 
+    def test_m_a_pick_made_mid_turn_flips_nothing_until_the_arm(self):
+        # a pick made during a turn with no live work flipped at pick time (fast to on, auth_live blanked);
+        # when that turn spawned work and settled, the hold began with the flipped value in place: the fast
+        # badge read on under the held mark and the delivery turn's init flipped it back with the mark
+        # standing; the billing row lost the report. The flips are the ARM's now (review round 3): nothing
+        # moves until the settle that finds no work arms the reconnect
+        s = self._sess(auth="login")
+        s._launched_auth = "login"; s.auth_live = "login"
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        s.inflight = 1                                   # a turn open, no live work
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s._reconnect_when_idle and not s._reconnect and not s._reconnect_held_for_work)
+        self.assertTrue(any("auth (web): set to key; reconnect deferred to the end of the open turn" in str(m) for m in self.logs), self.logs)
+        self.assertEqual(s.fast, "off", "deferred: no flip at the pick"); self.assertTrue(s.fast_opt)
+        self.assertEqual(s.auth_live, "login", "deferred: the report stands")
+        self._start(s, "a1")                             # the turn spawns work
+        out = self._settle(s)                            # its settle finds the work: the hold begins here
+        self.assertFalse(out["reconnect"]); self.assertTrue(out["deferred"])
+        self.assertTrue(s._reconnect_held_for_work)
+        snap = s.snapshot()
+        self.assertEqual(snap["pickHeld"]["surfaces"], ["fast", "auth"])
+        self.assertEqual(snap["fast"], "off", "the badge shows what the session runs under the held mark")
+        self.assertEqual(snap["authLive"], "login", "the billing row names the report as what bills until the work finishes")
+        self.assertTrue(snap["authPending"]); self.assertEqual(snap["auth"], "key")
+        # an init during the hold (the delivery turn's) changes nothing: the running state is what it says
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required"})
+        snap = s.snapshot()
+        self.assertEqual(snap["fast"], "off"); self.assertTrue(s.fast_opt)
+        self.assertEqual(snap["pickHeld"]["surfaces"], ["fast", "auth"])
+        self._stop(s, "a1")
+        out = self._settle(s)                            # the settle that finds none: the arm flips
+        self.assertTrue(out["reconnect"])
+        snap = s.snapshot()
+        self.assertIsNone(snap["pickHeld"])
+        self.assertEqual(snap["fast"], "on", "the arm's optimism: the flag rides this connect")
+        self.assertEqual(snap["authLive"], "", "the arm clears the report: it described the process this reconnect replaces")
+        # an idle pick flips at its immediate arm, as before
+        s = self._sess(auth="login")
+        s._launched_auth = "login"; s.auth_live = "login"
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+        self.assertTrue(s._reconnect); self.assertEqual(s.auth_live, "")
+
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
         # RUNS: the effort it launched with, the mode it runs, the fast state the init reported, the CLI's
@@ -6505,7 +6552,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self._start(s, "a1")
         s.backend.set_effort(self.SID, "low")
         self.assertEqual(s.snapshot()["effort"], "low")
-        # a fast pick that is NOT held keeps the optimistic flip the badge relied on (2026-08-11)
+        # an idle fast pick keeps the optimistic flip the badge relied on (2026-08-11): its arm is immediate,
+        # and the flip is the arm's (review round 3)
         s = self._sess()
         s.fast = "off"; s.thread = mock.Mock(is_alive=lambda: True)
         s.backend.set_fast(self.SID, "on")
