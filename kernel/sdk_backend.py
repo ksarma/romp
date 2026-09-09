@@ -5659,16 +5659,26 @@ class SdkSession:
                           % (self.name, what, still, what_waits))
 
     def _withdraw_held_pick(self, surface: str) -> None:
-        """A newer pick made `surface`'s pending reconnect moot (set_mode: a live pick of a non-bypass mode
-        while a pick INTO bypass waits; review round 2, 2026-09-09): forget the surface, and when it was
-        the only one pending, end the hold and the reconnect it asked for, since the reconnect would
-        relaunch a mode the process no longer needs. A pending rewind records no surface and depends on
-        the deferred arm, so its arm stands. Loop thread, queued behind the request it withdraws
-        (call_soon_threadsafe keeps the order), so the two cannot interleave."""
+        """A newer pick made `surface`'s pending reconnect moot: the ONE withdraw routine for every surface
+        (review round 3, 2026-09-09). set_mode calls it for a live pick of a non-bypass mode while a pick
+        INTO bypass waits (review round 2); set_effort, set_auth and set_fast call it when the pick returns
+        to the value the process runs while a different pick is pending (held for live work, or deferred to
+        the turn's end). Forget the surface, so pickHeld stops naming it, and when it was the only one
+        pending end the hold and the reconnect it asked for: the reconnect would relaunch the very shape
+        the process runs (until round 3 the revert left the arm standing, and the settle that found no
+        work relaunched the identical shape). When other picks remain the arm stands for them. A pending
+        rewind records no surface and depends on the deferred arm, so its arm stands. Loop thread, queued
+        behind the request it withdraws (call_soon_threadsafe keeps the order), so the two cannot
+        interleave."""
         if surface not in self._reconnect_surfaces:
             return
         self._reconnect_surfaces.discard(surface)
-        if self._reconnect_surfaces or self._reconnect or not self._reconnect_when_idle:
+        if self._reconnect or not self._reconnect_when_idle:
+            return
+        if self._reconnect_surfaces:
+            self._log_quietly("reconnect (%s): the withdrawn %s pick leaves %s pending; the reconnect stands"
+                              % (self.name, surface, self._picks_phrase(self._pick_names(), "pending", "pending")))
+            self.backend._poke()
             return
         if self._rewind_to and not self._rewind_armed:
             return
@@ -12818,6 +12828,18 @@ class SdkBackend:
             self._wake_push()
             return True
         if value == "off":                     # no flag at connect → fast mode is already off; nothing to send
+            if "fast" in s._reconnect_surfaces:
+                # an on pick is pending on a reconnect (held for live work, or deferred to the turn's end) and
+                # this returns to the state the process runs: the pick is withdrawn through the one withdraw
+                # routine (review round 3, 2026-09-09; set_mode's shape), which ends the hold and the reconnect
+                # when nothing else asked. The running state is off (a flagless connection reports off), so
+                # the badge reads it whether or not the arm had flipped it
+                if s.loop is not None and not s.ended:
+                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "fast")
+                s.fast = "off"
+                self._log("fast (%s): set to off; the pending on pick is withdrawn" % s.name)
+                self._wake_push()
+                return True
             self._log("fast (%s): set to off; unchanged, no reconnect" % s.name)
             return True
         outcome = s._note_reconnect_ask("fast")   # the one line per pick, in set_env's voice (2026-09-09)
@@ -12965,16 +12987,19 @@ class SdkBackend:
             # changed nothing). The reg is per-session and reads the launch again below where it drifted;
             # the seed above still moved (it is cross-session). The chip still acknowledges the pick.
             if s._effort_pending and s._effort_pending != value:
-                # a DIFFERENT pick is waiting to apply: this one reverts it. Persist the revert and clear
-                # the badge; no new request. If the reconnect it asked for is still pending it fires when
-                # the session is quiet and relaunches this same shape, and since it waits for live work it
-                # kills nothing (an idle session pays one reconnect for the round trip; the pick is not
-                # lost either way).
+                # a DIFFERENT pick is waiting to apply: this one reverts it. Persist the revert, clear the
+                # badge, and WITHDRAW the pending pick through the one withdraw routine (review round 3,
+                # 2026-09-09; set_mode's shape): the surface leaves the pending set, so pickHeld stops naming
+                # it, and when it was the only one pending the hold and its reconnect end, since the reconnect
+                # would relaunch the very shape the process runs. Until round 3 the arm stood, and the settle
+                # that found no work relaunched the identical shape.
                 reverted = s._effort_pending
                 s.effort = value
                 s._effort_pending = ""
                 self._update_reg(sid, effort=value, effortPending=False)
-                self._log("effort (%s): set to %s; reverted the pending %s; no reconnect" % (s.name, value, reverted))
+                if s.loop is not None and not s.ended:
+                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "effort")
+                self._log("effort (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
             else:
                 if reg.get("effort") != value or s.effort != value:
                     s.effort = value                  # a reg that drifted from the launch (a pending pick
@@ -13089,11 +13114,18 @@ class SdkBackend:
             # takes the pick as its explicit intent in the reg, still without a reconnect: the process
             # already bills that side.
             if s._auth_pending and s._auth_pending != value:
-                reverted = s._auth_pending            # a DIFFERENT switch waits to apply: this reverts it
-                s.auth = value                        # (set_effort's revert; the deferred reconnect, if it
-                s._auth_pending = ""                  # fires, relaunches this same side and kills nothing)
+                # a DIFFERENT switch waits to apply: this reverts it, set_effort's revert for billing. The
+                # pending pick is withdrawn through the one withdraw routine (review round 3, 2026-09-09):
+                # the surface leaves the pending set and, when it was the only one pending, the hold and its
+                # reconnect end instead of relaunching the side the process already bills. auth_live is
+                # untouched: the CLI's report still describes the process that keeps running
+                reverted = s._auth_pending
+                s.auth = value
+                s._auth_pending = ""
                 self._update_reg(sid, auth=value, authPending=False)
-                self._log("auth (%s): set to %s; reverted the pending %s; no reconnect" % (s.name, value, reverted))
+                if s.loop is not None and not s.ended:
+                    s.loop.call_soon_threadsafe(s._withdraw_held_pick, "auth")
+                self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
             else:
                 if s.auth != value or reg.get("auth") != value:
                     s.auth = value

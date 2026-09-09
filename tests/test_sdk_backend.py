@@ -5696,7 +5696,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(reg.get("effort"), "high"); self.assertFalse(reg.get("effortPending"))
         self.assertEqual(s._effort_pending, ""); self.assertEqual(s.effort, "high")
         self.assertEqual(self._seed(s).get("effort"), "high", "the latest pick is the seed")
-        self.assertTrue(any("reverted the pending max; no reconnect" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("set to high; the pending max pick is withdrawn" in str(m) for m in self.logs), self.logs)
 
     def test_f3_ultracode_is_its_own_launch_shape_and_a_fresh_session_has_none(self):
         # xhigh and ultracode both hand the CLI --effort xhigh; ultracode adds the settings key, so a
@@ -6094,7 +6094,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s._effort_pending, "high", "recorded as pending: the process coming up runs max")
         self.assertTrue(s._reconnect, "and a reconnect is requested for after the launch lands")
         self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("effortPending"))
-        self.assertFalse(any("reverted the pending" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("pick is withdrawn" in str(m) for m in self.logs), self.logs)
         self.assertTrue(any("effort (web): set to high; reconnecting to apply" in str(m) for m in self.logs), self.logs)
         s._connect_landed()                                                 # max lands
         self.assertEqual(s._launched_effort, sb.effort_launch_shape("max"))
@@ -6141,7 +6141,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "default", "auth": "login"}
             self.assertTrue(s.backend.set_auth(self.SID, "key"))            # the revert, during the spawn of login
             self.assertEqual(s._auth_pending, "key"); self.assertTrue(s._reconnect)
-            self.assertFalse(any("reverted the pending" in str(m) for m in self.logs), self.logs)
+            self.assertFalse(any("pick is withdrawn" in str(m) for m in self.logs), self.logs)
             s._connect_landed()
             self.assertEqual(s._launched_auth, "login")
             self.assertEqual(s._auth_pending, "key", "key survives the landing of login")
@@ -6325,6 +6325,135 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(asked, [], "the connect in progress launches bypass: already applying")
         self.assertEqual(live, [])
         self.assertTrue(any("already applying, no new request" in str(m) for m in self.logs), self.logs)
+
+    def _withdrawn(self):
+        return [str(m) for m in self.logs if "the withdrawn" in str(m)]
+
+    def test_l_reverting_a_held_effort_pick_withdraws_it_and_the_settle_reconnects_nothing(self):
+        # the launched value picked again while a different pick is held cleared the pending flag and
+        # logged "no reconnect", but left the surface in the pending set and the hold armed: pickHeld kept
+        # naming the withdrawn pick and the settle that found no work relaunched the identical shape
+        # ("live work finished; the held effort pick reconnects now"). One withdraw routine for every
+        # surface now (review round 3); the request runs through the loop double, so the surfaces populate
+        s = self._sess(effort="high")
+        s._launched_effort = sb.effort_launch_shape("high")
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_effort(self.SID, "max"))
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort"])
+        self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertIsNone(s._pick_held(), "the withdrawn pick is no longer held")
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertFalse(s._reconnect_when_idle, "the only pending pick was withdrawn: no reconnect waits")
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_held_for_work)
+        self.assertEqual(s._reconnect_surfaces, set())
+        self.assertEqual(s._effort_pending, ""); self.assertEqual(s.effort, "high")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("effort"), "high"); self.assertFalse(reg.get("effortPending"))
+        self.assertTrue(any("effort (web): set to high; the pending max pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("the withdrawn effort pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+        self.assertFalse(any("unchanged, no reconnect" in str(m) for m in self.logs), "never 'unchanged' while a hold stood")
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"], "nothing relaunches the shape the process already runs")
+        self.assertFalse(out["deferred"])
+        self.assertEqual(self._armed(), [])
+
+    def test_l2_reverting_a_held_billing_pick_withdraws_it_and_keeps_the_report(self):
+        s = self._sess(auth="login")
+        s._launched_auth = "login"
+        s.auth_live = "login"
+        self._start(s, "a1")
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+            self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["auth"])
+            self.assertEqual(s.auth_live, "login", "held: the report still describes the running process")
+            self.assertTrue(s.backend.set_auth(self.SID, "login"))
+        self.assertIsNone(s._pick_held()); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
+        self.assertEqual(s._auth_pending, ""); self.assertEqual(s.auth, "login")
+        self.assertEqual(s.auth_live, "login", "the report is kept through the revert: the process bills the login")
+        self.assertEqual(s.snapshot()["authLive"], "login"); self.assertFalse(s.snapshot()["authPending"])
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual(reg.get("auth"), "login"); self.assertFalse(reg.get("authPending"))
+        self.assertTrue(any("auth (web): set to login; the pending key pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("the withdrawn auth pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"]); self.assertEqual(self._armed(), [])
+
+    def test_l3_fast_off_over_a_pending_on_pick_withdraws_it_held_and_deferred(self):
+        # held for live work: the on pick waits, off returns to the state the process runs
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        self._start(s, "a1")
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["fast"])
+        self.assertEqual(s.snapshot()["fast"], "off", "held: the badge shows the running state")
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertFalse(s.fast_opt, "the ask is off for the next connect")
+        self.assertIsNone(s._pick_held()); self.assertIsNone(s.snapshot()["pickHeld"])
+        self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
+        self.assertEqual(s.snapshot()["fast"], "off")
+        self.assertFalse(sb.read_reg(s.backend.state_dir, self.SID).get("fast"))
+        self.assertTrue(any("fast (web): set to off; the pending on pick is withdrawn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(any("the withdrawn fast pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"]); self.assertEqual(self._armed(), [])
+        # deferred (a turn open, no live work): the same withdraw, and the badge reads off, never the
+        # picked value (a deferred on pick used to flip the badge on at pick time and the cancelled
+        # reconnect's init no longer reset it)
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = False
+        s.inflight = 1
+        self.assertTrue(s.backend.set_fast(self.SID, "on"))
+        self.assertTrue(s._reconnect_when_idle and not s._reconnect)
+        self.assertTrue(any("fast (web): set to on; reconnect deferred to the end of the open turn" in str(m) for m in self.logs), self.logs)
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(s.fast, "off"); self.assertEqual(s.snapshot()["fast"], "off")
+        out = self._settle(s)
+        self.assertFalse(out["reconnect"]); self.assertFalse(out["deferred"])
+        # an UNLOCKED connection takes off as a live send and cancels nothing: the refusal relaunch pends
+        # "fast" on a flagged connection, and a live off must leave that reconnect standing
+        s = self._sess()
+        s.thread = mock.Mock(is_alive=lambda: True)
+        s.fast = "off"; s._fast_unlocked = True
+        s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
+        self.assertTrue(s._reconnect_when_idle); self.assertIn("fast", s._reconnect_surfaces)
+        self.assertTrue(s.backend.set_fast(self.SID, "off"))
+        self.assertTrue(s._reconnect_when_idle, "the flagless relaunch still waits")
+        self.assertIn("fast", s._reconnect_surfaces)
+        self.assertEqual(s.pending(), ["/fast off"], "the unlocked branch is untouched: a live send")
+
+    def test_l4_a_withdrawn_pick_leaves_another_held_pick_and_its_reconnect_standing(self):
+        s = self._sess(effort="high", auth="login")
+        s._launched_effort = sb.effort_launch_shape("high"); s._launched_auth = "login"
+        self._start(s, "a1")
+        with mock.patch.object(sb.SdkBackend, "key_available", new_callable=mock.PropertyMock, return_value=True):
+            self.assertTrue(s.backend.set_effort(self.SID, "max"))
+            self.assertTrue(s.backend.set_auth(self.SID, "key"))
+            self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["effort", "auth"])
+            self.assertTrue(s.backend.set_effort(self.SID, "high"))
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["auth"], "the billing pick still waits")
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work, "the hold stands for it")
+        self.assertEqual(s._auth_pending, "key")
+        self.assertTrue(any("the withdrawn effort pick leaves the pending auth pick pending; the reconnect stands"
+                            in str(m) for m in self.logs), self.logs)
+        self.assertEqual([m for m in self._withdrawn() if "only one pending" in m], [])
+        self._stop(s, "a1")
+        out = self._settle(s)
+        self.assertTrue(out["reconnect"], "the settle still reconnects for the billing pick")
+        armed = self._armed()
+        self.assertEqual(len(armed), 1, self.logs)
+        self.assertIn("the held auth pick reconnects now", armed[0])
 
     def test_k_every_held_kind_marks_the_snapshot_and_the_badges_read_the_running_value(self):
         # one marker (pickHeld) for effort, mode, fast and auth; the values beside it are what the process
