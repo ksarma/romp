@@ -91,6 +91,7 @@ const OBJ_ID = ["tabs"]; //                       an array of objects keyed by `
 // queued for or broadcast to another, and are not named anywhere in this file; two tests pin that absence).
 const KERNEL_SETTING = new Set(["setAutoNudge", "setJudgeModel", "setIndexModel",
                                 "setJudgeEffort", "setIndexEffort", "setUpdateMode",
+                                "setJudgeConcurrency",   // T277: the judges' pool width, one value across machines
                                 "setDistillModel", "setDistillEffort", "setFileEditing",
                                 "setCompactSuggest",
                                 "setCommentModel", "setCommentEffort", "setCommentFast"]);

@@ -296,14 +296,20 @@ class ApiHealthCell(unittest.TestCase):
 
     def test_the_shell_socket_carries_the_dashboard_s_wid_minted_before_it_connects(self):
         # review round 2 (2026-09-07): the detail's openSession rode a shell socket with no wid, so the kernel's
-        # reveal fell to _send_to_view's broadcast and every open dashboard's chat switched
+        # reveal fell to _send_to_view's broadcast and every open dashboard's chat switched.
+        # Re-aimed in the 2026-09-09 fold (upstream #1127): the connect reads the script's wid() helper, defined
+        # above it, and the id is minted once, by the HEAD script _landing() emits before any pane or the shell
+        # script parses (it was minted by the settings script, after the iframes, until then)
         js = km._LANDING_MOBILE_JS
-        self.assertIn("var wid='';try{wid=sessionStorage.getItem('romp:wid')||'';}catch(e){}\n"
-                      "var ws=new WebSocket(proto+location.host+'/ws?app=shell'+(wid?'&wid='+encodeURIComponent(wid):''));", js)
+        helper = "function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}"
+        connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));"
+        self.assertIn(helper, js)
+        self.assertIn(connect, js)
+        self.assertLess(js.index(helper), js.index(connect), "the helper is defined before the connect reads it")
         mint = "sessionStorage.setItem('romp:wid'"
-        self.assertIn(mint, km._LANDING_SETTINGS_JS, "the shell mints the id in the settings script")
-        self.assertLess(self.html.index(mint), self.html.index("'/ws?app=shell'"), "minted before the shell socket connects")
-        self.assertIn("'/ws?app=shell'", self.html)
+        self.assertEqual(self.html.count(mint), 1, "the page mints the id once")
+        self.assertLess(self.html.index(mint), self.html.index("'/ws?app=shell&wid='"), "minted before the shell socket connects")
+        self.assertIn("'/ws?app=shell&wid='", self.html)
 
     def test_an_emptied_usage_cell_collapses_its_gap(self):
         # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the

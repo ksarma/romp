@@ -87,23 +87,32 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
 
     def test_it_refits_on_the_events_ios_actually_changes_the_height_on(self):
         # iOS collapses its toolbars AS YOU SCROLL, with no window resize; the visual viewport's own
-        # scroll event is where that settles. pageshow covers a back/forward-cache restore.
-        for ev in ("'resize',fit", "'orientationchange',fit", "'pageshow',fit"):
+        # scroll event is where that settles. pageshow covers a back/forward-cache restore. Since
+        # 2026-09-08 every event binds `refit`, the one-frame coalescer, and the set also covers a
+        # return from the background (visibilitychange, window focus) and a keyboard the composer's
+        # blur dismissed (focusout) — the installed iPhone app came back keyboard-short otherwise.
+        # Behavior is pinned by test_kernel_mobile.MobileFitExecutes; these are the wiring strings.
+        for ev in ("'resize',refit", "'orientationchange',refit", "'pageshow',refit", "'focus',refit"):
             self.assertIn("window.addEventListener(" + ev, self.js)
-        self.assertIn("window.visualViewport.addEventListener('scroll',fit)", self.js)
-        self.assertIn("window.visualViewport.addEventListener('resize',fit)", self.js)
+        self.assertIn("document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')refit();});", self.js)
+        self.assertIn("document.addEventListener('focusout',refit);", self.js)
+        self.assertIn("window.visualViewport.addEventListener('scroll',refit)", self.js)
+        self.assertIn("window.visualViewport.addEventListener('resize',refit)", self.js)
+        # one fit per animation frame, however many events a keyboard slide or a resume fires
+        self.assertIn("fitRaf=window.requestAnimationFrame(function(){fitRaf=0;fit();});", self.js)
 
     def test_the_fit_runs_even_with_no_mobile_tab_bar(self):
         # it must apply on a desktop/tablet layout too, so the fit and its listeners come BEFORE the
         # #mtabs early return — that ordering is the whole reason a landscape tablet gets a real height
-        fit_at = self.js.index("fit();window.addEventListener('resize',fit)")
-        bar_at = self.js.index("var bar=document.getElementById('mtabs');")
+        fit_at = self.js.index("fit();window.addEventListener('resize',refit)")
+        # the line-anchored form: barfit() looks the bar up the same way, guarded, BEFORE the wiring
+        bar_at = self.js.index("\nvar bar=document.getElementById('mtabs');if(!bar)return;\n")
         self.assertLess(fit_at, bar_at)
-        # the early return still follows the lookup (the layout probe __rompMobileOn sits between them since
-        # 2026-09-04 — defined before the return so it answers false on a page with no tab bar)
-        ret_at = self.js.index("if(!bar)return;")
-        self.assertLess(bar_at, ret_at)
-        self.assertLess(self.js.index("window.__rompMobileOn=mobileOn;"), ret_at)
+        # the fork's layout probe __rompMobileOn (2026-09-04) sits ABOVE the lookup-and-return line, so a page
+        # with no tab bar still defines it (it answers false there). The lookup and the early return became
+        # one line on 2026-09-08 (barfit), so "between the lookup and the return" is no longer a place: the
+        # probe precedes the line
+        self.assertLess(self.js.index("window.__rompMobileOn=mobileOn;"), bar_at)
 
 
 if __name__ == "__main__":

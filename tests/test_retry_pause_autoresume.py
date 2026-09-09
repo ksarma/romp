@@ -436,7 +436,7 @@ class LimitPauseLift(_PauseFixture):
         real_sdk = km._sdk
 
         def world(key):
-            km._sdk = lambda: type("B", (), {"work_key_configured": key,
+            km._sdk = lambda: type("B", (), {"key_available": key,
                                              "new_session_auth": lambda self: "key" if key else "login"})()
         try:
             world(True)

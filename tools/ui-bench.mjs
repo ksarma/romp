@@ -33,8 +33,9 @@
 //      Serving design: the REAL kernel HTTP Handler runs in a python3 subprocess under an isolated
 //      environment, the pattern of tests/test_color_route.py with the floors tests/conftest.py applies:
 //      private XDG_STATE_HOME and TMUX_TMPDIR; the manager variables and the API-key variables removed;
-//      the manager's key FILE and the boot model-catalog fetch pointed away (the kernel would otherwise
-//      read ~/.config/romp/service.env and carry its key to the Models API); the Claude binary floored
+//      the service env file pointed away (kernel/credentials.py reads it at boot for retired names) and
+//      the boot model-catalog fetch off (it would otherwise run the operator's apiKeyHelper); the Claude
+//      binary floored
 //      to /bin/false; the postal peer bus off; ROMP_KERNEL_NO_OPEN=1; a serve token minted for the run.
 //      So the page HTML and the WebSocket shim are the kernel's own bytes. The subprocess holds a pipe
 //      from the parent and exits when it closes, so it cannot outlive the bench however the bench ends.
@@ -627,11 +628,11 @@ export async function startPageServer({ dist, python = "python3", log = () => {}
   fs.mkdirSync(env.TMUX_TMPDIR, { recursive: true });
   env.ROMP_KERNEL_NO_OPEN = "1";
   env.ROMP_POSTAL_PEERS = "0";   // the feed page polls /tunnels, which otherwise asks the LIVE postal bus for its peers
-  // The floors tests/conftest.py applies, for the same reasons. The kernel's live API key is the manager's
-  // env FILE (kernel/keysource.py falls back to ~/.config/romp/service.env when these two are unset), the
-  // boot model-catalog fetch would carry that key to the Models API from the first /sessions request a
-  // pane makes, and a missing ROMP_CLAUDE_BIN resolves to the real CLI, so it is set to a binary that runs
-  // nothing rather than removed.
+  // The floors tests/conftest.py applies, for the same reasons. The kernel reads the manager's env FILE at
+  // boot (kernel/credentials.py falls back to ~/.config/romp/service.env when these two are unset) and
+  // refuses to start on a retired key line there, the boot model-catalog fetch would run the operator's
+  // apiKeyHelper in-process from the first /sessions request a pane makes, and a missing ROMP_CLAUDE_BIN
+  // resolves to the real CLI, so it is set to a binary that runs nothing rather than removed.
   env.ROMP_SERVICE_ENV_FILE = env.ROMP_SERVICE_ENV = path.join(tmp, "no-service.env");   // never created
   env.ROMP_MODEL_CATALOG = "off";
   env.ROMP_CLAUDE_BIN = "/bin/false";

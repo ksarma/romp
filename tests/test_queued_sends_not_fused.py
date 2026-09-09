@@ -481,7 +481,9 @@ class OneFedTextAtATime(unittest.TestCase):
     def test_a_reconnect_asked_for_while_the_cli_still_holds_a_text_is_deferred_not_immediate(self):
         """The immediate arm: after a mid-turn feed's result the counters read idle (inflight 0, queue
         empty) while the text sits in the CLI's queue. A reconnect asked for in that gap defers; the
-        key cycle's no-defer form is refused with its log line, as when a turn is running."""
+        immediate-only form (defer=False) is refused with its log line, as when a turn is running. The
+        line reads 'not reconnected' since the 2026-09-09 fold: upstream #1128 retired the key cycle
+        that was this form's caller and renamed the line; the refusal itself is unchanged."""
         s, c1 = self.s, self._first_turn()
         s.enqueue("mid-turn note")
         self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
@@ -493,7 +495,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._settle()
         self.assertEqual(len(self._Client.instances), 1, "the CLI keeps running: it still holds the note")
         s.request_reconnect(defer=False)
-        self._wait(lambda: any("not cycled" in l for l in self.lines), "the no-defer form refused, loudly")
+        self._wait(lambda: any("not reconnected" in l for l in self.lines), "the no-defer form refused, loudly")
         self.assertEqual(len(self._Client.instances), 1)
         c1.phase = "turn-2"
         self._init(c1)

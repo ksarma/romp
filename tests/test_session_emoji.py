@@ -394,6 +394,9 @@ class Store(unittest.TestCase):
         # live session lost its name and cwd from the registry (review round 3, 2026-09-06). Every kernel
         # names writer refuses a record with no name: re-read once, then leave the file EXACTLY as it is
         # and report the sid — never a silent degrade.
+        # The emoji, clear and color writers answer False; _set_name RAISES RuntimeError naming the sid
+        # (upstream #1138's fail-loudly contract: _rename_session must not say "renamed" over a file it never
+        # rewrote), with the same report and the file untouched.
         import io
         slept = self._quiet_reread()
         saved_problems = list(km._SDK_BOOT_PROBLEMS)
@@ -410,10 +413,15 @@ class Store(unittest.TestCase):
                     err = io.StringIO()
                     saved_err, km.sys.stderr = km.sys.stderr, err
                     try:
-                        out = call()
+                        if name == "name":
+                            with self.assertRaises(RuntimeError) as cm:
+                                call()
+                            self.assertIn(SID, str(cm.exception), "the raise names the sid")
+                            self.assertIn("no name", str(cm.exception))
+                        else:
+                            self.assertFalse(call(), "nothing was written")
                     finally:
                         km.sys.stderr = saved_err
-                    self.assertFalse(out, "nothing was written")
                     self.assertEqual((self.names / SID).read_text(), raw, "the file is left byte-for-byte as it was")
                     self.assertEqual(slept, [km._NAMES_REREAD_S], "exactly one re-read, after the short pause")
                     self.assertIn(SID, err.getvalue(), "the problem line names the sid")
@@ -461,7 +469,7 @@ class Store(unittest.TestCase):
         self.assertEqual(err.getvalue(), "", "a caught window is not a problem")
         # a record with a name but nothing else is a real (if old) record: padded and published as before
         (self.names / SID).write_text("web\n")
-        self.assertTrue(km._set_name(SID, "api") is None)
+        self.assertTrue(km._set_name(SID, "api"))   # True once published (#1138 fail-loudly: a silent None let a rename lie)
         self.assertEqual(self._line(), "api\t\t\t\n")
 
     def test_no_emoji_reads_as_empty(self):
