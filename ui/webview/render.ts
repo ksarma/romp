@@ -95,8 +95,8 @@ for (const [name, lang] of Object.entries({
   try { hljs.registerLanguage(name, lang as any); } catch { /* dup alias */ }
 }
 
-// The grammar — GFM without hard breaks, the ~~-only `del` tokenizer, the KaTeX math extensions and the Obsidian
-// constructs — is defined ONCE in md-config.ts and shared with `userMarked`, the breaks:true instance that renders
+// The grammar (GFM without hard breaks, the ~~-only `del` tokenizer, the KaTeX math extensions and the Obsidian
+// constructs) is defined ONCE in md-config.ts and shared with `userMarked`, the breaks:true instance that renders
 // the user's own words (userMd below), with the viewer (file-view.ts) and with the anchor map (anchor-map.ts).
 // Everything assistant-authored stays on this singleton, breaks:false.
 applyMdConfig();

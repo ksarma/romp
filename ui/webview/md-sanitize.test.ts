@@ -103,15 +103,16 @@ test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.
   assert.deepEqual(callers, ["md-sanitize.ts"], "every other module goes through sanitizeMd");
   const SAN = read("md-sanitize.ts");
   assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1);
-  assert.match(SAN, /export function sanitizeMd\(dirty: string\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
-    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM");
-  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/, "the input post-pass, then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
+  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
+    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass is optional (the chat's md() and userMd() pass none)");
+  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
+    "the input post-pass, then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
   assert.match(SAN, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/, "the registry is a module array of passes over the sanitized body, empty until a grammar module registers one");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));
   assert.deepEqual(importers, ["md-sanitize.ts"]);
   assert.match(read("render.ts"), /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
-  assert.match(read("file-view.ts"), /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(read("file-view.ts"), /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // plus the reveal step the viewer's scrollToFragment shares with the chat's `#` delegate
   assert.equal((read("render.ts").match(/sanitizeMd\(/g) || []).length, 2, "md() and userMd()");
   assert.equal((read("file-view.ts").match(/sanitizeMd\(/g) || []).length, 1, "mdBlock");
 });

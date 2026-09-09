@@ -214,7 +214,14 @@ test("an img's srcset is rewritten by candidate, its x and w descriptors kept, a
   assert.equal(widths.getAttribute("sizes"), "100px", "sizes is not a source and is untouched");
 });
 
-test("an inline svg's <image> and <feImage> href go through /file; an xlink:href becomes the plain href, so the element carries one attribute", async () => {
+// The feImage arm is exercised over the stand-in ALONE: the product never reaches it today. mdBlock sanitizes before it
+// rewrites (file-view.ts), and the sanitizer's profile (md-sanitize.ts MD_PURIFY: DOMPurify's `svg` profile, not its
+// `svgFilters`) drops a filter's primitives, `<feImage>` with them, so a note's `<filter><feImage href>` renders as an
+// empty `<filter>` in the Files pane and fetches nothing, gated or not (measured 2026-09-09 over the real sanitizeMd in
+// headless Chromium: the feImage gone, the `<image>` beside it kept). The arm stays in FIGURE_SEL as a guard for a
+// wider profile, and the test after this one fails the day the profile widens, so that change brings a DOM-level test
+// (file-view-figures-gate-browser.test.ts) and updates the prose on the arm (figure-gate.ts, the plan's item 8, file-view.ts).
+test("an inline svg's <image> href goes through /file; an xlink:href becomes the plain href, so the element carries one attribute; the feImage arm holds over the stand-in, unreachable in the product while the sanitizer drops filters", async () => {
   const image = tag("svg", {}, tag("image", { href: "figs/d.png" }));
   const xlink = tag("svg", {}, tag("image", { "xlink:href": "figs/e.png" }));
   const both = tag("svg", {}, tag("image", { href: "figs/f.png", "xlink:href": "figs/g.png" }));
@@ -228,6 +235,25 @@ test("an inline svg's <image> and <feImage> href go through /file; an xlink:href
   const b = both.childNodes[0] as El;
   assert.equal(b.getAttribute("href"), q(DIR + "figs/f.png"), "an href the author wrote beside the xlink wins");
   assert.equal(b.getAttribute("xlink:href"), null, "the xlink is rewritten onto href too, so no second source stands");
-  assert.equal(((filter.childNodes[0] as El).childNodes[0] as El).getAttribute("href"), q(DIR + "figs/h.png"), "a filter's feImage fetches too");
+  assert.equal(((filter.childNodes[0] as El).childNodes[0] as El).getAttribute("href"), q(DIR + "figs/h.png"), "a filter's feImage href is rewritten when one reaches the rewrite; today none does (the sanitizer drops it), so this holds the arm for a wider profile");
   assert.equal((remote.childNodes[0] as El).getAttribute("href"), "https://remote.test/svg.png", "a web address stays as written");
+});
+
+// The premise the case above rests on, executable: the one sanitizer (md-sanitize.ts, the only DOMPurify.sanitize call
+// in the dashboard) runs under DOMPurify's `svg` profile alone, and `feImage` is a member of its `svgFilters` list, not
+// of `svg` (dompurify 3.4.10: `filter` and `image` sit in `svg`, every `fe*` primitive in `svgFilters`). So no feImage
+// reaches rewriteFigureSrcs or the gate's figureRefs in the product, and the stand-in case is the arm's only coverage.
+// Widening the profile, by `svgFilters: true` or by naming the tag in ADD_TAGS, makes the arm live in the Files pane:
+// that change must bring a DOM-level test over the real bundle (a filter's feImage fixture in
+// file-view-figures-gate-browser.test.ts, local and remote) and update the prose on the arm (figure-gate.ts's header
+// and FIGURE_SEL comment, plans/markdown-viewer.md's build note item 8, the rewriteFigureSrcs comment in
+// file-view.ts). This fails first, and names that work.
+test("the sanitizer drops a filter's <feImage> today (the svg profile without svgFilters, no ADD_TAGS), so the feImage arm is covered over the stand-in alone; widening the profile must bring a DOM-level test", async () => {
+  const { MD_PURIFY } = await import("./md-sanitize");
+  const profiles: { svg?: boolean; svgFilters?: boolean } = MD_PURIFY.USE_PROFILES || {};   // DOMPurify allows `false` here
+  assert.equal(profiles.svg, true, "the svg profile is what lets an inline svg's <image> through at all");
+  assert.notEqual(profiles.svgFilters, true, "svgFilters would keep <feImage>: the arm goes live in the product, so add the browser leg and update the prose named above before enabling it");
+  const addTags = MD_PURIFY.ADD_TAGS ?? [];
+  assert.ok(Array.isArray(addTags), "ADD_TAGS as a predicate could admit feImage too: name tags, so this pin can read them");
+  assert.ok(!addTags.map((t) => t.toLowerCase()).includes("feimage"), "ADD_TAGS is the other door to a live feImage: the same follow-through applies");
 });

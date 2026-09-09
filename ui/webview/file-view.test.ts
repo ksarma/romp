@@ -490,10 +490,11 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   // the two buttons are built inside the isMd gate — a .py file shows no Rendered/Raw toggle
   assert.match(VIEW, /if \(isMd\) \{\s*\n\s*for \(const mode of \["rendered", "raw"\] as const\)/);
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
-  assert.match(VIEW, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // the sanitizer, and the shared reveal step scrollToFragment runs before its scroll
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
-  // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string)
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty\)\.childNodes\)\);/);
+  // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); the heading ids are minted
+  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts)
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
   // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both

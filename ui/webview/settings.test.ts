@@ -8,7 +8,7 @@ const store: Record<string, string> = {};
   setItem: (k: string, v: string) => { store[k] = v; },
   removeItem: (k: string) => { delete store[k]; },
 };
-import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT } from "./settings";
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT, figureHosts, figureHostName } from "./settings";
 
 test("loadSettings returns defaults when nothing is stored", () => {
   delete store["romp:settings"];
@@ -113,5 +113,31 @@ test("figureHosts defaults to github.com and its image hosts, localhost and 127.
   const saved = saveSettings({ figureHosts: ["x.test"] });
   assert.deepEqual(saved.figureHosts, ["x.test"]);
   assert.deepEqual(loadSettings().figureHosts, ["x.test"], "round-trips through storage");
+  delete store["romp:settings"];
+});
+
+// The Slice 4 review, round 1: the normaliser kept a line as typed, so an address pasted whole, a port, a path, an
+// internationalised or a leading-zero spelling never equalled the URL.hostname the gate compares (figure-gate.ts
+// remoteHost), and the host it named stayed gated with no sign in the gear.
+test("figureHosts reads every entry down to the host name the gate compares: an address, a port, a path, an IDN and an IPv4 spelling come back canonical, once each; a line the URL parser refuses is kept as typed, lower-cased, so the gear can show it back", () => {
+  assert.equal(figureHostName("https://cdn.test/a.png"), "cdn.test");
+  assert.equal(figureHostName(" HTTPS://Upper.TEST "), "upper.test", "trimmed, the scheme's case and the host's ignored");
+  assert.equal(figureHostName("cdn.test/"), "cdn.test");
+  assert.equal(figureHostName("cdn.test:8080"), "cdn.test", "a port, not a scheme");
+  assert.equal(figureHostName("cdn.test?x=1#f"), "cdn.test");
+  assert.equal(figureHostName("//proto.test/x"), "proto.test");
+  assert.equal(figureHostName("user@cred.test"), "cred.test");
+  assert.equal(figureHostName("bücher.test"), "xn--bcher-kva.test", "the parser's spelling, which the reader also gives");
+  assert.equal(figureHostName("127.000.000.001"), "127.0.0.1");
+  assert.equal(figureHostName("0x7f.1"), "127.0.0.1");
+  assert.equal(figureHostName("[::1]"), "[::1]");
+  assert.equal(figureHostName("localhost."), "localhost.", "a trailing dot is another host to the browser too");
+  assert.equal(figureHostName("ftp://ftp.test/x"), "ftp.test", "a host is a host whatever the scheme typed");
+  for (const bad of ["", "  ", "[bad", "x^y.test", "%zz.test", "http://", "file:///x", "::1", "192.168.1.256", "https:cdn.test"]) assert.equal(figureHostName(bad), null, JSON.stringify(bad));
+  assert.deepEqual(figureHosts("https://cdn.test\ncdn.test/, cdn.test:8080 bücher.test\n127.000.000.001 [Bad  github.com"), ["cdn.test", "xn--bcher-kva.test", "127.0.0.1", "[bad", "github.com"], "the textarea's text: one cdn.test for its three spellings, the refused line kept");
+  assert.deepEqual(figureHosts(["https://cdn.test", "Other.TEST:8080", "[Bad", 3 as unknown as string]), ["cdn.test", "other.test", "[bad"]);
+  store["romp:settings"] = JSON.stringify({ figureHosts: ["https://cdn.test", "Other.TEST:8080", "[Bad"] });
+  assert.deepEqual(loadSettings().figureHosts, ["cdn.test", "other.test", "[bad"], "a stored list reads canonical on load");
+  assert.deepEqual(figureHosts([...FIGURE_HOSTS_DEFAULT]), [...FIGURE_HOSTS_DEFAULT], "the default list is already canonical");
   delete store["romp:settings"];
 });

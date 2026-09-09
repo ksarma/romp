@@ -181,12 +181,36 @@ export function registerMdPostPass(pass: (root: ParentNode) => void): void {
 
 /** Sanitize marked's HTML under the profile above and return the sanitized <body>: its children are the
  *  nodes to adopt (mdBlock) or its innerHTML the string to set (md, userMd), after any DOM post-pass of
- *  the caller's own (PR links, heading ids). The registered passes (the math fill) have run by then. The
+ *  the caller's own (PR links, the viewer's link stamps). The registered passes (the math fill) have run by then.
+ *  `own`, when given, is a pass of the caller's that must read the sanitized markup AS MARKED EMITTED IT, so it
+ *  runs after the sanitizer's own rules and BEFORE the registered passes rewrite any of it: the viewer mints its
+ *  heading ids there (file-view.ts mintHeadingIds), from each heading's text as the author wrote it, which for a
+ *  formula is the placeholder's TeX. Read after the fill, a heading with math slugged KaTeX's glyphs instead, in
+ *  layout order (a fraction's denominator before its numerator, a U+200B strut), so `# Ratio $\frac{a}{b}$` was
+ *  `md-ratio-ba` where GitHub's slug of the text, and the id the Files pane minted before the fill reached its
+ *  bundle, is `md-ratio-fracab`, and the note's own `[see](#ratio-fracab)` rendered dead (the Slice 4 review). The
  *  only DOMPurify.sanitize call in the dashboard's source. */
-export function sanitizeMd(dirty: string): HTMLElement {
+export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void): HTMLElement {
   installMdSanitizeHooks();
   const clean = DOMPurify.sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
   keepOnlyInertCheckboxes(clean);
+  if (own) own(clean);
   for (const pass of postPasses) pass(clean);
   return clean;
+}
+
+/** The HTML spec's ancestor revealing steps, which the browser's own fragment navigation runs before it scrolls and
+ *  scrollIntoView does not: every closed <details> whose content holds `target` is opened (a target inside a details'
+ *  own <summary> is in view already and opens nothing, as in the browser), and a `hidden="until-found"` on the target
+ *  or an ancestor is removed. Both shapes pass the sanitizer (details, summary and hidden are kept), and a folded
+ *  callout (`> [!type]-`, md-config.ts) is a closed details an author reaches from plain markdown, so a heading, a
+ *  footnote definition or an anchor inside one is a `#` target that has to be revealed first: without this, the
+ *  viewer's scrollToFragment (file-view.ts) scrolled to nothing and the fold stayed shut (the Slice 4 review); the
+ *  chat's `#` delegate (render.ts) runs the same steps ahead of its scroll. */
+export function revealFragmentTarget(target: Element): void {
+  for (let n: Element | null = target; n; n = n.parentElement) {
+    if ((n.getAttribute("hidden") || "").toLowerCase() === "until-found") n.removeAttribute("hidden");
+    const p = n.parentElement;
+    if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) p.setAttribute("open", "");
+  }
 }

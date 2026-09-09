@@ -9,8 +9,9 @@
 // click leaves it standing around the loaded picture; Enter on a focused placeholder loads it; a re-open of the file keeps
 // a loaded host loaded; a change to the gear's list in another tab (the storage event, here the same-document event)
 // re-judges the open document in place; an emptied list gates github.com too; and a URL document allows its own host
-// beside the list. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic
-// values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
+// beside the list, which shows on a figure of that hostname under another scheme or port (another origin, so only the
+// arm lets it through). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -43,10 +44,14 @@ const NOTE = [
   '<p><img class="fx-data" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="d"></p>', "",
   "Last para.", "",
 ].join("\n");
-// a URL document is same-origin by the viewer's own fetch mode (file-view.ts openUrlView, `mode: "same-origin"`), so its host is the
-// page's; the gate's "document's own host" arm names it all the same, and the list gates the rest
+// a URL document is same-origin by the viewer's own fetch mode (file-view.ts openUrlView, `mode: "same-origin"`), so its HOSTNAME is
+// the page's, and a figure on the page's own origin (fx-own, the relative one) passes remoteHost without the arm. The arm
+// (file-view.ts mdBlock, `gateRemoteFigures(box, document.baseURI, [own])`) decides for a figure on that hostname under another
+// scheme or port: another ORIGIN, which remoteHost reports as the host "romp.test", and which only the arm's entry in the
+// allowed set lets load on open (fx-alt, fx-port). The list gates the rest (fx-far). Without the arm, fx-alt and fx-port are
+// placeholders naming romp.test.
 const URL_DOC = "http://romp.test/notes/note.md";
-const URL_NOTE = '# Note\n\n<p><img class="fx-own" src="http://romp.test/own.png" alt="o"> <img class="fx-far" src="https://remote2.test/x.png" alt="f"></p>\n\n![](rel.png)\n';
+const URL_NOTE = '# Note\n\n<p><img class="fx-own" src="http://romp.test/own.png" alt="o"> <img class="fx-alt" src="https://romp.test/alt.png" alt="a"> <img class="fx-port" src="http://romp.test:8080/port.png" alt="pt"> <img class="fx-far" src="https://remote2.test/x.png" alt="f"></p>\n\n![](rel.png)\n';
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -93,9 +98,9 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
     page.on("request", (r: any) => { requests.push(r.url()); });
     await page.route("**/*", (route: any) => {
       const u = new URL(route.request().url());
-      if (u.host !== "romp.test") return route.fulfill({ status: 200, contentType: "image/png", body: PNG });   // recorded above; a picture, so a load settles
+      if (u.host !== "romp.test") return route.fulfill({ status: 200, contentType: "image/png", body: PNG });   // recorded above (romp.test:8080 included: host carries the port); a picture, so a load settles
       if (u.pathname === "/notes/note.md") return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: URL_NOTE });
-      if (u.pathname === "/own.png" || u.pathname === "/notes/rel.png") return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
+      if (u.pathname === "/own.png" || u.pathname === "/alt.png" || u.pathname === "/notes/rel.png") return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
       if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: FILES_HTML });
       if (u.pathname === "/dist/files.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
       if (u.pathname === "/file") {
@@ -282,21 +287,33 @@ test("the gear's list reaches an open document in place: a host added to figureH
   });
 });
 
-test("a URL document (same-origin by the viewer's fetch mode) loads its own host's pictures and a relative one resolved against it on open; a picture on another host is gated and loads on the click through the URL viewer's own delegate", { timeout: 120000 }, async (t) => {
+test("a URL document (same-origin by the viewer's fetch mode) loads its own host's pictures on open: one on the page's origin, a relative one resolved against it, and one on the same hostname under another scheme or port (the own-host arm; the list does not name it); a picture on another host is gated and loads on the click through the URL viewer's own delegate", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (h) => {
     const { page } = h;
     await page.evaluate((u: string) => { (window as any).__rompProbe.openUrlView(u); }, URL_DOC);
     await page.waitForSelector("#romp-fileview .fileview-body .fileview-md", { timeout: 15000 });
     await h.settle();
-    const doc = await page.evaluate(() => ({
-      own: (document.querySelector("#romp-fileview img.fx-own") as HTMLElement).getAttribute("src"), ownGated: !!document.querySelector("#romp-fileview img.fx-own")!.closest(".fv-gate"),
-      rel: (document.querySelector('#romp-fileview img[alt=""]') as HTMLElement).getAttribute("src"), relGated: !!document.querySelector('#romp-fileview img[alt=""]')!.closest(".fv-gate"),
-      far: document.querySelector("#romp-fileview img.fx-far")!.closest(".fv-gate")?.getAttribute("data-fv-host") || null,
-    }));
-    assert.deepEqual(doc, { own: "http://romp.test/own.png", ownGated: false, rel: "http://romp.test/notes/rel.png", relGated: false, far: "remote2.test" });
+    const doc = await page.evaluate(() => {
+      const q = (s: string) => document.querySelector("#romp-fileview " + s) as HTMLElement;
+      const gate = (s: string) => q(s).closest(".fv-gate")?.getAttribute("data-fv-host") || null;   // the placeholder's host, or null for a figure that stands ungated
+      return {
+        own: q("img.fx-own").getAttribute("src"), ownGated: gate("img.fx-own"),
+        rel: q('img[alt=""]').getAttribute("src"), relGated: gate('img[alt=""]'),
+        alt: q("img.fx-alt").getAttribute("src"), altGated: gate("img.fx-alt"),
+        port: q("img.fx-port").getAttribute("src"), portGated: gate("img.fx-port"),
+        far: gate("img.fx-far"),
+      };
+    });
+    assert.deepEqual(doc, {
+      own: "http://romp.test/own.png", ownGated: null, rel: "http://romp.test/notes/rel.png", relGated: null,
+      alt: "https://romp.test/alt.png", altGated: null, port: "http://romp.test:8080/port.png", portGated: null,
+      far: "remote2.test",
+    }, "the page's origin and the document's hostname under another scheme or port stand ungated; the other host is a placeholder naming it");
     const own = h.requests.filter((u) => u === "http://romp.test/own.png" || u === "http://romp.test/notes/rel.png").sort();
-    assert.deepEqual(own, ["http://romp.test/notes/rel.png", "http://romp.test/own.png"], "the document's own host loaded on open: " + JSON.stringify(h.requests));
-    assert.deepEqual(h.foreign(), [], "and nothing left the page for the other host: " + JSON.stringify(h.foreign()));
+    assert.deepEqual(own, ["http://romp.test/notes/rel.png", "http://romp.test/own.png"], "the document's own origin loaded on open: " + JSON.stringify(h.requests));
+    // the two other-origin figures of the document's hostname left the page's origin on open (the arm allowed them; remoteHost alone
+    // would have gated both as "romp.test"), and nothing left for the other host
+    assert.deepEqual(h.foreign(), ["http://romp.test:8080/port.png", "https://romp.test/alt.png"], "the own-host arm's figures fetched on open, and nothing for the other host: " + JSON.stringify(h.foreign()));
     await page.click("#romp-fileview .fv-gate[data-fv-host='remote2.test']");
     await page.waitForFunction(() => !document.querySelector("#romp-fileview .fv-gate"), null, { timeout: 5000 });
     await h.settle();

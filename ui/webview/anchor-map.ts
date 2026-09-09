@@ -115,16 +115,26 @@ function textNodes(root: DNode): DText[] {
 }
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
+/** The three shapes the fill leaves where a formula's placeholder stood (math.ts renderMathPlaceholders): KaTeX's layout
+ *  (`.katex`, glyphs laid out from the TeX), KaTeX's flag on TeX it could not parse (`.katex-error`, the TeX as text, with
+ *  no `.katex` root around it), and the fill's own belt for a formula past a bound (`code.md-math-src`, the TeX as text, in a
+ *  `pre` for a display formula). Each is a control below: its text is not the note's, whether glyphs or the TeX (the source
+ *  holds the TeX between delimiters, and the mathInline / mathBlock tokens are zero-text holes), and a formula the fill fell
+ *  back on used to leave the TeX in the block's rendered text, so a paragraph with one refused as not matching the file, and
+ *  a display formula took no element and every block after it paired one element early, its paragraphs refused and the
+ *  reader's place a block off (the Slice 4 review). A selection endpoint inside one is a formula touched (mapRenderedSelection). */
+const FORMULA_CLASSES = ["katex", "katex-error", "md-math-src"];
+const isFormula = (n: DNode): boolean => FORMULA_CLASSES.some((cls) => hasClass(n, cls));
 /** A control the viewer parks inside the rendered markup, not the note's text: the Copy button code-block.ts puts in every
  *  fence's <pre>. Its label "Copy" joined a block's rendered text, so every block holding a fence, and every list or quote
  *  with one anywhere in it, failed to pair with its source and was refused as not matching the file, and paintRendered's
  *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it, and since
- *  Slice 4 the other elements whose text is not the note's: a rendered formula (its glyph text is KaTeX's layout of the
- *  TeX, so the paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's
- *  back link, the front matter's fold label, and a gated figure's placeholder. */
+ *  Slice 4 the other elements whose text is not the note's: a formula in any of the fill's three shapes (FORMULA_CLASSES: the
+ *  paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's back link, the
+ *  front matter's fold label, and a gated figure's placeholder. */
 const CONTROL_CLASSES = [
   "code-copy",              // the fence's Copy button (code-block.ts)
-  "katex",                  // a formula KaTeX rendered (math.ts renderMathPlaceholders): glyphs laid out from the TeX, not the TeX
+  ...FORMULA_CLASSES,       // a formula, rendered or shown as its TeX (math.ts renderMathPlaceholders)
   "md-fnback",              // a footnote definition's back link (md-config.ts): its label is the footnote's number
   "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
@@ -235,17 +245,57 @@ function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => b
   return sum;
 }
 
+/** A selection boundary inside a control (isControl): the control, the global text index at its place (a control counts no
+ *  text, so its place is one index, the same before and after it), and where in the control's own text the boundary sits
+ *  (`inner` of `len`: 0 at its leading edge, `len` at its trailing edge). The browser puts a boundary there for ordinary
+ *  gestures on the Slice 4 constructs: a triple-click on a footnote definition anchors on the back link's label, a drag
+ *  that starts or ends on a formula's glyphs, a triple-click on the paragraph before a display formula, whose focus lands
+ *  on the formula's first glyph. boundaryIndex used to answer null for these, the answer for a node under another surface,
+ *  and the selection was refused as reaching outside the rendered text (the Slice 4 review). */
+type InControl = { control: DElement; at: number; inner: number; len: number };
+type Boundary = number | "before" | "after" | InControl | null;
+const inControl = (b: Boundary): b is InControl => typeof b === "object" && b !== null;
+/** The global text index a boundary stands at: a boundary inside a control at the control's place. */
+const boundaryAt = (b: Exclude<Boundary, null>, total: number): number => (b === "before" ? 0 : b === "after" ? total : inControl(b) ? b.at : b);
+/** Whether `node` is `el` or under it. */
+function isUnder(node: DNode, el: DNode): boolean {
+  for (let n: DNode | null = node; n; n = n.parentNode) if (n === el) return true;
+  return false;
+}
+
 /**
  * The number of counted characters under `root` before the boundary (node, offset), i.e. the boundary's
  * global text index. "before"/"after" when the boundary is outside `root` but `node` is an ancestor of
- * it (the selection reached past the text and may snap to its edge); null when the boundary is unrelated
- * to `root` (a sibling surface, which refuses). `counts` limits counting to text under elements it
- * admits (the Raw rows), so text outside a row never shifts an index.
+ * it (the selection reached past the text and may snap to its edge); an InControl when the boundary sits
+ * inside a control under `root` (whose text is not counted: the control's place, and the boundary's place
+ * in its own text); null when the boundary is unrelated to `root` (a sibling surface, which refuses).
+ * `counts` limits counting to text under elements it admits (the Raw rows), so text outside a row never
+ * shifts an index.
  */
 function boundaryIndex(root: DNode, node: DNode, offset: number,
-                       counts: ((el: DElement) => boolean) | null): number | "before" | "after" | null {
+                       counts: ((el: DElement) => boolean) | null): Boundary {
   let total = 0;
+  let within: InControl | null = null;
   const visit = (n: DNode, inCounted: boolean): boolean => {
+    if (isControl(n) && n !== root) {
+      if (!isUnder(node, n)) return false;
+      // the boundary's place in the control's own text: every text node under the control counts toward `len`, and toward
+      // `inner` while it lies before the boundary (a control holds no control, so nothing is skipped here)
+      let inner = 0, len = 0, seen = false;
+      const walk = (c: DNode): void => {
+        if (c === node) {
+          if (isText(c)) { inner += Math.min(Math.max(0, offset), c.data.length); len += c.data.length; }
+          else for (let i = 0; i < c.childNodes.length; i++) { if (i === offset) seen = true; walk(c.childNodes[i]); }
+          seen = true;
+          return;
+        }
+        if (isText(c)) { len += c.data.length; if (!seen) inner += c.data.length; return; }
+        for (let i = 0; i < c.childNodes.length; i++) walk(c.childNodes[i]);
+      };
+      walk(n);
+      within = { control: n as DElement, at: total, inner, len };
+      return true;
+    }
     if (n === node) {
       if (isText(n)) { if (inCounted || !counts) total += Math.min(Math.max(0, offset), n.data.length); return true; }
       const here = inCounted || !counts || (isElement(n) && counts(n));
@@ -253,12 +303,11 @@ function boundaryIndex(root: DNode, node: DNode, offset: number,
       return true;
     }
     if (isText(n)) { if (inCounted || !counts) total += n.data.length; return false; }
-    if (isControl(n)) return false;
     const here = inCounted || !counts || (isElement(n) && counts(n));
     for (let i = 0; i < n.childNodes.length; i++) if (visit(n.childNodes[i], here)) return true;
     return false;
   };
-  if (visit(root, false)) return total;
+  if (visit(root, false)) return within ?? total;
   // Not under root: is `node` an ancestor of root? Then the boundary sits before or after the whole root.
   let child: DNode = root;
   let p = root.parentNode;
@@ -380,8 +429,7 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
   const a = boundaryIndex(root, sel.anchorNode as unknown as DNode, sel.anchorOffset, isRow);
   const f = boundaryIndex(root, sel.focusNode as unknown as DNode, sel.focusOffset, isRow);
   if (a === null || f === null) return refuse("The selection reaches outside the file text.");
-  const snap = (x: number | "before" | "after") => (x === "before" ? 0 : x === "after" ? idx.total : x);
-  let s = Math.min(snap(a), snap(f)), e = Math.max(snap(a), snap(f));
+  let s = Math.min(boundaryAt(a, idx.total), boundaryAt(f, idx.total)), e = Math.max(boundaryAt(a, idx.total), boundaryAt(f, idx.total));
   if (s >= e) return refuse("Select some text to comment on.");
   // Self-check on the untrimmed range: the text nodes' concatenation must equal the source slice with
   // its line endings removed (a DOM "\n" standing for a source "\r" is a line ending too).
@@ -568,6 +616,8 @@ function suffixLineView(raw: View, text: string): View {
 }
 
 type Hole = { reason: string; startN: number; endN: number };
+/** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
+const FORMULA_HOLE = "a formula";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
  *  block or table the renderer shows but the mapping refuses). */
@@ -665,7 +715,7 @@ function walkInline(tokens: Token[], view: View, em: Emitter): void {
       }
       case "mathInline": {
         // rendered by KaTeX into glyphs the walks skip (isControl): a zero-text hole, so the paragraph maps around it
-        em.holes.push({ reason: "a formula", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
         break;
       }
       case "link": {
@@ -812,7 +862,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       }
       case "mathBlock": {
         // a display formula of its own: KaTeX's glyphs are skipped as a control (isControl), so the block has no text
-        em.holes.push({ reason: "a formula", startN: view.n(p), endN: view.n(p + raw.length) });
+        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
         break;
       }
       case "html": throw new Refusal("an HTML block");
@@ -1134,6 +1184,34 @@ function srcRangeOf(idx: RenderedIndex, text: string): SourceRange | null {
   return { start: nOf(idx, i), end: nOf(idx, i + len) };
 }
 
+/** Every formula element (FORMULA_CLASSES) under `n` in document order, none looked into. */
+function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
+  if (isControl(n)) { if (isFormula(n)) out.push(n); return out; }
+  for (let i = 0; i < n.childNodes.length; i++) formulaElements(n.childNodes[i], out);
+  return out;
+}
+/** The Raw offer for a selection that touched a formula through its ELEMENT (a boundary inside it): the block that renders
+ *  the top-level node holding it, and the hole the element stands for, the k-th formula hole of the block for the k-th
+ *  formula element under the node (the walk pushes holes in source order and the renderer emits elements in the same
+ *  order); the block's own start when the count disagrees (a placeholder an author typed by hand renders a formula the
+ *  walk never saw). The same fields blockExtra gives a hole touched through its characters. */
+function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
+  let selected = "";
+  for (const n of idx.topNodes) { selected += isText(n) ? n.data : textOf(n); }
+  const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
+  const raw: Partial<MapRefusal> = rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
+  let top: DNode = control;
+  while (top.parentNode && top.parentNode !== root) top = top.parentNode;
+  const b = idx.nodeBlock.get(top);
+  if (b === undefined) return raw;
+  const blk = idx.blocks[b];
+  const k = formulaElements(top).indexOf(control);
+  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
+  const startN = k >= 0 && k < holes.length ? holes[k].startN : blk.startN;
+  const off = nOf(idx, startN);
+  return { blockStartLine: rawOffsetToLine(idx.source, off), blockStartOffset: off, ...raw };
+}
+
 export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source: string): MapResult {
   const root = renderedRoot as unknown as DElement;
   if (sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return refuse("Select some text to comment on.");
@@ -1141,8 +1219,20 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const a = boundaryIndex(root, sel.anchorNode as unknown as DNode, sel.anchorOffset, null);
   const f = boundaryIndex(root, sel.focusNode as unknown as DNode, sel.focusOffset, null);
   if (a === null || f === null) return refuse("The selection reaches outside the rendered text.");
-  const snap = (x: number | "before" | "after") => (x === "before" ? 0 : x === "after" ? idx.total : x);
-  const gs = Math.min(snap(a), snap(f)), ge = Math.max(snap(a), snap(f));
+  // A boundary inside a control stands at the control's place: the control's text is the viewer's (a back link's number, a
+  // fold label, a gated figure's label), so a selection that begins or ends on it begins or ends beside it, and a
+  // triple-click on a footnote definition maps the definition's words. A FORMULA is the note's, though not text the mapping
+  // places (its token is a zero-text hole): a boundary inside one means the person selected the formula, or part of it, and
+  // the answer is the hole's, "touches a formula", with the Raw view offered at the formula. The one exception is the edge
+  // that selects none of it: a selection ending at a formula's first character (a triple-click on the paragraph before a
+  // display formula puts its focus there) or starting past its last, which stands at the formula's place like any control.
+  const sa = boundaryAt(a, idx.total), sf = boundaryAt(f, idx.total);
+  const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
+  for (const [x, sx, other] of [[a, sa, sf], [f, sf, sa]] as const) {
+    if (!inControl(x) || !isFormula(x.control)) continue;
+    const clear = sx < other ? x.inner >= x.len : sx > other ? x.inner <= 0 : false;   // the start past its end, or the end at its start
+    if (!clear) return refuse("This selection touches a formula; comment on it from the Raw view.", formulaExtra(idx, root, x.control, gs, ge));
+  }
   if (gs >= ge || !idx.topNodes.length) return refuse("Select some text to comment on.");
   // the selected rendered text, for the Raw offer (computed only when a refusal needs it)
   let rawMemo: Partial<MapRefusal> | null = null;

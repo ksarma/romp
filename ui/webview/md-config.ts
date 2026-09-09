@@ -31,12 +31,18 @@ function escapeHtml(s: string): string {
 function cleanUrl(href: string): string | null {
   try { return encodeURI(href).replace(/%25/g, "%"); } catch { return null; }
 }
-type LexerThis = { lexer: { tokens: Token[]; state: { top: boolean }; blockTokens(src: string, tokens: Token[]): Token[]; inlineTokens(src: string): Token[] } };
+type LexerThis = { lexer: { tokens: Token[]; state: { top: boolean }; blockTokens(src: string, tokens: Token[]): Token[]; inlineTokens(src: string): Token[]; inline(src: string, tokens?: Token[]): Token[] } };
 type ParserThis = { parser: { parse(tokens: Token[]): string; parseInline(tokens: Token[]): string } };
+/** marked's own block rules as the lexer's tokenizer holds them (gfm's, under applyMdConfig): the extents two constructs
+ *  below borrow, so a callout ends where the blockquote it displaces would and a footnote definition where a paragraph
+ *  would. The tokenizer is a private field in marked's types and a plain property at run time. */
+function blockRules(lexer: object): { blockquote: RegExp; paragraph: RegExp } {
+  return (lexer as { tokenizer: { rules: { block: { blockquote: RegExp; paragraph: RegExp } } } }).tokenizer.rules.block;
+}
 
 // ── strikethrough on DOUBLE tildes only ─────────────────────────────────────────────────────────────
 // (the user 2026-06-26). marked's built-in GFM `del` tokenizer also fires on a SINGLE tilde, so prose like "near
-// the ~21 Wh/day budget … gives ~1.5–2 days" rendered as one big <del> struck through from the first ~ to the
+// the ~21 Wh/day budget … gives ~1.5 to 2 days" rendered as one big <del> struck through from the first ~ to the
 // second. GitHub itself only strikes ~~double~~, so match that: a lone ~ (commonly "approximately") stays literal.
 // Returning undefined lets marked treat the ~ as text. Moved here from chat-md.ts and file-view.ts, which each
 // held a copy.
@@ -52,17 +58,39 @@ export const delDoubleTilde = {
 
 // ── front matter ────────────────────────────────────────────────────────────────────────────────────
 // A `---` block at the very start of the document, closed by the next `---` line (Obsidian's and Jekyll's rule),
-// as ONE token whose raw tiles the source at offset 0, rendered folded: a <details> with a summary and the YAML in
-// a <pre>. Before this the lexer read the opener as an <hr> and the keys plus the closer as a setext h2, so every
-// Obsidian note opened with a rule and a heading of its own keys (the plan's High defect). Only at the top of the
-// DOCUMENT: `tokens === this.lexer.tokens` is true for the top-level token list alone (a blockquote's or a list
-// item's body is lexed into a fresh array), so `> ---` inside a quote stays an hr; `state.top` is not that test,
-// since the blockquote tokenizer sets it for its body. No `start`: the block is never mid-paragraph.
+// whose body reads as a YAML mapping, as ONE token whose raw tiles the source at offset 0, rendered folded: a <details>
+// with a summary and the YAML in a <pre>. Before this the lexer read the opener as an <hr> and the keys plus the closer
+// as a setext h2, so every Obsidian note opened with a rule and a heading of its own keys (the plan's High defect). Only
+// at the top of the DOCUMENT: `tokens === this.lexer.tokens` is true for the top-level token list alone (a blockquote's
+// or a list item's body is lexed into a fresh array), so `> ---` inside a quote stays an hr; `state.top` is not that
+// test, since the blockquote tokenizer sets it for its body. No `start`: the block is never mid-paragraph.
+// Two checks on the body keep a document that merely OPENS with a horizontal rule out of the fold (the 2026-09-09
+// review: a reply bounded by rules, `---`, a heading and prose, `---`, folded its first section into a closed "Front
+// matter" block, and a `---` inside a fence closed the block early, so the fence's closer became an opener that
+// swallowed the rest of the reply). First, pandoc's rule: an opener followed by a blank line is a rule, not a metadata
+// block. Second, the body must read as a YAML block mapping (isYamlMapping): every line at the left margin is a `key:`
+// line, a `- ` item under a key, a `#` comment or blank, and an indented line belongs to the key above. Prose, a list or
+// a fence between two rules fails that and lexes as it always did; YAML as Obsidian, Jekyll and Hugo write it (comments,
+// nested values, a sequence under a key, a blank line between keys, a quoted key) passes. Not a YAML parser: a prose line
+// with a colon ("See: the notes") reads as a key, and GitHub, which does parse the block, folds that too.
 export const FRONT_MATTER_CLASS = "md-frontmatter";
 export const FRONT_MATTER_HEAD_CLASS = "md-frontmatter-head";
 export const FRONT_MATTER_LABEL = "Front matter";
 export type FrontMatterToken = Tokens.Generic & { text: string };
 const FRONT_MATTER_RE = /^---[ \t]*\n(?:([\s\S]*?)\n)?---[ \t]*(?:\n+|$)/;
+const YAML_KEY_RE = /^(?:"[^"\n]*"|'[^'\n]*'|[A-Za-z0-9_][^:\n]*?)[ \t]*:(?:[ \t]|$)/;
+/** Whether `body` reads as a YAML block mapping, the shape front matter takes (the section comment above). */
+export function isYamlMapping(body: string): boolean {
+  let underKey = false;
+  for (const line of body.split("\n")) {
+    if (/^[ \t]*(?:#|$)/.test(line)) continue;                            // blank, or a comment
+    if (/^[ \t]/.test(line)) { if (!underKey) return false; continue; }      // a nested line: the key above's
+    if (/^-(?:[ \t]|$)/.test(line)) { if (!underKey) return false; continue; }   // a sequence item under the key above
+    if (!YAML_KEY_RE.test(line)) return false;
+    underKey = true;
+  }
+  return true;
+}
 export const frontMatter: TokenizerAndRendererExtension = {
   name: "frontMatter",
   level: "block",
@@ -70,6 +98,8 @@ export const frontMatter: TokenizerAndRendererExtension = {
     if (tokens !== this.lexer.tokens || tokens.length !== 0) return undefined;
     const m = FRONT_MATTER_RE.exec(src);
     if (!m) return undefined;
+    if (m[1] !== undefined && /^[ \t]*(?:\n|$)/.test(m[1])) return undefined;   // pandoc's rule: a blank line after the opener makes it a rule
+    if (!isYamlMapping(m[1] || "")) return undefined;
     return { type: "frontMatter", raw: m[0], text: m[1] || "" } as FrontMatterToken;
   },
   renderer(token) {
@@ -90,19 +120,32 @@ export const frontMatter: TokenizerAndRendererExtension = {
 // userContentTarget / fragmentTarget in the viewer and the chat's `#` delegate alike. A `[^n]: URL` line used to
 // be swallowed as a link reference definition (marked's `def` rule accepts a one-word destination); block
 // extensions run before every built-in rule, so it is a footnote now.
+// A reference renders ONLY when the document defines its id (GitHub's rule; the 2026-09-09 review: `[^1]` with no
+// `[^1]:` line rendered a live-looking numbered link whose click set the page hash and landed nowhere, and lost the
+// citation as written). The lexer lexes every block before any inline text (Lexer.lex queues the inline passes), so
+// when a reference is lexed the book holds every definition of the document, one inside a quote or a list item
+// included; a definition's own text is queued the same way (`lexer.inline`, as marked's paragraph queues its text), so
+// a reference in it finds a definition written later. A duplicate definition keeps its class and its back link and
+// drops the id, so `#fn-id` lands on the first; a definition nothing refers to shows its id as a label with no back
+// link, since the reference it would lead to is not there. A definition's text runs as far as marked's paragraph rule
+// reads a paragraph: to a blank line or a line that starts another block, a lazy continuation line (GitHub's documented
+// form) or a two-space indented one (Obsidian's) included, each de-indented by up to four spaces; another definition
+// ends it. The regex before this took only four-space continuations, so a wrapped definition lost its second line to a
+// paragraph of its own.
 export const FOOTNOTE_CLASS = "md-footnote";
 export const FOOTNOTE_REF_CLASS = "md-fnref";
 export const FOOTNOTE_BACK_CLASS = "md-fnback";
+export const FOOTNOTE_ORPHAN_TITLE = "Nothing in the text refers to this footnote";
 export type FootnoteRefToken = Tokens.Generic & { id: string; n: number; k: number };
-export type FootnoteDefToken = Tokens.Generic & { id: string; text: string; tokens: Token[]; order: Map<string, number> };
-type FootnoteBook = { order: Map<string, number>; refs: Map<string, number> };
+export type FootnoteDefToken = Tokens.Generic & { id: string; k: number; text: string; tokens: Token[]; order: Map<string, number> };
+type FootnoteBook = { order: Map<string, number>; refs: Map<string, number>; defs: Map<string, number> };
 function footnoteBook(lexer: object): FootnoteBook {
   const lx = lexer as { __mdFootnotes?: FootnoteBook };
-  if (!lx.__mdFootnotes) lx.__mdFootnotes = { order: new Map(), refs: new Map() };
+  if (!lx.__mdFootnotes) lx.__mdFootnotes = { order: new Map(), refs: new Map(), defs: new Map() };
   return lx.__mdFootnotes;
 }
 const FOOTNOTE_REF_RE = /^\[\^([^\]\s]+)\]/;
-const FOOTNOTE_DEF_RE = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?: {4}|\t)[^\n]*)*)(?:\n|$)/;
+const FOOTNOTE_DEF_HEAD_RE = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*/;
 export const footnoteRef: TokenizerAndRendererExtension = {
   name: "footnoteRef",
   level: "inline",
@@ -111,6 +154,7 @@ export const footnoteRef: TokenizerAndRendererExtension = {
     const m = FOOTNOTE_REF_RE.exec(src);
     if (!m) return undefined;
     const book = footnoteBook(this.lexer);
+    if (!book.defs.has(m[1])) return undefined;   // no definition: the citation stays as written
     let n = book.order.get(m[1]);
     if (n === undefined) { n = book.order.size + 1; book.order.set(m[1], n); }
     const k = (book.refs.get(m[1]) || 0) + 1;
@@ -128,16 +172,33 @@ export const footnoteDef: TokenizerAndRendererExtension = {
   level: "block",
   childTokens: ["tokens"],
   tokenizer(this: LexerThis, src: string) {
-    const m = FOOTNOTE_DEF_RE.exec(src);
-    if (!m) return undefined;
-    const text = m[2].replace(/\n(?: {4}|\t)/g, "\n");
-    return { type: "footnoteDef", raw: m[0], id: m[1], text, tokens: this.lexer.inlineTokens(text), order: footnoteBook(this.lexer).order } as FootnoteDefToken;
+    const head = FOOTNOTE_DEF_HEAD_RE.exec(src);
+    if (!head) return undefined;
+    const para = blockRules(this.lexer).paragraph.exec(src);   // the paragraph's extent from this line: lazy and indented continuation lines, to a blank line or another block
+    if (!para) return undefined;
+    const lines = para[0].split("\n");
+    const next = lines.findIndex((l, i) => i > 0 && FOOTNOTE_DEF_HEAD_RE.test(l));   // another definition ends this one
+    const kept = next > 0 ? lines.slice(0, next) : lines;
+    const body = kept.join("\n");
+    const raw = body + (src.charAt(body.length) === "\n" ? "\n" : "");
+    // line i of `text` is a suffix of line i of `raw` (the marker, or a continuation line's indent, removed): the shape the anchor map reads
+    const text = kept.map((l, i) => (i === 0 ? l.slice(head[0].length) : l.replace(/^(?: {1,4}|\t)/, ""))).join("\n");
+    const book = footnoteBook(this.lexer);
+    const k = (book.defs.get(head[1]) || 0) + 1;
+    book.defs.set(head[1], k);
+    const tokens: Token[] = [];
+    this.lexer.inline(text, tokens);   // queued: lexed after every block of the document, so a reference in this text finds a definition written later
+    return { type: "footnoteDef", raw, id: head[1], k, text, tokens, order: book.order } as FootnoteDefToken;
   },
   renderer(this: ParserThis, token) {
     const t = token as FootnoteDefToken;
     const id = escapeHtml(t.id);
     const label = t.order.get(t.id);
-    return `<div class="${FOOTNOTE_CLASS}" id="fn-${id}"><a class="${FOOTNOTE_BACK_CLASS}" href="#fnref-${id}" title="Back to the text">${label === undefined ? id : label}</a> ${this.parser.parseInline(t.tokens)}</div>`;
+    const idAttr = t.k === 1 ? ` id="fn-${id}"` : "";   // a duplicate definition drops the id, so #fn-id lands on the first
+    const back = label === undefined
+      ? `<span class="${FOOTNOTE_BACK_CLASS}" title="${FOOTNOTE_ORPHAN_TITLE}">${id}</span>`   // nothing refers to it: no link to a reference that is not there
+      : `<a class="${FOOTNOTE_BACK_CLASS}" href="#fnref-${id}" title="Back to the text">${label}</a>`;
+    return `<div class="${FOOTNOTE_CLASS}"${idAttr}>${back} ${this.parser.parseInline(t.tokens)}</div>`;
   },
 };
 
@@ -145,16 +206,21 @@ export const footnoteDef: TokenizerAndRendererExtension = {
 // `> [!NOTE]` and its body, GitHub's five alerts (NOTE, TIP, IMPORTANT, WARNING, CAUTION) and Obsidian's `[!type]
 // Title` with any type, plus Obsidian's fold markers: `[!type]-` renders closed and `[!type]+` open, as a
 // <details> with the title in its <summary>. A block extension tried before the built-in blockquote (extensions run
-// first), so `> [!note]` lexes as a callout wherever a blockquote would, and every other quote is untouched. The
-// body is the `>`-prefixed lines that follow, de-prefixed and lexed as blocks the way marked's blockquote lexes its
-// own (a lazy continuation line with no `>` ends the callout). Rendered as a <blockquote> so the sheets'
+// first), so `> [!note]` lexes as a callout wherever a blockquote would, and every other quote is untouched. Its
+// extent is the blockquote's own (marked's rule, borrowed): the `>`-prefixed lines that follow, and a paragraph's lazy
+// continuation lines with no `>`, to a blank line or another block, so a callout ends exactly where the quote it
+// displaces would have (the 2026-09-09 review: a regex that took `>` lines alone cut a wrapped alert at its first
+// unprefixed line and rendered the rest as a paragraph outside the tinted block, where GitHub keeps it inside). The
+// body is de-prefixed and lexed as blocks the way marked's blockquote lexes its own. The start hint looks for a marker
+// after a newline only: marked calls it on `src.slice(1)`, so a `^` alternative fired one character into a paragraph
+// and cut `a> [!note] b` into a one-letter paragraph and a callout (the same review). Rendered as a <blockquote> so the sheets'
 // blockquote rules and the anchor map's BLOCKQUOTE tag hold; the type rides in a class (`md-callout-note`), never
 // a data attribute, since the sanitizer drops every data-* attribute (ALLOW_DATA_ATTR: false, for the reason in
 // md-sanitize.ts). The title is the author's, or the type with its first letter capitalised, as plain text.
 export const CALLOUT_CLASS = "md-callout";
 export const CALLOUT_TITLE_CLASS = "md-callout-title";
 export type CalloutToken = Tokens.Generic & { kind: string; fold: "" | "+" | "-"; title: string; text: string; tokens: Token[] };
-const CALLOUT_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+([^\n]*?))?[ \t]*(?:\n|$)((?: {0,3}>[^\n]*(?:\n|$))*)/;
+const CALLOUT_HEAD_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+([^\n]*?))?[ \t]*$/;
 const QUOTE_PREFIX_RE = /^ {0,3}> ?/gm;
 /** The title a callout shows: the author's, else its type capitalised (`note` reads "Note", `CAUTION` "Caution"). */
 export function calloutTitle(t: { kind: string; title: string }): string {
@@ -166,16 +232,21 @@ export const callout: TokenizerAndRendererExtension = {
   name: "callout",
   level: "block",
   childTokens: ["tokens"],
-  start(src: string) { const m = /(?:^|\n) {0,3}> ?\[!/.exec(src); return m ? m.index : undefined; },
+  start(src: string) { const m = /\n {0,3}> ?\[!/.exec(src); return m ? m.index : undefined; },
   tokenizer(this: LexerThis, src: string) {
-    const m = CALLOUT_RE.exec(src);
+    if (!/^ {0,3}> ?\[!/.test(src)) return undefined;
+    const q = blockRules(this.lexer).blockquote.exec(src);
+    if (!q) return undefined;
+    const raw = q[0];
+    const nl = raw.indexOf("\n");
+    const m = CALLOUT_HEAD_RE.exec(nl < 0 ? raw : raw.slice(0, nl));
     if (!m) return undefined;
-    const body = m[4].replace(QUOTE_PREFIX_RE, "");
+    const body = (nl < 0 ? "" : raw.slice(nl + 1)).replace(QUOTE_PREFIX_RE, "");
     const top = this.lexer.state.top;
     this.lexer.state.top = true;
     const tokens = this.lexer.blockTokens(body, []);
     this.lexer.state.top = top;
-    return { type: "callout", raw: m[0], kind: m[1], fold: (m[2] || "") as "" | "+" | "-", title: m[3] || "", text: m[0].replace(QUOTE_PREFIX_RE, ""), tokens } as CalloutToken;
+    return { type: "callout", raw, kind: m[1], fold: (m[2] || "") as "" | "+" | "-", title: m[3] || "", text: raw.replace(QUOTE_PREFIX_RE, ""), tokens } as CalloutToken;
   },
   renderer(this: ParserThis, token) {
     const t = token as CalloutToken;
@@ -189,14 +260,23 @@ export const callout: TokenizerAndRendererExtension = {
 
 // ── ==mark== ────────────────────────────────────────────────────────────────────────────────────────
 // Obsidian's highlight, rendered as <mark>. The same shape as the double-tilde rule: the opener must touch its
-// content (`a == b` in prose stays literal), so the anchor map places it by delimiter width like em and strong.
+// content (`a == b` in prose stays literal), so the anchor map places it by delimiter width like em and strong. And
+// the opener must not touch a word on its OUTSIDE: `==` is also the equality operator, which agents write unquoted in
+// prose (`a==b and c==d`, `a===b`), and the plain delimiter rule paired two comparisons in one sentence or heading into
+// a highlight that swallowed the text between and ate the operators (the 2026-09-09 review). So, as CommonMark's `_`
+// may not open inside a word, the run of `=` is exactly two and the character before it (the last of the token lexed
+// just before, when there is one) is not an ASCII letter, digit or `=`. ASCII on purpose: CJK prose puts no space
+// before a highlight, and a letter rule there would refuse it.
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
+const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==(?!=)/;
+const WORD_END_RE = /[A-Za-z0-9=]$/;
 export const mark: TokenizerAndRendererExtension = {
   name: "mark",
   level: "inline",
-  start(src: string) { const m = /==(?=\S)/.exec(src); return m ? m.index : undefined; },
-  tokenizer(this: LexerThis, src: string) {
-    const m = /^==(?=\S)([\s\S]*?\S)==/.exec(src);
+  start(src: string) { const m = /(?<![A-Za-z0-9=])==(?=[^\s=])/.exec(src); return m ? m.index : undefined; },
+  tokenizer(this: LexerThis, src: string, tokens: Token[]) {
+    if (tokens.length && WORD_END_RE.test(tokens[tokens.length - 1].raw)) return undefined;   // inside a word, or after another =
+    const m = MARK_RE.exec(src);
     if (!m) return undefined;
     return { type: "mark", raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) } as MarkToken;
   },
@@ -209,28 +289,37 @@ export const mark: TokenizerAndRendererExtension = {
 // `[[Note]]`, `[[Note|alias]]`, `[[Note#Heading]]`, `[[#Heading]]`, and the embeds `![[image.png]]` and `![[Note]]`.
 // Resolution needs a directory, and only a FILE document has one, so the renderer emits an anchor ONLY when the
 // per-parse walkTokens of the file kind stamped the token `resolved` (file-view-links.ts viewerWalkTokens, run by
-// mdBlock for the file kind alone): `[[Note]]` becomes <a href="Note.md">Note</a> (a target that already names an
-// extension keeps it; a `#Heading` rides as the fragment), which the file kind's link pass (linkMarkdownAnchors)
+// mdBlock for the file kind alone): `[[Note]]` becomes <a href="Note.md">Note</a> (a target that names a file type
+// Obsidian opens keeps its extension, KNOWN_EXT_RE; a `#Heading` rides as the fragment), which the file kind's link pass (linkMarkdownAnchors)
 // turns into a path link to <dir>/Note.md with the fragment in data-frag, no existence check, exactly as a
 // `[text](Note.md#Heading)` link; `[[#Heading]]` is a section link within the same note. Everywhere else (the chat's
 // replies, a URL document) the same text renders as an unclickable styled span that says why on hover (the
-// ruling's "unclickable styled span"). An image embed (`![[image.png]]`, by extension) renders an <img> when
+// ruling's "unclickable styled span"; the hover text names no surface, since the span stands in a reply as well as in
+// a document, and "the viewer" is not what a reply's reader is looking at). An image embed (`![[image.png]]`, by extension) renders an <img> when
 // resolved, so rewriteFigureSrcs loads it from the file's folder like `![](image.png)` and the comments panel's
 // embed grammar (file-comments.ts imageEmbeds) pairs it; `![[image.png|300]]` sets its width as Obsidian does.
 // Any other embed (`![[Note]]`, `![[paper.pdf]]`) renders as a link-shaped chip to the file, which opens in the
 // viewer. Unresolved, an embed is the dead span too: an <img src="image.png"> in a chat reply would fetch
-// `/image.png` from the page's own origin, a request nothing meant to make. The shown text is the source text as
-// written (the alias, or the target with its fragment), so the anchor map places it at `textOffset` in the raw.
+// `/image.png` from the page's own origin, a request nothing meant to make. An anchor's shown text is the source text
+// as written (the alias, or the target with its fragment), so the anchor map places it at `textOffset` in the raw. The
+// dead span shows the whole source, brackets included (`[[Note]]`, `![[img.png]]`, an R-style `matrix[[0]]` too): its
+// reader is looking at a reply or a URL document, where the alias alone read as plain text and the brackets the author
+// typed were gone (the 2026-09-09 review); the anchor map never places a dead span (a chat reply is not mapped, and
+// the URL kind keeps its place by blocks alone).
 export const WIKILINK_CLASS = "fv-wikilink";
 export const WIKILINK_EMBED_CLASS = "fv-embed";
-export const WIKILINK_DEAD_TITLE = "Not a link the viewer can follow here: a wikilink names a file beside the one it is written in, and there is no file here";
+export const WIKILINK_DEAD_TITLE = "Not a link that opens here: a wikilink names a file beside the one it is written in, and this text is not a file";
 export type WikilinkToken = Tokens.Generic & {
   embed: boolean; image: boolean; target: string; frag: string; alias: string | null;
   text: string; textOffset: number; width: string | null; height: string | null; resolved?: boolean;
 };
 const WIKILINK_RE = /^(!?)\[\[([^\[\]|\n]+?)(?:\|([^\[\]\n]*))?\]\]/;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|avif|apng|ico)$/i;
-const HAS_EXT_RE = /\.[A-Za-z0-9]{1,8}$/;
+/** The file types Obsidian opens (its accepted formats: notes, canvases, bases, PDFs, images, audio, video). A target that
+ *  names one keeps its extension; any other target is a note's title and gets `.md`, a dotted title (`Note.v2`,
+ *  `Release v1.0`, `2026.09.09`) included, since Obsidian resolves such a title to `<title>.md`. `\.[A-Za-z0-9]{1,8}$`
+ *  read every dotted title as a file with an extension and linked a file that does not exist (the 2026-09-09 review). */
+const KNOWN_EXT_RE = /\.(md|canvas|base|pdf|png|jpe?g|gif|svg|webp|bmp|avif|apng|ico|flac|m4a|mp3|ogg|wav|webm|3gp|mkv|mov|mp4|ogv)$/i;
 export const wikilink: TokenizerAndRendererExtension = {
   name: "wikilink",
   level: "inline",
@@ -257,11 +346,12 @@ export const wikilink: TokenizerAndRendererExtension = {
   renderer(token) {
     const t = token as WikilinkToken;
     const text = escapeHtml(t.text);
-    if (!t.resolved) return `<span class="${WIKILINK_CLASS} fv-dead" title="${escapeHtml(WIKILINK_DEAD_TITLE)}">${text}</span>`;
-    const file = t.target && !HAS_EXT_RE.test(t.target.slice(t.target.lastIndexOf("/") + 1)) ? t.target + ".md" : t.target;
+    const dead = `<span class="${WIKILINK_CLASS} fv-dead" title="${escapeHtml(WIKILINK_DEAD_TITLE)}">${escapeHtml(t.raw)}</span>`;   // the source as written
+    if (!t.resolved) return dead;
+    const file = t.target && !KNOWN_EXT_RE.test(t.target.slice(t.target.lastIndexOf("/") + 1)) ? t.target + ".md" : t.target;
     const path = cleanUrl(file);
     const frag = t.frag ? cleanUrl(t.frag) : "";
-    if (path === null || frag === null) return `<span class="${WIKILINK_CLASS} fv-dead" title="${escapeHtml(WIKILINK_DEAD_TITLE)}">${text}</span>`;
+    if (path === null || frag === null) return dead;
     if (t.embed && t.image) {
       const size = (t.width ? ` width="${escapeHtml(t.width)}"` : "") + (t.height ? ` height="${escapeHtml(t.height)}"` : "");
       return `<img src="${escapeHtml(path)}" alt="${text}"${size}>`;

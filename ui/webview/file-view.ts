@@ -17,7 +17,7 @@
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
 import { marked, type Tokens } from "marked";
-import { sanitizeMd } from "./md-sanitize";
+import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -1504,15 +1504,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
   // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
   // rebuilds the placeholder (ui/CLAUDE.md, click-safe controls); Enter and Space do the same for a focused one, as its
-  // role says they should. The restore is the acknowledgement: the picture stands where the placeholder was, at once.
-  const loadGate = (g: HTMLElement) => { loadGatedHost(g.dataset.fvHost || "", document); };
-  body.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
-    const g = gateOf(ev.target, body);
-    if (!g) return;
-    ev.preventDefault();
-    loadGate(g);
-  });
+  // role says they should (gateKeys, shared with the URL viewer). The restore is the acknowledgement: the picture stands
+  // where the placeholder was, at once.
+  gateKeys(body);
   body.addEventListener("click", (ev) => {
     const t = ev.target as Element | null;
     const g = gateOf(t, body);
@@ -2280,8 +2274,9 @@ export function openUrlView(href: string): void {
   // the chat's own anchor delegate routes them.
   delegate(body, {
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
-    [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGatedHost(g.dataset.fvHost || "", document); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
+    [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGate(g); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
   });
+  gateKeys(body);                                      // and the same Enter and Space: the delegate reads clicks alone, and the placeholder is a role=button span
   body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
@@ -2469,15 +2464,37 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
 // `#evidence-results` and `#Evidence Results` all find md-evidence-results (file-view-links.ts fragmentTarget is
 // the one lookup; mark time reads it too). Nothing found → nothing happens: inert, never a scroll to the top and
 // never a navigation. Both viewers land through here: the local one's section links and a sibling link's
-// fragment, the URL one's fv-anchor links and the URL's own hash.
+// fragment, the URL one's fv-anchor links and the URL's own hash. Found, the target is REVEALED before the scroll
+// (md-sanitize.ts revealFragmentTarget: every closed <details> on its ancestor path opened, a hidden="until-found"
+// removed), the steps the browser's own fragment navigation takes and scrollIntoView does not: a heading, a footnote
+// definition or an anchor inside a folded callout (`> [!type]-`, a closed details since Slice 4 of
+// plans/markdown-viewer.md) was scrolled to nothing, with the fold still shut (the Slice 4 review).
 function scrollToFragment(box: HTMLElement, fragment: string): boolean {
   let frag = fragment.replace(/^#/, "");
   try { frag = decodeURIComponent(frag); } catch { /* a stray % — match the bytes as written */ }
   if (!frag) return false;
   const target = fragmentTarget(box.querySelector(".fileview-md") || box, frag);
   if (!target) return false;
+  revealFragmentTarget(target);
   target.scrollIntoView({ block: "start" });
   return true;
+}
+
+// A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md) activates from BOTH viewers'
+// bodies the same way: the click through each body's own listener, and Enter or Space through gateKeys, installed once
+// on the stable body (never on the placeholder, which every paint rebuilds; ui/CLAUDE.md, click-safe controls). The
+// placeholder is a span with role=button and tabindex=0, so the browser synthesizes no click for its keys: without
+// this listener the URL viewer, whose click is a `delegate` (actions.ts, clicks alone), showed a focusable button that
+// ignored Enter and Space (the Slice 4 review). The restore is the acknowledgement.
+function loadGate(g: HTMLElement): void { loadGatedHost(g.dataset.fvHost || "", document); }
+function gateKeys(body: HTMLElement): void {
+  body.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const g = gateOf(ev.target, body);
+    if (!g) return;
+    ev.preventDefault();
+    loadGate(g);
+  });
 }
 
 // Where the rendered document LIVES, so its relative references can be resolved against it (the user
@@ -2518,24 +2535,19 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // and interrupt the active session; review find on #958, 2026-09-07), and GitHub's rules for a note's own
     // HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to its
     // colours (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children are adopted as they are, no
-    // re-parse. The viewer's own stamps (heading ids, the file kind's path and section links, the URL kind's
-    // fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section link
-    // finds an author's id or name under the prefix (file-view-links.ts fragmentTarget).
-    box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));
+    // re-parse. The viewer's own stamps (the file kind's path and section links, the URL kind's fv-anchor stamp)
+    // are set AFTER this sanitize, so they are unaffected and never prefixed; a section link finds an author's id
+    // or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are the one stamp set INSIDE
+    // the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they are never prefixed
+    // either, and ahead of the registered passes, since the math fill replaces a formula's placeholder with KaTeX's
+    // glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted md-ratio-ba); read before it,
+    // the heading's text is the text as written, the TeX included, which is GitHub's slug and the id the note's
+    // own links spell.
+    box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
     rendered = false;
   }
-  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
-  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
-  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
-  // #tabs CSS and shadow getElementById("tabs") for the page's own controls. Both modes, before the
-  // anchors are sorted: a section link is live when its target is a heading, an element with that id
-  // or a named anchor, each under the sanitizer's user-content- prefix (file-view-links.ts fragmentTarget
-  // reads all three).
-  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
-  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
-  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -2667,6 +2679,26 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   return box;
 }
 
+/** Every heading gets an id first: marked 12 emits none, so a document's own `[top](#evidence)` had nothing to land
+ *  on. GitHub's slug of the heading's text (headingSlug, made unique in order by uniqueSlugs), and PREFIXED `md-` on
+ *  purpose: an unprefixed id="tabs" would dress a heading in the chat page's #tabs CSS and shadow
+ *  getElementById("tabs") for the page's own controls. Both modes, every caller, before the anchors are sorted: a
+ *  section link is live when its target is a heading, an element with that id or a named anchor, each under the
+ *  sanitizer's user-content- prefix (file-view-links.ts fragmentTarget reads all three). Run by sanitizeMd as
+ *  mdBlock's own pass, on the sanitized body (so SANITIZE_NAMED_PROPS never prefixes these ids) and BEFORE the
+ *  registered passes (md-sanitize.ts): the math fill is one of those, and it replaces a formula's placeholder, whose
+ *  text is the TeX as written, with KaTeX's glyphs, whose text is layout order (a fraction's denominator before its
+ *  numerator, a U+200B strut). A slug read after the fill gave `# Ratio $\frac{a}{b}$ and energy $E=mc^2$` the id
+ *  md-ratio-ba-and-energy-emc2, so the note's own `[see](#ratio-fracab-and-energy-emc2)` and a `[[#Ratio ...]]`
+ *  wikilink rendered dead on the Files pane and the feed the moment Slice 4 brought the fill to their bundles (the
+ *  chat page's viewer had it before); read before it, the slug is GitHub's, md-ratio-fracab-and-energy-emc2, as the
+ *  Files pane minted it while it had no fill (md-config-fragment-landing-browser.test.ts). */
+function mintHeadingIds(root: ParentNode): void {
+  const heads = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
+  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+}
+
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
@@ -2699,7 +2731,8 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // Every attribute a figure fetches through (figure-gate.ts figureRefs; Slice 4 of plans/markdown-viewer.md): an img's
   // src and srcset, a `<source>`'s src and srcset (inside a picture, a video or an audio), a video's src and poster, an
   // audio's and a track's src, and an inline svg's `<image>` or `<feImage>` href, SVG 1.1's `xlink:href` spelling
-  // included. Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
+  // included (the feImage arm is a guard for a wider sanitizer profile: MD_PURIFY drops filter primitives today, so none
+  // reaches this walk in the product). Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
   // file were fetched from the PAGE's origin and 404'd, exactly as `![](plot.png)` once did. A srcset is rewritten
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
   // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the

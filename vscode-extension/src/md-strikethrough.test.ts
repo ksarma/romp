@@ -2,7 +2,7 @@
 // SINGLE tilde, so prose with two "approximately" tildes ("~21 Wh … ~1.5 days") rendered as one big struck-
 // through run. The chat overrides the `del` tokenizer to require ~~ (matching GitHub). The override lives in
 // ui/webview/md-config.ts (the one configuration the assistant singleton, the viewer, the anchor map and the user-text
-// instance share), so this test runs the REAL definition — no mirrored copy to drift — and source-pins that
+// instance share), so this test runs the REAL definition (no mirrored copy to drift) and source-pins that
 // render.ts wires it into its marked.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

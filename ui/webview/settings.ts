@@ -23,7 +23,7 @@ export interface RompSettings {
   changesInline: boolean;   // the file viewer's Comments panel: mark a session's pending changes IN the text (insertions tinted, deletions struck), both views (the inline-display follow-on to plans/file-review.md, 2026-09-07). Toggled from the panel's header ("Show changes inline"), like `subgoals` from the feed footer — the gear MODAL does not show it. ON by default; off, the file reads as it is and every change is its card alone. Read by file-comments.ts at paint time; a flip elsewhere reaches an open panel through onExternalSettingsChange.
   commentsFilter: CommentsFilter;   // the same panel's filter (the filter follow-on, 2026-09-07): which cards the list shows and which marks the text wears — "all" (default), "comments" (comment cards of every kind; no change marks), or "changes" (change cards, each with the comments made on it; no comment highlights or region rectangles). Chosen from the panel's header (All · Comments · Changes), kept here like changesInline, which still applies on top of it; the gear MODAL does not show it. Read by file-comments.ts when a panel opens; a pick elsewhere reaches an open panel through onExternalSettingsChange.
   theme: Theme;   // the OVERALL dashboard theme (the user 2026-08-27, promoting the tab-strip setting): "classic" = the pre-720 dark look; "yatharth" = dark + the contributed strip aesthetic (what chatTabTheme:"yatharth" was); "yatharth-light" = the warm light theme (body.theme-light + the yatharth strip). Migration: a store written before `theme` existed seeds it from chatTabTheme.
-  figureHosts: string[];   // the file viewer's figures from the web (plans/markdown-viewer.md decision 8, ruling 2026-09-07): the hosts whose pictures and clips a viewed file loads when it opens. A figure on any other host shows a placeholder naming the host, which loads it on one click; a host loaded that way stays loaded for the page (figure-gate.ts, per document, not stored here). Default FIGURE_HOSTS_DEFAULT: github.com and its image hosts, localhost and 127.0.0.1; the kernel's own origin is always allowed and needs no entry. Edited in the gear as one host per line; read by file-view.ts at every paint of a rendered markdown file, and a change reaches an open file through onExternalSettingsChange.
+  figureHosts: string[];   // the file viewer's figures from the web (plans/markdown-viewer.md decision 8, ruling 2026-09-07): the hosts whose pictures and clips a viewed file loads when it opens. A figure on any other host shows a placeholder naming the host, which loads it on one click; a host loaded that way stays loaded for the page (figure-gate.ts, per document, not stored here). Default FIGURE_HOSTS_DEFAULT: github.com and its image hosts, localhost and 127.0.0.1; the kernel's own origin is always allowed and needs no entry. Edited in the gear as one host per line, each read down to its host name (figureHostName); read by file-view.ts at every paint of a rendered markdown file, and a change reaches an open file through onExternalSettingsChange.
 }
 /** The hosts a viewed file's figures load from on open, before the person adds any (decision 8's ruling names github.com
  *  and its image hosts, the kernel's own /file route and localhost; the route is the page's own origin, which the gate
@@ -34,14 +34,40 @@ export const FIGURE_HOSTS_DEFAULT: readonly string[] = [
   "avatars.githubusercontent.com", "objects.githubusercontent.com", "private-user-images.githubusercontent.com",
   "github.githubassets.com", "localhost", "127.0.0.1",
 ];
+/** One entry of the figureHosts setting as the host name the gate compares (figure-gate.ts remoteHost reads a source's
+ *  `URL.hostname`), or null when the URL parser refuses it. The entry goes through the parser, as the source does, so an
+ *  address pasted whole (`https://cdn.test/a.png`), a port (`cdn.test:8080`), a path or a trailing slash read as the host
+ *  alone, and the parser's canonical spelling comes back: an internationalised name in its `xn--` form, an IPv4 address
+ *  without leading zeros, ASCII lower-cased. Only that spelling ever equals a hostname the reader produces: before this
+ *  (the Slice 4 review, round 1) a stored `https://cdn.test`, `cdn.test:8080`, `bücher.test` or `127.000.000.001` was a
+ *  dead entry that gated the very host it named, with no sign in the gear. An entry with its own scheme is parsed as it
+ *  stands; every other one is parsed under `http://`, so `cdn.test:8080` is a host and a port, not a scheme. */
+export function figureHostName(entry: string): string | null {
+  const s = entry.trim();
+  if (!s) return null;
+  try {
+    const host = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "http://" + s).hostname.toLowerCase();
+    return host || null;
+  } catch { return null; }
+}
 /** The figureHosts normaliser: an array of strings, or one string as the gear's textarea holds it (hosts separated by
- *  newlines, spaces or commas), becomes a list of trimmed lower-case names with the empties dropped; anything else a
- *  store might hold (a number, an object, a store from before the setting existed) reads as the default list, never as
- *  "no host allowed" and never as a thrown error at paint time. Always a fresh array. */
+ *  newlines, spaces or commas), becomes a list of canonical host names (figureHostName), each once, with the empties
+ *  dropped. An entry the URL parser refuses (`[bad`, `x^y.test`) is kept as typed, trimmed and lower-cased, so the gear
+ *  shows it back and names it under the list (gear.js figureHostsNote); it can equal no hostname the reader produces, so
+ *  it allows nothing. Anything else a store might hold (a number, an object, a store from before the setting existed)
+ *  reads as the default list, never as "no host allowed" and never as a thrown error at paint time. Always a fresh array. */
 export function figureHosts(v: unknown): string[] {
   const parts = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/) : null;
   if (parts === null) return [...FIGURE_HOSTS_DEFAULT];
-  return parts.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0);
+  const out: string[] = [];
+  for (const p of parts) {
+    if (typeof p !== "string") continue;
+    const typed = p.trim().toLowerCase();
+    if (!typed) continue;
+    const host = figureHostName(typed) ?? typed;
+    if (!out.includes(host)) out.push(host);
+  }
+  return out;
 }
 // Solarized LIGHT is deliberately absent (the user allowed skipping it): its text tiers are designed
 // for a paper-light ground and invert into mud on romp's dark canvas — an unreadable preset is worse

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
-import { applyMdConfig } from "./md-config";
+import { applyMdConfig, resolveWikilink } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, type SelLike, type MapResult } from "./anchor-map";
 
 applyMdConfig();
@@ -104,7 +104,12 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
   return root.childNodes.slice();
 }
 /** What the fill leaves where a placeholder stood (math.ts renderMathPlaceholders): katex.render fills the placeholder with a
- *  `.katex` root (inside a `.katex-display` span in display mode) whose text is the formula's glyphs, and unwraps it. */
+ *  `.katex` root (inside a `.katex-display` span in display mode) whose text is the formula's glyphs, and unwraps it. The two
+ *  shapes the fill falls back to are stood in for by a marker in the TeX: `\BROKEN` renders KaTeX's flag on TeX it could not
+ *  parse (throwOnError: false), a bare `span.katex-error` holding the TeX as text with no `.katex` root around it (KaTeX's
+ *  renderError, as md-config-math-map-browser.test.ts reads it off the real fill); `\HUGE` renders the fill's own belt for a
+ *  formula past a bound (showSource): `code.md-math-src` holding the TeX, inside a `pre` for a display formula, which the
+ *  viewer then dresses with its Copy button (file-view.ts: the pre wears has-copy and holds a button.code-copy). */
 function standInFill(root: FakeElement): void {
   const walk = (n: FakeNode) => {
     for (const c of n.childNodes.slice()) {
@@ -113,21 +118,38 @@ function standInFill(root: FakeElement): void {
       const cls = el.getAttribute("class") || "";
       if (cls === "md-math-inline" || cls === "md-math-display") {
         const doc = el.ownerDocument;
-        const katex = doc.createElement("span"); katex.setAttribute("class", "katex");
-        katex.appendChild(doc.createTextNode(el.textContent.replace(/[\\^_{}]/g, "")));   // glyphs, not TeX
-        let repl: FakeElement = katex;
-        if (cls === "md-math-display") { repl = doc.createElement("span"); repl.setAttribute("class", "katex-display"); repl.appendChild(katex); }
+        const tex = el.textContent;
+        let repl: FakeElement;
+        if (tex.includes("\\BROKEN")) {
+          repl = doc.createElement("span"); repl.setAttribute("class", "katex-error"); repl.setAttribute("title", "ParseError: KaTeX parse error: Undefined control sequence: \\BROKEN"); repl.setAttribute("style", "color:#cc0000");
+          repl.appendChild(doc.createTextNode(tex));   // the TeX as text, no .katex root
+        } else if (tex.includes("\\HUGE")) {
+          const code = doc.createElement("code"); code.setAttribute("class", "md-math-src"); code.appendChild(doc.createTextNode(tex));
+          if (el.tagName === "DIV") {
+            repl = doc.createElement("pre"); repl.setAttribute("class", "has-copy"); repl.setAttribute("title", "Not rendered: 20001 characters of TeX; the limit is 20000.");
+            repl.appendChild(code);
+            const btn = doc.createElement("button"); btn.setAttribute("class", "code-copy"); btn.appendChild(doc.createTextNode("Copy")); repl.appendChild(btn);
+          } else { repl = code; repl.setAttribute("title", "Not rendered: 20001 characters of TeX; the limit is 20000."); }
+        } else {
+          const katex = doc.createElement("span"); katex.setAttribute("class", "katex");
+          katex.appendChild(doc.createTextNode(tex.replace(/[\\^_{}]/g, "")));   // glyphs, not TeX
+          repl = katex;
+          if (cls === "md-math-display") { repl = doc.createElement("span"); repl.setAttribute("class", "katex-display"); repl.appendChild(katex); }
+        }
         (n as FakeElement).replaceChild(repl, el);
       } else walk(el);
     }
   };
   walk(root);
 }
-/** `.fileview-md > marked output`, the fill stood in for. */
+/** `.fileview-md > marked output`, the fill stood in for, and the file kind's wikilink stamp applied (resolveWikilink, as
+ *  file-view-links.ts viewerWalkTokens applies it for a file document), so a `[[Note]]` is an anchor and `![[image.png]]`
+ *  an <img>, as the Files pane renders them; the dead span, which the mapping never sees in production, shows the source
+ *  with its brackets and would not match the token's shown text. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
   standInFill(box);
   return box;
 }
@@ -228,8 +250,8 @@ test("a ==mark== maps by its delimiters, a wikilink's shown text maps at its own
   assert.equal(frag.range.start, at("[[#Heading Two]]") + 2);
   const img = ok(mapText(box, "img.png"), "[[img.png]]");
   assert.equal(img.range.start, at("[[img.png]]") + 2);
-  // the embeds' paragraph: `![[image.png]]` renders no text (an <img> once resolved; here the dead span, whose text the
-  // walk places at the same offset), and a selection over the whole line quotes the source line
+  // the embeds' paragraph: `![[image.png]]` renders no text (an <img>, stamped resolved as in the Files pane), and a
+  // selection over the whole line quotes the source line
   const wiki = ok(mapRenderedSelection(sel(point(box, "Wiki "), point(box, "img.png", true)), El(box), FIX), "the whole wikilink line");
   assert.equal(wiki.quote, FIX.slice(at("Wiki [[Note]]"), at("[[img.png]]") + "[[img.png".length));
 });
@@ -269,4 +291,120 @@ test("a note without front matter but with an hr at its top is unchanged: the hr
   assert.doesNotMatch(marked.parse(src) as string, /md-frontmatter/, "no closing rule: not front matter");
   const r = ok(mapRenderedSelection(sel(point(box, "Para after"), point(box, "rule.", true)), El(box), src), "after an hr and a paragraph");
   assert.deepEqual(r.range, { start: src.indexOf("Para after rule."), end: src.indexOf("Para after rule.") + "Para after rule.".length });
+});
+
+// ── the fill's fallback shapes (the Slice 4 review: a formula shown as its source left the TeX in the block's text) ──
+const MATH_NOTE = (tex: string) => "# Title\n\nPara before the block.\n\n$$\n" + tex + "\n$$\n\nPara after the block.\n\nSecond para after.\n\nThird para after.\n";
+const mapIn = (box: FakeElement, src: string, text: string) => mapRenderedSelection(sel(point(box, text), point(box, text, true)), El(box), src);
+const ownersOf = (box: FakeElement, src: string) => box.childNodes.filter((n) => n.nodeType === 1).map((k) => renderedBlockIndex(El(box), src, k as unknown as Node));
+
+test("a display formula the fill could not render (KaTeX's flag, or the source past a bound) is a block of its own like a rendered one: every block after it pairs with its element and its paragraphs map", () => {
+  for (const [name, tex] of [["rendered", "\\frac{a}{b}"], ["katex-error", "\\frac{a}{b\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = MATH_NOTE(tex);
+    const box = buildRendered(src);
+    const kids = box.childNodes.filter((n) => n.nodeType === 1) as FakeElement[];
+    assert.deepEqual(kids.map((k) => k.tagName), ["H1", "P", name === "rendered" ? "SPAN" : name === "katex-error" ? "SPAN" : "PRE", "P", "P", "P"], name);
+    assert.equal(sourceBlockSpans(src).length, 6, name + ": six blocks");
+    assert.deepEqual(ownersOf(box, src), [0, 1, 2, 3, 4, 5], name + ": element i is block i (the formula's element, whatever shape the fill left, is the formula's block)");
+    for (const para of ["Para before the block.", "Para after the block.", "Second para after.", "Third para after."]) {
+      const r = ok(mapIn(box, src, para), name + ": " + para);
+      assert.deepEqual(r.range, { start: src.indexOf(para), end: src.indexOf(para) + para.length }, name + ": " + para);
+    }
+  }
+});
+
+test("a paragraph whose inline formula fell back (KaTeX's flag, or the source past a bound) maps around it as one with a rendered formula does, and a selection across it quotes the TeX between", () => {
+  for (const [name, tex] of [["rendered", "\\frac{a}{b}"], ["katex-error", "\\frac{a}{b\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = "Prose before $" + tex + "$ and prose after.\n\nNext para.\n";
+    const box = buildRendered(src);
+    assert.deepEqual(ownersOf(box, src), [0, 1], name);
+    const before = ok(mapIn(box, src, "Prose before"), name + ": before the formula");
+    assert.deepEqual(before.range, { start: 0, end: "Prose before".length });
+    const after = ok(mapIn(box, src, "and prose after"), name + ": after the formula");
+    assert.equal(after.range.start, src.indexOf("and prose after"));
+    const across = ok(mapRenderedSelection(sel(point(box, "Prose before"), point(box, "and prose", true)), El(box), src), name + ": across the formula");
+    assert.equal(across.quote, "Prose before $" + tex + "$ and prose", name + ": the TeX travels inside the quote");
+    ok(mapIn(box, src, "Next para."), name + ": the next paragraph");
+  }
+});
+
+// ── a selection endpoint inside a control (the Slice 4 review: it was refused as reaching outside the rendered text) ──
+/** The element (first match, document order) of class `cls` under root. */
+function byClass(root: FakeNode, cls: string): FakeElement {
+  const hit = (n: FakeNode): FakeElement | null => {
+    if (n.nodeType === 1 && ((" " + ((n as FakeElement).getAttribute("class") || "") + " ").includes(" " + cls + " "))) return n as FakeElement;
+    for (const c of n.childNodes) { const r = hit(c); if (r) return r; }
+    return null;
+  };
+  const r = hit(root);
+  assert.ok(r, "an element of class " + cls);
+  return r as FakeElement;
+}
+/** The element the k-th top-level element is. */
+const topEl = (box: FakeElement, k: number): FakeElement => box.childNodes.filter((n) => n.nodeType === 1)[k] as FakeElement;
+
+test("a selection endpoint inside a formula refuses as touching a formula, with the Raw view offered at the formula's line; one at the formula's edge that selects none of it maps the prose beside it", () => {
+  for (const [name, tex] of [["rendered", "x^2"], ["katex-error", "x^2\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = "Inline $" + tex + "$ math and after.\n\n$$\n" + tex + "\n$$\n\nPara after display.\n";
+    const box = buildRendered(src);
+    const inlineFormula = byClass(topEl(box, 0), name === "rendered" ? "katex" : name);
+    const displayFormula = byClass(topEl(box, 1), name === "rendered" ? "katex" : name);
+    const glyphs = allText(inlineFormula)[0], dglyphs = allText(displayFormula)[0];
+    assert.ok(glyphs.data.length >= 2 && dglyphs.data.length >= 2, name + ": the stand-in has text to select inside");
+    // strictly inside the inline formula, out into the prose after it
+    const fromInside = bad(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " math and", true)), El(box), src), name + ": from inside the formula");
+    assert.match(fromInside.reason, /^This selection touches a formula; comment on it from the Raw view\.$/, name + ": " + fromInside.reason);
+    assert.equal(fromInside.blockStartLine, 0, name + ": the Raw view opens at the formula's line");
+    assert.equal(fromInside.blockStartOffset, src.indexOf("$"), name + ": at the formula's first character");
+    // from the prose before it into the formula
+    const intoIt = bad(mapRenderedSelection(sel(point(box, "Inline "), { node: glyphs, offset: 1 }), El(box), src), name + ": into the formula");
+    assert.match(intoIt.reason, /touches a formula/);
+    // the formula alone (its whole text): the person selected the formula
+    const whole = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), name + ": the formula alone");
+    assert.match(whole.reason, /touches a formula/);
+    // from the formula's first character out into the prose: the whole formula is selected, and a formula is not text the mapping places
+    const fromStart = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), name + ": from the formula's start");
+    assert.match(fromStart.reason, /touches a formula/);
+    // the edge that selects none of the formula: a selection ENDING at its first character (a triple-click on the paragraph before a display
+    // formula puts its focus there) maps the prose before; one STARTING past its last character maps the prose after
+    const upTo = ok(mapRenderedSelection(sel(point(box, "Inline "), { node: glyphs, offset: 0 }), El(box), src), name + ": up to the formula");
+    assert.equal(upTo.quote, "Inline");
+    const fromEnd = ok(mapRenderedSelection(sel({ node: glyphs, offset: glyphs.data.length }, point(box, "math and", true)), El(box), src), name + ": from the formula's end");
+    assert.equal(fromEnd.quote, "math and");
+    // the display formula: a triple-click on the paragraph before it ends at its first glyph and maps the paragraph; one on the formula itself
+    // starts at its first glyph and ends at the next paragraph's start, and names the formula, with the Raw view offered at its `$$` line
+    const paraBefore = ok(mapRenderedSelection(sel(point(box, "Inline "), { node: dglyphs, offset: 0 }), El(box), src), name + ": the paragraph before the display formula, to its first glyph");
+    assert.equal(paraBefore.quote, "Inline $" + tex + "$ math and after.");
+    const nextP = topEl(box, 2);
+    const tripleOnFormula = bad(mapRenderedSelection(sel({ node: dglyphs, offset: 0 }, { node: nextP, offset: 0 }), El(box), src), name + ": the display formula selected whole");
+    assert.match(tripleOnFormula.reason, /^This selection touches a formula; comment on it from the Raw view\.$/);
+    assert.equal(tripleOnFormula.blockStartLine, 2, name + ": the `$$` line");
+    assert.equal(tripleOnFormula.blockStartOffset, src.indexOf("$$"));
+    // a selection across the display formula from prose to prose still maps (the hole block has no text; its source travels inside the quote)
+    const acrossDisplay = ok(mapRenderedSelection(sel(point(box, "and after."), point(box, "Para after", true)), El(box), src), name + ": across the display formula");
+    assert.equal(acrossDisplay.quote, src.slice(src.indexOf("and after."), src.indexOf("Para after") + "Para after".length));
+  }
+});
+
+test("a selection endpoint inside another control (a footnote's back link, the front matter's fold label) sits at the control's edge: a triple-click on a footnote definition maps the definition's text", () => {
+  const box = buildRendered(FIX);
+  // Chromium's triple-click on `div.md-footnote` selects the line from the back link's label: anchor at the label's text, focus at the next block's start
+  const def1 = topEl(box, 4), nextP = topEl(box, 5);   // the first definition and the paragraph after it (the first test pins the order)
+  assert.equal(def1.getAttribute("class"), "md-footnote"); assert.equal(nextP.tagName, "P");
+  const label = allText(byClass(def1, "md-fnback"))[0];
+  const triple = ok(mapRenderedSelection(sel({ node: label, offset: 0 }, { node: nextP, offset: 0 }), El(box), FIX), "a triple-click on the footnote definition");
+  assert.equal(triple.quote, "The footnote definition text.");
+  assert.deepEqual(triple.range, { start: at("The footnote definition text."), end: at("The footnote definition text.") + "The footnote definition text.".length });
+  // a drag from inside the back link's label into the definition's own words
+  const fromBack = ok(mapRenderedSelection(sel({ node: label, offset: 1 }, point(box, "footnote definition", true)), El(box), FIX), "from the back link into the text");
+  assert.equal(fromBack.quote, "The footnote definition");
+  // the label alone selects no text of the note
+  const labelOnly = bad(mapRenderedSelection(sel({ node: label, offset: 0 }, { node: label, offset: label.data.length }), El(box), FIX), "the label alone");
+  assert.equal(labelOnly.reason, "Select some text to comment on.");
+  // the front matter's fold label: a selection from it into the first paragraph touches the front matter (the hole block), as one from the YAML does
+  const head = byClass(box, "md-frontmatter-head");
+  const fromHead = bad(mapRenderedSelection(sel({ node: allText(head)[0], offset: 2 }, point(box, "Para after front", true)), El(box), FIX), "from the fold label into the prose");
+  assert.match(fromHead.reason, /the front matter/);
+  // nothing here says the selection reaches outside the rendered text: every endpoint was inside the rendered box
+  for (const r of [triple, fromBack, labelOnly, fromHead] as MapResult[]) if (!r.ok) assert.doesNotMatch(r.reason, /reaches outside/);
 });

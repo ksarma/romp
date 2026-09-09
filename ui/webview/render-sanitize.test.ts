@@ -19,7 +19,7 @@ const SANITIZE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webvie
 test("md() sanitizes marked output with DOMPurify before returning HTML", () => {
   assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.match(SANITIZE, /import DOMPurify from "dompurify";/);
-  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);
+  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids); the chat passes none
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() function not found");

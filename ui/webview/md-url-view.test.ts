@@ -335,13 +335,21 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
 
 // ── 6. in-document fragments: heading ids, and `#links` that land instead of spawning a tab ──
 
-test("every heading gets id=md-<slug> after sanitisation, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
-  assert.match(MD_FN, /const heads = Array\.from\(box\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
+test("every heading gets id=md-<slug> after sanitisation and BEFORE the math fill, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
+  // the minting is a function of its own (mintHeadingIds), handed to sanitizeMd as the caller's pass: it runs on the
+  // sanitized body, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids, and ahead of the registered passes,
+  // the math fill among them, so a heading with a formula is slugged from its TeX as written and never from KaTeX's
+  // glyphs (the Slice 4 review: `# Ratio $\frac{a}{b}$` minted md-ratio-ba and the note's own link to md-ratio-fracab was
+  // dead; md-config-fragment-landing-browser.test.ts executes both over the real bundle)
+  assert.match(MD_FN, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass");
+  const MINT = (VIEW.split("function mintHeadingIds(root: ParentNode): void {")[1] || "").split("\n}\n")[0];
+  assert.match(MINT, /const heads = Array\.from\(root\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
+  const SAN = web("md-sanitize.ts");
+  assert.match(SAN, /if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);/, "sanitizeMd runs the caller's pass ahead of the registered passes (the math fill), on the sanitized body");
   const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const ids = MD_FN.indexOf('h.id = "md-"');
   const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');
-  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate: every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
-  assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
+  assert.ok(sanitize > -1 && sanitize < docGate, "OUTSIDE the doc gate: every mode, every caller");
+  assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow[\s\S]*?getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
 test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL document (or one with no location); every other anchor there still does; a file's anchors are the module's", () => {

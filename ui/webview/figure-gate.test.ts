@@ -28,6 +28,34 @@ test("parseSrcset: HTML's own parse, a URL to whitespace, a glued comma ending a
   assert.equal(serializeSrcset(parseSrcset("a.png, b.png")), "a.png, b.png");
 });
 
+// The parse where a JS-flavoured reading parts from HTML's (review of Slice 4, round 1: two gate bypasses over the real Files
+// bundle). HTML's srcset parse ends a URL at ASCII whitespace ONLY (tab, LF, FF, CR, space); a JS `\s` also stops at U+00A0,
+// U+000B, U+2003, U+FEFF and the rest of Unicode space, so `https://github.com<nbsp>@evil.test/x.png` read as the allowed host
+// github.com to the gate while the browser fetched evil.test (github.com became the userinfo). And HTML's descriptor tokenizer
+// has ONE in-parens state that ends at the first `)`: a depth counter let `((,) 1x, https://evil.test/b.png` swallow the comma
+// that starts the second candidate, so the gate saw one allowed candidate and the browser fetched the second. The non-ASCII
+// code points are built with escapes so this source stays ASCII.
+test("parseSrcset agrees with HTML's parse where a JS reading would not: a URL runs through non-ASCII whitespace (nbsp, VT, em space, BOM) and stops at ASCII whitespace; a parenthesised descriptor ends at the first closing paren, never nested; the descriptor's edges lose ASCII whitespace only", () => {
+  for (const [name, cp] of [["nbsp", "\u00a0"], ["VT", "\u000b"], ["em space", "\u2003"], ["BOM", "\ufeff"]] as Array<[string, string]>) {
+    const url = "https://github.com" + cp + "@evil.test/x.png";
+    assert.deepEqual(parseSrcset(url), [{ url, descriptor: "" }], name + ": one URL, whole, as the browser reads it");
+    assert.equal(remoteHost(url, "http://romp.test/files"), "evil.test", name + ": the host the browser would fetch from");
+    assert.deepEqual(parseSrcset("https://github.com/a.png 1x, " + url + " 2x"), [{ url: "https://github.com/a.png", descriptor: "1x" }, { url, descriptor: "2x" }], name + ": beside an allowed candidate");
+  }
+  assert.deepEqual(parseSrcset("https://github.com\u000c@evil.test/x.png"), [{ url: "https://github.com", descriptor: "@evil.test/x.png" }], "form feed IS ASCII whitespace: the URL ends there for both parsers");
+  assert.deepEqual(parseSrcset("a.png\t1x,\nb.png\r2x\f"), [{ url: "a.png", descriptor: "1x" }, { url: "b.png", descriptor: "2x" }], "the four other ASCII whitespace code points separate as a space does");
+  assert.deepEqual(parseSrcset("https://github.com/a.png ((,) 1x, https://evil.test/b.png"), [{ url: "https://github.com/a.png", descriptor: "((,) 1x" }, { url: "https://evil.test/b.png", descriptor: "" }], "the first `)` leaves the parens: the comma after 1x starts the second candidate");
+  assert.deepEqual(parseSrcset("a.png ((,) 1x, https://hr.test/b.png"), [{ url: "a.png", descriptor: "((,) 1x" }, { url: "https://hr.test/b.png", descriptor: "" }], "the rewrite path's shape: a relative candidate first");
+  assert.deepEqual(parseSrcset("a.png (,) 1x, b.png"), [{ url: "a.png", descriptor: "(,) 1x" }, { url: "b.png", descriptor: "" }], "a comma inside one pair of parens still belongs to the descriptor");
+  assert.deepEqual(parseSrcset("a.png (b) (c,d) e, f.png"), [{ url: "a.png", descriptor: "(b) (c,d) e" }, { url: "f.png", descriptor: "" }], "two pairs in turn, each closed by its own `)`");
+  assert.deepEqual(parseSrcset("a.png (unclosed, b.png"), [{ url: "a.png", descriptor: "(unclosed, b.png" }], "an unclosed paren runs to the end, as HTML's in-parens state does");
+  assert.deepEqual(parseSrcset("a.png 1x\u00a0, b.png"), [{ url: "a.png", descriptor: "1x\u00a0" }, { url: "b.png", descriptor: "" }], "a non-ASCII space at a descriptor's edge stays: the browser reads that descriptor as invalid, and the re-serialised attribute must say the same");
+  // the serialisation carries each candidate through unchanged, so the browser fetches exactly the URLs the gate judged
+  const nb = "https://github.com\u00a0@evil.test/x.png";
+  assert.equal(serializeSrcset(parseSrcset("https://github.com/a.png ((,) 1x, " + nb)), "https://github.com/a.png ((,) 1x, " + nb);
+  assert.equal(serializeSrcset(parseSrcset("a.png 1x,b.png 2x")), "a.png 1x, b.png 2x", "the canonical form: one comma and one space between candidates");
+});
+
 test("remoteHost: the page's own origin (the kernel's /file route, a relative src) and data:/blob: are nobody's host; http(s) elsewhere is its host, lower-cased; a protocol-relative URL is remote; the kernel's own base is never remote", () => {
   const base = "http://romp.test/files";
   assert.equal(remoteHost("/file?path=%2Fa.png&sid=1", base), null);

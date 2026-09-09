@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
 import katex from "katex";
-import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, macroBounds, maxExpandFor } from "./math";
+import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, MATH_ERROR_COLOR, macroBounds, maxExpandFor } from "./math";
 
 const m = new Marked({ gfm: true, extensions: [mathBlock, mathInline] });
 const html = (src: string) => m.parse(src) as string;
@@ -30,7 +30,7 @@ const formulas = (out: string) => Array.from(out.matchAll(PLACEHOLDER)).map((x) 
 const hasMath = (s: string) => formulas(s).length > 0;
 // the options renderMathPlaceholders hands katex.render (pinned against math.ts below); maxExpand is computed per formula
 // there (maxExpandFor), so the fixed part is spread and a call adds it for the formula at hand
-const KATEX = { throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM } as const;
+const KATEX = { throwOnError: false, output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
 // --- becomes a formula: marked emits the placeholder, KaTeX does not run here ---
 
@@ -170,7 +170,8 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: chat-md
   // registers the fill, so a bundle with the grammar has the fill and a bundle without it has neither.
   const math = UI("math.ts");
   assert.match(math, /export function renderMathPlaceholders\(root: ParentNode\): void \{/);
-  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM \} as const;/, "every call is html-only and untrusted, under KaTeX's size cap");
+  assert.match(math, /const KATEX_OPTIONS = \{ output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR \} as const;/,
+    "every call is html-only and untrusted, under KaTeX's size cap, its flagged text in the theme's error ink (md-config-math-error-colour.test.ts: KaTeX's default read at 2.8:1 on the dark page)");
   assert.match(math, /katex\.render\(tex, el, \{ \.\.\.KATEX_OPTIONS, displayMode: display, throwOnError: true, maxExpand \}\);/,
     "the one katex call on the happy path, under the per-formula expansion count, and thrown at, so the catch can tell KaTeX's expansion stop from a syntax error (review round 5)");
   assert.match(math, /if \(!\(e instanceof katex\.ParseError\)\) throw e;\n\s*if \(\/Too many expansions\/\.test\(e\.message\)\) \{\n\s*showSource\(el, tex, "Not rendered: too many macro expansions; the limit for this formula is " \+ maxExpand \+ ", set by the longest macro body it defines\."\);/,

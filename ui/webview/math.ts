@@ -277,9 +277,19 @@ export function maxExpandFor(tex: string, bounds: MacroBounds = macroBounds(tex)
   return body > 0 ? Math.max(1, Math.min(KATEX_DEFAULT_MAX_EXPAND, Math.floor(MATH_EXPANSION_BUDGET_CHARS / body))) : KATEX_DEFAULT_MAX_EXPAND;
 }
 
+/** The ink of KaTeX's flagged text: the `span.katex-error` a syntax error renders as under throwOnError: false, and the
+ *  text of an unsupported command inside a formula. KaTeX writes the string verbatim into an inline `style` (its default
+ *  is #cc0000, which read at 2.8:1 on the dark page, under the 4.5:1 the sheets hold reading text to; the Slice 4 review,
+ *  as the fill reached the Files pane and the feed), so a theme token goes in its place: `--math-err`, declared in both
+ *  theme blocks of styles.css and feed.css (theme-parity.test.ts holds it readable on --bg in both themes;
+ *  md-config-math-error-colour.test.ts the token's presence). No fallback on purpose: where no sheet defines it the text
+ *  inherits the page's ink and stays readable, and a page of ours always loads one of the two sheets. */
+export const MATH_ERROR_COLOR = "var(--math-err)";
+
 /** What every katex.render call here passes: KaTeX's html output only (no MathML twin), no trusted command (KaTeX's own
- *  safety model), and the size cap; the mode, the per-formula expansion count and whether to throw are the call's. */
-const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM } as const;
+ *  safety model), the size cap and the error ink; the mode, the per-formula expansion count and whether to throw are the
+ *  call's. */
+const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
@@ -310,16 +320,63 @@ export function mathPlaceholder(tex: string, display: boolean, block: boolean): 
   return `<${tag} class="${cls}">${escapeText(tex)}</${tag}>`;
 }
 
+/** The display block at the start of `src`, if the block tokenizer accepts one there: either delimiter pair with
+ *  non-blank content. One reading for the tokenizer and for the `start` hint below, so the hint never names a position
+ *  the tokenizer then rejects. */
+function blockMath(src: string): RegExpExecArray | null {
+  const m = BLOCK_DOLLARS.exec(src) || BLOCK_BRACKET.exec(src);
+  return m && m[1].trim() ? m : null;
+}
+/** Where the next line begins that the block tokenizer (blockMath) would accept: the index of the "\n" before it, or
+ *  -1. A candidate line is one that opens with `$$` or `\[` after up to three spaces; the tokenizer accepts it when a
+ *  closer of the same family (`$$`, or `\]`, then spaces, then a line end or the end of the text) stands somewhere after
+ *  the opener with content between them that is not blank, and its lazy match takes the FIRST such closer. So each
+ *  candidate is judged against the first closer after its opener, which is searched for once per family and reused
+ *  while it still lies past the opener at hand (the closers are in order: a later opener's first closer is the same one
+ *  or a later one), and a family with no closer left rejects every later candidate without a search. One pass over
+ *  `src` per call, where running the block regex at each candidate scanned to the end of the note for every candidate
+ *  without a closer (a note of `$$5 and $$10` lines: 13 s for 1,500 paragraphs, measured 2026-09-09). */
+const NEXT_BLOCK_LINE = /\n(?= {0,3}(?:\$\$|\\\[))/g;
+const CLOSERS = [/\$\$ *(?=\n|$)/g, /\\\] *(?=\n|$)/g];   // by family: 0 for `$$`, 1 for `\[`
+function nextBlockMath(src: string): number {
+  NEXT_BLOCK_LINE.lastIndex = 0;
+  const closer = [-2, -2];   // per family: the first closer found so far; -1 once a search found none, -2 before any search
+  for (let m = NEXT_BLOCK_LINE.exec(src); m; m = NEXT_BLOCK_LINE.exec(src)) {
+    let open = m.index + 1;
+    while (src.charCodeAt(open) === 32) open++;
+    const family = src.charCodeAt(open) === 36 ? 0 : 1;   // "$" opens the dollar family, "\" the bracket family
+    const content = open + 2;                             // the content starts after the two-character opener
+    let c = closer[family];
+    if (c !== -1 && c < content + 1) {                    // the memo lies before this opener's content: search again
+      CLOSERS[family].lastIndex = content + 1;            // at least one character of content before the closer
+      const cm = CLOSERS[family].exec(src);
+      c = closer[family] = cm ? cm.index : -1;
+    }
+    if (c >= 0 && src.slice(content, c).trim()) return m.index;
+  }
+  return -1;
+}
+
 export const mathBlock: TokenizerAndRendererExtension = {
   name: "mathBlock",
   level: "block",
+  // marked's block lexer calls `start` on the source less its first character and clips the paragraph it is about to
+  // read at the index returned plus one, so the extension is tried there next; the paragraph then RESUMES if the
+  // tokenizer says no. Two things follow. The hint must name only a position where the tokenizer WILL match: on a
+  // rejected line (`$$x$$ is inline here.`, `$$ not closed`, an escaped `\[TODO\]`, a blank `$$ $$`) the lexer
+  // appends the line's "\n" to the clipped paragraph and, when the paragraph resumes, merges the rest with another
+  // "\n" (marked 12's blockTokens never clears lastParagraphClipped), so the token's raw held one newline the source
+  // did not, and the anchor map, which tiles the raws over the note, refused every block from that paragraph to the
+  // end of the note and seated the reader's place wrong (the Slice 4 review, round 1). And the string's own start is
+  // never a line start (it is one character into a line), so a match there made `A $$x$$` a paragraph "A" and a
+  // display block " $$x$$": only a position after "\n" counts. md-config-math-block-start.test.ts executes both.
   start(src: string) {
-    const m = src.match(/(?:^|\n) {0,3}(?:\$\$|\\\[)/);
-    return m ? m.index : undefined;
+    const at = nextBlockMath(src);
+    return at >= 0 ? at : undefined;
   },
   tokenizer(src: string) {
-    const m = BLOCK_DOLLARS.exec(src) || BLOCK_BRACKET.exec(src);
-    if (!m || !m[1].trim()) return undefined;
+    const m = blockMath(src);
+    if (!m) return undefined;
     return { type: "mathBlock", raw: m[0], text: m[1].trim(), display: true } as MathToken;
   },
   renderer(token) {
@@ -389,7 +446,8 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  the fifth bound and wears the same fallback, the source with the reason and the count in its title
  *  (review round 5: KaTeX's red error text stood there before, and this is the one bound an ordinary
  *  formula can meet, since the count over-approximates); any other ParseError, a syntax error, is rendered
- *  again with throwOnError: false, KaTeX's own red text as on main; a residual throw (an internal error)
+ *  again with throwOnError: false, KaTeX's own flagged text (span.katex-error, the TeX in the theme's error
+ *  ink, MATH_ERROR_COLOR) as on main; a residual throw (an internal error)
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
  *  blank a message. A second run over the same root is a no-op: no placeholder survives the first. Plain
  *  and exported: md-config.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */

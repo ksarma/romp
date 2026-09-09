@@ -4,8 +4,11 @@
 // Before this every remote `<img src>` fetched the moment a file rendered (a tracking pixel fires, with no click
 // and no gate), and so did the sources decision 8's first sketch never named: an `<img srcset>` candidate (the
 // browser picks it over a local `src` and never fetches the file the comments poll watches), a `<video poster>`,
-// a `<picture><source srcset>`, an `<svg><image href>` and a filter's `<feImage>` (measured 2026-09-08 over the
-// real bundles; the Slice 1 note listed them for this slice).
+// a `<picture><source srcset>` and an `<svg><image href>` (measured 2026-09-08 over the real bundles; the Slice 1
+// note listed them for this slice). A filter's `<feImage>` is in the walk too, as a guard for a wider sanitizer
+// profile: today MD_PURIFY (md-sanitize.ts) keeps DOMPurify's `svg` profile without `svgFilters`, which drops every
+// filter primitive before this code runs, so no feImage fetches or gates in the product (measured 2026-09-09 over the
+// real sanitizeMd); file-view-figures-absolute.test.ts pins both the arm and the profile.
 //
 // The allowed hosts are the gear's `figureHosts` setting (settings.ts: github.com and its image hosts, localhost
 // and 127.0.0.1 by default), plus the page's own origin and the kernel's (the /file route and its /remote relay,
@@ -26,7 +29,10 @@
 // `data-act="fv-load"`), never bound to the placeholder, since every paint rebuilds the DOM (ui/CLAUDE.md); it
 // restores every gated element of that host in the document and adds the host to the set. The placeholder's text
 // is the viewer's, not the file's: the anchor map skips it as a control (anchor-map.ts isControl), so a paragraph
-// holding a gated picture still pairs with its source.
+// holding a gated picture still pairs with its source. The viewer's class names can be typed by the author (the
+// sanitizer keeps `class`), so nothing here FINDS anything by class: the placeholder is found by its `data-act` and its
+// label by `data-fv-label`, marks the sanitizer never lets through (ALLOW_DATA_ATTR: false); the classes are for the
+// sheets alone.
 import { XLINK_NS } from "./md-links";
 import { loadSettings, onExternalSettingsChange } from "./settings";
 
@@ -34,6 +40,8 @@ export const GATE_CLASS = "fv-gate";
 export const GATE_LABEL_CLASS = "fv-gate-label";
 /** The delegated action on the placeholder (file-view.ts's body listeners read it). */
 export const GATE_ACT = "fv-load";
+/** The mark on the placeholder's own label span (labelOf reads it; the sheets may key the hide rule on it). */
+export const LABEL_MARK = "data-fv-label";
 const GATED_PREFIX = "data-fv-gated-";
 
 // ── the attributes a figure fetches ──────────────────────────────────────────────────────────────────
@@ -41,7 +49,8 @@ const GATED_PREFIX = "data-fv-gated-";
  *  attribute's own name (`xlink:href` for SVG 1.1's spelling, read through the XLink namespace). */
 export type FigureRef = { el: Element; attr: "src" | "srcset" | "poster" | "href" | "xlink:href"; value: string };
 /** The elements that fetch, by tag, and what they fetch through. `image` and `feImage` are SVG's (an inline svg's
- *  picture, and a filter's), matched by their own case since a type selector is case-sensitive for a non-HTML element. */
+ *  picture, and a filter's), matched by their own case since a type selector is case-sensitive for a non-HTML element.
+ *  feImage is a guard for a wider profile: the sanitizer drops it today (see the header). */
 export const FIGURE_SEL = "img, source, video, audio, track, image, feImage";
 const FETCH_ATTRS: Record<string, Array<FigureRef["attr"]>> = {
   img: ["src", "srcset"], source: ["src", "srcset"], video: ["src", "poster"], audio: ["src"], track: ["src"],
@@ -66,40 +75,62 @@ export function figureRefs(root: ParentNode): FigureRef[] {
 
 // ── srcset ──────────────────────────────────────────────────────────────────────────────────────────
 export type SrcsetCandidate = { url: string; descriptor: string };
-/** The candidates of a `srcset` attribute, by HTML's own parse: a URL runs to whitespace, a comma glued to its end
- *  ends the candidate, else the descriptors run to the next top-level comma (a parenthesised descriptor keeps its
- *  commas). A comma inside a URL therefore survives (`a,b.png 1x`), which a split on commas would cut. */
+/** HTML's ASCII whitespace (tab, LF, FF, CR, space): the only code points the srcset parse breaks on. Not a JS `\s`, which
+ *  also stops at U+00A0, U+000B, U+2003, U+FEFF and the rest of Unicode space: a URL such as `https://github.com<nbsp>@evil.test/x.png`
+ *  read as the allowed host github.com to a `\s` parse while the browser, reading the URL whole, fetched evil.test with github.com
+ *  as the userinfo (review of Slice 4, round 1: measured over the real Files bundle, no placeholder, no click). */
+const ASCII_WS = /[\t\n\f\r ]/;
+/** The candidates of a `srcset` attribute, by HTML's own parse (the "parse a srcset attribute" algorithm): a URL runs to
+ *  ASCII whitespace, a comma glued to its end ends the candidate, else the descriptors run to the next comma outside parens,
+ *  where "outside" is HTML's one in-parens state, entered at `(` and left at the FIRST `)`, never nested: a depth counter let
+ *  `((,) 1x, https://evil.test/b.png` swallow the comma before the second candidate, so the gate judged one allowed URL while
+ *  the browser dropped that candidate for its unknown descriptor and fetched the second (the same review). A comma inside a
+ *  URL survives (`a,b.png 1x`), which a split on commas would cut. The descriptor text is kept as written between its ASCII
+ *  whitespace edges: what the browser makes of it is the browser's (an unknown descriptor drops its candidate), and
+ *  serializeSrcset must hand it the same text. */
 export function parseSrcset(s: string): SrcsetCandidate[] {
   const out: SrcsetCandidate[] = [];
   let i = 0;
   const n = s.length;
   while (i < n) {
-    while (i < n && /[\s,]/.test(s[i])) i++;
+    while (i < n && (s[i] === "," || ASCII_WS.test(s[i]))) i++;
     if (i >= n) break;
     let j = i;
-    while (j < n && !/\s/.test(s[j])) j++;
+    while (j < n && !ASCII_WS.test(s[j])) j++;
     let url = s.slice(i, j);
     i = j;
     let descriptor = "";
     if (/,$/.test(url)) url = url.replace(/,+$/, "");
     else {
-      let k = i, depth = 0;
+      let k = i, inParens = false;
       while (k < n) {
         const c = s[k];
-        if (c === "(") depth++;
-        else if (c === ")") depth--;
-        else if (c === "," && depth <= 0) break;
+        if (inParens) { if (c === ")") inParens = false; }
+        else if (c === "(") inParens = true;
+        else if (c === ",") break;
         k++;
       }
-      descriptor = s.slice(i, k).trim();
+      descriptor = s.slice(i, k).replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
       i = k + 1;
     }
     if (url) out.push({ url, descriptor });
   }
   return out;
 }
+/** The candidates back as one attribute, in the one plain spelling (a space before a descriptor, a comma and a space between
+ *  candidates): parseSrcset reads it back to the same candidates, and so does the browser. */
 export function serializeSrcset(cands: SrcsetCandidate[]): string {
   return cands.map((c) => c.url + (c.descriptor ? " " + c.descriptor : "")).join(", ");
+}
+/** Every srcset under `el` rewritten in serializeSrcset's spelling when the author's differs, before the gate judges it, so the
+ *  attribute the browser reads is the one the gate parsed: the spelling variance the two parses could ever part on (where a
+ *  URL ends, where a candidate ends) is gone from the attribute, and the candidates left are exactly the URLs judged. */
+function spellSrcsets(el: Element): void {
+  for (const ref of figureRefs(el)) {
+    if (ref.attr !== "srcset") continue;
+    const plain = serializeSrcset(parseSrcset(ref.value));
+    if (plain !== ref.value) ref.el.setAttribute("srcset", plain);
+  }
 }
 /** The URLs one fetching attribute names: a srcset's candidates, else the value itself. */
 export function refUrls(ref: FigureRef): string[] {
@@ -178,11 +209,19 @@ function pxAttr(el: Element, name: string): number {
   const m = /^[ \t\n\f\r]*(\d+(?:\.\d*)?)(%?)/.exec(el.getAttribute(name) || "");
   return m && !m[2] ? Number(m[1]) : 0;
 }
+/** The viewer's label inside a placeholder: the child that carries the label MARK, never an author's element. The class
+ *  alone is not enough: the sanitizer keeps an author's `class`, so `<svg><text class="fv-gate-label">` inside a gated svg,
+ *  or the class on the gated img or video itself, was the first `.fv-gate-label` in document order (the media goes into the
+ *  wrapper before the label), took the label's text and left the real label empty; on a video the text replaced its
+ *  `<source>` children (the same review). A data attribute cannot come from the author (ALLOW_DATA_ATTR: false). */
+function labelOf(wrap: Element): HTMLElement | null {
+  return wrap.querySelector(":scope > [" + LABEL_MARK + "]") as HTMLElement | null;
+}
 function labelGate(wrap: HTMLElement, hosts: string[]): void {
   const host = hosts[0];
   wrap.setAttribute("data-fv-host", host);
   wrap.setAttribute("title", "Load from " + host);
-  const label = wrap.querySelector("." + GATE_LABEL_CLASS) as HTMLElement | null;
+  const label = labelOf(wrap);
   const media = wrap.firstElementChild;
   const more = hosts.length - 1;
   if (label) label.textContent = (media ? kindOf(media) : "Image") + " from " + host + (more > 0 ? " and " + more + " more host" + (more > 1 ? "s" : "") : "") + ". Click to load.";
@@ -216,6 +255,7 @@ function gate(el: Element, hosts: string[]): void {
   wrap.appendChild(el);
   const label = doc.createElement("span");
   label.className = GATE_LABEL_CLASS;
+  label.setAttribute(LABEL_MARK, "");
   wrap.appendChild(label);
   labelGate(wrap, hosts);
 }
@@ -243,6 +283,7 @@ let synced = false;
 export function gateRemoteFigures(root: ParentNode, base: string, extra: Iterable<string> = []): void {
   const allowed = allowedFigureHosts(extra);
   for (const el of gateRoots(root)) {
+    spellSrcsets(el);
     const hosts = unlistedHosts(el, base, allowed);
     if (hosts.length) gate(el, hosts);
   }
@@ -253,10 +294,14 @@ export function gateRemoteFigures(root: ParentNode, base: string, extra: Iterabl
 }
 /** Re-judge every placeholder in `doc` against the allowed set now: a placeholder whose hosts are all allowed is
  *  restored, one still waiting on another host is relabelled with it. A host that was allowed at gate time never
- *  appears in a placeholder's list, so the URL kind's own host needs no repeating here. */
+ *  appears in a placeholder's list, so the URL kind's own host needs no repeating here. The placeholders are found by
+ *  the delegated action, as gateOf finds them, never by the class: the sanitizer keeps an author's `class`, and a
+ *  `<span class="fv-gate">` around prose read as a placeholder with no hosts left, so restore() replaced it with its first
+ *  element child and the text between was gone from the page on any click or settings change (the same review); a
+ *  data attribute cannot come from the author. */
 export function regateFigures(doc: ParentNode): void {
   const allowed = allowedFigureHosts();
-  Array.from(doc.querySelectorAll("." + GATE_CLASS)).forEach((wrap) => {
+  Array.from(doc.querySelectorAll('[data-act="' + GATE_ACT + '"]')).forEach((wrap) => {
     const hosts = (wrap.getAttribute("data-fv-hosts") || "").split(" ").filter((h) => h && !allowed.has(h));
     if (!hosts.length) restore(wrap);
     else if (hosts[0] !== wrap.getAttribute("data-fv-host")) labelGate(wrap as HTMLElement, hosts);
