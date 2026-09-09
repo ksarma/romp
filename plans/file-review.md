@@ -1677,7 +1677,13 @@ nothing, so the click that shows an arrival does not mark it seen; the dots and 
 render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
 the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
 when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
-day (decision 40), which travel first in the message as `note`. The set lives with the
+day (decision 40), which travel first in the message as `note`. From the lost-update probe of the same day: the accept
+resolves the comments bound to the changes it accepts (the host's rule), and in the incident seven comments the session's
+edits had answered folded under a collapsed Resolved with nothing said; the option now reads "(resolves M comments; K
+arrived since you last looked)" in one parenthesis (`resolvedByAccept`), and after a send whose accept-all resolved
+comments the Resolved fold opens before the renders that follow and the sent note reads "Sent to <session> at <time> ·
+accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
+visible list without a visible word. The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: he saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
 the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the

@@ -501,7 +501,9 @@ picks the one to answer, or none. When tracking is off, another checkbox
 turns it on first, so the session's revisions come back as changes. When changes are pending,
 a third checkbox, **accept the pending changes**, accepts them all before the send, so the
 session's later edits arrive as new changes instead of folding into an old one; the message
-then says how many changes you accepted and rejected. All are checked by default. One send
+then says how many changes you accepted and rejected, and when accepting them resolves comments
+the session had answered, the checkbox says so beforehand and the panel opens **Resolved** and
+names them afterwards, so nothing leaves the list unannounced. All are checked by default. One send
 answers one todo; a todo that named several files is answered by the first, and later sends
 no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
 it when the session has gone quiet, in which case the message goes when it wakes.

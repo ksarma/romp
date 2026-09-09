@@ -88,6 +88,7 @@ import {
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
   statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
+  resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
   noteTooLong,   // the Send confirm's note box (the owner's ruling, 2026-09-09)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
@@ -2509,7 +2510,7 @@ class Panel {
       // the Send confirm's accept option, when it is up, names the pending changes still unseen (renderSend's words)
       const cb = this.root?.querySelector('input[data-opt="accept"]') as HTMLElement | null;
       const label = cb && cb.parentElement ? cb.parentElement.querySelector("span") : null;
-      if (label && this.status) label.textContent = acceptOptionLabel(this.ctx.editing() ? 0 : (this.status.hunks || []).length, this.arrivedPending());
+      if (label && this.status) label.textContent = acceptOptionLabel(this.ctx.editing() ? 0 : (this.status.hunks || []).length, this.arrivedPending(), this.ctx.editing() ? 0 : resolvedByAccept(this.status.store, this.status.hunks || []));
     };
     if (this.hold) void this.hold.defer(words); else words();
   }
@@ -3769,6 +3770,11 @@ class Panel {
     let pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
     const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
+    // the comments open before the send: the accept-all resolves the ones bound to the changes it accepts (the host's rule),
+    // and a comment that leaves the visible list must leave a visible word behind (the lost-update probe, 2026-09-09: seven
+    // comments the session had answered folded under a collapsed Resolved with nothing said). Counted off the reply below
+    const openBefore = new Set((s.store ? s.store.comments : []).filter((c) => !c.resolved).map((c) => c.id));
+    let moved = 0;
     this.gesture();                                    // a send is a gesture of the person's (the arrivals follow-on)
     this.sending = true; this.errors.delete("send"); this.render();
     try {
@@ -3791,6 +3797,10 @@ class Panel {
           return;
         }
         pending = decided.length;
+        // the comments the accept resolved: unresolved before, resolved in the reply. The Resolved fold opens before the
+        // renders that follow, so the cards stay in view with the session's replies, and the sent note names them
+        moved = (a.store ? a.store.comments : []).filter((c) => openBefore.has(c.id) && !!c.resolved).length;
+        if (moved) this.resolvedOpen = true;
       }
       const counts = sendCounts(parts, acceptAll, pending);
       // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
@@ -3810,7 +3820,8 @@ class Panel {
       if (todoId && reply.todoStamped) answeredTodos.add(todoId);
       if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
-      this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
+      const base = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
+      this.sentNote = sentNoteWords(base, acceptAll ? pending : 0, moved);   // …and what the accept moved to Resolved, when it did
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
       this.sendConfirm = false;
       this.sendNote = ""; this.noteBox.value = "";     // sent: the words went with the message; a refusal (the catch) keeps them
@@ -4837,7 +4848,8 @@ class Panel {
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       // the pending changes that arrived since the person last looked are named on the option (the arrivals follow-on,
       // 2026-09-09): the user's Send accepted eleven he had not seen. The words change; the default stays decision 8's
-      if (pending) opts.appendChild(this.opt("accept", acceptOptionLabel(pending, this.arrivedPending())));
+      // ...and the comments the accept resolves along with their changes (the host's rule; the lost-update probe, 2026-09-09)
+      if (pending) opts.appendChild(this.opt("accept", acceptOptionLabel(pending, this.arrivedPending(), resolvedByAccept(s.store, s.hunks || []))));
       if (opts.childNodes.length) cf.appendChild(opts);
       // the note box (the fields' comment): the person's own words, the first paragraph of the message after its header;
       // the placeholder names the session, or asks plainly when the panel cannot name one

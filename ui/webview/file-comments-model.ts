@@ -1048,9 +1048,31 @@ export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorI
   return listWords(names) + " made " + listWords(parts) + " since you last looked";
 }
 
-/** The Send confirm's accept option: "accept the N pending changes", and when `arrived` of them landed since the person
- *  last looked, "(M arrived since you last looked)" after it. The default is decision 8's and is not this function's. */
-export function acceptOptionLabel(pending: number, arrived: number): string {
+/** The unresolved comments bound to a pending change: what a Send's accept-all resolves along with the changes (the host
+ *  resolves a comment when its change is accepted). The confirm says so before the send and the sent note after it (the
+ *  lost-update probe, 2026-09-09: seven comments the session's edits had answered folded under a collapsed Resolved with
+ *  nothing said). */
+export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
+  if (!store) return 0;
+  const pending = new Set(hunks.map((h) => h.id));
+  return store.comments.filter((c) => !c.resolved && typeof c.suggestionId === "string" && pending.has(c.suggestionId)).length;
+}
+
+/** The Send confirm's accept option: "accept the N pending changes", and in one parenthesis after it what else the accept
+ *  does: "resolves M comments" when `resolves` unresolved comments are bound to those changes, and "K arrived since you
+ *  last looked" when `arrived` of the changes landed since the person last looked, joined with "; ". The default is
+ *  decision 8's and is not this function's. */
+export function acceptOptionLabel(pending: number, arrived: number, resolves = 0): string {
   const base = "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes");
-  return arrived > 0 ? base + " (" + arrived + " arrived since you last looked)" : base;
+  const parts: string[] = [];
+  if (resolves > 0) parts.push("resolves " + plural(resolves, "comment", "comments"));
+  if (arrived > 0) parts.push(arrived + " arrived since you last looked");
+  return parts.length ? base + " (" + parts.join("; ") + ")" : base;
+}
+
+/** The sent note after a send whose accept-all resolved comments: the base ("Sent to api at 10:32", "Queued for api") and
+ *  what moved to Resolved, so nothing leaves the visible list without a visible word; the base alone when nothing moved. */
+export function sentNoteWords(base: string, accepted: number, moved: number): string {
+  if (moved <= 0) return base;
+  return base + " · accepted " + plural(accepted, "change", "changes") + "; " + plural(moved, "comment", "comments") + " with the session's replies moved to Resolved";
 }

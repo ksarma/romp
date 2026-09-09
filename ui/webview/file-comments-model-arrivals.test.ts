@@ -6,7 +6,7 @@
 // the notes-api world, placeholder ids, the session names "api" and "web".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { statusEntries, arrivalsAmong, arrivalWords, acceptOptionLabel, YOU, type Entry, type Status, type StoreComment, type Hunk } from "./file-comments-model";
+import { statusEntries, arrivalsAmong, arrivalWords, acceptOptionLabel, resolvedByAccept, sentNoteWords, YOU, type Entry, type Status, type StoreComment, type Hunk } from "./file-comments-model";
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const SID2 = "22222222-3333-4444-5555-666666666666";
@@ -74,8 +74,30 @@ test("acceptOptionLabel: the Send confirm's accept option as before, and with th
   assert.equal(acceptOptionLabel(1, 1), "accept the 1 pending change (1 arrived since you last looked)");
 });
 
+test("acceptOptionLabel with the comments the accept resolves (the lost-update probe, 2026-09-09): one parenthesis, the resolve first, joined with a semicolon", () => {
+  assert.equal(acceptOptionLabel(2, 0, 1), "accept the 2 pending changes (resolves 1 comment)");
+  assert.equal(acceptOptionLabel(11, 0, 7), "accept the 11 pending changes (resolves 7 comments)");
+  assert.equal(acceptOptionLabel(11, 3, 7), "accept the 11 pending changes (resolves 7 comments; 3 arrived since you last looked)");
+  assert.equal(acceptOptionLabel(2, 0, 0), "accept the 2 pending changes");
+});
+
+test("resolvedByAccept: the unresolved comments bound to a pending change; a resolved one, one bound to a detached or decided change, and an unbound one count for nothing", () => {
+  const bound = (id: string, sug: string, resolved = false): StoreComment => ({ id, author: "you", ts: T0, body: "b", suggestionId: sug, resolved, replies: [] });
+  const store = { v: 3, path: "docs/report.md", suggestions: [], comments: [bound("c1", "h1"), bound("c2", "h1"), bound("c3", "h2", true), bound("c4", "h9"), mine] };
+  assert.equal(resolvedByAccept(store, [h1, h2]), 2, "two open comments on h1; the one on h2 is resolved already; h9 is not pending; the plain comment is unbound");
+  assert.equal(resolvedByAccept(store, []), 0);
+  assert.equal(resolvedByAccept(null, [h1]), 0);
+});
+
+test("sentNoteWords: the base alone when nothing moved; with what the accept moved to Resolved otherwise", () => {
+  assert.equal(sentNoteWords("Sent to api at 10:32", 2, 0), "Sent to api at 10:32");
+  assert.equal(sentNoteWords("Sent to api at 10:32", 2, 1), "Sent to api at 10:32 · accepted 2 changes; 1 comment with the session's replies moved to Resolved");
+  assert.equal(sentNoteWords("Queued for api", 11, 7), "Queued for api · accepted 11 changes; 7 comments with the session's replies moved to Resolved");
+  assert.equal(sentNoteWords("Sent to api at 10:32", 1, 1), "Sent to api at 10:32 · accepted 1 change; 1 comment with the session's replies moved to Resolved");
+});
+
 test("vocabulary: no romp nouns in the words a person reads here, and none of the words CONTEXT.md sets aside", () => {
-  const texts = [arrivalWords([{ key: "k", kind: "change", author: "api", authorId: SID, subject: "s", pending: true }], byLabel), acceptOptionLabel(3, 2)];
+  const texts = [arrivalWords([{ key: "k", kind: "change", author: "api", authorId: SID, subject: "s", pending: true }], byLabel), acceptOptionLabel(3, 2, 1), sentNoteWords("Sent to api at 10:32", 3, 1)];
   for (const t of texts) {
     assert.doesNotMatch(t, /\b(card|board|goal|column|nudge|fleet)\b/i, t);
     assert.doesNotMatch(t, /\b(suggestion|diff|thread|annotation)\b/i, t);

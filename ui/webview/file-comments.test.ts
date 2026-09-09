@@ -736,7 +736,7 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.ok(at("const parts: SendParts = sendParts(s);") < at('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message is built first");
   assert.ok(at("if (!r) return;") < at("await this.sendOnce(msg, false)"), "a refused toggle aborts before the send");
   assert.ok(at("tracked = !!r.trackedBy;") < at("await this.sendOnce(msg, false)"), "tracked is the post-toggle verdict");
-  assert.match(send, /this\.sentNote = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);/);
+  assert.match(send, /const base = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);\n\s*this\.sentNote = sentNoteWords\(base, acceptAll \? pending : 0, moved\);/, "the sent note, and what the accept moved to Resolved when it did (2026-09-09)");
   assert.match(send, /if \(reply\.warning\) this\.errors\.set\("send", \{ text: reply\.warning, reload: false, warn: true \}\);/, "sent but nothing stamped: the kernel's own reason shows");
   assert.match(SRC, /warning: \[str\(m\.warning\), str\(m\.logWarning\)\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined/,
     "a send whose comments-log append failed is loud too: the kernel's logWarning rides the same warn row");

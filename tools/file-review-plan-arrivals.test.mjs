@@ -84,7 +84,7 @@ test('the save\'s stand-down is as the paragraph states it: the count stood AND 
 
 test('the Send confirm\'s words and the notice\'s are the model\'s', () => {
   assert.ok(note.includes('"accept the N pending changes (M arrived since you last looked)"'));
-  assert.ok(model.includes('return arrived > 0 ? base + " (" + arrived + " arrived since you last looked)" : base;'));
+  assert.ok(model.includes('if (arrived > 0) parts.push(arrived + " arrived since you last looked");'));
   assert.ok(note.includes('"api made 11 changes and 7 replies since you last looked"'));
   assert.ok(model.includes('return listWords(names) + " made " + listWords(parts) + " since you last looked";'));
 });
