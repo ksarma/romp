@@ -741,10 +741,10 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   // the home computation, hoisted: ONE bare readTabGroups().on read (tab-groups.test pins the count at two in all of render.ts), the
   // copy's section tracked (round 2: copyNow, which the move writes; round 3: "" is no copy, an add from no group claims the copy, and
   // the resolution is the copy's own group, else the one remaining holder, else nothing), and three callers
-  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*let copyNow: string \| undefined = copy \|\| undefined;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*const home0 = \(copyNow !== undefined \? held\.find\(\(g\) => g\.name === copyNow\) : undefined\) \?\? \(held\.length === 1 \? held\[0\] : undefined\);\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};/);
+  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*let copyNow: string \| undefined = copy \|\| undefined;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*let home0 = copyNow !== undefined \? held\.find\(\(g\) => g\.name === copyNow\) : undefined;\s*\n\s*if \(!home0 && held\.length === 1 && !held\[0\]\.pending\) \{ home0 = held\[0\]; copyNow = home0\.name; \}[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};/);
   assert.equal(MENU.split("homeNow()").length - 1, 3, "the row's refresh, its click's (live, round 1) and the flyout's per-build read");
   assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
-  assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 7, "declared, read twice by homeNow, written by the move, and read twice and written once by claimIfLoose (round 3): a remove leaves it, an add from no group claims it");
+  assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 8, "declared, read twice and written once by homeNow (round 4: the one remaining holder becomes the copy), written by the move, and read twice and written once by claimIfLoose (round 3): a remove leaves it, an add from no group claims it");
   assert.match(MENU, /else postUnionEdits\(nv, a, r\);\s*\n\s*copyNow = to\.name;/, "the move writes the destination, whichever wire carried it");
   // round 3: the claim, one helper, read before the edit, on the three adds a copy with no group can make (the "+ <name>" row, an
   // existing name typed, a new tag); the "+" beside a Move to row (a copy with a group) never claims
@@ -792,7 +792,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(flatRow, /No home at click time \(moved out of every group, or the strip flattened in another pane\): the click dismisses and writes nothing\./);
   assert.ok(!row.includes("\u2014"), "no em dash in the new comment");
   const homeComment = MENU.slice(MENU.indexOf("// THE RIGHT-CLICKED COPY'S HOME SECTION, TRACKED."), MENU.indexOf("const unionFor = "));
-  assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /The resolution \(round 3\): the named copy's own group while it still holds the session; else the session's ONE remaining holder, the unambiguous case \(an x on the copy's tag on a two-tag session leaves one copy; a caller naming no copy on a one-tag session has one\); else nothing, so with two or more other holders there is no copy to hide, move or pin/, "the resolution is stated where the computation is (round 3: the one-holder return, the ambiguous case)");
+  assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /The resolution \(round 3\): the named copy's own group while it still holds the session; else the session's ONE remaining holder, the unambiguous case \(an x on the copy's tag on a two-tag session leaves one copy; a caller naming no copy on a one-tag session has one\), and that holder BECOMES the copy \(round 4: copyNow is latched to it at the resolution, so claimIfLoose, the "\+" beside a Move to row and a name typed all speak for the same copy, and an add from there is an add that keeps the row;[^)]*\); else nothing, so with two or more other holders there is no copy to hide, move or pin/, "the resolution is stated where the computation is (round 3: the one-holder return, the ambiguous case; round 4: the holder becomes the copy)");
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /a tab in the untagged trail carries "" there, which names no group, so it reads as no copy/, "the trail caller is described as it is (round 3: the comment had said the flat strip names none)");
   assert.ok(!homeComment.includes("\u2014"));
   // the glyph: a new ctxIcon kind, a tab on the strip's baseline, slashed by the helper's own `off` when hidden
@@ -1130,6 +1130,64 @@ test("executed: THE COPY'S TAG REMOVED inside the menu (menu review rounds 2 and
     fly.children.find((it) => it.label() === "+ archived")!.click();
     assert.equal(rowOf(menu), undefined, "the copy is the pending tag's: a further add does not move the claim, and the row waits for the ack");
     assert.equal(hooks.writes.length, 0, "no hide written by any of it");
+    // R6 (round 4): the one-holder fallback LATCHES. After the x on the copy's tag on a two-tag session the menu speaks for the one
+    // holder left, and that holder is the copy from then on: every add from there is an add (the copy has a group), so the row stays,
+    // the pin row stays and the flyout keeps its Move to rows. Before, copyNow still named the removed tag, so claimIfLoose took every
+    // add for a move of the claim: the + beside Move to a third tag took the row and the pin row away and the flyout read "+ <removed>";
+    // an existing name typed moved the row to the typed tag; a new tag typed took the row away; the + beside Move to the removed tag
+    // jumped the row back to it. A caller naming no copy on a one-holder session lost the row the same way.
+    const apiHolders = () => viewTagUnion(hooks.views as typeof V).filter((g) => g.members.includes("api")).map((g) => g.name);
+    const plusOf = (f: FakeEl, label: string) => f.children.find((it) => it.label() === label)!.all().find((n) => n.has("ctx-tag-plus"))!;
+    const qaEmpty = { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] };
+    const V3 = { ...V_API_BOTH, tags: [...V_API_BOTH.tags, qaEmpty], seq: 6 };
+    const settled = (what: string) => {
+      assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"), what + ": the row stays with the copy the one holder became");
+      assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while archived is folded", what + ": and the pin row speaks for it");
+      assert.ok(joinRows(fly).every((l) => l!.startsWith("Move to ")), what + ": the flyout keeps its Move to rows: " + JSON.stringify(joinRows(fly)));
+    };
+    // (1) the + beside Move to a third tag, then the Hide click writes the copy the menu spoke for
+    hooks.views = V3; hooks.writes = [];
+    menu = api.open("api", "infra"); fly = flyOf(menu);
+    xOf(fly, "infra").click();
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"));
+    assert.deepEqual(joinRows(fly), ["Move to infra", "Move to qa"]);
+    plusOf(fly, "Move to qa").click();
+    assert.deepEqual(apiHolders(), ["archived", "qa"], "an add: the session keeps archived");
+    settled("(1) the + beside Move to qa");
+    assert.deepEqual(joinRows(fly), ["Move to infra"]);
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden.filter((h) => h.sid === "api")), [[{ sid: "api", name: "archived", id: "g2" }]], "the click hides the copy the menu spoke for");
+    writeTabGroups(d);   // (1)'s hide out of the store
+    // (2) an existing name typed
+    hooks.views = V3; hooks.writes = [];
+    menu = api.open("api", "infra"); fly = flyOf(menu);
+    xOf(fly, "infra").click();
+    typeName(fly, "qa");
+    assert.deepEqual(apiHolders(), ["archived", "qa"]);
+    settled("(2) an existing name typed");
+    // (3) a new tag typed: an add; the pending tag does not take the claim
+    hooks.views = V3;
+    menu = api.open("api", "infra"); fly = flyOf(menu);
+    xOf(fly, "infra").click();
+    typeName(fly, "draft2");
+    assert.deepEqual(viewTagUnion(hooks.views as typeof V).filter((g) => g.members.includes("api")).map((g) => [g.name, !!g.pending]), [["archived", false], ["draft2", true]]);
+    settled("(3) a new tag typed");
+    // (4) the + beside Move to the removed tag: an add; the copy stays archived's
+    hooks.views = V3;
+    menu = api.open("api", "infra"); fly = flyOf(menu);
+    xOf(fly, "infra").click();
+    plusOf(fly, "Move to infra").click();
+    assert.deepEqual(apiHolders(), ["infra", "archived"]);
+    settled("(4) the + beside Move to infra");
+    // (5) a caller naming no copy on a one-holder session, then the + beside Move to: the one holder became the copy
+    hooks.views = V;
+    menu = api.open("web"); fly = flyOf(menu);
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"));
+    plusOf(fly, "Move to archived").click();
+    assert.deepEqual(holders(), ["infra", "archived"]);
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "(5) no copy named, one holder, then the + beside Move to archived: the holder became the copy, the add is an add, the row stays");
+    assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while infra is folded");
+    assert.equal(hooks.writes.length, 0, "no hide written by (2) to (5)");
   });
 });
 

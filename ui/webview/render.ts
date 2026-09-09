@@ -6582,7 +6582,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // click, the flyout's Move to and Show when folded rows on every build of its own) speaks for the copy where it now
   // sits. The resolution (round 3): the named copy's own group while it still holds the session; else the session's
   // ONE remaining holder, the unambiguous case (an x on the copy's tag on a two-tag session leaves one copy; a caller
-  // naming no copy on a one-tag session has one); else nothing, so with two or more other holders there is no copy to
+  // naming no copy on a one-tag session has one), and that holder BECOMES the copy (round 4: copyNow is latched to it at
+  // the resolution, so claimIfLoose, the "+" beside a Move to row and a name typed all speak for the same copy, and an
+  // add from there is an add that keeps the row; before, copyNow still named the removed tag and every add moved the
+  // claim or took the row away); else nothing, so with two or more other holders there is no copy to
   // hide, move or pin (round 2: a session under two tags hid a copy the user never touched, and which one depended on
   // the drag order), and the Hide tab row leaves while the flyout's rows read "+ <name>" (add without moving) until an
   // add gives the copy a group again or the holders are down to one. None while Group tabs by tag is off or the
@@ -6593,7 +6596,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   const homeNow = (): TagUnion | undefined => {
     if (!readTabGroups().on) return undefined;
     const held = holding();
-    const home0 = (copyNow !== undefined ? held.find((g) => g.name === copyNow) : undefined) ?? (held.length === 1 ? held[0] : undefined);
+    let home0 = copyNow !== undefined ? held.find((g) => g.name === copyNow) : undefined;
+    if (!home0 && held.length === 1 && !held[0].pending) { home0 = held[0]; copyNow = home0.name; }   // the one remaining holder BECOMES the copy (round 4)
     return home0 && !home0.pending ? home0 : undefined;
   };
   let refreshHideRow = () => {};   // the Hide tab row's refresh, assigned below; the Tags flyout calls it after each of its writes
