@@ -1,21 +1,20 @@
 // The live clock a pane runs its ages on (feed-age.ts liveNow: the kernel's `now` on the last frame plus the
-// local time elapsed since that frame ARRIVED) and the feed's age refresh, RUN: a delta client hears nothing
-// from a quiet board (the kernel used to repost the frame every 60 s, so its clock was never more than a
-// minute stale), so the pane keeps the clock moving itself and one 15 s pass repaints every stamped age — ask
-// cards, group cards, sub-goal rows, an open modal. The 2026-09-03 review found group cards and the modal
-// frozen at the age of the last change for hours. Pure functions here (node --test runs them without a DOM),
-// plus source pins on feed.ts's wiring (the feed has no DOM harness; see feed-dead.test.ts). Synthetic only.
+// local time elapsed since that frame ARRIVED) and the feed's age refresh, RUN: a quiet board sends a pane
+// nothing between frames, so the pane keeps the clock moving itself and one 15 s pass repaints every stamped
+// age — and, since the per-card update gate repaints a card only when its inputs change, every running
+// duration too. Pure functions here (node --test runs them without a DOM), plus source pins on feed.ts's
+// wiring; feed-render-incremental.test.ts runs the pass itself under a DOM stand-in. Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { liveNow, liveRefresher, paintAge, refreshAges, stampAge, type AgeEl } from "./feed-age";
-import { ageRgb } from "./age-color";
+import { ageColorReadable } from "./age-color";
 
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 // feed.ts's relAge, in shape (feed-relage.test.ts pins the real one); the refresh takes it as a parameter
 const rel = (s: number) => s < 60 ? "<1m ago" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? Math.round(s / 3600) + "h ago" : Math.round(s / 86400) + "d ago";
-const tint = (s: number) => "rgb(" + ageRgb(s).join(",") + ")";
+const tint = ageColorReadable;
 const mk = (): AgeEl => ({ textContent: null, style: { color: "" }, dataset: {} });
 
 test("liveNow adds only the local clock's DELTAS to the kernel's clock — skew between the two never enters", () => {
@@ -30,22 +29,22 @@ test("liveNow adds only the local clock's DELTAS to the kernel's clock — skew 
 
 test("a quiet board's ages advance: every stamped element repaints from the live clock, tinted ones re-tint", () => {
   const T = 1_000_000, t = T - 240;                         // everything 4 minutes old at the payload
-  const cardTime = mk(), groupTime = mk(), treeMeta = mk(), modalAge = mk();
+  const cardTime = mk(), groupTime = mk(), parenRow = mk(), tintedAge = mk();
   stampAge(cardTime, t, "plain", false, T, rel, tint);      // an ask card's stamp
   stampAge(groupTime, t, "plain", false, T, rel, tint);     // a group card's stamp
-  stampAge(treeMeta, t, "paren", true, T, rel, tint);       // a sub-goal row: "(4m ago)", recency-tinted
-  stampAge(modalAge, t, "plain", true, T, rel, tint);       // the modal's age: tinted
+  stampAge(parenRow, t, "paren", true, T, rel, tint);       // a parenthesized, recency-tinted "(4m ago)"
+  stampAge(tintedAge, t, "plain", true, T, rel, tint);      // a tinted "4m ago"
   assert.equal(cardTime.textContent, "4m ago"); assert.equal(groupTime.textContent, "4m ago");
-  assert.equal(treeMeta.textContent, "(4m ago)"); assert.equal(modalAge.textContent, "4m ago");
+  assert.equal(parenRow.textContent, "(4m ago)"); assert.equal(tintedAge.textContent, "4m ago");
   assert.equal(cardTime.style.color, "", "card stamps keep their own colour");
-  assert.equal(treeMeta.style.color, tint(240));
+  assert.equal(parenRow.style.color, tint(240));
   // an hour passes with no payload: the 15 s tick's pass, from the live clock
-  const n = refreshAges([cardTime, groupTime, treeMeta, modalAge], T + 3600, rel, tint);
-  assert.equal(n, 4, "every stamped element is repainted — group cards and the modal included (every label changed)");
+  const n = refreshAges([cardTime, groupTime, parenRow, tintedAge], T + 3600, rel, tint);
+  assert.equal(n, 4, "every stamped element is repainted (every label changed)");
   assert.equal(cardTime.textContent, "1h ago"); assert.equal(groupTime.textContent, "1h ago");
-  assert.equal(treeMeta.textContent, "(1h ago)"); assert.equal(modalAge.textContent, "1h ago");
-  assert.equal(treeMeta.style.color, tint(3840)); assert.notEqual(treeMeta.style.color, tint(240), "the tint aged");
-  assert.equal(modalAge.style.color, tint(3840));
+  assert.equal(parenRow.textContent, "(1h ago)"); assert.equal(tintedAge.textContent, "1h ago");
+  assert.equal(parenRow.style.color, tint(3840)); assert.notEqual(parenRow.style.color, tint(240), "the tint aged");
+  assert.equal(tintedAge.style.color, tint(3840));
   assert.equal(cardTime.style.color, "", "…and an untinted stamp stays untinted");
 });
 
@@ -100,8 +99,8 @@ test("a second pass at the same `now` writes NOTHING, and a pass across a minute
   assert.equal(refreshAges([a.e, b.e, c.e], T, rel, tint), 0, "same now: nothing rewritten");
   assert.equal(a.count() + b.count() + c.count(), c0, "…and no textContent setter ran");
   assert.equal(a.e.style.color, tint(100));
-  // 20 s later: a (120 s → "2m ago") and c (260 s → "4m ago") read the same; b (170 s) rounds to "3m ago" still — but
-  // every tinted colour moves on the log ramp, so the tinted labels rewrite their colour, not their text
+  // 20 s later: a (120 s → "2m ago") and c (260 s → "4m ago") read the same; b (170 s) rounds to "3m ago" still — a
+  // tinted colour may move on the ramp, so a tinted label rewrites its colour at most, never its text
   const nText = { a: a.count(), b: b.count(), c: c.count() };
   refreshAges([a.e, b.e, c.e], T + 20, rel, tint);
   assert.deepEqual({ a: a.count(), b: b.count(), c: c.count() }, nText, "no text changed: no textContent write");
@@ -115,6 +114,18 @@ test("a second pass at the same `now` writes NOTHING, and a pass across a minute
   assert.equal(refreshAges([plain], T + 50, rel, tint), 1, "150 s rounds to 3m: the one label that crossed is rewritten");
   assert.equal(plain.textContent, "3m ago");
   assert.equal(wrote, 2, "one write at the stamp, one at the crossing");
+});
+
+test("the tint compares against a shadow of what was written, not the CSSOM read-back: a style that re-serialises the colour is still written once", () => {
+  const T = 1_000_000;
+  let sets = 0;
+  const style = { _c: "", get color() { return this._c; }, set color(v: string) { sets++; this._c = v.replace(/\s+/g, ""); } };   // a browser's read-back need not equal the string written
+  const e: AgeEl = { textContent: null, style, dataset: {} };
+  stampAge(e, T - 240, "plain", true, T, rel, tint);
+  assert.equal(sets, 1);
+  assert.notEqual(e.style.color, tint(240), "the read-back differs from what was written");
+  assert.equal(refreshAges([e], T, rel, tint), 0, "same now: nothing rewritten…");
+  assert.equal(sets, 1, "…the colour included — compared against the shadow, so the re-serialised read-back does not force a write every pass");
 });
 
 test("a running DURATION is a stamp too (fmt 'dur'): workingFor's minutes-then-hours vocabulary, moving with the clock", () => {
@@ -142,7 +153,7 @@ test("liveRefresher: a hidden pane skips the pass and catches up exactly once wh
   live.tick(); assert.equal(passes, 3, "the cadence resumes");
 });
 
-test("feed.ts reads the clock only through nowSec(), stamps every age-bearing element, and the live pass repaints them all", () => {
+test("feed.ts reads the clock only through nowSec(), stamps every age and duration it shows, and the live pass repaints them all", () => {
   assert.match(FEED, /import \{ liveNow, liveRefresher, refreshAges, stampAge \} from "\.\/feed-age";/);
   assert.match(FEED, /function nowSec\(\): number \{ return liveNow\(hostNow, hostNowAt, Date\.now\(\)\); \}/);
   assert.match(FEED, /if \(typeof m\.now === "number"\) \{\n\s*hostNow = m\.now;\n\s*hostNowAt = typeof m\.nowAt === "number" \? m\.nowAt : Date\.now\(\);/,
@@ -151,36 +162,45 @@ test("feed.ts reads the clock only through nowSec(), stamps every age-bearing el
     "the bare arrival time anchors only a frame with no `nowAt` (no federation layer) or no `now` at all (an older kernel)");
   assert.equal((FEED.match(/\bhostNow\b/g) || []).length, 4,
     "hostNow is declared, recorded (with and without a kernel clock) and read by nowSec() — nothing else reads it raw (a raw read is a frozen age)");
-  // the stamps: ask card, group card, sub-goal row (parenthesized, tinted), the modal (tinted), the log rows
+  // the stamps: the ask card's and the group card's time, the sub-goal row (parenthesized, tinted), the modal
+  // (tinted), the log rows — every age the board shows is a stamp, so nothing reads hostNow raw (a raw read is
+  // an age frozen at the frame). The tint is computed client-side from the live clock (age-color.ts ageTint).
   assert.match(FEED, /stampAge\(a\._time, it\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(a\._time, g\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);
+  assert.doesNotMatch(FEED, /a\._time\.textContent = relAge\(/, "the time label is a stamp, not a one-off write");
+  assert.match(FEED, /relAge\(nowSec\(\) - at\)/, "the latched Continue's title ages on the same clock");
   assert.match(FEED, /else stampAge\(meta, node\.last, "paren", true, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(ageEl, it\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(ageEl, grp\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(when, rt, "plain", false, nowSec\(\), relAge, ageTint\);/);
   // …and the collapsed history gist's "· Xm ago": one text with the age baked in froze at render time while
-  // the sub-goal row above it kept counting (the 2026-09-03 review)
+  // the sub-goal row above it kept counting
   assert.match(FEED, /gist\.textContent = \(opened \? "▾ " : "▸ "\) \+ logPhrase\(last\) \+ " · ";\n/);
   assert.match(FEED, /stampAge\(gistAge, logRowT\(last\), "plain", false, nowSec\(\), relAge, ageTint\);/);
   assert.doesNotMatch(FEED, /logPhrase\(last\) \+ " · " \+ relAge\(/, "the gist's age is no longer built into a text the tick cannot reach");
-  // the running DURATIONS (2026-09-06): the awaiting box, the Awaiting-task pill, the waiting-on chip, the
-  // working narration and the per-paragraph ages are stamped too — the per-card update gate repaints a card
-  // only when its inputs change, so a duration baked into a caption would freeze on a card never re-sent
+  // the running DURATIONS: the awaiting box, the Awaiting-task pill, the waiting-on chip, the working narration
+  // and the per-paragraph ages are stamped too — the per-card update gate repaints a card only when its inputs
+  // change, so a duration baked into a caption would freeze on a card never re-sent
   assert.match(FEED, /function durSpan\(since: number\): HTMLElement \{\n\s*const d = el\("span", "fask-dur"\);\n\s*stampAge\(d, since, "dur", false, nowSec\(\), relAge, ageTint\);/);
-  assert.doesNotMatch(FEED, /, Date\.now\(\) \/ 1000\)/, "no elapsed label reads the browser clock any more (the clock anchors themselves still do, feed-age.ts liveNow)");
+  assert.doesNotMatch(FEED, /, Date\.now\(\) \/ 1000\)/, "no elapsed label reads the browser clock any more (the clock anchor itself still does, feed-age.ts liveNow)");
   assert.match(FEED, /if \(bp!\[i\]\.since\) stampAge\(age, bp!\[i\]\.since, "plain", false, nowS, relAge, ageTint\);/);
-  // the wash is recomputed from the live clock at render, through the one compare-then-write tint helper…
+  // the card's wash is recomputed from the live clock at render, through the one compare-then-write tint helper…
   assert.match(FEED, /function applyTint\(card: HTMLElement, ageSecs: number\): void \{\n\s*const s = cardTint\(ageSecs\);\n\s*if \(\(card as any\)\._tint === s\) return;/);
   assert.match(FEED, /applyTint\(card, nowSec\(\) - it\.t\);/);
   assert.match(FEED, /applyTint\(card, nowSec\(\) - g\.t\);/);
-  // …and the 15 s live pass re-applies it to ask AND group cards, then repaints every stamped age, writing
-  // only what changed, through the shared visibility gate
-  const pass = FEED.slice(FEED.indexOf("function livePass(): void {"), FEED.indexOf("const paneHidden = () =>"));
+  // …and the 15 s live pass re-applies it to ask AND group cards, refreshes the latched Continue's title, then
+  // repaints every stamped age, writing only what changed, through the shared visibility gate
+  const pass = FEED.slice(FEED.indexOf("function livePass(): void {"), FEED.indexOf("const live = liveRefresher("));
   assert.ok(pass.length > 0, "the live pass exists");
   assert.match(pass, /const now = nowSec\(\);/);
   assert.match(pass, /for \(const card of askEls\.values\(\)\) \{\s*\n\s*const it = \(card as any\)\._it as AskItem \| undefined;\s*\n\s*if \(!it\) continue;\s*\n\s*applyTint\(card, now - it\.t\);/);
+  assert.match(pass, /if \(cont && cont\.disabled && \(it\.followupPending \|\| it\.recheck \|\| it\.rejudging\)\) \{\n\s*const ct = contTitle\(true, "a continue", it\.followupAt\);\n\s*if \(cont\.title !== ct\) cont\.title = ct;/);
   assert.match(pass, /for \(const card of groupEls\.values\(\)\) \{\s*\n\s*const g = \(card as any\)\._g as AskGroup \| undefined;\s*\n\s*if \(g\) applyTint\(card, now - g\.t\);/);
   assert.match(pass, /refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), now, relAge, ageTint\);/);
-  assert.match(FEED, /const paneHidden = \(\) => document\.hidden \|\| window\.innerWidth === 0 \|\| window\.innerHeight === 0;\n/);
-  assert.match(FEED, /const live = liveRefresher\(\{ hidden: paneHidden, pass: livePass \}\);\nsetInterval\(live\.tick, 15000\);\ndocument\.addEventListener\("visibilitychange", live\.catchUp\);\nwindow\.addEventListener\("resize", live\.catchUp\);/);
+  assert.doesNotMatch(FEED, /t\.textContent = relAge\(now - it\.t\);/, "the old tick, which rewrote every label on the browser clock, is gone");
+  // "hidden" is the paint gate's decision over its two measures (paint-gate.ts: the tab's visibility and the
+  // observer's word on #feed-list), not a second probe of the pane's viewport; both release events catch up
+  assert.match(FEED, /const live = liveRefresher\(\{ hidden: \(\) => paintHeld\(document\.hidden, feedIntersecting, true\), pass: livePass \}\);\nsetInterval\(live\.tick, 15000\);\ndocument\.addEventListener\("visibilitychange", live\.catchUp\);\n/);
+  assert.match(FEED, /feedIntersecting = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n\s*live\.catchUp\(\);/);
+  assert.doesNotMatch(FEED, /window\.innerWidth === 0 \|\| window\.innerHeight === 0/, "no zero-viewport probe beside the gate");
 });

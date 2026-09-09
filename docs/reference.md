@@ -21,7 +21,7 @@ update` starts a session called "update".
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
 | `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
-| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them; a remote stopped by `romp down` is synced and left stopped |
+| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them at once (every deploy restart is immediate; boot reconcile resumes the cut turns with their history); a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
@@ -148,7 +148,7 @@ These are for scripting and for agents rather than daily use:
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
-| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
+| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop). The ONLY door to the quiet window: a deploy (a peer's `romp update`, a release self-update, an automatic converge) restarts immediately, by the user's 2026-09-08 decision |
 | `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
 
@@ -2253,29 +2253,29 @@ frames it received is measured in the panes themselves, by
   `tabOrder`, `bars`, or any other type that is a short identifier: letters,
   digits, `_ . : -`, at most 32 characters), a raw delta as `delta:<slot>`
   (`delta:other` when the slot is not such an identifier), a shell message (a
-  `romp` field and no `type`) as `shell`, and `other` for a frame with neither,
-  a `type` that is not a short identifier, or any type past the 32 distinct
-  types a minute the pane tracks; frames the handler ignores count too. The
-  federation layer, which every kernel page loads, times its own prefixing,
-  delta application and merge of each frame as `fed:<type>`, nested outside the
-  pane's handler; each level records its own time, so `fed:feed` and `feed` add
-  up to the frame's cost.
-  The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
-  `bars`) to the pane's handler by direct call once the pane has registered it
-  (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
-  `fed:<type>` is that layer's own compute; it dispatches them on `window` only
-  when nothing registered, and every other frame still arrives as a `window`
-  `message` event. A `message` listener from another JavaScript world (a
-  browser extension's content script) that reads `event.data` receives a
-  structured clone of every frame dispatched on `window`, tens of milliseconds
-  for a multi-megabyte board; the direct call keeps the merged frames out of
-  its reach. See "A message listener from another world" in `CONTRIBUTING.md`
-  for the check that finds such a listener.
-  The timeline's listener is wrapped the same way on both hosts (the VS Code
-  bundle directly; the kernel page's inline boot through the `window.__rompPerf`
-  that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
-  `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
-  The Files pane installs nothing: no frames are pushed to it.
+  `romp` field and no `type`) as `shell`, and `other` for a frame with
+  neither, a `type` that is not a short identifier, or any type past the 32
+  distinct types a minute the pane tracks; frames the handler ignores count
+  too. The federation layer, which every kernel page loads, times its
+  own prefixing, delta application and merge of each frame as `fed:<type>`,
+  nested outside the pane's handler; each level records its own time, so
+  `fed:feed` and `feed` add up to the frame's cost. The federation layer hands
+  its merged frames (`feed`, `tabOrder`, `data`, `bars`) to the pane's handler
+  by direct call once the pane has registered it (`window.__rompFed.onFrame`,
+  through `ui/webview/frame-listener.ts`), so `fed:<type>` is that layer's own
+  compute; it dispatches them on `window` only when nothing registered, and
+  every other frame still arrives as a `window` `message` event. A `message`
+  listener from another JavaScript world (a browser extension's content
+  script) that reads `event.data` receives a structured clone of every frame
+  dispatched on `window`, tens of milliseconds for a multi-megabyte board; the
+  direct call keeps the merged frames out of its reach. See "A message
+  listener from another world" in `CONTRIBUTING.md` for the check that finds
+  such a listener. The timeline's listener is wrapped the same way on both
+  hosts (the VS Code bundle directly; the kernel page's inline boot through
+  the `window.__rompPerf` that `federation.js` publishes before it runs), so
+  `data`, `bars`, `hover`, `activeChat`, `revealEvent` and `models` are timed
+  like any pane's frames. The Files pane installs nothing: no frames are
+  pushed to it.
 - Per type and minute: count, summed and maximum handler time, the exact
   number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
   100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,

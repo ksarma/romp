@@ -1,6 +1,7 @@
-// The fence highlight cache (highlight-cache.ts, 2026-09-06): the same (language, source) tokenizes once
-// while its entry is held; an unlabeled fence still goes through auto-detection over every grammar (the
-// detection is kept — only the repeat work goes); the cache is bounded by entries and by output size.
+// The fence highlight cache (highlight-cache.ts): the same (language, source) tokenizes once
+// while its entry is held; an unlabeled fence still goes through auto-detection, among the chat's registered
+// grammars (AUTO_LANGUAGES; code-block.test.ts executes that subset) — the detection is kept, only the repeat
+// work goes; the cache is bounded by entries and by output size.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { highlightHtml, newHighlightCache, CAP, BUDGET, MAX_RAW } from "./highlight-cache";
@@ -60,13 +61,33 @@ test("bounded by entries: the oldest goes first, and a hit counts as newest", ()
 test("bounded by output size, and a very large source is highlighted but never kept", () => {
   const { hl, calls } = stub();
   const c = newHighlightCache();
-  const big = "x".repeat(Math.floor(BUDGET / 3) + 1);
-  highlightHtml(hl, "python", big + "1", c); highlightHtml(hl, "python", big + "2", c); highlightHtml(hl, "python", big + "3", c);
-  assert.ok(c.map.size < 3 && c.chars <= BUDGET + big.length + 40, "the budget evicted the oldest: " + c.map.size + " held, " + c.chars + " chars");
+  // BUDGET bounds the highlighted OUTPUT and MAX_RAW the source, so the stub's output is what has to be large: a
+  // short source highlighted to OUT characters per character; three of `each` characters overrun the budget together
+  const OUT = 50_000;
+  const wide = { ...hl, highlight: (raw: string) => { calls.highlight++; return { value: raw.repeat(OUT) }; } };
+  const each = Math.floor(BUDGET / 3 / OUT) + 1;
+  highlightHtml(wide, "python", "a".repeat(each), c); highlightHtml(wide, "python", "b".repeat(each), c); highlightHtml(wide, "python", "c".repeat(each), c);
+  assert.equal(c.map.size, 2, "the third output pushed the total past the budget, so the oldest went");
+  assert.equal(c.chars, 2 * each * OUT, "the evicted entry's characters were subtracted");
+  highlightHtml(wide, "python", "a".repeat(each), c);
+  assert.equal(calls.highlight, 4, "the evicted source tokenizes again");
+  assert.equal(c.map.size, 2); assert.equal(c.chars, 2 * each * OUT);
+  const one = newHighlightCache();
+  highlightHtml(wide, "python", "z".repeat(Math.floor(BUDGET / OUT) + 1), one);   // over the budget by itself
+  assert.equal(one.map.size, 1, "a single entry is kept even when it alone exceeds the budget");
   const huge = "y".repeat(MAX_RAW + 1);
-  const n = c.map.size;
+  const n = c.map.size, before = calls.highlight;
   assert.equal(highlightHtml(hl, "python", huge, c), `<python>${huge}</python>`);
   assert.equal(c.map.size, n, "not kept");
   highlightHtml(hl, "python", huge, c);
-  assert.equal(calls.highlight, 5, "…so it tokenizes each time");
+  assert.equal(calls.highlight, before + 2, "…so it tokenizes each time");
+});
+
+test("with no cache argument (render.ts's call) the module-level cache holds across calls: the same fence tokenizes once per page, not once per call", () => {
+  const { hl, calls } = stub();
+  // a source no other test uses: the shared cache persists across the tests of one process
+  const src = "shared_default_probe = 1  # highlight-cache.test.ts";
+  const first = highlightHtml(hl, "python", src);
+  assert.equal(highlightHtml(hl, "python", src), first);
+  assert.deepEqual(calls, { highlight: 1, auto: 0 }, "the second call was a hit on the module-level cache");
 });

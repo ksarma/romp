@@ -1,4 +1,4 @@
-// The "worked …" footer's rule and the tail path's footer plan (worked-footer.ts, 2026-09-06). The chat's tail
+// The "worked …" footer's rule and the tail path's footer plan (worked-footer.ts). The chat's tail
 // path re-renders exactly the events the kernel names as changed, so the one render that depends on later
 // events — the footer on a turn's last reply — is patched from this plan. Synthetic events; epochs are seconds.
 import { test } from "node:test";
@@ -18,6 +18,8 @@ test("turnWorkedSecs: the turn's last reply carries the footer once a genuine pr
   assert.equal(turnWorkedSecs(evs, 4, true, epoch), null, "the final turn while working: the spinner owns it");
   assert.equal(turnWorkedSecs(evs, 4, false, epoch), 30, "…and idle: the footer");
   assert.equal(turnWorkedSecs(evs, 0, false, epoch), null, "a prompt carries none");
+  assert.equal(turnWorkedSecs([user(100), reply(100)], 1, false, epoch), null, "a zero elapsed carries no footer");
+  assert.equal(turnWorkedSecs([user(100), reply(90)], 1, false, epoch), null, "…nor a negative one (a clock skew between the two stamps)");
 });
 
 test("turnWorkedSecs: the elapsed runs from the immediate trigger, and an injected user line does not end a turn", () => {

@@ -54,11 +54,17 @@ test("the sessions pane speaks the same three-way language", () => {
 });
 
 test("the tab strip draws the gray ring for a missing state and nothing for idle", () => {
-  // the fork's strip carries an extra OPENING state, so its mapping is a dot[] ladder rather than
-  // upstream's else-if chain; the unreadable branch and the missing ready branch are the same rule
-  assert.match(RENDER, /: !st \? \["unknown", "state unknown — romp couldn't read this session's live state"\]/);
-  assert.ok(!/\["ready",/.test(RENDER), "no ready pip on the strip — a blank says quiet");
-  assert.ok(!/tab-dot ready/.test(RENDER));
+  // the unknown ring comes from the one dot rule (tabDotClass, T262g): a missing state → "tab-dot unknown"
+  const TS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-state.ts"), "utf8");
+  assert.match(TS, /if \(!st\) return "tab-dot unknown";/);
+  assert.match(RENDER, /const dotCls = tabDotClass\(st\);/);
+  // the fork's strip carries an extra OPENING state; it is a branch of the same rule (and of its title twin,
+  // tabDotTitle), so the unreadable ring and the missing ready branch still come from one place
+  assert.match(TS, /if \(!st\) return "state unknown — romp couldn't read this session's live state";/);
+  assert.match(TS, /if \(st === "opening"\) return "tab-dot opening";/);
+  assert.ok(!/\["ready",|"tab-dot ready"/.test(TS), "no ready pip on the strip — a blank says quiet");
+  // ready/idle reaches no branch at all — the ladder ends without appending
+  assert.ok(!/tab-dot ready/.test(RENDER), "no ready pip on the strip");
 });
 
 test("every surface styles the unknown ring, and none styles a ready one", () => {

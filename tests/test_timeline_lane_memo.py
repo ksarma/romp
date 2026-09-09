@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
-"""The per-lane segment memo in build_timeline (perf round 4, item A).
+"""The timeline's two lane memos: the DEAD-LANE memo (2026-09-08, upstream) and the fork's per-lane segment memo.
 
+Both exist in the kernel since the 2026-09-09 fold: for a DEAD lane with a readable store the dead-lane memo
+(stat-keyed on every input file, the parse dropped once cached) is consulted first; the fork's _lane_memo
+(object-identity keyed on the parse, the FrozenStore and the _Caps object; every lane) serves where it does
+not: live lanes, and a dead lane whose key moved. A dead lane the dead-lane memo takes leaves the fork's memo
+(its entry would keep the parse resident). Upstream's cases come first (DeadLaneMemo, HorizonFilterIsExact,
+EntryEncodeMemo, its sid DEAD_SID); the fork's follow under LaneMemoBase, whose fixtures build LIVE lanes.
+
+--- the dead-lane memo ---
+The full timeline build ran every pusher cycle (the fleet signature's 5 s bucket turns over faster than a 6 s
+cycle) and re-parsed every lane's transcript and goals each time, dead lanes included. Now a dead lane's
+parse-derived parts (bars, compactions, the work end, its judging marks) are served from a memo keyed on
+every file they read, its parse is dropped from _parse_cache once cached (the resident-memory lever), and the
+served frame is byte-identical to a rebuilt one: the judging marks are derived once at horizon zero, stamped
+with the value the horizon test compares, and filtered per build on exactly that. The bars encoder reuses the
+strings of entry objects it already encoded.
+
+Synthetic transcript, states and captions under a temp root; a placeholder sid; the lane is dead because the
+liveness snapshot is empty.
+
+--- the per-lane segment memo ---
 A lane's SEGMENT part (its bars, seg_ends, last_t, compaction markers and judging marks) is derived by
 _lane_segments and held per lane by _lane_memo while every input is the previous build's: the _parse
 object, the FrozenStore from load_goals_shared and the _Caps object from _captions (by identity), live,
@@ -13,7 +33,9 @@ _derive_judging as it stood before the split.
 
 Synthetic fixtures only: placeholder UUIDs, invented prompts. This module mints goal stores, so its
 sids are PRIVATE to it (CLAUDE.md, goal-store fixtures); the state root is a fresh temp dir per test
-and is removed with its override journal in tearDown."""
+and is removed with its override journal in tearDown.
+"""
+
 import ast
 import inspect
 import io
@@ -41,6 +63,209 @@ em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 km = load_source("romp_kernel_lanememo", os.path.join(BIN, "romp-kernel"))
 km._limit_hold = lambda sid: None
+
+DEAD_SID = "11111111-2222-3333-4444-555555555555"
+NOW = 1_800_000_000
+T0 = NOW - 3600
+
+
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _rec(kind, t, uuid, parent, text):
+    if kind == "user":
+        return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent, "promptSource": "typed",
+                "message": {"role": "user", "content": text}}
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
+
+
+class DeadLaneMemo(unittest.TestCase):
+    def setUp(self):
+        km._downtime[:] = []
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        cdir = td / "launchdir"; cdir.mkdir()
+        proj = td / "projects"
+        pdir = proj / km.jd.re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
+        pdir.mkdir(parents=True)
+        self.recs = [_rec("user", T0, "u1", None, "run the long benchmark"),
+                     _rec("assistant", T0 + 10, "a1", "u1", "Launched it.")]
+        self.tpath = pdir / (DEAD_SID + ".jsonl")
+        self._write(self.recs)
+        names = td / "names"; names.mkdir()
+        (names / DEAD_SID).write_text("testsess\t%s\t#abcdef\n" % str(cdir))
+        self.saved = (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._tmux_sessions)
+        km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR = names, proj, td / "goals", td / "captions"
+        km.jd.STATE = td
+        km.NAMES = names
+        km._tmux_sessions = lambda: {}                 # NOBODY is live: the lane is a dead one within the window
+        (td / "states").mkdir(); (td / "captions").mkdir(); (td / "goals").mkdir()
+        (td / "goals" / (DEAD_SID + ".json")).write_text(json.dumps({"nodes": {}, "status": {}}))   # the judging marks need a store
+        self.caps = td / "captions" / (DEAD_SID + ".jsonl")
+        km._parse_cache.pop(str(self.tpath), None)
+        km._dead_lane_memo.clear()
+        km._delta_entry_memo.clear()
+
+    def tearDown(self):
+        (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._tmux_sessions) = self.saved
+        km._dead_lane_memo.clear()
+        self.td.cleanup()
+
+    def _write(self, recs):
+        self.tpath.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        os.utime(self.tpath, (NOW - 30, NOW - 30))    # recently touched: a lane within the 12 h window
+
+    def _build(self, now=NOW):
+        return km.build_timeline(now, {}, with_bars=True)
+
+    def _lane(self, tl):
+        return next(s for s in tl["sessions"] if s["id"] == DEAD_SID)
+
+    def test_the_second_build_serves_the_lane_without_a_parse_and_drops_the_parse(self):
+        parses = []
+        real = km._parse
+        km._parse = lambda path, sid, now: (parses.append(path), real(path, sid, now))[1]
+        try:
+            tl1 = self._build()
+            self.assertEqual(parses, [str(self.tpath)], "the first build parses the dead lane once")
+            self.assertNotIn(str(self.tpath), km._parse_cache, "and drops the parse once the lane is cached")
+            self.assertIn(DEAD_SID, km._dead_lane_memo)
+            tl2 = self._build()
+            self.assertEqual(len(parses), 1, "the second build serves the lane: no parse")
+            self.assertEqual(tl1["turns"][DEAD_SID], tl2["turns"][DEAD_SID])
+            self.assertEqual(self._lane(tl1), self._lane(tl2), "a served lane is the rebuilt lane, byte for byte")
+            self.assertEqual([m for m in tl1["judging"] if m["sid"] == DEAD_SID], [m for m in tl2["judging"] if m["sid"] == DEAD_SID])
+            self.assertFalse(any("_h" in m for m in tl2["judging"]), "the horizon stamp never reaches the wire")
+        finally:
+            km._parse = real
+
+    def test_a_moved_transcript_re_derives_the_lane(self):
+        self._build()
+        recs = self.recs + [_rec("user", T0 + 600, "u2", "a1", "and the cap?"),
+                            _rec("assistant", T0 + 610, "a2", "u2", "Two minutes.")]
+        self._write(recs)
+        os.utime(self.tpath, (NOW - 20, NOW - 20))
+        tl = self._build()
+        self.assertEqual(len(tl["turns"][DEAD_SID]), 2, "the new turn is drawn")
+        self.assertEqual(km._dead_lane_memo[DEAD_SID][1]["bars"], tl["turns"][DEAD_SID])
+
+    def test_the_memo_keeps_stamped_marks_and_the_wire_never_sees_the_stamp(self):
+        cap_t = NOW - km.TL_HORIZON + 30
+        self.caps.write_text(json.dumps({"id": "u1", "t": cap_t, "caption": "launched the benchmark",
+                                         "grain": "segment"}) + "\n")
+        tl = self._build(NOW)
+        marks = km._dead_lane_memo[DEAD_SID][1]["marks"]
+        self.assertEqual([(m["judge"], m["_h"]) for m in marks], [("captioner", cap_t)], "derived once, stamped")
+        self.assertFalse(any("_h" in m for m in tl["judging"]), "the stamp never reaches the wire")
+
+    def test_every_keyed_input_re_derives_the_lane_when_it_moves(self):
+        """The key is every file the parse-derived parts read, not the transcript alone (the review of the
+        first batch found a key pinned on one component): touching each one changes the memo's key and the
+        lane is derived again."""
+        td = Path(self.td.name)
+        self._build()
+        key0 = km._dead_lane_memo[DEAD_SID][0]
+        inputs = [td / "states" / (DEAD_SID + ".jsonl"), td / "goals" / (DEAD_SID + ".json"),
+                  td / "overrides" / (DEAD_SID + ".jsonl"), td / "captions" / (DEAD_SID + ".jsonl"),
+                  td / "archive" / (DEAD_SID + ".json"), td / "session-flags.json"]
+        seen = {key0}
+        for i, p in enumerate(inputs):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if p.name == DEAD_SID + ".json" and p.parent.name == "goals":
+                p.write_text(json.dumps({"nodes": {}, "status": {}, "touched": i}))
+            elif p.suffix == ".json":
+                p.write_text(json.dumps({"touched": i}))
+            else:
+                p.write_text("")
+            os.utime(p, (NOW - 10 + i, NOW - 10 + i))
+            self._build()
+            key = km._dead_lane_memo[DEAD_SID][0]
+            self.assertNotIn(key, seen, "%s moved but the key did not" % p.name)
+            seen.add(key)
+        self._build()
+        self.assertEqual(km._dead_lane_memo[DEAD_SID][0], key, "nothing moved: the key stands")
+
+    def test_a_lane_whose_goals_store_cannot_be_read_is_never_cached(self):
+        """A goals FAULT is a store that cannot be read (an OSError; malformed bytes are healed by the loader):
+        the lane renders without goal-derived data, complains, and is derived again on every build rather
+        than served from a memo that would silence the fault."""
+        store = Path(self.td.name) / "goals" / (DEAD_SID + ".json")
+        store.chmod(0)
+        try:
+            self._build()
+            self.assertNotIn(DEAD_SID, km._dead_lane_memo, "a faulted store stays loud on every build, never served stale")
+        finally:
+            store.chmod(0o600)
+        self._build()
+        self.assertIn(DEAD_SID, km._dead_lane_memo, "readable again: cached like any other dead lane")
+
+    def test_a_live_lane_is_not_memoized(self):
+        km._tmux_sessions = lambda: {DEAD_SID: {"state": "waiting", "since": NOW - 100, "model": "", "effort": "",
+                                           "context": None, "compactPct": None, "color": None, "mode": ""}}
+        km.build_timeline(NOW, km._tmux_sessions(), with_bars=True)
+        self.assertNotIn(DEAD_SID, km._dead_lane_memo)
+
+
+class HorizonFilterIsExact(unittest.TestCase):
+    """The cached marks filtered on their stamped compare value are the marks a fresh derivation at that
+    horizon would append, mark for mark: the diary and distiller marks are compared on their EVIDENCE time
+    but emitted at the segment's work END, so a filter on the emitted time would admit a mark the fresh
+    derivation drops (evidence before the horizon, work end after it). Pure functions, synthetic inputs."""
+
+    def _inputs(self):
+        h = 1_700_000_000
+        caps = {"c%d" % i: {"id": "c%d" % i, "t": h - 100 + i * 50, "caption": "cap %d" % i, "grain": "segment"} for i in range(6)}
+        goals = {"nodes": {
+            "g1": {"t": h - 40, "mt": h + 10, "text": "old mint, done after the horizon",
+                   "log": [{"src": "closer", "kind": "done", "ev_t": h - 5, "why": "evidence just before the horizon"}]},
+            "g2": {"t": h + 20, "mt": h + 30, "text": "new mint", "distilledMt": h - 20, "briefedMt": h + 40},
+        }}
+        seg_ends = {h - 5: h + 300, h - 20: h + 400}      # completion marks land at the work END, after the horizon
+        return h, caps, goals, seg_ends
+
+    def test_filtered_stamped_marks_equal_a_fresh_derivation(self):
+        h, caps, goals, seg_ends = self._inputs()
+        for t0 in (h - 1000, h - 10, h, h + 15, h + 35, h + 1000):
+            fresh = []
+            km._derive_judging("s", caps, goals, t0, fresh, seg_ends)
+            stamped = []
+            km._derive_judging("s", caps, goals, 0, stamped, seg_ends, stamp=True)
+            self.assertEqual(km._dead_lane_marks(stamped, t0), fresh, "horizon %+d" % (t0 - h))
+        fresh = []
+        km._derive_judging("s", caps, goals, h, fresh, seg_ends)
+        self.assertFalse(any(m["judge"] == "closer" for m in fresh), "evidence before the horizon: dropped")
+        self.assertTrue(any(m["judge"] == "distiller" and m["kind"] == "brief" for m in fresh))
+
+    def test_the_stamp_is_private(self):
+        h, caps, goals, seg_ends = self._inputs()
+        stamped = []
+        km._derive_judging("s", caps, goals, 0, stamped, seg_ends, stamp=True)
+        self.assertTrue(stamped and all("_h" in m for m in stamped))
+        self.assertFalse(any("_h" in m for m in km._dead_lane_marks(stamped, 0)))
+
+
+class EntryEncodeMemo(unittest.TestCase):
+    def test_an_entry_object_seen_last_split_is_not_encoded_again(self):
+        km._delta_entry_memo.clear()
+        sep = km._DELTA_SEP
+        b1, b2 = {"id": "b1", "start": 1, "end": 2}, {"id": "b2", "start": 3, "end": 4}
+        ents1, _ = km._delta_split("dictlist:id", {"S": [b1, b2]}, memo_key=("bars", "turns"))
+        b3 = {"id": "b3", "start": 5, "end": 6}
+        ents2, _ = km._delta_split("dictlist:id", {"S": [b1, b3]}, memo_key=("bars", "turns"))
+        self.assertIs(ents2["S" + sep + "b1"][1], ents1["S" + sep + "b1"][1], "the same object: the same string, not re-encoded")
+        self.assertEqual(json.loads(ents2["S" + sep + "b3"][1]), b3)
+        self.assertNotIn(id(b2), km._delta_entry_memo[("bars", "turns")], "the memo is rebuilt from THIS split: no growth")
+        b1b = dict(b1)                                   # equal content, a NEW object: encoded afresh (identity, never equality)
+        ents3, _ = km._delta_split("dictlist:id", {"S": [b1b]}, memo_key=("bars", "turns"))
+        self.assertEqual(ents3["S" + sep + "b1"][1], ents1["S" + sep + "b1"][1])
+        self.assertIsNot(ents3["S" + sep + "b1"][1], ents1["S" + sep + "b1"][1])
+
+    def test_the_wire_fill_hands_the_collection_key_down(self):
+        import inspect
+        self.assertIn("_delta_split(kind, value, memo_key=(ftype, name))", inspect.getsource(km._delta_parts))
+
 
 SID = "44444444-5555-6666-7777-888888888801"      # private synthetic sids: this module mints goal stores
 SID2 = "44444444-5555-6666-7777-888888888802"
@@ -134,6 +359,7 @@ class LaneMemoBase(unittest.TestCase):
         jd._discover_cache.clear(); jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         km._parse_cache.clear(); km._dismissed_lanes.clear(); km._BARS_COMPLAINED.clear()
         km._caps_memo.clear(); km._lanes_memo.clear(); _reset(km._lanes_stats)
+        km._dead_lane_memo.clear()                   # upstream's dead-lane memo (2026-09-08): served first for a dead lane
         km._downtime[:] = []
         self.now = int(time.time())
         self.t0 = self.now - 600
@@ -160,7 +386,7 @@ class LaneMemoBase(unittest.TestCase):
         km.Sessions.backend_for = self._saved_backend
         jd._file_key = self._saved_file_key
         jd._SHARED_OFF[0] = False
-        km._lanes_memo.clear()
+        km._lanes_memo.clear(); km._dead_lane_memo.clear()
         jd._rebind_state(self._saved_state)
         jd.PROJECTS = self._saved_proj
         shutil.rmtree(self._td, ignore_errors=True)
@@ -413,10 +639,19 @@ class EveryInputBusts(LaneMemoBase):
     def test_liveness_is_in_the_key(self):
         self.build(tmux=self.tmux(SID))
         tl = self.build(tmux={})                                         # the process ended: a dead lane (12 h window)
-        self.assertEqual(self.outcomes()["miss"], 2)
+        self.assertEqual(self.outcomes()["miss"], 2, "the same parse, another liveness: no hit")
         self.assertFalse(self.lane(tl)["live"])
+        # From here the lane is a DEAD lane with a readable store, and since the 2026-09-09 fold upstream's dead-lane
+        # memo (#1131) takes it: the miss above populated that memo and dropped this memo's entry (the entry keys on
+        # the parse object, which the dead-lane memo lets go of), so the next build is a dead-lane SERVE, counted under
+        # _VIEW_STATS["laneServe"], and this memo is not consulted (before the fold: one more hit here).
+        self.assertIn(SID, km._dead_lane_memo, "the dead build handed the lane to the dead-lane memo")
+        self.assertNotIn(SID, km._lanes_memo, "…and this memo dropped its entry for it, so the parse can go")
+        served = km._VIEW_STATS.get("laneServe", 0)
         self.build(tmux={})
-        self.assertEqual(self.outcomes()["hit"], 1)
+        self.assertEqual(km._VIEW_STATS.get("laneServe", 0), served + 1, "the third build is a dead-lane serve")
+        self.assertEqual(self.outcomes()["hit"], 0, "…not a hit here: a dead lane the dead-lane memo holds skips this memo")
+        self.assertEqual(self.outcomes()["miss"], 2)
 
     def test_an_open_turn_reads_open_only_on_a_live_lane(self):
         self.append_records([uline(self.t0 + 100, "keep going", "u2", "a1"),
@@ -452,14 +687,16 @@ class EveryInputBusts(LaneMemoBase):
             def __getattr__(self, name):
                 return lambda *a, **k: None
         km._sdk = lambda: FakeBe()
-        tl1 = self.build(tmux={})
+        # LIVE lanes (since the 2026-09-09 fold a dead lane is served by upstream's dead-lane memo first, whose key
+        # carries the branch clip itself; this memo's clip key is exercised where the memo serves: live lanes)
+        tl1 = self.build(tmux=self.tmux(SID, PARENT, CHILD))
         self.assertTrue(all(b["start"] > fork_t for b in tl1["turns"][CHILD]), "clipped while the parent is a lane")
         self.assertEqual(self.outcomes()["miss"], 3)
-        self.build(tmux={})
+        self.build(tmux=self.tmux(SID, PARENT, CHILD))
         self.assertEqual(self.outcomes()["hit"], 3)
-        (jd.NAMES / PARENT).unlink()
+        (jd.NAMES / PARENT).unlink()                                     # the parent leaves the build: no name, no row
         jd._discover_cache.clear()
-        tl3 = self.build(tmux={})
+        tl3 = self.build(tmux=self.tmux(SID, CHILD))
         self.assertEqual(self.outcomes()["miss"], 4, "the child's clip moved: one more miss")
         self.assertEqual(self.outcomes()["hit"], 4, "SID's lane still hits")
         self.assertTrue(any(b["start"] < fork_t for b in tl3["turns"][CHILD]), "the whole story, the parent gone")
