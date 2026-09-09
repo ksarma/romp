@@ -1,7 +1,7 @@
 ---
 title: Chat page: staged comments go as one message, and the strip shows a few and scrolls beyond
 status: candidate
-where: ui/webview/staged-messages.ts (quoteReplyBody moved in, stagedBatchBody), ui/webview/render.ts (flushStaged folds the run and the typed message, the strip .staged-list and fold caret), ui/webview/styles.css (the .staged-list cap and caret rules), docs/guide.md (one sentence); tests ui/webview/staged-messages.test.ts, ui/webview/staged-list-cap.test.ts, and the pins in composer-citation, send-scroll-preserve, rewind-edit
+where: ui/webview/staged-messages.ts (quoteReplyBody moved in, stagedBatchBody, stagedPosts with isSlashCommand), ui/webview/render.ts (flushStaged routes the posts, the strip .staged-list with its per-tab kept scroll, reveal-on-stage and fold caret), ui/webview/styles.css (the .staged-list cap, overflow-x and open-label wrap, caret rules), docs/guide.md (one new sentence on the list, and the Enter sentence says as one message); tests ui/webview/staged-messages.test.ts, ui/webview/staged-list-cap.test.ts, and the pins in composer-citation, send-scroll-preserve, rewind-edit, optimistic-send
 added: 2026-09-09
 pr:
 tier: feature

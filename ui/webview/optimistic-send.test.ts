@@ -231,11 +231,11 @@ test("the echo renders dragged-image THUMBNAILS — composer → provisional →
   // bytes and the reconcile swap never re-fetches or flickers.
   assert.match(RENDER, /if \(t\.imgPaths && t\.imgPaths\.length\) \{\s*\n\s*for \(const ip of t\.imgPaths\) bubble\.appendChild\(userImage\(\{ src: "path:" \+ ip, path: ip \}, true\)\);/);
   // the paths ride the send at every register site (deliver, staged flush, the provisional hold); deliver
-  // hands them to flushStaged since the one-message fold (2026-09-08), which passes them to routeUserMessage
-  // on both of its typed paths (the folded batch and the nothing-staged fallback)
+  // hands them to flushStaged since the one-message fold (2026-09-08), which routes every post stagedPosts
+  // returns with the post's own imgPaths: the typed message's ride the run it closes, or the typed post
+  // itself when it goes alone (staged-messages.test.ts executes both)
   assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
-  assert.match(RENDER, /routeUserMessage\(sid, stagedBatchBody\(rest, typed\), goal \? \[goal\] : undefined, typed\?\.imgPaths\);/);
-  assert.match(RENDER, /routeUserMessage\(sid, typed\.text, typed\.cites, typed\.imgPaths\);/);
+  assert.match(RENDER, /for \(const p of stagedPosts\(batch, typed\)\) routeUserMessage\(sid, p\.text, p\.cites as Citation\[\] \| undefined, p\.imgPaths\);/);
   // …and ONLY image-kind attachments mint thumbs — a dropped .csv stays the path text it always was
   assert.doesNotMatch(RENDER, /registerOptimistic\(sid, text, attached\)/);
 });

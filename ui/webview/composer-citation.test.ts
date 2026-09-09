@@ -61,7 +61,9 @@ test("sending with a GOAL citation routes as an askFollowUp (reopen) and consume
   // (2026-08-25) ride as the batch's last item, and with nothing staged route exactly as before
   assert.match(RENDER, /const cites = composerCitations\.get\(activeId\);/);
   assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
-  assert.match(RENDER, /\} else if \(typed\) \{\s*\n\s*routeUserMessage\(sid, typed\.text, typed\.cites, typed\.imgPaths\);/);
+  // (with nothing staged, stagedPosts returns the typed message as itself, cites and images intact:
+  // staged-messages.test.ts executes that; here the one call site that routes each post)
+  assert.match(RENDER, /for \(const p of stagedPosts\(batch, typed\)\) routeUserMessage\(sid, p\.text, p\.cites as Citation\[\] \| undefined, p\.imgPaths\);/);
   assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /else \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /if \(cites\) \{ composerCitations\.delete\(activeId\); renderComposerChips\(activeId\); \}/);
@@ -251,7 +253,7 @@ test("quote chips send a plain message wrapped by quoteReplyBody — never askFo
   const STAGED_MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "staged-messages.ts"), "utf8");
   assert.match(STAGED_MOD, /export function quoteReplyBody\(cites: \{ quote\?: string; src\?: string \| null \}\[\], text: string\): string \{/);
   assert.match(STAGED_MOD, /return quoted && text \? quoted \+ "\\n\\n" \+ text : quoted \|\| text;/);
-  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedBatchBody, type StagedMsg \} from "\.\/staged-messages";/);
+  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedPosts \} from "\.\/staged-messages";/);
   assert.doesNotMatch(RENDER, /^function quoteReplyBody\(/m, "one definition, in the module");
   // the chip's audit preview shows the SAME composed body — the whole outgoing message, every stacked
   // quote, whichever chip was clicked — client-side (no /followup-preview fetch)

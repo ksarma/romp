@@ -46,7 +46,7 @@ import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sect
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
-import { StagedStack, quoteReplyBody, stagedBatchBody, type StagedMsg } from "./staged-messages";
+import { StagedStack, quoteReplyBody, stagedPosts } from "./staged-messages";
 import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
@@ -14461,6 +14461,11 @@ const stagedOpen = new Set<string>();   // sid:index of staged chips expanded to
 // label click, so a fold is the user's and a reload shows the list again. The head keeps the count and
 // Send now either way.
 const stagedFolded = new Set<string>();
+// The list's kept scroll offset, PER TAB (review round 1, 2026-09-09): the strip holds one tab's list at a
+// time, so the offset is stored under the sid that built the list the strip holds (strip.dataset.sid) and
+// reused only for that sid. Read off whatever list was in the strip, it carried the leaving tab's offset
+// onto the entering tab's list on a switch and hid that tab's first items.
+const stagedScroll = new Map<string, number>();
 try { stagedMsgs.restore(((vscodeApi?.getState?.() || {}) as any).staged); } catch { /* ignore */ }
 
 // One routing owner for a user message (deliver speaks it through flushStaged, which folds the staged
@@ -14492,38 +14497,38 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
 }
 
 /** Release the tab's staged stack as ONE message (the user 2026-09-08, who wanted staged comments to
- *  land as one message, not a series): every staged item in stage order and then the typed message, when
- *  the send carries one, folded into a single body by stagedBatchBody, so one post makes one bubble and
- *  one turn. The one exception is a staged item citing a GOAL: the kernel wraps one goal per message
- *  (askFollowUp), so each of those still goes as its own follow-up, ahead of the batch; a typed goal
- *  follow-up carries the batch inside its text and the goal wraps the lot. With nothing staged the typed
- *  message routes exactly as before. Deliver's guards (host down, provisional) run before this in the
- *  send path; Send now re-checks reachability itself. Returns how many staged items went. */
+ *  land as one message, not a series): stagedPosts (staged-messages.ts, executed by its test) folds the
+ *  staged items in stage order and then the typed message, when the send carries one, into a single body,
+ *  so one post makes one bubble and one turn. Two kinds of item still go on their own, at their place in
+ *  stage order: a staged item citing a GOAL (the kernel wraps one goal per message, askFollowUp; a typed
+ *  goal follow-up carries the run inside its text and the goal wraps the lot) and a SLASH COMMAND, staged
+ *  or typed (the kernel fires a command only at the head of its own text; folded in, a typed /clear was
+ *  prose the agent read and a staged /compact took the comments after it as its argument: review round 1,
+ *  2026-09-09). With nothing staged the typed message routes exactly as before. Deliver's guards (host
+ *  down, provisional) run before this in the send path; Send now re-checks reachability itself. Returns
+ *  how many staged items went. */
 function flushStaged(sid: string, typed?: { text: string; cites?: Citation[]; imgPaths?: string[] }): number {
   const batch = stagedMsgs.takeAll(sid);
-  const citesGoal = (s: StagedMsg) => (s.cites as Citation[]).some((c) => c && c.itemId);
-  for (const s of batch) if (citesGoal(s)) routeUserMessage(sid, s.text, s.cites as Citation[]);
-  const rest = batch.filter((s) => !citesGoal(s));
-  if (rest.length) {
-    const goal = typed?.cites?.find((c) => c.itemId);
-    routeUserMessage(sid, stagedBatchBody(rest, typed), goal ? [goal] : undefined, typed?.imgPaths);
-  } else if (typed) {
-    routeUserMessage(sid, typed.text, typed.cites, typed.imgPaths);
-  }
+  for (const p of stagedPosts(batch, typed)) routeUserMessage(sid, p.text, p.cites as Citation[] | undefined, p.imgPaths);
   if (batch.length) { persistDrafts(); renderStagedStrip(sid); }
   return batch.length;
 }
 
-function renderStagedStrip(id: string | null): void {
+function renderStagedStrip(id: string | null, opts?: { reveal?: "last" }): void {
   const strip = document.getElementById("composer-staged");
   if (!strip) return;
   // the list's scroll position survives the rebuild: expanding or discarding an item re-renders the
-  // strip, and a fresh list would start at the top, away from the item just clicked
+  // strip, and a fresh list would start at the top, away from the item just clicked. The offset is kept
+  // under the tab that built the list it is read from (stagedScroll), so a switch never carries one tab's
+  // place onto another's list and a tab comes back to its own; an emptied list forgets it. The STAGE path
+  // passes reveal: "last" instead and the new item scrolls into view: with the kept offset, every item
+  // staged past the fourth landed below the list's edge, out of sight (review round 1, 2026-09-09).
   const prevList = strip.querySelector(".staged-list") as HTMLElement | null;
-  const keepScroll = prevList ? prevList.scrollTop : 0;
+  if (prevList && strip.dataset.sid) stagedScroll.set(strip.dataset.sid, prevList.scrollTop);
   strip.replaceChildren();
   const list = id ? stagedMsgs.list(id) : [];
-  if (!id || !list.length) { strip.style.display = "none"; return; }
+  if (!id || !list.length) { if (id) stagedScroll.delete(id); delete strip.dataset.sid; strip.style.display = "none"; return; }
+  strip.dataset.sid = id;
   strip.style.display = "flex";
   const folded = stagedFolded.has(id);
   const head = el("div", "staged-head");
@@ -14535,11 +14540,16 @@ function renderStagedStrip(id: string | null): void {
   const lbl = el("span", "staged-lbl");
   lbl.textContent = list.length + " staged — sends with your next message";
   lbl.title = "⌘⏎ (or Ctrl+⏎) stages what you've typed, quote chips and all, without sending. "
-    + "A plain send releases them as one message, in order, with your new message last; Send now releases them alone.";
+    + "A plain send releases them as one message, in order, with your new message last; a card follow-up or a slash command goes on its own, in its place. "
+    + "Send now releases them alone.";
   const toggleFold = (ev: Event) => {
     ev.stopPropagation();
     if (stagedFolded.has(id)) stagedFolded.delete(id); else stagedFolded.add(id);
+    // the rebuild destroys the caret that had focus, so the keyboard user stays on the new one (dropped
+    // to body, the next Enter was the bare-area Enter that focuses the composer; review round 1, 2026-09-09)
+    const had = document.activeElement === car;
     renderStagedStrip(id);
+    if (had) (strip.querySelector(".staged-fold") as HTMLElement | null)?.focus();
   };
   car.addEventListener("click", toggleFold);
   lbl.addEventListener("click", toggleFold);
@@ -14612,7 +14622,7 @@ function renderStagedStrip(id: string | null): void {
     box.appendChild(chip);
   });
   strip.appendChild(box);
-  box.scrollTop = keepScroll;
+  box.scrollTop = opts?.reveal === "last" ? box.scrollHeight : (stagedScroll.get(id) || 0);
 }
 
 function beginComposerEdit(sid: string, uuid: string, orig: string): void {
@@ -16556,7 +16566,7 @@ function setupComposer() {
     drafts.delete(activeId); draftStartedAt.delete(activeId);
     clearBox();
     persistDrafts();
-    renderStagedStrip(activeId);
+    renderStagedStrip(activeId, { reveal: "last" });   // the new item scrolls into view (review round 1, 2026-09-09)
   };
   const sendComposer = (opts?: { pastShipGate?: boolean }) => {
     const typed = ta.value.trim();

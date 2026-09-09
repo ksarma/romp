@@ -3,7 +3,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StagedStack, quoteReplyBody, stagedBatchBody } from "./staged-messages";
+import { StagedStack, quoteReplyBody, stagedBatchBody, stagedPosts, isSlashCommand } from "./staged-messages";
 
 test("stage order is release order, and a flush is one-shot", () => {
   const s = new StagedStack();
@@ -117,4 +117,92 @@ test("stagedBatchBody: an empty stage adds nothing (no stray separators), and no
   assert.equal(stagedBatchBody([{ text: "", cites: [] }], { text: "typed", cites: [] }), "typed", "an item with nothing to say is skipped");
   assert.equal(stagedBatchBody([{ text: "", cites: [Q1] }]), quoteReplyBody([Q1], ""), "context only stages as its quote block");
   assert.doesNotMatch(stagedBatchBody([{ text: "a", cites: [] }, { text: "b", cites: [] }]), /^\n|\n$|\n\n\n/, "no leading, trailing or tripled blank lines");
+});
+
+// ── the release's post list (review round 1, 2026-09-09): a goal follow-up and a slash command each go on
+// their own, at their place in stage order, and the items between them fold. Executed: these posts ARE what
+// render.ts routes, one routeUserMessage call each.
+
+const G = { itemId: "11111111-2222-3333-4444-555555555555:g1", title: "t" };
+const J = (v: unknown) => JSON.parse(JSON.stringify(v));   // drops undefined-valued keys, so shapes compare by content
+
+test("isSlashCommand mirrors the kernel's shape test: a slash, a name, then whitespace or the end, at the head of the trimmed text", () => {
+  for (const t of ["/clear", "/clear ", " /compact", "/model opus", "/fast on", "/effort high\nmore lines", "/mcp:x", "/9lives", "/re-run now", "/clear\nfile.png"])
+    assert.ok(isSlashCommand(t), JSON.stringify(t));
+  for (const t of ["", "a /clear", "/", "/ clear", "//", "/Users/x", "/a/b", "/-x", "/clear,now", "not a command", "see /clear"])
+    assert.ok(!isSlashCommand(t), JSON.stringify(t));
+});
+
+test("stagedPosts: the plain shapes are one post (Send now) or one post with the typed message last (a plain send); nothing staged posts the typed message as itself", () => {
+  const items = [{ text: "rename it", cites: [Q1] }, { text: "and a bare note", cites: [] }];
+  assert.deepEqual(J(stagedPosts(items)), [{ text: stagedBatchBody(items) }]);
+  const typed = { text: "that is all", cites: [Q2], imgPaths: ["a.png"] };
+  assert.deepEqual(J(stagedPosts(items, typed)), [{ text: stagedBatchBody(items, typed), imgPaths: ["a.png"] }], "the typed images ride the run they close");
+  // a typed goal cite wraps the run: the one post carries exactly that cite and the goal wraps the lot
+  assert.deepEqual(J(stagedPosts(items, { text: "follow-up words", cites: [G] })), [{ text: stagedBatchBody(items) + "\n\nfollow-up words", cites: [G] }]);
+  // nothing staged: the typed message, cites and images intact, exactly as a send with no stack
+  assert.deepEqual(J(stagedPosts([], typed)), [typed]);
+  assert.deepEqual(J(stagedPosts([], { text: "/clear" })), [{ text: "/clear" }], "a typed command with nothing staged is the typed message");
+  assert.deepEqual(stagedPosts([]), []);
+});
+
+test("stagedPosts: a typed slash command goes last on its own, never as the tail of the folded body (buried there, a /clear was prose the agent read)", () => {
+  const items = [{ text: "rename it", cites: [Q1] }, { text: "why two?", cites: [Q2] }];
+  for (const cmd of ["/clear", "/model opus", "/compact", "/fast on", "/clear\nshot.png"]) {
+    const posts = stagedPosts(items, { text: cmd, cites: [], imgPaths: ["shot.png"] });
+    assert.equal(posts.length, 2, cmd);
+    assert.equal(posts[0].text, stagedBatchBody(items), "the run folds without the command, and without the typed images");
+    assert.equal(posts[0].imgPaths, undefined);
+    assert.deepEqual(J(posts[1]), { text: cmd, cites: [], imgPaths: ["shot.png"] }, "the command is the whole text of its own post, its images with it");
+  }
+  // a typed command with a goal chip still goes alone, the chip on it (the pre-fold shape)
+  assert.deepEqual(J(stagedPosts(items, { text: "/clear", cites: [G] })), [{ text: stagedBatchBody(items) }, { text: "/clear", cites: [G] }]);
+});
+
+test("stagedPosts: a staged slash command goes alone at its place; a leading one never heads a folded body (the comments after it were its argument)", () => {
+  const A = { text: "rename it", cites: [Q1] }, B = { text: "why two?", cites: [Q2] }, C = { text: "/compact", cites: [] };
+  assert.deepEqual(stagedPosts([C, A, B], { text: "done", cites: [] }).map((p) => p.text),
+    ["/compact", stagedBatchBody([A, B], { text: "done" })]);
+  assert.deepEqual(stagedPosts([A, C, B]).map((p) => p.text),
+    [stagedBatchBody([A]), "/compact", stagedBatchBody([B])]);
+  assert.deepEqual(stagedPosts([A, B, C], { text: "done", cites: [] }).map((p) => p.text),
+    [stagedBatchBody([A, B]), "/compact", "done"], "a run closed by a command: the typed message follows on its own");
+  // the command goes exactly as it went before the fold: its own cites with it
+  const Cq = { text: "/compact", cites: [Q1] };
+  assert.deepEqual(J(stagedPosts([Cq, A])), [{ text: "/compact", cites: [Q1] }, { text: stagedBatchBody([A]) }]);
+});
+
+test("stagedPosts: a goal follow-up goes alone at its place in stage order and the runs around it fold (before, it went ahead of everything staged)", () => {
+  const A = { text: "rename it", cites: [Q1] }, Gm = { text: "on the card", cites: [G] }, B = { text: "why two?", cites: [Q2] };
+  const typed = { text: "done", cites: [Q2], imgPaths: ["a.png"] };
+  assert.deepEqual(J(stagedPosts([A, Gm, B], typed)), [
+    { text: stagedBatchBody([A]) },
+    { text: "on the card", cites: [G] },
+    { text: stagedBatchBody([B], typed), imgPaths: ["a.png"] },
+  ]);
+  // a goal item last: the typed message goes on its own after it, its own cites with it
+  assert.deepEqual(J(stagedPosts([A, Gm], { text: "done", cites: [G] })),
+    [{ text: stagedBatchBody([A]) }, { text: "on the card", cites: [G] }, { text: "done", cites: [G] }]);
+  // a goal-only stage with nothing typed: the follow-up alone, no empty post
+  assert.deepEqual(J(stagedPosts([Gm])), [{ text: "on the card", cites: [G] }]);
+});
+
+test("stagedPosts invariants over every shape: stage order across the posts, each item once, and no folded body ever carries a command section", () => {
+  const cmd = { text: "/clear", cites: [] }, note = { text: "a note", cites: [Q1] }, bare = { text: "bare words", cites: [] }, goal = { text: "on the card", cites: [G] };
+  const stages = [[cmd], [note, cmd], [cmd, note], [note, cmd, bare], [goal, cmd], [cmd, goal, note], [note, goal, bare, cmd, note], [note, bare]];
+  const typeds = [undefined, { text: "/model x", cites: [] }, { text: "typed words", cites: [] }, { text: "typed words", cites: [G] }];
+  for (const items of stages) for (const typed of typeds) {
+    const posts = stagedPosts(items, typed);
+    const all = posts.map((p) => p.text).join("\n\n");
+    let at = -1;
+    for (const it of typed ? [...items, typed] : items) {
+      const i = all.indexOf(it.text, at + 1);
+      assert.ok(i > at, "in stage order, once: " + it.text + " in " + JSON.stringify(all));
+      at = i;
+    }
+    for (const p of posts) {
+      if (isSlashCommand(p.text)) { assert.equal(p.text.split("\n\n").length, 1, "a command is the whole post"); continue; }
+      for (const s of p.text.split("\n\n")) assert.ok(!isSlashCommand(s), "no command inside a folded body: " + JSON.stringify(p.text));
+    }
+  }
 });

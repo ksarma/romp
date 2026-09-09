@@ -3,8 +3,11 @@
 // in their own list under the head, about four items tall, scrolling beyond; the head with the count and
 // Send now stays outside the scroll; a caret folds the strip to the head line. And the run goes out as
 // ONE message (the same user, who wanted staged comments to land as one message, not a series):
-// flushStaged folds the staged items and the typed message into one body and routes it once. No jsdom
-// for the chat renderer, so the DOM and CSS are pinned at the source; the body itself is executed in
+// flushStaged routes the posts stagedPosts folds the staged items and the typed message into. Review round
+// 1 (2026-09-09): staging reveals the new item, the kept scroll offset is per tab, the caret keeps focus
+// across the rebuild, an expanded long token wraps instead of scrolling the list sideways, and a slash
+// command or a goal follow-up goes on its own at its place in stage order. No jsdom for the chat
+// renderer, so the DOM and CSS are pinned at the source; the post list itself is executed in
 // staged-messages.test.ts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -20,11 +23,15 @@ const LIST = (CSS.match(/\.staged-list \{[^}]*\}/) || [""])[0];
 test("the staged items live in .staged-list, capped at about four items (209px) with its own scroll", () => {
   assert.match(LIST, /max-height: 209px;/, "four items of 50px (a quote pill and a comment row each) plus three 3px gaps");
   assert.match(LIST, /overflow-y: auto;/, "the scroll is the list's own");
+  assert.match(LIST, /overflow-x: hidden;/, "never sideways: the pane's rule for every scroll container (body overflow-x hidden no longer reaches inside the list)");
   assert.match(LIST, /overscroll-behavior: contain;/, "a wheel at the end never scrolls the page");
   assert.match(LIST, /display: flex; flex-direction: column; gap: 3px;/, "the chips keep the strip's column and gap");
-  // the cap is on the LIST, never on the strip or the head: the head must stay visible above the scroll
-  assert.doesNotMatch(CSS, /#composer-staged \{[^}]*max-height/);
-  assert.doesNotMatch(CSS, /\.staged-head \{[^}]*max-height/);
+  // the cap is on the LIST, never on the strip or the head: the head must stay visible above the scroll.
+  // Any rule whose selector list names the strip or the head, the shared width rule included ([^{}]*
+  // spans a selector list, not a rule boundary); a descendant rule under the strip id would trip it too,
+  // so nest the list under the id only with the pin narrowed, never loosened
+  assert.doesNotMatch(CSS, /#composer-staged[^{}]*\{[^}]*max-height/);
+  assert.doesNotMatch(CSS, /\.staged-head[^{}]*\{[^}]*max-height/);
   // the arithmetic's inputs, so a geometry change here fails loudly instead of quietly showing three or five
   assert.match(CSS, /\.staged-chip \{[^}]*border: 1px dashed[^}]*padding: 2px 6px; font-size: 12px;/);
   assert.match(CSS, /\.staged-chip \{[^}]*gap: 2px;/);
@@ -40,15 +47,29 @@ test("the head (count + Send now) is appended to the strip, the chips to the lis
   assert.doesNotMatch(STRIP, /strip\.appendChild\(chip\)/, "no chip lands outside the scrolling list");
 });
 
-test("the list's scroll position survives the strip rebuild (expand, collapse, discard all re-render)", () => {
-  // read BEFORE replaceChildren, written back after the new list is in the DOM (a detached node has no layout)
-  assert.match(STRIP, /const prevList = strip\.querySelector\("\.staged-list"\) as HTMLElement \| null;\s*\n\s*const keepScroll = prevList \? prevList\.scrollTop : 0;\s*\n\s*strip\.replaceChildren\(\);/);
-  assert.match(STRIP, /strip\.appendChild\(box\);\s*\n\s*box\.scrollTop = keepScroll;/);
+test("staging reveals the new item; expand, collapse, discard and the fold keep the list's place, kept per tab", () => {
+  // the STAGE path is the one caller with the reveal intent (the new item is the event that justifies the
+  // move); with the kept offset, every item staged past the fourth landed below the list's edge, unseen
+  assert.match(STRIP, /^id: string \| null, opts\?: \{ reveal\?: "last" \}\): void \{/);
+  assert.match(RENDER, /stagedMsgs\.push\(activeId, \{ text: typed, cites: \(composerCitations\.get\(activeId\) \|\| \[\]\)\.slice\(\) \}\);[\s\S]*?renderStagedStrip\(activeId, \{ reveal: "last" \}\);/);
+  assert.equal((RENDER.match(/renderStagedStrip\(\w+, \{ reveal/g) || []).length, 1, "only the stage path reveals; every other rebuild keeps the place");
+  // written after the new list is in the DOM (a detached node has no layout); the reveal clamps to the end
+  assert.match(STRIP, /strip\.appendChild\(box\);\s*\n\s*box\.scrollTop = opts\?\.reveal === "last" \? box\.scrollHeight : \(stagedScroll\.get\(id\) \|\| 0\);/);
+  // the kept offset is PER TAB: read off the list the strip holds BEFORE replaceChildren and stored under
+  // the sid that built it (strip.dataset.sid), so a switch never writes the leaving tab's offset onto the
+  // entering tab's list; an emptied list forgets its place
+  assert.match(RENDER, /const stagedScroll = new Map<string, number>\(\);/);
+  assert.match(STRIP, /const prevList = strip\.querySelector\("\.staged-list"\) as HTMLElement \| null;\s*\n\s*if \(prevList && strip\.dataset\.sid\) stagedScroll\.set\(strip\.dataset\.sid, prevList\.scrollTop\);\s*\n\s*strip\.replaceChildren\(\);/);
+  assert.match(STRIP, /if \(!id \|\| !list\.length\) \{ if \(id\) stagedScroll\.delete\(id\); delete strip\.dataset\.sid; strip\.style\.display = "none"; return; \}\s*\n\s*strip\.dataset\.sid = id;/);
+  assert.equal((STRIP.match(/prevList\.scrollTop/g) || []).length, 1, "the previous list's offset is read once, into the map, never straight onto the new list");
 });
 
 test("the cap breaks nothing the items do: expand keeps its keyed fold, the x keeps its stopPropagation, and there is no drag to break", () => {
   assert.match(STRIP, /const open = stagedOpen\.has\(id \+ ":" \+ i\);\s*\n\s*if \(open\) chip\.classList\.add\("open"\);/);
-  assert.match(CSS, /\.staged-chip\.open \.staged-row \.composer-chip-label \{ white-space: pre-wrap; overflow: visible; \}/, "an expanded item grows (inside the scroll)");
+  // an expanded item grows inside the scroll, and a long unbroken token in it (a digest, a query string)
+  // wraps instead of widening the list: the list's overflow-x is hidden, so unwrapped it was unreadable
+  assert.match(CSS, /\.staged-chip\.open \.staged-row \.composer-chip-label \{ white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; \}/);
+  assert.match(CSS, /\.staged-cite\.open \.composer-chip-label \{ white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; \}/);
   assert.doesNotMatch(LIST, /:has\(/, "no cap lift: the expanded item scrolls inside the list");
   assert.match(STRIP, /x\.addEventListener\("click", \(ev\) => \{ ev\.stopPropagation\(\); stagedMsgs\.removeAt\(id, i\);/);
   assert.doesNotMatch(STRIP, /draggable|dragstart|dragover|drop"/, "the staged items have no drag and drop");
@@ -62,25 +83,27 @@ test("the fold is the user's: a caret button (keyboard-reachable) and the label 
   assert.match(STRIP, /if \(stagedFolded\.has\(id\)\) stagedFolded\.delete\(id\); else stagedFolded\.add\(id\);/);
   assert.match(STRIP, /car\.addEventListener\("click", toggleFold\);\s*\n\s*lbl\.addEventListener\("click", toggleFold\);/);
   // folded: the head line alone, the count still on it (the label is built before the return)
-  assert.match(STRIP, /lbl\.textContent = list\.length \+ " staged — sends with your next message";[\s\S]*?strip\.appendChild\(head\);\s*\n\s*if \(folded\) return;/);
+  assert.match(STRIP, /lbl\.textContent = list\.length \+ " staged [^"]*sends with your next message";[\s\S]*?strip\.appendChild\(head\);\s*\n\s*if \(folded\) return;/);
   // the renderer never folds or unfolds on its own: the two writers above are the only ones in the file
   assert.equal((RENDER.match(/stagedFolded\.(add|delete|clear)\(/g) || []).length, 2);
+  // the rebuild destroys the caret that had focus; the keyboard user stays on the new one (Enter or Space
+  // on the caret, then Enter again, folded and unfolded; dropped to body it focused the composer instead)
+  assert.match(STRIP, /const had = document\.activeElement === car;\s*\n\s*renderStagedStrip\(id\);\s*\n\s*if \(had\) \(strip\.querySelector\("\.staged-fold"\) as HTMLElement \| null\)\?\.focus\(\);/);
   // Send now's click never reaches the fold toggle (it is a sibling, not a child, of the label)
   assert.match(STRIP, /head\.append\(car, lbl, go\);/);
   assert.match(CSS, /\.staged-head \.staged-fold \{[^}]*cursor: pointer;/);
   assert.match(CSS, /\.staged-head \.staged-lbl \{ cursor: pointer; \}/);
 });
 
-test("the staged run and the typed message go as ONE message: flushStaged folds them and routes once (the user 2026-09-08)", () => {
-  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedBatchBody, type StagedMsg \} from "\.\/staged-messages";/);
-  // the non-goal items fold into one body with the typed message last, ONE routeUserMessage call
-  assert.match(FLUSH, /const rest = batch\.filter\(\(s\) => !citesGoal\(s\)\);/);
-  assert.match(FLUSH, /if \(rest\.length\) \{\s*\n\s*const goal = typed\?\.cites\?\.find\(\(c\) => c\.itemId\);\s*\n\s*routeUserMessage\(sid, stagedBatchBody\(rest, typed\), goal \? \[goal\] : undefined, typed\?\.imgPaths\);/);
-  // nothing staged: the typed message routes exactly as before (cites and images intact)
-  assert.match(FLUSH, /\} else if \(typed\) \{\s*\n\s*routeUserMessage\(sid, typed\.text, typed\.cites, typed\.imgPaths\);/);
-  // the kernel wraps ONE goal per message: a staged goal follow-up keeps its own askFollowUp, ahead of the batch
-  assert.match(FLUSH, /for \(const s of batch\) if \(citesGoal\(s\)\) routeUserMessage\(sid, s\.text, s\.cites as Citation\[\]\);/);
-  assert.equal((FLUSH.match(/routeUserMessage\(/g) || []).length, 3, "goal items, the folded batch, the bare typed fallback: no other send");
+test("the staged run and the typed message go as ONE message: flushStaged routes the posts stagedPosts folds them into (the user 2026-09-08)", () => {
+  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedPosts \} from "\.\/staged-messages";/);
+  // ONE routing call, once per post. The post list is the module's and executed in staged-messages.test.ts:
+  // the fold, and the two kinds of item that go alone at their place in stage order (a goal follow-up, the
+  // kernel wrapping one goal per message; a slash command, which the kernel fires only at the head of its
+  // own text, so folded in it was prose or took the sections after it as its argument)
+  assert.match(FLUSH, /for \(const p of stagedPosts\(batch, typed\)\) routeUserMessage\(sid, p\.text, p\.cites as Citation\[\] \| undefined, p\.imgPaths\);/);
+  assert.equal((FLUSH.match(/routeUserMessage\(/g) || []).length, 1, "no send outside the post list");
+  assert.doesNotMatch(FLUSH, /stagedBatchBody|citesGoal|isSlashCommand/, "the fold and its exceptions are decided in the module, not re-derived here");
   // the flush is one-shot: the stack is taken before anything routes
   assert.match(FLUSH, /^sid: string, typed\?: \{ text: string; cites\?: Citation\[\]; imgPaths\?: string\[\] \}\): number \{\s*\n\s*const batch = stagedMsgs\.takeAll\(sid\);/);
 });
@@ -94,7 +117,8 @@ test("both send paths use the fold: deliver hands the typed message to flushStag
   // Send now (the strip's button) and the empty-box go release the stack alone
   assert.match(STRIP, /go\.addEventListener\("click", \(\) => \{[\s\S]*?flushStaged\(id\);/);
   assert.match(RENDER, /if \(!typed && !\(composerFiles\.get\(activeId\) \|\| \[\]\)\.length && stagedMsgs\.count\(activeId\)\) \{[\s\S]*?flushStaged\(activeId\);\s*\n\s*return;/);
-  // the head's count and its tooltip say what happens
-  assert.match(STRIP, /lbl\.textContent = list\.length \+ " staged — sends with your next message";/);
-  assert.match(STRIP, /A plain send releases them as one message, in order, with your new message last; Send now releases them alone\./);
+  // the head's count and its tooltip say what happens, the two exceptions included
+  assert.match(STRIP, /lbl\.textContent = list\.length \+ " staged [^"]*sends with your next message";/);
+  assert.match(STRIP, /A plain send releases them as one message, in order, with your new message last; a card follow-up or a slash command goes on its own, in its place\. "/);
+  assert.match(STRIP, /\+ "Send now releases them alone\."/);
 });

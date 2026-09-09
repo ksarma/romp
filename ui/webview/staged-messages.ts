@@ -1,14 +1,14 @@
 // STAGED messages (the user 2026-08-15): compose against a highlight, hold it, keep reading — then
 // release the whole run together. ⌘/Ctrl+⏎ stages the composer's text WITH its citation chips; a
-// plain send flushes the stack in stage order with the typed message last; the strip's Send now
+// plain send folds the stack, in stage order, into one message with the typed message last; Send now
 // releases the stack alone. Deliberately NOT "queued": queued is romp's injection-side wait (sent,
 // pending injection into the session); staged is user-side — not sent at all, just held where it
 // was written so each message keeps the context it was written against.
 //
 // This is the PURE stack — per-tab isolation, order, flush-clears, discard, persistence round-trip —
-// and the outgoing BODY (quoteReplyBody, stagedBatchBody), so staged-messages.test.ts EXECUTES the
-// rules instead of regexing render.ts (the repo's extract-for-execution idiom). The DOM strip and the
-// send routing live in render.ts.
+// the outgoing BODY (quoteReplyBody, stagedBatchBody) and the release's post list (stagedPosts), so
+// staged-messages.test.ts EXECUTES the rules instead of regexing render.ts (the repo's
+// extract-for-execution idiom). The DOM strip and the send routing live in render.ts.
 
 export interface StagedMsg { text: string; cites: unknown[] }
 
@@ -43,6 +43,49 @@ export function stagedBatchBody(items: readonly StagedMsg[], typed?: { text: str
     if (s) parts.push(s);
   }
   return parts.join("\n\n");
+}
+
+/** What one send posts: the words, the citation chips they ride with (a goal chip makes the post a
+ *  follow-up on that card, quote chips wrap client-side) and the image paths the echo thumbnails. The typed
+ *  message a release carries has this shape, and so does each message stagedPosts returns. */
+export interface Post { text: string; cites?: unknown[]; imgPaths?: string[] }
+
+// a goal citation names the card the words follow up on; the kernel wraps one goal per message
+const isGoalCite = (c: unknown): boolean =>
+  !!c && typeof (c as { itemId?: unknown }).itemId === "string" && !!(c as { itemId?: string }).itemId;
+
+/** The kernel's own shape test for a slash command, mirrored (kernel _SLASH_CMD_RE: a slash, a name, then
+ *  whitespace or the end, at the head of the trimmed text). Shape-matched, not checked against a command
+ *  list, as there: the CLI owns what executes, this only decides that the text must reach it alone. */
+const SLASH_COMMAND_RE = /^\/[A-Za-z0-9][\w:-]*(\s|$)/;
+export function isSlashCommand(text: string): boolean { return SLASH_COMMAND_RE.test((text || "").trim()); }
+
+/** The messages a release posts, in order (render.ts routes each through routeUserMessage). The rule is
+ *  ONE message for the run (the user 2026-09-08), with two kinds of staged item that go on their own, at
+ *  their place in stage order, so nothing arrives out of the order it was staged in: a GOAL follow-up (the
+ *  kernel wraps one goal per message, askFollowUp) and a SLASH COMMAND (the kernel fires a command only at
+ *  the head of its own text: folded after a section it is prose the agent reads, folded ahead of one it
+ *  takes the sections after it as its argument; review round 1, 2026-09-09). Each goes exactly as it went
+ *  before the fold, its own cites with it. The items between them fold into one body. The typed message
+ *  closes the last run (a typed goal cite wraps that run, the typed images ride it) unless it is itself a
+ *  command, which goes last on its own; with no run to close, the typed message posts as itself, cites and
+ *  images intact, exactly as a send with nothing staged. Nothing staged and nothing typed posts nothing. */
+export function stagedPosts(items: readonly StagedMsg[], typed?: Post | null): Post[] {
+  const posts: Post[] = [];
+  let run: StagedMsg[] = [];
+  const close = (last?: Post | null) => {
+    if (!run.length) return;
+    const goal = last ? (last.cites || []).find(isGoalCite) : undefined;
+    posts.push({ text: stagedBatchBody(run, last), cites: goal ? [goal] : undefined, imgPaths: last?.imgPaths });
+    run = [];
+  };
+  for (const it of items) {
+    if ((it.cites || []).some(isGoalCite) || isSlashCommand(it.text)) { close(); posts.push({ text: it.text, cites: it.cites }); }
+    else run.push(it);
+  }
+  if (typed && run.length && !isSlashCommand(typed.text)) close(typed);
+  else { close(); if (typed) posts.push({ text: typed.text, cites: typed.cites, imgPaths: typed.imgPaths }); }
+  return posts;
 }
 
 export class StagedStack {
