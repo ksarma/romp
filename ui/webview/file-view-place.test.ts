@@ -343,8 +343,8 @@ test("seatPlace: scrolls the body by the difference between where the kept block
 // ── the order file-view.ts runs the keeper in ─────────────────────────────────────────────────────
 test("file-view.ts: the place is read before the text swap and seated after the hooks (the selection keeper's order); the width reflow seats the place read at scroll time; a text-size step reads and seats around its reflow; the URL viewer's switch seats too", () => {
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
-  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
-    "read, swap, hooks, then seat over the new text");
+  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+    "read, swap, the tables' width stamp (no geometry read), hooks, then seat over the new text");
   // a seat reads the place anew after it, unless the browser clamped the write (reader-place.ts seatPlaceOutcome): then the
   // place it was given stands, held while the body stands where the clamp left it, so the swap back seats the reader's own
   // passage and not the block the clamp showed (the Slice 3 review: the round trip from the end of the taller view came back

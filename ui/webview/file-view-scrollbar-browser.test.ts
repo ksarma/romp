@@ -8,8 +8,9 @@
 // never scrolls: a three-paragraph note and a picture 5px off the card's centre (7.5 on the feed's 15px platform scrollbar), a
 // PDF frame 10px short of the body's edge with the dark card showing in the strip, the editor the same beside its own scrollbar.
 // The fix takes the reservation out and keys the cap on the body's content width as the viewer's ResizeObserver reports it,
-// written on the body as `--fv-body-w` (file-view.ts; the observer's report is the layout's own event, one write per report,
-// so a scrollbar appearing or leaving moves the cap in the same frame). The other legs never saw any of it: playwright launches
+// written on each top-level table as `--fv-body-w` (file-view.ts; the observer's report is the layout's own event, so a scrollbar
+// appearing or leaving moves the cap in the same frame; on the body, where it sat until 2026-09-09, every write restyled every
+// node under it, see file-view-body-width-browser.test.ts). The other legs never saw any of it: playwright launches
 // headless Chromium with `--hide-scrollbars`, so this one launches WITHOUT that flag (`ignoreDefaultArgs`) and measures the real
 // geometry, the scrollbar present. Skips loudly without a browser. Synthetic values only.
 import { test } from "node:test";
@@ -32,7 +33,7 @@ function measure(): Facts {
   const br = body.getBoundingClientRect(), pr = p.getBoundingClientRect(); const scrollbar = body.offsetWidth - body.clientWidth; const cs = getComputedStyle(root);
   const at = (t: HTMLElement) => { const r = t.getBoundingClientRect(); return { width: r.width, bodyL: r.left - br.left, bodyR: br.right - scrollbar - r.right, pastColR: r.right - pr.right, client: t.clientWidth, scroll: t.scrollWidth }; };
   return { bodyOffset: body.offsetWidth, bodyClient: body.clientWidth, scrollbar, scrolls: body.scrollHeight > body.clientHeight, sidewaysScroll: body.scrollWidth > body.clientWidth,
-    bodyW: getComputedStyle(body).getPropertyValue("--fv-body-w").trim(), gutter: getComputedStyle(body).scrollbarGutter,
+    bodyW: getComputedStyle(tables[2]).getPropertyValue("--fv-body-w").trim(), bodyOwnW: getComputedStyle(body).getPropertyValue("--fv-body-w").trim(), proseW: getComputedStyle(p).getPropertyValue("--fv-body-w").trim(), gutter: getComputedStyle(body).scrollbarGutter,
     padL: parseFloat(cs.paddingLeft), padR: parseFloat(cs.paddingRight), column: pr.width, colL: pr.left - br.left, colR: br.right - scrollbar - pr.right, narrow: at(tables[0]), mid: at(tables[1]), wide: at(tables[2]) };
 }
 /** The body against the card and the title bar: what is reserved beside a body that does not scroll, and where its content sits. */
@@ -83,7 +84,9 @@ test("with the scrollbar visible, a table wider than the pane sits 18px inside t
       // takes the platform's, which may be an overlay of no width: then the cell measures the same geometry with nothing taken
       if (mode !== "feed") assert.equal(m.scrollbar, 10, cell + ": the classic 10px scrollbar is present (this leg launches without --hide-scrollbars)");
       assert.equal(m.gutter, "auto", cell + ": the body reserves no gutter (round 1's `scrollbar-gutter: stable` is gone)");
-      assert.equal(m.bodyW, m.bodyClient + "px", cell + ": --fv-body-w on the body is its content box, the scrollbar's " + m.scrollbar + "px taken (the ResizeObserver's report; the box before the scrollbar is " + m.bodyOffset + ")");
+      assert.equal(m.bodyW, m.bodyClient + "px", cell + ": --fv-body-w on the wide table is the body's content box, the scrollbar's " + m.scrollbar + "px taken (the ResizeObserver's report; the box before the scrollbar is " + m.bodyOffset + ")");
+      assert.equal(m.bodyOwnW, "", cell + ": ...and the body itself carries no --fv-body-w (written on the tables since 2026-09-09: on the body every node under it was restyled per write)");
+      assert.equal(m.proseW, "", cell + ": ...and the prose inherits none (the property is registered non-inherited)");
       assert.equal(m.padL, m.padR, cell + ": the column's two gaps are equal"); assert.ok(m.padL >= 18, cell + ": at least the 18px inset");
       assert.ok(Math.abs(m.colL - m.colR) <= 1, cell + ": the column is centred in the content box (" + m.colL + " / " + m.colR + ")");
       // the wide table: from inset to inset, both 18, and never past the column's edge where the column is at its floor

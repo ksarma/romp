@@ -96,9 +96,8 @@ const hasClass = (n: DNode, cls: string): boolean => {
 const WS = /\s/;
 const isWs = (c: string): boolean => WS.test(c);
 
-/** Every text node under `root`, document order. */
-function textNodes(root: DNode): DText[] {
-  const out: DText[] = [];
+/** Every text node under `root`, document order, appended to `out`. */
+function textNodes(root: DNode, out: DText[] = []): DText[] {
   const visit = (n: DNode) => {
     if (isText(n)) { out.push(n); return; }
     if (isControl(n)) return;
@@ -106,6 +105,12 @@ function textNodes(root: DNode): DText[] {
   };
   visit(root);
   return out;
+}
+/** The child of `root` that `n` sits under (`n` itself when it is one), or null when `n` is not under `root`. */
+function topChildOf(root: DNode, n: DNode): DNode | null {
+  let c = n;
+  while (c.parentNode && c.parentNode !== root) c = c.parentNode;
+  return c.parentNode === root ? c : null;
 }
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
@@ -1164,10 +1169,26 @@ const skipBlockWs = (t: DText): boolean => {
   return !!p && isElement(p) && BLOCK_CONTAINERS.has(p.tagName.toUpperCase());
 };
 
-/** Wrap from (startNode, startOff) to (endNode, endOff) — both text positions under `root`. */
+/** Wrap from (startNode, startOff) to (endNode, endOff) — both text positions under `root`. The text nodes between
+ *  the two are read from the top-level children of `root` the two sit under, and the children between those, not from
+ *  the whole of `root`: a walk of every text node under the root per mark made the Comments panel's paint pass cost
+ *  marks x nodes (0.11-0.22 ms per 1000 nodes per mark in Chromium; 466 marks over a 24k-node document were 1.1 s of a
+ *  1.4 s frame on every width change, and 0.7 s of each added comment on a 79k-node file with 32 comments, 2026-09-09).
+ *  A mark now costs the blocks it touches. */
 function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; off: number },
                      className: string, data?: Record<string, string>): DElement[] {
-  const all = textNodes(root);
+  const ts = topChildOf(root, s.t), te = topChildOf(root, e.t);
+  if (!ts || !te) return [];
+  let all: DText[];
+  if (ts === te) all = textNodes(ts);
+  else {
+    const kids = root.childNodes;
+    let k0 = -1, k1 = -1;
+    for (let k = 0; k < kids.length && (k0 < 0 || k1 < 0); k++) { if (kids[k] === ts) k0 = k; if (kids[k] === te) k1 = k; }
+    if (k0 < 0 || k1 < 0 || k1 < k0) return [];
+    all = [];
+    for (let k = k0; k <= k1; k++) textNodes(kids[k], all);
+  }
   const i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
   if (i0 < 0 || i1 < 0 || i1 < i0) return [];
   const nodes = all.slice(i0, i1 + 1);
