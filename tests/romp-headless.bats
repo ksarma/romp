@@ -82,6 +82,23 @@ PY
     [[ "$output" == *"only works from inside a romp SDK session"* ]]
 }
 
+@test "romp end --when-idle says deferred when the kernel deferred, ok when it killed at once" {
+    # the kernel's when:idle arm answers {"ok": true, "deferred": true} and a far kernel's deferral is
+    # relayed as is; the CLI printed the same bare "ok (web)" for that and for an immediate kill, so a
+    # caller could not tell a session gone from one still finishing its turn (review round 4, 2026-09-09)
+    start_fake_kernel '{"ok": true, "deferred": true}'
+    run "$ROMP_SCRIPT" end web --when-idle
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp end: deferred (web), ends when idle"* ]]
+    [[ "$output" != *"romp end: ok"* ]]
+    grep -q '"when": "idle"' "$TEST_DIR/req"
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" end web --when-idle
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp end: ok (web)"* ]]
+    [[ "$output" != *"deferred"* ]]
+}
+
 @test "the dashed spellings are silent aliases: --send works and says nothing about it" {
     # Agent-facing text delivered before 2026-07-25 (postal reply footers, skill
     # docs in old transcripts) names the dashed forms; they must keep working

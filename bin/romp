@@ -712,7 +712,7 @@ EOF
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
-    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1"
+    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1; a known session that is not running is refused the same way (409, not delivered)"
     _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
     _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn; an unknown session is refused with the kernel's reason, exit 1"
     _romp_cmd "romp end <session>|self [--now|--when-idle]" - "End a session, at once by default; --when-idle ends it once its turn settles (self, the calling session, defaults to that; --now overrides); an unknown session is refused with the kernel's reason, exit 1"
@@ -2386,7 +2386,8 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
                     echo "  hand a session a message through the kernel. While the session is busy the message"
                     echo "  queues and delivers when the session is quiet. --tag <label> (one word) shows the text"
                     echo "  as machine-sent under that label instead of as your typed words; pass one from scripts"
-                    echo "  and cron." ;;
+                    echo "  and cron. A known session that is not running (an ended session by id, an ended comment"
+                    echo "  thread) is refused with the kernel's reason and exit 1; the message is not delivered." ;;
                 interrupt)
                     echo "  stop the session's current turn (Esc) through the kernel; the session stays open." ;;
                 end)
@@ -2461,6 +2462,15 @@ print(json.dumps(d))' "$_who" "$_when")"
             # when the session is quiet. Said out loud so a sender inside that very turn — an agent sending
             # itself a slash command — knows the command has NOT run yet.
             echo "romp send: queued ($_who) — delivers when the session is quiet"
+            exit 0
+        fi
+        if [[ "$_verb" == "end" && ( "$_resp" == *'"deferred": true'* || "$_resp" == *'"deferred":true'* ) ]]; then
+            # the kernel RECORDED the end and serves it at the turn's settle (its when:idle arm answers
+            # deferred:true; a far kernel's deferral is relayed as is). Said as what happened, since a bare ok
+            # here read the same for a kill that landed at once and for one still waiting on the settle
+            # (review round 4, 2026-09-09). A bare ok on a --when-idle request stays ok: every kernel that ever
+            # deferred answered deferred:true, so a bare ok means it killed at once
+            echo "romp end: deferred ($_who), ends when idle"
             exit 0
         fi
         echo "romp $_verb: ok ($_who)"

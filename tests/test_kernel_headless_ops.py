@@ -160,9 +160,10 @@ class HeadlessRoutes(_RouteServer):
         self.assertIn(("chat", {"type": "closed", "id": fake.kill.call_args[0][0]}), sent)
 
     def test_the_end_route_and_the_ws_endSession_op_run_one_end_routine(self):
-        # The two intentional kill doors a client reaches, POST /end (`romp end <session>`) and the
-        # dashboard's endSession op, each call _end_and_record once, with the sid and the backend that owns
-        # it, and neither kills on its own. The routine's epilogue (the death record, _comment_kill_all, the
+        # Two of the three kill doors that record a death, POST /end (`romp end <session>`) and the
+        # dashboard's endSession op (the third is the end-on-idle sweep's arm, driven by the sweep tests
+        # below; cancelCreate's _end_pending_sid stays outside the routine and records none), each call
+        # _end_and_record once, with the sid and the backend that owns it, and neither kills on its own. The routine's epilogue (the death record, _comment_kill_all, the
         # closed frame) is exercised through the thread doors below; this test holds the doors to the one
         # routine, so a door that grows its own inline sweep, or skips the routine, fails here rather than
         # drifting (review round 4, 2026-09-09: the extension's source pin on the two inline sweeps went

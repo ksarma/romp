@@ -25970,8 +25970,9 @@ def _death_boot_pass(now=None):
 
 def _confirmed_ended(sid, fresh=False, scan=None):
     """Did this session actually END — may a kill/close path record the death, tear down its comment
-    threads, and broadcast `closed`? The four post-kill honesty gates (endSession, the /end route,
-    closeTab, cancelCreate) all ask HERE, mirroring _death_sweep_tick's doctrine: a death is certified
+    threads, and broadcast `closed`? Every post-kill honesty gate asks HERE: _end_and_record (the routine
+    behind endSession, the /end route and the end-on-idle sweep's kill arm), the sweep's already-dead
+    retire check, closeTab and cancelCreate's _end_pending_sid, mirroring _death_sweep_tick's doctrine: a death is certified
     only by the liveness owner's AFFIRMATIVE answer, never by silence. Bare `sid in _tmux_sessions()`
     membership inherits list_lines' error/timeout→[] collapse — and the failures CORRELATE: the same
     wedged tmux server that swallows the fire-and-forget kill (kill() returns True regardless) also
@@ -26068,9 +26069,15 @@ def _death_stamp_due(sid):
 
 
 def _end_and_record(sid, be, now, via, fresh=False):
-    """The ONE end routine behind every intentional kill door: the dashboard's endSession op, POST /end
-    (`romp end <session>`, `romp end self --now`) and the end-on-idle sweep (`romp end self`, served at the
-    turn's settle). Kill; corroborate with the liveness owner (_confirmed_ended, never bare membership);
+    """The ONE end routine behind the three kill doors that record a death: the dashboard's endSession op,
+    POST /end (`romp end <session>`, `romp end self --now`) and the end-on-idle sweep (`romp end self`,
+    served at the turn's settle). One intentional kill stays outside it on purpose: cancelCreate's
+    _end_pending_sid ends a never-prompted spawn whose Opening cue the webview dismissed. It kills and
+    corroborates through _confirmed_ended like this routine, but records no death (a spawn nobody prompted
+    leaves no history worth a gone marker or an idle row), sweeps no threads (a never-prompted session can
+    own none) and sends its own closed frame, so routing it here would write records that door exists to
+    avoid (review round 4, 2026-09-09). Kill; corroborate with the liveness owner (_confirmed_ended, never
+    bare membership);
     and on its affirmative answer leave the durable state an ended session leaves: the death record
     (STATE/gone/<sid>.json plus the idle row), its comment threads' CLIs shut down (_comment_kill_all)
     and the `closed` frame. A comment thread takes the same path as a plain session, so `romp end self`

@@ -241,8 +241,10 @@ test("POST /end and the WS endSession op end a session through one routine, and 
   // change (2026-09-09) folded them, and the end-on-idle sweep's arm, into _end_and_record: the kill, the
   // corroboration, the death record, _comment_kill_all and the closed frame. Each door is pinned to the
   // routine by its own kill attribution, and the routine to the sweep inside its own body (the scan stops
-  // at the next top-level def), so no door can grow a second epilogue that drifts. The executed twin, both
-  // doors calling the routine once with one sid and one backend, is tests/test_kernel_headless_ops.py.
+  // at the next top-level def), so none of the three doors that record a death can grow a second epilogue
+  // that drifts. cancelCreate's _end_pending_sid, the one intentional kill outside the routine, records no
+  // death by design and is not pinned here. The executed twin, both client doors calling the routine once
+  // with one sid and one backend, is tests/test_kernel_headless_ops.py.
   assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "endSession WS op"\)/);
   assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "\/kill route"\)/);
   assert.match(KERNEL, /ended = _end_and_record\(sid, Sessions\.backend_for\(sid\), now,\s*\n\s*"end-on-idle \(self-close/);
