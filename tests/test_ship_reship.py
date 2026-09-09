@@ -25,7 +25,7 @@ The fix, both faces:
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.
 
-Two guards here:
+Three guards here:
   * SourcePins — runs everywhere, CI included: the wiring above, pinned in the sources (the
     webview-side twins live in ui/webview/pending-attach.test.ts).
   * NackNoticeSurvivesReload: the notice's executed guard, the same choreography with the state
@@ -95,7 +95,8 @@ class SourcePins(unittest.TestCase):
         self.assertIn("(window as any).__rompPersistForReload = persistForReload;", RENDER)
         self.assertIn('window.addEventListener("pagehide", persistScrollForReload);', RENDER)
         self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts"))', RENDER)
-        self.assertIn("const taken = takePendingNotices(vscodeApi?.getState?.());", RENDER)
+        self.assertIn("const taken = takePendingNotices(st);", RENDER)
+        self.assertIn('if (st && typeof st === "object" && "pendingNotices" in st) vscodeApi?.setState?.(taken.rest);', RENDER)
         self.assertIn("for (const text of taken.notices) warnToast(text);", RENDER)
 
 

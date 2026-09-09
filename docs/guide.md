@@ -158,7 +158,8 @@ the feed. What it is doing now comes from its current task, else from the headli
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
 its formatting; click one to open that session, which also opens its section if the section is
-folded (a hidden session's section stays as it was; see the next paragraph). The rows update as
+folded (with several tags, the first folded group of them that does not hide it; a section that
+hides the session stays as it was; see the next paragraph). The rows update as
 the sessions work and change only when something about a session changes; the **needs you** word
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
@@ -178,11 +179,12 @@ group is open, its count opens this view without folding the group, so hiding a 
 a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
 the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
 you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
-standing in for the tab, and leaves it hidden, its group folded or open as it was. A session set to
-**Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes when
-you show it again. A hidden session keeps the setting when its group is renamed, and shows again
-wherever it lands when it leaves the group. Like the sections, hiding is per browser and for the
-desktop layout.
+standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the
+session has another tag whose group is folded and does not hide it: that group opens and the tab
+shows there, the hide standing where it was. A session set to **Show when folded** stays hidden
+while it is hidden: the hide wins, and the setting resumes when you show it again. A hidden
+session keeps the setting when its group is renamed, and shows again wherever it lands when it
+leaves the group. Like the sections, hiding is per browser and for the desktop layout.
 
 ### The feed
 
