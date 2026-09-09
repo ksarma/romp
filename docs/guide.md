@@ -189,6 +189,14 @@ while it is hidden: the hide wins, and the setting resumes when you show it agai
 session keeps the setting when its group is renamed, and shows again wherever it lands when it
 leaves the group. Like the sections, hiding is per browser and for the desktop layout.
 
+**On a small screen.** To keep more of the transcript in view, turn on the gear's
+**Compact tabs and agents** setting. It tightens the rows in the box of background work above the
+message box (the one headed **Awaiting** or **In the background**) and caps that box's list at
+about four rows that scroll; the cap lifts while a row's details are open. Where the tab strip is
+showing (a desktop-width screen, or a tablet wide enough for it) it also shrinks the tabs and group
+headers; on a phone the session picker stands in for the strip, so there the setting tightens the
+box. Like the other chat settings, it is per browser.
+
 ### The feed
 
 The feed is Romp's task-management layer: a card for each task. Romp's
