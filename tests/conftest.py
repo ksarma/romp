@@ -303,36 +303,6 @@ def _no_cli_scope():
     yield
 
 
-# No test may read the REAL service unit, launchd plist or Claude Code settings (2026-09-05; the reason
-# changed on 2026-09-08): the key side of every billing question is now whether Claude Code's settings
-# carry an apiKeyHelper (kernel/credentials.py settings_files / key_available read
-# $CLAUDE_CONFIG_DIR/settings*.json, and helper_key RUNS the helper for the kernel's catalog fetch and its
-# fast-mode probe), and bin/romp-service reads the systemd unit and the launchd plist, so a backend
-# construction or a service check in the suite would otherwise read this machine's unit and the
-# developer's own apiKeyHelper setting, or run it. The three are floored to empty temp dirs under the
-# state root: no unit, no plist, no settings. The one test that deliberately borrows the user's own
-# apiKeyHelper command (the opt-in live move test) reads the pre-floor location through
-# ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, saved above beside the CLAUDE_CONFIG_DIR floor, before any floor
-# touched the variable. Import-time plus a per-test re-assert, on the same reasoning as the manager-port
-# floor; a test that needs its own dirs points the vars at temp paths in setUp, which runs after the
-# fixture.
-_EMPTY_DIRS = {
-    "ROMP_SYSTEMD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-systemd-user"),
-    "ROMP_LAUNCHD_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-launch-agents"),
-    "CLAUDE_CONFIG_DIR": os.path.join(os.environ["XDG_STATE_HOME"], "floor-claude-config"),
-}
-for _v, _d in _EMPTY_DIRS.items():
-    os.makedirs(_d, exist_ok=True)
-    os.environ[_v] = _d
-
-
-@pytest.fixture(autouse=True)
-def _no_real_unit_or_settings():
-    for var, d in _EMPTY_DIRS.items():
-        os.environ[var] = d
-    yield
-
-
 # No test may reach the machine's REAL tmux server (2026-09-06; the reason changed on 2026-09-08): the
 # retired key-source module used to scrub the live server's globals from inside a test, and any tmux-backed
 # test still runs its commands somewhere. The same private socket directory the bats suites use
