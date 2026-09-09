@@ -110,7 +110,7 @@ marked.use({
 // default for markdown (the user 2026-08-09); Raw stays one click away.
 /** Run a paint pass of the viewer as one timed frame of the page's performance collector (ui/webview/perf-telemetry.ts,
  *  window.__rompPerf), under the type `fileview:<why>`: `paint` for a text body painted anew, `reflow` for the panel's
- *  re-paint after the body's width moved. The Files pane gets no frames pushed to it, so this is the only work its
+ *  re-paint over unchanged text (the body's width moved, or a text-size step). The Files pane gets no frames pushed to it, so this is the only work its
  *  collector times; the cost of a large reviewed file (the panel re-wraps every highlight per pass) then shows per
  *  minute in `romp perf client` under app "files", with the main-thread-free sample the collector takes after an
  *  outermost bracket, instead of a long frame nobody attributed (2026-09-09: a divider drag with a big note open

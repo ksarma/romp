@@ -2299,9 +2299,9 @@ frames it received is measured in the panes themselves, by
   `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
   The Files pane receives no frames; its collector times the viewer's own paint
   pass instead, as `fileview:paint` (a text body painted) and `fileview:reflow`
-  (the comments panel's re-paint after the body's width moved, a divider drag
-  or the panel opening), so the cost of a large reviewed file shows per minute
-  under app `files`.
+  (the comments panel's re-paint over unchanged text: the body's width moved
+  under a divider drag or the panel opening, or a text-size step), so the cost
+  of a large reviewed file shows per minute under app `files`.
   The dashboard shell (the top-level window that frames the panes) runs the
   same collector under app `shell` with no frame types at all: Chromium reports
   an iframe's long animation frames to the top-level window only, so a pane
