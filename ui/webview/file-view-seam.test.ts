@@ -939,8 +939,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
-  // (`painting` is the text under the guard above the pass, held for the fileview:paint bracket's closure; perfTimed)
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(painting, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(painting, path, true\)\);/,
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
   const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));");   // the shared sanitizer, md-sanitize.ts
@@ -1238,7 +1237,7 @@ test("source: the Slice 5 seam — text() answers the buffer in edit mode, the m
   assert.doesNotMatch(VIEW, /@codemirror|track-decorations|editor-chunk"/, "the viewer imports nothing from the chunk: the option is data through the mount call");
 });
 
-test("the paint pass runs as one fileview:paint frame of the page's performance collector, the panel's re-paint after the body's width moved as one fileview:reflow frame, and the pane's minute row carries both with the pass cost; no collector, the pass runs untimed", async (t) => {
+test("the paint pass runs as one fileview:paint frame of the page's performance collector, the panel's re-paint after the body's width moved as one fileview:reflow frame (the bracket is fireRenderedKeepingSelection's, which both reflow triggers run through), and the pane's minute row carries both with the pass cost; no collector, the pass runs untimed", async (t) => {
   // The Files pane gets no frames pushed to it; its collector (perf-telemetry.ts, published as window.__rompPerf by
   // federation) times nothing unless the viewer brackets its own work (file-view.ts perfTimed), which is what made a
   // 20 s divider drag over a large reviewed note invisible to `romp perf client` (2026-09-09). The collector here is

@@ -1052,7 +1052,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
   // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
   // keep nothing: there the text itself is new.
-  const fireRenderedKeepingSelection = () => {
+  // Both reflows (a text-size step, the body's width moving under a divider drag or the aside) run through here, so
+  // this is where the pass is timed as one fileview:reflow frame of the page's collector (perfTimed): the panel's
+  // re-wrap of every highlight is the cost a large reviewed file pays per drag frame, and it shows per minute.
+  const fireRenderedKeepingSelection = () => perfTimed("reflow", () => {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
       && typeof document.createRange === "function"
@@ -1063,7 +1066,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
     const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
     try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
-  };
+  });
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
@@ -1241,7 +1244,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       frame = 0;
       if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
       paintedWidth = seenWidth;
-      if (textShowing()) perfTimed("reflow", () => { fireRenderedKeepingSelection(); seat(place); });   // the place read before the width moved (see notePlace); timed as fileview:reflow (perfTimed)
+      if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
@@ -1394,13 +1397,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
-    const painting: string = text;              // the guard above, kept for the closure below
-    perfTimed("paint", () => {                  // the whole pass, body and hooks, as one fileview:paint frame of the page's collector (perfTimed)
-      body.replaceChildren(rendered ? mdBlock(painting, { kind: "file", path, sid: sid || null }) : codeBlock(painting, path, true));   // long lines always soft-wrap (the user 2026-08-24)
-      fireRendered();                           // the seam's onRendered: every text paint, so highlights follow the view
-      shownText = painting;
-      seat(kept);                               // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+    perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
+      if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
+      const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
+      body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
+      shownText = text;
+      seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
     });
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
