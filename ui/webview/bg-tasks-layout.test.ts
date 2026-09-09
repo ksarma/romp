@@ -35,6 +35,30 @@ test("the list expands DOWNWARD beneath the header (header at the top) — nothi
   assert.match(RENDER, /car\.textContent = open \? "▾" : "▸";/);
 });
 
+// The OPEN list is capped at about six rows (the user 2026-09-08, whose phone showed the box over the
+// transcript): seven agents in flight fit under the box's min(50vh, 340px) cap without scrolling, so the
+// open box took half the phone's screen and left about three lines of chat between the tab strip and the
+// box. The fold itself was already the user's: bgFoldOpen is a page-lifetime Set of session ids, empty
+// (closed) by default and written only by the header click and the Awaiting chip, so a box opens only on
+// a tap and a reload starts it closed; the fix is the open list's height, not the fold.
+test("the open list shows about six rows and scrolls beyond; the cap lifts while a row's details are open (the user 2026-09-08)", () => {
+  assert.match(CSS, /\.bg-list:not\(:has\(\.bg-task\.open\)\) \{ max-height: 180px; \}/, "six rows of 29px plus the list's padding");
+  assert.match(CSS, /\.bg-list \{[^}]*overflow-y: auto;/, "the inner scroll is the list's own");
+  assert.match(BOX, /max-height: min\(50vh, 340px\);/, "the box's own cap still bounds an open row's details");
+  // a row's details wear .open on the .bg-task (bgRow), the class that lifts the cap
+  assert.match(RENDER, /const row = el\("div", "bg-task bg-" \+ \(t\.status \|\| "running"\) \+ \(t\.awaited \? " bg-awaited" : ""\) \+ \(tOpen && foldable \? " open" : ""\)\);/);
+});
+
+test("the fold is the user's: closed by default, opened only by a tap, never by the renderer (the user 2026-09-08)", () => {
+  assert.match(RENDER, /const bgFoldOpen = new Set<string>\(\);/, "a page-lifetime Set of session ids, empty (closed) at load");
+  const body = RENDER.split("function renderBgTasks(")[1].split("\nfunction ")[0];
+  assert.match(body, /const open = bgFoldOpen\.has\(sid\);[\s\S]*?host\.appendChild\(head\);\s*\n\s*if \(!open\) return;/, "not in the set → the header line alone");
+  assert.doesNotMatch(body, /bgFoldOpen\.(add|delete|clear)\(/, "the renderer never opens or closes it");
+  // the two writers, both gestures (awaiting-rows.test.ts pins the exact list)
+  assert.match(RENDER, /"bg-fold": \(el\) => \{[\s\S]{0,200}?if \(bgFoldOpen\.has\(id\)\) bgFoldOpen\.delete\(id\); else bgFoldOpen\.add\(id\);/);
+  assert.match(RENDER, /"awaitingChip": \(\) => \{[\s\S]{0,120}?bgFoldOpen\.add\(activeId\);/);
+});
+
 test("status dots are SOLID — the pulsating yellow animation is gone", () => {
   assert.doesNotMatch(CSS, /animation: bg-pulse/);
   assert.doesNotMatch(CSS, /@keyframes bg-pulse/);
