@@ -21,6 +21,10 @@
 # its owner's to publish and its domain may be their own name. An unset
 # user.email chooses nothing, which is the case the scan exists for.
 #
+# An annotated TAG carries a tagger the same way, and every other read the hook
+# makes peels a tag to the commit it names, so the tag object's own address is
+# read here too: the tag cases at the end hold that.
+#
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the domains are invented per test (the repo may go public, and a real one
 # written here would be the very leak the hook exists to stop). pre-push-hook.bats
@@ -94,6 +98,14 @@ commit_as() {   # <author_email> <committer_email> <path> <message>
 # A commit under the hermetic identity, with a clean tree: the control.
 commit_clean() {   # <path> <message>
     commit_as tests@example.invalid tests@example.invalid "$1" "$2"
+}
+
+# Feed the hook a TAG ref line: <refs/tags/name> pushed as new (the remote sha zero).
+run_hook_tag() {   # <name>
+    local sha
+    sha="$(git -C "$REPO" rev-parse "refs/tags/$1")"
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< \
+        "refs/tags/$1 $sha refs/tags/$1 $ZERO"
 }
 
 @test "a commit under the hermetic identity passes (the control)" {
@@ -233,4 +245,41 @@ commit_clean() {   # <path> <message>
     run_hook
     [ "$status" -ne 0 ]
     [[ "$output" == *"commit ${merge_sha:0:10} is committed as <$STAMPED>"* ]]
+}
+
+@test "an annotated tag's TAGGER is read like a committer: stamped by an unset user.email, the tag is refused naming the tag, the address and its own remedy" {
+    commit_clean ok.txt "clean"
+    # the tagger is the committer identity of the clone that cut the tag
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]
+    run_hook_tag v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"tag refs/tags/v1 (${sha:0:10}) is tagged as <$STAMPED>, an address this clone is not configured to use"* ]]
+    [[ "$output" == *"git tag -f -a <name> <commit>"* ]]
+    # the commit the tag names is clean, and is reported as nothing
+    [[ "$output" != *"is authored as"* ]]
+    [[ "$output" != *"is committed as"* ]]
+}
+
+@test "an annotated tag under the configured address passes, and a lightweight tag has no metadata of its own" {
+    git -C "$REPO" config user.email dev@zzsynthuser.example
+    commit_as dev@zzsynthuser.example dev@zzsynthuser.example ok.txt "the owner's commit"
+    GIT_COMMITTER_EMAIL=dev@zzsynthuser.example git -C "$REPO" tag -a v1 -m "release one"
+    run_hook_tag v1
+    [ "$status" -eq 0 ]
+    git -C "$REPO" tag light
+    [ "$(git -C "$REPO" cat-file -t refs/tags/light)" = commit ]
+    run_hook_tag light
+    [ "$status" -eq 0 ]
+}
+
+@test "the commit an annotated tag names is still read through the tag: a clean tagger over a stamped commit is refused naming the commit" {
+    commit_as "$STAMPED" "$STAMPED" web.txt "stamped by an unset user.email"
+    commit_sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" tag -a v1 -m "release one"     # the hermetic identity: an address the environment chose
+    run_hook_tag v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${commit_sha:0:10} is authored as <$STAMPED>"* ]]
+    [[ "$output" != *"is tagged as"* ]]
 }

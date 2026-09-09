@@ -31,6 +31,7 @@ zero=0000000000000000000000000000000000000000
 blocked_ids=0
 blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
 blocked_messages=0      # likewise: a subset of blocked_ids, with a remedy of its own
+blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
 blocked_creds=0
 
 # The commits THIS push publishes for one ref: what no remote already has.
@@ -105,6 +106,16 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 #                     per-commit checks above: a message a remote already holds
 #                     is refused to no purpose. The author and committer NAMES
 #                     on the commit are not read (above).
+#   an annotated tag  its OWN tagger and message, under the two checks above.
+#                     Every other read here peels a tag to the commit it names
+#                     (git grep, rev-list and log take a tag as that commit), so
+#                     the tag object's metadata was read by nothing, and a
+#                     `git push --tags` from a clone with no user.email stamps
+#                     the tagger the way it stamps a committer. The tag object
+#                     is read whenever its ref is pushed: a remote holding it at
+#                     this sha would not be updating the ref, and one holding it
+#                     at another sha is receiving a new object. A tag of a tag
+#                     is peeled one object at a time.
 
 # The lines a commit adds, one per line as "<path>\t<text>". A commit with one
 # parent: its diff against that parent (a root commit, against the empty tree).
@@ -155,8 +166,19 @@ stamped_addresses() {   # <rev>
     done
 }
 
+# One header field of an annotated tag object (`tagger`, `object`), or its
+# message: the header ends at the first empty line and the message is the rest
+# (a signed tag's signature included; it is text like any other). awk reads the
+# whole object, so git is never cut off mid-write.
+tag_field() {   # <tag_sha> <field>
+    git cat-file -p "$1" | awk -v f="$2" 'BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } hdr && !seen && $1 == f { seen = 1; sub(/^[^ ]+ /, ""); print }'
+}
+tag_message() {   # <tag_sha>
+    git cat-file -p "$1" | awk 'BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } !hdr { print }'
+}
+
 scan_identifiers() {
-    local strings_file line lines rev revs hits local_ref local_sha remote_sha role email
+    local strings_file line lines rev revs hits local_ref local_sha remote_sha role email obj tagger chosen
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
@@ -229,6 +251,31 @@ scan_identifiers() {
                 blocked_messages=1
             fi
         done
+        # An annotated tag's own tagger and message (the note above): the pushed
+        # object, peeled tag by tag down to the commit, which the loop above read.
+        # The tagger's address is checked as a commit's are — not when the clone
+        # chose it, its domain otherwise — and the message like a commit's.
+        obj="$local_sha"
+        while [ "$(git cat-file -t "$obj" 2>/dev/null || true)" = tag ]; do
+            tagger="$(tag_field "$obj" tagger)"
+            email=""
+            case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
+            chosen="$(chosen_emails)"
+            if [ -n "$email" ] && ! printf '%s\n' "$chosen" | grep -qixF -e "$email" && printf '%s' "${email##*@}" | grep -qi -F "${grep_args[@]}"; then
+                echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
+                blocked_ids=1
+                blocked_addresses=1
+                blocked_tags=1
+            fi
+            if hits=$(tag_message "$obj" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
+                lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
+                echo "romp pre-push: the MESSAGE of tag $local_ref (${obj:0:10}) carries a personal identifier on line $lines" >&2
+                blocked_ids=1
+                blocked_messages=1
+                blocked_tags=1
+            fi
+            obj="$(tag_field "$obj" object)"
+        done
     done <<< "$refs"
 
     if [ "$blocked_ids" -ne 0 ]; then
@@ -246,6 +293,9 @@ scan_identifiers() {
         fi
         if [ "$blocked_messages" -ne 0 ]; then
             echo "  A commit MESSAGE is never redacted forward: rewrite the named commit — git commit --amend for the tip, a reword rebase (git rebase -i <base>) for an older one — and push again." >&2
+        fi
+        if [ "$blocked_tags" -ne 0 ]; then
+            echo "  An annotated TAG's tagger and message are the tag object's own: re-create it under your configured address, with a clean message (git tag -f -a <name> <commit>), and push it again." >&2
         fi
     fi
 }

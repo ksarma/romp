@@ -17,7 +17,9 @@
 # and the author and committer NAMES on the commit are not read — they are the
 # author's own and on every commit they make. The message itself is read whole,
 # the author's own name included: it is text they typed, and a FILE naming them
-# is refused on the same ground.
+# is refused on the same ground. An annotated TAG's message is read the same way
+# (every other read the hook makes peels a tag to its commit): the tag case at
+# the end holds that.
 #
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the paths are invented per test (the repo may go public, and a real one written
@@ -210,4 +212,18 @@ commit_msg() {   # <path> <paragraph>...
     [[ "$output" == *"whose domain carries a personal identifier"* ]]
     [[ "$output" == *"never redacted forward"* ]]
     [[ "$output" == *"--reset-author"* ]]
+}
+
+@test "an annotated tag's MESSAGE is read like a commit's, naming the tag and the line, with the tag's own remedy" {
+    commit_msg ok.txt "clean"
+    git -C "$REPO" tag -a v1 -m "release one" -m "cut on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< \
+        "refs/tags/v1 $sha refs/tags/v1 $ZERO"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) carries a personal identifier on line 3"* ]]
+    [[ "$output" == *"git tag -f -a <name> <commit>"* ]]
+    # the commit it names has a clean message and is reported as nothing
+    [[ "$output" != *"the MESSAGE of commit"* ]]
 }
