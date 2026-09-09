@@ -60,11 +60,22 @@ class Aurora(unittest.TestCase):
         self.assertIn("CMAPS = { aurora: [[84, 178, 4]", gear, "the gear picker lists aurora FIRST as an option")
 
     def test_set_colormap_accepts_aurora(self):
+        # The pick persists in STATE/colormap of the judge module every kernel-loading test shares, so the
+        # cleanup puts back what it found, not a fixed name. Until 2026-09-09 it wrote "hawaii" (the default
+        # this test's map replaced) and every later reader of _colormap() in the process was tinted hawaii
+        # while its fixtures expected cm.DEFAULT: seven tests of tests/test_feed_delta.py on the serial order.
+        # The mtime memo is reset with the file so a same-tick rewrite cannot keep serving "aurora".
+        f = km.jd.STATE / "colormap"
+        prior = f.read_text() if f.exists() else None
         try:
             km._set_colormap("aurora")
             self.assertEqual(km._colormap(), "aurora")
         finally:
-            km._set_colormap("hawaii")
+            if prior is None:
+                f.unlink(missing_ok=True)
+            else:
+                f.write_text(prior)
+            km._cmap_cache.update(name=km.cm.DEFAULT, mt=None)
 
 
 if __name__ == "__main__":
