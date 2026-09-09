@@ -9,3 +9,5 @@ offered: their PR #1169
 closed: 2026-09-09
 ---
 Fourth Codex piece owed upstream after #406: a dashboard loaded before the first Codex session never learned the model list until reload because neither door sent the models frame. The per-landing rule is argued in the body against the exact flip (a door cannot see the flip without the backend counting closings). Remaining piece: the picker reason row (feature).
+
+FOLDED 2026-09-09 (slice 3 of the inbound fold): the fork converged on the landed per-landing _models_changed() and retired its own gate-flip counter (has_live, gate_closings, the two door reads) with the 22 tests that pinned it; tests/test_codex_models_frame.py's OneFrameOnRevive class pins that a revive sends exactly one models frame per app.
