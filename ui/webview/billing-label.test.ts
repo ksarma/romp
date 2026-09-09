@@ -11,7 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { billingRowText, billingSubText, billingSide, billingContradicted, pickerBillingRow } from "./billing-label";
+import { billingRowText, billingSubText, billingSide, billingContradicted, pickerBillingRow, pickerBillingTitle, billingPickUnavailable, billingFellTo } from "./billing-label";
 
 const ROOT = path.resolve(process.cwd(), "..");
 const KERNEL = fs.readFileSync(path.join(ROOT, "kernel", "kernel.py"), "utf8");
@@ -100,6 +100,56 @@ test("the picker's Billing row shows whenever the host can name what a new sessi
   assert.deepEqual(pickerBillingRow({ login: false, key: false, acct: "", default: "login" }),
     { show: false, both: false, fixed: "" });
   assert.equal(pickerBillingRow(null).show, false, "no availability reply yet (an older kernel never sends one)");
+});
+
+test("the written-out row's hover names why the other side is off, in the kernel's reason, and claims nothing else", () => {
+  // upstream #1147 (the user 2026-09-08): the picker never disappears, and the side it cannot offer says why
+  assert.equal(pickerBillingTitle({ login: false, key: true, default: "key" }), "Login unavailable: no Claude login signed in on this machine");
+  assert.equal(pickerBillingTitle({ login: false, key: true, default: "key", loginWhy: "X" }), "Login unavailable: X");
+  assert.equal(pickerBillingTitle({ login: true, key: false, default: "login", keyWhy: "Y" }), "API key unavailable: Y");
+  assert.equal(pickerBillingTitle({ login: true, key: false, default: "login" }), "API key unavailable: no apiKeyHelper configured");
+  // a login beside a declared key: the declared side is written out, and the login is PRESENT, so no claim
+  assert.equal(pickerBillingTitle({ login: true, key: false, default: "key" }), "");
+  assert.equal(pickerBillingTitle({ login: true, key: true }), "", "buttons, no hover");
+  assert.equal(pickerBillingTitle({ login: false, key: false, default: "login" }), "", "a hidden row has no hover");
+  assert.equal(pickerBillingTitle(null), "");
+});
+
+test("a pick this box cannot bill is the kernel's word, never inferred, and the row says where the launch went", () => {
+  // authPickUnavailable names an EXPLICIT pick (the kernel's pick_unavailable); a seeded default never carries it
+  assert.equal(billingPickUnavailable({ auth: "login", authPickUnavailable: "login" }), true);
+  assert.equal(billingPickUnavailable({ auth: "login", authPickUnavailable: "" }), false);
+  assert.equal(billingPickUnavailable({ auth: "login", authAvail: { login: false, key: true } }), false, "availability alone is no verdict on the pick");
+  assert.equal(billingPickUnavailable({ auth: "", authPickUnavailable: "" }), false);
+  // the fall is authPickFell when the kernel sent it (the launch's own decision; "" = went out as picked)
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "login", authPickFell: "key" }), "key");
+  assert.equal(billingFellTo({ auth: "key", authPickUnavailable: "key", authPickFell: "login" }), "login");
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "login", authPickFell: "", authAvail: { login: false, key: true } }), "");
+  // an older kernel without the field: inferred from the other side existing, as the sub-line always did
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "login", authAvail: { login: false, key: true } }), "key");
+  assert.equal(billingFellTo({ auth: "key", authPickUnavailable: "key", authAvail: { login: true, key: false } }), "login");
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "login", authAvail: { login: false, key: false } }), "");
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "login" }), "key", "no availability at all reads as both sides existing");
+  assert.equal(billingFellTo({ auth: "login", authPickUnavailable: "" }), "", "a pick the box can bill (or none) never fell");
+  // the row and the sub-line, in upstream's words: the kernel's reason for the picked side, then the fall
+  const fell = { auth: "login", authPickUnavailable: "login", authPickFell: "key", authAvail: { login: false, key: true, loginWhy: "no Claude login signed in on this machine" } };
+  assert.equal(billingRowText(fell), "⚠ Login picked, but no Claude login signed in on this machine — this session bills the API key");
+  assert.equal(billingSubText(fell), "⚠ login unavailable, billing API key");
+  const fellKey = { auth: "key", authPickUnavailable: "key", authPickFell: "login", authAvail: { login: true, key: false, keyWhy: "no apiKeyHelper configured" } };
+  assert.equal(billingRowText(fellKey), "⚠ API key picked, but no apiKeyHelper configured — this session bills the login");
+  assert.equal(billingSubText(fellKey), "⚠ API key unavailable, billing login");
+  const stood = { auth: "login", authPickUnavailable: "login", authPickFell: "", authAvail: { login: false, key: false } };
+  assert.equal(billingRowText(stood), "⚠ Login picked, but this machine cannot bill it — nothing to fall to, so the launch went out as picked");
+  assert.equal(billingSubText(stood), "⚠ login unavailable");
+  // precedence: pending > unavailable > contradicted > plain
+  assert.equal(billingRowText({ ...fell, authPending: true }), "Login (applying, not confirmed yet)", "a pending switch still wins");
+  assert.equal(billingSubText({ ...fell, authPending: true }), "applying…");
+  const both = { auth: "login", authPickUnavailable: "login", authPickFell: "key", authLive: "key", authPicked: true };
+  assert.equal(billingRowText(both), "⚠ Login picked, but this machine cannot bill it — this session bills the API key",
+    "the kernel's own account of the fall outranks the contradiction reading of the same landing");
+  assert.equal(billingSubText(both), "⚠ login unavailable, billing API key");
+  assert.equal(billingRowText({ auth: "login", authPickUnavailable: "", authPickFell: "", authLive: "login", authPicked: true, authAcct: "user@example.com" }),
+    "Login (user@example.com)", "a pick the box bills reads plainly");
 });
 
 test("a pending switch reads as pending, never as applied fact, and outranks a stale report (T124)", () => {

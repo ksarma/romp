@@ -55,8 +55,12 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
   assert.match(RENDER, /fixed\.textContent = row\.fixed;/);
   // the written-out choice follows the kernel's default (what a spawn without a pick bills), the key arm
   // only for a reply carrying no default (verification round 2, 2026-09-09)
-  assert.match(BILLING, /const keyed = !!a && \(a\.default \? a\.default === "key" : !!a\.key\);\s*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
-  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow \} from "\.\/billing-label";/);
+  assert.match(BILLING, /function pickerKeyed\(a: BillingAvail\): boolean \{ return a\.default \? a\.default === "key" : !!a\.key; \}/);   // 2026-09-09 fold: factored out, the hover helper reads it too
+  assert.match(BILLING, /const keyed = !!a && pickerKeyed\(a\);[^\n]*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
+  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle \} from "\.\/billing-label";/);
+  // …and the written-out row's hover names why the OTHER side is not on offer, in the kernel's reason (upstream #1147,
+  // the user 2026-09-08): pickerBillingTitle, executed in billing-label.test.ts (it claims nothing the kernel reported present)
+  assert.match(RENDER, /fixed\.title = pickerBillingTitle\(a\);/);
   assert.match(RENDER, /const auFixed = el\("span", "picker-auth-fixed"\);/);
   // in button mode, the Login button's hover names WHICH account
   assert.match(RENDER, /if \(loginBtn && a!\.acct\) loginBtn\.title = `Bill this session to the machine's Claude login \(\$\{a!\.acct\}\)\.`;/);
@@ -76,24 +80,24 @@ test("the pick rides createSession, omitted when the row is hidden or written-ou
   assert.match(RENDER, /const def = a!\.default === "key" \? "key" : "login";/);
 });
 
-test("the switching CONTROL is the tab menu's Billing submenu, gated on both", () => {
+test("the switching CONTROL is the tab menu's Billing submenu, both sides listed (the unavailable one greyed)", () => {
   // moved OUT of the statusline (the user 2026-08-09): no auth badge kind survives there
   assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
   assert.doesNotMatch(RENDER, /metaButton\("auth"/);
   assert.doesNotMatch(RENDER, /AUTH_CHOICES/);
   // …and INTO showTabMenu: only when the machine offers both choices does the item exist at all
   // (a one-auth machine keeps the fact on the tab hover, never a dead selector)
-  assert.match(RENDER, /if \(st && st\.auth && st\.authBoth\) \{/);
+  assert.match(RENDER, /if \(st && st\.auth && \(st\.authAvail \|\| st\.authBoth\)\) \{/);   // 2026-09-08: availability, not only both
   // the flyout offers the two plain labels — Login named by its account, the key by NO material —
   // with the session's current choice check-marked
-  assert.match(RENDER, /\{ label: st\.authAcct \? `Login \(\$\{st\.authAcct\}\)` : "Login", value: "login" \},/);
-  assert.match(RENDER, /\{ label: "API key", value: "key" \}\]/);
-  assert.match(RENDER, /el\("div", "ctx-item" \+ \(st\.auth === c\.value \? " current" : ""\)\)/);
+  assert.match(RENDER, /\{ label: st\.authAcct \? `Login \(\$\{st\.authAcct\}\)` : "Login", value: "login", why: avail\.login \? "" : /);   // 2026-09-08: each option carries the reason it is greyed, or ""
+  assert.match(RENDER, /\{ label: "API key", value: "key", why: avail\.key \? "" : /);   // 2026-09-08: reason field, see above
+  assert.match(RENDER, /el\("div", "ctx-item" \+ \(st\.auth === c\.value \? " current" : ""\) \+ \(c\.why \? " disabled" : ""\)\)/);   // 2026-09-08: the unavailable side is greyed, never hidden
   // a pick posts the same setAuth the badge used, and only a CHANGE posts (current = dismiss)
   assert.match(RENDER, /if \(st\.auth !== c\.value && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
   // the item's sub-line names the current billing, or the applying reconnect (billing-label.ts's words)
   assert.match(BILLING, /if \(f\.authPending\) return "applying…";/);
-  assert.match(RENDER, /auth\?: string; authLive\?: string; authPending\?: boolean; authBoth\?: boolean; authAcct\?: string;/);
+  assert.match(RENDER, /auth\?: string; authLive\?: string; authPending\?: boolean; authBoth\?: boolean; authAvail\?: AuthAvail; authPickUnavailable\?: string; authPickFell\?: string; authAcct\?: string;/);   // 2026-09-09: the fall the launch took rides beside the unavailable pick
 });
 
 test("no key material reaches the webview — no tail plumbing survives anywhere", () => {
@@ -116,18 +120,25 @@ test("the chat tab hover says Billing whenever the backend reports it, through b
   // the SWITCH CONTROL (the Billing submenu) carries the same decision where the pick lives (T124)
   assert.match(RENDER, /sb\.textContent = billingSubText\(st\);/,
     "the submenu sub-line is the same decision, shorter");
-  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow \} from "\.\/billing-label";/);
-  // the field that tells a pick from a seeded default rides the status type
-  assert.match(RENDER, /authBoth\?: boolean; authAcct\?: string; authPicked\?: boolean;/);
+  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle \} from "\.\/billing-label";/);   // 2026-09-09: the picker row's hover joined the module (upstream #1147's reason for the missing side)
+  // the field that tells a pick from a seeded default rides the status type, after upstream's one-auth fields
+  assert.match(RENDER, /authAcct\?: string; authPicked\?: boolean;/);
+  // …and a pick this box cannot bill is said on the hover and in the sub-line (upstream #1147, 2026-09-08), from the
+  // kernel's word (authPickUnavailable, never inferred) and the side the launch fell to (authPickFell): the same
+  // module decides it, ahead of the contradiction reading; the strings run in billing-label.test.ts
+  assert.match(BILLING, /if \(billingPickUnavailable\(f\)\) \{\s*\n\s*const fell = billingFellTo\(f\);\s*\n\s*return `⚠ \$\{billingSide\(f\.auth \|\| ""\)\} picked, but \$\{unavailableWhy\(f\)\}`/,
+    "the hover row says the pick could not be billed here, and where the launch went");
+  assert.match(BILLING, /return `⚠ \$\{wordOf\(f\.auth \|\| ""\)\} unavailable` \+ \(fell \? `, billing \$\{wordOf\(fell\)\}` : ""\);/,
+    "the sub-line says the same in fewer words");
 });
 
 test("set_auth refuses a login pick on a box with no login — the same bar the key side always had (T124)", () => {
   const BACKEND = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
-  assert.ok(BACKEND.includes('if value == "login" and not self.login_ok():'),
+  assert.ok(BACKEND.includes('why = self.auth_unavailable_why(value)') && BACKEND.includes('if self.login_ok() is False:'),   // 2026-09-08: one reason vocabulary (credentials.WHY_*), login_ok still the probe; 2026-09-09: tri-state, None = cannot tell
     "refuse loudly at pick time when the box demonstrably lacks the credential");
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  assert.ok(KERNEL.includes("_sdk_backend.login_ok = lambda: bool(_claude_account())"),
-    "the probe is the credential store — the authority the usage bars trust");
+  assert.ok(KERNEL.includes('_sdk_backend.login_ok = lambda: (None if _claude_account_state() == "unreadable" else bool(_claude_account()))'),
+    "the probe is the credential store — the authority the usage bars trust; an unreadable store is cannot-tell, never no-login (2026-09-09)");
   assert.ok(KERNEL.includes("or this machine has no Claude login to switch to."),
     "the warn toast names the login case");
 });

@@ -17,6 +17,14 @@
 // authLive was "" (the user 2026-09-09). Had the report reached the row, the old wording would have shown
 // "Login picked, but the CLI reports the API key" for a default nobody picked. No key material anywhere:
 // the key is labelled 'API key'.
+//
+// Three more fields ride the payload since upstream's one-auth Billing picker (#1147, folded 2026-09-09):
+// `authPickUnavailable` names an EXPLICIT pick this box cannot bill (the kernel's pick_unavailable: a login pick
+// with no signed-in login or under a managed apiKeyHelper, a key pick with no helper; "" for an unpicked session
+// or a pick the box can apply), `authPickFell` the side the launch billed instead (pick_fall, the launch's one
+// decision), and `authAvail` which sides the box can bill with the kernel's reasons. A pick that fell outranks
+// the contradiction reading: the kernel already says what happened, and the row repeats it in upstream's words,
+// so the two trees agree on the copy.
 
 export interface BillingFacts {
   auth?: string;          // "login" | "key" | "" (a tmux session reports nothing)
@@ -24,6 +32,9 @@ export interface BillingFacts {
   authPicked?: boolean;   // `auth` is an explicit pick, not the seeded default
   authPending?: boolean;  // a switch's applying reconnect is in flight
   authAcct?: string;      // the login's display name, when known
+  authPickUnavailable?: string;   // the explicit pick this box cannot bill: "login" | "key" | "" (kernel pick_unavailable)
+  authPickFell?: string;          // the side the launch billed instead: "login" | "key" | ""; absent on an older kernel (kernel pick_fall)
+  authAvail?: BillingAvail;       // which sides this box can bill, with the reasons (kernel auth_avail / _auth_avail)
 }
 
 // The plain label for one side, naming the login's account when known; "" for no side at all.
@@ -38,7 +49,14 @@ export interface BillingAvail {
   key?: boolean;     // Claude Code's settings carry an apiKeyHelper (the kernel's key_available; romp holds no key)
   acct?: string;     // the login's display name, when known
   default?: string;  // what a session created now without an explicit pick would bill: "login" | "key"
+  loginWhy?: string; // why the login side is unavailable, in the kernel's words (credentials.WHY_*); absent when it is available
+  keyWhy?: string;   // the same for the key side
 }
+
+// The side a written-out row names: the kernel's `default`, exactly what a spawn without a pick bills (new_session_auth);
+// a remembered login pick on a keyed box seeds the login into the created session, so the helper's key is not the
+// answer there; the key arm serves only a reply carrying no default.
+function pickerKeyed(a: BillingAvail): boolean { return a.default ? a.default === "key" : !!a.key; }
 
 // The picker's Billing row, from that reply: whether the row has anything to say, whether it offers BUTTONS
 // (both choices real) and, when not, the single applying choice written out (the user 2026-08-09:
@@ -51,13 +69,46 @@ export interface BillingAvail {
 export function pickerBillingRow(a: BillingAvail | null | undefined): { show: boolean; both: boolean; fixed: string } {
   const show = !!(a && (a.login || a.key || a.default === "key"));
   const both = !!(a && a.login && a.key);
-  // the written-out choice is the kernel's `default`, exactly what a spawn without a pick bills (new_session_auth):
-  // a remembered login pick on a keyed box seeds the login into the created session, so the helper's key
-  // is not the answer there; the key arm serves only a reply carrying no default
-  const keyed = !!a && (a.default ? a.default === "key" : !!a.key);
+  const keyed = !!a && pickerKeyed(a);   // the written-out choice follows the kernel's default (pickerKeyed)
   const fixed = !show || both ? "" : (keyed ? "API key" : billingSide("login", a!.acct));
   return { show, both, fixed };
 }
+
+// The written-out row's hover: why the OTHER side is not on offer, in the kernel's reason (the user 2026-09-08),
+// when the reply says that side is unavailable. "" when the row is hidden, when it offers buttons, and when the
+// other side is available but not offered because the declared default decides (a login beside a declared key):
+// the hover never claims a side is missing that the kernel reported present.
+export function pickerBillingTitle(a: BillingAvail | null | undefined): string {
+  const row = pickerBillingRow(a);
+  if (!row.show || row.both) return "";
+  if (pickerKeyed(a!)) return a!.login ? "" : `Login unavailable: ${a!.loginWhy || "no Claude login signed in on this machine"}`;
+  return a!.key ? "" : `API key unavailable: ${a!.keyWhy || "no apiKeyHelper configured"}`;
+}
+
+// The explicit pick this box cannot bill, when the status names one: the kernel's word (authPickUnavailable),
+// never inferred here from the availability alone.
+export function billingPickUnavailable(f: BillingFacts): boolean {
+  return !!(f.auth && f.authPickUnavailable === f.auth);
+}
+
+// The side a pick this box cannot bill actually fell to ("login" | "key"), "" when nothing did: the kernel's
+// authPickFell (the launch's own decision, 2026-09-09). An older kernel without the field is read the way the
+// Billing sub-line always inferred it: the pick is unavailable and the other side exists.
+export function billingFellTo(f: BillingFacts): string {
+  if (f.authPickFell !== undefined) return f.authPickFell || "";
+  if (!billingPickUnavailable(f)) return "";
+  const other = f.auth === "key" ? "login" : "key";
+  const avail: BillingAvail = f.authAvail || { login: true, key: true };
+  return avail[other] ? other : "";
+}
+
+// Why the picked side cannot be billed, in the kernel's words (authAvail's reason for that side), else the generic.
+function unavailableWhy(f: BillingFacts): string {
+  return (f.auth === "key" ? f.authAvail?.keyWhy : f.authAvail?.loginWhy) || "this machine cannot bill it";
+}
+
+// The sub-line's word for a side (upstream's wordOf): the key by its plain label, the login in lower case.
+const wordOf = (side: string): string => (side === "key" ? "API key" : "login");
 
 // Whether there is a contradiction to warn about: an explicit pick the CLI's own report disagrees with.
 export function billingContradicted(f: BillingFacts): boolean {
@@ -65,10 +116,19 @@ export function billingContradicted(f: BillingFacts): boolean {
 }
 
 // The tab hover's Billing row. A pending pick says so first (the reconnect window is never shown as
-// applied fact); a contradicted pick leads with the warning and names what is billed; otherwise the
-// CLI's reported side, falling back to the intent before any report has landed.
+// applied fact); a pick this box cannot bill says so next, naming the side the launch went to, in upstream's
+// words (the user 2026-09-08; review 2026-09-09: the fall is the kernel's word, never inferred from the pick
+// alone, since a box with neither side launches as picked and the CLI decides); a contradicted pick leads
+// with the warning and names what is billed; otherwise the CLI's reported side, falling back to the intent
+// before any report has landed.
 export function billingRowText(f: BillingFacts): string {
   if (f.authPending) return billingSide(f.auth || "") + " (applying, not confirmed yet)";
+  if (billingPickUnavailable(f)) {
+    const fell = billingFellTo(f);
+    return `⚠ ${billingSide(f.auth || "")} picked, but ${unavailableWhy(f)}`
+      + (fell ? ` — this session bills ${fell === "key" ? "the API key" : "the login"}`
+              : " — nothing to fall to, so the launch went out as picked");
+  }
   if (billingContradicted(f)) {
     return `⚠ ${billingSide(f.auth || "")} picked, but the CLI reports `
       + `${f.authLive === "key" ? "the API key" : "the login"}; this session bills that`;
@@ -80,6 +140,10 @@ export function billingRowText(f: BillingFacts): string {
 // away and the row is a control's caption.
 export function billingSubText(f: BillingFacts): string {
   if (f.authPending) return "applying…";
+  if (billingPickUnavailable(f)) {   // the pick names a side this box cannot bill: the launch went to the other one when it exists
+    const fell = billingFellTo(f);
+    return `⚠ ${wordOf(f.auth || "")} unavailable` + (fell ? `, billing ${wordOf(fell)}` : "");
+  }
   if (billingContradicted(f)) return `⚠ CLI reports ${f.authLive === "key" ? "API key" : "login"}`;
   return billingSide(f.authLive || f.auth || "", f.authAcct);
 }
