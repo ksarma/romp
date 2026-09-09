@@ -336,6 +336,13 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      #tabbar-resize drag can move it while the mobile page's max-height:none still wins over it
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
+  /* the scrollbar's space is reserved at every height (review round 2 of the keep-with-next change): the sheet's
+     ::-webkit-scrollbar rule makes the cap's scrollbar a classic 10px one, so a row the painter's keep pass added or
+     dropped that crossed the cap toggled it and changed #tabs' width from inside the strip's ResizeObserver callback
+     (render.ts ensureTabRowObserver), one loop notice per crossing. Stable, the strip's width holds, at the cost of a
+     10px gutter on the bar's right in every host where scrollbars take space; no gutter under the phone layout, whose
+     media rule (kernel.py _CHAT_MOBILE_CSS) sets overflow: visible, where the property has no effect */
+  scrollbar-gutter: stable;
   border-bottom: 1px solid var(--box-border);
   /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
      which defines --vscode-sideBar-background:#252526 — so the var(--bg) fallback never fired in
@@ -353,7 +360,9 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    width change (render.ts ensureTabRowObserver) observes this zero-height child, not #tabs, whose height
    the painter's own keep breaks change from inside the callback (Chromium's loop notice, a window error
    event). Absolute, so it takes no place in the flow; left 0 and right 0, so its width is the strip's;
-   height 0 always, in every theme. */
+   height 0 always, in every theme. The sentinel covers the strip's own height changes; #tabbar's stable
+   scrollbar gutter above covers the other way the callback could change the strip's width, a row change
+   crossing the scroll cap (review round 2). */
 #tabs .tab-row-sentinel { position: absolute; top: 0; left: 0; right: 0; height: 0; pointer-events: none; }
 /* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call — theirs to make):
    a full-bleed hairline under EVERY row of tabs, so a row above a short row never floats. Painted
@@ -4680,8 +4689,10 @@ body.filebrowse-open { overflow: hidden; }
 /* ── COMPACT TABS AND AGENTS (the gear's denseChrome setting; the user 2026-09-08, whose phone showed about
    three lines of transcript between the tab strip and the box of background work). Density only, under ONE
    body class the settings applier toggles (dense-chrome.ts applyDenseChrome, run from applyChatScheme at
-   startup and on every settings change), so a gear flip repaints the strip and the box at once through the
-   cascade and neither is rebuilt. Every rule here is scoped to body.dense-chrome and shadows a default written
+   startup and on every settings change), so a gear flip re-sizes the strip and the box at once through the
+   cascade. The box is not rebuilt; the strip is (the setting is in renderTabs's rebuild signature), so its
+   per-row hairlines and keep breaks are laid under the shorter rows (review round 2 of the keep-with-next
+   change). Every rule here is scoped to body.dense-chrome and shadows a default written
    above; the defaults themselves are untouched, and the trailing comment on each line records the value it
    shadows (dense-chrome.test.ts pins both). Sizes reuse the sheet's own rungs: the tab's 0.86em is on the em
    ladder (css-vocab.test.ts); the row's 11px and 10px are the box's own sizes (.bg-since, .bg-status). The

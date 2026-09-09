@@ -11,7 +11,8 @@ geometry as before; the second drives the default and checks the inline layout: 
 each group's header followed by its tabs with nothing between, the untagged trail behind the pre-T264
 13px divider, and a header or divider whose first tab wrapped moved down to open the next row with it
 (the painter's keep-with-next break, 2026-09-09). The inline drive runs at a viewport where that case
-occurs (the infra header ends row 0 with its first tab below at 800px; at 640px nothing wraps that way),
+occurs (the infra header ends row 0 with its first tab below at 810px, a 784px strip beside #tabbar's paddings and
+its 10px scrollbar gutter; at 640px nothing wraps that way),
 then narrows the viewport to 640px so the painter's ResizeObserver re-places the breaks in a real
 browser, with a window error listener catching Chromium's ResizeObserver loop notice (review round 1).
 
@@ -105,7 +106,8 @@ const survey = () => page.evaluate(() => {
     const r = e.getBoundingClientRect();
     return { cls: e.className, group: e.dataset.group || null, id: e.dataset.id || null,
              name: e.querySelector(".tab-label")?.textContent || e.querySelector(".tab-group-chip")?.textContent || null,
-             top: Math.round(e.offsetTop), left: Math.round(e.offsetLeft), w: Math.round(r.width), h: Math.round(r.height) };
+             top: Math.round(e.offsetTop), left: Math.round(e.offsetLeft), w: Math.round(r.width), h: Math.round(r.height),
+             bottom: e.offsetTop + e.offsetHeight };   // the painter's own read of a row member's bottom
   };
   return {
     items: kids.map(item),
@@ -147,7 +149,16 @@ if (cfg.resizeTo) {
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   resized = await survey();
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify({ open, clicked, light, resized }) + "\n");
+// the gear's compact-tabs flip (denseChrome), through the same-document settings signal the gear raises: the body class
+// re-heights every strip item with no width change, so no observer sees it; the strip must rebuild (the setting is in
+// renderTabs's signature) and the rebuild's paint lays the hairlines under the new rows (review round 2). Wait on the
+// class and two frames, never on a timer
+const stored = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("romp:settings") || "{}"); } catch (e) { return {}; } });
+await page.evaluate((s) => { localStorage.setItem("romp:settings", JSON.stringify(Object.assign({}, s, { denseChrome: true }))); window.dispatchEvent(new Event("romp:settings")); }, stored);
+await page.waitForFunction(() => document.body.classList.contains("dense-chrome"), null, { timeout: 8000 });
+await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+const dense = await survey();
+fs.writeSync(1, "RESULT:" + JSON.stringify({ open, clicked, light, resized, dense }) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -255,6 +266,30 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
                 cur[2].append(it)
         return out
 
+    @staticmethod
+    def _row_bottoms(s):
+        """The painter's rows: every tab, header and visible divider grouped by offsetTop, each row's max bottom, the last
+        row dropped (the bar's own border closes it): what the hairlines must sit on."""
+        rows = {}
+        for it in s["items"]:
+            cls = set(it["cls"].split())
+            if not ({"tab", "tab-group-head"} & cls or ("tab-group-sep" in cls and "tab-group-break" not in cls)):
+                continue
+            rows[it["top"]] = max(rows.get(it["top"], 0), it["bottom"])
+        return sorted(rows.values())[:-1]
+
+    def _check_dense_flip(self, before, dense, label):
+        """The compact-tabs flip re-heights every item at the same strip width; the hairlines must sit under the NEW row
+        bottoms (review round 2: the flip rebuilt nothing, so the lines stayed at the old bottoms, drawn through the next
+        row's tabs, until an unrelated change)."""
+        tall = max(it["h"] for it in before["items"] if it["id"])
+        short = max(it["h"] for it in dense["items"] if it["id"])
+        self.assertLess(short, tall, "%s: the flip made every tab shorter (%r to %r)" % (label, tall, short))
+        self.assertEqual(dense["barW"], before["barW"], "%s: the strip's width did not change: no observer saw the flip" % label)
+        self.assertEqual(dense["lines"], self._row_bottoms(dense), "%s: the hairlines sit under the dense rows' bottoms: %r vs rows %r" % (label, dense["lines"], self._row_bottoms(dense)))
+        self.assertEqual(dense["sentinels"], 1)
+        self.assertEqual([e for e in dense["errs"] if "ResizeObserver" in e], [], "%s: no loop notice on the flip: %r" % (label, dense["errs"]))
+
     def _check_rows(self, s, label):
         items = s["items"]
         # the row's left edge: the leftmost TAB or HEADER (the T134 hairlines bleed 8px past the strip; breaks have no box)
@@ -327,6 +362,10 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         # LIGHT theme: the same geometry
         self.assertIn("theme-light", l["theme"])
         self._check_rows(l, "light")
+        # THE COMPACT-TABS FLIP (review round 2): under the setting too, the gear's denseChrome rebuilds the strip and the
+        # hairlines sit under the shorter rows
+        self._check_dense_flip(o, r["dense"], "dense flip under the setting")
+        self._check_rows(r["dense"], "dense")
 
     def _openers_share_rows(self, o, label):
         """keep-with-next (2026-09-09): a header, or the divider, whose first tab wrapped to the next row gets the painter's
@@ -342,17 +381,18 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
     def test_the_fork_default_flows_inline_no_breaks_and_the_trail_behind_its_divider(self):
         # the user 2026-09-08, whose strip of eleven tag groups became eleven rows: with the setting off (the
         # default) the strip emits no row break of the setting's, a group's header is followed by its tabs with
-        # nothing between, and the untagged trail stands behind the pre-T264 13px divider. Driven at 800px, where
+        # nothing between, and the untagged trail stands behind the pre-T264 13px divider. Driven at 810px (a 784px
+        # strip: the viewport less #tabbar's two 8px paddings and its 10px scrollbar gutter, review round 2), where
         # the infra header fits at the end of row 0 while its first tab wraps (at 640px nothing does, and the
         # keep pass places nothing; review round 1), then narrowed to 640px through the live observer
-        r = self._drive(DRIVER, "inline", rows=False, width=800, resize_to=640)
+        r = self._drive(DRIVER, "inline", rows=False, width=810, resize_to=640)
         o = r["open"]
         self.assertEqual(o["breaks"], 0, "no row break of the setting's in the inline layout: %r" % [i["cls"] for i in o["items"]])
-        self._openers_share_rows(o, "800px")
+        self._openers_share_rows(o, "810px")
         # the painter's ONE keep break at this width stands ahead of the infra header, which shares its first tab's row
         items = o["items"]
         keeps = [i for i, it in enumerate(items) if "tab-keep-break" in it["cls"].split()]
-        self.assertEqual(o["keeps"], 1, "at 800px exactly one opener, the infra header, ended a row above its first tab: %r" % [(it["name"] or it["cls"], it["top"]) for it in items])
+        self.assertEqual(o["keeps"], 1, "at 810px exactly one opener, the infra header, ended a row above its first tab: %r" % [(it["name"] or it["cls"], it["top"]) for it in items])
         self.assertEqual(len(keeps), 1)
         infra = items[keeps[0] + 1]
         self.assertEqual((infra["cls"].split()[0], infra["group"]), ("tab-group-head", "infra"), "the keep break stands ahead of the infra header: %r" % infra)
@@ -379,8 +419,11 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
             self.assertEqual((k["h"], k["w"] > 0), (0, True), "a keep break spans the row at zero height: %r" % k)
         # THE OBSERVER'S PATH (review round 1): narrowed to 640px with no rebuild, the strip re-wraps, the infra header
         # opens its row by wrapping, and the painter's ResizeObserver takes the keep break back out; the pass changed
-        # the strip's height from inside the callback, and Chromium raised no loop notice (the observer watches a
-        # zero-height width sentinel, not #tabs, whose height the pass changes)
+        # the strip's height from inside the callback, and Chromium raised no loop notice: the observer watches a
+        # zero-height width sentinel, not #tabs, whose height the pass changes, and #tabbar's scrollbar gutter is stable,
+        # so a row change crossing its scroll cap does not change the strip's width from inside the callback either
+        # (review round 2; this drive launches with Playwright's --hide-scrollbars, so the second case is pinned by
+        # ui/webview/tab-row-keep-browser.test.ts's classic-scrollbar leg)
         z = r["resized"]
         self.assertEqual(z["innerWidth"], 640)
         self.assertEqual(z["keeps"], 0, "at 640px no opener ends a row above its first tab: the observer re-ran the pass and placed nothing: %r" % [(it["name"] or it["cls"], it["top"]) for it in z["items"]])
@@ -388,6 +431,14 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertEqual([e for e in z["errs"] if "ResizeObserver" in e], [], "no ResizeObserver loop notice on the window across the narrowing: %r" % z["errs"])
         self.assertEqual(z["errs"], [], "no window error at all: %r" % z["errs"])
         self.assertEqual((o["sentinels"], z["sentinels"]), (1, 1), "the painter's width sentinel stands in the strip, once, before and after the narrowing: %r %r" % (o["sentinels"], z["sentinels"]))
+        # THE COMPACT-TABS FLIP (review round 2): at 640px the gear's denseChrome re-heights every item with no width
+        # change; the setting is in the strip's rebuild signature, so the flip rebuilds and the rebuild's paint lays the
+        # hairlines under the dense rows (before the fix the lines stayed at the 32px bottoms over 25px rows, drawn
+        # through the next row's tabs, until an unrelated change)
+        d = r["dense"]
+        self.assertEqual(d["innerWidth"], 640)
+        self._check_dense_flip(z, d, "dense flip at 640px")
+        self._openers_share_rows(d, "dense flip at 640px")
 
 
 if __name__ == "__main__":

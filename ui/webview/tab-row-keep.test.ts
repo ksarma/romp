@@ -8,7 +8,9 @@
 //    next row gets a break ahead of it, so a group never opens at a row's end with its tabs below; not while a tab
 //    is dragged (the breaks are the drag's row openers), and not for a pair no row can hold;
 //  - the divider is a row member for the hairlines, like a tab (the pre-T264 rule, back).
-// The observer watches a zero-height width sentinel, not #tabs, so its own row changes never re-trigger it.
+// The observer watches a zero-height width sentinel, not #tabs, so its own row changes never re-trigger it. A fourth
+// caller (review round 2) is the tab drag's own insert: the dragover handler moves the dragged tab through the DOM and
+// runs the painter after the move, since the rows re-pack at an unchanged width, which no observer sees.
 // tab-row-keep-browser.test.ts runs the same code in Chromium. Synthetic ids only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -60,6 +62,7 @@ class Bar {
   resize(width: number): void { this.width = width; this.dirty(); }
   appendChild(c: Item): Item { c.parent = this; this.children.push(c); this.dirty(); return c; }
   insertBefore(c: Item, ref: Item | null): Item {
+    if (c.parent === this) this.children = this.children.filter((x) => x !== c);   // the DOM moves a node already in the tree (the drag's insert)
     c.parent = this;
     const i = ref ? this.children.indexOf(ref) : -1;
     if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
@@ -427,7 +430,47 @@ test("the observer watches the strip's WIDTH through a zero-height sentinel, not
   assert.doesNotMatch(RENDER, /tabRowObserver\.observe\(bar\)/, "never #tabs itself");
 });
 
-test("event-keyed only: the pass rides the painter, which the rebuild, the width observer and the fonts events run, and nothing else does; no timer, no frame callback", () => {
+test("the drag's live insert (review round 2, executed: render.ts's dragover insert block): a move that changes the row count at an unchanged width repaints the hairlines under the rows as they then stand; the keep breaks stay frozen", () => {
+  const { paintTabRowLines, drag } = lift();
+  // the handler's insert block, from the once-per-actual-insert guard to the handler's end (its closing `});` cut)
+  const block = RENDER.slice(RENDER.indexOf("if (ref !== dragged && dragged.nextElementSibling !== ref)"), RENDER.indexOf("// Drop commits the LIVE DOM position")).replace(/\}\);\s*$/, "");
+  assert.ok(block.startsWith("if (ref !== dragged"), "the insert block was found in the dragover handler");
+  const js = requireCjs("esbuild").transformSync(block, { loader: "ts" }).code;
+  const insert = new Function("tabs", "dragged", "ref", "flipTabs", "paintTabRowLines", js) as (tabs: Bar, dragged: Item, ref: Item | null, flipTabs: (f: () => void) => void, paint: (b: Bar) => void) => void;
+  const flipTabs = (f: () => void) => f();   // the FLIP animation, inert
+  // five tabs in a 330px strip: a b (300) fill row 0, c d e row 1; c moved ahead of b gives a c, b d, e: three rows
+  const a = tab("a", 150), b = tab("b", 150), c = tab("c", 100), d = tab("d", 100), e = tab("e", 100);
+  const bar = strip(330, a, b, c, d, e);
+  paintTabRowLines(bar);
+  assert.deepEqual(bar.rows(), [["a", "b"], ["c", "d", "e"]]);
+  assert.deepEqual(bar.lines(), [ROW_H]);
+  drag("c");
+  const n = bar.paints;
+  insert(bar, c, b, flipTabs, paintTabRowLines);
+  assert.deepEqual(bar.rows(), [["a", "c"], ["b", "d"], ["e"]], "the insert re-packed the rows");
+  assert.equal(bar.paints, n + 1, "one paint, from the insert itself (the round-1 head painted nothing here)");
+  assert.deepEqual(bar.lines(), [ROW_H, 2 * ROW_H], "a hairline under each row above the last");
+  insert(bar, c, b, flipTabs, paintTabRowLines);   // the pointer rests in the slot: c already sits ahead of b, no insert, no paint
+  assert.equal(bar.paints, n + 1, "the no-op guard stands: a dragover tick with nothing to move paints nothing");
+  insert(bar, c, d, flipTabs, paintTabRowLines);   // back: a b, c d e
+  assert.deepEqual(bar.rows(), [["a", "b"], ["c", "d", "e"]]);
+  assert.deepEqual(bar.lines(), [ROW_H], "the dropped row's line went with it");
+  // the keep breaks are the drag's row openers: the insert's paint leaves them as they stand
+  const api = head("api"), b1 = tab("b1"), a1 = tab("a1");
+  const two = strip(300, head("web"), a1, tab("a2", 80), api, b1, tab("b2"), add());
+  drag(null);   // dragstart's paint (the rebuild before the drag) places the break
+  paintTabRowLines(two);
+  const brk = two.keeps()[0];
+  assert.equal(api.previousElementSibling, brk, "the premise: api's break stands at dragstart");
+  drag("a1");
+  insert(two, a1, b1, flipTabs, paintTabRowLines);   // a1 moves into the api group
+  assert.equal(two.keeps()[0], brk, "the same break: the pass stood down under the drag");
+  assert.equal(api.previousElementSibling, brk, "still ahead of api");
+  assert.deepEqual(two.lines(), two.rows().slice(0, -1).map((_, i) => (i + 1) * ROW_H), "the lines under the rows as the insert left them");
+  drag(null);
+});
+
+test("event-keyed only: the pass rides the painter, which the rebuild, the width observer, the fonts events and the drag's insert run, and nothing else does; no timer, no frame callback", () => {
   const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
   const arming = RENDER.slice(RENDER.indexOf("let tabRowObserver"), RENDER.indexOf("function tabEmojiNode("));
   assert.match(painter, /if \(!draggedId\) keepGroupsWithTabs\(bar\);/, "the keep pass runs inside the painter, frozen mid-drag, before the rows are read for the lines");
@@ -449,6 +492,10 @@ test("event-keyed only: the pass rides the painter, which the rebuild, the width
     "function paintTabRowLines(bar: HTMLElement): void {",
     'if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => paintTabRowLines(bar));',
     "paintTabRowLines(bar);",
+    "paintTabRowLines(tabs);",
     "tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));",
-  ], "the painter is called from the rebuild, the width observer and the two fonts events, and nowhere else");
+  ], "the painter is called from the rebuild, the width observer, the two fonts events and the drag's insert, and nowhere else");
+  // the drag's caller sits inside the once-per-actual-insert guard, after the insert (the rows are read after the mutation)
+  assert.match(RENDER, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\) \{\s*\n\s*flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);\s*\n\s*paintTabRowLines\(tabs\);/,
+    "the dragover handler paints right after its insert, inside the guard");
 });

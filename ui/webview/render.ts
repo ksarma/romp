@@ -5852,14 +5852,18 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
 // row 2's tabs "look like they're sitting there floating"). CSS cannot select flex-wrap rows, so
 // the painter groups the rendered tabs by offsetTop and lays one absolute full-bleed hairline
 // under each row but the last — the strip's existing bottom border already finishes the final row. Runs on
-// every strip rebuild, on wrap changes (a ResizeObserver on the strip's width, through a zero-height
-// sentinel: ensureTabRowObserver; width changes re-wrap rows without a rebuild; event-keyed, no
-// polling) and when the document's fonts finish a load (a web font arriving after first paint re-widths
-// every item and moves no box). Classic-scoped in CSS (the Yatharth theme hides .tab-row-line), like
-// every strip tuning. The keep-with-next pass (keepGroupsWithTabs, below) rides the same three events
-// and runs first: the breaks it places move rows, and the lines go under the rows as they then stand.
-// It stands down while a tab is dragged (draggedId): the lines still follow the rows, the breaks stay
-// where the drag found them.
+// every strip rebuild (a setting that re-sizes the items with no width change, the gear's compact tabs,
+// is in the rebuild's signature for this reason: stripSig), on wrap changes (a ResizeObserver on the
+// strip's width, through a zero-height sentinel: ensureTabRowObserver; width changes re-wrap rows
+// without a rebuild; event-keyed, no polling), when the document's fonts finish a load (a web font
+// arriving after first paint re-widths every item and moves no box), and after the tab drag's own
+// insert (the dragover handler moves the dragged tab through the DOM and the rows re-pack at an
+// unchanged width, which no observer sees: it calls the painter right after the move, once per actual
+// insert). Classic-scoped in CSS (the Yatharth theme hides .tab-row-line), like every strip tuning. The
+// keep-with-next pass (keepGroupsWithTabs, below) rides the same events and runs first: the breaks it
+// places move rows, and the lines go under the rows as they then stand. It stands down while a tab is
+// dragged (draggedId): the lines still follow the rows, through the observer on a width change and
+// through the drag's insert on each move; the breaks stay where the drag found them.
 function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
   if (!draggedId) keepGroupsWithTabs(bar);   // frozen mid-drag: the breaks are the drag's row openers (see the pass)
@@ -5908,8 +5912,13 @@ function paintTabRowLines(bar: HTMLElement): void {
 // judged by reads made after the breaks ahead of it were placed, so a header that a break above
 // pushed onto its own row gets none. Placing a break changes the strip's height, which is why the
 // observer watches the strip's width through a zero-height sentinel (ensureTabRowObserver): the
-// callback's own row changes never re-trigger it, and Chromium raises no loop notice (observing
-// #tabs itself raised one, a window error event, on every row the pass added or dropped).
+// callback's own row changes never re-trigger it, and Chromium raises no loop notice for them
+// (observing #tabs itself raised one, a window error event, on every row the pass added or dropped).
+// The strip's WIDTH can still change from inside the callback when a row the pass adds or drops
+// crosses #tabbar's scroll cap: the sheet's ::-webkit-scrollbar rule makes every Chromium scrollbar a
+// 10px classic one, so the cap's scrollbar took 10px of #tabs when it appeared, and the sentinel
+// re-fired once. #tabbar's scrollbar-gutter: stable (styles.css) reserves that space at every height,
+// so the width holds across the crossing (review round 2). Two mechanisms, one for each input.
 function keepGroupsWithTabs(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-keep-break"))) old.remove();
   for (const head of Array.from(bar.children) as HTMLElement[]) {
@@ -5932,8 +5941,11 @@ let tabRowObserver: ResizeObserver | null = null;
 // re-wraps rows. Observing #tabs itself fired on its height too, which the painter's own keep breaks
 // change from inside the callback: Chromium then raised "ResizeObserver loop completed with
 // undelivered notifications" as a window error event on every row the pass added or dropped (review
-// round 1). The rebuild's replaceChildren sweeps the sentinel out with the tabs, so every call puts it
-// back; the observation is on the element and survives.
+// round 1). The sentinel removes that, the height-triggered notice; the scrollbar-triggered one (a row
+// change crossing #tabbar's scroll cap toggled its classic scrollbar and so the strip's width, inside
+// the callback) is removed by #tabbar's stable scrollbar gutter in styles.css (review round 2). The
+// rebuild's replaceChildren sweeps the sentinel out with the tabs, so every call puts it back; the
+// observation is on the element and survives.
 let tabRowSentinel: HTMLElement | null = null;
 function ensureTabRowObserver(bar: HTMLElement): void {
   if (!tabRowSentinel) { tabRowSentinel = el("div", "tab-row-sentinel"); tabRowSentinel.setAttribute("aria-hidden", "true"); }
@@ -6079,6 +6091,7 @@ function renderTabs() {
   const stripSig = JSON.stringify([
     activeId, peekId, phoneLayout(), ids, visibleIds, activeId ? tabInView(activeId) : null, plan.items,
     settings.tabCtx, settings.stripGroupRows, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
+    settings.denseChrome,   // compact tabs: the body class re-heights every item at an unchanged width, an input no observer sees; the rebuild's paint lays the hairlines and keep breaks under the new rows (review round 2 of the keep-with-next change)
     surfaceLens(effViews(), "chat"), unions,
     snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
     visibleIds.map((id) => {
@@ -17772,7 +17785,10 @@ function applyChatScheme(s: RompSettings): void {
   applyTheme(document, s);
   // compact tabs and agents (the user 2026-09-08): a body class the strip's and the #bg-tasks box's dense
   // rules key on (styles.css body.dense-chrome). Same two moments as the scheme and the theme, so the gear's
-  // flip repaints both surfaces at once through the cascade; neither is rebuilt.
+  // flip re-sizes both surfaces at once through the cascade. The box is not rebuilt; the strip is, by the
+  // renderTabs() that follows this in onExternalSettingsChange (settings.denseChrome is in its signature), so
+  // the rebuild's paint lays the row hairlines and keep breaks under the re-heighted items (review round 2 of
+  // the keep-with-next change: the cascade alone left them at the old row bottoms)
   applyDenseChrome(document, s);
 }
 function setupSettings(): void {
@@ -18359,8 +18375,15 @@ setupSettings();
     // them would open the trail's row ahead of its divider). The trail's own break under the setting is
     // a break, not a divider, and needs no redirect (isBreak(ref)).
     if (ref && ref.classList.contains("tab-group-sep") && !isBreak(ref) && isBreak(before(ref as HTMLElement))) ref = before(ref as HTMLElement);
-    if (ref !== dragged && dragged.nextElementSibling !== ref)
+    // the insert re-packs the rows at an unchanged strip width, which no observer sees, and renderTabs is
+    // deferred while the pointer is down: the hairlines are re-laid right after the move, keyed on the insert
+    // itself (once per actual move, inside the no-op guard). Lines only: the keep pass stands down under
+    // draggedId, so the drag's row openers stay where dragstart found them (review round 2 of the
+    // keep-with-next change)
+    if (ref !== dragged && dragged.nextElementSibling !== ref) {
       flipTabs(() => tabs.insertBefore(dragged, ref));
+      paintTabRowLines(tabs);
+    }
   });
   // Drop commits the LIVE DOM position through the same reorderTo the strip has always used —
   // neighbor id + side — so persistence and the kernel write are byte-identical, and ids that a
