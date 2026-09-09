@@ -6970,7 +6970,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       sub.appendChild(cfg);
       menu.appendChild(sub);
       // beside the Tags row: the side rule (the model-version submenus): PREFER right; fall LEFT only when the right
-      // edge would clip — never slide over the row; the top at the row's, clamped to the pane. Read again on every
+      // edge would clip, never slide over the row; the top at the row's, clamped to the pane. Read again on every
       // reseat while this flyout is open (the Hide tab row's refresh, after each write here): the row's coming or going
       // above the Tags row moves the row, and the flyout's own size changes with its rows (round 3: the flyout stood one
       // row too low after an x on the copy's tag)
