@@ -1,5 +1,6 @@
-// The Send confirm's note is trimmed twice on its way to the session: the panel puts `this.sendNote.trim()` on the wire
-// (doSend; pinned in file-comments-send-note.test.ts) and the kernel's send op strips what arrives with Python's
+// The Send confirm's note is trimmed twice on its way to the session: the panel puts the note on the wire through trimNote
+// (doSend; `this.sendNote.trim()` until the review's consolidation; pinned in file-comments-send-note.test.ts) and the
+// kernel's send op strips what arrives with Python's
 // `str.strip()` before it measures the note against _SEND_NOTE_MAX, places it and logs it. The two trims do not remove
 // the same characters: JavaScript's trim() drops a byte-order mark (U+FEFF) that Python keeps, and Python's strip()
 // drops NEL (U+0085) and the four ASCII information separators (U+001C to U+001F) that JavaScript keeps. Before trimNote

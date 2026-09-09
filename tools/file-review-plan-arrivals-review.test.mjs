@@ -67,7 +67,7 @@ test('the op prose is true of the panel: the same bound, refused before any requ
   assert.ok(model.includes('export const SEND_NOTE_MAX = 4000;'), 'the panel\'s bound is the kernel\'s');
   assert.ok(model.includes('export function noteTooLong(note: string): string | null {'));
   const send = between(panel, 'async doSend(): Promise<void> {', 'if (note) msg.note = note;');
-  assert.ok(send.includes('const note = this.sendNote.trim();'), 'trimmed');
+  assert.ok(send.includes('const note = trimNote(this.sendNote);'), 'trimmed as the kernel reads it');
   assert.ok(send.includes('const long = noteTooLong(note); if (long) { this.errors.set("send", { text: long, reload: false }); this.render(); return; }'), 'refused over the bound before the request is built');
   assert.ok(panel.includes('if (note) msg.note = note;'), 'left out when empty');
 });

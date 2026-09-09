@@ -486,9 +486,12 @@ export const SEND_NOTE_MAX = 4000;
  *  interpreter in file-comments-model-note-trim.test.ts. */
 const PY_SPACE = "\\t\\n\\v\\f\\r\\x1C-\\x1F \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
 const PY_STRIP_ENDS = new RegExp("^[" + PY_SPACE + "]+|[" + PY_SPACE + "]+$", "g");
-/** The note as the kernel reads it. The panel puts the note on the wire through `trim()` (doSend) and the kernel strips
- *  what arrives with `str.strip()` before it measures, places or logs it, so the note the kernel sees is
- *  strip(trim(text)): this is that composition, in that order. The two trims differ only at the ends of the text and only
+/** The note as the kernel reads it. The kernel strips what arrives with `str.strip()` before it measures, places or logs
+ *  it, and the panel put the note on the wire through `trim()` (doSend), so the note the kernel saw was strip(trim(text)):
+ *  this is that composition, in that order, and since the review's consolidation (2026-09-09) the panel puts THIS on the
+ *  wire and reads its emptiness off it (doSend, syncSendGo), so a note the kernel would strip to nothing is no note in the
+ *  panel either — before, one NEL beside comments went as `note` and the kernel dropped it without a word, and alone it
+ *  turned the confirm's Send on for a send the kernel refused. The two trims differ only at the ends of the text and only
  *  on characters nobody can see — JS drops a pasted byte-order mark that Python keeps; Python drops NEL and the ASCII
  *  separators that JS keeps — so the panel measured "\u0085" + 4000 letters as 4001 and refused a note the kernel would
  *  have taken, and read a note of one NEL as words to send that the kernel read as none. Idempotent under the kernel's

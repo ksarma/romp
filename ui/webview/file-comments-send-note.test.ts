@@ -492,6 +492,36 @@ test("nothing unsent: Send still opens the confirm, whose own Send is off until 
   assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at /, "the sent note as before");
 });
 
+test("a note the kernel would strip to nothing is none here too: NEL or an ASCII separator alone leaves the confirm's Send off with nothing unsent, and beside comments travels as no note", async (t: TestContext) => {
+  // Python's str.strip() removes NEL (U+0085) and the four information separators (U+001C to U+001F); JavaScript's trim()
+  // keeps them. Before trimNote reached the panel, such a note alone turned the confirm's Send on for a send the kernel
+  // refused as nothing to send, and beside comments went on the wire as `note` for the kernel to strip to nothing and drop
+  // without a word (the review's consolidation, 2026-09-09). Built from code points: no such literal in this file.
+  const nel = String.fromCharCode(0x85), sep = String.fromCharCode(0x1c);
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ unsent: NO_UNSENT }));
+  openConfirm(aside);
+  typeNote(aside, nel + "\n" + sep);
+  assert.equal(aside.querySelector('[data-act="fcsendgo"]')!.disabled, true, "no words the kernel would keep: nothing to send");
+  aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  assert.equal(lastOf(w, "fileCommentsSend"), undefined, "doSend sends nothing either");
+  assert.ok(aside.querySelector(".fc-confirm .fc-send-note"), "the confirm stays up");
+  typeNote(aside, nel + "Keep the table." + sep);
+  assert.equal(aside.querySelector('[data-act="fcsendgo"]')!.disabled, false, "words inside the edges are words");
+  aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  assert.equal(lastOf(w, "fileCommentsSend").note, "Keep the table.", "the wire carries the note as the kernel reads it");
+  sent(w); await flush();
+  // beside comments the same characters are no note either: the field is left out, as for an empty box
+  const w2 = world(); t.after(() => w2.close());
+  const { aside: a2 } = await openPanel(w2);
+  openConfirm(a2);
+  typeNote(a2, nel);
+  a2.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  const msg = lastOf(w2, "fileCommentsSend");
+  assert.ok(msg && msg.comments.length > 0, "the comments went");
+  assert.equal("note" in msg, false, "no note field: the kernel would have stripped it to nothing");
+});
+
 test("the Log: a send's row names the note with the comments, or alone, and the row's detail shows the words first", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const log = [
@@ -524,7 +554,8 @@ test("at source: no preview, no toggle, no message built in the panel; the box i
   assert.match(SRC, /const noting = document\.activeElement === this\.noteBox;/);
   assert.match(SRC, /if \(noting && document\.activeElement !== this\.noteBox\) this\.noteBox\.focus\(\{ preventScroll: true \}\);/);
   assert.match(SRC, /else if \(ev\.target === p\.noteBox\) \{ ev\.stopImmediatePropagation\(\); p\.noteKey\(ev\); \}/);
-  assert.match(SRC, /const long = noteTooLong\(note\);\n\s*if \(long\) \{ this\.errors\.set\("send", \{ text: long, reload: false \}\); this\.render\(\); return; \}/, "refused before any request");
+  assert.match(SRC, /const note = trimNote\(this\.sendNote\);\n\s*const long = noteTooLong\(note\);\n\s*if \(long\) \{ this\.errors\.set\("send", \{ text: long, reload: false \}\); this\.render\(\); return; \}/, "the wire carries the note as the kernel reads it, refused before any request");
+  assert.match(SRC, /b\.disabled = !n && !trimNote\(this\.sendNote\);/, "the confirm's Send reads the note's emptiness the kernel's way");
   assert.match(SRC, /if \(note\) msg\.note = note;/);
   assert.match(SRC, /fcsendcancel: \(\) => \{ this\.sendConfirm = false; this\.sendNote = ""; this\.noteBox\.value = ""; this\.render\(\); \},/);
 });

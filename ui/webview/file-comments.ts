@@ -89,7 +89,7 @@ import {
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
   statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
   resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
-  noteTooLong,   // the Send confirm's note box (the owner's ruling, 2026-09-09)
+  noteTooLong, trimNote,   // the Send confirm's note box (the owner's ruling, 2026-09-09); trimNote: the note as the kernel reads it
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -3793,9 +3793,11 @@ class Panel {
   async doSend(): Promise<void> {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
-    // the note (the fields' comment): trimmed, refused over the bound before any request goes; with nothing unsent it is
-    // the whole message, and without it there is nothing to send (renderSend keeps the confirm's Send off then)
-    const note = this.sendNote.trim();
+    // the note (the fields' comment): trimmed as the kernel reads it (trimNote: NEL or an ASCII separator alone is no note here
+    // as there, so the wire never carries words the kernel would strip to nothing and drop without a word), refused over the
+    // bound before any request goes; with nothing unsent it is the whole message, and without it there is nothing to send
+    // (renderSend keeps the confirm's Send off then)
+    const note = trimNote(this.sendNote);
     const long = noteTooLong(note);
     if (long) { this.errors.set("send", { text: long, reload: false }); this.render(); return; }
     if (!unsentCount(s.unsent) && !note) return;
@@ -4932,14 +4934,15 @@ class Panel {
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
   }
-  /** The confirm's Send: off with nothing unsent and no note, on as soon as either stands. `go` is the button renderSend just
+  /** The confirm's Send: off with nothing unsent and no note (as the kernel reads it, trimNote: words its strip would take to
+   *  nothing are none), on as soon as either stands. `go` is the button renderSend just
    *  built; without it, the one in the panel, followed in place as the person types (the box's input): a render would rebuild
    *  the confirm around the box. */
   private syncSendGo(go?: HTMLButtonElement): void {
     const b = go || (this.root?.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement | null);
     if (!b) return;
     const n = this.status ? unsentCount(this.status.unsent) : 0;
-    b.disabled = !n && !this.sendNote.trim();
+    b.disabled = !n && !trimNote(this.sendNote);
     b.title = b.disabled ? "Nothing is unsent; type a note to send one" : "Send";
   }
   /** The bound refusal's row (doSend: a note over SEND_NOTE_MAX is refused before any request, in the send slot) is about the
