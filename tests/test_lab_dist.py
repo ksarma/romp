@@ -11,10 +11,11 @@ does (holding the staging window open long enough to matter):
   3. a marker that names the current inputs skips the build; a changed input, a removed dist, a dependency
      change, a build by another command or a change of build command rebuilds; the marker records the key
      computed BEFORE the build, so a source edited mid-build is caught by the next call;
-  4. the inputs are derived from esbuild.js by a rule that reads no array or object: every quoted string
-     literal naming a path on disk inside the checkout, comments included, contributes its top-level tree
-     (a literal naming nothing on disk contributes nothing; an existing path outside the checkout is an
-     error; then the trees their relative imports reach, one executed test per import shape the scan
+  4. the inputs are derived from esbuild.js by a rule that reads no array, object, string or comment: every
+     path-shaped token naming a path on disk inside the checkout, quoted or not, in code or in a comment,
+     contributes its top-level tree (a token naming nothing on disk contributes nothing; a stray quote
+     before a path hides nothing; an existing path outside the checkout is an error; a top-level file is
+     keyed as one file; then the trees their relative imports reach, one executed test per import shape the scan
      follows), the dist being built is left out at the top level only, and on the real config the
      derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins file-level parity);
   5. a build that fails skips the caller (the served labs' standing behaviour) and leaves no marker; a
@@ -390,9 +391,10 @@ class MarkerKeysOnInputs(_Checkout):
 
 
 class InputsDeriveFromEsbuild(unittest.TestCase):
-    """The keyed trees come from esbuild.js, never from a list kept here: the top-level tree of every path
-    the config names in a quoted string literal, then the trees their relative imports reach. The checkout
-    is `base/checkout`, so a path OUTSIDE the checkout can exist inside the cleaned temp dir."""
+    """The keyed trees come from esbuild.js, never from a list kept here: the top-level tree of every
+    path-shaped token in the config that names a path on disk, quoted or not, then the trees their relative
+    imports reach. The checkout is `base/checkout`, so a path OUTSIDE the checkout can exist inside the
+    cleaned temp dir."""
 
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="lab-dist-inputs-")
@@ -444,18 +446,18 @@ function testBuild() { const entries = []; return { entryPoints: entries, outdir
         _write(path, text)
         return list(lab_dist._relative_imports(path))
 
-    def test_every_quoted_path_the_config_names_contributes_its_tree(self):
+    def test_every_path_token_the_config_names_contributes_its_tree(self):
         self.assertEqual(self.roots(), ["ext", "tools", "ui"],
                          "ext from src/extension.ts and dist, ui and tools from the webview entries; the object-form "
-                         "entry under node_modules is a dependency; outfile, outdir and the format names resolve to "
-                         "nothing on disk")
+                         "entry under node_modules is a dependency; outfile, outdir, the format names and every "
+                         "identifier and comment word resolve to nothing on disk")
 
     def test_the_rule_reads_no_array_and_survives_every_shape_that_broke_the_old_parser(self):
         """The shapes that made an array parser return a shorter list in silence: a `//` inside a string on
         the line that opens the array (a comment strip took the rest of the line), the record form of
         entryPoints (no array at all), a URL entry, a comment naming a path that does not exist, a trailing
-        comma, a single-quoted entry, a spread and a ternary. None is parsed as a structure; every quoted
-        literal is resolved on disk, and the roots are exactly the trees the real paths reach."""
+        comma, a single-quoted entry, a spread and a ternary. None is parsed as a structure; every
+        path-shaped token is resolved on disk, and the roots are exactly the trees the real paths reach."""
         _write(self.config, '''
 const banner = { js: "// built by esbuild.js" }, entryPoints = [
     "../ui/webview/render.ts",   // see "../plans/render.md" and "../gone/x.ts": neither exists
@@ -478,12 +480,53 @@ const extension = { entryPoints: ["src/extension.ts"] };
 ''')
         self.assertEqual(self.roots(), ["data", "ext"])
 
-    def test_a_literal_naming_nothing_on_disk_contributes_nothing(self):
-        """Noise the config is full of: formats, targets, loader keys, globs, messages, an empty string, an
-        absolute path, the checkout root itself (".."), a template literal, a spread and a variable. None
-        names a tree; the one real path does."""
+    # The scan reads path-shaped tokens, not quoted literals, so the quotes on a line need not balance. Each
+    # test below puts a stray quote (or none at all) before a real path on the same line; a quote-balanced scan
+    # opened a literal at the stray quote that swallowed the path and dropped its tree in silence.
+    def test_an_apostrophe_in_a_comment_before_a_path_hides_nothing(self):
         _write(self.config, '''
-const x = { entryPoints: ["src/extension.ts", ...more, shared, `src/${name}.ts`], format: "cjs", target: "node18",
+const webview = { entryPoints: [
+    /* the extension's own entry */ "../tools/extra/thing.ts",   // don't drop it
+    "../ui/webview/render.ts", "src/extension.ts",
+] };
+''')
+        self.assertEqual(self.roots(), ["ext", "tools", "ui"],
+                         "the apostrophe in the comment stands before the tools entry on the same line")
+
+    def test_a_double_quote_in_a_regex_literal_before_a_path_hides_nothing(self):
+        """The real config carries this shape (the failure summary's `Could not resolve` regex)."""
+        _write(self.config, '''
+const m = /^Could not resolve "([^"]+)"/.exec(text); const entries = ["../tools/extra/thing.ts", "src/extension.ts"];
+''')
+        self.assertEqual(self.roots(), ["ext", "tools"],
+                         "three double quotes in the regex literal stand before the two entries on the same line")
+
+    def test_a_template_literal_path_is_keyed(self):
+        _write(self.config, '''
+const entries = [`../tools/extra/thing.ts`, "src/extension.ts"];
+''')
+        self.assertEqual(self.roots(), ["ext", "tools"])
+
+    def test_a_top_level_file_the_config_names_is_keyed_as_one_file(self):
+        """A path whose top-level tree is a FILE (root/top.js) is keyed as that one file, not walked: it is
+        an input like any other (an edit to it changes the key), and a walk of a file would key nothing."""
+        top = os.path.join(self.root, "top.js")
+        _write(top, "module.exports = 1;\n")
+        _write(self.config, 'const x = { entryPoints: ["src/extension.ts", "../top.js"] };\n')
+        self.assertEqual(self.rel(lab_dist.default_inputs(self.root, self.ext)), [("ext", True), ("top.js", False)])
+        build = lab_dist.DistBuild(ext=self.ext, cmd=[sys.executable, "x"], root=self.root)
+        self.assertIn(top, list(build._input_files()), "the file itself is the keyed input")
+        before = build.key()
+        _bump(top)
+        self.assertNotEqual(build.key(), before, "an edit to a top-level file input changes the key")
+
+    def test_a_token_naming_nothing_on_disk_contributes_nothing(self):
+        """Noise the config is full of: formats, targets, loader keys, globs, messages, an empty string, an
+        absolute path, the checkout root itself (".."), a template literal computed from parts, a spread, a
+        variable, and every identifier and punctuation run around them. None names a tree; the one real path
+        does."""
+        _write(self.config, '''
+const x = { entryPoints: ["src/extension.ts", ...more, shared, `${dir}/${name}.ts`], format: "cjs", target: "node18",
             loader: { ".woff2": "file" }, external: ["*.png", "../media/*.woff2"], empty: "", abs: "/", up: "..",
             msg: "esbuild.js: build failed: ", assetNames: "fonts/[name]-[hash]" };
 ''')
@@ -560,7 +603,7 @@ const x = { entryPoints: ["src/extension.ts", ...more, shared, `src/${name}.ts`]
         self.assertEqual(self.roots(), ["ext"])
 
     def test_a_config_naming_no_path_inside_the_checkout_is_an_error(self):
-        _write(self.config, 'const x = { format: "cjs", entryPoints: [`src/${name}.ts`] };\n')
+        _write(self.config, 'const x = { format: "cjs", entryPoints: [`${dir}/${name}.ts`] };\n')
         with self.assertRaises(ValueError) as cm:
             lab_dist.esbuild_roots(self.root, self.ext)
         self.assertIn("names no path inside the checkout", str(cm.exception))

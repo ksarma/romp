@@ -17,15 +17,18 @@ This module owns the build. The rules:
   content of npm's two lock files). The output state digests every served file's path, mtime and size
   under dist. A caller whose build state matches the marker, over a dist nobody has written since, copies
   without building; anything else builds: a missing or stale marker, an edited or added source, a
-  dependency change, a build by another command (`node esbuild.js --production` by hand, or the kernel's
-  in-place rebuild, leaves minified bundles under a marker whose inputs still match; the output state is
-  what shows it). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
+  dependency change, a build by another command under a marker whose inputs still match (a `node esbuild.js
+  --production` by hand, or the kernel's boot build in `_ensure_bundles`, which minifies unless
+  ROMP_EXT_DEV_BUILD is set, leaves minified bundles; the kernel's in-place `_rebuild_dist` runs the same
+  command line as this harness and leaves dev bundles under new mtimes; the output state is what shows
+  either). The marker is rewritten, atomically (write a sibling, rename), only AFTER the build
   exits 0, and the build state is computed BEFORE the build and recorded after it, so the marker never
   claims inputs newer than what the build read: a source edited mid-build is caught by the next call.
 - The trees the build state covers are DERIVED from esbuild.js, not listed here, by a rule that reads no
-  array or object out of the config: every quoted string literal in the file that names a file or
-  directory on disk inside the checkout contributes the top-level tree that holds it (ui/ and
-  vscode-extension/ today; one under node_modules is a dependency, keyed by the lock files; one naming
+  array, object, string or comment out of the config: every path-shaped token in the file (a maximal run
+  of letters, digits, dot, slash, underscore and hyphen, quoted or not, in code or in a comment) that
+  names a file or directory on disk inside the checkout contributes the top-level tree that holds it (ui/
+  and vscode-extension/ today; one under node_modules is a dependency, keyed by the lock files; one naming
   nothing on disk contributes nothing), and then, to a fixed point, the top-level tree of every relative
   import a keyed source makes out of the keyed trees (vendor/ today: ui/webview/anchor-map.ts imports
   vendor/track-changents/engine.js). Over-approximation is safe for a staleness key (more files keyed
@@ -117,9 +120,13 @@ _SKIP_DIRS = {"node_modules", "out-tests", "__pycache__"}
 _IMPORTING_SUFFIXES = (".ts", ".js", ".mjs", ".css")
 _RELATIVE_LITERAL = re.compile(r"""["'](\.\.?/[^"'\n]*)["']""")
 _IMPORT_SHAPE = re.compile(r"""(?:\bfrom|\bimport|\brequire\s*\(|@import(?:\s+url\()?)\s*\(?\s*$""")
-# A single- or double-quoted string literal in esbuild.js, escapes kept whole, on one line (a JS string cannot
-# span lines). Template literals are not read: one that named a path would be computed, and none does today.
-_STRING_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"' r"|'((?:[^'\\\n]|\\.)*)'")
+# A path-shaped token in esbuild.js: a maximal run of the characters a relative path is made of (`./x`, `../y/z.ts`,
+# `src/extension.ts`, `dist`), wherever it stands: inside a string of either quote kind, a template literal, a regex
+# literal, a comment, or bare in code. The scan ignores quoting and comments on purpose. A quote-balanced scan was
+# thrown off by a stray quote earlier on the same line (an apostrophe in a comment, a double quote in a regex
+# literal, both of which esbuild.js carries) and swallowed the path literal after it in silence; a token that names
+# nothing on disk is noise, so reading every token costs a stat sweep and nothing else.
+_PATH_TOKEN = re.compile(r"[A-Za-z0-9._/-]+")
 # The dependency state, relative to the extension dir. package-lock.json moves at checkout time (a merge, a
 # pull); node_modules/.package-lock.json is npm's hidden lockfile, rewritten by every `npm install` and `npm
 # ci`, and it is the one that moves when the installed tree changes AFTER the checkout did (the pull moves the
@@ -162,22 +169,30 @@ def _sources(tree, skip=()):
 def esbuild_roots(root=ROOT, ext=EXT):
     """The top-level trees of the checkout `root` that esbuild.js names, as absolute paths, sorted.
 
-    The rule is deliberately conservative and reads no array or object out of the config: EVERY single- or
-    double-quoted string literal in the file, comments included, is joined to the extension dir and
-    normalized, and one that names a file or directory on disk inside the checkout contributes the
-    top-level tree that holds it ("src/extension.ts" and "dist" contribute vscode-extension,
-    "../ui/webview/render.ts" contributes ui). Everything else contributes nothing: a literal naming nothing
-    on disk (a format, a target, a loader key, a URL, a glob, a message, a path in a comment that no longer
-    exists), an empty or absolute literal, one under node_modules (a dependency, keyed by the lock files),
-    and one that resolves to the checkout root itself (a top-level tree is the unit this key walks).
+    The rule is deliberately conservative and reads no array, object, string or comment out of the config:
+    EVERY path-shaped token in the file (_PATH_TOKEN: a maximal run of letters, digits, dot, slash,
+    underscore and hyphen), whether it stands in a quoted string, a template literal, a regex literal, a
+    comment or bare code, is joined to the extension dir and normalized, and one that names a file or
+    directory on disk inside the checkout contributes the top-level tree that holds it ("src/extension.ts"
+    and "dist" contribute vscode-extension, "../ui/webview/render.ts" contributes ui). Everything else
+    contributes nothing: a token naming nothing on disk (a format, a target, a loader key, a URL, a glob, a
+    word of a message or a comment, an identifier, a path in a comment that no longer exists), an absolute
+    token, one under node_modules (a dependency, keyed by the lock files), and one that resolves to the
+    checkout root itself (a top-level tree is the unit this key walks).
+
+    The scan ignores quoting and comments on purpose: a scan that read quoted literals depended on the
+    quotes on a line balancing, and a stray quote before a path (an apostrophe in a comment, a double quote
+    in a regex literal) opened a literal that swallowed the path and dropped its tree in silence. Tokens
+    have no such dependency: a path is found wherever it stands, and what is found is then tested on disk.
 
     Over-approximation is SAFE for a staleness key: a tree named only in a comment is keyed too, and more
     files keyed means a rebuild more often, never less. Under-approximation is the failure this module
     exists to prevent, and the parity test in tests/test_kernel_bundle_staleness.py is the guard against
     it: on the real tree, every file the kernel's `_bundle_inputs` reads must be keyed here. The one shape
-    neither sees is an input named by no literal at all (a computed path); none exists today.
+    neither sees is an input whose path appears nowhere in the file in one piece (a path assembled from
+    parts at run time); none names a tree of its own today.
 
-    Loud in two cases: a literal that names an existing path OUTSIDE the checkout, which no top-level tree
+    Loud in two cases: a token that names an existing path OUTSIDE the checkout, which no top-level tree
     can key and the parity test cannot see either; and a config naming no path inside the checkout at all,
     which means the wrong file was read."""
     config = os.path.join(ext, "esbuild.js")
@@ -185,17 +200,16 @@ def esbuild_roots(root=ROOT, ext=EXT):
         src = f.read()
     node_modules = os.path.join(ext, "node_modules")
     roots = set()
-    for m in _STRING_LITERAL.finditer(src):
-        literal = m.group(1) if m.group(1) is not None else m.group(2)
-        if not literal or os.path.isabs(literal):
+    for token in sorted(set(_PATH_TOKEN.findall(src))):
+        if os.path.isabs(token):
             continue
-        path = os.path.normpath(os.path.join(ext, literal))
+        path = os.path.normpath(os.path.join(ext, token))
         if path == root or _under(path, node_modules) or not os.path.exists(path):
             continue
         top = _top_tree(path, root)
         if top is None:
             raise ValueError("%s names %r, an existing path outside the checkout %s, which cannot be keyed"
-                             % (config, literal, root))
+                             % (config, token, root))
         roots.add(top)
     if not roots:
         raise ValueError("%s names no path inside the checkout %s: the build's inputs cannot be keyed" % (config, root))
