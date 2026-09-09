@@ -338,7 +338,7 @@ class UploadHoldExecuted(unittest.TestCase):
     since a reload over it would land on a kernel not answering the page and lose the prompt: it is reported ahead of
     a clocked word and defers a release past the deadline like a gesture, so a chat pane's upload beside a sibling
     pane's 'sends' clocks from its first sight and is released only when the flush ends the 'sends'. An older pane
-    core without paneHere is read through its busyHere word. A refused reload persists once more without the release
+    core without paneHere is read through its busyHere word. A refused reload with a release note pending persists once more without the release
     note (the fold's review, F2).
     The timers, the clock and the console are the scenario's own fakes (the core calls setTimeout, clearTimeout,
     Date.now and console.warn by name, so a bare assignment in the sloppy-mode script replaces the global): a

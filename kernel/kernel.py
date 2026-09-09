@@ -49751,7 +49751,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # pre-reload hook reads through `released()` and appends to the toasts it persists (render.ts
 # persistNoticesForReload, reload-hold.ts releasedNotices), so the fresh page says why it reloaded over the
 # wait; the loss toast still names what was lost. A refused reload (fire()'s catch) drops the note and the
-# clock and persists once more, so the panes' stored toasts no longer carry a note about a reload that never
+# clock and, when a release note was pending, persists once more, so the panes' stored toasts no longer carry a note about a reload that never
 # happened (the fold's review, F2). The shim's 'sends' (a prompt queued for a socket that is down) has NO
 # deadline (NOCLOCK; the fold's review, F1/UI-1) and defers a release like a gesture: the word is true only
 # while this pane's socket is not open, so a reload fired over it, on its own clock or on a sibling pane's,
