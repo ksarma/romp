@@ -109,3 +109,16 @@ test('the Tests section and the Docs section carry the follow-on, naming the sam
   assert.ok(save[0].includes('unless you scrolled, clicked, tapped, or pressed a key while the save was under way'), save[0]);
   assert.ok(!save[0].includes('unless you scrolled on'), 'the first wording named scrolling as the only stand-down: ' + save[0]);
 });
+
+test('the seed is stated as built: the first render and the first status with the panel open both seed the set, and the rule reads the author label alone', () => {
+  // the review's consolidation (2026-09-09): the round made the open's first status all seen too (a panel first opened
+  // minutes after the probe had named everything since as arrivals) and the paragraph still described the render's seed
+  // alone; and the author-label limit the review asked to be stated is stated
+  assert.ok(note.includes('seeded at its first render with a status from everything in it and again from the first status to land with the panel open (`seenOpen`'));
+  assert.ok(note.includes('so a file opened fresh has no arrivals, whatever the session added between the probe and the open'));
+  assert.ok(panel.includes('seenOpen = false;'), 'the flag');
+  assert.ok(panel.includes('if (!this.seenOpen) {\n      if (!this.open) return;\n      this.seenOpen = true;\n      for (const e of entries) seen.add(e.key);\n      return;\n    }'), 'the first status with the panel open seeds the set and files no arrival');
+  assert.ok(note.includes('a record labelled `you` is the person\'s whoever wrote it, and one under any other label is not, whatever its `authorId`'));
+  assert.ok(model.includes('return entries.filter((e) => e.author !== YOU && !seen.has(e.key));'), 'the model\'s rule reads the label');
+  assert.ok(panel.includes('if (e.author === YOU) seen.add(e.key);'), 'and so does the panel\'s');
+});

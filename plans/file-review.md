@@ -1662,10 +1662,14 @@ The arrivals follow-on (2026-09-09): two rules, both from the user's reports of 
 sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
 the panel said so; the first they knew of them was the next Send accepting the changes by default. Built: the panel keeps
 the set of ENTRIES the person has seen (a pending or detached change, a comment, a reply, each by a key:
-`statusEntries` in `file-comments-model.ts`), seeded at its first render with a status from everything in it (a file
-opened fresh has no arrivals), and every status after that files an entry by another author that is not in the set as
-an ARRIVAL (`noteArrivals`); the person's own writes, `you` by decision 6, join the set outright and are never
-arrivals. While any arrival stands, one line under the header names them in the model's words (`arrivalWords`: "api
+`statusEntries` in `file-comments-model.ts`), seeded at its first render with a status from everything in it and again
+from the first status to land with the panel open (`seenOpen`: the render's status is the mount's probe, asked with the
+panel closed, and the open's own re-ask lands after it, so a file opened fresh has no arrivals, whatever the session
+added between the probe and the open — the review, 2026-09-09), and every status after that files an entry by another
+author that is not in the set as an ARRIVAL (`noteArrivals`); the person's own writes, `you` by decision 6, join the set
+outright and are never arrivals. The rule reads the sidecar's author label as the cards' chips do: a record labelled
+`you` is the person's whoever wrote it, and one under any other label is not, whatever its `authorId`. While any arrival
+stands, one line under the header names them in the model's words (`arrivalWords`: "api
 made 11 changes and 7 replies since you last looked", singulars handled, "and N comments" when the session added
 comments of its own, the authors named as the chips name them and several joined with "and"), a button through the
 delegate table (`fcarrivals`) whose click shows the first arrival in the list's order as the focus (`goToArrival`,
