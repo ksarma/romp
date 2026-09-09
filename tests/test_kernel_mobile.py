@@ -20,6 +20,15 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 
 
+def _mobile_js():
+    """The phone shell script AS THE PAGE RUNS IT. _landing() splices the layout probe's media query into the
+    template's __MOBILE_MQ__ placeholder before serving, so an executed harness must splice the same way or the
+    probe's matchMedia(__MOBILE_MQ__) throws at top level (the 2026-09-09 fold review, ruling 3: teach the harness
+    the page's contract, never widen the probe's guard). One helper for every executor class, so the next one is
+    a one-line adoption; HarnessSplicesLikeThePage pins that the harness and the page cannot drift apart."""
+    return km._LANDING_MOBILE_JS.replace("__MOBILE_MQ__", json.dumps(km._MOBILE_MQ))
+
+
 class LandingShell(unittest.TestCase):
     def test_three_panes_are_addressable_iframes(self):
         html = km._landing()
@@ -533,6 +542,19 @@ console.log(JSON.stringify(out));
 """
 
 
+class HarnessSplicesLikeThePage(unittest.TestCase):
+    """The executed harnesses run the fork's template spliced the way the served page is, and neither can drift
+    from the other on the layout probe's media query (the 2026-09-09 fold review, ruling 3)."""
+
+    def test_the_harness_script_carries_the_pages_media_query_and_no_placeholder(self):
+        probe = "var MQ=(window.matchMedia&&matchMedia(%s))||null;" % json.dumps(km._MOBILE_MQ)
+        js = _mobile_js()
+        self.assertNotIn("__MOBILE_MQ__", js, "the harness must splice the placeholder as _landing() does")
+        self.assertIn(probe, js, "the spliced probe line reads the page's media query")
+        self.assertIn(probe, km._landing(), "the served page carries the same spliced probe line")
+        self.assertIn("__MOBILE_MQ__", km._LANDING_MOBILE_JS, "the template keeps the placeholder the page splices")
+
+
 class MobileFitExecutes(unittest.TestCase):
     """The installed iPhone app came back from the background with the chat pane filling only the
     top ~60% of the screen: the composer mid-screen, a keyboard-tall blank band under it, the tab
@@ -548,19 +570,13 @@ class MobileFitExecutes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-            f.write(_FIT_HARNESS + km._LANDING_MOBILE_JS + _FIT_DRIVER)
+            f.write(_FIT_HARNESS + _mobile_js() + _FIT_DRIVER)
             path = f.name
         try:
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # RED since the 2026-09-09 fold, on purpose (ruling 3 of its review). This harness executes the template
-        # UNSPLICED, and the fork's template carries the __MOBILE_MQ__ placeholder that _landing() splices for the
-        # layout probe (__rompMobileOn), so matchMedia(__MOBILE_MQ__) throws a ReferenceError at top level here.
-        # The review ruled the probe carries no try/catch (a missing matchMedia is checked explicitly and leaves
-        # the probe answering false; any other error surfaces) and that a harness this leaves red is named in the
-        # PR body rather than met by a wider guard. Pending that call; a harness that runs the script as served
-        # would splice the placeholder the way _landing() does.
+        # The harness runs the template spliced the way the page does (_mobile_js above; the 2026-09-09 fold review).
         assert r.returncode == 0, "the mobile script threw: " + r.stderr[:800]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -731,7 +747,7 @@ class MobileBellExecutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        src = "const MOBILE_JS=%s;const PUSH_JS=%s;" % (json.dumps(km._LANDING_MOBILE_JS), json.dumps(km._LANDING_PUSH_JS))
+        src = "const MOBILE_JS=%s;const PUSH_JS=%s;" % (json.dumps(_mobile_js()), json.dumps(km._LANDING_PUSH_JS))
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
             f.write(_BELL_HARNESS + src + _BELL_DRIVER)
             path = f.name
@@ -739,8 +755,7 @@ class MobileBellExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # RED since the 2026-09-09 fold, on purpose: the same unspliced __MOBILE_MQ__ ReferenceError as the fit
-        # harness above (ruling 3 of the fold review; the comment there has the whole reason)
+        # Spliced the way the page does (_mobile_js above).
         assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
