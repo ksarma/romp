@@ -305,7 +305,9 @@ test("the chat is never held; the feed pane holds its PAINT like the Outline and
   // (feed-hidden-paint.test.ts runs that gate) while applyFeedPayload never looks at the visibility
   assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased(") && !/from "\.\/paint-gate"/.test(RENDER),
     "render.ts (the chat) has no paint gate: every frame paints (its shim word comes through chat-visibility.ts: the publisher pins below)");
-  assert.equal(FEED.split("paintHeld(").length - 1, 1, "the feed gates once, in render()");
+  // two gates in feed.ts since the browser-frames offer came home reviewed (upstream #1061; R1 at the 2026-09-09 fold): render()'s,
+  // and the live pass's hidden test handed to feed-age.ts liveRefresher (feed-hidden-paint.test.ts pins the same count)
+  assert.equal(FEED.split("paintHeld(").length - 1, 2, "the feed gates twice: render() and the live pass's hidden test");
   assert.equal(FLEET.split("paintHeld(").length - 1, 1, "so does the Outline");
   const apply = /^function applyFeedPayload\([\s\S]*?\n\}/m.exec(FEED)![0];
   assert.doesNotMatch(apply, /document\.hidden|paintDirty|feedIntersecting|paintHeld/, "the payload path never looks at the gate");
@@ -324,7 +326,9 @@ test("the chat is never held; the feed pane holds its PAINT like the Outline and
 
 test("source pins: the release events are the observer's callback and visibilitychange, never a resize; the telemetry's hidden_pane is the viewport probe again", () => {
   for (const [name, src, sites] of [["fleet.ts", FLEET, 2], ["feed.ts", FEED, 3]] as const) {
-    assert.match(src, /new IntersectionObserver\(\(entries\) => \{\n\s*\w+ = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n\s*\}\)\.observe\(list\);/, name + ": the observer over the list releases");
+    // feed.ts's callback also catches the skipped age pass up (`live.catchUp();`, the offer's line, pinned by feed-hidden-paint.test.ts)
+    // in place of the fork's resize listener; fleet.ts's observer has no such line
+    assert.match(src, /new IntersectionObserver\(\(entries\) => \{\n\s*\w+ = entries\.some\(\(e\) => e\.isIntersecting\);\n\s*releasePaint\(\);\n(?:\s*live\.catchUp\(\);[^\n]*\n)?\s*\}\)\.observe\(list\);/, name + ": the observer over the list releases");
     assert.match(src, /document\.addEventListener\("visibilitychange", \(\) => \{ if \(!document\.hidden\) releasePaint\(\); \}\);/, name + ": the tab's return releases");
     assert.equal(src.split("releasePaint();").length - 1, sites, name + ": the release call sites");
     assert.ok(!/addEventListener\("resize"[^\n]*releasePaint/.test(src), name + ": a resize releases nothing (a same-size re-show fires none)");

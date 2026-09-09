@@ -48,6 +48,7 @@ function liftChatTail(): (hooks: TailHooks) => TailApi {
     const scheduleAppendActive = () => { H.appends++; };
     const renderBgTasks = () => { H.bgRenders++; };
     const schedulePrebuild = () => { H.prebuilds++; };
+    const renderPinnedNotes = () => {};                  // the pinned-notes strip rides the active tab's tail frame (a fork seam, 2026-09-08): inert here
   `;
   const epilogue = `
     return { chatTail, set: (p) => { if (p.sessions) sessions = p.sessions; if (p.views) views = p.views; if ("activeId" in p) activeId = p.activeId; } };

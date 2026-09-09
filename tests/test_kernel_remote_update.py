@@ -476,35 +476,38 @@ class UpdateRemote(unittest.TestCase):
         # a downed host would otherwise be dropped
         marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi'
         self.assertIn(marker, apply)
-        self.assertLess(apply.index("restart-all --quiet"), apply.index(marker),
-                        "a manager that owns the kernel still gets the quiet restart (its start cleared any marker)")
+        self.assertLess(apply.index('restart-all >>'), apply.index(marker),
+                        "a manager that owns the kernel still gets the immediate restart (its start cleared any marker)")
         self.assertLess(apply.index(marker), apply.index("immediate: no owning manager"),
                         "no audit row for a restart that does not happen")
         self.assertLess(apply.index(marker), apply.index('pkill -f "bin/romp-kern[e]l"'), "nothing killed")
         self.assertLess(apply.index(marker), apply.index('"$R/bin/romp-manager" ensure'), "nothing ensured")
         self.assertLess(apply.index(marker), apply.index('nohup "$R/bin/romp-serve"'), "no bare kernel")
 
-    def test_a_romp_down_host_gets_no_quiet_row_unless_a_manager_owns_its_kernel(self):
-        # the quiet row's two sites (fold review, 2026-09-07): upstream writes it before the owner check so the
+    def test_a_romp_down_host_gets_no_audit_row_unless_a_manager_owns_its_kernel(self):
+        # the audit row's two sites (fold review, 2026-09-07): upstream writes it before the owner check so the
         # far kernel's drift check sees it during the manager status call; the fork's `romp down` marker branch
-        # exits with no restart, and a quiet row there was one nobody consumed, naming a restart nobody parked
-        # to the kernel `romp up` starts later. So: no marker, the row precedes the owner check (upstream's
-        # timing); a marker, the row is written only once a manager is found owning the kernel, right before
-        # its quiet restart. One writer function, so the ledger still has one quiet and one immediate writer.
+        # exits with no restart, and a row there named a restart nobody made (before T269 it parked a quiet
+        # restart to the kernel `romp up` starts later). So: no marker, the row precedes the owner check
+        # (upstream's timing); a marker, the row is written only once a manager is found owning the kernel,
+        # right before its restart. One writer function, so the ledger still has one helper writer and one
+        # immediate-fallback writer. The row is T269's immediate request (no when=quiet), so the helper is
+        # `arow` (the 2026-09-09 fold; it was `qrow` while it wrote a quiet row).
         calls = self._wire(apply_out="SYNCED:abcdef0:DOWN")
         km._update_remote("TESTHOST")
         apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
-        gate = '[ -f "$LOGDIR/down-by-romp" ] || qrow; '
-        owned_row = '[ ! -f "$LOGDIR/down-by-romp" ] || qrow; '
-        self.assertIn('qrow() { python3 -c', apply, "the quiet row is one function, called per site")
-        self.assertLess(apply.index("qrow() {"), apply.index(gate))
+        gate = '[ -f "$LOGDIR/down-by-romp" ] || arow; '
+        owned_row = '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
+        self.assertIn('arow() { python3 -c', apply, "the audit row is one function, called per site")
+        self.assertLess(apply.index("arow() {"), apply.index(gate))
         self.assertLess(apply.index(gate), apply.index("OWNED=0; if command -v node"),
                         "a live host: the row is on disk before the owner check runs")
         self.assertLess(apply.index('if [ "$OWNED" = 1 ]'), apply.index(owned_row))
-        self.assertLess(apply.index(owned_row), apply.index("restart-all --quiet"),
+        self.assertLess(apply.index(owned_row), apply.index('restart-all >>'),
                         "a manager beside a marker: the row lands before the restart it attributes")
-        self.assertEqual(apply.count("restart-audit.jsonl"), 2, "one quiet writer, one immediate writer")
-        self.assertEqual(apply.count("qrow;"), 2)
+        self.assertEqual(apply.count("restart-audit.jsonl"), 2, "one helper writer, one immediate-fallback writer")
+        self.assertEqual(apply.count("arow;"), 2)
+        self.assertNotIn("'when':'quiet'", apply, "T269: the p2p row is an immediate request at both sites")
 
     def test_a_same_build_restart_of_a_romp_down_host_says_not_restarting(self):
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
@@ -1095,7 +1098,7 @@ class ApplyScriptRuns(unittest.TestCase):
     the state root under ROMP_STATE_DIR, and `pkill` shadowed by a no-op first on PATH, so a fall-through
     into the immediate path can kill nothing on the box running the tests. What the text pins above cannot
     show: which audit rows each branch leaves on disk (fold review, 2026-09-07). The far manager is a stub
-    that lists the polled port (owning) or nothing, notes whether the quiet row was already on disk when its
+    that lists the polled port (owning) or nothing, notes whether the p2p audit row was already on disk when its
     status was read, and records the restart it is asked for. Synthetic host, port 1 (nothing answers)."""
     PORT = 1
 
@@ -1139,7 +1142,7 @@ class ApplyScriptRuns(unittest.TestCase):
 
     def _manager(self, owns):
         body = ('case "$1" in\n'
-                'status) [ -f "$ROMP_STATE_DIR/restart-audit.jsonl" ] && grep -q \'"when": "quiet"\' "$ROMP_STATE_DIR/restart-audit.jsonl" '
+                'status) [ -f "$ROMP_STATE_DIR/restart-audit.jsonl" ] && grep -q \'"action": "p2p-update"\' "$ROMP_STATE_DIR/restart-audit.jsonl" '
                 '&& echo row-on-disk >> "%s/manager-calls"; echo \'{"kernels": [%s]}\' ;;\n'
                 '*) echo "$*" >> "%s/manager-calls" ;;\n'
                 'esac' % (self.root, '{"port": %d}' % self.PORT if owns else "", self.root))
@@ -1165,7 +1168,7 @@ class ApplyScriptRuns(unittest.TestCase):
             cmd = argv[-1]
             if "for d in" in cmd:
                 return _R(out="DIR:%s\nHEAD:%s\nDIRTY:" % (self.host, "2" * 40))
-            return _R(out="SYNCED:%s:QUIET" % self.sha)
+            return _R(out="SYNCED:%s:MANAGED" % self.sha)
         km.subprocess.run = fake
         try:
             km._update_remote("TESTHOST")
@@ -1194,26 +1197,26 @@ class ApplyScriptRuns(unittest.TestCase):
         self._marker()
         out, err = self._apply()
         self.assertEqual(out, "SYNCED:%s:DOWN" % self.sha, err)
-        self.assertEqual(self._rows(), [], "a quiet row for a restart nobody parked")
+        self.assertEqual(self._rows(), [], "no row for a restart nobody made")
         self.assertEqual(self._git("rev-parse", "--short", "HEAD").strip(), self.sha, "the code was synced")
 
     @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
-    def test_a_live_host_has_the_quiet_row_on_disk_when_the_owner_check_runs(self):
+    def test_a_live_host_has_the_audit_row_on_disk_when_the_owner_check_runs(self):
         self._manager(owns=True)
         out, err = self._apply()
-        self.assertEqual(out, "SYNCED:%s:QUIET" % self.sha, err)
-        self.assertEqual(self._rows(), [("p2p-update", "quiet")])
-        self.assertEqual(self._calls(), ["row-on-disk", "restart-all --quiet"],
-                         "upstream's timing: the row precedes the status call, and the restart goes through the manager")
+        self.assertEqual(out, "SYNCED:%s:MANAGED" % self.sha, err)
+        self.assertEqual(self._rows(), [("p2p-update", None)], "T269: an immediate request, no when=quiet")
+        self.assertEqual(self._calls(), ["row-on-disk", "restart-all"],
+                         "upstream's timing: the row precedes the status call, and the restart goes through the manager at once")
 
     @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
-    def test_a_manager_owning_the_kernel_beside_a_marker_gets_one_attributed_quiet_restart(self):
+    def test_a_manager_owning_the_kernel_beside_a_marker_gets_one_attributed_immediate_restart(self):
         self._marker()
         self._manager(owns=True)
         out, err = self._apply()
-        self.assertEqual(out, "SYNCED:%s:QUIET" % self.sha, err)
-        self.assertEqual(self._rows(), [("p2p-update", "quiet")], "exactly one row, written once the owner was found")
-        self.assertEqual(self._calls(), ["restart-all --quiet"], "no row on disk yet at the status read")
+        self.assertEqual(out, "SYNCED:%s:MANAGED" % self.sha, err)
+        self.assertEqual(self._rows(), [("p2p-update", None)], "exactly one row, written once the owner was found")
+        self.assertEqual(self._calls(), ["restart-all"], "no row on disk yet at the status read")
 
     @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
     def test_a_marker_beside_a_manager_owning_nothing_leaves_no_row_and_restarts_nothing(self):

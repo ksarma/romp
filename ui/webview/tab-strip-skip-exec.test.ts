@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { planStrip, parseTabGroups, headWords } from "./tab-groups";
-import { tabStateClass, tabDotClass, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
+import { tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
 import type { TagUnion } from "./session-views";
 
 const requireCjs = createRequire(__filename);
@@ -42,6 +42,7 @@ class FakeEl {
   append(...cs: FakeEl[]): void { for (const c of cs) this.appendChild(c); }
   replaceChildren(...cs: FakeEl[]): void { this.wipes++; this.children = []; this.append(...cs); }
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
+  get lastElementChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }   // the dot's hover title lands on the slot just appended
   contains(n: unknown): boolean { return n === this || this.children.some((c) => c.contains(n)); }
   setAttribute(k: string, v: string): void { this.attrs[k] = v; }
   addEventListener(t: string, f: Function): void { (this.listeners[t] ??= []).push(f); }
@@ -62,7 +63,7 @@ type Hooks = {
   phone: boolean;             // the phone layout: the plan is the flat strip there
   heads: HeadCall[];          // every group header the paint minted, in order
   planStrip: typeof planStrip; parseTabGroups: typeof parseTabGroups; headWords: typeof headWords;
-  tabStateClass: typeof tabStateClass; tabDotClass: typeof tabDotClass; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
+  tabStateClass: typeof tabStateClass; tabDotClass: typeof tabDotClass; tabDotTitle: typeof tabDotTitle; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
 };
 type Api = {
   renderTabs: () => void; sig: () => string; folded: () => Set<string>;
@@ -80,7 +81,12 @@ function lift(): (hooks: Hooks) => Api {
     let tabStripSig = "", activeId = null, peekId = null, allHiddenBlanked = false, draggedId = null, tabDragCommitted = false;
     let order = [], closingTabs = new Set(), tabMeta = new Map(), sessions = new Map(), views = new Map();
     let collapsedTabIds = new Set(), draggedGroup = null, provisionalId = null, provisionalTags = [];
-    let settings = { tabCtx: "over50", theme: "classic", colormap: "aurora" };
+    let settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora" };
+    // the strip's other readers and writers on this fork, inert: the plan the section snapshot reads (lastStripItems),
+    // the section whose snapshot the pane shows (snapView, null: no snapshot open), the dragged copy (draggedEl), the
+    // hover tip's owner (tabTipOwner, null: no tip up), the feed's per-session ledgers (empty: no needs-you verdict)
+    let lastStripItems = [], snapView = null, draggedEl = null, tabTipOwner = null;
+    const ledgers = new Map();
     const H = HOOKS;
     const el = (tag, cls) => new H.FakeEl(tag, cls);
     const document = { activeElement: null,
@@ -97,7 +103,12 @@ function lift(): (hooks: Hooks) => Api {
     const readTabGroups = (u) => H.parseTabGroups(H.groupsRaw, u);
     const tabGroups = () => readTabGroups(H.unions); const writeTabGroups = () => {};
     const phoneLayout = () => H.phone;
-    const tabStateClass = H.tabStateClass, tabDotClass = H.tabDotClass, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;   // tabDotClass: the state-dot slot every tab carries (the tab-strip fix, 2026-09-08)
+    const tabStateClass = H.tabStateClass, tabDotClass = H.tabDotClass, tabDotTitle = H.tabDotTitle, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;   // tabDotClass: the state-dot slot every tab carries (the tab-strip fix, 2026-09-08); tabDotTitle: what the slot says on hover
+    // fork-only calls the resolved body makes, stubbed inert: the @-mention roster refresh ahead of the strip's guards,
+    // the tab's emoji (none in these worlds), the row break between groups (only under stripGroupRows), the tip
+    // re-hover after a rebuild, and stripAftermath's section-snapshot pass (no snapshot is open: snapView stays null)
+    const mentionRosterChanged = () => {}; const tabEmojiNode = () => null; const makeRowBreak = () => el("span", "tab-row-break");
+    const rehoverTabTip = () => {}; const snapshotHoldsFocus = () => false; const renderSnapshot = () => false; const showActive = () => {};
     function makeGroupHead(sec, folded, active, hidden) {
       const h = el("div", "tab-group-head" + (folded ? " collapsed" : ""));
       h.dataset.group = String(sec.name);
@@ -139,11 +150,11 @@ function world(): { H: Hooks; api: Api; sessions: Map<string, any>; tabMeta: Map
   const H: Hooks = { FakeEl, bar: new FakeEl("div"), mslot: null, only: "", hidden: new Set(), down: new Set(), notes: {},
                      keyHint: "Open a session (K)", lens: { all: true }, unions: [], tips: [], aftermaths: [], rowPaints: 0, tagSyncs: 0, placeholders: 0,
                      groupsRaw: null, phone: false, heads: [],
-                     planStrip, parseTabGroups, headWords, tabStateClass, tabDotClass, sectionPip, sectionPipMembers, sectionPipTitle };
+                     planStrip, parseTabGroups, headWords, tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle };
   const api = lift()(H);
   const sessions = new Map<string, any>([["a", session("web", "ready")], ["b", session("api", "working")]]);
   const tabMeta = new Map<string, any>([["p", { name: "tests", color: { bg: "#112233", fg: "#ffffff" } }]]);
-  const settings = { tabCtx: "over50", theme: "classic", colormap: "aurora" };
+  const settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora" };
   api.set({ order: ["a", "b", "p"], sessions, tabMeta, settings, activeId: "a" });
   return { H, api, sessions, tabMeta, settings };
 }
@@ -206,6 +217,7 @@ test("every input the strip paints repaints it, once, when it changes", () => {
     ["the order", () => { api.set({ order: ["b", "a", "p"] }); }],
     ["a tab hidden by the views filter", () => { H.hidden.add("p"); }],
     ["the context-gauge setting", () => { settings.tabCtx = "always"; }],
+    ["the one-group-per-row setting (the row breaks and the trail's boundary read it)", () => { settings.stripGroupRows = true; }],
     ["the theme", () => { settings.theme = "yatharth"; }],
     ["the colormap", () => { settings.colormap = "hawaii"; }],
     ["the + tab's key hint", () => { H.keyHint = "Open a session (J)"; }],
