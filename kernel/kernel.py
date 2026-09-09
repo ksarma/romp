@@ -10469,13 +10469,18 @@ def _auto_pause_on_spend_limit(now, tmux):
 def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
-    before its init landed) can only be billing the login when this box holds no key at all
-    (_auth_key_present), and is taken as billing a key otherwise. The spend pause reads it at both edges
-    (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's spend rule
-    compares a candidate's against it)."""
+    before its init landed) is taken to bill the side the box DECLARES (ROMP_EXPECTED_AUTH, when no gear
+    pick has made it inert: _declared_default_auth), else a key when romp holds one to inject
+    (_auth_key_present), else the login. The declaration comes before the key read because a box whose
+    sessions authenticate through Claude Code's apiKeyHelper holds no key of romp's and bills a key all the
+    same. The spend pause reads it at both edges (_auto_pause_on_spend_limit records the capped session's
+    billing; _auto_resume_retry's spend rule compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
     if a:
         return a == "login"
+    d = _declared_default_auth()
+    if d:
+        return d == "login"
     return not _auth_key_present()
 
 
@@ -17328,13 +17333,33 @@ def _sdk_problem(text):
 
 
 def _auth_key_present():
-    """Whether the manager's environment carried an API key (now held by the SDK backend). A bool on
-    purpose: no fragment of the key — not even a last-4 tail — leaves the kernel process for a label
-    (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
+    """Whether romp itself holds an API key source for its launches (the SDK backend's selected source).
+    A bool on purpose: no fragment of the key, not even a last-4 tail, leaves the kernel process for a
+    label (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
     display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
-    attribute read off the backend singleton, safe per-push."""
+    attribute read off the backend singleton, safe per-push. False says romp injects nothing, NOT that
+    the sessions bill the login: on a box whose sessions authenticate through Claude Code's apiKeyHelper
+    they bill a key romp never sees; readers that need the billed side take the CLI's own report
+    (authLive) or the box declaration (_declared_default_auth) first."""
     be = _sdk()
     return bool(getattr(be, "work_key_configured", False)) if be else False
+
+
+def _declared_default_auth():
+    """The side an UNPICKED session bills by the box's own declaration: ROMP_EXPECTED_AUTH's word when
+    the manager's environment carries one and no gear Billing pick has ever been made (a pick makes the
+    declaration inert: sdk_backend._declared_auth's "pick" source, read through the backend so the kernel
+    and the backend share one rule); "" when nothing is declared, a pick stands, or no backend answers.
+    The fallback _bills_login and _auth_avail's picker default read before the key test."""
+    be = _sdk()
+    fn = getattr(be, "declared_auth", None) if be else None
+    if fn is None:
+        return ""
+    try:
+        exp, src = fn()
+    except Exception:
+        return ""
+    return exp if src == "env" and exp in ("key", "login") else ""
 
 
 def _work_key_fp():
@@ -17376,9 +17401,12 @@ def _auth_avail():
         d = d if isinstance(d, dict) else {}
     except Exception:
         d = {}
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    if default == "key" and not key:
-        default = "login"
+    pick = d.get("auth") if d.get("auth") in ("login", "key") else ""
+    if pick == "key" and not key:
+        pick = "login"   # a remembered key pick the picker cannot offer here (spawn sets it aside the same way)
+    # unpicked: the box's declared side when it speaks (ROMP_EXPECTED_AUTH, inert under a pick; the
+    # apiKeyHelper box bills a key romp never holds), else the key romp holds, else the login
+    default = pick or _declared_default_auth() or ("key" if key else "login")
     return {"login": bool(_claude_account()), "key": key,
             "acct": _claude_account_label(), "default": default}
 
@@ -19586,6 +19614,13 @@ class Sessions:
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                                 "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
+                                # the CLI's OWN report ("" until an init lands) and whether `auth` is an explicit
+                                # pick: build_session's Billing fields read them off this map, and until
+                                # 2026-09-09 the merge dropped authLive, so every reader of the map (the hover
+                                # row, _bills_login, the cap-switch offer, the judge-limit banner) saw "" and
+                                # fell to the seeded intent, "login" on a box whose CLI reported the key
+                                "authLive": st.get("authLive", ""),
+                                "authPicked": bool(st.get("authPicked")),
                                 "authPending": bool(st.get("authPending")),   # an /auth switch reconnecting → badge dots
                                 "color": (st.get("color") or None), "mode": st.get("mode", ""), "backend": "sdk",
                                 "subagents": st.get("subagents") or [],   # live Task subagents (SDK only) → lane pill
@@ -35458,6 +35493,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
+                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
+                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # reports" only for a pick; an unpicked session shows the CLI's side plainly
+                  "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices — the gate for the CONTROLS (statusline
                   # badge menu / picker buttons); display no longer hangs on it (the user 2026-08-09)
                   "authBoth": _auth_both(),

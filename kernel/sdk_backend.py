@@ -4199,6 +4199,22 @@ def _declared_auth(state_dir) -> tuple:
     return v, ("env" if v else "")
 
 
+def unpicked_auth(state_dir, key: bool) -> str:
+    """The side a session with NO explicit Billing pick bills: the one fallback behind
+    SdkSession.effective_auth and SdkBackend.default_auth (the dormant twin), so the badge, the judge
+    billing and the spend readers agree. The key when romp holds a source to inject (`key`, the
+    pre-selector world: an ambient key billed every session); else the side the box DECLARES
+    (ROMP_EXPECTED_AUTH through _declared_auth, which is silent once a gear pick exists: that pick is
+    re-seeded into every new reg, so an unpicked session never reaches this read under it); else the
+    login. Before the declaration was read here, every session on an apiKeyHelper box reported
+    'login' as its intent: romp holds no key of its own there, and the fallback took that for a login
+    (the user 2026-09-09) while the CLI's own report said the key."""
+    if key:
+        return "key"
+    exp, src = _declared_auth(state_dir)
+    return exp if src == "env" and exp else "login"
+
+
 # ---------------------------------------------------------------------------
 # The key-source verdict — one pure check at backend construction (the cli_scope_supported pattern).
 # ---------------------------------------------------------------------------
@@ -4850,7 +4866,8 @@ class SdkSession:
         #   Billing row's live truth; restored with the flag so the hover stays honest across restarts
         self.auth = reg.get("auth") if reg.get("auth") in ("login", "key") else ""   # the user's
         #   per-session auth pick (the user 2026-08-08: some sessions on the personal login, some on
-        #   the work key). "" = no explicit pick → effective_auth() preserves the pre-selector world.
+        #   the work key). "" = no explicit pick → effective_auth() falls to unpicked_auth (the key romp
+        #   holds, else the box's ROMP_EXPECTED_AUTH declaration, else the login).
         self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
         #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
         self._launched_keyed = False  # what _options actually handed the CLI (key injected or not);
@@ -5730,7 +5747,7 @@ class SdkSession:
             return "key"
         if key is None:
             key = self.backend.work_key_configured
-        return "key" if key else "login"
+        return unpicked_auth(self.backend.state_dir, key)
 
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
@@ -8057,6 +8074,8 @@ class SdkSession:
                 "authLive": self.auth_live,   # what the CLI's init actually reported ("" until one
                 #   lands) — the Billing row says so when it disagrees with the launch intent above
                 #   (a key found via apiKeyHelper bills the key while `auth` still reads login)
+                "authPicked": bool(self.auth),   # `auth` is an explicit pick (picker, gear, remembered)
+                #   rather than the box default; the Billing row words a contradiction as one only then
                 "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
                 "mode": self.perm_mode, "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
                 "ctxOver": self._ctx_over,   # the % above is CLAMPED — true when the CLI reported 100+
@@ -10081,13 +10100,18 @@ class SdkBackend:
                           "is billing the %s. %s"
                           % (sess.name, "the API key" if meant_key else "the login", source,
                              "API key" if keyed else "login", remedy), problem=True)
+        first = not sess.auth_live   # no report on record: never an init, or set_auth cleared the last one
         sess.auth_live = "key" if keyed else "login"   # the CLI's own report, for the Billing row
-        if keyed == sess.api_key_auth:
+        if keyed == sess.api_key_auth and not first:
             return
         sess.api_key_auth = keyed
         # Persisted with the flip: runtime-only, a kernel restart reset a keyed session to False and
         # its rate-limit events landed in the login's usage.json until the next init corrected it —
-        # exactly the max-merge contamination the per-session gate exists to prevent.
+        # exactly the max-merge contamination the per-session gate exists to prevent. The FIRST report
+        # persists whichever side it names: a login landing equals the flag's default, and without the
+        # write a restart read it as "no init ever landed" and the Billing row fell back to the intent
+        # for a session whose CLI had already spoken (the persisted report is what the constructor and
+        # the dormant row restore as authLive).
         self._update_reg(sess.sid, apiKeyAuth=keyed)
         self._log("auth (%s): apiKeySource=%r — %s" % (sess.name, source,
                   "this session bills an API key: its usage polls and rate-limit events are ignored"
@@ -12689,7 +12713,12 @@ class SdkBackend:
         a = (reg or {}).get("auth")
         if a in ("login", "key"):
             return a
-        return "key" if self.work_key_configured else "login"
+        return unpicked_auth(self.state_dir, self.work_key_configured)
+
+    def declared_auth(self) -> tuple:
+        """_declared_auth over this backend's state dir, for the kernel's readers of the same rule
+        (_bills_login's fallback for a row that reports nothing, _auth_avail's picker default)."""
+        return _declared_auth(self.state_dir)
 
     def sid_for_name(self, name: str) -> str:
         """The sid of the ONE alive session (not a comment thread) whose reg carries `name`, else "".
@@ -12908,7 +12937,7 @@ class SdkBackend:
                                  % (sid, traceback.format_exc()))
                 out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
                             "effortPending": False, "effort": "", "auth": "", "authLive": "",
-                            "authPending": False, "mode": "", "fast": "", "fastReason": "",
+                            "authPicked": False, "authPending": False, "mode": "", "fast": "", "fastReason": "",
                             "color": None, "connected": False, "spawning": False, "retryCount": 0,
                             "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
         return out
@@ -12945,6 +12974,7 @@ class SdkBackend:
                     # session's Billing row keeps telling it; absent = no init ever landed
                     "authLive": ("key" if reg.get("apiKeyAuth") else "login")
                                 if isinstance(reg.get("apiKeyAuth"), bool) else "",
+                    "authPicked": reg.get("auth") in ("login", "key"),   # snapshot()'s twin
                     "authPending": bool(reg.get("authPending")),
                     "mode": reg.get("mode", ""),
                     # last persisted fast state (liveFast, like liveCtx above) → the badge

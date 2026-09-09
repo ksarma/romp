@@ -531,7 +531,9 @@ the key option is labelled plainly `API key` — no fragment of the key, not
 even a last-4 tail, ever reaches a browser or a screen. A new session
 defaults to the last pick made anywhere, and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
-existed. tmux sessions are not covered by the picker: their CLI lives in the
+existed; with neither, to the side `ROMP_EXPECTED_AUTH` declares (see below),
+so a box whose sessions bill a key through Claude Code's `apiKeyHelper`
+reads `API key` rather than the login. tmux sessions are not covered by the picker: their CLI lives in the
 tmux server's environment, which the kernel does not control. What Romp does
 do there, when a key provider is configured, is keep the manager's
 startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
@@ -542,9 +544,14 @@ runtime](#api-keys-from-a-secret-manager-at-runtime).
 Each chat tab's hover tooltip carries the same fact as a `Billing` row —
 `API key`, or `Login (name@example.com)` — whenever the session's backend
 reports it, one-auth machines included; only tmux sessions, whose billing romp
-cannot know, show no row. When the CLI's own report disagrees with what the
-session was launched for — a key found through `apiKeyHelper`, say — the row
-carries both: `Login (CLI reports API key)`.
+cannot know, show no row. Once the session's CLI has reported which credential
+it found (its init names the source), the row shows that side; before any
+report it shows the intent the session was launched with. A pick you made that
+the CLI contradicted is worded as one: `⚠ Login picked, but the CLI reports
+the API key; this session bills that`. A default nobody picked is never
+worded that way: a session started unpicked on a box whose `apiKeyHelper`
+supplies the key reads `API key`. The tab menu's Billing item carries
+the same decision in fewer words.
 
 Failures are loud rather than silent: a session that lands on the other auth
 than it was launched for (say, a key found through `apiKeyHelper`) is flagged
@@ -561,10 +568,14 @@ Declaring the intent fixes it: set
 on the declared side is quiet while one landing on the other side is flagged,
 naming the declaration. The check inverts rather than disappearing; unset (or
 any other value), it compares against what the session was launched with, as
-before. One explicit gear **Billing** pick supersedes the declaration from then
-on: the remembered pick becomes the box's expectation and the env var goes
-inert (it described the unpicked design), so re-seeded spawns are judged
-against your pick, never against stale doctrine.
+before. The declaration also decides what an unpicked session is *taken* to
+bill when romp holds no key of its own: the Billing row's fallback before the
+CLI has reported, the picker's written-out choice, and the spend pause's
+reading of a session that reports nothing all read the declared side, where
+they read the login before. One explicit gear **Billing** pick supersedes the
+declaration from then on: the remembered pick becomes the box's expectation
+and the env var goes inert (it described the unpicked design), so re-seeded
+spawns are judged against your pick, never against stale doctrine.
 
 The declaration is also checked once, when the kernel starts, against the
 key source a launch would select. Under `ROMP_EXPECTED_AUTH=login`, a selected
