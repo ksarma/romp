@@ -18310,7 +18310,7 @@ def _kernel_knows(sid, live=None):
     """Does THIS kernel have a session by this id at all? The names registry is the authority: it is sid-keyed
     and written at launch by BOTH backends, and the entry outlives the session, so a dormant or long-dead
     session still answers True and can be sent to (that revives it). The SDK's own view is checked too, so a
-    session mid-launch — spawned but not yet named — is never called foreign; a comment thread passes at
+    session mid-launch (spawned but not yet named) is never called foreign; a comment thread passes at
     this door too (its reg is sdk/<tsid>.json, which owns() stats), though sdk_backend.fork withholds its
     names/ entry and live_sessions hides threadOf regs. So is the LIVE set, which both backends report from
     their own view: a session this kernel can see running right now is ours whatever the registry says, and
@@ -26300,7 +26300,7 @@ def _end_on_idle_sweep(now, tmux):
                 path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
                 ps = _parse(path, sid, now)
                 if _session_working(ps.get("turns") or []):
-                    continue                         # the turn it asked from is still open — its end is the event
+                    continue                         # the turn it asked from is still open; its end is the event
             except Exception:
                 continue
         # the one end routine (_end_and_record: the /end route's and the endSession op's), with a FRESH,
