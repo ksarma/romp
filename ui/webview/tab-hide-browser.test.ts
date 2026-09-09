@@ -621,3 +621,66 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (pointer: fine,
   assert.deepEqual([desktop.pointerFine, desktop.hoverHover, desktop.anyPointerCoarse, desktop.opacity], [true, true, false, "0"],
     "the desktop: no coarse pointer anywhere, so the act rests unseen until the row's hover or focus (round 1's disclosure)");
 });
+
+// THE SUB-LINE'S CAP (tab menu review round 2, 2026-09-09): the menu's rows are nowrap and the menu is sized by its widest row, so
+// the Hide tab row's sub-line grew the menu with the tag name (a 458px sub-line and a 512px menu at the 40-character maximum in
+// Inter, clipped at a narrow pane's edge under render.ts's clamp, which never shrinks the menu). One rule caps .ctx-item-sub at 36em
+// of its own font with an ellipsis. Measured here over the real sheet with Inter served from the extension's media (the same file
+// the page loads): the widest fixed sub-lines (Rename's, Notify me's) are whole, the 40-character Hide tab sub-line stops at the cap
+// and elides, and a menu holding all three fits a 450px pane under the clamp. The sub-lines are the page's own words, read from
+// render.ts.
+const FONT_PATH = path.join(EXT, "media", "InterVariable.woff2");
+const MENU_PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=stylesheet href=/styles.css><style>body{margin:0}</style></head><body></body></html>`;
+type SubRead = { em: number; elided: boolean; overflow: string };
+test("in Chromium, over the real sheet with Inter: the menu's sub-line cap (menu review round 2) keeps the fixed sub-lines whole, elides a 40-character tag name's Hide tab sub-line at 36em, and keeps the menu inside a 450px pane", async (t) => {
+  let pw: any = null;
+  try { pw = requireCjs("playwright"); } catch { pw = null; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension (CI installs no browsers)"); return; }
+  let browser: any;
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { t.skip("no playwright chromium on this box (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  try {
+    const page = await browser.newPage({ viewport: { width: 450, height: 700 } });
+    const font = fs.existsSync(FONT_PATH) ? fs.readFileSync(FONT_PATH) : null;
+    await page.route("http://romp.test/**", (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: MENU_PAGE });
+      if (u.pathname === "/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: CSS });
+      if (font && u.pathname.endsWith("/InterVariable.woff2")) return route.fulfill({ status: 200, contentType: "font/woff2", body: font });
+      return route.fulfill({ status: 404, body: "" });
+    });
+    await page.goto("http://romp.test/page");
+    await page.evaluate(() => (document as any).fonts.ready);
+    const rename = RENDER.match(/sb\.textContent = "(the name is a label[^"]+)"; bodyEl\.appendChild\(sb\);/)![1];
+    const bell = RENDER.match(/"(system notification when its work blocks on you or completes)"/)![1];
+    const name40 = "notes-api-customer-billing-migration-two";   // 40 characters, the New tag input's maxLength
+    assert.equal(name40.length, 40);
+    const hide = `hidden in ${name40}; to show it, open the group's view`;
+    const r = await page.evaluate(([rename, bell, hide]: string[]) => {
+      const el = (tag: string, cls: string) => { const e = document.createElement(tag); e.className = cls; return e; };
+      const menu = el("div", "ctx-menu");
+      const subs: HTMLElement[] = [];
+      for (const [lab, sub] of [["Rename", rename], ["Notify me", bell], ["Hide tab", hide]]) {
+        const item = el("div", "ctx-item ctx-item-toggle");
+        const ic = el("span", "ctx-icon"); ic.innerHTML = '<svg width="16" height="14" viewBox="0 0 16 14"></svg>'; item.appendChild(ic);
+        const body = el("span", "ctx-item-body");
+        const l = el("span", "ctx-item-label"); l.textContent = lab; body.appendChild(l);
+        const sb = el("span", "ctx-item-sub"); sb.textContent = sub; body.appendChild(sb);
+        item.appendChild(body); menu.appendChild(item); subs.push(sb);
+      }
+      document.body.appendChild(menu);
+      // render.ts's clamp (showTabMenu): at the cursor, never past the pane's right edge; the cursor here at 400px
+      const rect = menu.getBoundingClientRect();
+      const mx = Math.max(0, Math.min(400, window.innerWidth - rect.width - 4));
+      menu.style.left = mx + "px"; menu.style.top = "10px";
+      const read = (sb: HTMLElement) => { const fs = parseFloat(getComputedStyle(sb).fontSize); const b = sb.getBoundingClientRect(); return { em: +(b.width / fs).toFixed(2), elided: sb.scrollWidth > sb.clientWidth, overflow: getComputedStyle(sb).textOverflow }; };
+      return { font: getComputedStyle(subs[0]).fontFamily, rows: subs.map(read) as SubRead[], menuWidth: rect.width, right: menu.getBoundingClientRect().right, inner: window.innerWidth };
+    }, [rename, bell, hide]);
+    assert.ok(/Inter/.test(r.font), "the page's face: " + r.font);
+    assert.equal(r.rows[0].elided, false, "Rename's sub-line, the widest fixed one, is whole: " + JSON.stringify(r.rows[0]));
+    assert.equal(r.rows[1].elided, false, "Notify me's is whole: " + JSON.stringify(r.rows[1]));
+    assert.ok(r.rows[0].em > 30 && r.rows[0].em < 36, "the measurement is the real one (31.8em in Inter): " + JSON.stringify(r.rows[0]));
+    assert.ok(r.rows[2].em <= 36.01 && r.rows[2].elided && r.rows[2].overflow === "ellipsis", "the 40-character name's sub-line stops at the cap and elides: " + JSON.stringify(r.rows[2]));
+    assert.ok(r.right + 4 <= r.inner, `the menu stays inside the 450px pane under the clamp (right ${r.right}, menu ${r.menuWidth}px)`);
+  } finally { await browser.close(); }
+});

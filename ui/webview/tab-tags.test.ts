@@ -88,8 +88,8 @@ test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' a
   // executes both readers): homeNow, which the flyout reads on every build of its own
   assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,
     "the group THIS COPY sits in (T264b: a session under several tags has a copy per group, and the menu speaks for the right-clicked copy's group), else the first holder; only while the strip is sectioned, and never a tag whose create is still in flight");
-  assert.match(RENDER, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
-    "the computation itself, once, in showTabMenu's scope: the copy's group, else the first holder, only while sectioned, never a pending tag");
+  assert.match(RENDER, /let copyNow = copy;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(copyNow !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copyNow\) : holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
+    "the computation itself, once, in showTabMenu's scope: the copy's group, tracked through a move (copyNow, which moveUnion writes), or nothing once it left it; the first holder for a caller naming no copy; only while sectioned, never a pending tag");
   assert.match(fly, /lb\.textContent = "Move to " \+ g\.name; bodyE\.appendChild\(lb\);/);
   assert.match(fly, /moveUnion\(home, g\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move");
   assert.match(fly, /plus\.title = "add this tag too — the session keeps its other tags";/, "…and multi-tag stays one click away");

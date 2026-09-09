@@ -6545,15 +6545,20 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   const offFeed = !!(s && s.hideFromFeed);
   const offMail = !!(s && s.postalServiceOff);
   const onBell = !!(s && s.notify);
-  const toggle = (kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string, fn: () => void, cls = "") => {
-    const item = el("div", "ctx-item ctx-item-toggle" + cls);
-    item.appendChild(ctxIcon(kind, off));
+  // the toggles' dress, the row's whole content: the kind's icon (slashed when off), the label and the faint sub-line. Its own
+  // helper so the Hide tab row below can re-dress its one node when the copy's section or state changes under an open menu.
+  const dressToggle = (item: HTMLElement, kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string) => {
     const bodyEl = el("span", "ctx-item-body");
     const l = el("span", "ctx-item-label"); l.textContent = lab; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub"); sb.textContent = sub; bodyEl.appendChild(sb);
-    item.appendChild(bodyEl);
+    item.replaceChildren(ctxIcon(kind, off), bodyEl);
+  };
+  const toggle = (kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string, fn: () => void) => {
+    const item = el("div", "ctx-item ctx-item-toggle");
+    dressToggle(item, kind, off, lab, sub);
     item.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); fn(); });
     menu.appendChild(item);
+    return item;
   };
   toggle("feed", offFeed,
     offFeed ? "Show in feed" : "Hide from feed",
@@ -6565,58 +6570,74 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     () => setSessionFlag(id, "postalServiceOff", !offMail));
   // system-notification bell (the user 2026-07-28) — same flag the timeline lane bell toggles. NOTE the
   // inverted polarity vs the two above: `notify` true is the ENABLED state, so the icon slashes on !onBell.
-  toggle("bell", !onBell,
+  const bellItem = toggle("bell", !onBell,
     onBell ? "Stop notifying" : "Notify me",
     onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes",
     () => setSessionFlag(id, "notify", !onBell));
-  // THE RIGHT-CLICKED COPY'S HOME SECTION, read when a caller asks: the copy's own group while the strip
-  // is sectioned, else the first holder in tagOrder (the flat strip names no copy), and none while Group
-  // tabs by tag is off or that tag's create is still in flight (no id to address). Shared by the Hide
-  // tab row below and the Tags flyout's Move-to and Show-when-folded rows; the flyout re-reads it on
-  // every build of its own, since a move or a remove there changes the copy's group.
+  // THE RIGHT-CLICKED COPY'S HOME SECTION, TRACKED. `copy` is the group the copy sat in when the menu opened (the
+  // tab's dataset.copy); copyNow follows it through the Tags flyout's Move to, which leaves this menu open with the
+  // copy in another group, so every later read (the Hide tab row's refresh and click, the flyout's Move to and Show
+  // when folded rows on every build of its own) speaks for the copy where it now sits, never for the first remaining
+  // holder in tagOrder (round 2: for a session under two tags that hid a copy the user never touched, and which one
+  // depended on the drag order). A named copy resolves to its own group or to nothing: once its tag was removed
+  // inside the menu there is no copy left to hide, move or pin, so the Hide tab row leaves and the flyout's rows read
+  // "+ <name>" (add without moving) until a "+" puts the tag back, which restores the copy. The first holder in
+  // tagOrder serves only a caller that names no copy (the flat strip names none). None while Group tabs by tag is
+  // off or the tag's create is still in flight (no id to address).
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
+  let copyNow = copy;
   const homeNow = (): TagUnion | undefined => {
-    const home0 = readTabGroups().on ? ((copy !== undefined ? holding().find((g) => g.name === copy) : undefined) ?? holding()[0]) : undefined;
+    const home0 = readTabGroups().on ? (copyNow !== undefined ? holding().find((g) => g.name === copyNow) : holding()[0]) : undefined;
     return home0 && !home0.pending ? home0 : undefined;
   };
+  let refreshHideRow = () => {};   // the Hide tab row's refresh, assigned below; the Tags flyout calls it after each of its writes
   // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
   // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
   // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
   // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
-  // after the "+"; the pane's Show button stays the way back, and the sub-line says how to reach it
-  // (open the group, click its count). Present only while the strip is sectioned and the right-clicked
-  // copy has a home section, and never on the phone layout (phoneLayout, the gate the Group tabs by tag
-  // switch uses: planStrip flattens there, so a hide would write and show nothing): hides do not apply
-  // on the flat strip, to an untagged session, under a tag whose create is still in flight or on the
-  // phone, so the row is absent there. THE LABEL IS A SNAPSHOT, THE CLICK IS LIVE (round 1): the label
-  // reads the stored state at build (Hide tab on a shown copy, Show tab on a hidden one); the click
-  // resolves the copy's section again, since the Tags flyout's Move to and remove leave this menu open
-  // with the copy in another group (a hide addressed to the old section pruned to nothing), and SETS the
-  // state the label promised, the pin row's idiom: a copy already in that state where it now sits (the
-  // pane hid it there) is left as it is, never flipped back. No home at click time (moved out of every
-  // group, or the strip flattened in another pane): the click dismisses and writes nothing. No kernel
-  // round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
+  // after the "+"; the pane's Show button stays the way back, and the sub-line names where it is, the
+  // group's view (which click opens that view differs by fold state, an open group's count or a folded
+  // group's header, and the guide says so; the sub-line stays short and true in both). Present only while
+  // the strip is sectioned and the right-clicked copy has a home section, and never on the phone layout
+  // (phoneLayout, the gate the Group tabs by tag switch uses: planStrip flattens there, so a hide would
+  // write and show nothing): hides do not apply on the flat strip, to an untagged session, under a tag
+  // whose create is still in flight or on the phone, so the row is absent there. THE ROW FOLLOWS THE COPY,
+  // THE CLICK IS LIVE (rounds 1 and 2): the row is one node with a refresh that reads the copy's section
+  // (homeNow, tracked through the flyout's Move to) and the stored state, dresses it (Hide tab on a shown
+  // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
+  // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
+  // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
+  // left (event-keyed on the write, no timer). The click resolves the section once more (a push between the
+  // refresh and the click) and SETS the state the row promised, the pin row's idiom: a copy already in that
+  // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
+  // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
+  // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
   // was the one door to a hide (2026-09-08); the user asked for the menu door.
   // (The kernel-side hide-session mechanism stays RETIRED, the user 2026-08-24: the tag system covers
   // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
   // for the picker's tagged-session jump.)
   {
-    const home = phoneLayout() ? undefined : homeNow();
-    if (home) {
-      const hidden = isHidden(tabGroups(), sectionRef(home), id);
-      toggle("tab", hidden,
+    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide");
+    let hidden = false;   // the stored bit the row last showed; the click sets its opposite
+    refreshHideRow = () => {
+      const home = phoneLayout() ? undefined : homeNow();
+      if (!home) { row.remove(); return; }
+      hidden = isHidden(tabGroups(), sectionRef(home), id);
+      dressToggle(row, "tab", hidden,
         hidden ? "Show tab" : "Hide tab",
-        hidden ? `back on the strip in ${home.name}` : `off the strip in ${home.name}; to show it again, open the group and click its count`,
-        () => {
-          const now = homeNow();
-          if (!now) return;
-          const sec = sectionRef(now), st = tabGroups();
-          if (isHidden(st, sec, id) === !hidden) return;
-          writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
-        },
-        " ctx-item-hide");
-    }
+        hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`);
+      if (!row.parentNode) bellItem.after(row);
+    };
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation(); dismissTabMenu();
+      const now = homeNow();
+      if (!now) return;
+      const sec = sectionRef(now), st = tabGroups();
+      if (isHidden(st, sec, id) === !hidden) return;
+      writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
+    });
+    refreshHideRow();
   }
   // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
   // statusline badge). Only when the machine offers BOTH choices (st.authBoth) — a one-auth machine
@@ -6764,6 +6785,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (add && rem && a.ops.length === 1 && r.ops.length === 1)
         postUnionEdits(nv, { ops: [{ op: "move", tid_from: rem.tid, tid_to: add.tid, sid: id }], mirrored: a.mirrored || r.mirrored });
       else postUnionEdits(nv, a, r);
+      copyNow = to.name;   // the copy sits in `to` now: the Hide tab row's refresh and this flyout's next build speak for it there
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -6897,6 +6919,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         nrow.appendChild(inp);
         tagsFlyNewInput = inp; syncNewTagInput();
         sub.appendChild(nrow);
+        refreshHideRow();   // every edit above rebuilds this flyout: the Hide tab row speaks for the copy where it now sits (keyed on the write, no timer)
       };
       build();
       // Configure tags… at the foot, behind the divider (T163): the ONE route the tag-lens menus

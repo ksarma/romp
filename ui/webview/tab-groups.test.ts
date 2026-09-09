@@ -1893,16 +1893,18 @@ test("↑/↓ measure from the focused copy and never land on the session's own 
 test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT tag, Show when folded pins THAT section, Rename edits THAT copy (T264b review)", () => {
   assert.match(RENDER, /showTabMenu\(e, id, tab\.dataset\.copy\); \}\);/, "the copy's group rides the contextmenu call");
   assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string, copy\?: string\)/);
-  assert.match(RENDER, /const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;/,
-    "the copy's own group, else the first holder (the flat strip names no copy)");
+  assert.match(RENDER, /let copyNow = copy;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(copyNow !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copyNow\) : holding\(\)\[0\]\) : undefined;/,
+    "the copy's own group, tracked through the flyout's move (copyNow), or nothing once it left it; the first holder only for a caller naming no copy (the flat strip names none)");
   // the computation sits in showTabMenu's scope since the menu's Hide tab row (the user 2026-09-09; tab-hide.test executes it): one
-  // function, homeNow, read by that row at build and by the Tags flyout on every build of its own, so the Move-to and
-  // Show-when-folded rows still speak for the copy's group after a move or a remove inside the flyout
+  // function, homeNow, read by that row's refresh and click and by the Tags flyout on every build of its own, so the Move-to and
+  // Show-when-folded rows still speak for the copy's group after a move or a remove inside the flyout (the tab menu review's
+  // round 2 made it the MOVED copy's group: moveUnion writes copyNow, and a named copy never falls to the first holder)
   const menuAt = RENDER.indexOf("function showTabMenu(");
   const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
   assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \?/);
-  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's read at build, its click's (the click is live, review round 1) and the flyout's");
-  assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('toggle("tab"') && menu.indexOf('toggle("tab"') < menu.indexOf("const home = homeNow();   // read per build"));
+  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's refresh, its click's (the click is live, review round 1) and the flyout's");
+  assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide"') && menu.indexOf('"ctx-item ctx-item-toggle ctx-item-hide"') < menu.indexOf("const home = homeNow();   // read per build"));
+  assert.match(menu, /copyNow = to\.name;/, "the move writes the tracked section");
   assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");
   assert.match(RENDER, /startTabRename\(id, copy\)/);
   assert.match(RENDER, /function startTabRename\(id: string, copy\?: string\)/);

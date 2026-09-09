@@ -174,7 +174,11 @@ once the session is hidden. Hiding a session takes its tab off the strip while i
 and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
 **Show** button puts the tab back at once. You can also hide a session from its tab: right-click
 the tab and pick **Hide tab**. The line under the label names the group the session hides in and
-tells you the way back: open the group and click its count. The menu has **Hide tab** only while
+where to show it again: the group's view, where its row has the **Show** button. Which click opens
+that view depends on the fold: an open group's count opens the view and leaves the group open; a
+folded group's header opens the group and the view together. While the **Tags** flyout is open,
+moving the session to another group or removing its tag updates the line; once the session is in
+no group, the row goes away. The menu has **Hide tab** only while
 the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
 on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
 row under **Tags** says creating) has no **Hide tab** yet; it comes a moment later. A hidden

@@ -344,6 +344,6 @@ test("pins: render.ts builds every lens and order write from the store's blob (p
   // slice; the flyout reads it on every build of its own, and the pending guard is where it was)
   assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,
     "no move OUT of a home tag whose create is in flight: the flyout's per-build read of the shared computation");
-  assert.match(RENDER, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
-    "the computation: the copy's group, else the first holder, only while sectioned, and never a tag whose create is in flight");
+  assert.match(RENDER, /let copyNow = copy;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(copyNow !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copyNow\) : holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
+    "the computation: the copy's group, tracked through a move (copyNow), or nothing once it left it; the first holder for a caller naming no copy; only while sectioned, and never a tag whose create is in flight");
 });
