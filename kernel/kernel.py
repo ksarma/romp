@@ -22506,6 +22506,34 @@ def _remote_name_of(host, sid):
         return names.get(str(sid or "")) or None
 
 
+def _remote_session_named(who):
+    """The attached host that lists a session NAMED `who`, with that session's far sid: (row, far_sid), from
+    the supervisor's polled roster (_remotes[host]["names"], the copy _remote_name_of reads, beside the
+    sids _host_for_sid routes by). None when no attached host lists the name. A name two hosts list is
+    ambiguous: a refusal body (409) naming the candidates as host:name, the spelling list_agents prints,
+    and `host:name` as `who` picks one (session names carry no colon, so the first colon is the host's).
+    Asked by the control routes (_control_target) only after every LOCAL door missed, so a local session
+    wins: `romp end far-web`, `romp send far-web ...` and `romp interrupt far-web` from the hub answered
+    404 "no live session named 'far-web'" while the roster listed the name and the far session ran on,
+    though the same requests by id forwarded (review round 4, 2026-09-09). Read-only under _remotes_lock;
+    the match takes the remote arm with the far sid exactly as the sid path does."""
+    who = str(who or "")
+    host_q, sep, name_q = who.partition(":")
+    hits = []
+    with _remotes_lock:
+        for host, r in _remotes.items():
+            for far_sid, nm in ((r or {}).get("names") or {}).items():
+                if nm == who or (sep and host == host_q and nm == name_q):
+                    hits.append((host, r, far_sid))
+    if not hits:
+        return None
+    if len(hits) == 1 or sep:
+        return hits[0][1], hits[0][2]
+    return {"ok": False, "_status": 409,
+            "error": "'%s' names a session on more than one attached machine; say which: %s"
+                     % (who, ", ".join(sorted("%s:%s" % (h, who) for h, _, _ in hits)))}
+
+
 def _host_for_sid(sid):
     """The attached remote row that owns this sid (from the supervisor's polled map), or None if local."""
     sid = str(sid)
@@ -26686,8 +26714,9 @@ def _control_target(who):
     (_thread_names answered None while resolving a name) or the sid's own registry entry
     (_unknown_session_refusal's first check). A failed read is never reported as a session that does not
     exist (review round 4, 2026-09-09; the fail-loudly rule). Order: the local doors (a local session
-    wins), the roster by sid, then the gate with the live map the resolution read, so a refused request
-    scans once."""
+    wins), the roster by sid, the gate with the live map the resolution read (so a refused request scans
+    once), and, when the gate would answer 404, the roster by NAME (_remote_session_named): a session an
+    attached host runs is reached by the name that host lists, with the far sid, as it is by id."""
     sid, live, store_unreadable = _resolve_sid(who)
     r = _host_for_sid(sid)
     if r is not None:
@@ -26695,9 +26724,15 @@ def _control_target(who):
     refusal = _unknown_session_refusal(sid, who, live)
     if refusal is None:
         return sid, None, None
-    if refusal["_status"] == 404 and store_unreadable:
-        return sid, None, {"ok": False, "error": "could not read the comment threads' store while resolving "
-                                                 "'%s'; nothing was done, try again" % who, "_status": 503}
+    if refusal["_status"] == 404:
+        if store_unreadable:
+            return sid, None, {"ok": False, "error": "could not read the comment threads' store while resolving "
+                                                     "'%s'; nothing was done, try again" % who, "_status": 503}
+        hit = _remote_session_named(who)
+        if isinstance(hit, dict):
+            return sid, None, hit
+        if hit is not None:
+            return hit[1], hit[0], None
     return sid, None, refusal
 
 

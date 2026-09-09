@@ -287,6 +287,15 @@ class HeadlessRoutes(_RouteServer):
 THREAD_PARENT = "11111111-2222-3333-4444-555555555555"
 THREAD_TSID = "66666666-7777-8888-9999-000000000000"
 THREAD_NAME = "web-comment-1"
+FAR_SID = "77777777-8888-9999-0000-111111111111"          # a session an attached host runs (its roster row)
+FAR_SID_B = "88888888-9999-0000-1111-222222222222"
+
+
+def _remote_row(srv, host="TESTHOST", sids=(), names=None):
+    """A hub roster row for an attached host whose kernel is `srv` (a _far_kernel on loopback): the shape
+    the supervisor's poll files (_remotes[host]), sids and the names that host lists for them."""
+    return {"host": host, "local_port": srv.server_address[1], "token": "far-token",
+            "sids": list(sids), "names": dict(names or {})}
 
 
 def _mk_thread(parent, tsid, name):
@@ -779,21 +788,22 @@ class UnknownSessionRefused(_RouteServer):
         # The validated field rides along, and only it: the caller's `name` key stays here, an immediate
         # end forwards {id} as before, and /interrupt never carries it. Against a REAL far kernel on
         # loopback, which records what it was sent; its deferred answer is relayed as is.
+        # The roster is seeded, not _host_for_sid patched, so the request routes as a real hub's would
+        # (review round 4: the earlier version pinned a NAME forwarded as an id, a shape routing never makes)
         srv = _far_kernel(200, json.dumps({"ok": True, "deferred": True}))
-        remote = {"host": "TESTHOST", "local_port": srv.server_address[1], "token": "far-token"}
         try:
-            with mock.patch.object(km, "_host_for_sid", lambda sid: remote):
-                code, resp = self._post("/end", {"name": self.GHOST, "when": "idle"})
+            with mock.patch.dict(km._remotes, {"TESTHOST": _remote_row(srv, sids=[FAR_SID])}, clear=True):
+                code, resp = self._post("/end", {"id": FAR_SID, "when": "idle"})
                 self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
-                self._post("/end", {"id": self.GHOST})
-                self._post("/end", {"id": self.GHOST, "when": "now"})
-                self._post("/interrupt", {"id": self.GHOST, "when": "idle"})
+                self._post("/end", {"id": FAR_SID})
+                self._post("/end", {"id": FAR_SID, "when": "now"})
+                self._post("/interrupt", {"id": FAR_SID, "when": "idle"})
         finally:
             srv.shutdown()
-        self.assertEqual(srv.received, [("/end", {"id": self.GHOST, "when": "idle"}),
-                                        ("/end", {"id": self.GHOST}),
-                                        ("/end", {"id": self.GHOST}),
-                                        ("/interrupt", {"id": self.GHOST})])
+        self.assertEqual(srv.received, [("/end", {"id": FAR_SID, "when": "idle"}),
+                                        ("/end", {"id": FAR_SID}),
+                                        ("/end", {"id": FAR_SID}),
+                                        ("/interrupt", {"id": FAR_SID})])
 
     def test_the_refusal_path_scans_the_live_map_once(self):
         # _sid_of scans Sessions.live() once the names registry misses; a gate that scanned again forked
@@ -812,10 +822,61 @@ class UnknownSessionRefused(_RouteServer):
     def test_a_remote_session_forwards_before_the_gate(self):
         # a session living on another kernel is in neither the local registry nor the local live map;
         # the remote map owns it and the request must forward, never 404 here
-        with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
+        with mock.patch.dict(km._remotes, {"TESTHOST": {"host": "TESTHOST", "sids": [FAR_SID]}}, clear=True), \
              mock.patch.object(km, "_remote_forward_answer", lambda r, path, body, method="POST": (200, {"ok": True}, "")):
-            code, resp = self._post("/end", {"id": self.GHOST})
+            code, resp = self._post("/end", {"id": FAR_SID})
         self.assertEqual((code, resp), (200, {"ok": True}))
+
+    def test_a_far_session_is_reached_by_the_name_the_hubs_roster_lists(self):
+        # _resolve_sid reads the local names registry, the local live map and the thread names, and
+        # _host_for_sid matches sids only, so `romp end far-web` from the hub answered 404 "no live session
+        # named 'far-web'" with nothing forwarded while the roster (_remotes[host]["names"], the copy
+        # _remote_name_of reads) listed that very name and the far session ran on; by id the request
+        # forwarded. The roster is consulted by name after every local door missed, and a match takes the
+        # remote arm with the far sid exactly as the sid path does, the deferral included (review round 4,
+        # 2026-09-09). A live local session of the same name wins; a name two hosts list is refused naming
+        # both as host:name, and that spelling picks one. Against a real far kernel on loopback.
+        srv = _far_kernel(200, json.dumps({"ok": True, "deferred": True}))
+        row = _remote_row(srv, sids=[FAR_SID], names={FAR_SID: "far-web"})
+        row_b = _remote_row(srv, host="TESTHOST-B", sids=[FAR_SID_B], names={FAR_SID_B: "far-web"})
+        fake = mock.Mock()
+        try:
+            with mock.patch.dict(km._remotes, {"TESTHOST": row}, clear=True), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})):
+                self.assertEqual(km._remote_name_of("TESTHOST", FAR_SID), "far-web")
+                for body in ({"name": "far-web", "when": "idle"}, {"id": FAR_SID, "when": "idle"},
+                             {"name": "TESTHOST:far-web", "when": "idle"}):
+                    code, resp = self._post("/end", body)
+                    self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}), body)
+                self._post("/end", {"name": "far-web"})
+                self._post("/interrupt", {"name": "far-web"})
+                self._post("/send", {"name": "far-web", "text": "hello"})
+                code, resp = self._post("/end", {"name": "far-api"})      # a name no roster lists stays a 404
+                self.assertEqual(code, 404)
+                self.assertIn("far-api", resp.get("error", ""))
+                with mock.patch.dict(km._remotes, {"TESTHOST-B": row_b}):
+                    code, resp = self._post("/interrupt", {"name": "far-web"})
+                    self.assertEqual(code, 409, resp)
+                    self.assertIn("TESTHOST:far-web", resp.get("error", ""))
+                    self.assertIn("TESTHOST-B:far-web", resp.get("error", ""))
+                    code, resp = self._post("/interrupt", {"name": "TESTHOST-B:far-web"})
+                    self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+            # a LIVE local session named far-web outranks the roster: the local doors are asked first
+            _register("sid-x", "far-web")
+            with mock.patch.dict(km._remotes, {"TESTHOST": row}, clear=True), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {"sid-x": {}})):
+                code, resp = self._post("/interrupt", {"name": "far-web"})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                fake.interrupt.assert_called_once_with("sid-x")
+        finally:
+            _register("sid-x", "web")
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/end", {"id": FAR_SID, "when": "idle"})] * 3
+                         + [("/end", {"id": FAR_SID}), ("/interrupt", {"id": FAR_SID}),
+                            ("/send", {"id": FAR_SID, "text": "hello"}), ("/interrupt", {"id": FAR_SID_B})],
+                         "every by-name request forwards the FAR sid, never the name")
 
     def test_a_far_kernels_answer_is_relayed_in_its_own_words(self):
         # against a REAL far kernel on loopback, so the helper's body read is under test, not a stub of
