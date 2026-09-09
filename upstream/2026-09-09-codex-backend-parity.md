@@ -1,7 +1,7 @@
 ---
 title: Codex backend: prune_live takes the kernel call shape; the model picker says why its list is empty
 status: candidate
-where: kernel/codex_backend.py, kernel/codex_events.py, kernel/session_backend.py, kernel/kernel.py (/models codex section, the Codex spawn and revive models frame, keyed on the door's before-snapshot or a gate closing since it), ui/webview/render.ts, ui/webview/styles.css, docs/codex.md, docs/read-side.md, plans/codex-backend.md, tests/test_backend_call_parity.py, tests/test_codex_models_route.py, tests/test_codex_backend.py, tests/test_codex_discovery.py, tests/test_codex_echo_merge.py, tests/test_codex_events_golden.py, ui/webview/codex-meta-choices.test.ts, ui/webview/models-rev.test.ts
+where: kernel/codex_backend.py, kernel/codex_events.py, kernel/session_backend.py, kernel/kernel.py (/models codex section, the Codex spawn and revive models frame, keyed on the door's before-snapshot or a gate closing since it), ui/webview/render.ts, ui/webview/styles.css, docs/codex.md, docs/read-side.md, plans/codex-backend.md, tests/test_backend_call_parity.py, tests/test_codex_models_route.py, tests/test_codex_backend.py, tests/test_codex_discovery.py, tests/test_kernel_create_session_ack.py and tests/test_kernel_names.py (their Codex fakes carry the gate reads), tests/test_codex_echo_merge.py, tests/test_codex_events_golden.py, ui/webview/codex-meta-choices.test.ts, ui/webview/models-rev.test.ts
 added: 2026-09-09
 pr:
 tier: fix
