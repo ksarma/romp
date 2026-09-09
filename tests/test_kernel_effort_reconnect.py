@@ -25,7 +25,17 @@ class EffortReconnect(unittest.TestCase):
     def test_build_session_emits_a_reconnecting_event_while_effort_pending(self):
         src = inspect.getsource(km.build_session)
         self.assertIn('if (tm0 or {}).get("effortPending"):', src)
-        self.assertIn('events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or ""})', src)
+        self.assertIn('events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or "",', src)
+        # ...carrying the HOLD when the pick waits for live work, so the webview renders a waiting line
+        # instead of the reloading animation (review round 1, 2026-09-09)
+        self.assertIn('"held": (tm0 or {}).get("pickHeld") or None})', src)
+
+    def test_the_held_pick_reaches_the_status_readers(self):
+        # the backend snapshot's pickHeld ({surfaces, subagents, tasks} or None) passes through the live
+        # map and the status dict, beside effortPending, so the UI can tell a hold from a reload
+        self.assertIn('"pickHeld": st.get("pickHeld") or None,', inspect.getsource(km.Sessions.live))
+        self.assertIn('"pickHeld": tm.get("pickHeld") or None,', inspect.getsource(km.build_session))
+        self.assertIn('"pickHeld": held,', BACKEND_SRC)
 
     def test_the_reconnecting_notice_precedes_the_queued_bubble(self):
         # like the compacting element, it must sit ABOVE any queued/provisional message

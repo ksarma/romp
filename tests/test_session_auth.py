@@ -208,24 +208,55 @@ class OptionsInjection(_OptionsHarness):
         self._options_kw(s2)
         self.assertFalse(s2._launched_keyed)
 
-    def test_options_stamps_the_whole_launched_shape_for_the_unchanged_guards(self):
-        # set_effort and set_auth compare a pick against what the CLI was LAUNCHED with, never against
-        # the reg (which the pick itself rewrites): the stamps are None until a connect, so a session
-        # that has not launched still takes every pick (2026-09-09)
-        s = self._sess(5, auth="key", effort="ultracode", mode="plan", fast=True)
-        self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode)
-        self.assertIsNone(s._launched_fast); self.assertIsNone(s._launched_auth)
+    def test_options_records_the_launching_shape_and_the_connect_landing_stamps_it(self):
+        # set_effort and set_auth compare a pick against what the RUNNING CLI launched with, never against
+        # the reg (which the pick itself rewrites). _options records the shape it composes; the stamps are
+        # written when the connect lands (_connect_landed), so a pick during the spawn compares against the
+        # process still running, and a session that has not launched still takes every pick (2026-09-09;
+        # the landing stamp since review round 1)
+        s = self._sess(5, auth="key", effort="ultracode", mode="plan")
+        self.assertIsNone(s._launching)
+        self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode); self.assertIsNone(s._launched_auth)
         kw = self._options_kw(s)
+        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key"})
+        self.assertEqual(s._launching["effort"], (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
+        self.assertIsNone(s._launched_effort, "nothing is stamped until the connect lands")
+        s._connect_landed()
         self.assertEqual(s._launched_effort, sb.effort_launch_shape("ultracode"))
-        self.assertEqual(s._launched_effort, (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
         self.assertEqual(s._launched_mode, "plan")
-        self.assertTrue(s._launched_fast)
         self.assertEqual(s._launched_auth, "key")
         s2 = self._sess(6, auth="login", effort="xhigh")
         self._options_kw(s2)
+        s2._connect_landed()
         self.assertEqual(s2._launched_effort, ("xhigh", False))
         self.assertEqual(s2._launched_auth, "login")
-        self.assertFalse(s2._launched_fast)
+
+    def test_a_key_pick_that_launched_without_a_key_is_stamped_as_what_launched(self):
+        # an explicit key pick with no source launches un-injected (the test below) and bills Claude Code's
+        # own credential. Stamping it "key" made a later key pick, once a source existed, read as unchanged
+        # in set_auth, so the key was never injected (review round 1); the stamp records the side that
+        # launched, and the re-pick reconnects
+        self.be.work_key = ""
+        sid = "11111111-2222-3333-4444-%012d" % 7
+        sb.write_reg(self.be.state_dir, sid, {"sid": sid, "name": "s7", "cwd": "/tmp", "auth": "key"})
+        s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        self._options_kw(s)
+        s._connect_landed()
+        self.assertTrue(s._launched_unkeyed_pick)
+        self.assertEqual(s._launched_auth, "login", "what launched: nothing injected")
+        self.be.sessions[sid] = s
+        s.loop = object()                        # a live loop, as far as _note_reconnect_ask is concerned
+        asked = []
+        s.request_reconnect = lambda: asked.append(1)
+        self.be.work_key = FAKE_KEY              # a source appears
+        self.assertTrue(self.be.set_auth(sid, "key"))
+        self.assertEqual(asked, [1], "the re-pick reconnects and injects")
+        self.assertEqual(s._auth_pending, "key")
+        # and picking login on that session reads unchanged: the same env either way
+        asked.clear()
+        s._auth_pending = ""
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual(asked, [])
 
     def test_the_claimed_login_tokens_ride_every_launch_that_bills_the_login(self):
         """The kernel claims ANTHROPIC_AUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN out of its environment at boot;

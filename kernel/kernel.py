@@ -20427,6 +20427,9 @@ class Sessions:
                                 "model": st.get("model", ""), "effort": st.get("effort", ""),
                                 "modelPending": bool(st.get("modelPending")),   # a /model switch resolving → badge shows switching-dots
                                 "effortPending": bool(st.get("effortPending")),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
+                                # a pick HELD for the session's live work before its reconnect ({surfaces,
+                                # subagents, tasks} or None): the chat's waiting line reads it (2026-09-09)
+                                "pickHeld": st.get("pickHeld") or None,
                                 "retryCount": int(st.get("retryCount") or 0),   # api_retry backoff attempts → the chat's "API retrying — attempt N…" element
                                 "retryInfo": st.get("retryInfo") or None,   # the attempt's detail (attempt/max, error, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
@@ -36630,8 +36633,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # leaves NO record in the chat. While that reconnect is pending, show an animated "Reloading session…"
     # element (mirrors the compacting one) so the user sees the "rereading transcript" step the TUI narrates;
     # it clears the instant the new client connects (effortPending drops). Appended before the queued bubble.
+    # While the pick is HELD for the session's live work (pickHeld: subagents, background tasks, a Workflow
+    # run), nothing is reloading yet, so the element carries the hold and the webview renders a waiting
+    # line in its place (review round 1, 2026-09-09: the reloading line ran for the whole hold).
     if (tm0 or {}).get("effortPending"):
-        events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or ""})
+        events.append({"kind": "reconnecting", "effort": (tm0 or {}).get("effort") or "",
+                       "held": (tm0 or {}).get("pickHeld") or None})
     # Live API-RETRY indicator (the user 2026-07-08): while the CLI backs off + retries a rate-limited /
     # overloaded request the turn stalls in 'retrying' — which was visible ONLY as the amber tab border, with
     # NOTHING in the chat ("the border says retrying but the chat shows no sign"). Show an animated "API
@@ -37140,6 +37147,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   "authPending": bool(tm.get("authPending")),   # an /auth reconnect applying → badge dots
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
+                  "pickHeld": tm.get("pickHeld") or None,   # the pick waits for live work before that reconnect (2026-09-09)
                   "ctx": str(tm["context"]) if tm["context"] is not None else "",
                   # the % above is clamped at 100 — ctxOver says the CLI reported 100+ (tokens exceed
                   # the CURRENT model's window, e.g. right after a 1M→200k model switch), so the
@@ -49905,8 +49913,18 @@ def _fleet_view_sig(now, tmux):
                          t.get("fast"), t.get("since"), t.get("fastReason"),
                          _row_items_sig(t.get("subagents")), _row_ids_sig(t.get("bgTasks")),
                          bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
-                         int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")))
+                         int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
+                         _pick_held_sig(t.get("pickHeld")))   # the hold's start, its counts, and its end all repaint
     return tuple(sorted(sig.items()))
+
+
+def _pick_held_sig(h):
+    """A held pick's status entry ({surfaces, subagents, tasks} or None) as a hashable: the waiting line
+    the chat renders off it must change when the hold begins, when a count falls, and when the arm
+    clears it while effortPending stays set (2026-09-09)."""
+    if not isinstance(h, dict):
+        return None
+    return (tuple(h.get("surfaces") or ()), h.get("subagents"), h.get("tasks"))
 
 
 def _row_items_sig(rows):

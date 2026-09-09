@@ -241,7 +241,7 @@ type ChatEvent = (
   // LIVE session reconnect in progress (kernel-driven): an /effort switch reconnects the session to apply
   // (--effort is connect-time), so an animated "Reloading session…" element shows while it re-reads the
   // transcript, clearing when the new client connects (the user 2026-07-06). No ts → off the rail (transient).
-  | { kind: "reconnecting"; effort?: string; ts?: string; uuid?: string }
+  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; ts?: string; uuid?: string }
   // LIVE api_retry in progress (kernel-driven, event-based, SDK-only): the API returned a retryable error
   // (rate-limit / overload) and the CLI is backing off + retrying, so the turn stalls. An animated "API
   // retrying…" element (the amber retrying status color) with the live attempt count; clears the instant
@@ -298,7 +298,7 @@ type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: stri
 // which billing sides this box can bill, and why not for the other (kernel _auth_avail, 2026-09-08): the
 // Billing submenu lists both and greys the unavailable one with the reason in its hover
 interface AuthAvail { login?: boolean; key?: boolean; loginWhy?: string; keyWhy?: string; acct?: string; default?: string }
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; pickHeld?: PickHeld | null; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4011,17 +4011,38 @@ function renderCompacting(): HTMLElement {
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.
+// While the pick is HELD (ev.held: the kernel waits for the session's live subagents and background tasks
+// to finish before it reloads, since the reload would kill them; 2026-09-09) nothing is reloading yet, so
+// the element says what it waits for, in plain words, with no loader dots: the animation claimed a reload
+// in progress for the whole hold, sometimes hours (review round 1).
 function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): HTMLElement {
   const turn = el("div", "turn turn-reconnecting");
   turn.appendChild(dot("ring"));
   const line = el("div", "reconnecting-line");
-  line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge — "it's romp, working"
   const txt = el("span", "reconnecting-text");
-  txt.textContent = ev.effort ? `Reloading session — applying ${ev.effort} effort…` : "Reloading session…";
+  if (ev.held) {
+    turn.classList.add("turn-reconnecting-held");
+    txt.textContent = ev.effort ? `Applying ${ev.effort} effort when the background work finishes`
+      : "Applying the change when the background work finishes";
+    line.title = pickHeldTitle(ev.held);
+  } else {
+    line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge — "it's romp, working"
+    txt.textContent = ev.effort ? `Reloading session — applying ${ev.effort} effort…` : "Reloading session…";
+    line.title = "applying the effort change — reloading the session (it re-reads the transcript); any message you send lands once it's back";
+  }
   line.appendChild(txt);
-  line.title = "applying the effort change — reloading the session (it re-reads the transcript); any message you send lands once it's back";
   turn.appendChild(line);
   return turn;
+}
+
+// A pick waiting for live work before its reconnect: {surfaces, subagents, tasks} from the kernel's
+// status (SdkSession.snapshot pickHeld), counts live so the hover can watch them fall.
+interface PickHeld { surfaces: string[]; subagents: number; tasks: number }
+
+function pickHeldTitle(h: PickHeld): string {
+  const n = h.subagents, m = h.tasks;
+  return `waiting on ${n} subagent${n === 1 ? "" : "s"} and ${m} background task${m === 1 ? "" : "s"}; `
+    + "the session reloads to apply the change when they finish (reloading now would cut them off)";
 }
 
 // LIVE api_retry (the user 2026-07-08): the API returned a retryable error (rate-limit / overload) and the

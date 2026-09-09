@@ -3305,8 +3305,9 @@ def task_death_notice(tasks: list, cause: str = "a restart or crash") -> str:
     notification that can never arrive (nimbus's dead campaign watcher, the user 2026-07-11). The
     notice names what was lost (the task descriptions from the lifecycle stream) so the session can
     relaunch exactly what still matters. Enqueued by _on_session_gone (CLI died, kernel alive), the
-    boot reconcile (kernel died; read from the reg's bgTasks mirror), and _drop_live_work (a settings
-    switch reconnected the CLI; `cause` names that, so the session is told why its work was cut off).
+    boot reconcile (kernel died; read from the reg's bgTasks mirror), and _drop_live_work (a reconnect
+    abandoned the CLI with work alive; `cause` says the restart was deliberate, so the session is not
+    left suspecting a crash).
 
     It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
     task's tool shell can outlive the CLI — the process may well still be running, and the session
@@ -5028,15 +5029,20 @@ class SdkSession:
         self._pick_fell_said = ""    # the pick whose fall to the other side _options has said for THIS
         self._pick_unknown_said = ""     # the 'cannot tell, launching with the pick as is' row: once per session and pick
         #   session (once per session, not per reconnect; the user 2026-09-08)
-        # The rest of the launched shape (2026-09-09), stamped by _options beside the two above and None
-        # until a connect: the setters compare a pick against what the CURRENT client launched with, never
-        # against the reg (which the pick itself rewrites). The launched value picked again is nothing to
-        # apply, so set_effort and set_auth request no reconnect for it; a session that has not launched
-        # has no shape yet and takes every pick, since its first connect reads the reg.
-        self._launched_effort = None  # effort_launch_shape(sess.effort) at the launch
-        self._launched_mode = None    # the permission mode handed to the launch (set_mode's live path needs no compare)
-        self._launched_fast = None    # whether the launch carried the fastMode opt-in (set_fast reads _fast_unlocked, the same fact)
-        self._launched_auth = None    # "key" when a key was injected or an explicit key pick launched un-injected, else "login"
+        # The rest of the launched shape (2026-09-09): _options records what it hands the CLI (_launching)
+        # and the connect's landing stamps it (_connect_landed), so the stamps describe the process that
+        # RUNS, never one still spawning; None until the first connect lands. The setters compare a pick
+        # against them, never against the reg (which the pick itself rewrites): the launched value picked
+        # again is nothing to apply, so set_effort and set_auth request no reconnect for it, and a pick
+        # equal to a pending one is already applying. A session that has not launched has no shape yet and
+        # takes every pick, since its first connect reads the reg.
+        self._launching = None        # {"effort", "mode", "auth"}: the shape _options composed for the connect in progress
+        self._launched_effort = None  # effort_launch_shape(sess.effort) of the running process
+        self._launched_mode = None    # the permission mode the running process launched with (snapshot reports it
+        #   while a bypass pick is held: the process still runs it; _can_use_tool reads it the same way)
+        self._launched_auth = None    # the side that LAUNCHED: "key" only when a key was injected, else "login" (an
+        #   explicit key pick that launched un-injected bills Claude Code's own credential, so it is not "key":
+        #   once a source exists, re-picking key must reconnect and inject; review round 1)
         self._last_cost_total = 0.0   # the CLI's totalCostUSD is CUMULATIVE per process (verified in
         #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
         #   so spend folds the DELTA between results — folding the raw value re-added the whole
@@ -5087,8 +5093,10 @@ class SdkSession:
         #   quiet arm it (_arm_reconnect_if_quiet, 2026-09-09)
         self._reconnect_surfaces: set = set()   # which picks asked for the pending reconnect ("effort", "mode",
         #   "fast", "auth", "env"): the line that reports a held pick arming names them; cleared at the arm
-        self._reconnect_held_for_work = False   # the pending reconnect has been reported as held for live work:
-        #   one line when the hold begins (the setter's, or the loop's), one when it lifts
+        self._reconnect_held_for_work = False   # the pending reconnect is HELD for live work: set when the hold is
+        #   first announced (the setter's line, or the loop's), cleared when the arm fires or the loop top takes
+        #   the arm. The status readers' pickHeld rides it (snapshot), so it holds through the delivery turn of
+        #   the last agent rather than flapping with the live counts (review round 1, 2026-09-09)
         self._settled_msg = None                 # the ResultMessage whose settle ran last (its finally records
         #   it) — what _note_message_failure reads to say whether a failed result's turn still settled
         # The handshake as a cross-thread EVENT: set the moment a ClaudeSDKClient is up, cleared when
@@ -5440,8 +5448,9 @@ class SdkSession:
         session idle between its own turns while a background agent ran reconnected at once, and 26
         subagents and 10 background tasks died in one day to picks that changed nothing. Otherwise the
         request waits (_reconnect_when_idle) and the exact events that make the session quiet arm it: the
-        turn's ResultMessage settle, the last subagent's stop hook, a task's terminal notification, a run's
-        end (_arm_reconnect_if_quiet). A rewind is the exception: its queue cannot start until the reconnect
+        turn's ResultMessage settle, or a shell or monitor task's terminal notification when no turn is
+        open; an agent's or a Workflow run's end is followed by the turn the CLI starts to deliver its
+        result, so that turn's settle arms it (_arm_reconnect_if_quiet says which). A rewind is the exception: its queue cannot start until the reconnect
         arms it, and the work in the old process is what the rewind discards, so it arms over live work as
         before. No-op if the session is shutting down or not yet connected (the new value is in the
         registry, so it applies on connect).
@@ -5499,31 +5508,53 @@ class SdkSession:
                                                            n_task, "" if n_task == 1 else "s")
 
     def _live_work_counts(self) -> tuple:
-        """(subagents, background tasks) registered right now, read under the set lock. A Workflow run
-        counts through its task and its agents through the subagent set; a run roster that outlived its
-        task entry (never observed; _on_task_event keeps them together) counts as a task, so the live
-        test reads every set the teardown would clear."""
+        """(subagents, background tasks) registered right now, read under the set lock. A Task/Agent
+        subagent's lifecycle task carries the AGENT ID as its task_id (probe-verified on 2.1.257), so an
+        id in both sets is one agent and counts once, as a subagent (review round 1: it read "1 subagent
+        and 1 background task"). A Workflow run counts through its task and its agents through the
+        subagent set; the key cycle's own live test reads the same two sets."""
         with self._sub_lock:
             n_sub = len(self._subagents)
-            n_task = len(self._bg_tasks) + sum(1 for t in self._wf_agents if t not in self._bg_tasks)
+            n_task = sum(1 for t in self._bg_tasks if t not in self._subagents)
         return n_sub, n_task
 
+    def _pick_names(self) -> list:
+        return [n for n in ("effort", "mode", "fast", "auth", "env") if n in self._reconnect_surfaces]
+
+    @staticmethod
+    def _picks_phrase(names: list, one: str, many: str) -> str:
+        if len(names) == 1:
+            return "the %s %s pick" % (one, names[0])
+        return "the %s %s and %s picks" % (many, ", ".join(names[:-1]), names[-1])
+
     def _held_pick_phrase(self) -> str:
-        names = [n for n in ("effort", "mode", "fast", "auth", "env") if n in self._reconnect_surfaces]
+        names = self._pick_names()
         if not names:
             return "the held reconnect fires now"
-        if len(names) == 1:
-            return "the held %s pick reconnects now" % names[0]
-        return "the held %s and %s picks reconnect now" % (", ".join(names[:-1]), names[-1])
+        return self._picks_phrase(names, "held", "held") + (" reconnects now" if len(names) == 1 else " reconnect now")
+
+    def _log_quietly(self, line: str) -> None:
+        """A log line from a place that must not raise: the kernel's callback runs bare in _log, and a
+        callback failing (a closed stderr under a service restart) would otherwise escape a hook (the SDK
+        turns that into an error control_response) or the settle's finally (skipping its failed-step
+        report). The ring row, when the line is a problem, lands before the callback runs (see _log)."""
+        try:
+            self.backend._log(line)
+        except Exception:
+            pass
 
     def _note_reconnect_ask(self, surface: str) -> str:
         """A setter is about to call request_reconnect() for `surface`: record the surface for the arm's
         log line and return what the request will do, in the words the setters log. The same predicates
-        the loop-side decision reads (_do_request_reconnect, _arm_reconnect_if_quiet), read here on the
-        kernel thread a moment earlier. Live work outranks the open turn in the answer: the turn's end
-        alone will not fire it. Marks the hold as announced (_reconnect_held_for_work) so the loop side
-        does not say it twice; a hold the loop finds that this did not (work registered in between) is
-        said there."""
+        the loop-side decision reads (request_reconnect, _do_request_reconnect, _arm_reconnect_if_quiet),
+        read here on the kernel thread a moment earlier. A session request_reconnect will refuse (no loop
+        yet, or ended) records nothing: the reg carries the pick to the connect, and a surface recorded
+        here would be named by a later hold's arm line as if it had waited (review round 1). Live work
+        outranks the open turn in the answer: the turn's end alone will not fire it. Marks the hold as
+        announced (_reconnect_held_for_work) so the loop side does not say it twice; a hold the loop
+        finds that this did not (work registered in between) is said there."""
+        if self.loop is None or self.ended:
+            return "applies at the next connect"
         self._reconnect_surfaces.add(surface)
         n_sub, n_task = self._live_work_counts()
         if n_sub or n_task:
@@ -5533,19 +5564,39 @@ class SdkSession:
             busy = self._busy_under_lock()
         return "reconnect deferred to the end of the open turn" if busy else "reconnecting to apply"
 
-    def _arm_reconnect_if_quiet(self, reason: str, queued_ok: bool = False) -> bool:
+    # Task types whose end the CLI never delivers as a turn: a shell command or a Monitor (both `local_bash`
+    # in the CLI's own model, a Monitor being a local_bash of kind "monitor"), and the MCP and websocket
+    # monitors. Their notifications are enqueued and never dequeued (the kernel's queue-record
+    # measurements, 2026-08-18: 123 enqueues, 0 dequeues), so the end frame IS the quiet moment. Every
+    # other type the CLI mints (local_agent, remote_agent, in_process_teammate, local_workflow, mcp_task,
+    # dream, auto_mode_scan) and an entry whose type was never learned (self-healed from a progress
+    # event) is treated as one whose end a turn delivers; see _arm_reconnect_if_quiet.
+    _QUIET_END_TASK_TYPES = frozenset(("local_bash", "monitor_mcp", "monitor_ws"))
+
+    def _arm_reconnect_if_quiet(self, reason: str, queued_ok: bool = False, wakes_turn: bool = False) -> bool:
         """Arm the pending reconnect (_reconnect_when_idle) if the session is quiet NOW, and say so once
         when it is not. Quiet: no turn in flight, no fed text the CLI still holds (_untaken), no queued
         turn (unless `queued_ok`: at the ResultMessage settle the new client takes the queue with it, as
         it always did; or a rewind holds the queue, whose turns cannot start until this arms), and, for a
         settings pick, no live work: a subagent, a Workflow run, a background task. A pending rewind skips
-        the live-work test (request_reconnect says why). Returns whether it armed.
+        the live-work test (request_reconnect says why). Returns whether it armed. Never raises: its log
+        lines go through _log_quietly, since the hook and the settle's finally call it.
 
-        Called at every event that can make the session quiet, never on a timer: the request itself
-        (_do_request_reconnect), the turn's settle (_on_message), the SubagentStop hook, a task's end and
-        a run's end in the task stream (_on_task_event, _reconcile_workflow_agents). The live sets empty
-        only at those sites, so the arm follows the last removal by construction; there is no
-        set-became-empty event to key on otherwise (2026-09-09). Loop thread only, like every caller."""
+        WHICH END MAY ARM (review round 1, 2026-09-09). The CLI delivers a background agent's result as a
+        turn it starts itself: probed on 2.1.266, the agent's task_notification (or terminal task_updated)
+        is followed 27 to 92 ms later by system/init and a 6 to 9 s model turn. An arm at the agent's end
+        frame closed stdin under that turn, the CLI did not exit on EOF, and terminate() cut the turn at
+        the 5 s grace: the notification's user record survived in the transcript, but the agent's reply
+        to its own result was lost and an idle session stayed idle. So a removal whose end a turn delivers
+        (`wakes_turn`: an agent's SubagentStop or task end, a Workflow run's end, and any end of unknown
+        type) never arms here: it leaves the arm set and the delivery turn's ResultMessage settle arms it
+        (the settle passes queued_ok). Only an end that starts no turn (a shell or monitor task,
+        _QUIET_END_TASK_TYPES) arms at its own frame, and only with no turn open. No timer: the settle is
+        the exact event. Residual: a Workflow run's end was not probed for a delivery turn; deferring it
+        costs at most a wait until the session's next turn, arming it could cut one.
+
+        Called at the request itself (_do_request_reconnect), the turn's settle (_on_message), and a
+        task's end in the task stream (_on_task_event). Loop thread only, like every caller."""
         if not self._reconnect_when_idle or self.ended:
             return False
         held = bool(self._rewind_to and not self._rewind_armed)
@@ -5558,17 +5609,87 @@ class SdkSession:
             if n_sub or n_task:
                 if not self._reconnect_held_for_work:
                     self._reconnect_held_for_work = True
-                    self.backend._log("reconnect (%s): held for %s (%s); it arms when the work ends"
+                    self._log_quietly("reconnect (%s): held for %s (%s); it arms when the work ends"
                                       % (self.name, self._work_phrase(n_sub, n_task), reason))
                 return False
+            if wakes_turn:
+                return False   # the CLI's delivery turn follows this end; its settle arms
         self._reconnect_when_idle = False
         self._reconnect = True
         self._wake_set()
+        names_line = self._held_pick_phrase()
+        self._reconnect_surfaces.clear()
         if self._reconnect_held_for_work:
             self._reconnect_held_for_work = False
-            self.backend._log("reconnect (%s): live work finished; %s" % (self.name, self._held_pick_phrase()))
-        self._reconnect_surfaces.clear()
+            self._log_quietly("reconnect (%s): live work finished; %s" % (self.name, names_line))
         return True
+
+    def _reset_reconnect_state(self) -> None:
+        """The reconnect loop's top, before it connects again: every request has been served, whichever
+        armed the break. The client this iteration opens reads every pick from the reg and the session
+        (_options), so a pick still pending when some OTHER request armed the reconnect (a rewind admitted
+        during a hold, whose queue cannot wait) rides this connect. Until review round 1 (2026-09-09) the
+        top cleared only _reconnect: the deferred arm and its hold survived, and the replacement turn's
+        settle fired a second, redundant reconnect with a false "live work finished" line. Sync, and no
+        await lies between the top and _options, so the new client reads every pick made before it."""
+        if self._reconnect_when_idle:
+            names = self._pick_names()
+            what = self._picks_phrase(names, "pending", "pending") if names else "the pending reconnect"
+            self._log_quietly("reconnect (%s): %s rides this reconnect" % (self.name, what))
+        self._reconnect = False
+        self._reconnect_when_idle = False
+        self._reconnect_held_for_work = False
+        self._reconnect_surfaces.clear()
+
+    def _pick_held(self):
+        """The status readers' view of a hold (snapshot pickHeld): which picks wait and on how much work,
+        or None. Held from the hold's first announcement (_reconnect_held_for_work) until the arm, so
+        it does not flap to "reloading" while the last agent's delivery turn runs (the sets read empty
+        then; the settle arms). The counts are live, so a reader can watch them fall."""
+        if not self._reconnect_held_for_work or self._reconnect or not self._reconnect_when_idle:
+            return None
+        n_sub, n_task = self._live_work_counts()
+        return {"surfaces": self._pick_names(), "subagents": n_sub, "tasks": n_task}
+
+    def _connect_landed(self) -> None:
+        """The (re)connect is up (the reconnect loop, right after the handshake): the shape _options
+        composed for it (_launching) is what the process runs from here, so stamp it as the launched
+        shape the setters compare against. Stamped HERE and not in _options (review round 1, 2026-09-09):
+        the spawn takes about 1.5 s, and a repeat pick of the pending value inside that window used to
+        read as unchanged against the early stamp and clear the pending flag, so this landing never
+        wrote the applied record; against the running process's stamp it reads as already applying.
+
+        Then the pending switches this connect carried are APPLIED. A pending /effort switch, when it IS
+        the shape that launched (a pick made during the spawn stays pending for the reconnect its own
+        request armed): clear the switching-dots and the "Reloading session" notice (the user 2026-07-06),
+        for the immediate (idle) reconnect, the deferred (turn-end) one, and a first connect that picked
+        up a pending value from the reg. Event-based on the connect itself; pokes a push so it clears
+        now. The DURABLE "effort set to X" marker is written at this same moment: the reconnect writes no
+        transcript record, so without it the only trace is the synthesized /effort chip, which prunes on
+        the next message (the user 2026-07-16); written here, not at request time, so it pins when the new
+        effort became REAL (turn-end for a busy session, whose in-flight turn ran at the OLD effort).
+        self.backend.state_dir, not self.state_dir: a session has no state_dir of its own, and the typo
+        raised straight out of the connect path, killing the session thread on any /effort switch that
+        applied at reconnect (found 2026-07-28 in the backend's own crash log). A pending AUTH switch is
+        applied the same way: the key rode (or was withheld from) _options' env on THIS connect, the
+        init's apiKeySource is the CLI's own confirmation and _note_auth_source flags a mismatch loudly;
+        here we clear the dots, unconditionally (a key pick whose source vanished before the launch must
+        not wear them forever)."""
+        launching = self._launching
+        if launching is not None:
+            self._launched_effort = launching.get("effort")
+            self._launched_mode = launching.get("mode")
+            self._launched_auth = launching.get("auth")
+        if self._effort_pending:
+            if self._launched_effort is None or effort_launch_shape(self._effort_pending) == self._launched_effort:
+                append_effort_applied(self.backend.state_dir, self.sid, self._effort_pending)
+                self._effort_pending = ""
+                self.backend._update_reg(self.sid, effortPending=False)
+                self.backend._poke()
+        if self._auth_pending:
+            self._auth_pending = ""
+            self.backend._update_reg(self.sid, authPending=False)
+            self.backend._poke()
 
     def _release_hold_at_exit(self):
         """THE CLI'S EXIT is the one event on which the CLI loses its prompt queue, and so the one event
@@ -6298,7 +6419,7 @@ class SdkSession:
         # incoming message, leaking the client + its claude subprocess).
         while not self.ended:
             self._wake.clear()
-            self._reconnect = False
+            self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)
             self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
             # a move's turn-less result was owed by the client this iteration replaces; the new one will
             # never emit it, and a standing arm keeps _on_message from counting the CLI's own turns
@@ -6360,32 +6481,9 @@ class SdkSession:
                     # hold once the window resets: the next _ensure connects, the error record goes, and
                     # the queue the limit was holding drains on the following pusher cycle.
                     self.backend._clear_launch_error(self.sid)
-                    # A pending /effort switch is APPLIED the instant this (re)connect lands (--effort rode _options
-                    # above) → clear the switching-dots + "Reloading session…" notice (the user 2026-07-06). Covers
-                    # the immediate (idle) reconnect, the deferred (turn-end) one, and a first connect that picked up
-                    # a pending value from the reg. Event-based on the connect itself; pokes a push so it clears now.
-                    if self._effort_pending:
-                        # a DURABLE "effort set to X" marker at the apply moment: the reconnect writes no
-                        # transcript record, so without this the only trace is the synthesized /effort chip,
-                        # which prunes on the next message (the user 2026-07-16). Written here, not at request
-                        # time, so it pins when the new effort became REAL — turn-end for a busy session, whose
-                        # in-flight turn ran at the OLD effort (recording at request would misdate it).
-                        # self.backend.state_dir, not self.state_dir: a session has no state_dir of its own,
-                        # and the typo raised straight out of the connect path — killing the session thread
-                        # on any /effort switch that applied at reconnect (found 2026-07-28 in the backend's
-                        # own crash log, which until now nothing showed the user).
-                        append_effort_applied(self.backend.state_dir, self.sid, self._effort_pending)
-                        self._effort_pending = ""
-                        self.backend._update_reg(self.sid, effortPending=False)
-                        self.backend._poke()
-                    # A pending AUTH switch is applied the same way — the key rode (or was withheld
-                    # from) _options' env on THIS connect. The init's apiKeySource is the CLI's own
-                    # confirmation and _note_auth_source flags a mismatch loudly; here we just clear
-                    # the switching-dots, event-based on the connect like effort above.
-                    if self._auth_pending:
-                        self._auth_pending = ""
-                        self.backend._update_reg(self.sid, authPending=False)
-                        self.backend._poke()
+                    # the shape this connect launched is the running one from here, and the pending
+                    # effort and auth switches it carried are APPLIED: stamps, then the clears
+                    self._connect_landed()
                     # PRE-TURN PUBLISH (the user 2026-06-27): pull the live model + context % the INSTANT we
                     # connect — before any turn — so a freshly-created SDK session shows its model and context on
                     # OPEN, like a tmux session does on launch. The old path keyed model/ctx resolution off the
@@ -7559,6 +7657,15 @@ class SdkSession:
         # consults under default/plan/acceptEdits, an ask IS the honest behavior for whatever its
         # own evaluation could not auto-decide.
         if self.perm_mode == "bypassPermissions":
+            if self._launched_mode != "bypassPermissions" and (self._reconnect_when_idle or self._reconnect):
+                # the pick INTO bypass is pending on a reconnect (held for live work, or deferred): the
+                # process still runs the mode it launched with, so its consult is the honest behaviour of
+                # that process, not a contract breach; the declared intent still answers it (review
+                # round 1, 2026-09-09: the ring fired once per consult for the whole hold)
+                self._log_quietly("permission consult (%s, tool %s) while the bypass pick is held for the "
+                                  "pending reconnect: the process still runs %s; auto-allowed per the "
+                                  "declared mode" % (self.name, tool_name, self._launched_mode or "its launch mode"))
+                return PermissionResultAllow(behavior="allow")
             self.backend._log("permission consult under bypassPermissions (%s, tool %s) — the CLI's "
                               "contract says this cannot happen; auto-allowed per the declared mode"
                               % (self.name, tool_name), problem=True)
@@ -8155,14 +8262,16 @@ class SdkSession:
         agent gets one: probe-verified on 2.1.257, a workflow agent that failed (its model did not exist) got
         no stop hook, so a failed agent's end arrives through its run's progress list or its own task end
         instead (see _reconcile_workflow_agents / _on_task_event). When the last one clears, the session
-        falls back to its real state (working if the main turn is still in flight, else idle), and a
-        settings pick held for this work reconnects: the stop is the exact event it waited on."""
+        falls back to its real state (working if the main turn is still in flight, else idle). A settings
+        pick held for this work does NOT arm here (review round 1, 2026-09-09): a background agent's end
+        is followed by the turn the CLI starts to deliver its result, and an arm at this hook cut that
+        turn; the delivery turn's settle arms it (_arm_reconnect_if_quiet). A foreground agent's stop
+        lands mid-turn, and that turn's settle does the same."""
         aid = inp.get("agent_id") if isinstance(inp, dict) else None
         if aid:
             with self._sub_lock:
                 self._subagents.pop(aid, None)
             self.backend._poke()
-            self._arm_reconnect_if_quiet("subagent stop")
         return {}
 
     def _live_subagents(self) -> list:
@@ -8206,11 +8315,14 @@ class SdkSession:
                                                             len(died), "" if len(died) == 1 else "s", reason))
             self.backend._poke()
 
-    _RECONNECT_CAUSE = "a rewind or a key cycle restarted it"   # the death notice's cause on a reconnect
-    #   that found work alive. A settings switch (effort/fast/auth/mode/env) waits for the live work to end
+    _RECONNECT_CAUSE = "a deliberate restart"   # the death notice's cause on a reconnect that
+    #   found work alive. A settings switch (effort/fast/auth/mode/env) waits for the live work to end
     #   before it reconnects (request_reconnect, 2026-09-09), so what still reaches the drop with work
-    #   running is a rewind, whose queue cannot wait, or a key cycle whose loop-side re-check raced a launch;
-    #   the loop cannot tell the two apart here, so the notice names that family truthfully
+    #   running is a rewind, whose queue cannot wait, or a key cycle whose loop-side re-check raced a
+    #   launch; the loop cannot tell the two apart here. The session reads this text, and "key cycle" is
+    #   romp's own operation name, so the notice says the one thing the session needs: the restart was
+    #   meant (and never says "crash", which a session might grep for: LiveSubagentsRetire.test_f pins that;
+    #   review round 1; tests/test_injected_voice.py screens the words)
 
     _WF_AGENT_ENDED = frozenset(("done", "error"))
     _WF_AGENT_STATES = frozenset(("start", "progress", "done", "error"))   # the vocabulary the probe recorded
@@ -8325,7 +8437,9 @@ class SdkSession:
                 self._subagents.pop(a, None)
         if drop:
             self.backend._poke()
-            self._arm_reconnect_if_quiet("run end" if terminal else "run progress")   # a held pick's cue
+            # no arm of a held settings pick here: these are a run's agents, and the run's own end (the
+            # task end in _on_task_event, which calls this) is an end a turn may deliver, so the settle
+            # arms (review round 1, 2026-09-09)
 
     # ---- background-task tracking (the CLI's task lifecycle stream) ----
 
@@ -8349,6 +8463,7 @@ class SdkSession:
         ended = False            # this event ENDED the task (a notification, or a terminal patch status)
         wf = False               # the task is a Workflow run — its agents report through its progress list
         sub_changed = False
+        gone = None              # the entry this event ended, if it was live: its type says whether this end may arm
         with self._sub_lock:
             if subtype in ("task_started", "task_progress"):
                 entry = self._bg_tasks.get(tid)
@@ -8382,8 +8497,15 @@ class SdkSession:
             self._reconcile_workflow_agents(tid, d.get("workflow_progress"), terminal=ended)
         if ended and (changed or sub_changed):
             # the task's end (and, through the reconcile above, its run's roster) may have emptied the
-            # live sets: the exact event a settings pick held for this work waited on (2026-09-09)
-            self._arm_reconnect_if_quiet("task end")
+            # live sets. Whether THIS frame may arm a held settings pick follows the task's class
+            # (_arm_reconnect_if_quiet): a shell or monitor task's end starts no turn and arms now; an
+            # agent's (sub_changed: the agent's own task), a run's or an unknown type's end is followed
+            # by a delivery turn whose settle arms. Guarded: this runs in the message stream.
+            quiet_end = not sub_changed and (gone or {}).get("type") in self._QUIET_END_TASK_TYPES
+            try:
+                self._arm_reconnect_if_quiet("task end", wakes_turn=not quiet_end)
+            except Exception as e:
+                self._log_quietly("reconnect (%s): the task-end arm check failed: %s: %s" % (self.name, type(e).__name__, e))
         if changed:
             # MIRROR the live set to the reg: bg tasks die with the CLI, and the in-memory set dies with
             # the backend — the persisted mirror is what lets a later boot's reconcile tell the session
@@ -8504,10 +8626,15 @@ class SdkSession:
         else:
             ls = last_state(self.backend.state_dir, self.sid)
             state, since = ls.get("state") or "waiting", ls.get("t") or 0
+        held = self._pick_held()
         return {"state": state, "since": str(since) if since else "",
                 "model": model_label(self.model, self.chosen_model), "effort": self.effort,
                 "modelPending": bool(self._model_pending),   # a /model switch resolving → the badge shows switching-dots
                 "effortPending": bool(self._effort_pending),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
+                # a pick WAITING for live work to end before its reconnect (review round 1, 2026-09-09):
+                # {"surfaces": [...], "subagents": n, "tasks": m}, else None. The chat renders a waiting
+                # line off it instead of the reloading animation, which claimed a reload in progress
+                "pickHeld": held,
                 "auth": self.effective_auth(),   # which account this session bills ('login'|'key') → gear badge
                 # the pick this box cannot bill ("login"|"key"|""), and the side the launch fell to when one
                 # exists ("login"|"key"|""; _options decides both from pick_fall): the Billing menu keeps the
@@ -8521,7 +8648,11 @@ class SdkSession:
                 "authPicked": bool(self.auth),   # `auth` is an explicit pick (picker, gear, remembered)
                 #   rather than the box default; the Billing row words a contradiction as one only then
                 "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
-                "mode": self.perm_mode, "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
+                # while a pick INTO bypass is held, the process still runs the mode it launched with, so
+                # that is the mode reported (perm_mode holds the declared intent for the consult guard)
+                "mode": (self._launched_mode if held and "mode" in held["surfaces"] and self._launched_mode
+                         else self.perm_mode),
+                "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
                 "ctxOver": self._ctx_over,   # the % above is CLAMPED — true when the CLI reported 100+
                 #   (tokens exceed the current model's window, e.g. right after a 1M→200k switch)
                 "summary": "",
@@ -10713,14 +10844,14 @@ class SdkBackend:
             kw["env"] = dict(kw["env"], **helper_fast_org_env(self._log, sess.cwd))
         sess._launched_keyed = launch_keyed
         sess._launched_unkeyed_pick = side == "key" and not launch_keyed
-        # The rest of the launched shape, for the setters' unchanged compares (2026-09-09): a pick equal to
-        # what THIS client runs with is nothing to apply, so set_effort and set_auth request no reconnect
-        # for it. Auth is the side the decision above landed on: keyed, or an explicit key pick that
-        # launched un-injected (Claude Code's own credential bills; the pick itself is still "key").
-        sess._launched_effort = effort_shape
-        sess._launched_mode = kw["permission_mode"]
-        sess._launched_fast = bool(sess.fast_opt)
-        sess._launched_auth = "key" if (launch_keyed or sess._launched_unkeyed_pick) else "login"
+        # The rest of the launched shape, for the setters' unchanged compares (2026-09-09): recorded here
+        # as what this connect is ABOUT to run, stamped by _connect_landed once it does (a pick equal to
+        # the stamp is nothing to apply; one equal to a pending value is already applying). Auth is the
+        # side actually launched: "key" only when the key was injected. An explicit key pick that found
+        # no source launches un-injected and bills Claude Code's own credential, so it is "login" here,
+        # and once a source exists a key re-pick reconnects and injects (review round 1).
+        sess._launching = {"effort": effort_shape, "mode": kw["permission_mode"],
+                           "auth": "key" if launch_keyed else "login"}
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
@@ -12674,14 +12805,33 @@ class SdkBackend:
             return False
         s = self.sessions.get(sid)
         fsid = s.resume_sid if s else reg.get("lastSid")
-        if s and s._launched_effort == effort_launch_shape(value):
-            # UNCHANGED: the CLI this session runs was launched with this very shape (the stamp _options
-            # wrote, never the reg, which this pick would rewrite). set_env's rule: an unchanged re-assert
-            # is already the world the launch describes, so it persists nothing new and skips the
+        # Remember EVERY pick as the new-session seed, ultracode included (the user 2026-08-14, who
+        # picks ultracode and expects new sessions to follow; the old never-remember guard kept the
+        # seed at their one historical max pick, so every new session opened at max — reading as a
+        # downgrade). The CLI itself cannot persist ultracode as a default (its settings enum stops at
+        # xhigh; /effort says "this session only") — but romp's seed is romp's own store, and spawn
+        # hands each NEW session its own per-session launch shape (--effort xhigh + the ultracode
+        # settings key), so the CLI's session-scoping is preserved, one session at a time. Every pick,
+        # the unchanged and the already-applying ones below included (review round 1): the seed is
+        # cross-session and follows the latest pick; the guards decide only whether THIS session reconnects.
+        write_sdk_default(self.state_dir, effort=value)
+        shape = effort_launch_shape(value)
+        if s and s._effort_pending == value and s._launched_effort != shape:
+            # ALREADY APPLYING: this value is pending on a reconnect that has not landed (held for live
+            # work, deferred to a turn's end, or in the spawn window between the teardown and the connect).
+            # Nothing to add: the flag and the reg's effortPending stay for the connect's own clear, which
+            # also writes the applied record (_connect_landed). Until review round 1 the stamp was written
+            # at _options, so a repeat pick in the spawn window read as unchanged and cleared the flag
+            # before the connect, and the applied record was never written.
+            self._log("effort (%s): set to %s; already applying, no new request" % (s.name, value))
+        elif s and s._launched_effort == shape:
+            # UNCHANGED: the CLI this session runs was launched with this very shape (the stamp
+            # _connect_landed wrote, never the reg, which this pick would rewrite). Nothing to apply, so no
             # reconnect rather than churning the CLI process on no new information. Until 2026-09-09 the
             # repeat pick cost a reconnect anyway, and a reconnect over live work killed the session's
             # subagents and background tasks (26 and 10 across four sessions in one day, to picks that
-            # changed nothing). The chip still acknowledges the pick in the chat.
+            # changed nothing). The reg is per-session and reads the launch again below where it drifted;
+            # the seed above still moved (it is cross-session). The chip still acknowledges the pick.
             if s._effort_pending and s._effort_pending != value:
                 # a DIFFERENT pick is waiting to apply: this one reverts it. Persist the revert and clear
                 # the badge; no new request. The reconnect already deferred fires when the session is
@@ -12691,7 +12841,6 @@ class SdkBackend:
                 s.effort = value
                 s._effort_pending = ""
                 self._update_reg(sid, effort=value, effortPending=False)
-                write_sdk_default(self.state_dir, effort=value)   # the latest pick is the seed, as always
                 self._log("effort (%s): set to %s; reverted the pending %s; no reconnect" % (s.name, value, reverted))
             else:
                 if reg.get("effort") != value or s.effort != value:
@@ -12701,34 +12850,25 @@ class SdkBackend:
                     s._effort_pending = ""            # stale: the reconnect that landed this shape cleared it
                     self._update_reg(sid, effortPending=False)
                 self._log("effort (%s): set to %s; unchanged, no reconnect" % (s.name, value))
-            self._ack_cmd_chip(sid, "/effort", "/effort " + value, fsid)
-            return True
-        # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
-        # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
-        # interleaving could silently drop the effort field — the pick LOOKED applied (in-memory label
-        # right), then reverted at the next respawn when __init__ re-read the reg (the user 2026-08-14,
-        # whose ultracode sessions seemed to downgrade at random). Whole setter family fixed alike.
-        # effortPending: the applying reconnect hasn't completed yet → dots + "Reloading session…"
-        self._update_reg(sid, effort=value, effortPending=True)
-        # Remember EVERY pick as the new-session seed, ultracode included (the user 2026-08-14, who
-        # picks ultracode and expects new sessions to follow; the old never-remember guard kept the
-        # seed at their one historical max pick, so every new session opened at max — reading as a
-        # downgrade). The CLI itself cannot persist ultracode as a default (its settings enum stops at
-        # xhigh; /effort says "this session only") — but romp's seed is romp's own store, and spawn
-        # hands each NEW session its own per-session launch shape (--effort xhigh + the ultracode
-        # settings key), so the CLI's session-scoping is preserved, one session at a time.
-        write_sdk_default(self.state_dir, effort=value)
-        if s:
-            s.effort = value        # picker label reflects it now; the reconnect makes it real
-            s._effort_pending = value   # switching-dots on the effort badge + "Reloading session…" notice until the reconnect lands
-            outcome = s._note_reconnect_ask("effort")
-            s.request_reconnect()
-            self._log("effort (%s): set to %s; %s" % (s.name, value, outcome))
+        else:
+            # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
+            # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
+            # interleaving could silently drop the effort field — the pick LOOKED applied (in-memory label
+            # right), then reverted at the next respawn when __init__ re-read the reg (the user 2026-08-14,
+            # whose ultracode sessions seemed to downgrade at random). Whole setter family fixed alike.
+            # effortPending: the applying reconnect hasn't completed yet → dots + "Reloading session…"
+            self._update_reg(sid, effort=value, effortPending=True)
+            if s:
+                s.effort = value        # picker label reflects it now; the reconnect makes it real
+                s._effort_pending = value   # switching-dots on the effort badge + "Reloading session…" notice until the reconnect lands
+                outcome = s._note_reconnect_ask("effort")
+                s.request_reconnect()
+                self._log("effort (%s): set to %s; %s" % (s.name, value, outcome))
         # Synthesize the "/effort X" invocation atom, exactly as set_model does for "/model X": the
         # reconnect leaves NO transcript record at all, so without this an idle-session effort change
         # showed nothing in the chat while a busy one (parked) showed a queued chip — the same pick,
         # visibly acknowledged or not depending on timing (the user 2026-07-05, who called it somewhat
-        # inconsistent). One chip, both paths — and a dormant session's too.
+        # inconsistent). One chip, every path (the unchanged ones too), and a dormant session's.
         self._ack_cmd_chip(sid, "/effort", "/effort " + value, fsid)
         return True
 
@@ -12794,18 +12934,24 @@ class SdkBackend:
         if not reg:
             return False
         s = self.sessions.get(sid)
-        if s and s._launched_auth == value:
+        write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort:
+        #   every pick, the unchanged ones below included (review round 1); the guards decide only whether
+        #   THIS session reconnects
+        if s and s._auth_pending == value and s._launched_auth != value:
+            # ALREADY APPLYING (set_effort's guard for billing): pending on a reconnect that has not
+            # landed; the flags stay for _connect_landed's clear
+            self._log("auth (%s): set to %s; already applying, no new request" % (s.name, value))
+        elif s and s._launched_auth == value:
             # UNCHANGED, set_effort's guard for billing: the CLI this session runs launched on this side
-            # (_launched_auth, derived at the connect from _launched_keyed and _launched_unkeyed_pick,
-            # the stamps cycle_key diffs). Nothing to apply, so no reconnect. An unpicked session whose
-            # launch happened to land here (effective_auth's fallback) takes the pick as its explicit
-            # intent in the reg, still without a reconnect: the process already bills that side.
+            # (_launched_auth, the side _connect_landed stamped: "key" only when the key was injected).
+            # Nothing to apply, so no reconnect. An unpicked session whose launch happened to land here
+            # (effective_auth's fallback) takes the pick as its explicit intent in the reg, still without
+            # a reconnect: the process already bills that side.
             if s._auth_pending and s._auth_pending != value:
                 reverted = s._auth_pending            # a DIFFERENT switch waits to apply: this reverts it
                 s.auth = value                        # (set_effort's revert; the deferred reconnect, if it
                 s._auth_pending = ""                  # fires, relaunches this same side and kills nothing)
                 self._update_reg(sid, auth=value, authPending=False)
-                write_sdk_default(self.state_dir, auth=value)
                 self._log("auth (%s): set to %s; reverted the pending %s; no reconnect" % (s.name, value, reverted))
             else:
                 if s.auth != value or reg.get("auth") != value:
@@ -12815,25 +12961,24 @@ class SdkBackend:
                     s._auth_pending = ""
                     self._update_reg(sid, authPending=False)
                 self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, value))
-            self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
-            return True
-        # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.
-        # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
-        # so a restart must restore "no init has landed yet", never the old side (both readers guard
-        # with isinstance(..., bool), so None reads as absent).
-        self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)
-        write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort
+        else:
+            # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.
+            # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
+            # so a restart must restore "no init has landed yet", never the old side (both readers guard
+            # with isinstance(..., bool), so None reads as absent).
+            self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)
+            if s:
+                s.auth = value
+                s._auth_pending = value
+                s.auth_live = ""   # the last init's report predates this switch — the Billing row shows
+                #   the plain intent (no "CLI reports" parenthetical) until the next init re-confirms
+                outcome = s._note_reconnect_ask("auth")
+                s.request_reconnect()
+                self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
         if s:
-            s.auth = value
-            s._auth_pending = value
-            s.auth_live = ""   # the last init's report predates this switch — the Billing row shows
-            #   the plain intent (no "CLI reports" parenthetical) until the next init re-confirms
-            outcome = s._note_reconnect_ask("auth")
-            s.request_reconnect()
-            self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
-            # nothing at all.
+            # nothing at all. One chip, every path.
             self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
 

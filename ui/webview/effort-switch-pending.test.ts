@@ -34,3 +34,23 @@ test("renderReconnecting draws the accent loader dots + a 'Reloading session' li
   assert.match(RENDER, /"Reloading session…"/);                // effort-less fallback
   assert.match(CSS, /\.turn-reconnecting \.dot \{[^}]*background: var\(--accent\)/);   // accent (loading), not a status color
 });
+
+test("a pick HELD for live work renders a waiting line, not the reloading animation", () => {
+  // the kernel holds an effort pick while the session's subagents and background tasks run (the reload
+  // would kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the
+  // element then says what it waits for, with no loader dots, and its title names the counts
+  assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
+  assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
+  assert.match(RENDER, /interface PickHeld \{ surfaces: string\[\]; subagents: number; tasks: number \}/);
+  assert.match(RENDER, /if \(ev\.held\) \{/);
+  assert.match(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/);
+  assert.match(RENDER, /"Applying the change when the background work finishes"/);
+  assert.match(RENDER, /line\.title = pickHeldTitle\(ev\.held\);/);
+  // the dots and the reloading words live in the else branch: a hold shows neither
+  const fn = RENDER.slice(RENDER.indexOf("function renderReconnecting("), RENDER.indexOf("interface PickHeld"));
+  const held = fn.indexOf("if (ev.held) {"), els = fn.indexOf("} else {");
+  assert.ok(held > 0 && els > held);
+  assert.ok(fn.indexOf("line.appendChild(metaDots());") > els, "no loader dots while held");
+  assert.ok(fn.indexOf("Reloading session") > els, "no reload claim while held");
+  assert.match(RENDER, /waiting on \$\{n\} subagent\$\{n === 1 \? "" : "s"\} and \$\{m\} background task/);
+});
