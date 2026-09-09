@@ -37,17 +37,20 @@ const label = (r) => r.knobs.label.replace(prefix, "");
 const status = (r) => (r.timed_out ? `TIMEOUT@${r.phase}` : (r.errors?.length ? `${r.errors.length} pageerror` : "ok"));
 
 function profileShare(r) {
-  // self-time share of the whole-run profile by source file, from the top rows the run kept
-  const rows = r.profile_top || [];
+  // self-time share by source file over the drag window's top profile rows (the whole run's rows when no drag ran);
+  // native and idle rows keep their V8 names
+  const rows = r.profile_by_interaction?.drag?.length ? r.profile_by_interaction.drag : (r.profile_top || []);
   if (!rows.length) return "-";
   const total = rows.reduce((s, x) => s + (x.self_ms || 0), 0);
   const by = new Map();
   for (const x of rows) {
-    const src = (x.key || x.fn || "").match(/\(([^)]*)\)/)?.[1] || (x.file ?? "").toString() || "(native/idle)";
-    const k = src.split("/").pop() || "(native/idle)";
+    const key = x.key || "";
+    let k;
+    if (/^\([a-z ]+\)@/.test(key)) k = key.split("@")[0];
+    else { const m = key.match(/\(([^)]*)\)\s*$/); k = m ? m[1].split("/").pop() : "native"; }
     by.set(k, (by.get(k) || 0) + (x.self_ms || 0));
   }
-  return [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${n(100 * v / total)}%`).join(", ");
+  return [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${n(100 * v / total)}%`).join(", ");
 }
 
 const I = (r, k) => r.interactions?.[k] || {};
@@ -57,7 +60,7 @@ const head1 = ["run", "tree", "lines", "chars", "fences/fenceLines", "tables", "
 const head2 = ["run", "tree", "lines", "cmts", "hunks", "panel", "drag p50 / p90 / max ms", "drag total ms (frames)", "drag >50ms", "drag layouts / ms",
   "drag restyle ms", "drag script ms", "drag LoAF n / worst block ms / total block ms", "drag heap MB", "big max ms (layouts)", "nudge max ms (script ms)",
   "add reply→placed ms", "status"];
-const head3 = ["run", "tree", "elapsed s", "profile: self share by file (top rows)", "profile", "json"];
+const head3 = ["run", "tree", "elapsed s", "profile: self share by file (drag window, top rows)", "profile", "json"];
 
 function row1(r) {
   const m = I(r, "mount"), s = I(r, "scroll");
