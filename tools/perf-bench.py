@@ -42,8 +42,8 @@ Redacted copies. A copy tool that rewrites the cwd in every registry file (a hom
 X-es) while Claude's projects/ directory keeps the original name leaves discovery with nothing: the
 kernel derives the project directory from the registry cwd (judge.py's _proj_dir), so no transcript
 is found for any session. `--cwd-map FROM=TO` (repeatable) rewrites a registry cwd's leading path
-components before that derivation — `--cwd-map /XXXX/XXXXXX=/home/someone` maps
-/XXXX/XXXXXX/code/notes-api to /home/someone/code/notes-api — and the report counts the hits per
+components before that derivation — `--cwd-map /XXXX/XXXXXX=$HOME` maps
+/XXXX/XXXXXX/code/notes-api to $HOME/code/notes-api — and the report counts the hits per
 rule. It touches nothing else: the cwd the chat build hands to its git queries stays the redacted
 one (a directory that does not exist here, so those queries fail as they would on a machine without
 the checkout). A later version of the copy tool will rename the project directories to match;
