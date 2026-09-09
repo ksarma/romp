@@ -3909,15 +3909,20 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 .fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
-/* The body's content width reaches the sheet as --fv-body-w, written on the body by the viewer's ResizeObserver
-   (file-view.ts, the width observer: the observer's report is the layout's own event, one write per report), for the
-   pane-wide table's cap (.fileview-md > table, below). The body reserves no scrollbar gutter and is no size container: the
+/* The body's content width reaches the sheet as --fv-body-w, written by the viewer's ResizeObserver (file-view.ts, the width
+   observer: the observer's report is the layout's own event) on each top-level table, for the pane-wide table's cap
+   (.fileview-md > table, below). The property is registered NON-INHERITED: written on the body as an ordinary custom property
+   (until 2026-09-09) it reached every node under the body, and Chromium recomputed every node's style on each write, 27 ms a
+   step at 24k nodes and 259 ms at 134k, on every width change of the pane; on the table alone, with nothing inheriting it, a
+   write restyles the tables and nothing else. The universal syntax and no initial value keep the unset case as before: the
+   var() fallbacks below hold until the first report. The body reserves no scrollbar gutter and is no size container: the
    review's round 1 had `scrollbar-gutter: stable` here so a container unit (100cqi, resolved before an auto scrollbar takes
    its space) agreed with the root's 100% padding, and the gutter was then a blank strip on every body that never scrolls, a
    short note 5px off the card's centre, a picture too, a PDF frame and the editor 10px short of the body's edge (15 on the
    feed's platform scrollbar); the observer's width is the content box the column is measured in, scrollbar or none (review
    round 2). file-view-scrollbar-browser.test.ts launches Chromium with the scrollbar visible (the other legs run under
    playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
+@property --fv-body-w { syntax: "*"; inherits: false; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the raw-mode editor: height: 100% (not flex) — .fileview-body above is a plain overflow block,
    not a flex container, so a flex basis on its child is inert and the textarea sat at the UA's

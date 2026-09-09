@@ -843,8 +843,8 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/,
-    "every text paint fires it (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts)");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it, after the fresh tables take the body's width (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
     "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");

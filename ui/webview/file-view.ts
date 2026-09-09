@@ -1230,6 +1230,23 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // blocked the whole dashboard for the drag. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
   // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
   // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
+  // The body's CONTENT WIDTH, for the sheets: the pane-wide table's cap (`.fileview-md > table` reads --fv-body-w) is the body
+  // less the root's inset, a width the table's own percentages cannot reach (its 100% is the column). The value is the width
+  // observer's report (below), and it is written on EACH TOP-LEVEL TABLE, not on the body it describes: the property is
+  // registered non-inherited (`@property --fv-body-w { inherits: false }` in styles.css and feed.css), so a write restyles the
+  // tables alone. Until 2026-09-09 it sat on the body as an ordinary (inherited) custom property, and Chromium recomputed the
+  // style of every node under the body on each write: 27 ms a step at 24k nodes, 138 ms at 79k, 259 ms at 134k (a fence-heavy
+  // note), on every width change of the pane (M4 of the 2026-09-09 viewer-resize measurements). mdBlock
+  // rebuilds the root on every render and no report follows a render, so renderBody stamps the fresh tables itself with the
+  // width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is the column).
+  let bodyWidth = -1;        // the body's content width as last reported, -1 before the first report
+  const stampBodyWidth = () => {
+    if (bodyWidth < 0) return;
+    const md = body.querySelector(".fileview-md");
+    if (!md) return;
+    const v = bodyWidth + "px";
+    for (const n of Array.from(md.childNodes)) if (n.nodeType === 1 && (n as Element).tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", v);
+  };
   if (typeof ResizeObserver !== "undefined") {
     let paintedWidth = -1;   // the width the last repaint (or the first report) saw
     let seenWidth = -1;      // the latest report's width
@@ -1242,11 +1259,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
-      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`): on the BODY, which
-      // stands for the open (mdBlock rebuilds .fileview-md on every render and no report follows a render), from the
-      // layout's own report, one write per report; a scrollbar's width is taken, a reserved gutter is none (Slice 3 review,
-      // round 2: `scrollbar-gutter: stable` reserved a blank strip on every body that never scrolls)
-      body.style.setProperty("--fv-body-w", w + "px");
+      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`), from the layout's own
+      // report, stamped on the top-level tables (stampBodyWidth above) when it moved; a scrollbar's width is taken, a
+      // reserved gutter is none (Slice 3 review, round 2: `scrollbar-gutter: stable` reserved a blank strip on every body
+      // that never scrolls)
+      if (w !== bodyWidth) { bodyWidth = w; stampBodyWidth(); }
       if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
       seenWidth = w;
       if (w === paintedWidth || frame) return;
@@ -1393,6 +1410,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    stampBodyWidth();                           // the fresh root's tables take the body's width (no report follows a render)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
     shownText = text;
     seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
