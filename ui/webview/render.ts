@@ -487,7 +487,7 @@ function noteCancelledQueued(sid: string, md: string, sendId?: string): void {
   list.push({ sendId, md });
   cancelledQueued.set(sid, list);
 }
-// queued-held.ts speaks the wire's names — a queued entry's `sendId`, a user event's `sendIds` (send-pending.ts): upstream's
+// queued-held.ts speaks the wire's names, a queued entry's `sendId` and a user event's `sendIds` (send-pending.ts): upstream's
 // qid/qids were renamed at the 2026-09-09 fold (one vocabulary), so the records go in and come back as they are.
 function reconcileHeldCopies(s: Session): void {
   // idempotent: a frame that kept the resident events (an empty full frame) still carries the previous pass's held

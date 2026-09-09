@@ -43,8 +43,8 @@ def _fn_body(src, name):
 
 class TabStripPips(unittest.TestCase):
     def test_the_strip_marks_activity_and_the_unreadable_state(self):
-        """The dot rule must place a pip for working, awaitingBg and a MISSING state — the same
-        language dotFor (feed.ts) and statusDot (fleet.ts) speak — and none for a quiet session; and
+        """The dot rule must place a pip for working, awaitingBg and a MISSING state, the same
+        language dotFor (feed.ts) and statusDot (fleet.ts) speak, and none for a quiet session; and
         render.ts must put the classed slot on the tab."""
         body = _fn_body(TAB_STATE, "tabDotClass")
         self.assertIn('st === "working"', body)
@@ -52,7 +52,7 @@ class TabStripPips(unittest.TestCase):
         self.assertRegex(body, r'if \(!st\) return "tab-dot unknown";',
                          "a MISSING state must render an explicit unknown ring, not nothing")
         self.assertNotIn('st === "ready"', body, "a healthy idle session gets NO pip — a blank says it")
-        self.assertNotIn('"tab-dot ready"', TAB_STATE, "a healthy idle session gets NO pip — a blank says it")
+        self.assertNotIn('"tab-dot ready"', TAB_STATE, "a healthy idle session gets NO pip: a blank says it")
         for src, name in ((TAB_STATE, "tab-state.ts"), (RENDER, "render.ts")):
             self.assertNotIn('"idle — nothing running', src, "%s: the ready tooltip went with the ready pip" % name)
         # the wiring: render.ts reads the rule, never a dot ladder of its own

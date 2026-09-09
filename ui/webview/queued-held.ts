@@ -7,7 +7,7 @@
 // atom that carries its identity arrives (the send's one identity on this wire, T252: the queued copy's `sendId` is
 // among the landed record's `sendIds`), and the atom then takes the copy's slot in the same frame. A copy with no id
 // (one the kernel queued itself: mail, a nudge; the tmux route; an older kernel) is held by TEXT for the one push it
-// vanished on, and dropped at the next push that carries the queue if nothing claimed it — never a phantom. A held
+// vanished on, and dropped at the next push that carries the queue if nothing claimed it, never a phantom. A held
 // identified copy is dropped the moment a LATER landing shows the CLI has passed it (the queue is first-in-first-out:
 // had the copy landed, its record would precede that one), or when the kernel lists it queued again (it came back;
 // nothing to hold). Pure and DOM-free so node --test executes it; render.ts owns the per-session memory and the

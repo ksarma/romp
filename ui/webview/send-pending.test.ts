@@ -1001,7 +1001,7 @@ test("an id the frame still shows queued or echoed refuses a same-text landing t
   r = reconcilePending([...tail, { kind: "user", md: "ok", uuid: "u1" }, { kind: "user", md: "ok", uuid: "echo:q2" }], [a, b]);
   assert.deepEqual([r.landed.map((l) => l.p), r.keep, r.inject, r.echoHide], [[a], [b], [b], [2]], "the id-less echo is the second send's by text: hidden for it, ours drawn (T262h)");
   // …and the same when the echo NAMES the second send (the kernel ships sendIds on its echoes): the one it names is
-  // covered by id — that echo hidden, ours drawn — and the landed first send never claims it
+  // covered by id (that echo hidden, ours drawn), and the landed first send never claims it
   r = reconcilePending([...tail, { kind: "user", md: "ok", uuid: "u1" }, { kind: "user", md: "ok", uuid: "echo:q2", sendIds: [b.sendId] }], [a, b]);
   assert.deepEqual([r.landed.map((l) => l.p), r.keep, r.inject, r.echoHide], [[a], [b], [b], [2]]);
   // a send read by text (its id is nowhere in the frame) never takes an echo another send owns by id

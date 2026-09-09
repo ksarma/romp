@@ -32,13 +32,17 @@ update` starts a session called "update".
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
-ask* shows the banner, *Install automatically* converges on its own and restarts Romp at once, and
-*Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. An
-automatic restart cuts the turns in flight, which resume with their history on the new code. A
-converge to `main` in this mode comes no sooner than 25 minutes after the last deploy restart, so
-a busy `main` costs one restart per batch of merges. The one command that waits for a quiet
-window is `romp refresh --quiet`. Reloads are separate from that control and happen in every
+ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
+checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
+and keeps running what it has until they restart Romp themselves. An automatic converge takes one
+of two routes, decided by what the new commits touch. A change to the kernel's own code
+(`kernel/`, `bin/`) restarts Romp at once, and the restart cuts the turns in flight, which resume
+with their history on the new code. A change anywhere else (the UI, the docs, the CLI, the postal
+bus, tests) converges in place with the kernel left up: the served bundles are rebuilt, a postal
+change restarts the bus alone, and no turn is cut. A converge to `main` in this mode comes
+no sooner than 25 minutes after the last deploy restart, so a busy `main` costs at most one
+restart per batch of merges. The one command that waits for a quiet window is
+`romp refresh --quiet`. Reloads are separate from that control and happen in every
 mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
 newer build than the page runs, once any gesture in progress has ended and any file still
 shipping has settled, and the notification center's one line says which happened. The banner that

@@ -9,7 +9,7 @@ import { reconcileHeld, heldAsQueued, landsCopy, lastKernelUuid, type HeldMemory
 // The follow-up (the first review's reproductions): a copy judged against the PREVIOUS push's anchor, so one that
 // vanishes and lands in the same push is released; a landing that releases a sibling is not a "later" landing; a
 // copy the user cancelled here, or one that vanished on a settled session, is never held; copies count per text.
-// The fields are the wire's (send-pending.ts, the kernel): a queued copy's `sendId`, a landed record's `sendIds` — upstream's
+// The fields are the wire's (send-pending.ts, the kernel): a queued copy's `sendId`, a landed record's `sendIds`, upstream's
 // qid/qids renamed at the 2026-09-09 fold (ruling 4: one vocabulary, no translation seam at render.ts's call site); every
 // assertion below is upstream's, re-aimed to those names.
 
@@ -116,7 +116,7 @@ test("our own bubble and hidden copies never become held copies; a landing is a 
 });
 
 // One vocabulary on the wire (the 2026-09-09 fold, ruling 4): the module names a copy's identity the way send-pending.ts
-// and the kernel do — a queued copy's `sendId`, a landed record's `sendIds` — and render.ts hands it the session's records
+// and the kernel do (a queued copy's `sendId`, a landed record's `sendIds`), and render.ts hands it the session's records
 // as they are. Upstream's qid/qids and the three adapter lambdas that translated them at the call site are gone; a
 // comment may still name the old words as history, so the guard reads code only.
 test("the module and its call site speak the wire's names: sendId/sendIds in code, no qid/qids, no adapter", () => {
