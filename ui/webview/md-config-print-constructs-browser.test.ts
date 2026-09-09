@@ -17,7 +17,12 @@
 // black through `.fileview-md a`), and the ==mark== kept its screen wash, 35% of the theme's --warn, so the same note printed
 // two tints from two themes (rgb(241, 223, 186) from the dark page, rgb(220, 203, 166) from the light one); the block names
 // the chip on the construct line and gives the mark one print wash, 15% black, read here on every cell and held to one value
-// across the themes. Skips loudly without a browser. Synthetic values only: hosts under .test, no real note.
+// across the themes. Round 6: the math fill's source fallback (`code.md-math-src`, a formula the belt refuses shown as its
+// TeX) printed black ink under a dotted underline still in the screen's --dim: the shared rule names the underline's colour
+// outright (`text-decoration-color: var(--dim)`), so the block's `color: black` did not carry to it, and the cue printed at
+// 2.56:1 from the dark themes (rgb(154, 163, 173) on white) and in another grey from the light one; the block sets the
+// underline's colour beside the ink now, and the note here carries an `\edef` formula the belt refuses so the underline is
+// read on every cell. Skips loudly without a browser. Synthetic values only: hosts under .test, no real note.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -37,6 +42,7 @@ const NOTE = ["---", "title: Print me", "tags: [a, b]", "---", "", "# Print me",
   "> [!TIP]- A folded tip", "> Its body.", "",
   "A remote picture: ![remote](https://figures.example.test/pic.png)", "",
   "A ==highlighted run== beside an embed ![[Other]] of another note.", "",
+  "A formula the belt refuses, shown as its source: $\\edef\\b{x}\\b$ in the line.", "",
   "The last paragraph.", ""].join("\n");
 const BLACK = "rgb(0, 0, 0)", WHITE = "rgb(255, 255, 255)", CLEAR = "rgba(0, 0, 0, 0)";
 
@@ -49,6 +55,7 @@ test("the print block blacks the footnote, the front matter, the gate placeholde
     assert.ok(block.includes(".fileview-md .fv-gate { background: none; }"), f + ": the placeholder's wash goes, as every other wash in the block");
     assert.ok(block.includes(".fileview-md .md-callout { --callout: black; }"), f + ": the rail and the wash ride --callout, so the variable is what the block sets");
     assert.ok(block.includes(".fileview-md mark.md-mark { background: color-mix(in srgb, black 15%, transparent); }"), f + ": the ==mark== prints one neutral wash whatever the theme (round 5: it kept 35% of the theme's --warn)");
+    assert.ok(block.includes(".fileview-md code.md-math-src { text-decoration-color: black; }"), f + ": the source fallback's dotted underline prints black beside its ink (round 6: the shared rule names the underline's colour outright, so `color: black` alone left it in the screen's --dim)");
   }
   const at = (css: string) => css.slice(css.indexOf("@media print {"));
   assert.equal(at(read("styles.css")), at(read("feed.css")), "the block mirrors exactly (file-view-print-browser.test.ts pins the slice from its comment on)");
@@ -69,12 +76,14 @@ function parse(s: string): RGBA {
 type Callout = { cls: string; tag: string; rail: string; railW: string; wash: string; ink: string; title: string };
 type Facts = { matchesPrint: boolean; page: string; body: string; quote: { ink: string; rail: string }; frontMatter: { open: boolean; ink: string; label: string; yaml: string; border: string; borderW: string } | null;
   footnote: { ink: string; rail: string; railW: string; back: string } | null; callouts: Callout[]; gate: { ink: string; label: string; border: string; style: string; wash: string; text: string } | null;
-  embed: { ink: string; border: string; style: string; borderW: string; text: string } | null; mark: { ink: string; wash: string; text: string } | null };
+  embed: { ink: string; border: string; style: string; borderW: string; text: string } | null; mark: { ink: string; wash: string; text: string } | null;
+  belt: { ink: string; line: string; style: string; deco: string; text: string; why: string } | null };
 function facts(): Facts {
   const md = document.querySelector(".fileview-md")!; const cs = (e: Element) => getComputedStyle(e); const q = (s: string) => md.querySelector(s);
   const fm = q("details.md-frontmatter") as HTMLDetailsElement | null, fn = q(".md-footnote"), gate = q('.fv-gate[data-act="fv-load"]'), quote = q(":scope > blockquote:not(.md-callout)")!;
-  const embed = q("a.fv-embed"), mark = q("mark.md-mark");
+  const embed = q("a.fv-embed"), mark = q("mark.md-mark"), belt = q("code.md-math-src");
   return {
+    belt: belt ? { ink: cs(belt).color, line: cs(belt).textDecorationLine, style: cs(belt).textDecorationStyle, deco: cs(belt).textDecorationColor, text: (belt.textContent || "").trim(), why: belt.getAttribute("title") || "" } : null,
     embed: embed ? { ink: cs(embed).color, border: cs(embed).borderTopColor, style: cs(embed).borderTopStyle, borderW: cs(embed).borderTopWidth, text: (embed.textContent || "").trim() } : null,
     mark: mark ? { ink: cs(mark).color, wash: cs(mark).backgroundColor, text: (mark.textContent || "").trim() } : null,
     matchesPrint: matchMedia("print").matches, page: cs(document.body).backgroundColor, body: cs(q(":scope > p")!).color,
@@ -86,7 +95,7 @@ function facts(): Facts {
   };
 }
 
-test("under print media a footnote definition, the front matter, a gated figure's placeholder, the embed chip and every callout print black ink and black rails on the white page, and the ==mark== one neutral wash from every theme, on the pane, the chat modal and the feed page; screen media restores each", { timeout: 240000 }, async (t) => {
+test("under print media a footnote definition, the front matter, a gated figure's placeholder, the embed chip and every callout print black ink and black rails on the white page, the ==mark== one neutral wash from every theme and the source fallback's dotted underline black, on the pane, the chat modal and the feed page; screen media restores each", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const markWashes = new Map<string, string>();   // the mark's print wash per cell: one value from every theme and surface
     for (const [mode, light] of [["pane", false], ["chat", false], ["feed", false], ["pane", true], ["feed", true]] as [Mode, boolean][]) {
@@ -94,7 +103,7 @@ test("under print media a footnote definition, the front matter, a gated figure'
       const { page, errors } = await openViewer(browser, mode, 900, 700, { docs: { [REPORT]: NOTE }, theme: THEME_CSS });
       if (light) { await page.evaluate(() => { document.body.classList.add("theme-light"); }); await frames(page, 2); }
       await page.waitForFunction(() => document.querySelectorAll(".fileview-md .md-callout").length >= 3 && !!document.querySelector('.fileview-md .fv-gate[data-act="fv-load"]') && !!document.querySelector(".fileview-md .md-footnote")
-        && !!document.querySelector(".fileview-md a.fv-embed") && !!document.querySelector(".fileview-md mark.md-mark"), null, { timeout: 10000 });
+        && !!document.querySelector(".fileview-md a.fv-embed") && !!document.querySelector(".fileview-md mark.md-mark") && !!document.querySelector(".fileview-md code.md-math-src"), null, { timeout: 10000 });
       // the fold open, so its YAML is laid out and reads a colour (a closed details hides its body in print too; the label prints always)
       await page.evaluate(() => { (document.querySelector(".fileview-md details.md-frontmatter") as HTMLDetailsElement).open = true; }); await frames(page, 2);
       const screen = await page.evaluate(facts) as Facts;
@@ -112,6 +121,11 @@ test("under print media a footnote definition, the front matter, a gated figure'
       assert.equal(screen.embed!.text, "Other", cell + ": ![[Other]] is the chip naming the note"); assert.equal(screen.mark!.text, "highlighted run");
       assert.equal(screen.embed!.border, screen.footnote!.rail, cell + ": on screen the chip's box is the hairline, the footnote rail's token"); assert.notEqual(screen.embed!.border, BLACK);
       assert.notEqual(screen.mark!.wash, CLEAR, cell + ": on screen the mark wears its wash"); assert.notDeepEqual(parse(screen.mark!.wash).slice(0, 3).map(Math.round), [0, 0, 0], cell + ": ...the theme's amber, not a neutral (" + screen.mark!.wash + ")");
+      // round 6: the belt's fallback, the formula shown as its TeX under a dotted underline in the dim tier
+      assert.ok(screen.belt, cell + ": the note renders the belt's source fallback");
+      assert.equal(screen.belt!.text, "\\edef\\b{x}\\b", cell + ": ...showing the TeX as written"); assert.match(screen.belt!.why, /\\edef/, cell + ": ...with the belt's reason in its title");
+      assert.equal(screen.belt!.ink, screen.quote.ink, cell + ": on screen the fallback reads in the dim tier"); assert.equal(screen.belt!.deco, screen.belt!.ink, cell + ": ...its dotted underline in the same tier");
+      assert.deepEqual([screen.belt!.line, screen.belt!.style], ["underline", "dotted"], cell + ": ...dotted");
       await page.emulateMedia({ media: "print" }); await frames(page, 3);
       const pr = await page.evaluate(facts) as Facts;
       assert.equal(pr.matchesPrint, true, cell + ": print media");
@@ -143,6 +157,11 @@ test("under print media a footnote definition, the front matter, a gated figure'
       assert.deepEqual(wash.slice(0, 3).map(Math.round), [0, 0, 0], cell + ": the mark's print wash is neutral, not the theme's amber (" + mark.wash + "; before: " + screen.mark!.wash + ")");
       assert.ok(wash[3] > 0.12 && wash[3] < 0.18, cell + ": ...at the rule's 15% (" + mark.wash + ")");
       markWashes.set(cell, mark.wash);
+      // round 6: the fallback's underline. `color: black` reached its ink and not its underline, whose colour the shared rule names outright
+      const belt = pr.belt!;
+      assert.equal(belt.ink, BLACK, cell + ": the source fallback's TeX prints black");
+      assert.equal(belt.deco, BLACK, cell + ": the source fallback's dotted underline prints black too (before: " + screen.belt!.deco + ", the screen's --dim, 2.56:1 on white from the dark themes and another grey from the light one)");
+      assert.deepEqual([belt.line, belt.style], ["underline", "dotted"], cell + ": ...and stays the dotted cue the fallback is known by");
       await page.emulateMedia({ media: "screen" }); await frames(page, 3);
       const back = await page.evaluate(facts) as Facts;
       assert.deepEqual(back, screen, cell + ": every screen value returns");

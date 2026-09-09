@@ -6,7 +6,14 @@
    does styles.css's and emits the fonts to dist/fonts/ once (the same files, the same hashed names). */
 @import "katex/dist/katex.min.css";
 
-/* A wide display formula scrolls inside its own box instead of stretching the column. */
+/* A wide display formula scrolls inside its own box instead of stretching the column. An INLINE formula has no box of
+   its own: KaTeX lays each formula out nowrap, so one with no break point (no top-level operator or relation) wider
+   than its column runs under the column's right edge, clipped by the chat's overflow-x hidden and, in the viewer, ink
+   overflow under the md box's contain: layout that the body cannot scroll to (Raw shows the source); a formula with a
+   top-level `+` or `=` wraps between its bases. Not a scroll box of its own: an inline-block whose overflow is not
+   visible takes its baseline at its bottom margin edge (CSS 2.1 section 10.8.1), which lifts every inline formula off
+   the text's baseline, and a breakable one becomes a block on its own line (the Slice 4 review, round 6: measured,
+   recorded). */
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 
 /* Inter (SIL OFL 1.1 — media/InterVariable-LICENSE.txt): THE romp UI typeface (the user
@@ -1752,6 +1759,14 @@ a.fileview-gh-note { border-style: dashed; }
 .md .md-footnote, .fileview-md .md-footnote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); font-size: 0.86em; color: var(--dim); }
 .md .md-fnback, .fileview-md .md-fnback { display: inline-block; min-width: 1.2em; margin-right: 0.3em; text-align: center; }
 .md .md-callout, .fileview-md .md-callout { --callout: var(--box-border); color: inherit; border-left: 3px solid var(--callout); border-radius: 0 6px 6px 0; padding: 0.4em 0.8em; background: color-mix(in srgb, var(--callout) 8%, transparent); }
+/* the folded form's box spacing: a details matches no block rule, so it had the UA's 0 margin where the blockquote
+   form takes the quote's 0.5em from `.md blockquote` and `.fileview-md blockquote`, and a run of `> [!tip]-` folds
+   stacked flush into one tinted box with a notch where their rounded corners met (the slice's review, round 6). The
+   :where() heads hold the rule at the blockquote rule's own weight, (0,1,1), so a fold that is the body's first or
+   last child loses that margin to the body's `> :first-child` and `> :last-child` rules, (0,2,0), as a blockquote
+   does; on the shared callout rule, (0,2,0) and later in the sheet, the margin would have outranked them
+   (md-config-chat-styles-browser.test.ts reads both forms and a one-child body). */
+:where(.md) details.md-callout, :where(.fileview-md) details.md-callout { margin: 0.5em 0; }
 .md .md-callout-title, .fileview-md .md-callout-title { margin: 0 0 0.3em; font-weight: 600; color: inherit; }
 .md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title { cursor: pointer; user-select: none; }
 .md .md-callout-note, .fileview-md .md-callout-note, .md .md-callout-info, .fileview-md .md-callout-info, .md .md-callout-abstract, .fileview-md .md-callout-abstract, .md .md-callout-summary, .fileview-md .md-callout-summary, .md .md-callout-tldr, .fileview-md .md-callout-tldr, .md .md-callout-todo, .fileview-md .md-callout-todo, .md .md-callout-quote, .fileview-md .md-callout-quote, .md .md-callout-cite, .fileview-md .md-callout-cite, .md .md-callout-example, .fileview-md .md-callout-example { --callout: var(--accent); }
@@ -2505,9 +2520,17 @@ body.filebrowse-open { overflow: hidden; }
    content, at least the column, at most the body less the inset, centred in the body), so a formula between the column and
    the body prints whole across both gutters and a wider one starts at the gutter and is cut at the paper's edge (KaTeX's
    nowrap: a formula never wraps), while a narrow one keeps its column box and an equation tag its place at the column's edge
-   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page). Byte-equal in
-   styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides
-   are in files-pane.css. */
+   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page). A display formula
+   inside a callout, a quote or a list item takes the open box and not the room and shift, as a nested table takes neither
+   (the `>` heads): its ink runs from its container's left edge past the container's right edge to the paper's edge where it
+   is wider than the container, start-aligned as CSS lays out inline content wider than its line box, which shows more of
+   it than the screen's clip did; the shift would put ink across the container's rail or a list's bullet, and the sheet
+   cannot read a container's inset (round 6, recorded). Round 6 also named the source fallback's underline: the shared rule
+   sets `text-decoration-color: var(--dim)` outright, so the ink list's `color: black` did not carry to it and the dotted
+   cue printed at 2.56:1 on white from the dark themes and in another grey from the light one; the block sets the
+   underline's colour beside the ink (md-config-print-constructs-browser.test.ts reads it). Byte-equal in styles.css and
+   feed.css (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in
+   files-pane.css. */
 @media print {
   :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -2521,6 +2544,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
   .fileview-md { --math-err: black; }
+  .fileview-md code.md-math-src { text-decoration-color: black; }
   .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }
   .fileview-md .fv-gate { background: none; }
   .fileview-md .md-callout { --callout: black; }

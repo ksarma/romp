@@ -405,17 +405,25 @@ export const callout: TokenizerAndRendererExtension = {
 // text (round 5 of the review): marked masks every escaped punctuation character before its em and strong run and hands
 // an extension the unmasked source, so the `==` of `\==` closed the highlight when a space followed it, and `==a \== b==
 // end` highlighted `a \` and left ` b== end` literal, where `\=` is marked's escape everywhere else in the paragraph
-// (`a \== b` renders `a == b`). Now a backslash and the character after it are one atom of the content (MARK_RE) and
-// the view skips a `==` an odd count of backslashes precedes (markView), so `==a \== b==` highlights `a == b`, `==x
-// \\== y` closes at its `==` (two backslashes escape each other) and `==a\==` is literal, one `=` escaped and one
-// left, as `*a\*` is literal to marked. The double-tilde rule keeps this blind spot too, as marked's own gfm del has
-// it (`~~a \~~ b~~` closes at the escaped pair). The element carries a class, `md-mark`,
+// (`a \== b` renders `a == b`). Now a backslash and one ASCII punctuation character after it are one atom of the content
+// (MARK_RE; the pair marked's escape rule reads, CommonMark 2.4) and the view skips a `==` an odd count of backslashes
+// precedes (markView), so `==a \== b==` highlights `a == b`, `==x \\== y` closes at its `==` (two backslashes escape
+// each other) and `==a\==` is literal, one `=` escaped and one left, as `*a\*` is literal to marked. A backslash before
+// any other character (a letter, a space, a newline) is one character of text and that character another (round 6 of
+// the review): `==a \b==` highlights `a \b`, and `==a \ == z` is literal, its closer preceded by a space as in `==a ==`,
+// where round 5's atom of a backslash and any character paired `\ ` and highlighted `a \ `, and took a line-ending
+// backslash with its newline, marked's hard break, into the highlight. The double-tilde rule keeps the escaped-pair
+// blind spot, as marked's own gfm del has it (`~~a \~~ b~~` closes at the escaped pair). The element carries a class, `md-mark`,
 // so the sheets' rule names the highlight alone and the comment and change marks the panel paints as <mark> elements
 // (mark.fc-hl, .fc-presel, .fc-ins, .fc-del; anchor-map.ts makeMark) keep their own dress (round 3: `.fileview-md mark`
 // outranked their single-class rules, so every comment highlight in the Rendered view wore the amber wash).
 export const MARK_CLASS = "md-mark";
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
-const MARK_RE = /^==(?=[^\s=])((?:\\[\s\S]|(?!==)[^\\])*?(?:\\[\s\S]|[^\s=\\]))==(?![A-Za-z0-9_=])/;
+/** The content: an escape pair (a backslash and one ASCII punctuation character, marked's escape rule, CommonMark 2.4) or
+ *  one character that starts neither `==` nor an escape pair, so every position reads one way and a run of backslashes
+ *  costs one pass; the last atom is an escape pair or a character that is neither whitespace, `=` nor a backslash, so a
+ *  closer preceded by whitespace is refused whatever precedes the whitespace. */
+const MARK_RE = /^==(?=[^\s=])((?:\\[!-\/:-@\[-`{-~]|(?!==|\\[!-\/:-@\[-`{-~])[\s\S])*?(?:\\[!-\/:-@\[-`{-~]|[^\s=\\]))==(?![A-Za-z0-9_=])/;
 const OPERAND_END_RE = /[A-Za-z0-9_=)\]'"]$/;
 export const mark: TokenizerAndRendererExtension = {
   name: "mark",

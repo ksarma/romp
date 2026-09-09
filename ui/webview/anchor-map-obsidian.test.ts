@@ -536,18 +536,19 @@ test("a lazy `===` or `--` line under a callout's or a quote's body line is that
     assert.equal(across.quote, src.slice(src.indexOf(first), src.indexOf(under) + under.length), why + ": the source text between");
     assert.ok(!across.quote.includes("    "), why + ": the guard's spaces are not in the quote");
   }
-  // the guard is the ONE mismatch the view reads through: a tab after the marker still refuses the block (the nested lexer
-  // expands it to four spaces, so the paragraph's raw no longer starts the quote's text and the placement refuses), and the
-  // paragraph after the quote maps as before
+  // the guard's spaces are one shape the view reads through; a tab after the marker is the other (round 6, blockLexView: the
+  // nested lexer expands it to four spaces, and the nested walk runs over the expanded text as the top-level walk runs over N),
+  // so `>\t\tcode line` is the paragraph's second line and both lines map to their own characters; round 5 pinned this shape as
+  // a refusal of the whole quote (test 18 holds the class)
   const tabbed = "> quote\n>\t\tcode line\n\nAfter para.\n";
   const tb = buildRendered(tabbed);
-  const refused = bad(mapIn(tb, tabbed, "quote"), "a tab after the marker");
-  assert.match(refused.reason, /could not place|a tab after its marker/);
-  const after = ok(mapIn(tb, tabbed, "After para."), "the paragraph after the refused quote");
-  assert.deepEqual(after.range, { start: tabbed.indexOf("After para."), end: tabbed.indexOf("After para.") + "After para.".length });
+  for (const s of ["quote", "code line", "After para."]) {
+    const r = ok(mapIn(tb, tabbed, s), "a tab after the marker: " + s);
+    assert.deepEqual(r.range, { start: tabbed.indexOf(s), end: tabbed.indexOf(s) + s.length }, s + " maps to its own offset");
+  }
 });
 
-test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer strips the marker and rtrims the newlines left, so the raw has a line more than the text; with a space or a tab after the marker, indented, at the end of the note, two paragraphs, nested, inside a list item", () => {
+test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer strips the marker and rtrims the newlines left, so the raw has a line more than the text; with a space or a tab after the marker, indented up to three spaces or, as a lazy line, four and more, at the end of the note, two paragraphs, nested, inside a list item", () => {
   // (the Slice 4 review, round 5: the whole quote refused with "a block whose lines the mapping could not place" and a selection on its first
   // line was sent to the Raw view, where a callout of the same shape mapped, md-config.ts keeping the trailing newlines in its text; the same
   // at the base, the round-3 suffix view being where the tail check lives)
@@ -555,6 +556,8 @@ test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer 
   const closed = "> first\n>\n\nAfter para.\n";
   const t = Lexer.lex(closed)[0] as { type: string; raw: string; text: string };
   assert.deepEqual([t.type, t.raw, t.text], ["blockquote", "> first\n>\n\n", "first"], "the shape this test is about: the raw ends in the `>` line, the text does not");
+  const lazy = Lexer.lex("> first\n    >\n\nAfter para.\n")[0] as { type: string; raw: string; text: string };
+  assert.deepEqual([lazy.type, lazy.raw, lazy.text], ["blockquote", "> first\n    >\n\n", "first"], "the indented shape: the `>` line enters the quote as a lazy continuation and the strip (` *>`) empties it under any indentation");
   const cases: Array<[string, string[], string]> = [
     [closed, ["first", "After para."], "a bare > closing the quote"],
     ["> first\n> \n\nAfter para.\n", ["first", "After para."], "a > and a space"],
@@ -563,6 +566,14 @@ test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer 
     ["> first\n>\n=\n\nAfter para.\n", ["first", "=", "After para."], "a = line after the closing >"],
     ["> one para\n>\n> two para\n>\n\nAfter para.\n", ["one para", "two para", "After para."], "two paragraphs, a > between them and one closing"],
     ["> first\n   >\n\nAfter para.\n", ["first", "After para."], "the closing > indented three spaces"],
+    ["> first\n    >\n\nAfter para.\n", ["first", "After para."], "the closing > indented four spaces (round 6: marked strips a lazy `>` line under any indentation; before, the quote refused whole where three spaces mapped)"],
+    ["> first\n     >\n\nAfter para.\n", ["first", "After para."], "the closing > indented five spaces"],
+    ["> first\n\t>\n\nAfter para.\n", ["first", "After para."], "the closing > after a tab (four spaces in N)"],
+    ["> first\n    > \n\nAfter para.\n", ["first", "After para."], "the closing > indented four spaces, a space after it"],
+    ["> first\n    >", ["first"], "the closing > indented four spaces at the end of the note"],
+    ["> outer\n> > inner\n>     >\n\nAfter para.\n", ["outer", "inner", "After para."], "a nested quote closed with an indented >"],
+    ["- > inner\n      >\n\nAfter para.\n", ["inner", "After para."], "a quote inside a list item closed with a > past the item's indent"],
+    ["> first\n    >\n> second\n\nAfter para.\n", ["first", "second", "After para."], "an indented > in the middle (mapped before this too: the text keeps that blank line)"],
     ["> outer\n> > inner\n> >\n\nAfter para.\n", ["outer", "inner", "After para."], "a nested quote closed with > >"],
     ["- item\n\n> first\n>\n\nAfter para.\n", ["item", "first", "After para."], "after a list"],
     ["- > inner\n  >\n\nAfter para.\n", ["inner", "After para."], "a quote inside a list item"],
@@ -578,8 +589,56 @@ test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer 
       assert.equal(r.quote, s, why);
     }
   }
-  // the tail check still refuses a raw line past the text that carries text: a quote line the lexer turned into code after a tab
-  const tabbed = "> quote\n>\t\tcode line\n\nAfter para.\n";
-  const tb = buildRendered(tabbed);
-  assert.match(bad(mapIn(tb, tabbed, "quote"), "a tab after the marker").reason, /could not place|a tab after its marker/);
+  // (round 5 closed with `>\t\tcode line` refusing as the tail check's control; it refused for the tab the nested lexer expanded,
+  // not for the tail, and it maps since round 6: test 18)
+});
+
+test("a tab after a quote's marker maps: the nested block lexer expands the leading tab run of every line it is handed, and the nested walk runs over that expanded text (blockLexView), so a closing `> \\t` line, a `> \\tsecond` continuation, a `>\\t\\tcode` line, a callout's body line and a list item's `- \\t` are placed; an indented code block a tab opens is a hole at the tab's position", () => {
+  // (the Slice 4 review, round 6: marked's blockquote strip takes ONE whitespace after the marker, `^ *>[ \t]?`, so a second one stays
+  // in the quote's text, and blockTokens expands a leading tab there to four spaces before lexing: the nested paragraph's raw was
+  // `first\n    ` over a quote text of `first\n\t`, and the whole quote refused with "a paragraph the mapping could not place";
+  // round 5 covered `>\t` and `> ` singly and pinned the content shape `>\t\tcode line` as a refusal naming the tab)
+  const mapIn = (box: FakeElement, source: string, text: string): MapResult => mapRenderedSelection(sel(point(box, text), point(box, text, true)), El(box), source);
+  const closed = "> first\n> \t\n\nAfter para.\n";
+  const t = Lexer.lex(closed)[0] as unknown as { type: string; text: string; tokens: Array<{ type: string; raw: string }> };
+  assert.deepEqual([t.type, t.text, t.tokens.map((x) => [x.type, x.raw])], ["blockquote", "first\n\t", [["paragraph", "first\n    "]]], "the shape this test is about: the tab stays in the quote's text and is four spaces in the nested paragraph's raw");
+  const cases: Array<[string, string[], string]> = [
+    [closed, ["first", "After para."], "a >, a space and a tab closing the quote"],
+    ["> first\n>\t\t\n\nAfter para.\n", ["first", "After para."], "a > and two tabs"],
+    ["> first\n> \t\t\n\nAfter para.\n", ["first", "After para."], "a >, a space and two tabs"],
+    ["> first\n> \t", ["first"], "a >, a space and a tab at the end of the note"],
+    ["> first\n> \t\n> second\n\nAfter para.\n", ["first", "second", "After para."], "the same line between two paragraphs (a space token of four spaces in the nested lex)"],
+    ["> outer\n> > inner\n> > \t\n\nAfter para.\n", ["outer", "inner", "After para."], "a nested quote closed with > >, a space and a tab"],
+    ["> first\n> \tsecond\n\nAfter para.\n", ["first", "second", "After para."], "a tab after the marker's space on a continuation line: one paragraph, its second line indented in the nested lex"],
+    ["> quote\n>\t\tcode line\n\nAfter para.\n", ["quote", "code line", "After para."], "two tabs after the marker on a continuation line (round 5's control)"],
+    ["> [!note] T\n> body text\n> \t\n\nAfter para.\n", ["body text", "After para."], "a callout closed with >, a space and a tab (the space token's raw is four spaces there too)"],
+    ["> [!note] T\n> body\n> \tmore\n\nAfter para.\n", ["body", "more", "After para."], "a callout body line with a tab after the marker's space"],
+    ["> first\r\n> \t\r\n\r\nAfter para.\r\n", ["first", "After para."], "CRLF line ends around the same closing line"],
+  ];
+  for (const [src, needles, why] of cases) {
+    const box = buildRendered(src);
+    for (const s of needles) {
+      const r = ok(mapIn(box, src, s), why + ": " + s);
+      const i = src.indexOf(s);
+      assert.deepEqual(r.range, { start: i, end: i + s.length }, why + ": " + s + " maps to its own offset");
+      assert.equal(r.quote, s, why);
+    }
+  }
+  // a tab right after the marker's space on a line of its own paragraph is indented code in the nested lex: the code block is a
+  // hole at the tab's position (a selection on it refuses as any code block does, in the person's terms), and the quote's other
+  // paragraph and the paragraph after it map; before, the whole quote refused with a reason naming the tab
+  const coded = "> first\n>\n> \tcode here\n\nAfter para.\n";
+  const cb = buildRendered(coded);
+  assert.match(marked.parse(coded) as string, /<blockquote>[\s\S]*<pre><code>code here/, "the lexer's reading: indented code inside the quote");
+  const hole = bad(mapIn(cb, coded, "code here"), "the code block the tab opened");
+  assert.match(hole.reason, /an indented code block/);
+  assert.equal(hole.blockStartOffset, coded.indexOf("\t"), "the hole stands where the tab does");
+  for (const s of ["first", "After para."]) assert.deepEqual(ok(mapIn(cb, coded, s), s).range, { start: coded.indexOf(s), end: coded.indexOf(s) + s.length });
+  // the same in a list item: `- `, a tab and text is indented code in the item (marked's list tokenizer keeps a tab after the
+  // bullet's space, and the item's nested lex expands it); the item after it and the paragraph after the list map
+  const listed = "- \tcode here\n- plain item\n\nAfter para.\n";
+  const lb = buildRendered(listed);
+  assert.match(marked.parse(listed) as string, /<li><pre><code>code here/, "the lexer's reading: indented code inside the item");
+  assert.match(bad(mapIn(lb, listed, "code here"), "the item's code block").reason, /an indented code block/);
+  for (const s of ["plain item", "After para."]) assert.deepEqual(ok(mapIn(lb, listed, s), s).range, { start: listed.indexOf(s), end: listed.indexOf(s) + s.length });
 });

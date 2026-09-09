@@ -9,7 +9,14 @@
    and never fetched). */
 @import "katex/dist/katex.min.css";
 
-/* A wide display formula scrolls inside its own box instead of stretching the bubble. */
+/* A wide display formula scrolls inside its own box instead of stretching the bubble. An INLINE formula has no box of
+   its own: KaTeX lays each formula out nowrap, so one with no break point (no top-level operator or relation) wider
+   than its column runs under the column's right edge, clipped by the chat's overflow-x hidden and, in the viewer, ink
+   overflow under the md box's contain: layout that the body cannot scroll to (Raw shows the source); a formula with a
+   top-level `+` or `=` wraps between its bases. Not a scroll box of its own: an inline-block whose overflow is not
+   visible takes its baseline at its bottom margin edge (CSS 2.1 section 10.8.1), which lifts every inline formula off
+   the text's baseline, and a breakable one becomes a block on its own line (the Slice 4 review, round 6: measured,
+   recorded). */
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 
 /* ── chat TEXT schemes (the user 2026-08-24) ─────────────────────────────────────────────────────
@@ -2040,21 +2047,27 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    measured over the wash it sits on (the slice's review, round 5): a white wash under white ink lightens the fill and
    lowers the ratio, so the bubble's washes DARKEN the fill instead. The mark is an 18% black wash under the bubble's own
    ink (6.40:1 dark, 6.92:1 light); the code span's 20% white wash it copied in round 1 put the same ink at 3.35:1 and
-   3.51:1, the lowest contrast in the message (that span's wash predates the slice and stands). A callout's rail is the
+   3.51:1, the lowest contrast among the constructs the leg types (that span's wash predates the slice and stands, and the
+   math fill's source fallback above, Slice 1's 0.88 tint on that same wash, reads lower still at 2.95:1 and 3.09:1 and
+   stands with it: both are the base's, recorded with the span, not the slice's to re-ink). A callout's rail is the
    quoted passage's 0.88 white through --callout, its ink the bubble's own (inherit: 5.36:1 dark, 5.85:1 light over the
    wash) and its wash an 8% black, the shared rule's 8% in the darkening direction; round 4 had set both forms to the
    quote's 0.88 tint, 3.59:1 and 3.87:1 over the 7% white wash --callout gave them. The rail and the ink are set here
    outright, for both forms of a callout: the blockquote rule above, a type selector deep, outranks the shared callout
    rule's `border-left` and `color: inherit` for the blockquote form and not for the folded one (a details), so with the
    variable alone `> [!note]` wore the plain quote's 0.40 rail under the 0.88 ink while `> [!note]-` one line below took
-   the 0.88 rail and the bubble's plain white (round 4). A wikilink that resolves nowhere keeps the shared rule's dotted
-   underline at the bubble's full ink: that rule's 0.7 opacity is tuned to --fg on --bg (5.6:1 in a reply) and put white
-   on the fill at 3.10:1 and 3.38:1 (round 5). The .md form alone, as the fallback above: the constructs exist only in
+   the 0.88 rail and the bubble's plain white (round 4). The face is set here for both forms too (font-family: inherit,
+   the bubble's own): the blockquote rule's --font-prose is the mono of the light theme for the ASSISTANT's quoted words,
+   and it reached the blockquote form alone, so on light `> [!note]` read in ui-monospace and `> [!note]-` one line below in
+   the bubble's sans; a callout is the person's own construct, not a quoted passage, and the quoted passage keeps its mono
+   (round 6). A wikilink that resolves nowhere keeps the shared rule's dotted underline at the bubble's full ink: that
+   rule's 0.7 opacity is tuned to --fg on --bg (5.6:1 in a reply) and put white on the fill at 3.10:1 and 3.38:1 (round
+   5). The .md form alone, as the fallback above: the constructs exist only in
    sanitized markdown. The mark rule keys on the renderer's class as the shared one does, so the comment highlight
    mark.cmt-hl is not its subject. md-config-chat-styles-browser.test.ts reads every construct here at the bar, both forms
    of the callout included. */
 .user-bubble.md mark.md-mark { background: rgba(0, 0, 0, 0.18); color: inherit; }
-.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); border-left-color: var(--callout); color: inherit; background: rgba(0, 0, 0, 0.08); }
+.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); border-left-color: var(--callout); color: inherit; background: rgba(0, 0, 0, 0.08); font-family: inherit; }
 .user-bubble.md .fv-wikilink { opacity: 1; }
 /* a footnote definition and the front-matter fold in YOUR bubble: their shared rules ink them var(--dim), the page's grey, tuned
    to --bg and on the saturated fill at 1.66:1 (dark) and 1.39:1 (light) where the bubble's text reads at 4.67:1 and 5.13:1, the
@@ -4220,6 +4233,14 @@ body.filebrowse-open { overflow: hidden; }
 .md .md-footnote, .fileview-md .md-footnote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); font-size: 0.86em; color: var(--dim); }
 .md .md-fnback, .fileview-md .md-fnback { display: inline-block; min-width: 1.2em; margin-right: 0.3em; text-align: center; }
 .md .md-callout, .fileview-md .md-callout { --callout: var(--box-border); color: inherit; border-left: 3px solid var(--callout); border-radius: 0 6px 6px 0; padding: 0.4em 0.8em; background: color-mix(in srgb, var(--callout) 8%, transparent); }
+/* the folded form's box spacing: a details matches no block rule, so it had the UA's 0 margin where the blockquote
+   form takes the quote's 0.5em from `.md blockquote` and `.fileview-md blockquote`, and a run of `> [!tip]-` folds
+   stacked flush into one tinted box with a notch where their rounded corners met (the slice's review, round 6). The
+   :where() heads hold the rule at the blockquote rule's own weight, (0,1,1), so a fold that is the body's first or
+   last child loses that margin to the body's `> :first-child` and `> :last-child` rules, (0,2,0), as a blockquote
+   does; on the shared callout rule, (0,2,0) and later in the sheet, the margin would have outranked them
+   (md-config-chat-styles-browser.test.ts reads both forms and a one-child body). */
+:where(.md) details.md-callout, :where(.fileview-md) details.md-callout { margin: 0.5em 0; }
 .md .md-callout-title, .fileview-md .md-callout-title { margin: 0 0 0.3em; font-weight: 600; color: inherit; }
 .md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title { cursor: pointer; user-select: none; }
 .md .md-callout-note, .fileview-md .md-callout-note, .md .md-callout-info, .fileview-md .md-callout-info, .md .md-callout-abstract, .fileview-md .md-callout-abstract, .md .md-callout-summary, .fileview-md .md-callout-summary, .md .md-callout-tldr, .fileview-md .md-callout-tldr, .md .md-callout-todo, .fileview-md .md-callout-todo, .md .md-callout-quote, .fileview-md .md-callout-quote, .md .md-callout-cite, .fileview-md .md-callout-cite, .md .md-callout-example, .fileview-md .md-callout-example { --callout: var(--accent); }
@@ -4793,9 +4814,17 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
    content, at least the column, at most the body less the inset, centred in the body), so a formula between the column and
    the body prints whole across both gutters and a wider one starts at the gutter and is cut at the paper's edge (KaTeX's
    nowrap: a formula never wraps), while a narrow one keeps its column box and an equation tag its place at the column's edge
-   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page). Byte-equal in
-   styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides
-   are in files-pane.css. */
+   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page). A display formula
+   inside a callout, a quote or a list item takes the open box and not the room and shift, as a nested table takes neither
+   (the `>` heads): its ink runs from its container's left edge past the container's right edge to the paper's edge where it
+   is wider than the container, start-aligned as CSS lays out inline content wider than its line box, which shows more of
+   it than the screen's clip did; the shift would put ink across the container's rail or a list's bullet, and the sheet
+   cannot read a container's inset (round 6, recorded). Round 6 also named the source fallback's underline: the shared rule
+   sets `text-decoration-color: var(--dim)` outright, so the ink list's `color: black` did not carry to it and the dotted
+   cue printed at 2.56:1 on white from the dark themes and in another grey from the light one; the block sets the
+   underline's colour beside the ink (md-config-print-constructs-browser.test.ts reads it). Byte-equal in styles.css and
+   feed.css (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in
+   files-pane.css. */
 @media print {
   :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -4809,6 +4838,7 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
   .fileview-md { --math-err: black; }
+  .fileview-md code.md-math-src { text-decoration-color: black; }
   .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }
   .fileview-md .fv-gate { background: none; }
   .fileview-md .md-callout { --callout: black; }

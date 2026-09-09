@@ -584,7 +584,9 @@ export function locateComment(source: string, anchor: Anchor, hintOffset?: numbe
 //
 // marked's tokens carry no positions and its `raw` strings index a PREPROCESSED text (CRLF and CR
 // normalized to LF, leading tabs expanded to four spaces), children of list items and blockquotes are
-// dedented / de-prefixed, block-level `text` tokens double their interior newlines in `raw`, and a
+// dedented / de-prefixed and then lexed with THEIR leading tabs expanded (the block lexer expands on every
+// call, so a tab after a quote's marker reaches its nested tokens as four spaces; blockLexView), block-level
+// `text` tokens double their interior newlines in `raw`, and a
 // paragraph marked joined onto the one before it (sourceRaw) doubles the newline at the join and, when the
 // joined block was an indented line, loses its indentation in `text`. The walk therefore runs over the
 // normalized text N with a map back to source offsets, places every token by verifying its raw (or, for
@@ -611,10 +613,13 @@ class View {
 
 /** A lazy `===` or `--` line as marked's blockquote tokenizer guards it: up to three spaces, a run of `=` or `-`, spaces. */
 const SETEXT_LAZY_RE = /^ {0,3}(?:=+|-+) *$/;
-/** A quote line with nothing after its marker, as marked's blockquote tokenizer reads one (`^ *>[ \t]?` comes off, and
- *  the quote rule allows up to three spaces before the marker): the tokenizer rtrims the newlines that remain of the
- *  quote's last such lines, so at the quote's end the line is a raw line past the text. */
-const QUOTE_BLANK_RE = /^ {0,3}>[ \t]?$/;
+/** A quote line with nothing after its marker, as marked's blockquote tokenizer reads one: `^ *>[ \t]?` comes off every
+ *  line of the quote's raw, under ANY indentation, since a lazy continuation line indented four or more spaces enters the
+ *  quote through the paragraph's continuation (the quote rule's own ` {0,3}>` is what OPENS a line, not what the strip
+ *  takes: the Slice 4 review, round 6, where `> first\n    >` and `> first\n\t>` refused whole and `> first\n   >`
+ *  mapped); the tokenizer rtrims the newlines that remain of the quote's last such lines, so at the quote's end the line
+ *  is a raw line past the text. A raw line matching this is by construction one the tokenizer emptied. */
+const QUOTE_BLANK_RE = /^ *>[ \t]?$/;
 /** Child text of a list item or blockquote, and the text of a paragraph marked joined an indented line onto
  *  (sourceRaw): line i of `text` is a suffix of line i of the raw view (the bullet, indentation, or `> `
  *  prefix removed); raw lines past the text are blank, or a quote's empty `>` lines (QUOTE_BLANK_RE: the
@@ -625,10 +630,11 @@ const QUOTE_BLANK_RE = /^ {0,3}>[ \t]?$/;
  *  `--` line after another line is prefixed with four spaces in `text`, so the nested lex reads a paragraph's
  *  text and not a setext underline. The spaces are the tokenizer's, not the note's, and the emitter records
  *  no whitespace, so they take the underline's own start and the underline's characters their raw offsets
- *  (the Slice 4 review, round 3: before this the callout or the quote refused whole, with the tab reason
- *  below, and a selection on its body was sent to the Raw view). Anything else (a tab the lexer expanded
- *  after the marker) fails the suffix test and refuses with `mismatch`, the caller's reason. */
-function suffixLineView(raw: View, text: string, mismatch = "a line that begins with a tab after its marker"): View {
+ *  (the Slice 4 review, round 3: before this the callout or the quote refused whole, with a reason naming
+ *  a tab, and a selection on its body was sent to the Raw view). A tab after the marker's own whitespace is
+ *  a suffix like any other and stays a tab here; the nested lexer's expansion of it is the caller's next
+ *  step (blockLexView). Anything else fails the suffix test and refuses with `mismatch`, the caller's reason. */
+function suffixLineView(raw: View, text: string, mismatch = "a block whose lines the mapping could not place"): View {
   const rawLines = raw.str.split("\n"), textLines = text.split("\n");
   if (textLines.length > rawLines.length) throw new Refusal("a block whose lines the mapping could not place");
   const map: number[] = new Array(text.length + 1);
@@ -653,6 +659,40 @@ function suffixLineView(raw: View, text: string, mismatch = "a line that begins 
   }
   map[text.length] = endN;
   return new View(text, null, map);
+}
+
+/** marked's tab expansion, the block lexer's first step on every text it is handed (blockTokens: `^( *)(\t+)`, four
+ *  spaces per tab, the run being the tabs right after a line's leading spaces; a space after the run ends it for the
+ *  rest of the line). `n(i)` is the position str[i] carries; each tab's four spaces carry the tab's own. The result's
+ *  map has one entry per character and one past the end. */
+function expandTabs(str: string, n: (i: number) => number): { str: string; map: number[] } {
+  let out = "";
+  const map: number[] = [];
+  let spacesOnly = true, tabRun = false;
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i], at = n(i);
+    if (c === "\n") { out += c; map.push(at); spacesOnly = true; tabRun = false; continue; }
+    if (c === "\t" && (spacesOnly || tabRun)) { out += "    "; map.push(at, at, at, at); spacesOnly = false; tabRun = true; continue; }
+    if (c === " ") { if (tabRun) tabRun = false; }
+    else { spacesOnly = false; tabRun = false; }
+    out += c; map.push(at);
+  }
+  map.push(n(str.length));
+  return { str: out, map };
+}
+/** The view a NESTED block lex's tokens tile: a blockquote's text, a callout's body and a list item's text each go
+ *  through blockTokens again, which expands their leading tab runs before lexing (expandTabs), so a tab the container's
+ *  marker left in the text (`> \tquoted`, `>\t\tcode`, a closing `> \t`, `- \titem`) is four spaces in the nested
+ *  tokens' raws. The top-level walk runs over N, the source with the same expansion (normalizeSource); this is that step
+ *  one level down, and the four spaces take the tab's position, so no emitted character moves and a block the tab opens
+ *  (an indented code block) places as a hole where the tab stands. The Slice 4 review, round 6: before this the nested
+ *  walk ran over the unexpanded text, the nested raws did not tile it, and any such quote refused whole, a closing
+ *  `> \t` line with "a paragraph the mapping could not place" (round 5 covered `>\t` and `> ` singly: the strip takes
+ *  one whitespace and the nested lexer expanded the second), a `> \tquoted` line with a reason naming the tab. */
+function blockLexView(v: View): View {
+  if (!/^ *\t/m.test(v.str)) return v;
+  const { str, map } = expandTabs(v.str, (i) => v.n(i));
+  return new View(str, null, map);
 }
 
 type Hole = { reason: string; startN: number; endN: number };
@@ -877,7 +917,6 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         if (view.str.startsWith(raw, q)) break;
       }
       if (view.str.startsWith(raw, q)) p = q;
-      else if (/^ *\t/.test(view.str.slice(p, p + 8))) throw new Refusal("a line that begins with a tab after its marker");
       else throw new Refusal(`a ${t.type} the mapping could not place`);
     }
     switch (t.type) {
@@ -898,7 +937,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       }
       case "blockquote": {
         const tt = t as Tokens.Blockquote;
-        walkBlocks(tt.tokens, suffixLineView(view.sub(p, p + raw.length), tt.text), em);
+        walkBlocks(tt.tokens, blockLexView(suffixLineView(view.sub(p, p + raw.length), tt.text)), em);
         break;
       }
       case "list": {
@@ -906,7 +945,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         let q = p;
         for (const item of tt.items) {
           if (!view.str.startsWith(item.raw, q)) throw new Refusal("a list the mapping could not place");
-          walkBlocks(item.tokens, suffixLineView(view.sub(q, q + item.raw.length), item.text), em);
+          walkBlocks(item.tokens, blockLexView(suffixLineView(view.sub(q, q + item.raw.length), item.text)), em);
           q += item.raw.length;
         }
         // the last item's raw is trimmed, and a single newline after the list is moved onto the list's raw
@@ -952,7 +991,7 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         const bodyStart = nl < 0 ? tt.text.length : nl + 1;
         em.holes.push({ reason: "a callout's title", startN: view.n(p), endN: tv.n(bodyStart) });
         em.putHole(calloutTitle(tt), em.holes.length - 1);
-        walkBlocks(tt.tokens, tv.sub(bodyStart, tt.text.length), em);
+        walkBlocks(tt.tokens, blockLexView(tv.sub(bodyStart, tt.text.length)), em);
         break;
       }
       case "mathBlock": {
@@ -971,25 +1010,19 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
  *  (length N.length + 1; a "\n" from CRLF maps to the CR, the four spaces of a tab to the tab). */
 function normalizeSource(source: string): { N: string; nStart: Int32Array | null } {
   if (!/\r|^ *\t/m.test(source)) return { N: source, nStart: null };
-  const map: number[] = [];
-  let N = "";
-  // marked expands ONE run of tabs per line, the run right after the line's leading spaces
-  // (`^( *)(\t+)`); a space after that run ends the expansion for the rest of the line.
-  let spacesOnly = true, tabRun = false;
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    if (c === "\r") {
-      N += "\n"; map.push(i);
-      if (source[i + 1] === "\n") i++;
-      spacesOnly = true; tabRun = false; continue;
+  // CRLF and CR to LF first (the lexer's own order), the LF taking the CR's offset; then marked's tab expansion
+  let lf = source, lfMap: number[] | null = null;
+  if (source.includes("\r")) {
+    lf = ""; lfMap = [];
+    for (let i = 0; i < source.length; i++) {
+      const c = source[i];
+      if (c === "\r") { lf += "\n"; lfMap.push(i); if (source[i + 1] === "\n") i++; continue; }
+      lf += c; lfMap.push(i);
     }
-    if (c === "\n") { N += "\n"; map.push(i); spacesOnly = true; tabRun = false; continue; }
-    if (c === "\t" && (spacesOnly || tabRun)) { N += "    "; map.push(i, i, i, i); spacesOnly = false; tabRun = true; continue; }
-    if (c === " ") { if (tabRun) { tabRun = false; } }
-    else { spacesOnly = false; tabRun = false; }
-    N += c; map.push(i);
+    lfMap.push(source.length);
   }
-  map.push(source.length);
+  const m = lfMap;
+  const { str: N, map } = expandTabs(lf, m ? (i) => m[i] : (i) => i);
   return { N, nStart: Int32Array.from(map) };
 }
 

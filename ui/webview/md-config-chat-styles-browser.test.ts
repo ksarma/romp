@@ -24,6 +24,15 @@
 // inherited round 4's white and read at 1.19:1 on the light theme's cream; it takes the page's --fg. A dead wikilink kept
 // the shared rule's 0.7 opacity, tuned to --fg on --bg, and read at 3.10:1 and 3.38:1 on the fill; it is at full ink in
 // the bubble. The bubble leg opens the fold and reads every one of these at the bar, both forms of the callout included.
+// Round 6: the two forms still differed on the light theme in their FACE: the bubble's blockquote rule sets the prose face
+// (`--font-prose`, mono in light) for the assistant's quoted words, and reached the blockquote-form callout alone, so
+// `> [!note]` read in ui-monospace and `> [!note]-` one line below in the bubble's sans; a callout is the person's own
+// construct, so both forms take the bubble's face now (font-family: inherit on the bubble's callout rule) and the quoted
+// passage keeps the mono. And the folded form had no vertical margin on any surface: the blockquote form takes `margin:
+// 0.5em 0` from the `.md blockquote` and `.fileview-md blockquote` rules, a details matched no margin rule, so a run of
+// `> [!tip]-` folds stacked flush into one tinted box where the same run unfolded sat 0.5em apart; the details form has
+// the blockquote's margin at the blockquote rule's own weight (a `:where()` head), so a fold that is the body's first
+// child still loses its top margin to the `> :first-child` rule as a blockquote does (read here on two one-child roots).
 // Both themes. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text
 // only.
 import { test } from "node:test";
@@ -61,13 +70,16 @@ const REPLY = [
   "> [!NOTE]", "> This only affects the web dashboard.", "",
   "> [!WARNING]", "> Careful here.", "",
   "> plain quote for reference", "",
+  "> [!NOTE]- A folded note", "> Folded body.", "",
   "The ==important== bit and a footnote[^1], see [[Note]].", "",
   "[^1]: The footnote definition text.", "",
 ].join("\n");
 // what the person types: a note pasted whole (its YAML opener folds as front matter), a footnote, a callout and the same
 // callout folded, the two forms of one construct one line apart
 const TYPED = ["---", "title: Pasted note", "---", "", "==this== is what I typed[^1], see [[Note]]", "", "> [!NOTE]", "> pasted from an issue", "",
-  "> [!NOTE]- the same, folded", "> its body", "", "[^1]: the source I pasted"].join("\n");
+  "> [!NOTE]- the same, folded", "> its body", "", "> a passage I quoted from the reply", "", "[^1]: the source I pasted"].join("\n");
+// a callout as the ONLY child of a body, in each form: the body's `> :first-child` and `> :last-child` rules take its margins
+const FIRST_FOLD = "> [!NOTE]- A first fold\n> its body\n", FIRST_BLOCK = "> [!NOTE] A first block\n> its body\n";
 
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}</style></head><body>
 <div id=content>
@@ -75,12 +87,16 @@ const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}</s
   <div class="notice-md md" id=n></div>
   <div class="turn turn-user"><div class="user-bubble md" id=u></div></div>
   <div class="fileview-md" id=f></div>
+  <div class="fileview-md" id=ff></div>
+  <div class="fileview-md" id=fb></div>
   <p id=ref>A <mark class="cmt-hl">commented</mark> passage outside any markdown body</p>
 </div>
 <script>window.__pageErrors=[];window.addEventListener("error",function(e){window.__pageErrors.push(String(e.message));});</script>
 <script>${probeBundle()}</script>
 <script>
   var reply = ${JSON.stringify(REPLY)}, typed = ${JSON.stringify(TYPED)};
+  document.getElementById("ff").innerHTML = window.__md(${JSON.stringify(FIRST_FOLD)});
+  document.getElementById("fb").innerHTML = window.__md(${JSON.stringify(FIRST_BLOCK)});
   document.getElementById("a").innerHTML = window.__md(reply) + '<p>A <mark class="cmt-hl">commented</mark> passage in the reply</p>';
   document.getElementById("n").innerHTML = window.__md(reply);
   document.getElementById("u").innerHTML = window.__userMd(typed);
@@ -106,14 +122,14 @@ const READ_DRESS = `(function (rootId) {
   var root = document.getElementById(rootId);
   var want = {
     "mark:not(.cmt-hl)": ["backgroundColor", "color", "borderTopLeftRadius"],
-    "blockquote.md-callout.md-callout-note": ["borderLeftColor", "borderLeftWidth", "backgroundColor", "borderTopRightRadius", "color"],
+    "blockquote.md-callout.md-callout-note": ["borderLeftColor", "borderLeftWidth", "backgroundColor", "borderTopRightRadius", "color", "fontFamily", "marginTop", "marginBottom"],
     "blockquote.md-callout.md-callout-warning": ["borderLeftColor"],
-    ".md-callout-note > .md-callout-title": ["fontWeight", "color", "marginTop"],
-    ".md-callout-note > p:not(.md-callout-title)": ["fontWeight", "color"],
-    "blockquote:not(.md-callout)": ["borderLeftColor", "borderLeftWidth", "color"],
-    "details.md-callout.md-callout-note": ["borderLeftColor", "borderLeftWidth", "backgroundColor", "color"],
-    "details.md-callout > summary.md-callout-title": ["fontWeight", "color"],
-    "details.md-callout > p": ["color"],
+    ".md-callout-note > .md-callout-title": ["fontWeight", "color", "marginTop", "fontFamily"],
+    ".md-callout-note > p:not(.md-callout-title)": ["fontWeight", "color", "fontFamily"],
+    "blockquote:not(.md-callout)": ["borderLeftColor", "borderLeftWidth", "color", "fontFamily"],
+    "details.md-callout.md-callout-note": ["borderLeftColor", "borderLeftWidth", "backgroundColor", "color", "fontFamily", "marginTop", "marginBottom"],
+    "details.md-callout > summary.md-callout-title": ["fontWeight", "color", "fontFamily"],
+    "details.md-callout > p": ["color", "fontFamily"],
     "details.md-frontmatter": ["borderTopWidth", "borderTopStyle", "borderTopColor", "borderTopLeftRadius", "color"],
     "details.md-frontmatter > summary": ["color"],
     "details.md-frontmatter > pre": ["color", "backgroundColor"],   // the YAML, laid out only while the fold is open (the bubble leg opens it)
@@ -131,7 +147,7 @@ const READ_DRESS = `(function (rootId) {
     for (var i = 0; i < want[sel].length; i++) o[want[sel][i]] = cs[want[sel][i]];
     out[sel] = o;
   }
-  out["__root"] = { color: getComputedStyle(root).color, backgroundColor: getComputedStyle(root).backgroundColor };
+  out["__root"] = { color: getComputedStyle(root).color, backgroundColor: getComputedStyle(root).backgroundColor, fontFamily: getComputedStyle(root).fontFamily };
   return out;
 })`;
 
@@ -157,6 +173,15 @@ function assertViewerDress(chat: Dress, viewer: Dress, where: string): void {
   assert.notEqual(title.color, note.borderLeftColor, where + ": the title is not painted in the rail's token");
   assert.equal(title.marginTop, "0px", where + ": the title sits on the callout's top edge, not a paragraph's margin");
   assert.equal(chat[".md-callout-note > p:not(.md-callout-title)"]!.fontWeight, "400", where + ": the callout's body stays regular");
+  // round 6: the folded form (a details) matched no margin rule, so consecutive folds stacked flush into one tinted box
+  // where the blockquote form sits 0.5em apart through `.md blockquote` / `.fileview-md blockquote`; both forms one box now
+  const fold = chat["details.md-callout.md-callout-note"]!, vfold = viewer["details.md-callout.md-callout-note"]!;
+  assert.ok(fold && vfold, where + ": the folded callout rendered in both roots");
+  assert.notEqual(note.marginTop, "0px", where + ": the callout is not the body's first child here, so it wears the quote's 0.5em margin");
+  assert.equal(fold.marginTop, note.marginTop, where + ": the folded and the unfolded callout wear one top margin (before: the details form's UA 0px)");
+  assert.equal(fold.marginBottom, note.marginBottom, where + ": ...and one bottom margin");
+  assert.equal(vfold.marginTop, vnote.marginTop, where + ": ...and in the viewer's root too (its em is the viewer's own size, so no cross-root px)");
+  assert.equal(fold.fontFamily, note.fontFamily, where + ": the two forms read in one face");
   const fm = chat["details.md-frontmatter"]!, vfm = viewer["details.md-frontmatter"]!;
   assert.equal(fm.borderTopWidth, vfm.borderTopWidth, where + ": the front matter is boxed as in the viewer");
   assert.equal(fm.borderTopStyle, "solid", where + ": the front matter's box is drawn");
@@ -183,6 +208,13 @@ test("a reply's constructs wear the viewer's dress in the chat's markdown bodies
     });
     const dark = await readAll();
     assert.ok(dark.a["mark.cmt-hl"], "the fixture holds a comment highlight in the reply");
+    // round 6: the fold's margin rule sits at the blockquote rule's weight, (0,1,1), so a fold that is the body's only child
+    // loses both margins to the body's `> :first-child` and `> :last-child` rules, (0,2,0), as the blockquote form does
+    const only = await page.evaluate(`(function () { var f = document.querySelector("#ff > details.md-callout"), b = document.querySelector("#fb > blockquote.md-callout");
+      var r = function (el) { var cs = getComputedStyle(el); return { top: cs.marginTop, bottom: cs.marginBottom, tag: el.tagName }; }; return { fold: f && r(f), block: b && r(b) }; })()`) as { fold: { top: string; bottom: string; tag: string } | null; block: { top: string; bottom: string; tag: string } | null };
+    assert.ok(only.fold && only.block, "the one-child roots rendered a details and a blockquote");
+    assert.deepEqual([only.fold!.top, only.fold!.bottom], ["0px", "0px"], "a folded callout that is the body's only child keeps the body's edges (the first- and last-child rules outrank its margin rule)");
+    assert.deepEqual([only.block!.top, only.block!.bottom], ["0px", "0px"], "...as the blockquote form does");
     assertViewerDress(dark.a, dark.f, "dark, a reply");
     assertViewerDress(dark.n, dark.f, "dark, a notice");
     // the comment highlight: its own rule (mark.cmt-hl) stands earlier in the sheet and ties a `.md mark` selector on
@@ -246,7 +278,7 @@ test("the person's own bubble: a ==mark==, a callout in both forms, a footnote, 
       const rail = u["blockquote.md-callout.md-callout-note"]!;
       assert.match(rail.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout rail is in the white family");
       assert.match(rail.backgroundColor, /^rgba\(0, 0, 0, /, theme + ": the bubble's callout wash darkens the fill (round 5; before: 7% white through --callout, which lowered the ink's ratio)");
-      assert.equal(quote, null, theme + ": (the fixture types no plain quote)");
+      assert.ok(quote, theme + ": the typed quoted passage rendered in the bubble");
       // round 4: the two forms of one callout. The bubble's blockquote rule (.user-bubble.md blockquote, a type selector deep)
       // outranked the shared callout rule's rail and ink for the blockquote form, so `> [!note]` wore the plain quote's 0.40
       // rail under a 0.88 ink while `> [!note]-` (a details) took the 0.88 rail --callout names and the bubble's plain white:
@@ -262,6 +294,19 @@ test("the person's own bubble: a ==mark==, a callout in both forms, a footnote, 
       assert.equal(foldTitle.color, title.color, theme + ": the two titles read in one ink");
       assert.equal(foldTitle.fontWeight, "600", theme + ": the folded callout's title is bold too");
       assert.equal(u["details.md-callout > p"]!.color, u[".md-callout-note > p:not(.md-callout-title)"]!.color, theme + ": the two bodies read in one ink");
+      // round 6: the face. The bubble's blockquote rule sets the prose face (--font-prose, mono in the light theme) for the
+      // assistant's quoted words, and reached the blockquote-form callout alone, so on light `> [!note]` read in ui-monospace
+      // and `> [!note]-` in the bubble's sans; a callout is the person's own construct, so both forms take the bubble's face
+      const face = u["__root"]!.fontFamily;
+      assert.equal(rail.fontFamily, face, theme + ": the callout reads in the bubble's own face (before, on light: the quote rule's " + quote!.fontFamily + ")");
+      assert.equal(fold.fontFamily, rail.fontFamily, theme + ": the folded and the unfolded callout wear one face");
+      assert.equal(title.fontFamily, face, theme + ": ...its title too"); assert.equal(foldTitle.fontFamily, face, theme + ": ...and the folded one's");
+      assert.equal(u[".md-callout-note > p:not(.md-callout-title)"]!.fontFamily, face, theme + ": ...and both bodies"); assert.equal(u["details.md-callout > p"]!.fontFamily, face);
+      if (theme === "light") assert.notEqual(quote!.fontFamily, face, "light: the quoted passage keeps the prose face (mono in light, the 2026-08-31 ruling); only the callout is the person's own");
+      // round 6: the box spacing. The details form matched no margin rule (UA 0px) where the blockquote form takes the quote's 0.5em
+      assert.notEqual(rail.marginTop, "0px", theme + ": the typed callout is not the bubble's first child, so it wears the quote's margin");
+      assert.equal(fold.marginTop, rail.marginTop, theme + ": the folded and the unfolded callout wear one top margin (before: 0px against " + rail.marginTop + ")");
+      assert.equal(fold.marginBottom, rail.marginBottom, theme + ": ...and one bottom margin");
       // round 4: the footnote definition and the front-matter fold. Their shared rules colour them var(--dim), the page's grey,
       // which on the fill read at 1.66:1 (dark) and 1.39:1 (light) where the bubble's text reads at 4.67:1 and 5.13:1; the
       // sheet's own blockquote comment names that grey at ~2:1 on this fill as the reason the quote was re-inked. Both take the

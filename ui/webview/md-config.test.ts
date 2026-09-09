@@ -471,6 +471,32 @@ test("==mark== reads a backslash-escaped `=` as its text, as marked's escape rul
   assert.equal(html("~~a \\~~ b~~ end"), "<p><del>a \\</del> b~~ end</p>\n", "the double-tilde rule keeps the blind spot marked's own gfm del has (`~~a \\~~ b~~` closes at the escaped pair): no change of this slice's, recorded in the header");
 });
 
+// ── the 2026-09-09 review of Slice 4, round 6 ─────────────────────────────────────────────────────
+test("==mark==: the escape atom is a backslash and one ASCII punctuation character, marked's escape (CommonMark 2.4), so a backslash before whitespace is text and a closer after `\\ ` is preceded by whitespace and refused, while `==a \\== b==` and `==a\\\\== b` render as round 5 renders them", () => {
+  const cases: Array<[string, string, string]> = [
+    ["==a \\ == z", "<p>==a \\ == z</p>\n", "a backslash and a space before the closer: the space is the content's last character, so the closer is refused as in `==a ==` (round 5's atom of a backslash and any character paired `\\ ` and highlighted `a \\ `)"],
+    ["==a\\ ==", "<p>==a\\ ==</p>\n", "the same with nothing after the closer"],
+    ["==a \\\t== z", "<p>==a \\\t== z</p>\n", "a backslash and a tab"],
+    ["==a \\\n== z", "<p>==a <br>== z</p>\n", "a backslash at the end of a line is marked's hard break, kept, and the `==` on the next line closes nothing (round 5 highlighted `a \\` with the newline and lost the break)"],
+    ["==\\ ==", "<p>==\\ ==</p>\n", "a backslash and a space alone"],
+    ["==see \\ == in `a==b`==", "<p>==see \\ == in <code>a==b</code>==</p>\n", "the view still cuts at the first unescaped `==` outside a code span, and the rule refuses that closer: literal, marked rendering the code span"],
+    ["==a \\== b== end", `<p>${MARK}a == b</mark> end</p>\n`, "an escaped `=` is the highlight's text, as round 5 renders it"],
+    ["==a\\\\== b", `<p>${MARK}a\\</mark> b</p>\n`, "an escaped backslash, then the closer: two backslashes are one escape pair and the highlight closes at that `==`"],
+    ["==a \\b==", `<p>${MARK}a \\b</mark></p>\n`, "a backslash before a letter is one character of text and the letter another; neither is a delimiter, as round 5 renders it"],
+    ["==C:\\Users\\me==", `<p>${MARK}C:\\Users\\me</mark></p>\n`, "backslashes before letters inside a path"],
+    ["*a \\ * z", "<p>*a \\ * z</p>\n", "marked's own em refuses the same shape"],
+    ["~~a \\ ~~ z", "<p>~~a \\ ~~ z</p>\n", "and the double-tilde rule too"],
+  ];
+  for (const [src, want, why] of cases) {
+    assert.equal(html(src), want, why + ": " + JSON.stringify(src));
+    assert.equal(userMdHtml(src), want, "the user's bubble agrees: " + JSON.stringify(src));
+  }
+  const lexer = new Lexer();
+  const tail = " and ==more== `x==y` " + "z".repeat(100000) + " ==end==";
+  assert.equal(markView(lexer, "==a \\ == z" + tail), "==a \\ == ", "the view is unchanged: it cuts at the first unescaped `==` outside a code span, whitespace before it or not; the rule, not the view, refuses this closer");
+  assert.deepEqual((Lexer.lex("==a \\ == z")[0] as { tokens: Array<{ type: string; raw: string }> }).tokens.map((t) => [t.type, t.raw]), [["text", "==a \\ == z"]], "one text token for the anchor map: no mark");
+});
+
 test("a callout's body drops a quote marker indented up to three spaces, CommonMark's marker: a lazy line indented four or more that begins with `>` keeps its `>` as text, as commonmark.js and GitHub render it; marked's blockquote strips it under any indentation, a deviation of marked's the callout does not copy", () => {
   const head = '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">T</p>';
   const four = "> [!note] T\n> body\n    > more\n\nAfter.\n";
