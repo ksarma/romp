@@ -92,6 +92,7 @@ PY
     [[ "$output" == *"romp end: deferred (web), ends when idle"* ]]
     [[ "$output" != *"romp end: ok"* ]]
     grep -q '"when": "idle"' "$TEST_DIR/req"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"          # the fake is one-shot: a second one needs a fresh port file
     start_fake_kernel '{"ok": true}'
     run "$ROMP_SCRIPT" end web --when-idle
     [ "$status" -eq 0 ]
