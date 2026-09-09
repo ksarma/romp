@@ -293,6 +293,10 @@ function dropUrlRead(): void {
   }
 }
 
+/** Why the seam's onRendered fired: "paint", the body's nodes are new; "reflow", the same nodes at a new width or text size
+ *  (a hook keeps its wraps and re-measures). */
+export type FileViewRenderWhy = "paint" | "reflow";
+
 // ── viewer action registry (the user 2026-08-22) ── INTERNAL SEAM, no compatibility promise:
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
 // openFileView's action row, where every file-viewer change used to collide. mount() runs once per
@@ -305,10 +309,6 @@ function dropUrlRead(): void {
 // panel needs of the open viewer beyond its path and sid, handed over as closures over this open's
 // state rather than as exports — the viewer stays a per-open closure and the panel never reaches into
 // it. Every member is per open; a hook registered through one is dropped with the viewer (onClose).
-/** Why the seam's onRendered fired: "paint", the body's nodes are new; "reflow", the same nodes at a new width or text size
- *  (a hook keeps its wraps and re-measures). */
-export type FileViewRenderWhy = "paint" | "reflow";
-
 export interface FileViewActionCtx {
   path: string; sid: string | null; todoId?: string | null;
   /** the `.fileview-body` element: the raw rows (`code.hljs` > `.fv-cl`) or the rendered `.fileview-md` live inside it */
