@@ -2333,6 +2333,29 @@ fi
 if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     _verb="${1#--}"; shift
     _who="${1:-}"
+    # -h|--help is the verb's own (the up/down arms' convention), so it never reaches the kernel as a
+    # session name; every other dash-leading word is still a name, as the compact verb allows
+    case "$_who" in
+        -h|--help)
+            case "$_verb" in
+                send)
+                    echo "usage: romp send <session> [--tag <label>] <text>"
+                    echo "  hand a session a message through the kernel. While the session is busy the message"
+                    echo "  queues and delivers when the session is quiet. --tag <label> (one word) shows the text"
+                    echo "  as machine-sent under that label instead of as your typed words; pass one from scripts"
+                    echo "  and cron." ;;
+                interrupt)
+                    echo "usage: romp interrupt <session>"
+                    echo "  stop the session's current turn (Esc) through the kernel; the session stays open." ;;
+                end)
+                    echo "usage: romp end <session>|self [--now|--when-idle]"
+                    echo "  end a session through the kernel, at once by default. --when-idle ends it once its"
+                    echo "  current turn settles, so the closing reply lands first. \`self\` names the calling"
+                    echo "  session (from inside a session) and defaults to --when-idle; --now overrides that." ;;
+            esac
+            echo "  An unknown session name exits 1 with the kernel's reason."
+            exit 0 ;;
+    esac
     if [[ -z "$_who" ]]; then echo "usage: romp $_verb <session> $([[ "$_verb" == send ]] && echo '<text>')" >&2; exit 2; fi
     shift
     # `romp end self [--now]` — a session closing ITSELF after finishing its work (the user
@@ -2384,9 +2407,27 @@ w=sys.argv[2] if len(sys.argv)>2 else ""
 if w: d["when"]=w
 print(json.dumps(d))' "$_who" "$_when")"
     fi
-    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/$_verb" \
+    # The status rides -w and is read here (the perf/tag verbs' pattern): curl's -f folded every 4xx
+    # into the same silent exit as a dead kernel, so the kernel's 404 for a name no session answers to
+    # printed "kernel not reachable" and its reason never reached the caller.
+    _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/$_verb" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    _code="${_out##*$'\n'}"
+    _resp="${_out%$'\n'*}"
+    if [[ "$_code" != 2?? ]]; then
+        # the body's own reason when it carries one (the routes' JSON error shape), else the raw answer
+        _err="$(python3 -c 'import json, sys
+try:
+    v = json.loads(sys.argv[1])
+except Exception:
+    v = None
+e = v.get("error") if isinstance(v, dict) else None
+print(e if e else "the kernel answered HTTP %s: %s" % (sys.argv[2], sys.argv[1]))' "$_resp" "$_code" 2>/dev/null \
+            || printf 'the kernel answered HTTP %s: %s' "$_code" "$_resp")"
+        echo "romp $_verb: $_err" >&2
+        exit 1
+    fi
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
         if [[ "$_verb" == "send" && ( "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ) ]]; then
             # the kernel PARKED it (a turn is open / compacting / the account is limit-held) and delivers it

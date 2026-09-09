@@ -81,6 +81,24 @@ class PendingOpsPersistence(unittest.TestCase):
         self.assertEqual(km._load_pending_ops(), {})
 
 
+# The sids these route tests address. The routes refuse a target the kernel has never heard of
+# (UnknownSessionRefused below), so each is registered in the hermetic names registry: known to the
+# kernel, not live, exactly the shape of a session between turns or dormant.
+KNOWN_SIDS = {"runaway": "runaway", "sid-x": "web", "sid-q": "web", "sid-m": "web", "sid-r": "web"}
+
+
+def _register(sid, name):
+    km.NAMES.mkdir(parents=True, exist_ok=True)
+    (km.NAMES / sid).write_text("%s\t\n" % name)
+
+
+def _unregister(sid):
+    try:
+        (km.NAMES / sid).unlink()
+    except OSError:
+        pass
+
+
 class HeadlessRoutes(unittest.TestCase):
     """POST /interrupt and /end over the REAL handler on loopback (the ServeSecurity pattern)."""
 
@@ -95,6 +113,14 @@ class HeadlessRoutes(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+
+    def setUp(self):
+        for sid, name in KNOWN_SIDS.items():
+            _register(sid, name)
+
+    def tearDown(self):
+        for sid in KNOWN_SIDS:
+            _unregister(sid)
 
     def _post(self, path, body):
         import urllib.request, urllib.error
@@ -217,6 +243,90 @@ class HeadlessRoutes(unittest.TestCase):
         code, resp = self._post("/interrupt", {})
         self.assertEqual(code, 400)
         self.assertFalse(resp.get("ok"))
+
+
+class UnknownSessionRefused(HeadlessRoutes):
+    """A name (or id) that resolves to no session is a 404 naming it, on /end, /interrupt and /send
+    alike. _sid_of falls back to its input unchanged, so a typo used to mint a phantom sid: /end
+    "killed" it, _confirmed_ended found nothing listed and certified the death, and `romp end <typo>`
+    printed a bare ok while the real session kept running; /send handed the phantom to the tmux
+    backend, whose refusal the route folded into ok:true. A caller that trusted those oks had to
+    re-check the roster to learn nothing had happened. The gate is the fork-comment route's (known to
+    the names registry, or live): a registered-but-idle sid still passes, so a dead session addressed
+    by id keeps its idempotent end."""
+
+    GHOST = "no-such-session"
+
+    def _assert_404(self, code, resp):
+        self.assertEqual(code, 404, "an unknown session is a 404, not an ok")
+        self.assertFalse(resp.get("ok"))
+        self.assertIn(self.GHOST, resp.get("error", ""), "the reason names the unknown name")
+
+    def test_end_of_an_unknown_name_is_a_404_and_kills_nothing(self):
+        fake = mock.Mock()
+        sent, deaths = [], []
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append((app, m))), \
+             mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)):
+            code, resp = self._post("/end", {"name": self.GHOST})
+        self._assert_404(code, resp)
+        fake.kill.assert_not_called()
+        self.assertEqual(deaths, [], "no death record for a session that never existed")
+        self.assertEqual(sent, [], "no closed broadcast either")
+
+    def test_end_when_idle_of_an_unknown_name_records_no_wish(self):
+        code, resp = self._post("/end", {"name": self.GHOST, "when": "idle"})
+        self._assert_404(code, resp)
+        self.assertNotIn(self.GHOST, km._end_on_idle_load(), "nothing to defer for a phantom")
+
+    def test_interrupt_of_an_unknown_name_is_a_404_and_touches_nothing(self):
+        fake = mock.Mock()
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)):
+            code, resp = self._post("/interrupt", {"name": self.GHOST})
+        self._assert_404(code, resp)
+        fake.interrupt.assert_not_called()
+        self.assertNotIn(self.GHOST, km._interrupt_clicked, "no chip flip for a phantom")
+
+    def test_send_to_an_unknown_name_is_a_404_and_delivers_nothing(self):
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        km._pending_ops.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_compacting_now", lambda sid, **k: False), \
+                 mock.patch.object(km, "_working_now", lambda sid: False):
+                code, resp = self._post("/send", {"name": self.GHOST, "text": "hello"})
+            self._assert_404(code, resp)
+            fake.send.assert_not_called()
+            self.assertEqual(km._pending_ops, {}, "nothing parked for a phantom")
+        finally:
+            km._pending_ops.clear()
+
+    def test_an_unknown_id_is_refused_the_same_way(self):
+        fake = mock.Mock()
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)):
+            code, resp = self._post("/end", {"id": self.GHOST})
+        self._assert_404(code, resp)
+        fake.kill.assert_not_called()
+
+    def test_a_live_name_still_resolves(self):
+        # the gate must not refuse a session that is live but not yet in the registry snapshot: the
+        # existing tests cover registered-not-live; this covers live-not-registered
+        fake = mock.Mock()
+        _unregister("sid-x")
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km.Sessions, "live", staticmethod(lambda: {"sid-x": {}})):
+            code, resp = self._post("/interrupt", {"id": "sid-x"})
+        self.assertEqual((code, resp), (200, {"ok": True}))
+        fake.interrupt.assert_called_once()
+
+    def test_a_remote_session_forwards_before_the_gate(self):
+        # a session living on another kernel is in neither the local registry nor the local live map;
+        # the remote map owns it and the request must forward, never 404 here
+        with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
+             mock.patch.object(km, "_remote_forward", lambda r, path, body: {"ok": True}):
+            code, resp = self._post("/end", {"id": self.GHOST})
+        self.assertEqual((code, resp), (200, {"ok": True}))
 
 
 class CodexRuntimeSelection(unittest.TestCase):

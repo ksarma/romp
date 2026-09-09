@@ -19,16 +19,16 @@ teardown() {
 }
 
 # Start a one-shot fake kernel; writes its port to $TEST_DIR/port and its request to $TEST_DIR/req.
-start_fake_kernel() {   # $1 = response body
-    python3 - "$1" "$TEST_DIR" <<'PY' &
+start_fake_kernel() {   # $1 = response body, $2 = HTTP status (default 200)
+    python3 - "$1" "$TEST_DIR" "${2:-200}" <<'PY' &
 import http.server, json, sys
-body, tdir = sys.argv[1].encode(), sys.argv[2]
+body, tdir, status = sys.argv[1].encode(), sys.argv[2], int(sys.argv[3])
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         with open(tdir + "/req", "w") as f:
             f.write(self.path + "\n" + self.rfile.read(n).decode())
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -161,6 +161,36 @@ PY
     run "$ROMP_SCRIPT" send lonely
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp send"* ]]
+}
+
+@test "an unknown session is a 404 the CLI surfaces by its reason, exit 1" {
+    # the kernel used to mint a phantom sid for a typo and answer ok:true; it now refuses with a 404
+    # whose error names the name. curl -f swallowed every 4xx body into "kernel not reachable", so the
+    # status is read off the response instead and the reason is printed
+    start_fake_kernel '{"ok": false, "error": "no live session named '"'"'typo'"'"'"}' 404
+    run "$ROMP_SCRIPT" end typo
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no live session named 'typo'"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    grep -q '"name": "typo"' "$TEST_DIR/req"
+}
+
+@test "romp send, interrupt and end each answer --help without a kernel" {
+    # `romp end --help` used to POST a session named --help (the phantom-sid bug from the other side)
+    for verb in send interrupt end; do
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" --help
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"usage: romp $verb <session>"* ]]
+        [[ "$output" != *"kernel not reachable"* ]]
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" -h
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"usage: romp $verb <session>"* ]]
+    done
+    run "$ROMP_SCRIPT" send --help
+    [[ "$output" == *"--tag <label>"* ]]
+    run "$ROMP_SCRIPT" end --help
+    [[ "$output" == *"--now"* ]]
+    [[ "$output" == *"self"* ]]
 }
 
 # ── romp compact (2026-08-30, the user via the dashboard team) ──

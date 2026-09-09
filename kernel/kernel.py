@@ -26464,6 +26464,21 @@ def _sid_of(who):
     return th[0] if th else who               # the THREAD (T223) — not a phantom sid spelled like a name
 
 
+def _unknown_session_refusal(sid, who):
+    """The 404 for a name (or id) that resolves to no session, or None when the kernel knows it. _sid_of
+    hands back its input unchanged when nothing matches, so a typo reaches the backends as a phantom sid:
+    /end "killed" it and _confirmed_ended, finding nothing listed, certified the death; /send handed it to
+    the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
+    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The gate is
+    the fork-comment door's: known to the names registry (a registered sid, live or between turns) or in
+    the live map (a session up before its registry entry lands). Ask this AFTER the remote forward, since
+    a session on an attached host is in neither local map. `who` is the caller's spelling, so the reason
+    names what they typed."""
+    if _name_of(sid) or str(sid) in Sessions.live():
+        return None
+    return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
+
+
 def _optimistic_echo(sid, text, author="human"):
     """Show a composer send INSTANTLY. The SDK backend already adds its own input echo inside send() (its
     _live store), so this only adds the kernel-side tmux echo for a tmux sid. Either way the echo is pruned
@@ -57597,6 +57612,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
                                                                                   and res.get("queued"))}),
                                       "application/json")
+                unknown = _unknown_session_refusal(sid, body["who"])   # a phantom sid delivers nowhere: say so
+                if unknown:
+                    return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
                 # PARKS like a composer send (the user 2026-07-24), through the same FIFO: a message handed
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
@@ -57666,6 +57684,11 @@ class Handler(BaseHTTPRequestHandler):
                             "the remote kernel for this session (%s) isn't answering"
                             % r.get("host", "?")}), "application/json")
                     return self._send(200, json.dumps(res), "application/json")
+                # a name nothing answers to is a 404, never a kill of a phantom sid that _confirmed_ended
+                # then certifies as a death: `romp end <typo>` read ok:true and nothing had happened
+                unknown = _unknown_session_refusal(sid, who)
+                if unknown:
+                    return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)
