@@ -4329,9 +4329,10 @@ class TimelinePanel {
     };
     // the tag table of the LAST build, read for its scroll before the rebuild tears it down (in build)
     let tgridEl = null;
-    // the two floors, set by build once its rows are laid out (see each box's style), and the session row
-    // height the last build measured (kept across repaints: a query that hides every row has none to measure)
-    let tgridFloor = () => {}, gridFloor = () => {}, sessRowH = 0;
+    // the two floors, set by build once its rows are laid out (see each box's style), and the row heights
+    // the last build measured (kept across repaints: a query that hides every row has none to measure, and a
+    // build in a document without layout reads 0)
+    let tgridFloor = () => {}, gridFloor = () => {}, sessRowH = 0, tagRowH = 0;
     // a grid row's rendered height: the tallest of its cells (align-items:center seats them in one track);
     // 0 when nothing is laid out
     const rowHeight = (cells) => {
@@ -4405,20 +4406,27 @@ class TimelinePanel {
         // of blank under one tag and cut the third of three rows by 7px, the row height being the font's):
         // a table of at most three rows does not shrink at all (its natural height IS its rows: no blank,
         // no scroll), and a taller one may shrink to three rows at its first row's rendered height, set
-        // once the rows are laid out (tgridFloor, at the end of build); no rows, no box and no padding.
+        // once the rows are laid out (tgridFloor, at the end of build); no rows, no box and no padding. The
+        // row height is kept across builds (tagRowH): a build in a document without layout reads 0 and
+        // keeps the last floor rather than dropping to none (round 3).
+        // overflow-anchor:none: with scroll anchoring on, a reorder cue leaving the first partly clipped
+        // row moves that row's pill 2px and the browser shifts scrollTop by 2 to hold it, which with the
+        // drag's exact measurement re-admits the row, so the cue and the scroll oscillate every frame
+        // (round 3, traced in Chromium and Firefox); the cap's own scroll is unaffected.
         const rowsN = viewTagUnion(v).length;
         const tgridStyle = (floor) => 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
           + 'column-gap:14px;row-gap:4px;align-items:center;'
           + (rowsN ? 'padding:4px 0 4px 4px;margin:-2px 0 2px -4px;' : 'padding:0;margin:0;')
           + (rowsN > 3 ? 'flex:0 1 auto;min-height:' + floor + 'px;' : 'flex:0 0 auto;')
-          + 'max-height:' + TAG_TABLE_CAP + ';overflow-y:auto;';
+          + 'max-height:' + TAG_TABLE_CAP + ';overflow-y:auto;overflow-anchor:none;';
         tgrid.setAttribute('style', tgridStyle(0));
         tgridFloor = () => {
           if (rowsN <= 3) return;
           const cells = Array.from(tgrid.children).filter((c) => c._tname);
           const kids = Array.from(tgrid.children);
           const h = rowHeight(kids.slice(kids.indexOf(cells[0]), kids.indexOf(cells[1])));
-          if (h > 0) tgrid.setAttribute('style', tgridStyle(Math.round((3 * h + 2 * 4) * 100) / 100));
+          if (h > 0) tagRowH = h;
+          if (tagRowH) tgrid.setAttribute('style', tgridStyle(Math.round((3 * tagRowH + 2 * 4) * 100) / 100));
         };
         tgrid.addEventListener('scroll', scrolledUnderPop, { passive: true });
         // `held`: the reason a gesture cannot be honoured here; the action renders disabled (dim, no
@@ -4474,23 +4482,30 @@ class TimelinePanel {
               // clip took the cue and the drop while the cue, a border on that very edge, painted under the
               // clip, invisible). The held row itself counts as a candidate while any of it shows, so
               // dragging a row cut by the edge past that edge leaves it where it is rather than ranking
-              // the whole row above it and moving it AGAINST the gesture. A cue already on a cell sits
-              // inside that cell's rect, so it is measured back out and the cell is judged as the bare
-              // row; otherwise the cue could flap between two rows at the edge. The rects are live, and
-              // the ranking re-runs with the last pointer y on the table's scroll (a wheel mid-drag fires
-              // no pointermove), so the rows scrolled into view take the cue and the drop; the drop itself
-              // re-ranks when the table has scrolled since the grab, for a scroll whose event has not
-              // landed yet.
+              // the whole row above it and moving it AGAINST the gesture. THE CUE COMES OFF FOR THE
+              // MEASUREMENT: the pill cell is the tallest of its row, so a cue on EITHER edge grows the
+              // cell 2px at the bottom and pushes every row under it 2px down (round 3, measured in both
+              // browsers; arithmetic on the cued cell alone judged a top-cued row 2px low and corrected no
+              // row under a cued row, so a stepped drag past the table's edge lost a last row with 2 to 4px
+              // of room and a top cue landed one row above the pointer). The border is cleared, the rects
+              // read, and the border put back in the same task, so nothing paints between; the table's
+              // overflow-anchor:none keeps the browser from scrolling to follow the 2px the lift moves.
+              // The rects are live, and the ranking re-runs with the last pointer y on the table's scroll
+              // (a wheel mid-drag fires no pointermove), so the rows scrolled into view take the cue and the
+              // drop; the drop itself re-ranks when the table has scrolled since the grab, for a scroll
+              // whose event has not landed yet.
               let lastY = e.clientY;
               const top0 = tgrid.scrollTop;
               const rank = (y) => {
                 if (typeof y !== 'number') return;
+                const cuedEl = toIdx !== fromIdx ? cells[toIdx] : null, cuedSide = toIdx > fromIdx ? 'borderBottom' : 'borderTop';
+                if (cuedEl) cuedEl.style[cuedSide] = '';
                 const box = tgrid.getBoundingClientRect();
                 const shown = cells.map((c, i) => {
                   const r = c.getBoundingClientRect();
-                  const top = r.top + (c.style.borderTop ? 2 : 0), bottom = r.bottom - (c.style.borderBottom ? 2 : 0);
-                  return { i, y: (top + bottom) / 2, whole: top >= box.top && bottom + 2 <= box.bottom, seen: bottom > box.top && top < box.bottom };
+                  return { i, y: (r.top + r.bottom) / 2, whole: r.top >= box.top && r.bottom + 2 <= box.bottom, seen: r.bottom > box.top && r.top < box.bottom };
                 }).filter((p) => p.whole || (p.i === fromIdx && p.seen));
+                if (cuedEl) cuedEl.style[cuedSide] = '2px solid #9cd2ff';
                 if (!shown.length) return;
                 const hit = shown.find((p) => y < p.y);
                 const idx = hit ? hit.i : shown[shown.length - 1].i;
@@ -4831,10 +4846,16 @@ class TimelinePanel {
       // it gives way FIRST when height runs out (the thousandfold flex-shrink: a tag table that fits is
       // never squeezed while the sessions have room) and never below four rows, its floor: past it the
       // tag table and the open matrix give way, and past their floors the card scrolls (review, 2026-09-09).
-      // The floor is sized under the rows there are: min(live, 4) rows at the first row's rendered height
-      // (review round 2: a fixed 96px held 74px of blank over one live session), set at the end of build
-      // (gridFloor). The LIVE count, not the search hits, so typing in the search box never resizes the
-      // box; a build whose query hides every row keeps the row height the last one measured.
+      // The floor is sized under the rows there are: min(live, 4) rows at the SMALLEST rendered row height
+      // plus the gaps, set at the end of build (gridFloor). Review round 2: a fixed 96px held 74px of blank
+      // over one live session; round 3: the first row's height, times four, held 74px of blank again when
+      // that row's chips wrapped (a session in many tags at the phone shell's 351px card), so the smallest
+      // row sizes the floor: a wrapped row can make the box hold fewer whole rows, never blank. The LIVE
+      // count, not the search hits, so typing in the search box never moves the floor (on a short page the
+      // box stays put under a query; on a tall one it still shrinks to its hits, the content sizing it has
+      // always had); the rows are measured on an unfiltered build only (a query could leave the wrapped
+      // row alone on screen) and the height is kept across builds, so a build under a query, or in a
+      // document without layout, keeps the last measured floor.
       const liveN = ((this.data && this.data.sessions) || []).filter((s) => s.live).length;
       const gridStyle = (floor) => 'flex:1 1000 auto;min-height:' + floor + 'px;overflow-y:auto;';
       gridBox.setAttribute('style', gridStyle(0));
@@ -4843,9 +4864,10 @@ class TimelinePanel {
         const grid = gridBox.children[0];
         const kids = grid ? Array.from(grid.children).filter((c) => !String(c.getAttribute('style') || '').startsWith('grid-column:1 / -1;')) : [];
         const names = kids.filter((c) => c._sid);
-        if (names.length) {
-          const h = rowHeight(kids.slice(kids.indexOf(names[0]), names[1] ? kids.indexOf(names[1]) : kids.length));
-          if (h > 0) sessRowH = h;
+        if (!query.trim()) {
+          // a row's cells are the kids from its name cell up to the next row's
+          const hs = names.map((n, i) => rowHeight(kids.slice(kids.indexOf(n), names[i + 1] ? kids.indexOf(names[i + 1]) : kids.length))).filter((h) => h > 0);
+          if (hs.length) sessRowH = Math.min(...hs);
         }
         gridBox.setAttribute('style', gridStyle(k && sessRowH ? Math.round((k * sessRowH + (k - 1) * 3) * 100) / 100 : 0));
       };
@@ -4946,8 +4968,9 @@ class TimelinePanel {
       renderRows();
       // a repaint mid-typing keeps the search box live: re-focus with the caret at the end
       if (query) { q.focus(); try { q.setSelectionRange(q.value.length, q.value.length); } catch (e) {} }
-      // the floors, off the rendered rows now that they are laid out (the card is in a document from its
-      // first line: document.body.createDiv appends it), before the scroll restore reads the final height
+      // the floors, off the rendered rows now that they are laid out (the card is in its final document
+      // before the first build: the open appends it to the host before building), before the scroll
+      // restore reads the final height
       tgridFloor(); gridFloor();
       // the tag table's scroll, restored now that the card is complete and the table has its final
       // height (written earlier it lands against a taller table and clamps low); a table that no longer
@@ -4960,9 +4983,14 @@ class TimelinePanel {
         if (r.bottom > b.top && r.top < b.bottom) this._placeTagColorPop(this._tagColorAnchor); else this._closeTagColorPop();
       }
     };
+    // the card is in its FINAL document before the first build: the floors are measured off the laid-out
+    // rows, and a card built in the pane's own document lays out at 90vw of the pane's viewport rather than
+    // the host's (round 3: in a narrow same-origin frame the first floors were a frame's worth of wrapped
+    // rows until the first repaint; from a hidden pane they were 0)
+    const h = this._menuHost({ left: 0, top: 0, bottom: 0, right: 0 });
+    h.doc.body.appendChild(back);
     build();
     this._viewsDialogBuild = build;   // tagEditFailed repaints the open dialog with the refusal
-    const h = this._menuHost({ left: 0, top: 0, bottom: 0, right: 0 });
     back.addEventListener('pointerdown', (e) => {
       // a press anywhere on the dialog outside the colour popover closes it (the popover lives beside
       // the dialog in the host document, so its own presses never arrive here); a press on its own
@@ -4974,7 +5002,6 @@ class TimelinePanel {
     const onKey = (e) => { if (e.key === 'Escape') { if (this._tagColorPop) this._closeTagColorPop(true); else this._closeViewsDialog(); } };
     h.doc.addEventListener('keydown', onKey);
     this._viewsDialogKey = { doc: h.doc, fn: onKey };
-    h.doc.body.appendChild(back);
     this._viewsDialog = back;
   }
 

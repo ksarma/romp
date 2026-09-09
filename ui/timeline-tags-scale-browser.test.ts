@@ -9,9 +9,11 @@
 //     rows) stays on screen both folded and with the filter matrix open, whose cell scrolls within itself when
 //     the page is short; at 800 a real pointer drag past the table's edge cues the last row with room for the
 //     cue, inside the box, and drops there, and a wheel mid-drag moves the cue and the drop to the rows it
-//     brings under the pointer; the floors are the rows' rendered height (one and three tags show no blank and
-//     no scroll, at 420 three tags keep three whole rows, the sessions box holds min(live, 4) rows and no blank);
-//     on a phone held sideways (844x390, touch) the card scrolls as a whole instead of clipping;
+//     brings under the pointer, and scrolled to the end a stepped drag below the table cues the last row; the
+//     floors are the rows' rendered height (one and three tags show no blank and no scroll, at 420 three tags
+//     keep three whole rows, the sessions box holds min(live, 4) rows and no blank, and four of the SMALLEST
+//     rows when the first session's chips wrap at a 390px page); on a phone held sideways (844x390, touch) the
+//     card scrolls as a whole instead of clipping;
 //  2. the colour popover and the table at 1300px: the pill of the tag the dialog was opened for keeps its ring
 //     inside the table's clip, Enter on a dot opens the popover with the current swatch focused (the browser's
 //     focus ring; the inner ring says "current"), Tab closes it back onto the dot, a table scroll that moves the
@@ -47,8 +49,9 @@ const SHELL_BAND = `<!DOCTYPE html><html><body style="margin:0;background:#111">
 
 const PALETTE = ["#1EA1EB", "#54B204", "#4EA8A9", "#DD42FF", "#E87221", "#4EC9B0", "#E0AF68", "#F7768E", "#7AA2F7", "#9ECE6A", "#BB9AF7", "#FF9E64"];
 const now = 1_781_000_000;
-// the panel's data with `nTags` tags (tag-01, tag-02, ...) and `nSessions` sessions, the first `liveN` of them live
-const dataFor = (nTags: number, nSessions = 40, liveN = nSessions) => {
+// the panel's data with `nTags` tags (tag-01, tag-02, ...) and `nSessions` sessions, the first `liveN` of them live;
+// `tagsOnS1` puts the first session in that many tags (its row's chips wrap on a narrow card)
+const dataFor = (nTags: number, nSessions = 40, liveN = nSessions, tagsOnS1 = 0) => {
   const names = Array.from({ length: nTags }, (_, i) => "tag-" + String(i + 1).padStart(2, "0"));
   return {
     now, turns: {}, messages: [], judging: [], palette: PALETTE,
@@ -59,7 +62,7 @@ const dataFor = (nTags: number, nSessions = 40, liveN = nSessions) => {
     views: {
       active: "all", at: 100, seq: 1000,
       actives: { chat: { tags: names.slice(0, 12) }, timeline: { all: true }, outline: { none: true } },
-      tags: names.map((name, i) => ({ id: "g" + (i + 1), name, color: PALETTE[i % 12], members: i < 20 ? ["s" + (i + 1)] : [], mtime: 100 })),
+      tags: names.map((name, i) => ({ id: "g" + (i + 1), name, color: PALETTE[i % 12], members: (i < 20 ? ["s" + (i + 1)] : []).concat(i > 0 && i < tagsOnS1 ? ["s1"] : []), mtime: 100 })),
     },
   };
 };
@@ -69,9 +72,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // a scroll event is delivered asynchronously: two frames let it land before the next read
 const twoFrames = (page: any) => page.evaluate(() => new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(() => res()))));
 
-type MountOpts = { width?: number; height?: number; mobile?: boolean; nTags?: number; nSessions?: number; liveN?: number };
+type MountOpts = { width?: number; height?: number; mobile?: boolean; nTags?: number; nSessions?: number; liveN?: number; tagsOnS1?: number };
 async function mount(browser: any, opts: MountOpts = {}) {
-  const { width = 1600, height = 1300, mobile = false, nTags = 30, nSessions = 40, liveN = nSessions } = opts;
+  const { width = 1600, height = 1300, mobile = false, nTags = 30, nSessions = 40, liveN = nSessions, tagsOnS1 = 0 } = opts;
   const errors: string[] = [];
   // `mobile`: a phone held sideways. Touch, and the mobile layout viewport: both browsers lay a page without a
   // viewport meta out at 980px wide and scale it to the screen, the way a phone renders it
@@ -84,7 +87,7 @@ async function mount(browser: any, opts: MountOpts = {}) {
     p.update(data);
     p.setCaps({ type: "caps", caps: ["tagEdit"], viewsSeq: 1000 });
     p._openViewsDialog(null);
-  }, dataFor(nTags, nSessions, liveN));
+  }, dataFor(nTags, nSessions, liveN, tagsOnS1));
   return { page, errors };
 }
 
@@ -109,6 +112,9 @@ const measure = (page: any) => page.evaluate(() => {
   const pillCells = all.filter((n) => (n as any)._tname);
   const nameCells = all.filter((n) => (n as any)._sid);
   const dots = all.filter((n) => n.dataset.tagDot);
+  // a session row's TRACK: the extent of its cells (name, [+], chips), the kids from its name cell up to the next row's
+  const gkids = (Array.from(grid.children) as HTMLElement[]).filter((n) => !(n.getAttribute("style") || "").startsWith("grid-column:1 / -1;"));
+  const track = (i: number) => { const a = gkids.indexOf(nameCells[i]), b = nameCells[i + 1] ? gkids.indexOf(nameCells[i + 1]) : gkids.length; const rs = gkids.slice(a, b).map((n) => n.getBoundingClientRect()); return Math.max(...rs.map((r) => r.bottom)) - Math.min(...rs.map((r) => r.top)); };
   return {
     viewport: { w: window.innerWidth, h: window.innerHeight },
     card: Object.assign(r(card), { scrollHeight: card.scrollHeight, clientHeight: card.clientHeight, scrollWidth: card.scrollWidth, clientWidth: card.clientWidth }),
@@ -130,6 +136,7 @@ const measure = (page: any) => page.evaluate(() => {
     sessionRows: nameCells.length,
     sessionRowsVisible: nameCells.filter((n) => inside(n, gridBox)).length,
     sessionRowHeights: nameCells.slice(0, 3).map((n) => Math.round(n.getBoundingClientRect().height)),
+    sessionTracks: nameCells.slice(0, 4).map((_, i) => track(i)),
     sessionPitch: nameCells.length > 1 ? nameCells[1].getBoundingClientRect().top - nameCells[0].getBoundingClientRect().top : 0,
   };
 });
@@ -166,10 +173,12 @@ function assertWorkingArea(m: any, label: string, want: { sessions: number; tagR
 const TGRID_PRE = "display:grid;grid-template-columns:max-content max-content max-content 1fr;";
 
 // THE REORDER DRAG, with real pointer events. `grabPill` records the order writes (the page has no host, so the
-// hook is the write's only outlet), puts the mouse on a tag's pill and presses; `cueOf` reads the cue: which
-// pill cell wears it (its place in the table as drawn), on which edge, whether the cell, its 2px cue included,
-// lies inside the table's box (a scroll container clips at its box, so a cue outside it is not drawn), the
-// place of the last row that has room for a cue, and the table's scroll
+// hook is the write's only outlet), puts the mouse on a tag's pill and presses, and reads, BEFORE any cue is
+// drawn, the place of the last row with room for a cue (its box plus 2px inside the table's box; round 3: a cue
+// grows its cell 2px at the bottom and shifts the rows under it, so that place read with a cue drawn agreed with
+// whatever the shift had produced); `cueOf` reads the cue: which pill cell wears it (its place in the table as
+// drawn), on which edge, whether the cell, its 2px cue included, lies inside the table's box (a scroll container
+// clips at its box, so a cue outside it is not drawn), and the table's scroll
 const grabPill = async (page: any, name: string) => {
   const at = await page.evaluate(({ pre, name }: { pre: string; name: string }) => {
     const w = window as any;
@@ -178,9 +187,12 @@ const grabPill = async (page: any, name: string) => {
     const card = (w.panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
     const all = Array.from(card.querySelectorAll("*")) as HTMLElement[];
     const tgrid = all.find((n) => (n.getAttribute("style") || "").startsWith(pre))!;
-    const pill = all.find((n) => (n as any)._tname === name)!.firstElementChild as HTMLElement;
+    const cells = all.filter((n) => (n as any)._tname);
+    const pill = cells.find((n) => (n as any)._tname === name)!.firstElementChild as HTMLElement;
     const b = pill.getBoundingClientRect(), t = tgrid.getBoundingClientRect();
-    return { x: b.left + b.width / 2, y: b.top + b.height / 2, box: { top: t.top, bottom: t.bottom } };
+    let lastWithRoom = -1;
+    cells.forEach((c, k) => { const r = c.getBoundingClientRect(); if (r.top >= t.top - 0.01 && r.bottom + 2 <= t.bottom + 0.01) lastWithRoom = k; });
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2, box: { top: t.top, bottom: t.bottom }, lastWithRoom, rows: cells.length, scrollTop: tgrid.scrollTop };
   }, { pre: TGRID_PRE, name });
   await page.mouse.move(at.x, at.y);
   await page.mouse.down();
@@ -194,10 +206,18 @@ const cueOf = (page: any) => page.evaluate((pre: string) => {
   const t = tgrid.getBoundingClientRect();
   const i = cells.findIndex((c) => c.style.borderBottom || c.style.borderTop);
   const r = i >= 0 ? cells[i].getBoundingClientRect() : null;
-  let lastWithRoom = -1;
-  cells.forEach((c, k) => { const b = c.getBoundingClientRect(); if (b.top >= t.top - 0.01 && b.bottom + (k === i ? 0 : 2) <= t.bottom + 0.01) lastWithRoom = k; });
   return { i, side: i < 0 ? "" : cells[i].style.borderBottom ? "bottom" : "top", cell: r ? { top: r.top, bottom: r.bottom } : null, box: { top: t.top, bottom: t.bottom },
-    inside: !!r && r.top >= t.top - 0.01 && r.bottom <= t.bottom + 0.01, lastWithRoom, scrollTop: tgrid.scrollTop, rows: cells.length };
+    inside: !!r && r.top >= t.top - 0.01 && r.bottom <= t.bottom + 0.01, scrollTop: tgrid.scrollTop, rows: cells.length };
+}, TGRID_PRE);
+// the table scrolled to its end, and the first row whole there (the row to grab for a drag at the end)
+const scrollTableToEnd = (page: any) => page.evaluate((pre: string) => {
+  const card = ((window as any).panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
+  const all = Array.from(card.querySelectorAll("*")) as HTMLElement[];
+  const tgrid = all.find((n) => (n.getAttribute("style") || "").startsWith(pre))!;
+  tgrid.scrollTop = tgrid.scrollHeight - tgrid.clientHeight;
+  const t = tgrid.getBoundingClientRect();
+  const whole = all.filter((n) => (n as any)._tname).find((c) => { const r = c.getBoundingClientRect(); return r.top >= t.top - 0.01 && r.bottom + 2 <= t.bottom + 0.01; });
+  return { name: whole ? (whole as any)._tname as string : null, scrollTop: tgrid.scrollTop, max: tgrid.scrollHeight - tgrid.clientHeight };
 }, TGRID_PRE);
 const lastOrder = (page: any) => page.evaluate(() => { const w = (window as any).__writes || []; return w.length ? w[w.length - 1].tagOrder as string[] : null; });
 
@@ -274,8 +294,8 @@ for (const name of ["chromium", "firefox"]) {
         assert.ok(c1.i > 0, "800px: a drag 60px below the table draws a cue: " + JSON.stringify(c1));
         assert.equal(c1.side, "bottom", "800px: the cue is the cell's bottom edge");
         assert.ok(c1.inside, "800px: the cued cell, its 2px cue included, lies inside the table's box: cell " + c1.cell!.top + ".." + c1.cell!.bottom + " in " + c1.box.top + ".." + c1.box.bottom);
-        assert.equal(c1.i, c1.lastWithRoom, "800px: the cue sits on the LAST row with room for it (a later row would be cut, or its cue would): row " + c1.i + " of " + c1.rows);
-        assert.ok(c1.lastWithRoom < c1.rows - 1, "800px: thirty rows overflow the table, so the last row with room is not the last row: " + c1.lastWithRoom);
+        assert.equal(c1.i, g1.lastWithRoom, "800px: the cue sits on the LAST row with room for it, as read before any cue (a later row would be cut, or its cue would): row " + c1.i + " of " + c1.rows);
+        assert.ok(g1.lastWithRoom < g1.rows - 1, "800px: thirty rows overflow the table, so the last row with room is not the last row: " + g1.lastWithRoom);
         await page.mouse.up();
         const o1 = await lastOrder(page);
         assert.ok(o1, "800px: the drop wrote the order");
@@ -297,6 +317,23 @@ for (const name of ["chromium", "firefox"]) {
         await page.mouse.up();
         const o2 = await lastOrder(page);
         assert.equal(o2!.indexOf("tag-01"), c3.i, "800px: the drop followed the rows the wheel brought under the pointer");
+        // scrolled to the END (round 3: the last row has the 4px padding of room; a stepped drag carried the cue over
+        // the rows above it, each cue pushing the last row 2px down, and measured with the cue drawn the last row
+        // lost its room, so in Firefox the drop landed one row short at every height): a whole row dragged 60px
+        // below the table in steps cues the LAST row and drops there
+        const end = await scrollTableToEnd(page);
+        await twoFrames(page);
+        assert.ok(end.name && end.scrollTop > 100 && end.scrollTop === end.max, "800px at the end: the table scrolled to its end: " + JSON.stringify(end));
+        const g4 = await grabPill(page, end.name!);
+        assert.equal(g4.lastWithRoom, g4.rows - 1, "800px at the end: the last row has room for a cue (the padding under it): " + JSON.stringify(g4));
+        await page.mouse.move(g4.x, g4.box.bottom + 60, { steps: 4 });
+        const c4 = await cueOf(page);
+        assert.equal(c4.i, c4.rows - 1, "800px at the end: a stepped drag past the table's edge cues the last row: " + JSON.stringify(c4));
+        assert.equal(c4.side, "bottom");
+        assert.ok(c4.inside, "800px at the end: the cued last row, its cue included, lies inside the box: " + JSON.stringify(c4));
+        await page.mouse.up();
+        const o4 = await lastOrder(page);
+        assert.equal(o4!.indexOf(end.name!), c4.rows - 1, "800px at the end: the drop put the row last");
         await page.evaluate((pre: string) => {
           const card = ((window as any).panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
           (Array.from(card.querySelectorAll("*")) as HTMLElement[]).find((n) => (n.getAttribute("style") || "").startsWith(pre))!.scrollTop = 0;
@@ -386,6 +423,32 @@ for (const name of ["chromium", "firefox"]) {
         else if (liveN <= 4) assert.ok(Math.abs(m.gridBox.height - m.grid.height) <= 0.5, label + ": the box is exactly its rows, no blank and no clip: box " + m.gridBox.height + ", rows " + m.grid.height);
         else assert.ok(Math.abs(m.gridBox.height - (4 * m.sessionPitch - 3)) <= 0.5, label + ": at its floor the box is four rows and their three 3px gaps: box " + m.gridBox.height + ", pitch " + m.sessionPitch);
         assert.ok(m.search.visible && m.tagAll.visible, label + ": search and tag all inside the card");
+        await page.close();
+      }
+      // a first session whose chips WRAP (round 3: the floor was four times the FIRST row's height, so a wrapped first
+      // row put 74px of blank under four live sessions, the blank round 2 had removed): at a 390px page the card is
+      // 351px wide and six tags on the first session wrap its chips onto a second line. The floor is four of the
+      // SMALLEST rows plus their gaps: on a tall page the box is its rows, and on a page short enough for the floors
+      // to bind the box sits at that floor, holding three whole rows (the wrapped one costs a row, never blank)
+      for (const [height, binds] of [[844, false], [400, true]] as Array<[number, boolean]>) {
+        const label = "390x" + height + ", the first session in six tags";
+        const { page, errors } = await mount(browser, { width: 390, height, nTags: 30, nSessions: 4, liveN: 4, tagsOnS1: 6 });
+        const m = await measure(page);
+        assert.deepEqual(errors, []);
+        assert.equal(m.sessionRows, 4);
+        assert.ok(m.card.width <= 352 && m.card.width >= 350, label + ": the card is 90vw, 351px: " + m.card.width);
+        assert.ok(m.sessionTracks[0] >= m.sessionTracks[1] + 10, label + ": the first row's chips wrapped, so its track is taller: " + m.sessionTracks.map((t: number) => Math.round(t * 10) / 10).join("/"));
+        const small = Math.min(...m.sessionTracks);
+        assert.ok(Math.abs(Number(m.gridBox.minHeight) - (4 * small + 9)) <= 0.1, label + ": the floor is four of the smallest rows and their three 3px gaps: " + m.gridBox.minHeight + " vs " + (4 * small + 9));
+        assert.ok(m.gridBox.height <= m.grid.height + 0.5, label + ": no blank under the rows: box " + m.gridBox.height + ", rows " + m.grid.height);
+        if (binds) {
+          assert.ok(m.card.scrollHeight > m.card.clientHeight, label + ": the floors bind (the card scrolls): " + m.card.scrollHeight + " vs " + m.card.clientHeight);
+          assert.ok(Math.abs(m.gridBox.height - Number(m.gridBox.minHeight)) <= 0.5, label + ": the box sits at its floor: " + m.gridBox.height + " vs " + m.gridBox.minHeight);
+          assert.equal(m.sessionRowsVisible, 3, label + ": three whole rows in a box of four small rows' worth (the wrapped row costs one)");
+        } else {
+          assert.ok(Math.abs(m.gridBox.height - m.grid.height) <= 0.5, label + ": the box is exactly its rows: box " + m.gridBox.height + ", rows " + m.grid.height);
+          assert.equal(m.sessionRowsVisible, 4, label + ": all four rows whole");
+        }
         await page.close();
       }
       // 844x390, a phone held sideways: the floors outgrow the card, which scrolls as a whole instead of clipping
