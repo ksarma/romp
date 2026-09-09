@@ -8,7 +8,9 @@
 // second option is the one that applies: the landing is HELD while a pointer is pressed over the body and runs on the
 // release (actions.ts pressHold; file-view-copy-held.test.ts has the helper alone). Two scenes over the real viewer
 // (real-viewer-leg.ts), the pane surface: (1) mousedown on Copy, the reload's fetch lands, mouseup: one copy, of the
-// text the reader pressed on, the button acknowledges, and only then do the new bytes paint; (2) the release paths: a
+// text the reader pressed on, the button acknowledges, and only then do the new bytes paint, the acknowledgement on the
+// button on screen after them (round 3: the pressed node had it, the new one read Copy; file-view-copy-ack-browser.test.ts
+// has the two clipboard paths); (2) the release paths: a
 // press begun over the body and released over the title bar, and a blur while pressed (a release in another frame),
 // each let the parked landing paint, once. Round 2 of the review added two more: (3) a right or middle press holds
 // nothing (a right press's release commonly never reaches the page, the native context menu takes it on Linux and
@@ -84,6 +86,9 @@ test("in a browser: a press on Copy that a reload lands under still copies, the 
     assert.equal(shown.code, FENCE2.replace(/\n/g, ""), "the fence too (the rows drop the newlines)");
     assert.equal(shown.oldGone, true, "the pressed button went with the old body, after its click");
     assert.equal(shown.paints, pressed.paints + 1, "one paint for the one landing");
+    const onScreen = await page.evaluate(() => { const b = document.querySelector(".fileview-md pre > .code-copy")!; return { label: b.textContent, copied: b.classList.contains("copied") }; });
+    assert.equal(onScreen.label, "Copied", "and the button on screen carries the acknowledgement: the swap took the pressed one, so the label follows the fence's position (code-block.ts acknowledge; round 3)");
+    assert.equal(onScreen.copied, true);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

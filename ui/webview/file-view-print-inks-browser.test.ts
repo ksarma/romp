@@ -15,8 +15,10 @@
 // them). And (5) a wide table was squeezed into the 80ch column on paper wide enough for it (A4 landscape: 761 of 1123px)
 // and its words broken at arbitrary characters; in print the table keeps the screen's room, the body less the root's inset,
 // and grows out of the column into both gutters as it does on screen (the cqi cap and translate restated in the print block,
-// where paper has no scrollbar and no script runs). Each value returns under screen media. Skips loudly without a browser.
-// Synthetic values only.
+// where paper has no scrollbar and no script runs). Round 3: the row numbers, black since round 2, kept the screen's opacity
+// (0.55 on a Raw row, 0.32 in a fence: the fence's 2.24:1 on white), so the block sets both gutters to full ink; the Raw
+// row's and a source file's are asserted here, the fence's in file-view-print-browser.test.ts. Each value returns under
+// screen media. Skips loudly without a browser. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -100,6 +102,7 @@ test("under print media the Raw view's code, tokens, row numbers, change marks a
       assert.equal(pr.codeColor, BLACK, cell + ": the Raw view's code prints black (before: " + screen.codeColor + ", 1.67:1 on white in the dark theme)");
       assert.deepEqual(pr.notBlack, [], cell + ": every token prints black: " + pr.notBlack.join("; "));
       assert.equal(pr.row.color, BLACK, cell + ": the row numbers print black (before: " + screen.row.color + " at " + screen.row.opacity + ")");
+      assert.equal(pr.row.opacity, "1", cell + ": ...at full ink (the screen's " + screen.row.opacity + " stood in print before round 3)");
       assert.ok(pr.ins, cell + ": the insertion's mark stands"); assert.equal(pr.ins.border, BLACK, cell + ": ...its underline prints black (before: " + screen.ins.border + ")"); assert.equal(pr.ins.borderW, "2px"); assert.equal(pr.ins.bg, CLEAR, cell + ": ...with no wash"); assert.equal(pr.ins.color, BLACK);
       assert.ok(pr.del, cell + ": the deletion's point stands"); assert.equal(pr.del.label, '"dolor "', cell + ": the struck label is generated"); assert.equal(pr.del.color, BLACK, cell + ": ...and prints black (before: " + screen.del.color + ")"); assert.equal(pr.del.bg, CLEAR); assert.equal(pr.del.deco, "line-through"); assert.equal(pr.del.border, BLACK);
       assert.equal(pr.chip.text, '"api"', cell + ": the author chip prints"); assert.equal(pr.chip.color, BLACK, cell + ": ...in black (before: " + screen.chip.color + ")"); assert.equal(pr.chip.bg, CLEAR, cell + ": ...with no wash"); assert.match(pr.chip.ring, /rgb\(0, 0, 0\)/, cell + ": ...in a black ring");
@@ -113,10 +116,10 @@ test("under print media the Raw view's code, tokens, row numbers, change marks a
       const prPy = await page.evaluate(codeFacts);
       assert.equal(prPy.codeColor, BLACK, cell + ": a .py file's code prints black (before: " + screenPy.codeColor + ")"); assert.deepEqual(prPy.notBlack, [], cell + ": every token of the .py file prints black: " + prPy.notBlack.join("; "));
       assert.equal(prPy.fn.color, BLACK, cell + ": the function name too (before: " + screenPy.fn.color + ")");
-      assert.equal(prPy.row.color, BLACK, cell + ": the .py file's row numbers print black (before: " + screenPy.row.color + ")");
+      assert.equal(prPy.row.color, BLACK, cell + ": the .py file's row numbers print black (before: " + screenPy.row.color + ")"); assert.equal(prPy.row.opacity, "1", cell + ": ...at full ink");
       await page.emulateMedia({ media: "screen" }); await frames(page, 3);
       const back = await page.evaluate(codeFacts);
-      assert.equal(back.matchesPrint, false); assert.equal(back.codeColor, screenPy.codeColor, cell + ": the code's ink returns"); assert.equal(back.row.color, screenPy.row.color, cell + ": the row numbers' ink returns");
+      assert.equal(back.matchesPrint, false); assert.equal(back.codeColor, screenPy.codeColor, cell + ": the code's ink returns"); assert.equal(back.row.color, screenPy.row.color, cell + ": the row numbers' ink returns"); assert.equal(back.row.opacity, screenPy.row.opacity, cell + ": ...and their dim");
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }

@@ -381,8 +381,10 @@ test("it waits with the romp loader and fails with the kernel's own words, never
   // it. The status rides along since 2026-08-09, so the catch can decide whether to offer the download.
   assert.match(VIEW, /if \(!r\.ok\) return r\.text\(\)\.then\(\(t\) => \{\s*\n\s*throw Object\.assign\(new Error\(t \|\| \("HTTP " \+ r\.status\)\), \{ status: r\.status \}\);\s*\n\s*\}\);/);
   assert.match(VIEW, /const why = el\("div", "fileview-err"\);/);
-  // a reply that lands after the user closed the viewer paints nothing
-  assert.match(VIEW, /if \(!document\.getElementById\("romp-fileview"\)\) return;/);
+  // a reply that lands after the user closed OR REPLACED the viewer paints nothing: the landing and the failure path both
+  // read `stands` (the wrap connected, this fetch the newest), never the viewer id, which a replace-open moves to the new
+  // viewer (the Slice 3 review, round 3; file-view-landing-order-browser.test.ts)
+  assert.equal((VIEW.match(/if \(!stands\(\)\) return;/g) || []).length, 2, "the landing and the failure path");
 });
 
 test("it reuses fileUrl, so a REMOTE session's file is relayed from the host that owns it", () => {
@@ -783,12 +785,14 @@ test("the media branch keys on the kernel's Content-Type verdict, never the exte
 
 test("a 200 image renders ONE <img> at an object URL; the quote gesture stays off RENDERED media", () => {
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
-  // the blob becomes an object URL only AFTER the still-open/still-this-viewer checks — a viewer
-  // closed or replaced mid-flight creates nothing to leak
-  assert.ok(openFn.indexOf('if (!document.getElementById("romp-fileview")) return;')
-            < openFn.indexOf("URL.createObjectURL"),
-    "no URL is minted for a viewer that is already gone");
-  assert.match(openFn, /if \(!wrap\.isConnected\) return;/);
+  // the blob becomes an object URL only AFTER the still-this-viewer, still-the-newest-fetch check (`stands`: the wrap
+  // connected, so a close or a REPLACE both count, and this fetch the newest out): a viewer closed or replaced
+  // mid-flight creates nothing to leak. The check reads the wrap, not the viewer id: after a replace-open the id sits on
+  // the new viewer and passed for the old one (the Slice 3 review, round 3; file-view-landing-order-browser.test.ts)
+  assert.match(openFn, /const stands = \(\): boolean => wrap\.isConnected && my === fetchSeq;/, "the landing's guard: the wrap connected and this fetch the newest");
+  const standsAt = openFn.indexOf("if (!stands()) return;");
+  assert.ok(standsAt >= 0 && standsAt < openFn.indexOf("URL.createObjectURL"), "no URL is minted for a viewer that is already gone");
+  assert.doesNotMatch(openFn.slice(openFn.indexOf("const fetchFile = "), openFn.indexOf("URL.createObjectURL")), /document\.getElementById\("romp-fileview"\)/, "the landing never reads the viewer id: a replace-open moves it to the new viewer");
   // renderBody's img/PDF arm renders and returns — an <img>/iframe body has no honest text to
   // quote (affordance honesty: no real target, no affordance), so the mouseup seed gates off
   // RENDERED media too. The SVG SOURCE view is the deliberate exception — a text view, covered by

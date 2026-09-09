@@ -4,7 +4,9 @@
 // wrapped code element's textContent runs its lines together. The helpers put the newline back between adjacent rows,
 // so a reader of the lines sees the source's structure whether the code was wrapped or not: paintRendered's fallback (a
 // comment across two code lines; the browser leg anchor-map-wrapped-code-browser.test.ts paints it over the real
-// bundle), reader-place.ts (the code line at the body's top edge, and where a line starts), and Slice 8's mapping. This
+// bundle) and Slice 8's mapping; reader-place.ts keeps the code line at the body's top edge as the row under it, whose
+// index among the rows is the line codeLineAt gives any position in that row (one row per line; the Slice 3 review's
+// round 3 retired its hit-test read of a code element with no rows, which the viewer never builds). This
 // node leg drives the helpers over a structural stand-in of the DOM (nodeType, childNodes, parentNode, data,
 // getAttribute: the surface anchor-map.ts walks) built from wrapLinesHtml's own output and from the unwrapped shape, and
 // checks the two shapes read alike. Synthetic values only.

@@ -120,10 +120,12 @@ const isControl = (n: DNode): boolean => hasClass(n, "code-copy");
 // The viewer's fenced code is wrapped in per-line rows (code-block.ts wrapCodeLines: `<span class="cl"><span
 // class="ct">…</span></span>` per line; the Raw view's `.fv-cl` rows are built the same way), and the wrap DROPS the
 // newline each row stands for, so a wrapped code element's textContent runs its lines together. Everything that reads a
-// code block's LINES reads them through here, and sees the source's line structure whether the code was wrapped or not:
-// paintRendered's fallback below (a comment across two code lines matched its quote, which holds a newline, against a
-// hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md), reader-place.ts (the code line at
-// the body's top edge, kept across a paint), and Slice 8's exact mapping of code lines. One reading, so the three agree.
+// code block's LINES from a text position reads them through here, and sees the source's line structure whether the code
+// was wrapped or not: paintRendered's fallback below (a comment across two code lines matched its quote, which holds a
+// newline, against a hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md) and Slice 8's
+// exact mapping of code lines. One reading, so the two agree; and reader-place.ts, which keeps the code line at the
+// body's top edge across a paint as the `.cl` row under the edge, counts that row's index as its line, the line
+// codeLineAt gives any position in the row (one row per line; the Slice 3 review's round 3 retired its hit-test read).
 
 const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl");
 

@@ -3,15 +3,16 @@
 // WHY THIS EXISTS — the "I had to click it several times" bug.
 // The dashboard re-renders on every kernel push: a 0.5–3s backstop poll, PLUS an
 // immediate push on each SDK stream event and on every hook /tick (turn ended,
-// prompt landed, postal message). Surfaces that rebuild their DOM wholesale —
-// renderTabs()'s `#tabs`.replaceChildren(), Fleet's `#fleet-list`.replaceChildren()
-// — DESTROY and recreate the very node you are clicking. A native `click` only
-// fires when the mousedown and the mouseup land on the same element; when a
-// rebuild slips between them the click is silently dropped. While a session works
-// the pushes are frequent, so the drop is frequent: the button feels dead until
-// you happen to click in a gap between rebuilds.
+// prompt landed, postal message). Surfaces that rebuild their DOM wholesale
+// (renderTabs()'s `#tabs`.replaceChildren(), the sessions list's
+// `#fleet-list`.replaceChildren()) DESTROY and recreate the very node you are
+// clicking. A native `click` fires on the nearest common ancestor of the mousedown
+// and mouseup targets, and a pressed node that a rebuild removed before the mouseup
+// has none, so the click is silently dropped. While a session works the pushes are
+// frequent, so the drop is frequent: the button feels dead until you happen to
+// click in a gap between rebuilds.
 //
-// THE RULE (see CLAUDE.md ## Design → "Buttons must stay click-safe…"):
+// THE RULE (see ui/CLAUDE.md, "Buttons must stay click-safe across re-renders…"):
 //   1. Never hang an action on a node you rebuild. Put the action on a STABLE
 //      ancestor (the container fetched by id survives replaceChildren(); only its
 //      children are swapped) and key it off a `data-act` attribute. The listener
