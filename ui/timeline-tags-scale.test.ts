@@ -218,7 +218,7 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
   const tgrid = tgridOf(panel);
   assert.ok(tgrid, "the tag table");
   assert.ok(styleOf(tgrid).includes("padding:4px 0 4px 4px;margin:-2px 0 2px -4px;"), "room inside the scroll clip for the pills' and dots' rings, the layout unmoved");
-  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:30vh;overflow-y:auto;"), "capped at 30vh, scrolling within, three rows never shrinking: " + styleOf(tgrid));
+  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:30vh;overflow-y:auto;overflow-anchor:none;"), "capped at 30vh, scrolling within, three rows never shrinking, and out of scroll anchoring (round 4: the drag's cue lift moves 2px of content the browser must not scroll to follow; the browser legs drive the case, this pins the token where CI runs): " + styleOf(tgrid));
   assert.ok(!styleOf(tgrid).includes("min-height"), "three rows need no floor under them: their natural height is the floor");
   assert.ok(tgrid._listeners.scroll, "the table's scroll is listened to (it closes the popover when the dot moves)");
   const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n).startsWith("flex:1 1000 auto;min-height:") && styleOf(n).endsWith("px;overflow-y:auto;"));
@@ -240,22 +240,30 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
 const GRID_PRE = "display:grid;grid-template-columns:max-content max-content 1fr;";
 const gridOf = (panel: any) => walk(panel._viewsDialog).find((n) => styleOf(n).startsWith(GRID_PRE));
 const gridBoxOf = (panel: any) => gridOf(panel).parentNode;
+// a grid cell's row: the count of the row-leading cells among its siblings up to it (the `_tname` pill in the tag
+// table, the `_sid` name in the sessions grid), so a test places rows by index without holding the nodes a
+// rebuild replaces
+const rowIdx = (n: any, lead: string) => { let k = 0; for (const c of n.parentNode.children) { if (c[lead]) k++; if (c === n) break; } return k - 1; };
+// a tag row placed by its index: 24px tall at a 28px pitch (row-gap 4), every cell of the row in its track.
+// Review round 4: one rect for every cell of the table let a floor measured off the WHOLE table (a thirty-row
+// floor, the table never shrinking) pass here, with only the browser legs, which skip on CI, to catch it
+const tagRect = (i: number) => ({ left: 0, top: 100 + 28 * i, right: 200, bottom: 124 + 28 * i, width: 200, height: 24 });
 
 test("executed: the floors are measured off the rendered rows: a table of at most three rows keeps its natural height, a taller one three rows' worth; the sessions box min(live, 4) rows, by the live count and not the search hits", () => {
   // review round 2 (2026-09-09): a constant per row (22px, 24px) is not the row height, which is the font's:
   // one tag showed 6px of blank under its row, three rows at the floor lost 7px of the third, one live
-  // session sat in a 96px box. GEOMETRY IS A TEST INPUT here: tag rows lay out 24px tall (row-gap 4),
-  // session rows 18px (row-gap 3), every cell of a row seated in its track
+  // session sat in a 96px box. GEOMETRY IS A TEST INPUT here: tag rows lay out 24px tall (row-gap 4), placed
+  // by their index (tagRect), session rows 18px (row-gap 3), every cell of a row seated in its track
   g.__rectOf = (n: any) => {
     const par = n.parentNode ? styleOf(n.parentNode) : "";
-    if (par.startsWith(TGRID_PRE)) return { left: 0, top: 100, right: 200, bottom: 124, width: 200, height: 24 };
+    if (par.startsWith(TGRID_PRE)) return tagRect(rowIdx(n, "_tname"));
     if (par.startsWith(GRID_PRE)) return { left: 0, top: 300, right: 200, bottom: 318, width: 200, height: 18 };
     return null;
   };
   try {
     // thirty tags: three rows' worth, 3 x 24 + 2 x 4, and the table may shrink to it
     const p30 = openDialog(THIRTY, FORTY_SESSIONS);
-    assert.ok(styleOf(tgridOf(p30)).includes("flex:0 1 auto;min-height:80px;max-height:30vh;"), "thirty rows: a floor of three at the rendered height: " + styleOf(tgridOf(p30)));
+    assert.ok(styleOf(tgridOf(p30)).includes("flex:0 1 auto;min-height:80px;max-height:30vh;overflow-y:auto;overflow-anchor:none;"), "thirty rows: a floor of three at the rendered height, the table out of scroll anchoring: " + styleOf(tgridOf(p30)));
     // forty live sessions: four rows' worth, 4 x 18 + 3 x 3
     assert.equal(styleOf(gridBoxOf(p30)), "flex:1 1000 auto;min-height:81px;overflow-y:auto;", "forty live: a floor of four rows at the rendered height");
     // typing a query that hides most rows, or every row, leaves the box as it was: the floor follows the live
@@ -795,14 +803,14 @@ test("executed: a tag dragged past the table's edge drops on the last WHOLE row:
 });
 
 test("executed: the floors' sources: four of the SMALLEST session rows when the first wraps, both floors kept through a build without layout, the first build in the host document", () => {
-  // review round 3 (2026-09-09). Session rows placed by their index: a cell's row is the count of name cells up
-  // to it in the grid; row 0 is 46.8px (its chips wrapped onto a second line), the rest 22.2px, 3px gaps
-  const rowIdx = (n: any) => { const sibs = n.parentNode.children; let k = 0; for (const c of sibs) { if (c._sid) k++; if (c === n) break; } return k - 1; };
+  // review round 3 (2026-09-09). Session rows placed by their index (rowIdx: a cell's row is the count of name
+  // cells up to it in the grid); row 0 is 46.8px (its chips wrapped onto a second line), the rest 22.2px, 3px
+  // gaps. Tag rows by their index too (round 4), 24px at a 28px pitch
   const sessRect = (i: number) => { const top = i === 0 ? 300 : 300 + 46.8 + 3 + (i - 1) * 25.2, h = i === 0 ? 46.8 : 22.2; return { left: 0, top, right: 200, bottom: top + h, width: 200, height: h }; };
   g.__rectOf = (n: any) => {
     const par = n.parentNode ? styleOf(n.parentNode) : "";
-    if (par.startsWith(TGRID_PRE)) return { left: 0, top: 100, right: 200, bottom: 124, width: 200, height: 24 };
-    if (par.startsWith(GRID_PRE)) return sessRect(rowIdx(n));
+    if (par.startsWith(TGRID_PRE)) return tagRect(rowIdx(n, "_tname"));
+    if (par.startsWith(GRID_PRE)) return sessRect(rowIdx(n, "_sid"));
     return null;
   };
   try {
@@ -841,7 +849,7 @@ test("executed: the floors' sources: four of the SMALLEST session rows when the 
     g.__rectOf = (n: any) => {
       const par = n.parentNode ? styleOf(n.parentNode) : "";
       if (!par.startsWith(TGRID_PRE)) return null;
-      return rootOf(n) === hostDoc.body ? { left: 0, top: 100, right: 200, bottom: 124, width: 200, height: 24 } : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      return rootOf(n) === hostDoc.body ? tagRect(rowIdx(n, "_tname")) : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
     };
     const ph = drawnPanel(THIRTY, FORTY_SESSIONS);
     ph._tipWin = { document: hostDoc };   // the topmost same-origin window, as the tooltip host resolves it

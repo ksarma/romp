@@ -9,8 +9,9 @@
 //     rows) stays on screen both folded and with the filter matrix open, whose cell scrolls within itself when
 //     the page is short; at 800 a real pointer drag past the table's edge cues the last row with room for the
 //     cue, inside the box, and drops there, and a wheel mid-drag moves the cue and the drop to the rows it
-//     brings under the pointer, and scrolled to the end a stepped drag below the table cues the last row; the
-//     floors are the rows' rendered height (one and three tags show no blank and no scroll, at 420 three tags
+//     brings under the pointer, scrolled to the end a stepped drag below the table cues the last row, and a top
+//     cue on the first row scrolled 1.5px under the clip moves to the next row with the scroll unmoved and one
+//     scroll event (overflow-anchor:none); the floors are the rows' rendered height (one and three tags show no blank and no scroll, at 420 three tags
 //     keep three whole rows, the sessions box holds min(live, 4) rows and no blank, and four of the SMALLEST
 //     rows when the first session's chips wrap at a 390px page); on a phone held sideways (844x390, touch) the
 //     card scrolls as a whole instead of clipping;
@@ -219,6 +220,34 @@ const scrollTableToEnd = (page: any) => page.evaluate((pre: string) => {
   const whole = all.filter((n) => (n as any)._tname).find((c) => { const r = c.getBoundingClientRect(); return r.top >= t.top - 0.01 && r.bottom + 2 <= t.bottom + 0.01; });
   return { name: whole ? (whole as any)._tname as string : null, scrollTop: tgrid.scrollTop, max: tgrid.scrollHeight - tgrid.clientHeight };
 }, TGRID_PRE);
+// the table scrolled back to its start, and the rows with room for a cue there: the first (the row a top cue
+// lands on) and the last (the row to grab for a drag above the table)
+const scrollTableToStart = (page: any) => page.evaluate((pre: string) => {
+  const card = ((window as any).panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
+  const all = Array.from(card.querySelectorAll("*")) as HTMLElement[];
+  const tgrid = all.find((n) => (n.getAttribute("style") || "").startsWith(pre))!;
+  tgrid.scrollTop = 0;
+  const t = tgrid.getBoundingClientRect();
+  const room = all.filter((n) => (n as any)._tname).map((c, k) => ({ k, name: (c as any)._tname as string, r: c.getBoundingClientRect() }))
+    .filter((p) => p.r.top >= t.top - 0.01 && p.r.bottom + 2 <= t.bottom + 0.01);
+  const last = room[room.length - 1];
+  return { firstWithRoom: room.length ? room[0].k : -1, lastWithRoom: last ? last.k : -1, name: last ? last.name : null, scrollTop: tgrid.scrollTop };
+}, TGRID_PRE);
+// with a cue drawn on row `i`, the table scrolled so that row's top edge sits 1.5px above the box (the row cut by
+// the clip, its cue with it); a counting scroll listener goes on the table first, and the scrollTop the browser
+// applied (an integer in both) comes back
+const scrollCuedRowUnderClip = (page: any, i: number) => page.evaluate(({ pre, i }: { pre: string; i: number }) => {
+  const w = window as any;
+  const card = (w.panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
+  const all = Array.from(card.querySelectorAll("*")) as HTMLElement[];
+  const tgrid = all.find((n) => (n.getAttribute("style") || "").startsWith(pre))!;
+  const cell = all.filter((n) => (n as any)._tname)[i];
+  w.__tgridScrolls = 0;
+  tgrid.addEventListener("scroll", () => { w.__tgridScrolls++; }, { passive: true });
+  tgrid.scrollTop = tgrid.scrollTop + (cell.getBoundingClientRect().top - tgrid.getBoundingClientRect().top) + 1.5;
+  return tgrid.scrollTop as number;
+}, { pre: TGRID_PRE, i });
+const tgridScrolls = (page: any) => page.evaluate(() => (window as any).__tgridScrolls as number);
 const lastOrder = (page: any) => page.evaluate(() => { const w = (window as any).__writes || []; return w.length ? w[w.length - 1].tagOrder as string[] : null; });
 
 for (const name of ["chromium", "firefox"]) {
@@ -334,6 +363,36 @@ for (const name of ["chromium", "firefox"]) {
         await page.mouse.up();
         const o4 = await lastOrder(page);
         assert.equal(o4!.indexOf(end.name!), c4.rows - 1, "800px at the end: the drop put the row last");
+        // A CUED ROW SCROLLED UNDER THE TOP CLIP (round 4: the table's overflow-anchor:none had no test, and a view
+        // without it passed every leg). With scroll anchoring on, a top cue leaving the first partly clipped row
+        // moves that row's pill 2px, the browser shifts scrollTop by 2 to hold it, the lift's exact measurement
+        // re-admits the row, and the cue and the scroll oscillate: Chromium kept the cue on a row whose top edge,
+        // its cue with it, was under the clip, and Firefox fired a scroll event a frame at a standing scrollTop
+        // before settling. From the top, the last whole row held with the pointer 60px above the table cues the
+        // first row's top edge; the table then scrolled 1.5px past that row's top hands the cue to the next row,
+        // with the scroll exactly where it was put and one scroll event, and the drop lands at the cue
+        const start = await scrollTableToStart(page);
+        await twoFrames(page);
+        assert.ok(start.name && start.scrollTop === 0 && start.firstWithRoom >= 0 && start.lastWithRoom > start.firstWithRoom + 1, "800px from the top: the table at its start, a first whole row and a later one to grab: " + JSON.stringify(start));
+        const g5 = await grabPill(page, start.name!);
+        await page.mouse.move(g5.x, g5.box.top - 60, { steps: 3 });
+        const c5 = await cueOf(page);
+        assert.equal(c5.i, start.firstWithRoom, "800px from the top: a drag 60px above the table cues the first whole row: " + JSON.stringify(c5));
+        assert.equal(c5.side, "top", "800px from the top: the cue is the cell's top edge");
+        assert.ok(c5.inside, "800px from the top: the cued first row, its cue included, lies inside the box: " + JSON.stringify(c5));
+        const applied = await scrollCuedRowUnderClip(page, c5.i);
+        assert.ok(applied > 0, "800px from the top: the table scrolled the cued row under its clip: " + applied);
+        await twoFrames(page);
+        const c6 = await cueOf(page);
+        const scrolls = await tgridScrolls(page);
+        assert.equal(c6.i, c5.i + 1, "800px from the top, the cued row scrolled under the clip: the cue moves to the next row (with scroll anchoring on, the lift moved the row's pill and the browser moved the scroll to follow it, so the rows were read 2px off and the cue stayed on a row whose top edge, its cue with it, was under the clip): " + JSON.stringify(c6));
+        assert.equal(c6.side, "top", "800px from the top: the cue keeps to the top edge");
+        assert.ok(c6.inside, "800px from the top: the cued next row, its cue included, lies inside the box: " + JSON.stringify(c6));
+        assert.equal(c6.scrollTop, applied, "800px from the top: the scroll stays exactly where it was put, no anchoring shift (overflow-anchor:none): " + c6.scrollTop + " vs " + applied);
+        assert.equal(scrolls, 1, "800px from the top: one scroll event, the one the set fired (with anchoring on, Firefox fired one a frame at a standing scrollTop): " + scrolls);
+        await page.mouse.up();
+        const o5 = await lastOrder(page);
+        assert.equal(o5!.indexOf(start.name!), c6.i, "800px from the top: the drop landed where the cue was drawn after the scroll");
         await page.evaluate((pre: string) => {
           const card = ((window as any).panel._viewsDialog as HTMLElement).firstElementChild as HTMLElement;
           (Array.from(card.querySelectorAll("*")) as HTMLElement[]).find((n) => (n.getAttribute("style") || "").startsWith(pre))!.scrollTop = 0;
