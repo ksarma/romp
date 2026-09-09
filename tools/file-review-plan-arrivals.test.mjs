@@ -2,7 +2,8 @@
 //
 // The paragraph records two rules from the user's reports of 2026-09-09: the line under the panel's header naming the
 // session's changes, comments and replies the person has not seen (with a dot on each card until a gesture finds it on
-// screen), and the save's scroll standing down once the person has moved on. A record that names a function the panel no
+// screen), and the save: once a scroll to the saved card that stood down when the person had moved on, since decision 43 no
+// scroll at all, with a line at the panel's foot saying where the card is. A record that names a function the panel no
 // longer has, an event the constructor no longer listens for, or a module that is not in the tree costs the next reader
 // the search it was meant to save, so every identifier the paragraph carries in backticks is checked against the source,
 // the events it lists against the listeners, its "never a timer" against the gesture's body, and the modules it names
@@ -58,6 +59,8 @@ test('every identifier the paragraph names in backticks is in the panel, the mod
       assert.ok(panel.includes('card.dataset.new = "1"'), 'the attribute the cards wear');
     } else if (n === 'fcarrivals') {
       assert.ok(panel.includes('fcarrivals: () => this.goToArrival(),'), 'the delegate entry');
+    } else if (n === 'fcsavedgo') {
+      assert.ok(panel.includes('fcsavedgo: () => { const out = this.savedOut;'), 'the saved line\'s delegate entry');
     } else {
       assert.ok(panel.includes(n + '(') || model.includes(n + '(') || panel.includes(n + ' ') || panel.includes(n + ';') || panel.includes(n + ','), `${n} is a function or a field of the panel or the model`);
     }
@@ -71,15 +74,21 @@ test('the events the paragraph lists are the constructor\'s listeners, and the g
   assert.ok(note.includes('a save, a send; never a timer'));
   const body = panel.slice(panel.indexOf('gesture(ev?: Event): void {'), panel.indexOf('private entryShown('));
   assert.ok(!/setTimeout|setInterval|Date\.now/.test(body), 'no timer in the gesture');
-  assert.ok(panel.includes('this.gesture();\n    const pressed = this.gestures;'), 'the save counts itself and samples the count');
+  assert.ok(panel.includes('this.gesture();\n    let r: Status | null;'), 'the save counts itself as a gesture, and samples no count: nothing stands down since nothing scrolls (decision 43)');
   assert.ok(panel.includes('this.gesture();                                    // a send is a gesture'), 'the send counts itself');
 });
 
-test('the save\'s stand-down is as the paragraph states it: the count stood AND the card not whole in the box; the card the focus either way', () => {
-  assert.ok(note.includes('scrolls only if the count stood'));
-  assert.ok(note.includes('AND the saved card is not already whole in the track\'s box (`cardWhole`'));
-  assert.ok(/if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}\n\s*if \(this\.margin\) this\.focusOn\(key\);/.test(panel));
-  assert.ok(note.includes('the card still becomes the focus for the layout (`focusOn`)'));
+test('the save is as the paragraph states it: the stand-down is recorded as history, a save never scrolls (decision 43), the card is the focus, and the line at the foot says where the card is', () => {
+  assert.ok(note.includes('scrolled only if the count stood'), 'the stand-down, as history');
+  assert.ok(note.includes('Decision 43 (the seen follow-on, the same day) retired the scroll'));
+  assert.ok(note.includes('`landSaved` makes the saved card the focus for the layout (`focusOn`)'));
+  assert.ok(note.includes('"Saved · the card is above"'));
+  const land = panel.slice(panel.indexOf('private landSaved('), panel.indexOf('private cardWhere('));
+  assert.ok(/if \(this\.margin\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);\n\s*if \(side === null\) return false;/.test(land), 'the focus, then the side');
+  assert.ok(!/scrollCard|scrollBoth|scrollIntoView|centerOn|showLoose/.test(land), 'nothing in the landing scrolls');
+  assert.ok(!/this\.gestures/.test(panel), 'the count went with the scroll it judged');
+  assert.ok(panel.includes('fcsavedgo: () => { const out = this.savedOut; this.savedOut = null; if (out) this.scrollCard(out.key); this.reflect(); },'), 'the line\'s click scrolls, and ends the line');
+  assert.ok(model.includes('return "Saved · the card is " + side;'), 'the words are the model\'s');
 });
 
 test('the Send confirm\'s words and the notice\'s are the model\'s', () => {
@@ -103,15 +112,15 @@ test('the Tests section and the Docs section carry the follow-on, naming the sam
   assert.ok(docs.includes('With the arrivals follow-on (2026-09-09), that a line under the panel\'s header counts what the session added since you last looked'));
   const files = guide.replace(/\s+/g, ' ');
   assert.ok(files.includes('A line under the panel\'s header counts the changes, comments, and replies the session added since you last looked'));
-  // The save sentence is taken from the guide by its opening, not quoted whole: the arrivals review's first round rewrote
-  // it to name every gesture the panel counts (a click, a tap, a key, not scrolling alone), and a pin holding the first
-  // wording went red for a sentence that had only got more accurate. tests/test_guide_files_save_standdown.py derives
-  // the words from the constructor's listeners; this pin holds the sentence's opening and its round-1 clause, and
-  // refuses the first wording, so the two suites agree on which sentence the guide carries.
-  const save = files.match(/Saving brings the new card into view[^.]*\./);
-  assert.ok(save, 'the guide\'s save sentence');
-  assert.ok(save[0].includes('unless you scrolled, clicked, tapped, or pressed a key while the save was under way'), save[0]);
-  assert.ok(!save[0].includes('unless you scrolled on'), 'the first wording named scrolling as the only stand-down: ' + save[0]);
+  // The save sentences are taken from the guide by their opening, not quoted whole: the arrivals review's first round rewrote
+  // the sentence to name every gesture the panel counts, and a pin holding the first wording went red for a sentence that had
+  // only got more accurate; decision 43 then replaced the scroll with the line at the panel's foot. tests/test_guide_files_save_line.py
+  // derives the gesture words from the constructor's listeners; this pin holds the opening and the line's clause, and refuses
+  // the two earlier wordings, so the suites agree on which sentences the guide carries.
+  const save = files.match(/Saving leaves the text where it is\. When the new card lands out of view[^.]*\./);
+  assert.ok(save, 'the guide\'s save sentences');
+  assert.ok(save[0].includes('your next scroll, click, tap, or key'), save[0]);
+  assert.ok(!files.includes('Saving brings the new card into view'), 'the scroll wordings are gone: a save never moves the view (decision 43)');
 });
 
 test('the seed is stated as built: the first render and the first status with the panel open both seed the set, and the rule reads the author label alone', () => {

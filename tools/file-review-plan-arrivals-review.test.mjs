@@ -83,7 +83,7 @@ test('the arrivals paragraph, decision 40 and the Docs sentence speak of the use
   // The base plan's attribution shape is "(the user <date>: …)"; the panel and the model carried neither word before.
   const SPEAK = [
     ['ui', 'webview', 'file-comments.ts'], ['ui', 'webview', 'file-comments-model.ts'], ['tools', 'file-comments-host.mjs'],
-    ['tests', 'test_kernel_file_comments_note.py'], ['tests', 'test_guide_files_arrivals.py'], ['tests', 'test_guide_files_save_standdown.py'],
+    ['tests', 'test_kernel_file_comments_note.py'], ['tests', 'test_guide_files_arrivals.py'], ['tests', 'test_guide_files_save_line.py'],
     ['tests', 'test_context_send_note.py'],
   ];
   for (const f of fs.readdirSync(path.join(REPO, 'ui', 'webview'))) {
@@ -100,11 +100,11 @@ test('the arrivals paragraph, decision 40 and the Docs sentence speak of the use
   assert.ok(d40.includes('a text box for anything they want to add takes its place'));
 });
 
-test('the Docs sentence names the gestures the guide\'s save sentence names, and the panel listens for each', () => {
-  const gestures = 'unless you scrolled, clicked, tapped, or pressed a key';
-  assert.ok(docs.includes('and that a save brings the new card into view ' + gestures + ' meanwhile (`tests/test_guide_files_arrivals.py` holds both sentences to the panel)'));
-  const save = guide.replace(/\s+/g, ' ').match(/Saving brings the new card into view[^.]*\./);
-  assert.ok(save, 'the guide\'s save sentence');
+test('the Docs sentence names the gestures the guide\'s save sentences name, and the panel listens for each', () => {
+  const gestures = 'your next scroll, click, tap, or key';
+  assert.ok(docs.includes('and that a save leaves the text where it is, a line at the panel\'s foot saying whether the new card is above or below until ' + gestures + ', its click bringing the card into view (`tests/test_guide_files_arrivals.py` holds both sentences to the panel)'));
+  const save = guide.replace(/\s+/g, ' ').match(/Saving leaves the text where it is\. When the new card lands out of view[^.]*\./);
+  assert.ok(save, 'the guide\'s save sentences');
   assert.ok(save[0].includes(gestures), 'the guide names the same gestures: ' + save[0]);
   assert.ok(panel.includes('for (const ev of ["pointerdown", "keydown"]) row.addEventListener(ev, (e) => this.gesture(e), true);'), 'clicked, tapped, pressed a key');
   assert.ok(panel.includes('for (const ev of ["wheel", "touchmove"]) row.addEventListener(ev, (e) => this.gesture(e), { capture: true, passive: true });'), 'scrolled');

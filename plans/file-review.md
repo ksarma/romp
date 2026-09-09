@@ -1733,15 +1733,24 @@ day) ended the host's resolve-on-accept, so nothing leaves the visible list on a
 seen follow-on below). The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
-the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
-save as a gesture and samples the count (`gestures`) when Save is pressed; when the reply lands, `scrollToSaved`
-scrolls only if the count stood (no gesture of theirs in between; the event is the person's own input, never a time
-window) AND the saved card is not already whole in the track's box (`cardWhole`: a card in view needs no scroll; a
-whole-file comment's card at the top of the track with the text scrolled down does); standing down, the card still
-becomes the focus for the layout (`focusOn`), so it lands level with its mark wherever that is, and nothing scrolls;
-the composer's acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
+the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built first: `saveComposer` counted
+the save as a gesture and sampled the count when Save was pressed, and when the reply landed the save scrolled only if
+the count stood (no gesture of theirs in between) and the saved card was not already whole in the track's box.
+Decision 43 (the seen follow-on, the same day) retired the scroll: a save never moves the view, the count went with the
+scroll it judged, and `landSaved` makes the saved card the focus for the layout (`focusOn`), so it lands level with its
+mark wherever that is. When the card is not whole in view once the save's status has landed (`cardWhere`: the placed
+top and height against the track's scroll and box in the margin layout, the card's box against the aside's in the
+list), the sent note's position at the panel's foot reads "Saved · the card is above" or "below" (`savedLine`; the words
+are the model's, `savedWhereWords`), a button whose click scrolls the card into view as the focus (`fcsavedgo`:
+`scrollCard`). The side is latched at the landing (`savedOut`), since a render swaps in a card list the pass has not
+sized yet and the track's scroll reads 0 until it has, and re-read where the geometry is settled, at the end of a pass
+and at a scroll (`reflectLines`, through the row's press hold as the arrivals line is: a line leaving the Send section
+moves the Send button under a pointer); the line ends there when the card is in view, and at the person's next gesture
+(`gesture`; a press on the line itself excepted, its click being what it is for). No timer. The composer's
+acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
 `file-comments-arrivals.test.ts` (the stand-in: both rules driven), `file-comments-arrivals-browser.test.ts` (Chromium
-and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel) and
+and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel),
+`tests/test_guide_files_save_line.py` (the save sentences' gesture words derived from the listeners) and
 `tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
 
 ### Slice 3: region comments on images
@@ -2358,12 +2367,16 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   on a status landing, none for the person's own writes or the first status; seen by a wheel, a key,
   a press and a touch move, in the track's box only, never by time; the line's click and its own
   press; the accept option's words; the set across a repaint, a status and a close and reopen; the
-  save's scroll standing down on each gesture kind, still scrolling when nothing happened and the
-  card is out of view, and not for a card whole in the box);
+  save moving nothing whatever came between Save and the reply, the saved card the focus, the line
+  at the foot for a card below or above the box, its words following the card between renders, its
+  click, its end at a gesture, under a held press at the release, and when the card comes into view,
+  and no line for a card in view or for one the reply's store cannot name);
   `file-comments-arrivals-browser.test.ts` measures both in Chromium and Firefox (the line in the
   accent with its dot, the dots on the cards' heads and the marks, a real wheel marking the arrival
-  in the box seen; a whole-file comment's save bringing the text to its card, and not after a
-  wheel); `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  in the box seen; a whole-file comment's save moving nothing, the line at the foot in the sent
+  note's green, a real wheel ending it, and its click bringing the text to the card);
+  `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  `tests/test_guide_files_save_line.py` derives the save sentences' gesture words from the listeners;
   `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
   modules it names; `tools/file-review-plan-send-note-close.test.mjs` holds decision 40's sentences on
   the viewer's close guard (the composer's comment and the Send box's note each asked about) to the panel's
@@ -2464,9 +2477,10 @@ panel and both sheets); with the focus follow-on (2026-09-08), that the card you
 passage whatever stands above it and that a long card folds to a few lines with Show more at its foot
 (`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
 With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
-last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
-view unless you scrolled, clicked, tapped, or pressed a key meanwhile (`tests/test_guide_files_arrivals.py` holds both
-sentences to the panel). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending changes
+last looked, with a dot on each until you scroll or click with it in view, and that a save leaves the text where it is,
+a line at the panel's foot saying whether the new card is above or below until your next scroll, click, tap, or key,
+its click bringing the card into view (`tests/test_guide_files_arrivals.py` holds both sentences to the panel). With
+the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending changes
 you have seen and says how many unseen ones stay pending (`tests/test_guide_files_seen.py` holds the sentence to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
@@ -2648,6 +2662,14 @@ document stands on its own, each with the reasoning it was given.
     before. With nothing resolved by an accept, the confirm's "resolves M comments" clause and the acknowledgment
     line's "moved to Resolved" tail are retired.
 
+43. **A save never moves the view; a line says where the card is** (2026-09-09). The user's ruling on the save's
+    scroll, which the arrivals follow-on had stand down once they had moved on: no scroll after a save at all, even
+    when the new card lands out of view, because a scroll is disruptive; they accept that the person may then have to
+    look for the card. Built: the save makes the card the focus for the layout and scrolls nothing. When the card is
+    not whole in view once the save's status has landed, the sent note's position at the panel's foot reads "Saved ·
+    the card is above" or "below", a button whose click scrolls the card into view; the line ends at the person's next
+    gesture or when the card comes into view, never on a timer. The arrivals follow-on under Slice 2 has the build.
+
 ## Open questions for the user
 
 Every question raised by this document, by its reviews, or in the design interview has been ruled
@@ -2658,8 +2680,8 @@ anchor, a region whose figure has not loaded) stands at the top of the track, wh
 of view for a reader anywhere but the top of the text; the follow-on's third review confirmed that and
 proposed a pinned band between the composer and the track for those cards, in the list's order, with
 its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than
-landing with the review's fixes (the save's scroll, `showLoose`, already brings a whole-file comment's
-card into view). The focus follow-on (2026-09-08) adds to the question: the group joins the chain of cards
+landing with the review's fixes (the saved line's click, through `showLoose`, brings a whole-file comment's card into
+view on request; the save itself moves nothing since decision 43). The focus follow-on (2026-09-08) adds to the question: the group joins the chain of cards
 a focus moves up, as far as the track's start, and the cards at its end that do not fit above the focused
 card are laid below it — so a focus near the top of the text can put a whole-file comment's card under the
 focused card rather than at the top (as first built the group was moved above the start, where no scroll

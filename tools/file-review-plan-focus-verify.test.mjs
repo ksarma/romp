@@ -71,12 +71,12 @@ test('the chain\'s clause is stated for the re-lay: a card the chain never reach
 
 // ── the save's focus ───────────────────────────────────────────────────────────────────────────────────────────────
 
-test('the save\'s setter is recorded on scrollCard\'s path, as the panel has it: scrollToSaved reaches scrollCard with no gesture before it, and scrollCard makes the card the focus', () => {
+test('the save\'s setter is recorded on scrollCard\'s path as the verification review had it; since decision 43 landSaved sets the focus itself, with no gesture before it, and scrollCard keeps its setter for the saved line\'s click', () => {
   assert.ok(note.includes('the save\'s is the one on `scrollCard`\'s path — `scrollToSaved` reaches it with no gesture before it, so a reply saved on an open card that is not the focus, pushed under a tall change card whose mark was clicked after the card opened, lands level with its mark and not where the push-down rule left it, a viewport below: the verification review, 2026-09-09'));
   assert.ok(note.includes('the card a save landed in'), 'the save stands among the focus setters the paragraph lists');
-  assert.ok(/private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string, still: boolean\): void \{\n\s*const saved = [^\n]*\n\s*if \(saved === null\) return;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}/.test(panel), 'scrollToSaved calls scrollCard with no gesture of its own before it (the arrivals follow-on\'s stand-down is a check on the count and the box, not a gesture)');
+  assert.ok(/private landSaved\(c: Composer, had: Set<string>, r: Status, note: string\): boolean \{\n\s*const saved = [^\n]*\n\s*if \(saved === null\) return false;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(this\.margin\) this\.focusOn\(key\);/.test(panel), 'landSaved makes the card the focus with no gesture of its own before it (the scroll it once made through scrollCard went with decision 43)');
   assert.ok(/scrollCard\(id: string\): void \{\n\s*if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel), 'scrollCard sets the focus first');
-  assert.ok(panel.includes('The save is the caller that needs the focus set HERE (scrollToSaved)'), 'the panel\'s docstring says why the setter is here');
+  assert.ok(panel.includes('save itself scrolled here (before decision 43) it was the one caller with no setter before it'), 'the panel\'s docstring says why the setter is here');
 });
 
 // ── the hosted comment's fold ──────────────────────────────────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ const ROUND = [
     'test("over a grid of fixtures: every pushed card sits a gap under the card placed above it — no leader claims a push no card makes — and the reach rule\'s invariants hold"',
   ] },
   { file: 'ui/webview/file-comments-focus-verify.test.ts', holds: [
-    'test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark and centered, the tall change card above moved up',
+    'test("a reply saved on an open card that is NOT the focus makes that card the focus: level with its mark, the tall change card above moved up',
     'test("a change card\'s hosted comment folds with the card: its run of turns is marked cut and scrolled to its end, and the card\'s one Show more lifts it with the change\'s text',
     'test("the fold\'s choice survives a re-render a STATUS drives:',
     'test("vocabulary: this module\'s own prose says file comment and run of turns;',
