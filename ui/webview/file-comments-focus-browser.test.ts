@@ -39,7 +39,7 @@ function bundle(): string {
   });
   return r.outputFiles[0].text;
 }
-/** The sheet's rules the layout lives under: the body, the rendered prose, the buttons, and the whole file-comments block
+/** The sheet's rules the layout lives under: the body, the rendered prose (the headings as the document type scale writes them), the buttons, and the whole file-comments block
  *  (the row, the aside and its fold, the panel, the cards, the highlights, the margin layout and the fold of a tall card). */
 function sheet(): string {
   const a = FEED.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
@@ -50,7 +50,7 @@ function sheet(): string {
     assert.ok(m, "a rule for " + sel + " in feed.css");
     return m![1];
   };
-  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
+  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), rule(".fileview-md h1"), rule(".fileview-md h1, .fileview-md h2"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>

@@ -1385,7 +1385,7 @@ a card returns the keyboard to the button; the composer's controls keep the one 
 the render after its Save comes back (the verification review's second round, 2026-09-09: `render` dropped the memory
 at its start and `refocus` re-armed it only on the way to the nearest place, so it lasted one render — the toggle was
 forgotten on the first status while the columns stayed narrow, and the render after they came back left the keyboard
-on the card's head, where Enter folds the card).
+on the card's head, where a press folds the card).
 Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused card, the
 cards above shifting only as needed, the cards below unchanged, the loose group joining the chain as far as the start,
 and no focus, a loose focus and an unknown focus giving the old result), `file-comments-focus.test.ts` (the panel over
