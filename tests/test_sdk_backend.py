@@ -5918,19 +5918,36 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertTrue(s.backend.set_env(self.SID, {"X": "1"}))
         self.assertTrue(any("env (web): per-session env set (X); reconnect held for 1 subagent and 0 background tasks"
                             in str(m) for m in self.logs), self.logs)
-        # the CLI refusing fast on a flagged connection relaunches flagless: that reconnect is the fast
-        # surface's, so the arm line names it
+        # the CLI refusing fast on a flagged connection relaunches flagless: that reconnect is a restore of the
+        # fast mode control, not a fast pick (the toast has just said the pick is back off), so it records its
+        # own surface, fast-reset, and the arm line names the restore. Recorded as "fast" until review round
+        # 3b (2026-09-09), a held relaunch read as a waiting fast pick in the chat and in this line
         s = self._sess()
         s.fast_opt = True
         self._start(s, "a1")
         s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
         self.assertFalse(s._reconnect); self.assertTrue(s._reconnect_when_idle)
-        self.assertIn("fast", s._reconnect_surfaces)
+        self.assertFalse(s.fast_opt, "the refusal clears the ask, so the arm's fast flip has nothing to key on")
+        self.assertIn("fast-reset", s._reconnect_surfaces)
+        self.assertNotIn("fast", s._reconnect_surfaces)
+        self.assertEqual(s._pick_held()["surfaces"], ["fast-reset"])
         self._stop(s, "a1")
         self._settle(s)
         armed = self._armed()
         self.assertEqual(len(armed), 1, self.logs)
-        self.assertIn("the held fast pick reconnects now", armed[0])
+        self.assertIn("the held fast mode restore reconnects now", armed[0])
+        self.assertNotIn("fast pick", armed[0])
+        self.assertEqual(s.fast, "off", "no flip: the relaunch is flagless")
+        # a pick held beside the relaunch: the line names the pick and the restore, in that order
+        s = self._sess(effort="high")
+        s.fast_opt = True
+        self._start(s, "a1")
+        s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
+        s.backend.set_effort(self.SID, "max")
+        self.assertEqual(s._pick_held()["surfaces"], ["effort", "fast-reset"])
+        self._stop(s, "a1")
+        self._settle(s)
+        self.assertIn("the held effort pick and fast mode restore reconnect now", self._armed()[0], self.logs)
 
     def test_g4_a_raising_log_callback_never_escapes_the_hook_or_the_settle(self):
         # the arm helper logs through the kernel's bare callback from a hook and from the settle's finally;
@@ -6432,17 +6449,18 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         out = self._settle(s)
         self.assertFalse(out["reconnect"]); self.assertFalse(out["deferred"])
         # an UNLOCKED connection takes off as a live send and cancels nothing: the refusal relaunch pends
-        # "fast" on a flagged connection, and a live off must leave that reconnect standing
+        # its own surface, fast-reset, on a flagged connection (review round 3b, 2026-09-09; "fast" before),
+        # and a live off must leave that reconnect standing
         s = self._sess()
         s.thread = mock.Mock(is_alive=lambda: True)
         s.fast = "off"; s._fast_unlocked = True
         s.fast_opt = True
         self._start(s, "a1")
         s._adopt_fast_state({"fast_mode_state": "off", "fast_mode_disabled_reason": "extra_usage_disabled"})
-        self.assertTrue(s._reconnect_when_idle); self.assertIn("fast", s._reconnect_surfaces)
+        self.assertTrue(s._reconnect_when_idle); self.assertIn("fast-reset", s._reconnect_surfaces)
         self.assertTrue(s.backend.set_fast(self.SID, "off"))
         self.assertTrue(s._reconnect_when_idle, "the flagless relaunch still waits")
-        self.assertIn("fast", s._reconnect_surfaces)
+        self.assertIn("fast-reset", s._reconnect_surfaces)
         self.assertEqual(s.pending(), ["/fast off"], "the unlocked branch is untouched: a live send")
 
     def test_l4_a_withdrawn_pick_leaves_another_held_pick_and_its_reconnect_standing(self):

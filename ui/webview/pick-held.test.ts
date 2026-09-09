@@ -81,3 +81,34 @@ test("no turn open once the work is done: the copy names the session's NEXT turn
   // a payload without the bit keeps today's copy
   assert.equal(pickHeldLine({ surfaces: ["effort"], subagents: 0, tasks: 0 }), "The effort pick applies when this turn finishes");
 });
+
+test("the refused opt-in's flagless relaunch is a restore, not a pick: the line says the fast mode control is restored", () => {
+  // the kernel records the "fast-reset" surface for the relaunch _adopt_fast_state requests when the CLI
+  // refuses an armed fast opt-in. Recorded as "fast" until review round 3b (2026-09-09), a held relaunch
+  // read "The fast mode pick is waiting on ..." right after the toast had said the pick is back off. The
+  // copy never says a pick waits and never mentions a badge: the kernel blanks the fast badge while the
+  // refusal's reason stands, so no held mark or tip renders during this hold
+  const running = { surfaces: ["fast-reset"], subagents: 1, tasks: 0 };
+  const open = { surfaces: ["fast-reset"], subagents: 0, tasks: 0, inflight: true };
+  const idle = { surfaces: ["fast-reset"], subagents: 0, tasks: 0, inflight: false };
+  const older = { surfaces: ["fast-reset"], subagents: 0, tasks: 0 };
+  assert.equal(pickHeldLine(running), "The fast mode control is restored when 1 subagent and 0 background tasks finish");
+  assert.equal(pickHeldLine({ surfaces: ["fast-reset"], subagents: 0, tasks: 2 }),
+    "The fast mode control is restored when 0 subagents and 2 background tasks finish");
+  assert.equal(pickHeldLine(open), "The fast mode control is restored when this turn finishes");
+  assert.equal(pickHeldLine(idle), "The fast mode control is restored when the next turn finishes");
+  assert.equal(pickHeldLine(older), "The fast mode control is restored when this turn finishes");
+  for (const h of [running, open, idle, older]) {
+    assert.doesNotMatch(pickHeldLine(h), /pick|badge|waiting/, "never a waiting pick, never a badge");
+  }
+  // the hover keeps its words: it names the change, not the pick
+  assert.equal(pickHeldTitle(running), "the session reloads to apply the change when they finish; reloading now would cut them off");
+  // beside a held pick the restore is its own clause after the pick's line, and the verbs agree
+  assert.equal(pickHeldLine({ surfaces: ["effort", "fast-reset"], subagents: 2, tasks: 0 }),
+    "The effort pick is waiting on 2 subagents and 0 background tasks; the fast mode control is restored with it");
+  assert.equal(pickHeldLine({ surfaces: ["effort", "fast-reset", "auth"], subagents: 0, tasks: 0, inflight: false }),
+    "The effort and billing picks apply when the next turn finishes; the fast mode control is restored with them");
+  assert.deepEqual(pickHeldSubject({ surfaces: ["fast-reset", "mode"], subagents: 1, tasks: 0 }),
+    { text: "The permission mode pick", plural: false }, "the subject counts picks only");
+  assert.equal(pickKindName("fast-reset"), "fast mode restore");
+});

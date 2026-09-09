@@ -4145,6 +4145,13 @@ _FAST_REFUSALS = {
                             "(claude.ai → Settings → Usage)",
 }
 
+# A reconnect surface that is NOT a user's pick, and the noun the log lines use for it in place of "<name>
+# pick": "fast-reset" is the flagless relaunch _adopt_fast_state requests when the CLI refuses an armed fast
+# opt-in. Recorded as "fast" until review round 3b (2026-09-09), a HELD relaunch read as a waiting fast pick
+# in the chat and the arm's line right after the toast had said the pick is back off; the restore of the
+# fast mode control is what waits. pick-held.ts carries the chat's wording branch for the same surface.
+_RESTORE_SURFACES = {"fast-reset": "fast mode restore"}
+
 
 ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
 
@@ -5106,7 +5113,8 @@ class SdkSession:
         #   in flight, or live work: a subagent, a Workflow run, a background task); the turn settle that
         #   finds it quiet arms it (_arm_reconnect_if_quiet, 2026-09-09)
         self._reconnect_surfaces: set = set()   # which picks asked for the pending reconnect ("effort", "mode",
-        #   "fast", "auth", "env"): the line that reports a held pick arming names them; cleared at the arm
+        #   "fast", "auth", "env", and "fast-reset" for the refused opt-in's flagless relaunch, _RESTORE_SURFACES):
+        #   the line that reports a held pick arming names them; cleared at the arm
         self._reconnect_held_for_work = False   # the pending reconnect is HELD for live work: set when the hold is
         #   first announced (the setter's line, or the loop's), cleared when the arm fires or the loop top takes
         #   the arm. The status readers' pickHeld rides it (snapshot), so it holds through the delivery turn of
@@ -5539,13 +5547,19 @@ class SdkSession:
         return n_sub, n_task
 
     def _pick_names(self) -> list:
-        return [n for n in ("effort", "mode", "fast", "auth", "env") if n in self._reconnect_surfaces]
+        return [n for n in ("effort", "mode", "fast", "fast-reset", "auth", "env") if n in self._reconnect_surfaces]
 
     @staticmethod
     def _picks_phrase(names: list, one: str, many: str) -> str:
+        """The picks' noun phrase for a log line: "the held effort pick", "the pending effort and auth
+        picks". A surface that is not a pick (_RESTORE_SURFACES) is named by its own noun, alone ("the held
+        fast mode restore") or beside the picks ("the held effort pick and fast mode restore")."""
+        nouns = [_RESTORE_SURFACES.get(n) or ("%s pick" % n) for n in names]
         if len(names) == 1:
-            return "the %s %s pick" % (one, names[0])
-        return "the %s %s and %s picks" % (many, ", ".join(names[:-1]), names[-1])
+            return "the %s %s" % (one, nouns[0])
+        if not any(n in _RESTORE_SURFACES for n in names):
+            return "the %s %s and %s picks" % (many, ", ".join(names[:-1]), names[-1])
+        return "the %s %s and %s" % (many, ", ".join(nouns[:-1]), nouns[-1])
 
     def _held_pick_phrase(self) -> str:
         names = self._pick_names()
@@ -5716,7 +5730,8 @@ class SdkSession:
 
     def _pick_held(self):
         """The status readers' view of a hold (snapshot pickHeld): which picks wait and on how much work,
-        or None. The ONE marker every held kind (effort, mode, fast, auth, env) shows through: the badges
+        or None. The ONE marker every held kind (effort, mode, fast, auth, env, and the refused opt-in's
+        fast-reset relaunch) shows through: the badges
         draw a pending mark and the chat a waiting line off it (review round 2). Held from the hold's
         first announcement (_reconnect_held_for_work, which the setter sets on the kernel thread before
         the loop runs the request, so a read between the two sees the hold) until the arm, so it does not
@@ -6220,7 +6235,13 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("fast mode (%s): could not tell the chat about the refusal: %s"
                                   % (self.name, e))
-            self._reconnect_surfaces.add("fast")   # the flagless relaunch is a fast-surface reconnect
+            # The flagless relaunch is a reconnect of its own, not a fast pick: it records the restore surface
+            # (_RESTORE_SURFACES), so when live work holds it the chat and the arm's line say the fast mode
+            # control is restored, never that a fast pick waits right after this toast said the pick is back
+            # off (review round 3b, 2026-09-09). No fast badge, held mark or tip renders during the hold:
+            # kernel.py blanks the fast badge while fastReason stands. Nothing keys on "fast" for this
+            # relaunch: the arm's optimistic flip is gated on fast_opt, which the refusal cleared above.
+            self._reconnect_surfaces.add("fast-reset")
             self.request_reconnect()
         return changed or refused_ask
 

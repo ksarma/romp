@@ -546,7 +546,10 @@ effort pick applies when this turn finishes" once the work is done, or "applies
 when the next turn finishes" when no turn is open at that point), and the badge
 keeps showing the value the session runs with a small mark beside it.
 The same hold and the same line apply to a permission-mode pick into bypass,
-the first fast-mode opt-in and a billing switch. A pick equal to what the
+the first fast-mode opt-in and a billing switch. When the CLI refuses that
+opt-in, the reload that takes the flag back off is held the same way, and the
+line says the fast mode control is restored when the work finishes, or when
+the turn does once no work is running. A pick equal to what the
 session already runs with (the same effort, the same billing) reloads nothing.
 A Claude Code (tmux) session
 gets the CLI's own command typed into its pane. `/model` there asks for a
