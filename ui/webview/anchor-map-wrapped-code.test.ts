@@ -2,16 +2,19 @@
 // Slice 3 of plans/markdown-viewer.md). The viewer's fences are cut into per-line rows (code-block.ts wrapLinesHtml:
 // `<span class="cl"><span class="ct">…</span></span>` per line) and the wrap drops the newline each row stands for, so a
 // wrapped code element's textContent runs its lines together. The helpers put the newline back between adjacent rows,
-// so a reader of the lines sees the source's structure whether the code was wrapped or not: paintRendered's fallback (a
-// comment across two code lines; the browser leg anchor-map-wrapped-code-browser.test.ts paints it over the real
-// bundle) and Slice 8's mapping; reader-place.ts keeps the code line at the body's top edge as the row under it, whose
-// index among the rows is the line codeLineAt gives any position in that row (one row per line; the Slice 3 review's
-// round 3 retired its hit-test read of a code element with no rows, which the viewer never builds). This
-// node leg drives the helpers over a structural stand-in of the DOM (nodeType, childNodes, parentNode, data,
-// getAttribute: the surface anchor-map.ts walks) built from wrapLinesHtml's own output and from the unwrapped shape, and
-// checks the two shapes read alike. Synthetic values only.
+// so a reader of the lines sees the source's structure whether the code was wrapped or not: paintRendered's fallback
+// builds its hay from codeRuns (a comment across two code lines; the browser leg anchor-map-wrapped-code-browser.test.ts
+// paints it over the real bundle); codeLineAt and codeLineStart are exported for Slice 8's mapping and have no caller in
+// production today (the last test pins that, and that anchor-map.ts's header says so); reader-place.ts keeps the code
+// line at the body's top edge as the row under it, whose index among the rows is the line codeLineAt gives any position
+// in that row (one row per line; the Slice 3 review's round 3 retired its hit-test read of a code element with no rows,
+// which the viewer never builds). This node leg drives the helpers over a structural stand-in of the DOM (nodeType,
+// childNodes, parentNode, data, getAttribute: the surface anchor-map.ts walks) built from wrapLinesHtml's own output and
+// from the unwrapped shape, and checks the two shapes read alike. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { codeRuns, codeText, codeLineAt, codeLineStart } from "./anchor-map";
 import { wrapLinesHtml } from "./code-block";
 
@@ -114,4 +117,18 @@ test("the Raw view's rows read the same way: `.fv-cl` rows are rows too", () => 
   const raw = el("code", "hljs", [el("span", "fv-cl", [el("span", "fv-ct", [text("one")])]), el("span", "fv-cl", [el("span", "fv-ct", [text("two")])])]);
   assert.equal(codeText(D(raw)), "one\ntwo");
   assert.equal(codeLineAt(D(raw), D(raw.childNodes[0].childNodes[0].childNodes[0]), 3), 0); assert.equal(codeLineAt(D(raw), D(raw.childNodes[1].childNodes[0].childNodes[0]), 0), 1);
+});
+
+test("codeLineAt and codeLineStart have no caller in production: exported for Slice 8's mapping, and anchor-map.ts's header says so", () => {
+  // Round 3 of the Slice 3 review retired reader-place.ts's calls, the last in production, and wrote that the two stay
+  // for paintRendered's fallback, which reads codeRuns and neither of them (the final fixes after round 3). The header
+  // now says what is true; this pin keeps it true: a caller added later fails here until the header and the plan's
+  // Slice 3 build note (item 9) are updated.
+  const UI = path.resolve(process.cwd(), "..", "ui", "webview");
+  const production = fs.readdirSync(UI).filter((f) => /\.(ts|js)$/.test(f) && !/\.test\.(ts|js)$/.test(f) && f !== "anchor-map.ts" && f !== "real-viewer-leg.ts");
+  const callers = production.filter((f) => /\b(codeLineAt|codeLineStart)\s*\(/.test(fs.readFileSync(path.join(UI, f), "utf8")));
+  assert.deepEqual(callers, [], "a production caller of codeLineAt or codeLineStart appeared: update anchor-map.ts's header (code lines under a wrap) and the plan");
+  const header = fs.readFileSync(path.join(UI, "anchor-map.ts"), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.match(header, /codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for Slice 8's exact mapping of code lines and have no caller in production today/);
+  assert.doesNotMatch(header, /codeLineAt and codeLineStart stay for paintRendered's fallback/, "the fallback reads codeRuns; the round 3 sentence was not true");
 });

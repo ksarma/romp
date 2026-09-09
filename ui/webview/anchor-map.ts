@@ -119,13 +119,16 @@ const isControl = (n: DNode): boolean => hasClass(n, "code-copy");
 //
 // The viewer's fenced code is wrapped in per-line rows (code-block.ts wrapCodeLines: `<span class="cl"><span
 // class="ct">…</span></span>` per line; the Raw view's `.fv-cl` rows are built the same way), and the wrap DROPS the
-// newline each row stands for, so a wrapped code element's textContent runs its lines together. Everything that reads a
-// code block's LINES from a text position reads them through here, and sees the source's line structure whether the code
-// was wrapped or not: paintRendered's fallback below (a comment across two code lines matched its quote, which holds a
-// newline, against a hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md) and Slice 8's
-// exact mapping of code lines. One reading, so the two agree; and reader-place.ts, which keeps the code line at the
-// body's top edge across a paint as the `.cl` row under the edge, counts that row's index as its line, the line
-// codeLineAt gives any position in the row (one row per line; the Slice 3 review's round 3 retired its hit-test read).
+// newline each row stands for, so a wrapped code element's textContent runs its lines together. The helpers below put
+// the newline back, so a reader of a code block's text sees the source's line structure whether the code was wrapped or
+// not. paintRendered's fallback below builds its hay from codeRuns (a comment across two code lines matched its quote,
+// which holds a newline, against a hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md).
+// codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for
+// Slice 8's exact mapping of code lines and have no caller in production today: reader-place.ts read the code line at
+// the body's top edge through codeLineAt until the Slice 3 review's round 3 retired that hit-test read, and now counts
+// the `.cl` row under the edge as its line, the line codeLineAt gives any position in the row (one row per line).
+// anchor-map-wrapped-code.test.ts exercises the two and pins that no production module calls them; a caller added later
+// updates this paragraph and the plan's Slice 3 build note (item 9).
 
 const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl");
 

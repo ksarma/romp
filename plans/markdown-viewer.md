@@ -963,27 +963,30 @@ build's. Where the code as built departs from the text, why, and which test hold
    textContent runs its lines together, and paintRendered's fallback matched a quote holding a newline against a hay
    reading "commentdef" (0 marks for a two-line comment range, where the unwrapped block painted 13). anchor-map.ts
    now reads a code element's lines through one set of helpers, `codeRuns` (the text runs with a newline put back
-   between adjacent `.cl` or `.fv-cl` rows), `codeText`, `codeLineAt` and `codeLineStart`; the fallback builds its hay
-   from them and maps the hit back onto the text nodes, and reader-place.ts reads the code line at the body's top edge
-   and where a line starts off the `.cl` rows themselves, as it reads the Raw rows (the first row whose box ends below
-   the edge, its index the line number, its box's top the line's top). Round 1 read them through the browser's hit
-   test at the first `.ct`'s left edge and `codeLineAt` over the DOM position (the end of one row's text and the start
-   of the next are one offset and two lines once the newline is gone); round 2 found that a blank line's row holds no
-   character, so the hit test read no line and the seat fell to the block fraction, that a Range around the empty row
-   read back a zero-height rect at its baseline, 9px under the row's top, and that a text row read at its glyph's top,
-   2px under the row's, so a code row at the edge came back 14 to 17px off after a Rendered/Raw round trip, walking on
-   some trips (file-view-fence-blank-rows-browser.test.ts: a blank row, rows under one and two blank rows, four cells,
-   three trips each, exact). Round 3 of the review found the hit test kept for a code element with no rows
-   unreachable: its stated case, the math fill's source fallback, opens with `$$` or `\[` and is no code block to
-   codeOf, and every fence and indented block mdBlock builds has rows; the branch went with caretAt, charTop and
-   reader-place's codeLineAt and codeLineStart imports, so a code element with no rows keeps the depth rule
-   (file-view-place-blocks.test.ts pins the rowless read over a document that offers a hit test, and codeOf's refusal
-   of a `$$` or `\[` block). anchor-map's codeLineAt and codeLineStart stay for paintRendered's fallback and Slice 8.
-   After: the two-line range paints marks in rows 0 and 1, the whole fence in its four text rows, a two-line range of
-   a plain fence in both rows, an insertion across lines in two or more rows, and a Rendered selection inside code is
-   still refused with the Raw offer. anchor-map-wrapped-code.test.ts (node, over a stand-in built from the walk's own
-   output) and anchor-map-wrapped-code-browser.test.ts (the real files bundle over anchor-map-fixtures/fenced.md) hold
-   it; the Slice 2 place suites are unchanged and green.
+   between adjacent `.cl` or `.fv-cl` rows) and `codeText`, with `codeLineAt` and `codeLineStart` beside them; the
+   fallback builds its hay from `codeRuns` and maps the hit back onto the text nodes, and reader-place.ts reads the
+   code line at the body's top edge and where a line starts off the `.cl` rows themselves, as it reads the Raw rows
+   (the first row whose box ends below the edge, its index the line number, its box's top the line's top). Round 1
+   read them through the browser's hit test at the first `.ct`'s left edge and `codeLineAt` over the DOM position (the
+   end of one row's text and the start of the next are one offset and two lines once the newline is gone); round 2
+   found that a blank line's row holds no character, so the hit test read no line and the seat fell to the block
+   fraction, that a Range around the empty row read back a zero-height rect at its baseline, 9px under the row's top,
+   and that a text row read at its glyph's top, 2px under the row's, so a code row at the edge came back 14 to 17px
+   off after a Rendered/Raw round trip, walking on some trips (file-view-fence-blank-rows-browser.test.ts: a blank
+   row, rows under one and two blank rows, four cells, three trips each, exact). Round 3 of the review found the hit
+   test kept for a code element with no rows unreachable: its stated case, the math fill's source fallback, opens with
+   `$$` or `\[` and is no code block to codeOf, and every fence and indented block mdBlock builds has rows; the branch
+   went with caretAt, charTop and reader-place's codeLineAt and codeLineStart imports, so a code element with no rows
+   keeps the depth rule (file-view-place-blocks.test.ts pins the rowless read over a document that offers a hit test,
+   and codeOf's refusal of a `$$` or `\[` block). anchor-map's `codeLineAt` and `codeLineStart` stay, exported for
+   Slice 8's exact code-line mapping; nothing in production calls them today (the final fixes after round 3:
+   anchor-map-wrapped-code.test.ts exercises them and pins that no production module calls them, so a caller added
+   later updates this sentence and anchor-map.ts's header). After: the two-line range paints marks in rows 0 and 1,
+   the whole fence in its four text rows, a two-line range of a plain fence in both rows, an insertion across lines in
+   two or more rows, and a Rendered selection inside code is still refused with the Raw offer.
+   anchor-map-wrapped-code.test.ts (node, over a stand-in built from the walk's own output) and
+   anchor-map-wrapped-code-browser.test.ts (the real files bundle over anchor-map-fixtures/fenced.md) hold it; the
+   Slice 2 place suites are unchanged and green.
 10. *Decision 5's grammars.* `ui/webview/viewer-grammars.ts` registers rust (rs), go (golang), c (h), java, sql and
     ini under both `ini` and `toml` (hljs 11 has no toml module; ini.js declares the alias), and file-view.ts imports
     it, so files.js and feed.js gain them through the viewer and the chat bundle through file-view.ts. The chat's
@@ -1093,20 +1096,26 @@ build's. Where the code as built departs from the text, why, and which test hold
     to the keyup) and the hold reads pointer events only, so code-block.ts closes it from the button's side: Copy acts
     on the Space keydown, as Enter does, the key's default prevented, and the chat's Copy gets the same
     (file-view-copy-space-browser.test.ts, the pane and the chat modal). And the Copied acknowledgement goes to the
-    button on screen at the fence's position, carried across a swap inside its 1.2s window on the swap's own event
-    (code-block.ts `acknowledge`: the fence's index among the fenced blocks under each ancestor is read at the press,
-    and a MutationObserver on those ancestors' child lists follows a swap): the held landing swapped the pressed
-    button out a tick after its click and the label had gone to the detached node, so with the async Clipboard API the
-    button on screen never changed and with the execCommand fallback it changed for a frame (round 3;
+    button on screen of the fence with the pressed fence's SOURCE, carried across a swap inside its 1.2s window on the
+    swap's own event (code-block.ts `acknowledge`: the text each Copy copies is recorded on its fence, the ancestors
+    are read at the press, and a MutationObserver on their child lists follows a swap; of several fences with one
+    source, the pressed one's ordinal among them; a write that rewrote or removed the fence acknowledges nothing,
+    since the clipboard holds the old text and no fence on screen is the one copied): the held landing swapped the
+    pressed button out a tick after its click and the label had gone to the detached node, so with the async Clipboard
+    API the button on screen never changed and with the execCommand fallback it changed for a frame (round 3;
     file-view-copy-ack-browser.test.ts pins the real Clipboard API on a secure origin and the fallback on the pane and
-    the chat modal). And readPlace's top-block reads take an element showing under a pixel as not the top one
-    (`edge + 1`, was 0.5): the browser snaps scrollTop to whole pixels, so a seat lands a block up to half a pixel
-    from where it asked, and at the chat's end under the new leading a paragraph's last line seated 0.525px under the
-    edge landed at 0.64 and was read back as the top block (file-view-place-blocks-browser.test.ts's bottom scene,
-    whose scrollTop pin is exact again and names the top block by position as well as by text, since every blank Raw
-    row reads as the same empty text). The prose leading, measured in round 1 and set in round 2: the slice declared
-    none, so the note took the body's, 1.6 on the pane and the chat and 1.5 on the feed (a 101-line paragraph 2416
-    against 2265px; the same note 6 percent taller on two surfaces than on the third), and the text named none;
+    the chat modal, over writes that keep the fence). Round 3 read the fence's index among the fenced blocks under
+    each ancestor, so a write that put a fence above the pressed one marked the new fence Copied and one that removed
+    the pressed fence marked whichever fence took its index (the final fixes, 2026-09-09;
+    file-view-copy-held-browser.test.ts scenes 5 to 7: the fence moved, removed, and one of two identical fences;
+    scene 1 over a rewritten fence). And readPlace's top-block reads take an element showing under a pixel as not the
+    top one (`edge + 1`, was 0.5): the browser snaps scrollTop to whole pixels, so a seat lands a block up to half a
+    pixel from where it asked, and at the chat's end under the new leading a paragraph's last line seated 0.525px
+    under the edge landed at 0.64 and was read back as the top block (file-view-place-blocks-browser.test.ts's bottom
+    scene, whose scrollTop pin is exact again and names the top block by position as well as by text, since every
+    blank Raw row reads as the same empty text). The prose leading, measured in round 1 and set in round 2: the slice
+    declared none, so the note took the body's, 1.6 on the pane and the chat and 1.5 on the feed (a 101-line paragraph
+    2416 against 2265px; the same note 6 percent taller on two surfaces than on the third), and the text named none;
     `.fileview-md` now declares `line-height: 1.5` (GitHub's) in both sheets, so the three surfaces set a line the
     same and a paragraph is the same height wherever the note is shown. file-view-prose-leading-browser.test.ts
     measures the ratio and the paragraph on the three surfaces at 100 and 115 percent, and pins the declaration in

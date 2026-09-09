@@ -9,6 +9,9 @@
 // success and every reason to click again (ui/CLAUDE.md, always acknowledge). code-block.ts writes the acknowledgement
 // to the button at the fence's POSITION under the nearest ancestor the swap left in place, and follows it across a swap
 // inside the window on the swap's own event (a MutationObserver on the ancestors' child lists, alive for the window).
+// The button is the one of the fence with the pressed fence's SOURCE (the final fixes after round 3: round 3 read the
+// fence's index, which a fence inserted above shifted), so every write here rewrites the prose and keeps the fence; a
+// write that rewrites or removes the fence acknowledges nothing (file-view-copy-held-browser.test.ts scenes 1, 5 and 6).
 // Three scenes over the real viewer (real-viewer-leg.ts): (1) the real Clipboard API on a secure origin (localhost, the
 // clipboard permissions granted), the pane: mousedown on Copy, the reload lands parked, mouseup: the clipboard holds the
 // text the reader pressed on, the button on screen after the swap reads Copied, and the window's close resets THAT button;
@@ -23,12 +26,12 @@ import { inBrowser, openViewer, pageHtml, frames, paintsReach, REPORT, SID, MT2,
 
 const F = "```";
 const FENCE1 = "# a comment\ndef f(x):\n    return x + 1";
-const FENCE2 = "# a comment\ndef f(x):\n    return x + 2";
-const FENCE3 = "# a comment\ndef f(x):\n    return x + 3";
 const note = (intro: string, fence: string): string => ["# Report", "", intro, "", F + "python", fence, F, "", "A paragraph after the fence.", ""].join("\n");
+const INTRO2 = "An intro paragraph before the fence, rewritten by a session.";
+const INTRO3 = "An intro paragraph before the fence, rewritten twice.";
 const DOC1 = note("An intro paragraph before the fence.", FENCE1);
-const DOC2 = note("An intro paragraph before the fence, rewritten by a session.", FENCE2);
-const DOC3 = note("An intro paragraph before the fence, rewritten twice.", FENCE3);
+const DOC2 = note(INTRO2, FENCE1);   // the prose rewritten, the fence kept (header)
+const DOC3 = note(INTRO3, FENCE1);
 const DOC_NO_FENCE = ["# Report", "", "A rewrite with no fence in it.", ""].join("\n");
 const MT3 = "1757145600000000019";
 const MT4 = "1757145600000000029";
@@ -102,6 +105,7 @@ test("in a browser (the real Clipboard API, a secure origin): after a held landi
     assert.equal(after.label, "Copied", "the acknowledgement is on the button on screen: the clipboard answered after the swap, so it is written to the button at the fence's position under the ancestor the swap kept, not to the pressed node (code-block.ts acknowledge)");
     assert.equal(after.copied, true, "with the copied class");
     assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, "over the new bytes");
+    assert.equal(await page.evaluate(() => (document.querySelector(".fileview-md p")!.textContent || "").trim()), INTRO2, "the write's prose is on screen: the swap happened");
     // the window closes on the button it acknowledged: the one on screen
     await page.waitForFunction((sel: string) => document.querySelector(sel)!.textContent === "Copy", BTN, { timeout: 5000 }).catch(() => null);
     const reset = await shown(page);
@@ -143,8 +147,8 @@ for (const mode of ["pane", "chat"] as Mode[]) {
       await reload(page, DOC3, MT3);
       await paintsReach(page, pressed.paints + 2);
       const again = await shown(page);
-      assert.equal(again.label, "Copied", "the newest button at the fence carries the acknowledgement for the rest of the window: the position is what is acknowledged, not a node");
-      assert.equal((await page.evaluate(() => (document.querySelector(".fileview-md pre code")!.textContent || "").trimEnd())), FENCE3.replace(/\n/g, ""), "over the second write's bytes");
+      assert.equal(again.label, "Copied", "the newest button of the fence carries the acknowledgement for the rest of the window: the fence's source is what is acknowledged, not a node");
+      assert.equal(await page.evaluate(() => (document.querySelector(".fileview-md p")!.textContent || "").trim()), INTRO3, "over the second write's bytes");
       await page.evaluate((sel: string) => { (window as any).__last = document.querySelector(sel); }, BTN);   // the button the window will close on
       // a landing whose note has no fence: nothing to write on, nothing thrown, and the window closes on the button it last acknowledged
       await reload(page, DOC_NO_FENCE, MT4);
