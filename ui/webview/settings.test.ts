@@ -106,3 +106,16 @@ test("an unknown key in storage is ignored, known keys still merge", () => {
   assert.equal(s.compact, true);
   assert.equal((s as any).future, 42, "merge is shallow — extra keys pass through harmlessly");
 });
+
+// Compact tabs and agents (the user 2026-09-08, whose phone showed about three lines of transcript
+// between the tab strip and the box of background work): OFF by default, so the desktop strip and box
+// render exactly as before the setting existed until the gear opts in. Distinct from `compact`, the
+// transcript's own fold. The class it drives is dense-chrome.test.ts's subject.
+test("Compact tabs and agents defaults OFF (the user 2026-09-08); the opt-in round-trips", () => {
+  assert.equal(DEFAULT_SETTINGS.denseChrome, false);
+  delete store["romp:settings"];
+  assert.equal(loadSettings().denseChrome, false, "a fresh install is undensified");
+  saveSettings({ denseChrome: true });
+  assert.equal(loadSettings().denseChrome, true, "the opt-in survives a reload (localStorage)");
+  delete store["romp:settings"];
+});
