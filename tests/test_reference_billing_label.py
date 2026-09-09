@@ -60,6 +60,13 @@ class TheWarningFormIsTheModules(unittest.TestCase):
 
 
 class TheRetiredFormIsGone(unittest.TestCase):
+    def test_the_switching_paragraph_names_the_applying_texts_the_module_renders(self):
+        # the reference once promised the effort badge's switching dots for a pending billing pick; nothing renders
+        # dots for one, the two applying texts are billing-label.ts's (verification round 3, 2026-09-09)
+        self.assertIn("the menu entry's sub-line reads `applying…`", REFERENCE)
+        self.assertIn('if (f.authPending) return "applying…";', BILLING)
+        self.assertNotIn("switching-dots the effort", REFERENCE)
+
     def test_no_paragraph_promises_the_login_cli_reports_api_key_row(self):
         self.assertNotIn("CLI reports API key)", REFERENCE,
                          "the `Login (CLI reports API key)` row never existed in the code; the how-to carried it "

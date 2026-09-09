@@ -524,8 +524,9 @@ a mystery. A live session's *switching* control is the Billing entry of the
 tab's right-click menu (it left the statusline on 2026-08-09), and that
 control keeps the stricter rule: it exists only when both choices are real (a
 one-option selector is noise). Switching reconnects the session to apply (the
-key rides the launch environment), with the same switching-dots the effort
-badge wears.
+key rides the launch environment); until that reconnect lands, the menu entry's
+sub-line reads `applying…` and the tab hover's Billing row says the pick is
+applying, not confirmed yet.
 
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key` — no fragment of the key, not
