@@ -3,7 +3,7 @@ title: Tab strip, inline layout: a group header or the trail divider whose first
 status: candidate
 where: ui/webview/render.ts (paintTabRowLines counts the inline divider; keepGroupsWithTabs places a .tab-keep-break ahead of a header or divider whose first tab wrapped, on the strip rebuild and the ResizeObserver that already paint the hairlines), ui/webview/styles.css (comments), docs/guide.md; tests ui/webview/tab-row-keep.test.ts (the painter executed over a flex-wrap model), ui/webview/tab-groups.test.ts, tests/test_tab_groups_rows.py
 added: 2026-09-09
-pr:
+pr: 434
 tier: fix
 offered:
 closed:
