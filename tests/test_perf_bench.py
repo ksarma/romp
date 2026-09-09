@@ -431,8 +431,68 @@ class PerfBench(unittest.TestCase):
         self.assertGreater(out["cwd_map"][1]["hits"], 0, "the matching rule counted its hits")
         self.assertIn("build_session_cold:11111111", out["benchmarks"])
         self.assertIn("cwd-map hits: rule 1=0, rule 2=", r.stdout)
+        self.assertIn("jd._proj_dir (cwd-map)", out["neutralized"], "the report says the derivation is wrapped")
         self.assertEqual(_tree_hash(state), before, "the map rewrites nothing in the copy")
         self.assertEqual(out["spawn_attempts"], [], "the git queries against the redacted cwd failed quietly, no tripwire")
+
+    def test_an_exception_out_of_the_candidate_kernel_still_prints_the_census(self):
+        # a --repo whose kernel raises at import (the realistic error of a broken candidate checkout) is
+        # not a BenchError: before the fix it propagated past main() and the census run() had taken was
+        # dropped with it (no census line, no JSON, only the traceback). Now the census prints, the JSON
+        # carries the error beside it, the copy is byte-identical, and the traceback still follows
+        root = self._scratch_root("perf-bench-broken-")
+        state, claude = build_synthetic(root, web_turns=3)
+        repo = os.path.join(root, "broken-repo")
+        os.makedirs(os.path.join(repo, "kernel"))
+        shutil.copy(os.path.join(ROOT, "kernel", "loadsource.py"), os.path.join(repo, "kernel", "loadsource.py"))
+        Path(repo, "kernel", "kernel.py").write_text("raise RuntimeError('synthetic import failure')\n")
+        before = _tree_hash(state)
+        out_json = os.path.join(root, "out.json")
+        r = run_tool(["--state", state, "--claude-dir", claude, "--repo", repo, "--iters", "1", "--json", out_json])
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", r.stdout)
+        self.assertIn("writes shadowed (landed in the private dir, not the copy): none", r.stdout)
+        self.assertIn("(partial: the run stopped on an error)", r.stdout)
+        self.assertIn("perf-bench: RuntimeError: synthetic import failure", r.stderr)
+        self.assertIn("Traceback", r.stderr, "the exception still leaves main() with its traceback")
+        self.assertEqual(_tree_hash(state), before)
+        with open(out_json) as f:
+            out = json.load(f)
+        self.assertEqual(out["error"], "RuntimeError: synthetic import failure")
+        self.assertEqual((out["writes"]["changed"], out["writes"]["new"], out["writes"]["removed"]), (0, 0, 0))
+        self.assertEqual(out["writes"]["shadowed"], [])
+
+    def test_fingerprint_sees_directories_and_symlink_targets(self):
+        # the census fingerprints directories and link targets too: a directory the kernel creates (its
+        # mkdir sites on STATE subdirectories) or a link it retargets is a write into the copy, and one
+        # that records files only would report it as 0 changed, 0 new, 0 removed
+        pb = load_source("perf_bench_fingerprint_under_test", TOOL)
+        root = self._scratch_root("perf-bench-fp-")
+        os.makedirs(os.path.join(root, "sdk"))
+        Path(root, "sdk", "a.json").write_text("{}")
+        os.symlink("sdk", os.path.join(root, "alias"))
+        before = pb.fingerprint(root)
+        self.assertEqual(before["sdk/"], "dir")
+        self.assertEqual(before["alias/"], ("link", "sdk"))
+        os.makedirs(os.path.join(root, "goals"))
+        os.remove(os.path.join(root, "alias"))
+        os.symlink("goals", os.path.join(root, "alias"))
+        diff = pb.fingerprint_diff(before, pb.fingerprint(root))
+        self.assertEqual((diff["changed"], diff["new"], diff["removed"]), (1, 1, 0))
+        self.assertEqual(diff["sample"], ["~ alias/", "+ goals/"])
+
+    def test_install_cwd_map_wraps_nothing_without_rules(self):
+        # the default run pays no extra frame per _proj_dir call; with a rule the wrapper counts its hits
+        pb = load_source("perf_bench_cwdmap_under_test", TOOL)
+        real = lambda d: "proj:" + str(d)
+        jd = SimpleNamespace(_proj_dir=real)
+        self.assertEqual(pb.install_cwd_map(jd, []), [])
+        self.assertIs(jd._proj_dir, real)
+        hits = pb.install_cwd_map(jd, [("/XXXX/XXXXXX", "/repo")])
+        self.assertIsNot(jd._proj_dir, real)
+        self.assertEqual(jd._proj_dir("/XXXX/XXXXXX/notes-api"), "proj:/repo/notes-api")
+        self.assertEqual(jd._proj_dir("/XXXX/XXXXXXX/other"), "proj:/XXXX/XXXXXXX/other", "whole-component match only")
+        self.assertEqual(hits, [1])
 
     def test_cwd_map_refuses_a_malformed_rule(self):
         r = run_tool(["--state", self.state, "--claude-dir", self.claude, "--repo", ROOT, "--cwd-map", "no-equals-sign"])

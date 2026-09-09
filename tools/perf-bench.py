@@ -47,7 +47,7 @@ components before that derivation — `--cwd-map /XXXX/XXXXXX=$HOME` maps
 rule. It touches nothing else: the cwd the chat build hands to its git queries stays the redacted
 one (a directory that does not exist here, so those queries fail as they would on a machine without
 the checkout). A later version of the copy tool will rename the project directories to match;
-until then the map is the way. The no-transcript error names the counts it worked from (live
+until then, use the map. The no-transcript error names the counts it worked from (live
 sessions, hits in the 48 h window and in the 365-day backfill, registry cwds and how many of them
 map to an existing project directory) so a wrong --claude-dir, a redacted cwd and a stale copy read
 differently.
@@ -122,7 +122,7 @@ How the liveness snapshot is reconstructed, and what is approximated:
     builders see ONE world. A live sid with no transcript anywhere is listed in the report; a run
     where neither the window nor the backfill finds a transcript for ANY live sid is an error (a wrong
     --claude-dir, registry cwds a redaction rewrote — see --cwd-map above — or a copy older than the
-    backfill window), raised only after the backfill has had its turn.
+    backfill window), raised only after the backfill has run.
   * Transcripts are read from Claude Code's own directory ($CLAUDE_CONFIG_DIR or ~/.claude), which
     the registry references; `--claude-dir` points at a copy or a synthetic one.
 
@@ -155,9 +155,11 @@ error, never a silent skip):
     (_read_state_json) reads a shadowed file from the shadow — so a read-modify-write such as the
     session order's append of new sids lands once, as it does live, instead of re-firing on every
     build against a file that never changed. A write aimed anywhere else is an error. The copy's
-    files are fingerprinted before the kernel is imported and again at the end, on EVERY exit path,
-    and the output lists what changed (nothing, or a writer this tool does not know about) beside
-    the relative paths that were shadowed.
+    files, directories and symlink targets are fingerprinted before the kernel is imported and again
+    at the end, on EVERY exit path — a guard's error, an exception out of the candidate kernel (at
+    import or inside a builder), Ctrl-C — and the output lists what changed (nothing, or a writer this
+    tool does not know about) beside the relative paths that were shadowed; the JSON, when asked for,
+    is written on those paths too, with the error beside the census.
 
 Verification: run once under `strace -f -e trace=execve,connect`. Expected: the interpreter's own
 execve, plus (without `--no-git`) one execve of git per counted git query and nothing else; connect()
@@ -177,6 +179,7 @@ import pstats
 import pwd
 import re
 import shutil
+import stat
 import statistics
 import subprocess as _real_subprocess
 import sys
@@ -260,7 +263,10 @@ def install_cwd_map(jd, maps):
     derives Claude's project directory from it (whole-component prefix match; the first matching rule
     wins). judge.py resolves _proj_dir by name on every call, so the wrapper is seen by discovery, the
     liveness rows' transcript paths and the chat build alike; nothing else reads the map. Returns the
-    per-rule hit counters (a list the wrapper updates)."""
+    per-rule hit counters (a list the wrapper updates). With no rules nothing is wrapped: the default
+    run's timed rows call the kernel's own _proj_dir, with no extra frame."""
+    if not maps:
+        return []
     real = jd._proj_dir
     hits = [0] * len(maps)
 
@@ -733,16 +739,28 @@ def fmt_profile(title, rows):
 
 # ── state fingerprint (what did the run write) ──────────────────────────────────────────────────
 def fingerprint(state):
+    """Every directory (keyed with a trailing slash), symlink (its target) and file (mtime and size)
+    under the copy, so a directory the kernel creates (its many mkdir sites on STATE subdirectories)
+    or a link it retargets shows in the census beside a changed file."""
     out = {}
     for root, dirs, files in os.walk(state):
         dirs[:] = [d for d in dirs if d != "sdkvenv"]
+        for d in dirs:
+            p = os.path.join(root, d)
+            try:
+                out[os.path.relpath(p, state) + "/"] = ("link", os.readlink(p)) if os.path.islink(p) else "dir"
+            except OSError:
+                continue
         for f in files:
             p = os.path.join(root, f)
             try:
                 st = os.lstat(p)
             except OSError:
                 continue
-            out[os.path.relpath(p, state)] = (st.st_mtime_ns, st.st_size)
+            if stat.S_ISLNK(st.st_mode):
+                out[os.path.relpath(p, state)] = ("link", os.readlink(p))
+            else:
+                out[os.path.relpath(p, state)] = (st.st_mtime_ns, st.st_size)
     return out
 
 
@@ -860,6 +878,8 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._codex_backend = False              # "module unavailable": _codex() returns None, loads nothing
     out["neutralized"] = install_guards(km, sbmod, shadow, rec, no_git=args.no_git)
     map_hits = install_cwd_map(jd, maps)
+    if maps:
+        out["neutralized"].append("jd._proj_dir (cwd-map)")   # the derivation is wrapped: say so in the report
     out["cwd_map"] = [{"from": frm, "to": to, "hits": 0} for frm, to in maps]
     bench = out["benchmarks"] = {}
     profiles = out["profiles"] = {}
@@ -1381,6 +1401,7 @@ def main(argv=None):
     out = {"schema": SCHEMA, "tool": "perf-bench", "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "python": sys.version.split()[0], "iters": args.iters, "sessions_requested": args.sessions}
     rc = 0
+    unexpected = None
     try:
         try:
             run(args, state, mirror_of, out, private)
@@ -1389,6 +1410,13 @@ def main(argv=None):
             # revision that trips a guard late in the run still yields its earlier numbers
             out["error"] = str(e)
             rc = 1
+        except BaseException as e:
+            # a candidate kernel that raises at import or inside a builder, or a Ctrl-C: the census
+            # run() took in its finally is the answer to "what did this do to the copy", so it prints
+            # and the JSON is written before the exception continues out of main() with its traceback
+            out["error"] = "%s: %s" % (type(e).__name__, e)
+            rc = 1
+            unexpected = e
         if out.get("benchmarks"):
             print(render_text(out, args.profile))
         else:
@@ -1397,8 +1425,11 @@ def main(argv=None):
             sys.stderr.write("perf-bench: %s\n" % out["error"])
         if args.json:
             with open(args.json, "w") as f:
-                json.dump(out, f, indent=1, sort_keys=True)
+                json.dump(out, f, indent=1, sort_keys=True, default=repr)   # repr: a half-built row must not mask the error
             print("\njson written to %s%s" % (args.json, " (partial: the run stopped on an error)" if rc else ""))
+        sys.stdout.flush()
+        if unexpected is not None:
+            raise unexpected
     finally:
         shutil.rmtree(private, ignore_errors=True)
         if mirror_root:
