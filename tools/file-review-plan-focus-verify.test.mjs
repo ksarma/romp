@@ -122,6 +122,15 @@ const ROUND = [
   { file: 'tools/file-review-plan-focus-verify.test.mjs', holds: [
     'test(\'the paragraph records the re-lay as the layout does:',
   ] },
+  // the round's second pass (the plan's paragraph credits it after the first round's modules, "from its second round")
+  { file: 'ui/webview/file-comments-focus-verify-2.test.ts', holds: [
+    'test("a head click on a loose card the reach rule laid below the focused card opens it where it stands: the focus stays on the card the person was reviewing',
+    'test("Show more on a loose card laid below the focused card shows its text whole where it stands: the card wears fc-more and grows in place, the focus and the scroll stay',
+    'test("a whole-file comment saved while a card is the focus: the new card joins the loose group\'s end below the focused card, the focus and the tall card\'s lift are kept',
+    'test("the focus clears with the panel\'s close: a reopen lays the cards by the push-down rule',
+    'test("the toggle is remembered for as long as the columns stay narrow: a repaint and a status while the list layout holds leave the keyboard on the card\'s head',
+    'test("a busy Reject is remembered across a repaint during its round trip:',
+  ] },
 ];
 
 test('the paragraph\'s Tests sentence and the Tests section\'s bullet name every module the verification review added', () => {
@@ -142,6 +151,33 @@ for (const m of ROUND) {
     for (const pin of m.holds) assert.ok(src.includes(pin), `${m.file} holds ${JSON.stringify(pin)}`);
   });
 }
+
+// ── the second round's statements: the loose focus, the keyboard's memory, the Show more row's place ───────────────
+
+test('a loose focus is recorded as the pass has it: a focus with no mark leaves the pass\'s focus as it was (laidOn), cleared with the layout', () => {
+  assert.ok(note.includes('A focus written on a LOOSE card — a whole-file comment\'s card opened by its head or its Show more, the card a whole-file comment\'s save landed in — leaves the pass\'s focus as it was: the pass keeps the card it laid the cards on last (`laidOn`)'));
+  assert.ok(note.includes('a gesture on such a card moves nothing, as a head click on a loose card never did, and `layoutOff` clears the memory with the focus'));
+  assert.ok(panel.includes('if (fit && fit.desired === null) this.focusCard = this.laidOn !== null && nodes.has(this.laidOn) ? this.laidOn : null;'), 'the pass falls back to the focus it laid the cards on last');
+  assert.ok(panel.includes('this.laidOn = this.focusCard;'), 'and remembers the one it lays them on now');
+  assert.ok(/this\.focusCard = null;[^\n]*\n\s*this\.laidOn = null;/.test(panel), 'layoutOff clears both');
+  assert.ok(layout.includes('A focus with no mark, or one\n// not among the items, changes nothing.'), 'the rule takes a focus with no mark as none, as the paragraph says');
+});
+
+test('the keyboard\'s memory is recorded as refocus has it: re-armed for a control of the list while the keyboard stays where the panel put it, the composer\'s controls keeping the one render', () => {
+  assert.ok(note.includes('The memory holds for as long as the control is in the list and the keyboard stays where the panel put it, however many renders pass — a repaint, a status — and a busy Accept or Reject is remembered the same way'));
+  assert.ok(note.includes('the composer\'s controls keep the one render, since a save closes the box in the render after its Save comes back'));
+  assert.ok(panel.includes('if (wf && document.activeElement === n && !this.composerBox.contains(wf)) this.wanted = { key: want!, at: n! };'), 'refocus re-arms the memory at the place the keyboard now holds, for a control outside the composer');
+  assert.ok(panel.includes('The composer\'s controls keep the one render'), 'its docstring says why the composer is left out');
+});
+
+test('the Show more row\'s place is recorded as the renderers and placeComposer have it: at the card\'s foot above the action row, a reply\'s box between the row and the buttons, a hosted comment\'s buttons above the change card\'s row', () => {
+  assert.ok(note.includes('The row stands at the card\'s foot above the action row — on a comment\'s card under the run of turns, on a change card after its hosted comments, above Accept and Reject — and a reply\'s box opened on the card stands between the row and the buttons (`placeComposer` puts it before `.fc-actions`)'));
+  assert.ok(/card\.appendChild\(this\.clipRow\(c\.id\)\);[^\n]*\n\s*card\.appendChild\(acts\);/.test(panel), 'renderCard: the row, then the action row');
+  assert.ok(/for \(const cm of c\.comments\) card\.appendChild\(this\.renderHosted\(cm\)\);\n\s*card\.appendChild\(this\.clipRow\(c\.key\)\);/.test(panel), 'renderChangeCard: the hosted comments, then the row');
+  assert.ok(panel.includes('before(host, (Array.from(host.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && n.classList.contains("fc-actions")) || null);'), 'placeComposer: the box before the action row, so after the row');
+  const place = read('ui', 'webview', 'file-comments-reply-place.test.ts');
+  assert.ok(place.includes('["fc-card-head", "fc-body fc-clip", "fc-replies fc-clip", "fc-clip-row", "fc-composer fc-composer-in", "fc-actions"]'), 'the reply-place stand-in asserts the order');
+});
 
 // ── the tree: every focus module named, so a round's module fails here by name ──────────────────────────────────────
 

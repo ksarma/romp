@@ -1318,7 +1318,16 @@ between a spilled tall card and the focus kept the push the tall card had given 
 under its mark wearing a leader up a gutter no card stood in — in the panel's own stand-in, the passage's card under its
 mark with empty track above it, its leader claiming a push the change card, by then below the essay, no longer made). The
 cards below the focus follow the push-down rule from the end of the last card so displaced, as ever from a card's end.
-Without a focus the rule is unchanged. A card the focus moved up past its own mark draws its leader down the gutter
+Without a focus the rule is unchanged.
+A focus written on a LOOSE card — a whole-file comment's card opened by its head or its Show more, the card a
+whole-file comment's save landed in — leaves the pass's focus as it was: the pass keeps the card it laid the cards on
+last (`laidOn`), since a loose card has no mark to be laid level with and the rule takes a focus with no mark as none,
+so writing it laid the whole margin by the push-down rule again, the clicked card at the track's start out of the box
+with nothing scrolling after it and the card the person was reviewing under the tall card again, off its mark (the
+verification review's second round, 2026-09-09: the reach rule lays a loose card the chain cannot fit above the focus
+below it, where a head click reaches it); a gesture on such a card moves nothing, as a head click on a loose card
+never did, and `layoutOff` clears the memory with the focus.
+A card the focus moved up past its own mark draws its leader down the gutter
 (`data-pulled`, `--fc-pull`), as a pushed card draws one up. The focus is set before the render whose pass lays the
 card (`showCard`; the head-click
 listener in `installLayout`; `focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus
@@ -1334,7 +1343,8 @@ track), so the fallback fires for an open card that fits the track with room to 
 the track (the verification review, 2026-09-09: this record had narrowed it to the latter, while
 `file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it). A focused
 card taller than the track has its head cut by the excess alone, the scroll capped where the mark's top would leave the
-body's box. The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
+body's box.
+The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
 ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`); and a pass in the
 list layout clears one too (the review, 2026-09-08: a mark or a head clicked in the list wrote a focus the list had no
 pass to spend, and the flip to the margin layout — a resize, not a click — anchored on it with nothing centered, the
@@ -1351,13 +1361,27 @@ hosted run capped with no fade and, where the change's own text is short, no Sho
 way in); the card's foot then offers Show more (`fcclip`, a `fileview-btn` through the delegate root, hidden as rendered
 until the pass finds a part cut), Show less once open, keyed like the expand state (`openBodies`; the card wears
 `fc-more`) so the choice
-survives a re-render; Show more makes the card the focus and centers its mark, as opening a card does. The list layout
-caps nothing. The keyboard stays on Show more and Show less (the review, 2026-09-08): the row is rendered hidden and the
+survives a re-render; Show more makes the card the focus and centers its mark, as opening a card does.
+The row stands at the card's foot above the action row — on a comment's card under the run of turns, on a change card
+after its hosted comments, above Accept and Reject — and a reply's box opened on the card stands between the row and
+the buttons (`placeComposer` puts it before `.fc-actions`): the box below the turns and above the card's Reply and
+Resolve, as asked on 2026-09-07, with the toggle kept by the text it lifts; a hosted comment's Reply and Resolve so
+stand above the change card's one Show more, which lifts the hosted parts too (the verification review, 2026-09-09,
+raised both orders; recorded as the choice, and the reply-place stand-ins assert the comment card's).
+The list layout caps nothing. The keyboard stays on Show more and Show less (the review, 2026-09-08): the row is rendered hidden and the
 pass shows it, so `render`'s refocus before the pass could not land on the fresh toggle — focus() on an element not
 rendered is a no-op — and the keyboard fell to the body when the toggle was pressed, and on any re-render while it was
 on the toggle; `render` refocuses once more after the pass (`refocus`, `settled`), and where the row stays hidden (the
 list layout) the keyboard goes to the card's head, the toggle remembered and taken back by the next render that shows
-it. Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused card, the
+it.
+The memory holds for as long as the control is in the list and the keyboard stays where the panel put it, however many
+renders pass — a repaint, a status — and a busy Accept or Reject is remembered the same way, so the refusal that keeps
+a card returns the keyboard to the button; the composer's controls keep the one render, since a save closes the box in
+the render after its Save comes back (the verification review's second round, 2026-09-09: `render` dropped the memory
+at its start and `refocus` re-armed it only on the way to the nearest place, so it lasted one render — the toggle was
+forgotten on the first status while the columns stayed narrow, and the render after they came back left the keyboard
+on the card's head, where Enter folds the card).
+Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused card, the
 cards above shifting only as needed, the cards below unchanged, the loose group joining the chain as far as the start,
 and no focus, a loose focus and an unknown focus giving the old result), `file-comments-focus.test.ts` (the panel over
 the review stand-in: the focus set by a highlight click, a
@@ -1396,7 +1420,12 @@ condition — the card's end against the centered scroll, not its height against
 geometry, whose open card fits the track and takes the fallback) and `tools/file-review-plan-focus-verify.test.mjs` (the
 re-lay, the save's focus and the hosted fold as recorded here held to the layout, the panel and the modules this round
 names, and every focus module in the tree — the layout's, the panel's, the guide's and the plan's — named here and in the
-Tests section's bullet, so a round's module fails by name, not in a later consolidation).
+Tests section's bullet, so a round's module fails by name, not in a later consolidation);
+and from its second round, `file-comments-focus-verify-2.test.ts` (the panel over the review stand-in: a head click, a
+Show more and a whole-file comment's save on a loose card the reach rule laid below the focused card leave the layout
+and the scroll as they were, the focus kept on the card the person was reviewing; the keyboard's memory of a control a
+render could not land on — Show less hidden by the fold to the list layout, a busy Reject — held across a repaint and
+a status until the control is back; and the focus cleared by the panel's close, driven through a close and a reopen).
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -2138,6 +2167,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   layout, the panel and these modules, and every focus module in the tree to the paragraph and this bullet (the
   round's commit added modules this section did not name, as the margin follow-on's three review rounds' had; found
   in the round's review, 2026-09-09).
+  From its second round: `file-comments-focus-verify-2.test.ts` (the stand-in: a gesture on a loose card below the
+  focus moving nothing, the keyboard's memory held across the renders that cannot land it, the focus cleared with the
+  panel's close, driven).
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
