@@ -390,6 +390,21 @@ def _far_kernel(status, body, ctype="application/json"):
     return srv
 
 
+def _sdk_reporting(running):
+    """The real SDK backend with running_sids() answering `running` (a list the test may mutate): the set
+    _backend_reports_running reads for a session the live map does not list. owns() and the rest stay the
+    real backend's, so the registry doors behave as they would."""
+    real = km._sdk()
+
+    class _Be:
+        def running_sids(self):
+            return list(running)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+    return _Be()
+
+
 class UnknownSessionRefused(_RouteServer):
     """A name (or id) that resolves to no session is a 404 naming it, on /end, /interrupt and /send
     alike. _sid_of falls back to its input unchanged, so a typo used to mint a phantom sid: /end
@@ -1059,6 +1074,23 @@ class UnknownSessionRefused(_RouteServer):
                 self.assertIn("Couldn't confirm", faileds[0]["text"])
                 self.assertIn("web", faileds[0]["text"], "the toast names the session")
                 self.assertNotIn("tmux", faileds[0]["text"])
+                # the reg cause promises a retry only while a backend reports the session running (its next
+                # flip rewrites the row); nothing runs sid-q here, so both doors name the record and the way
+                # out instead of "Try again" (review round 5, 2026-09-09)
+                self.assertNotIn("try again", resp.get("error", "").lower())
+                self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""))
+                self.assertIn("needs repair or removal", resp.get("error", ""))
+                self.assertNotIn("try again", faileds[0]["text"].lower())
+                self.assertIn("needs repair or removal", faileds[0]["text"])
+                with mock.patch.object(km, "_sdk", lambda be=_sdk_reporting(["sid-q"]): be):
+                    reg_path.write_text(json.dumps({"sid": "sid-q", "alive": True}))
+                    code, resp = self._post("/end", {"id": "sid-q"})
+                    self.assertIn("the session's record could not be read; try again", resp.get("error", ""))
+                    self.assertNotIn("repair", resp.get("error", ""))
+                    del faileds[:]
+                    reg_path.write_text(json.dumps({"sid": "sid-q", "alive": True}))
+                    self.assertTrue(km._drive({"type": "endSession", "id": "sid-q"}, client))
+                    self.assertIn("could not be read. Try again.", faileds[0]["text"])
                 # the probe cause: no reg, a tmux server up, the owner scan fails
                 reg_path.unlink()
                 fake.kill.side_effect = None
@@ -1086,50 +1118,148 @@ class UnknownSessionRefused(_RouteServer):
         # the WS _drive gate (_kernel_knows: names, the SDK registry, the live map) and the HTTP gate
         # (_unknown_session_refusal: names, the live map, then a threadOf reg only) were two predicates
         # with a different third door: a dead non-thread SDK reg with no names/ entry was ended by the
-        # dashboard's endSession op and refused 404 by /end, /interrupt and /send. One predicate now, and
-        # this table holds the two doors to one verdict per state (review round 4, 2026-09-09). The map
-        # _resolve_sid read is what the routes hand the predicate, so the refusal path still scans once.
+        # dashboard's endSession op and refused 404 by /end, /interrupt and /send (review round 4,
+        # 2026-09-09). Round 5 found the doors apart again on a record that will not read: the dashboard
+        # called it a session this kernel does not have (the modal for a foreign sid) where `romp end` said
+        # 503; a names-registered session on such a row passed the WS gate into the tmux fallthrough while
+        # HTTP refused it; a LIVE session on such a row was refused by HTTP and served by WS. One gate now,
+        # _session_gate, and this table holds both doors to a three-way verdict per state: admitted (the op
+        # reaches the backend at both doors), unknown (the WS err frame for a session the kernel has no
+        # record of; HTTP 404) or unreadable (the WS err frame naming the record; HTTP 503; "try again" at
+        # neither, since no writer serves it). A running session is admitted whatever its record reads. The
+        # map _resolve_sid read is what the routes hand the gate, so the refusal path still scans once.
         dead, named, live = ("aaaa1111-2222-3333-4444-555555555555", "bbbb1111-2222-3333-4444-555555555555",
                              "cccc1111-2222-3333-4444-555555555555")
+        bad_thread, bad_named, bad_list = ("dddd1111-2222-3333-4444-555555555555",
+                                           "eeee1111-2222-3333-4444-555555555555",
+                                           "ffff1111-2222-3333-4444-555555555555")
+        bad_live, bad_running = "abab1111-2222-3333-4444-555555555555", "cdcd1111-2222-3333-4444-555555555555"
         sdir = km.jd.STATE / "sdk"
         sdir.mkdir(parents=True, exist_ok=True)
         (sdir / (dead + ".json")).write_text(json.dumps({"sid": dead, "alive": False, "cwd": "/tmp"}))
+        for sid in (bad_thread, bad_named, bad_live, bad_running):
+            (sdir / (sid + ".json")).write_bytes(b"{not json")
+        (sdir / (bad_list + ".json")).write_bytes(json.dumps([1, 2]).encode())
         _register(THREAD_PARENT, "web-parent")
         _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
         _register(named, "named-only")
-        states = (("no record", self.GHOST, False), ("dead SDK reg, no names entry", dead, True),
-                  ("comment thread", THREAD_TSID, True), ("names entry only", named, True),
-                  ("live, unregistered", live, True))
-        refused = []
+        _register(bad_named, "named-bad")
+        _register(bad_live, "live-bad")
+        states = (("no record", self.GHOST, "unknown"),
+                  ("dead SDK reg, no names entry", dead, "admitted"),
+                  ("comment thread", THREAD_TSID, "admitted"),
+                  ("names entry only", named, "admitted"),
+                  ("live, unregistered", live, "admitted"),
+                  ("a reg that will not read, no names entry (a thread's)", bad_thread, "unreadable"),
+                  ("names-registered, dormant, a reg that will not read", bad_named, "unreadable"),
+                  ("a reg that is a JSON list, no names entry", bad_list, "unreadable"),
+                  ("names-registered, a reg that will not read, in the live map", bad_live, "admitted"),
+                  ("a reg that will not read, the SDK backend runs it", bad_running, "admitted"))
+        status = {"admitted": 200, "unknown": 404, "unreadable": 503}
+        frames = []
+        client = {"send": lambda s: frames.append(json.loads(s))}
         fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
-                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {live: {}})), \
-                 mock.patch.object(km, "_refuse_drive", side_effect=lambda c, op, sid, msg: refused.append(sid)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {live: {}, bad_live: {}})), \
+                 mock.patch.object(km, "_sdk", lambda be=_sdk_reporting([bad_running]): be), \
                  mock.patch.object(km, "_end_and_record", lambda sid, be, now, via, fresh=False, why=None: True), \
                  mock.patch.object(km, "_send_or_park", lambda be, sid, text: True), \
                  mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
                  mock.patch.object(km, "_confirm_close_now", lambda sid: None), \
                  mock.patch.object(km, "_send_to_app", lambda app, m: None), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None):
-                for label, sid, admitted in states:
-                    del refused[:]
-                    self.assertTrue(km._drive({"type": "interrupt", "id": sid}, {"send": lambda s: None}))
-                    self.assertEqual(not refused, admitted, "the WS drive gate on %s" % label)
+                for label, sid, expect in states:
+                    del frames[:]
+                    fake.interrupt.reset_mock()
+                    self.assertTrue(km._drive({"type": "interrupt", "id": sid}, client))
+                    errs = [f for f in frames if f.get("type") == "err"]
+                    if expect == "admitted":
+                        self.assertEqual(errs, [], "the WS drive gate on %s" % label)
+                        fake.interrupt.assert_called_once_with(sid)
+                    else:
+                        self.assertEqual(len(errs), 1, "the WS drive gate on %s: %r" % (label, frames))
+                        fake.interrupt.assert_not_called()
+                        text = errs[0]["text"]
+                        if expect == "unknown":
+                            self.assertIn("has no session with id", text, label)
+                        else:
+                            self.assertIn("could not read the record", text.lower(), label)
+                            self.assertIn(km._tilde(str(sdir / (sid + ".json"))), text, label)
+                            self.assertNotIn("no session with id", text, label)
+                            self.assertNotIn("try again", text.lower(), label)
                     for path, body in (("/end", {"id": sid}), ("/interrupt", {"id": sid}),
                                        ("/send", {"id": sid, "text": "hello"})):
                         code, resp = self._post(path, body)
-                        self.assertEqual(code != 404, admitted, "%s on %s answered %s" % (path, label, code))
+                        self.assertEqual(code, status[expect], "%s on %s answered %s %r" % (path, label, code, resp))
+                        if expect == "unknown":
+                            self.assertIn("no live session named", resp.get("error", ""), (path, label))
+                        elif expect == "unreadable":
+                            self.assertIn("could not read the record", resp.get("error", ""), (path, label))
+                            self.assertNotIn("try again", resp.get("error", "").lower(), (path, label))
         finally:
-            for f in (sdir / (dead + ".json"),):
+            for sid in (dead, bad_thread, bad_named, bad_list, bad_live, bad_running):
                 try:
-                    f.unlink()
+                    (sdir / (sid + ".json")).unlink()
                 except OSError:
                     pass
             _rm_thread(THREAD_PARENT, THREAD_TSID)
-            _unregister(THREAD_PARENT)
-            _unregister(named)
+            for sid in (THREAD_PARENT, named, bad_named, bad_live):
+                _unregister(sid)
             km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_a_dormant_sessions_record_that_will_not_read_is_a_503_by_name_too(self):
+        # the failed-read-as-404 class was closed for threads and by id in round 4 and stayed open by name:
+        # a dormant names-registered session's name resolves only through the live map, which list_regs
+        # omits a corrupt row from, so `romp end <name>` answered 404 "no live session named" on every
+        # attempt for a session whose record `romp end <sid>` said it could not read. _resolve_sid hands
+        # back the registered sid for exactly this record (_unreadable_dormant_named), and the gate answers
+        # its 503 (review round 5, 2026-09-09). A dormant session with a READABLE record keeps the by-name
+        # contract: a dormant session is addressed by id, 404 by name and admitted by id.
+        dormant, name = "dddd2222-3333-4444-5555-666666666666", "dormant-web"
+        reg_path = km.jd.STATE / "sdk" / (dormant + ".json")
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        _register(dormant, name)
+        reg_path.write_bytes(b"{not json")
+        fake = mock.Mock()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                for path, body in (("/end", {"name": name}), ("/end", {"name": name, "when": "idle"}),
+                                   ("/send", {"name": name, "text": "hello"}), ("/interrupt", {"name": name})):
+                    code, resp = self._post(path, body)
+                    self.assertEqual(code, 503, (path, body, resp))
+                    self.assertIn("could not read the record for '%s'" % name, resp.get("error", ""), path)
+                    self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), path)
+                    self.assertNotIn("no live session", resp.get("error", ""), path)
+                self.assertNotIn(dormant, km._end_on_idle_load(), "a refused deferred end records no wish")
+                fake.kill.assert_not_called()
+                fake.send.assert_not_called()
+                fake.interrupt.assert_not_called()
+                # the record reads again: by name it is the dormant session it always was, by id admitted
+                reg_path.write_text(json.dumps({"sid": dormant, "alive": False}))
+                km._thread_reg_memo.clear()
+                code, resp = self._post("/interrupt", {"name": name})
+                self.assertEqual(code, 404, resp)
+                self.assertIn("no live session named '%s'" % name, resp.get("error", ""))
+                code, resp = self._post("/interrupt", {"id": dormant})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                fake.interrupt.assert_called_once_with(dormant)
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {dormant})
+            _unregister(dormant)
+            try:
+                reg_path.unlink()
+            except OSError:
+                pass
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
 
     def test_a_record_that_will_not_read_is_a_503_naming_the_read_not_a_404(self):
         # a thread whose reg exists but does not parse was answered 404 "no live session named '<tsid>'"
@@ -1161,6 +1291,11 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertIs(resp.get("ok"), False)
                         self.assertIn("could not read the record", resp.get("error", ""), (bad, path))
                         self.assertNotIn("no live session", resp.get("error", ""), (bad, path))
+                        # no writer serves a retry for a record no backend holds live: the text names the
+                        # file and the way out instead (review round 5, 2026-09-09)
+                        self.assertNotIn("try again", resp.get("error", "").lower(), (bad, path))
+                        self.assertIn(km._tilde(str(reg_path)), resp.get("error", ""), (bad, path))
+                        self.assertIn("drops the session from the board", resp.get("error", ""), (bad, path))
                     self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "a refused deferred end records no wish")
                 fake.kill.assert_not_called()
                 fake.send.assert_not_called()
@@ -1177,6 +1312,8 @@ class UnknownSessionRefused(_RouteServer):
                         self.assertEqual(code, 503, (path, resp))
                         self.assertIn("comment threads' store", resp.get("error", ""), path)
                         self.assertNotIn("no live session", resp.get("error", ""), path)
+                        self.assertNotIn("try again", resp.get("error", "").lower(), path)
+                        self.assertIn(km._tilde(str(km.jd.STATE / "comments")), resp.get("error", ""), path)
                     # a sid the registry holds never reaches the store: a local session wins
                     code, resp = self._post("/interrupt", {"id": "sid-x"})
                     self.assertEqual((code, resp), (200, {"ok": True}))

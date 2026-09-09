@@ -18315,11 +18315,15 @@ def _kernel_knows(sid, live=None):
     names/ entry and live_sessions hides threadOf regs. So is the LIVE set, which both backends report from
     their own view: a session this kernel can see running right now is ours whatever the registry says, and
     that ordering keeps an unreadable names file from ever turning a live session away.
-    False means exactly one thing: no session with this id exists here, so nothing local can act on it.
-    THE one predicate for both client gates, the WS _drive gate and the HTTP control gate
-    (_unknown_session_refusal for /send, /interrupt and /end): a second predicate at the routes (names,
-    the live map, then a threadOf reg only) admitted a dead non-thread SDK reg with no names/ entry at the
-    dashboard's endSession op and refused it 404 at `romp end <sid>` (review round 4, 2026-09-09). `live`
+    False means no record of the session by any of those three reads. Whether that is "no such session" is
+    the caller's verdict once it has asked the reads that can FAIL (an SDK registry entry that exists but
+    will not read, a liveness probe that did not answer): _session_gate, THE one gate for both client doors
+    (the WS _drive gate and the HTTP control gate, _unknown_session_refusal for /send, /interrupt and
+    /end), asks this as its "known" test. A second predicate at the routes (names, the live map, then a
+    threadOf reg only) admitted a dead non-thread SDK reg with no names/ entry at the dashboard's
+    endSession op and refused it 404 at `romp end <sid>` (review round 4, 2026-09-09); the gate then grew
+    the record and liveness verdicts around this one predicate so the doors cannot disagree on a record
+    that will not read either (review round 5). `live`
     is a Sessions.live() map the caller already read (the routes' _resolve_sid scan), consulted in place
     of a fresh scan so a refused request scans once; None scans here. A live-scan exception reads False,
     the refusal, at every caller: _drive then refuses loudly (_refuse_drive's modal, undelivered record and
@@ -18343,6 +18347,76 @@ def _kernel_knows(sid, live=None):
         return False
 
 
+def _backend_reports_running(sid, live=None):
+    """Does a backend report `sid` running right now: the live map (`live`, a map the caller already read,
+    else one scanned here) or the SDK backend's in-flight set (running_sids: its live session threads, a
+    comment thread's included, which the live map hides by design). The liveness half of _session_gate,
+    asked only where a verdict needs it: a running session is admitted whatever its registry row reads,
+    since the row is rewritten from the backend's cache at its next flip and the base served such a
+    session. A failed scan or a backend without the set reads as not running."""
+    sid = str(sid or "")
+    if not sid:
+        return False
+    try:
+        if sid in (live if live is not None else Sessions.live()):
+            return True
+    except Exception:
+        pass
+    be = _sdk()
+    try:
+        return bool(be) and sid in (be.running_sids() or [])
+    except Exception:
+        return False
+
+
+def _unreadable_record_text(sid, who=None):
+    """What both client doors say for a NOT-running session whose SDK registry entry exists but will not
+    read: the record by path (~ for $HOME), that nothing was done, and the way out. Never "try again":
+    no writer serves the retry. Only a flip of a running session (SdkBackend's kill, resume or promote)
+    rewrites the row from the backend's cache, and a running session is admitted instead of refused;
+    _update_reg skips its write on an unreadable row, and list_regs omits it, so a dormant session's
+    broken record stays broken until the file is repaired or removed. Removing it drops the session from
+    the board (the dashboard's revive, which mints a fresh reg, is the other way back) (review round 5,
+    2026-09-09: the 503 promised a retry that no retry could serve)."""
+    return ("could not read the record for '%s': its registry entry %s exists but will not read; nothing was "
+            "done. Repair or remove that file (removing it drops the session from the board)."
+            % (who or sid, _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json")))))
+
+
+_GATE_ADMITTED, _GATE_UNKNOWN, _GATE_UNREADABLE = "admitted", "unknown", "unreadable"
+
+
+def _session_gate(sid, live=None, who=None):
+    """THE one verdict on whether a request that names a session may act here, for both client doors (the
+    WS _drive gate and the HTTP control gate, _unknown_session_refusal, for /send, /interrupt and /end):
+    (verdict, text), the verdict one of _GATE_ADMITTED, _GATE_UNKNOWN and _GATE_UNREADABLE, the text the
+    unreadable refusal carries (None otherwise). In order of precedence:
+      admitted    a backend reports the sid running (_backend_reports_running), whatever its registry row
+                  reads: the row heals at its next flip and the base served such a session; else the
+                  kernel knows it (_kernel_knows: the names registry, the SDK registry via owns(), the live
+                  map), so a dormant session, or a dead one addressed by id, passes to its idempotent end.
+      unreadable  a NOT-running session whose SDK registry entry exists but will not read (_reg_unreadable):
+                  the kernel cannot say whether it knows the session, so it says that, never that no such
+                  session exists (the fail-loudly rule). Asked before _kernel_knows, whose SDK door admits
+                  a body that is JSON but not an object (owns() answers bool(json)).
+      unknown     no record of any kind: the routes' 404, the dashboard's modal.
+    The two doors used to disagree on a record that will not read (the dashboard said "no session with id"
+    where `romp end` said 503 "could not read"), the HTTP door refused a LIVE names-registered session on
+    such a row while the WS door served it, and a dormant names-registered one passed the WS door into the
+    tmux fallthrough (review round 5, 2026-09-09). `live` is a map the caller already read (the routes'
+    _resolve_sid scan); None scans only where a verdict needs the map. The record is read first because only
+    a failed read raises the liveness question, so a readable or absent record costs what _kernel_knows
+    always cost, and the routes' refusal path still scans once. `who` is the caller's spelling for the
+    text; the WS door, which addresses by id, leaves it None."""
+    sid = str(sid or "")
+    if sid and _reg_unreadable(sid):
+        if _backend_reports_running(sid, live):
+            return _GATE_ADMITTED, None
+        return _GATE_UNREADABLE, _unreadable_record_text(sid, who)
+    known = _kernel_knows(sid) if live is None else _kernel_knows(sid, live=live)
+    return (_GATE_ADMITTED, None) if known else (_GATE_UNKNOWN, None)
+
+
 # What the user is told when an op names a session this kernel doesn't have. Written for the ONE case that
 # actually produces it — a federated board whose panes address several kernels — and phrased as what was lost
 # and what to do, not as an internal fault.
@@ -18361,23 +18435,45 @@ def _refuse_drive(client, op, sid, msg):
       2. `undelivered.jsonl` in the state dir, carrying the text VERBATIM, so anything typed survives the
          refusal and can be copied back out. This is the whole point: the old path lost the words.
       3. stderr → the kernel log, for the case where the browser is gone by the time it happens.
-    Text is capped for the log line, never for the user's own copy of it."""
+    Text is capped for the log line, never for the user's own copy of it. The sibling for a record that
+    will not read is _refuse_drive_unreadable; both write through _refuse_drive_records."""
+    what = _FOREIGN_OP_VERB.get(op, "action")
+    _refuse_drive_records(client, op, sid, msg, what, "this kernel has no session %s" % sid,
+                          "This romp kernel has no session with id %s, so it could not deliver your %s; on a "
+                          "board showing more than one machine, that means the pane addressed the wrong kernel."
+                          % (sid, what))
+
+
+def _refuse_drive_unreadable(client, op, sid, msg, text):
+    """_refuse_drive's sibling for _session_gate's unreadable verdict: the same three records (the modal, the
+    verbatim text in undelivered.jsonl, the stderr line), with `text` (the gate's, naming the record that
+    would not read and the way out) where the unknown refusal says the kernel has no such session. A
+    function of its own rather than a keyword on _refuse_drive, which tests stand in with a four-positional
+    callable (review round 5, 2026-09-09: this door called a record it could not read a session it did not
+    have)."""
+    what = _FOREIGN_OP_VERB.get(op, "action")
+    _refuse_drive_records(client, op, sid, msg, what, "the record for session %s will not read" % sid,
+                          text[:1].upper() + text[1:])
+
+
+def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
+    """The three records every refusal of a drive op writes (_refuse_drive's docstring says why each): the
+    modal (`lead`, then where the text went), the text verbatim in undelivered.jsonl, and the stderr line
+    (`cause`). One writer, so the unknown and the unreadable refusals cannot drift in what they keep."""
     text = ""
     for k in ("text", "cmd", "name"):
         if isinstance(msg.get(k), str) and msg[k]:
             text = msg[k]
             break
-    what = _FOREIGN_OP_VERB.get(op, "action")
     try:
         with (jd.STATE / "undelivered.jsonl").open("a") as fh:
             fh.write(json.dumps({"at": int(time.time()), "op": op, "sid": sid, "what": what,
                                  "itemId": msg.get("itemId") or "", "text": text}) + "\n")
     except OSError:
         pass
-    sys.stderr.write("undeliverable %s: this kernel has no session %s — %r\n" % (op, sid, text[:200]))
-    detail = ("Nothing was sent. This romp kernel has no session with id %s, so it could not deliver your %s "
-              "— on a board showing more than one machine, that means the pane addressed the wrong kernel. "
-              "Your text is saved verbatim in undelivered.jsonl under romp's state directory." % (sid, what))
+    sys.stderr.write("undeliverable %s: %s; %r\n" % (op, cause, text[:200]))
+    detail = ("Nothing was sent. %s Your text is saved verbatim in undelivered.jsonl under romp's state "
+              "directory." % lead)
     try:
         # `sid` rides along so the shell's error-center entry carries the session it was meant for, the way
         # every card-badge entry does — the bell is a log you read later, and "which one?" is the first thing
@@ -18516,11 +18612,20 @@ def _drive(msg, client):
     # logged. That silence swallowed real user messages (the user 2026-07-29): a federated dashboard sent a
     # card reply here that belonged to another machine's kernel, and it simply ceased to exist — no bubble,
     # no error, no record. Per the fail-loudly rule, an op we cannot deliver must SAY so instead of degrading
-    # into a no-op. `_kernel_knows` is the registry, not liveness: a dead-but-ours session still resolves, so
-    # reviving sends keep working — only a genuinely foreign sid lands here.
-    if not _kernel_knows(sid):
+    # into a no-op. The verdict is _session_gate's, the one gate both client doors ask (the HTTP control
+    # routes through _unknown_session_refusal): the registry, not liveness, so a dead-but-ours session still
+    # resolves and reviving sends keep working; only a genuinely foreign sid is refused as unknown, and a
+    # NOT-running session whose registry entry exists but will not read is refused as unreadable, in the
+    # same three places, never called foreign (review round 5, 2026-09-09: this door said "no session with
+    # id" for a record `romp end` said it could not read, and passed a names-registered session on such a
+    # row through to the tmux fallthrough this gate exists to stop).
+    verdict, text = _session_gate(sid)
+    if verdict == _GATE_UNKNOWN:
         _refuse_drive(client, t, sid, msg)
         return True                                       # consumed: refused, reported, and recorded
+    if verdict == _GATE_UNREADABLE:
+        _refuse_drive_unreadable(client, t, sid, msg, text)
+        return True
     be = Sessions.backend_for(sid)
     if t == "sendMessage" and msg.get("text"):
         # a typed "/model X" / "/effort X" / "/fast X" is a SETTING, not a message: it takes the kernel's
@@ -18998,7 +19103,7 @@ def _drive(msg, client):
             nm = _name_of(sid) or sid
             client["send"](json.dumps({"type": "endFailed", "id": sid,
                                        "text": ("Couldn't end “%s” — it's still running. Try again." % nm)
-                                               if ended is False else _unconfirmed_end_text(why, nm)}))
+                                               if ended is False else _unconfirmed_end_text(why, nm, sid=sid)}))
         else:
             _confirm_close_now(sid)      # the kill IS the event: the fresh tab set rides it, not the next pusher cycle
         _push_soon()
@@ -26186,18 +26291,29 @@ _UNCONFIRMED_END_CAUSE = {
 }
 
 
-def _unconfirmed_end_text(why, name=None):
+def _unconfirmed_end_text(why, name=None, sid=None):
     """The refusal both immediate end doors phrase for _end_and_record's None verdict: POST /end's ok:false
     error, and with `name` the WS endSession op's endFailed toast. The cause is the one _confirmed_ended
     filed in `why`: "tmux isn't answering" only when the owner scan was the door that failed, "the
     session's record could not be read" for an SDK reg that exists but would not read. Both doors used
     to say tmux for every None, including on a headless box with no tmux at all (review round 4,
     2026-09-09). One routine, so the doors cannot drift; a None with no filed cause (a stubbed probe)
-    names the owner generically rather than guessing tmux."""
-    cause = _UNCONFIRMED_END_CAUSE.get((why or {}).get("cause"), "the liveness owner did not answer")
+    names the owner generically rather than guessing tmux. "Try again" is said only when a retry has a
+    writer: always for a failed probe (tmux answers again), and for the reg cause only while a backend
+    reports `sid` running (its next flip rewrites the row from the backend's cache); a dormant session's
+    broken record is named by path with the way out instead, as the control gate says it (review round 5,
+    2026-09-09: an unconditional "Try again" for a record no retry could heal)."""
+    cause = (why or {}).get("cause")
+    text = _UNCONFIRMED_END_CAUSE.get(cause, "the liveness owner did not answer")
+    retry = True
+    if cause == "reg":
+        retry = bool(sid) and _backend_reports_running(sid)
+        if not retry:
+            text += (" (%s needs repair or removal; removing it drops the session from the board)"
+                     % _tilde(str(jd.STATE / "sdk" / (str(sid) + ".json"))))
     if name:
-        return "Couldn't confirm \u201c%s\u201d ended: %s. Try again." % (name, cause)
-    return "couldn't confirm the end: %s; try again" % cause
+        return "Couldn't confirm \u201c%s\u201d ended: %s.%s" % (name, text, " Try again." if retry else "")
+    return "couldn't confirm the end: %s%s" % (text, "; try again" if retry else "")
 
 
 # SELF-CLOSE, deferred to idle (the user 2026-08-15: "close yourself after you've done this thing"
@@ -26662,6 +26778,22 @@ def _parse_send_body(raw):
     return {"who": who, "text": text}
 
 
+def _unreadable_dormant_named(name):
+    """The sid of a names-registered session called `name` whose SDK registry entry exists but will not
+    read, or None. A dormant session is addressed by id, so a bare name that no live session answers to
+    stays the routes' 404; the one exception is this record, whose failed read must be said (the gate's
+    503) and never reported as a session that does not exist. Read on the resolution's miss path only,
+    after the live map and the thread names, so it costs a would-be 404 one registry walk; sorted, so
+    several generations of the name answer the same sid (review round 5, 2026-09-09)."""
+    try:
+        for sid, parts in sorted(_names_snapshot().items()):
+            if parts and parts[0] == name and _reg_unreadable(sid):
+                return sid
+    except Exception:
+        return None
+    return None
+
+
 def _resolve_sid(who):
     """_sid_of with the live map it read handed back: (sid, live, store_unreadable), where live is the
     Sessions.live() the resolution scanned, or None when the names registry answered first and nothing
@@ -26670,7 +26802,9 @@ def _resolve_sid(who):
     read" instead of "no such session" (review round 4, 2026-09-09; the fail-loudly rule). The control
     routes (_control_target) pass the map to _unknown_session_refusal, so a request for a name no session
     answers to costs one live scan (a tmux fork plus a walk of the SDK regs), not two (review find,
-    2026-09-09). Every other caller reads _sid_of, which keeps only the sid."""
+    2026-09-09). When every door misses, a dormant names-registered session whose registry entry will not
+    read is handed back by name (_unreadable_dormant_named), so the gate answers its 503 rather than "no
+    live session named" (review round 5). Every other caller reads _sid_of, which keeps only the sid."""
     who = str(who)
     if _name_of(who):
         return who, None, False
@@ -26684,7 +26818,14 @@ def _resolve_sid(who):
     if names is None:                         # the THREAD (T223), not a phantom sid spelled like a name
         return who, live, True
     th = names.get(who)
-    return (th[0] if th else who), live, False
+    if th:
+        return th[0], live, False
+    # every door missed: a dormant session addressed by its registered NAME stays the routes' 404 (a
+    # dormant session is addressed by id), unless its SDK registry entry exists and will not read, where
+    # the sid is handed back so the gate says the read failed (its 503), never "no live session named"
+    # (review round 5, 2026-09-09: the failed-read-as-404 class, closed for threads and by id in round 4,
+    # was still open by name)
+    return (_unreadable_dormant_named(who) or who), live, False
 
 
 def _sid_of(who):
@@ -26700,30 +26841,28 @@ def _unknown_session_refusal(sid, who, live=None):
     /end "killed" it and _confirmed_ended, finding nothing listed, certified the death; /send handed it to
     the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
     real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The verdict
-    is _kernel_knows's, the WS _drive gate's own predicate: the names registry (a registered sid, live or
-    between turns), the SDK registry (a reg the SDK backend wrote, a comment thread's among them: a thread
-    has no names/ entry, since sdk_backend.fork withholds it, and live_sessions skips threadOf regs, while
-    _sid_of resolves a thread's name to its tsid on purpose, T223, so a gate of names and live map alone
-    refused every thread, by name and by id, and `romp end self` from inside one; review find,
-    2026-09-09) and the live map (a session up before its registry entry lands). One predicate for both
-    client doors: the routes' own copy admitted through a threadOf reg only, so a dead non-thread SDK reg
-    with no names/ entry was ended by the dashboard and refused 404 here (review round 4, 2026-09-09).
-    `live` is the map _resolve_sid already read, when it read one, so the refusal path scans once; a
-    caller without one leaves it None and _kernel_knows reads the map. Ask this AFTER the remote forward,
-    since a session on an attached host is in neither local map. `who` is the caller's spelling, so the
-    reason names what they typed."""
-    sid = str(sid)
-    if _reg_unreadable(sid):
-        # a registry entry exists and will not read: the kernel cannot say whether it knows the session,
-        # so it says THAT (a 503 naming the read; nothing is done) rather than the 404 for a session that
-        # does not exist. Every step past this gate reads the record (the send's _ensure, the end's
-        # corroboration, the sweep) and each would answer a different wrong thing; a live SDK session's
-        # row is rewritten from the backend's cache at its next flip, so "try again" is exact (review
-        # round 4, 2026-09-09: a thread with a corrupt reg was told "no live session named")
-        return {"ok": False, "error": "could not read the record for '%s' (its registry entry exists but will "
-                                      "not read); nothing was done, try again" % who, "_status": 503}
-    if _kernel_knows(sid, live=live):
+    is _session_gate's, the one gate the WS _drive gate asks too, so the two client doors cannot disagree:
+    admitted for a session a backend reports running, whatever its record reads, else for one the kernel
+    knows (_kernel_knows: the names registry, a registered sid live or between turns; the SDK registry, a
+    reg the SDK backend wrote, a comment thread's among them, since a thread has no names/ entry and
+    live_sessions skips threadOf regs while _sid_of resolves its name to its tsid on purpose, T223; and the
+    live map, a session up before its registry entry lands); unreadable, a 503 naming the read and the way
+    out, for a NOT-running session whose registry entry exists but will not read (the kernel cannot say
+    whether it knows the session, so it says that; every step past this gate reads the record and each
+    would answer a different wrong thing); else the 404. History: a gate of names and live map alone
+    refused every thread (review find, 2026-09-09); the routes' own predicate admitted through a threadOf
+    reg only, so a dead non-thread SDK reg with no names/ entry was ended by the dashboard and refused 404
+    here (round 4); the 503 said "try again" for a record no retry could heal and refused a live session on
+    such a row that the dashboard served (round 5). `live` is the map _resolve_sid already read, when it
+    read one, so the refusal path scans once; a caller without one leaves it None and the gate reads the
+    map only where a verdict needs it. Asked by _control_target after the roster by sid (a session on an
+    attached host is in neither local map) and before the roster by name. `who` is the caller's spelling,
+    so the reason names what they typed."""
+    verdict, text = _session_gate(str(sid), live=live, who=who)
+    if verdict == _GATE_ADMITTED:
         return None
+    if verdict == _GATE_UNREADABLE:
+        return {"ok": False, "error": text, "_status": 503}
     return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
 
 
@@ -26748,8 +26887,9 @@ def _control_target(who):
         return sid, None, None
     if refusal["_status"] == 404:
         if store_unreadable:
-            return sid, None, {"ok": False, "error": "could not read the comment threads' store while resolving "
-                                                     "'%s'; nothing was done, try again" % who, "_status": 503}
+            return sid, None, {"ok": False, "error": "could not read the comment threads' store (%s) while "
+                                                     "resolving '%s'; nothing was done"
+                                                     % (_tilde(str(jd.STATE / "comments")), who), "_status": 503}
         hit = _remote_session_named(who)
         if isinstance(hit, dict):
             return sid, None, hit
@@ -58025,7 +58165,7 @@ class Handler(BaseHTTPRequestHandler):
                         _push_soon()   # ack-fast (the 2026-08-30 wedge: request threads poke the pusher, never build inline)
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": "the session is still running — the kill didn't take"
-                                                                    if ended is False else _unconfirmed_end_text(why)}),
+                                                                    if ended is False else _unconfirmed_end_text(why, sid=sid)}),
                                           "application/json")
                 _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
