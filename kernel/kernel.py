@@ -30618,7 +30618,9 @@ def _chat_sig_shared():
     """The chat-build signature's components that are the same for every tab, read ONCE per push (_push
     sets _live_scope.chat_shared for its chat loop; a caller outside a push reads them per call): the
     identities of session-flags.json and notify-cards.json, the colormap name, the login label with the
-    auth-choice bit, cleared.jsonl's identity, this host's name, the names snapshot's digest
+    auth-choice bit and the availability half (_auth_avail_status, the payload's authAvail: on a box with
+    no labelled login a key or managed-helper flip moves neither the label nor the bit), cleared.jsonl's
+    identity, this host's name, the names snapshot's digest
     (_names_digest; the thread's snapshot, else one read here) and the count of recorded host
     suspensions (_downtime, append-only, read by _session_working). A shared file that
     moves mid-push is read old here and new by that push's builds, which caches new content under the
@@ -30627,7 +30629,7 @@ def _chat_sig_shared():
     return {"flags": _chat_ident(jd.STATE / "session-flags.json"),
             "ncards": _chat_ident(jd.STATE / "notify-cards.json"),
             "colormap": _colormap(),
-            "acct": (_claude_account_label(), _auth_both()),
+            "acct": (_claude_account_label(), _auth_both(), tuple(sorted(_auth_avail_status().items()))),
             "cleared": _chat_cleared_key(),
             "host": _self_host(),
             "names": _names_digest(getattr(_live_scope, "names", None) or _names_snapshot()),
