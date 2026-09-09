@@ -6602,21 +6602,24 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // add gives the copy a group again or the holders are down to one. None while Group tabs by tag is off or the
   // resolved tag's create is still in flight (no id to address).
   // THE COPY IS A SECTION REF (round 4): copyNow holds the copy's tag as a pin addresses its section (tab-groups.ts SectionRef:
-  // the local tag's id when the frame carries one, and its name), and a held union is the copy's by the id first, else by the
-  // name. The id keeps the copy through a rename pushed while the menu is open (the same tag under a new name; before, the
-  // name-matched copy was lost on a session under two tags, and the click wrote nothing while the row still read the old
-  // name); the name carries it where the id cannot: a tag claimed at its create wears the placeholder id the ack replaces,
-  // and a union only remote hosts' tags make has no local id (so a rename of a remote-only group loses the copy, the one
-  // limit). Not either alone: a rename beside a new tag under the old name would match two unions. Every resolution latches
-  // what it found, so the id follows the ack and the name follows the rename.
+  // the local tag's id when the frame carries one, and its name), and a held union is the copy's by the ids when both are
+  // local, else by the names (sameSection, round 5, which the click's guard shares: a comparison that tested the ids alone
+  // took two remote-only sections, both without a local id, for one section, and a hide went through for a copy the row
+  // never named). The id keeps the copy through a rename pushed while the menu is open (the same tag under a new name;
+  // before, the name-matched copy was lost on a session under two tags, and the click wrote nothing while the row still read
+  // the old name); the name carries it where the id cannot: a tag claimed at its create wears the placeholder id the ack
+  // replaces, and a union only remote hosts' tags make has no local id (so a rename of a remote-only group loses the copy,
+  // the one limit). Not either alone: a rename beside a new tag under the old name would match two unions. Every resolution
+  // latches what it found, so the id follows the ack and the name follows the rename.
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
   const refOf = (name: string): SectionRef => { const g = unionFor().find((u) => u.name === name); return g ? sectionRef(g) : { name, localId: null }; };   // a tag not yet created: its name alone
   let copyNow: SectionRef | undefined = copy ? refOf(copy) : undefined;
+  const sameSection = (a: SectionRef, b: SectionRef) => (a.localId !== null && b.localId !== null ? a.localId === b.localId : a.name === b.name);   // the ids when both are local, else the names (round 5; the click's guard shares it)
   const heldCopy = (held: TagUnion[]): TagUnion | undefined => {
     const c = copyNow;
     if (!c) return undefined;
-    return (c.localId !== null ? held.find((g) => g.localId === c.localId) : undefined) ?? held.find((g) => g.name === c.name);
+    return held.find((g) => sameSection(sectionRef(g), c));
   };
   const homeNow = (): TagUnion | undefined => {
     if (!readTabGroups().on) return undefined;
@@ -6703,10 +6706,11 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const sec = sectionRef(now), st = tabGroups();
       // the copy the row named, or nothing (round 4): a views arrival re-dresses the row (tabMenuViewsHook), so the resolution at the
       // click names the row's copy unless something moved it since the last arrival; a hide of any other copy would be of one the
-      // user never touched. The same tag under a new name matches by its id. The guard runs BEFORE the dismissal (round 5): a refused
+      // user never touched. The same tag under a new name matches by its id (sameSection: the ids when both are local, else the names,
+      // so two remote-only sections are two). The guard runs BEFORE the dismissal (round 5): a refused
       // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
       // the menu was already off the page, and the re-dress reached no one)
-      if (!shown || (sec.localId !== shown.localId && sec.name !== shown.name)) { refreshHideRow(); return; }
+      if (!shown || !sameSection(sec, shown)) { refreshHideRow(); return; }
       dismissTabMenu();
       if (isHidden(st, sec, id) === !hidden) return;
       writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
