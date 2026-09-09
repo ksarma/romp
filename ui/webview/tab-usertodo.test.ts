@@ -33,13 +33,13 @@ test("the glyph is non-numeric and explains itself on hover", () => {
 test("the glyph is not a pip and does not fight the pip/gauge/close layout", () => {
   // pips (.tab-dot) encode turn state and the kernel's mobile scrape keys on '.tab-dot.await';
   // the glyph must be its own vocabulary, placed with the name — after the label, before the
-  // ctx gauge — so dot / bar / label / glyph / gauge / ✕ never collide
+  // ctx gauge helper call — so dot / bar / label / glyph / gauge / ✕ never collide
   const block = renderTabs.slice(renderTabs.indexOf('el("span", "tab-usertodo")'),
     renderTabs.indexOf('el("span", "tab-usertodo")') + 300);
   assert.doesNotMatch(block, /tab-dot/);
   const labelAt = renderTabs.indexOf("tab.appendChild(label)");
   const glyphAt = renderTabs.indexOf('el("span", "tab-usertodo")');
-  const gaugeAt = renderTabs.indexOf("tabCtxGauge(");
+  const gaugeAt = renderTabs.indexOf("appendTabCtxGauge(");   // the strip calls the shared helper for the gauge (skeleton tabs share it)
   assert.ok(labelAt > 0 && glyphAt > 0 && gaugeAt > 0, "all three anchors exist in renderTabs");
   assert.ok(labelAt < glyphAt && glyphAt < gaugeAt, "label, then glyph, then ctx gauge");
 });
