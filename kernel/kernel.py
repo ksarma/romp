@@ -50185,15 +50185,23 @@ function shown(id){var p=document.getElementById(id);return p&&getComputedStyle(
 window.__rompGrowFair=function(k){if(k==='timeline')return;var v=PANES.filter(shown).map(function(id){return grow[key(id)];});
 var avg=v.length?v.reduce(function(a,b){return a+b;},0)/v.length:50;setGrow(k,avg);
 try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}};
+// A drag moves a GHOST line and writes the pair's grows ONCE, on release (2026-09-09). A grow write re-lays out every
+// same-origin pane document in that frame: with a big reviewed file open in the Files pane one width step cost over a
+// second, and a drag of sixty such steps was that day's 20 s main-thread block. So mousemove only positions #gv-ghost
+// (a fixed line over the row, where the divider will land) and mouseup gives the two panes their new widths.
+var ghost=document.getElementById('gv-ghost');
 function gutter(gid,leftPick,rightId){var h=document.getElementById(gid);if(!h)return;
-h.addEventListener('mousedown',function(e){e.preventDefault();document.body.classList.add('drag','dragv');
+h.addEventListener('mousedown',function(e){e.preventDefault();
+var L=document.getElementById(leftPick()),R=document.getElementById(rightId);if(!L||!R)return;
+document.body.classList.add('drag','dragv');
 PANES.forEach(function(id){if(shown(id))setGrow(key(id),document.getElementById(id).offsetWidth);});
-var L=document.getElementById(leftPick()),R=document.getElementById(rightId);
-if(!L||!R)return;var wL=L.offsetWidth,wR=R.offsetWidth,sum=wL+wR,sx=e.clientX,mn=Math.min(120,sum*0.25);
-function mv(ev){var nL=Math.max(mn,Math.min(sum-mn,wL+(ev.clientX-sx)));setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);}
-function up(){document.body.classList.remove('drag','dragv');try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}
+var wL=L.offsetWidth,wR=R.offsetWidth,sum=wL+wR,sx=e.clientX,mn=Math.min(120,sum*0.25),nL=wL,lx=L.getBoundingClientRect().left,rr=row.getBoundingClientRect();
+function show(){if(!ghost)return;ghost.style.top=rr.top+'px';ghost.style.height=rr.height+'px';ghost.style.left=(lx+nL)+'px';ghost.style.display='block';}
+function mv(ev){nL=Math.max(mn,Math.min(sum-mn,wL+(ev.clientX-sx)));show();}
+function up(){document.body.classList.remove('drag','dragv');if(ghost)ghost.style.display='none';
+setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}
 window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);}
-window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});}
+show();window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});}
 gutter('gv-a',function(){return 'chat-pane';},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane';},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');
@@ -53583,6 +53591,10 @@ def _landing():
             ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
             ".gv:hover::after{background:var(--accent,#9cd2ff);height:52px}.gh:hover::after{background:var(--accent,#9cd2ff);width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
+            # the divider drag's ghost: a fixed line over the row where the divider will land, shown by the gutter's
+            # mousedown and hidden at mouseup, when the panes take their widths (the pointer moves only this line)
+            "#gv-ghost{display:none;position:fixed;width:7px;pointer-events:none;z-index:40;"
+            "background:linear-gradient(90deg,transparent 3px,var(--accent,#9cd2ff) 3px,var(--accent,#9cd2ff) 4px,transparent 4px)}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"
             # FOCUS cue (the user 2026-06-23): NO dimming — the active section is shown by a RING around it.
@@ -53904,6 +53916,7 @@ def _landing():
             "<div class=gv id=gv-d></div>"
             "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
             "</div>"
+            "<div id=gv-ghost></div>"   # the divider drag's ghost line (positioned fixed; see _LANDING_JS gutter)
             # the timeline BOTTOM BAND: full-width below the pane row, with a row-resize gutter above it. Both
             # are hidden (CSS) unless po-timeline (the rail's Timeline toggle).
             "<div class=gh id=gh></div>"

@@ -123,6 +123,22 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');", self.html)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
 
+    def test_a_divider_drag_moves_a_ghost_line_and_writes_the_grows_once_on_release(self):
+        # (2026-09-09) a grow write re-lays out every same-origin pane document in that frame; with a big reviewed
+        # file open in the Files pane one width step cost over a second, and a drag of sixty steps was a 20 s
+        # main-thread block. So mousemove only positions #gv-ghost, a fixed line over the row where the divider
+        # will land, and mouseup writes the pair's two grows once and persists them. The behaviour itself is pinned
+        # in ui/webview/shell-gutter-drag-browser.test.ts over the extracted script; this pins the source.
+        self.assertIn("<div id=gv-ghost></div>", self.html)
+        self.assertIn("#gv-ghost{display:none;position:fixed;width:7px;pointer-events:none;z-index:40;", self.html)
+        self.assertIn("var ghost=document.getElementById('gv-ghost');", km._LANDING_JS)
+        self.assertIn("function mv(ev){nL=Math.max(mn,Math.min(sum-mn,wL+(ev.clientX-sx)));show();}", km._LANDING_JS)
+        self.assertIn("function up(){document.body.classList.remove('drag','dragv');if(ghost)ghost.style.display='none';\n"
+                      "setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}",
+                      km._LANDING_JS)
+        # no grow write in the move handler
+        self.assertNotIn("setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);}\nfunction up()", km._LANDING_JS)
+
     def test_timeline_is_the_rail_toggled_bottom_band(self):
         # the timeline is a full-width BAND below the pane row (the user 2026-06-25), toggled by the rail's
         # Timeline button (po-timeline) — NOT a 4th vertical pane and NOT the old always-on band with a minimize
