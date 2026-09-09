@@ -45,7 +45,7 @@ import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sect
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
-import { StagedStack } from "./staged-messages";
+import { StagedStack, quoteReplyBody, stagedBatchBody, type StagedMsg } from "./staged-messages";
 import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, queuedCopyToHide, dropPending, bareGroupLabel, sentAtLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
@@ -14455,11 +14455,16 @@ const composerEdits = new Map<string, { uuid: string; orig: string }>();
 // executed by its test; this file owns the strip DOM and the send routing.
 const stagedMsgs = new StagedStack();
 const stagedOpen = new Set<string>();   // sid:index of staged chips expanded to their full text
+// The strip folded to its head line (the user 2026-09-08, whose twelve staged comments filled the page):
+// a page-lifetime Set of session ids, empty (list shown) at load and written only by the head's caret or
+// label click, so a fold is the user's and a reload shows the list again. The head keeps the count and
+// Send now either way.
+const stagedFolded = new Set<string>();
 try { stagedMsgs.restore(((vscodeApi?.getState?.() || {}) as any).staged); } catch { /* ignore */ }
 
-// One routing owner for a user message (the deliver path and the staged flush both speak it): a goal
-// chip rides askFollowUp, quote chips wrap client-side, a bare message is a plain send with the
-// optimistic bubble (chip sends have their own kernel-side echo).
+// One routing owner for a user message (deliver speaks it through flushStaged, which folds the staged
+// run and the typed message into one body): a goal chip rides askFollowUp, quote chips wrap client-side,
+// a bare message is a plain send with the optimistic bubble (chip sends have their own kernel-side echo).
 function routeUserMessage(sid: string, text: string, cites: Citation[] | undefined, imgPaths?: string[]): void {
   if (!vscodeApi) return;
   const goalCite = cites?.find((c) => c.itemId);
@@ -14485,11 +14490,25 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
     data: { sid, ts: Date.now(), len: text.length, route: goalCite?.itemId ? "followup" : quoteCites.length ? "quote" : "plain" } });
 }
 
-/** Release the tab's staged stack (deliver's guards — host down, provisional — run before this in the
- *  send path; Send now re-checks reachability itself). Returns how many went. */
-function flushStaged(sid: string): number {
+/** Release the tab's staged stack as ONE message (the user 2026-09-08, who wanted staged comments to
+ *  land as one message, not a series): every staged item in stage order and then the typed message, when
+ *  the send carries one, folded into a single body by stagedBatchBody, so one post makes one bubble and
+ *  one turn. The one exception is a staged item citing a GOAL: the kernel wraps one goal per message
+ *  (askFollowUp), so each of those still goes as its own follow-up, ahead of the batch; a typed goal
+ *  follow-up carries the batch inside its text and the goal wraps the lot. With nothing staged the typed
+ *  message routes exactly as before. Deliver's guards (host down, provisional) run before this in the
+ *  send path; Send now re-checks reachability itself. Returns how many staged items went. */
+function flushStaged(sid: string, typed?: { text: string; cites?: Citation[]; imgPaths?: string[] }): number {
   const batch = stagedMsgs.takeAll(sid);
-  for (const s of batch) routeUserMessage(sid, s.text, s.cites as Citation[]);
+  const citesGoal = (s: StagedMsg) => (s.cites as Citation[]).some((c) => c && c.itemId);
+  for (const s of batch) if (citesGoal(s)) routeUserMessage(sid, s.text, s.cites as Citation[]);
+  const rest = batch.filter((s) => !citesGoal(s));
+  if (rest.length) {
+    const goal = typed?.cites?.find((c) => c.itemId);
+    routeUserMessage(sid, stagedBatchBody(rest, typed), goal ? [goal] : undefined, typed?.imgPaths);
+  } else if (typed) {
+    routeUserMessage(sid, typed.text, typed.cites, typed.imgPaths);
+  }
   if (batch.length) { persistDrafts(); renderStagedStrip(sid); }
   return batch.length;
 }
@@ -14497,15 +14516,32 @@ function flushStaged(sid: string): number {
 function renderStagedStrip(id: string | null): void {
   const strip = document.getElementById("composer-staged");
   if (!strip) return;
+  // the list's scroll position survives the rebuild: expanding or discarding an item re-renders the
+  // strip, and a fresh list would start at the top, away from the item just clicked
+  const prevList = strip.querySelector(".staged-list") as HTMLElement | null;
+  const keepScroll = prevList ? prevList.scrollTop : 0;
   strip.replaceChildren();
   const list = id ? stagedMsgs.list(id) : [];
   if (!id || !list.length) { strip.style.display = "none"; return; }
   strip.style.display = "flex";
+  const folded = stagedFolded.has(id);
   const head = el("div", "staged-head");
-  const lbl = el("span");
+  // the fold caret (the user 2026-09-08): the head line alone when folded, the count still on it
+  const car = el("button", "staged-fold") as HTMLButtonElement;
+  car.textContent = folded ? "▸" : "▾";
+  car.setAttribute("aria-expanded", folded ? "false" : "true");
+  car.setAttribute("aria-label", folded ? "Show the staged messages" : "Hide the staged messages");
+  const lbl = el("span", "staged-lbl");
   lbl.textContent = list.length + " staged — sends with your next message";
   lbl.title = "⌘⏎ (or Ctrl+⏎) stages what you've typed, quote chips and all, without sending. "
-    + "A plain send releases them in order with your new message last — or Send now releases them alone.";
+    + "A plain send releases them as one message, in order, with your new message last; Send now releases them alone.";
+  const toggleFold = (ev: Event) => {
+    ev.stopPropagation();
+    if (stagedFolded.has(id)) stagedFolded.delete(id); else stagedFolded.add(id);
+    renderStagedStrip(id);
+  };
+  car.addEventListener("click", toggleFold);
+  lbl.addEventListener("click", toggleFold);
   const go = el("button", "staged-go");
   go.textContent = "Send now";
   go.addEventListener("click", () => {
@@ -14516,8 +14552,14 @@ function renderStagedStrip(id: string | null): void {
     }
     flushStaged(id);
   });
-  head.append(lbl, go);
+  head.append(car, lbl, go);
   strip.appendChild(head);
+  if (folded) return;
+  // the items sit in their own scrolling list UNDER the head (the user 2026-09-08, whose twelve staged
+  // comments filled the page below the strip and pushed the transcript out of view): about four items
+  // show and the rest scroll (.staged-list in styles.css), the head with its count and Send now stays
+  // outside the scroll, and the composer below keeps its place. An expanded item grows inside the scroll.
+  const box = el("div", "staged-list");
   list.forEach((s, i) => {
     const chip = el("div", "staged-chip");
     // each staged reply keeps the CONTEXT it was written against visible inside its own dotted box
@@ -14566,8 +14608,10 @@ function renderStagedStrip(id: string | null): void {
     x.addEventListener("click", (ev) => { ev.stopPropagation(); stagedMsgs.removeAt(id, i); persistDrafts(); renderStagedStrip(id); });
     row.append(mark, label, hint, x);
     chip.appendChild(row);
-    strip.appendChild(chip);
+    box.appendChild(chip);
   });
+  strip.appendChild(box);
+  box.scrollTop = keepScroll;
 }
 
 function beginComposerEdit(sid: string, uuid: string, orig: string): void {
@@ -14859,20 +14903,11 @@ function setCitation(id: string, cite: Citation): void {
   if (id === activeId) { renderComposerChips(id); focusComposer(); }
 }
 
-// The outgoing body for QUOTE citations (the user 2026-07-13): the highlighted text rides ahead of the
-// typed message as a markdown quote block, so the agent knows exactly which part is being replied to.
-// Also what the chip's audit preview shows — one function, no drift. Stacked chips (the user 2026-08-04)
-// become one section each, in the order they sit in the strip. `src` (the VS Code editor flavor,
-// 2026-07-13) names where a highlight came from — a workspace-relative file:lines — so that section's
-// lead-in points the agent at the code, not the conversation.
-function quoteReplyBody(cites: { quote?: string; src?: string | null }[], text: string): string {
-  const sections = cites.map((c) => {
-    const q = (c.quote || "").split("\n").map((l) => "> " + l).join("\n");
-    const lead = c.src ? "Replying to this highlighted code (" + c.src + "):" : "Replying to this part of the conversation:";
-    return lead + "\n" + q;
-  });
-  return text ? sections.join("\n\n") + "\n\n" + text : sections.join("\n\n");
-}
+// The outgoing body for QUOTE citations (the user 2026-07-13) is quoteReplyBody in staged-messages.ts,
+// imported above: the highlighted text rides ahead of the typed message as a markdown quote block, one
+// section per stacked chip, and the chip's audit preview shows the same body (one function, no drift).
+// It moved there with the one-message fold (2026-09-08) so the staged batch composes from the same
+// function and the test executes both.
 
 // HIGHLIGHT-TO-REPLY (the user 2026-07-13): selecting text in the chat transcript seeds the composer chip
 // as reply context, exactly like a distilled-summary click — but quote-flavored. Event-based on
@@ -16632,9 +16667,10 @@ function setupComposer() {
       lastSent.set(activeId, text);   // remembered for a possible Ctrl+C restore
       // STAGED first (the user 2026-08-15): the held run releases in stage order, each message with the
       // context it was written against, and the message being typed right now lands LAST — the reading
-      // the user composed: quote → comment, quote → comment, then the wrap-up. The guards above (host
-      // down, provisional) have already passed, so nothing staged can be half-lost here.
-      flushStaged(sid);
+      // the user composed: quote → comment, quote → comment, then the wrap-up. Since 2026-09-08 (the
+      // user, who wanted staged comments to land as one message, not a series) the run and the typed
+      // message are ONE body, one post, one bubble: flushStaged folds them and routes the result. The
+      // guards above (host down, provisional) have already passed, so nothing staged can be half-lost here.
       // A pending citation chip → send as a FOLLOW-UP on that goal (the user 2026-07-01): askFollowUp wraps the
       // text with the goal's context + the romp-goal-id marker (kernel side), so the goal reopens (done→working,
       // unless cleared) and the chat renders the ↩ Follow-up header — the same path the Follow-up button uses,
@@ -16648,7 +16684,7 @@ function setupComposer() {
       // uuid — nothing sent, no error, the card flashing to Working and back. The kernel keeps deriving
       // its sid from itemId, so this is inert locally; every other card op carries the sid the same way.
       const cites = composerCitations.get(activeId);
-      routeUserMessage(activeId, text, cites, attached.filter((p) => previewKind(p) === "img"));
+      flushStaged(sid, { text, cites, imgPaths: attached.filter((p) => previewKind(p) === "img") });
       // (a citation follow-up/quote has its own kernel-side echo path; the optimistic bubble covers the plain send)
       if (cites) { composerCitations.delete(activeId); renderComposerChips(activeId); }   // consumed on send
       sendOnShip.delete(sid);                       // a send happened — any held one is superseded

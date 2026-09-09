@@ -1194,6 +1194,18 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .staged-head .staged-go { margin-left: auto; background: none; border: 1px solid var(--accent); color: var(--accent);
   border-radius: 5px; font: inherit; padding: 1px 8px; cursor: pointer; }
 .staged-head .staged-go:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }   /* the feed word-button hover (2026-08-25) */
+/* the head's fold caret and label (the user 2026-09-08): a click folds the strip to the head line alone,
+   count and Send now still on it; the caret is a real button so the keyboard reaches it */
+.staged-head .staged-fold { flex: 0 0 auto; background: none; border: 0; padding: 0 2px; color: var(--dim); font: inherit; line-height: 1; cursor: pointer; }
+.staged-head .staged-lbl { cursor: pointer; }
+/* the items in their own scrolling list UNDER the head, about four items tall (the user 2026-09-08, whose
+   twelve staged comments filled the page below the strip and pushed the transcript out of view): a staged
+   item with one quote is 50px (the quote pill 22.8px = 12px text at the pill's 1.4 line height plus 2px
+   padding and 1px border top and bottom; the comment row 19.2px = 12px text at the page's 1.6 line height;
+   the 2px gap between them; the box's 2px padding and 1px border top and bottom), so four items and the
+   three 3px gaps between them are 209px. The head with the count and Send now sits outside the scroll;
+   an expanded item grows inside it. */
+.staged-list { display: flex; flex-direction: column; gap: 3px; min-height: 0; max-height: 209px; overflow-y: auto; overscroll-behavior: contain; }
 /* the chips strip's Stage button (the user 2026-08-23; moved 2026-08-24): it FOLLOWS the blue
    context chips in the strip's column — immediately after what it acts on, where its meaning reads;
    right-justified it floated detached. Exists exactly while context is held (the strip renders it,

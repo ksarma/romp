@@ -230,8 +230,12 @@ test("the echo renders dragged-image THUMBNAILS — composer → provisional →
   // exact "path:" shape), so buildPathImg's (sid,path)-keyed cache serves the landed bubble the same
   // bytes and the reconcile swap never re-fetches or flickers.
   assert.match(RENDER, /if \(t\.imgPaths && t\.imgPaths\.length\) \{\s*\n\s*for \(const ip of t\.imgPaths\) bubble\.appendChild\(userImage\(\{ src: "path:" \+ ip, path: ip \}, true\)\);/);
-  // the paths ride the send at every register site (deliver, staged flush, the provisional hold)
-  assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);
+  // the paths ride the send at every register site (deliver, staged flush, the provisional hold); deliver
+  // hands them to flushStaged since the one-message fold (2026-09-08), which passes them to routeUserMessage
+  // on both of its typed paths (the folded batch and the nothing-staged fallback)
+  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
+  assert.match(RENDER, /routeUserMessage\(sid, stagedBatchBody\(rest, typed\), goal \? \[goal\] : undefined, typed\?\.imgPaths\);/);
+  assert.match(RENDER, /routeUserMessage\(sid, typed\.text, typed\.cites, typed\.imgPaths\);/);
   // …and ONLY image-kind attachments mint thumbs — a dropped .csv stays the path text it always was
   assert.doesNotMatch(RENDER, /registerOptimistic\(sid, text, attached\)/);
 });

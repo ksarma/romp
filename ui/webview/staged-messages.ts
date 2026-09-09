@@ -6,10 +6,44 @@
 // was written so each message keeps the context it was written against.
 //
 // This is the PURE stack — per-tab isolation, order, flush-clears, discard, persistence round-trip —
-// so staged-messages.test.ts EXECUTES the rules instead of regexing render.ts (the repo's
-// extract-for-execution idiom). The DOM strip and the send routing live in render.ts.
+// and the outgoing BODY (quoteReplyBody, stagedBatchBody), so staged-messages.test.ts EXECUTES the
+// rules instead of regexing render.ts (the repo's extract-for-execution idiom). The DOM strip and the
+// send routing live in render.ts.
 
 export interface StagedMsg { text: string; cites: unknown[] }
+
+/** The outgoing body for QUOTE citations (the user 2026-07-13): the highlighted text rides ahead of the
+ *  typed message as a markdown quote block, so the agent knows exactly which part is being replied to.
+ *  Also what the chip's audit preview shows: one function, no drift. Stacked chips (the user 2026-08-04)
+ *  become one section each, in the order they sit in the strip. `src` (the VS Code editor flavor,
+ *  2026-07-13) names where a highlight came from, a workspace-relative file:lines, so that section's
+ *  lead-in points the agent at the code, not the conversation. No quotes at all is the text alone. */
+export function quoteReplyBody(cites: { quote?: string; src?: string | null }[], text: string): string {
+  const sections = cites.map((c) => {
+    const q = (c.quote || "").split("\n").map((l) => "> " + l).join("\n");
+    const lead = c.src ? "Replying to this highlighted code (" + c.src + "):" : "Replying to this part of the conversation:";
+    return lead + "\n" + q;
+  });
+  const quoted = sections.join("\n\n");
+  return quoted && text ? quoted + "\n\n" + text : quoted || text;
+}
+
+/** ONE body from the staged run (the user 2026-09-08, who wanted staged comments to land as one message,
+ *  not a series): each item in stage order as its own section, the quote block(s) it was written against
+ *  and then its comment, byte for byte what the item used to send on its own; items separated by a blank
+ *  line; the typed message, when the send carries one, last. An item with nothing to say (no quote, no
+ *  text) adds nothing; no items and nothing typed is "". A goal citation is not a quote and plays no part
+ *  here: the kernel wraps a goal follow-up itself (render.ts routes those). */
+export function stagedBatchBody(items: readonly StagedMsg[], typed?: { text: string; cites?: unknown[] } | null): string {
+  const parts: string[] = [];
+  for (const it of typed ? [...items, typed] : items) {
+    const quotes = (it.cites || []).filter((c): c is { quote: string; src?: string | null } =>
+      !!c && typeof (c as { quote?: unknown }).quote === "string" && !!(c as { quote?: string }).quote);
+    const s = quoteReplyBody(quotes, it.text || "");
+    if (s) parts.push(s);
+  }
+  return parts.join("\n\n");
+}
 
 export class StagedStack {
   private m = new Map<string, StagedMsg[]>();

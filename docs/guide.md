@@ -29,9 +29,11 @@ complementary panes:
 **Commenting on a file.** Select any passage in the file viewer and it lands in the
 composer as a quote chip, labeled with the file and the line the passage lives on. Type
 what should change and press **⌘⏎** to set the note aside; keep reading, select the next
-passage, and repeat — each staged note remembers its quote and its place. **⏎** sends
-everything you staged along with whatever is in the box, so the session applies the lot
-in one pass, and you never copy a line out of the document by hand. The line in each
+passage, and repeat — each staged note remembers its quote and its place. The list above
+the box shows about four staged notes and scrolls for the rest; its caret folds it to the
+count. **⏎** sends everything you staged along with whatever is in the box as one message,
+so the session applies the lot in one pass, and you never copy a line out of the document
+by hand. The line in each
 label is checked against the file at the moment you select, so numbers that moved under
 you are caught rather than quietly carried. Chips are one-off notes: they go out with the
 message and are not kept. For anything worth keeping with the file, use the viewer's
