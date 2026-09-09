@@ -7,9 +7,10 @@ is its header row alone.
 ON THE FORK that layout is the gear's opt-in (`stripGroupRows`, off by default: the user 2026-09-08, whose
 strip of eleven tag groups became eleven rows; upstream's default is the per-row layout). The first test
 drives the page with the setting on (written to localStorage before the page loads) and checks T264's
-geometry as before; the second drives the default and checks the inline layout: no break element at all,
-each group's header followed by its tabs with nothing between, and the untagged trail behind the pre-T264
-13px divider.
+geometry as before; the second drives the default and checks the inline layout: no break of the setting's,
+each group's header followed by its tabs with nothing between, the untagged trail behind the pre-T264
+13px divider, and a header or divider whose first tab wrapped moved down to open the next row with it
+(the painter's keep-with-next break, 2026-09-09).
 
 The served guard drives the real /chat page from a hermetic kernel: eight sessions under three tags of
 mixed sizes (one tag wide enough to wrap at the viewport) plus one untagged, one group folded by a header
@@ -106,7 +107,8 @@ const survey = () => page.evaluate(() => {
     barLeft: 0, barW: bar.clientWidth,
     theme: document.body.className,
     seps: Array.from(document.querySelectorAll("#tabs .tab-group-sep")).map((e) => ({ w: e.getBoundingClientRect().width, h: e.getBoundingClientRect().height })),
-    breaks: document.querySelectorAll("#tabs .tab-group-break").length,
+    breaks: document.querySelectorAll("#tabs .tab-group-break:not(.tab-keep-break)").length,
+    keeps: document.querySelectorAll("#tabs .tab-keep-break").length,
     lines: Array.from(document.querySelectorAll("#tabs .tab-row-line")).map((l) => parseFloat(l.style.top)),
     heads: Array.from(document.querySelectorAll("#tabs .tab-group-head")).map((h) => ({ group: h.dataset.group, act: h.dataset.act, folded: h.dataset.folded, count: h.querySelector(".tab-group-count")?.textContent })),
   };
@@ -268,6 +270,7 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertEqual(len([i for i in o["items"] if i["id"]]), len(visible) + 1, "every visible session has its tab, the two-tag one twice: %r" % [i["name"] for i in o["items"]])
         self.assertEqual([h["group"] for h in o["heads"]], ["web", "infra", "archived"])
         self.assertEqual(o["breaks"], 3, "a break before infra, before archived, and the trail's: %r" % o["breaks"])
+        self.assertEqual(o["keeps"], 0, "every header already opens its row under the setting: the keep-with-next pass places nothing: %r" % o["keeps"])
         for sp in o["seps"]:
             self.assertEqual(sp["h"], 0, "the untagged boundary has no height — no separator is drawn: %r" % o["seps"])
         secs = self._check_rows(o, "open")
@@ -306,7 +309,17 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         # default) the strip emits no row break, a group's header is followed by its tabs with nothing between,
         # and the untagged trail stands behind the pre-T264 13px divider
         o = self._drive(DRIVER, "inline", rows=False)["open"]
-        self.assertEqual(o["breaks"], 0, "no row break in the inline layout: %r" % [i["cls"] for i in o["items"]])
+        self.assertEqual(o["breaks"], 0, "no row break of the setting's in the inline layout: %r" % [i["cls"] for i in o["items"]])
+        # keep-with-next (2026-09-09): a header, or the divider, whose first tab wrapped to the next row gets the painter's
+        # break ahead of it, so no group opens at a row's end with its tabs below; read off the served strip's geometry
+        items = o["items"]
+        for i, it in enumerate(items[:-1]):
+            cls = it["cls"].split()
+            opener = "tab-group-head" in cls or ("tab-group-sep" in cls and "tab-group-break" not in cls)
+            nxt = items[i + 1]
+            if opener and "tab" in nxt["cls"].split() and nxt["id"]:
+                self.assertEqual(it["top"], nxt["top"], "%r opens a row with its first tab, never at the row's end above it: %r %r" % (it["name"] or it["cls"], it, nxt))
+        self.assertLessEqual(o["keeps"], 4, "at most one keep break per header or divider: %r" % o["keeps"])
         self.assertEqual(len(o["seps"]), 1, "one trail boundary: %r" % o["seps"])
         self.assertEqual(round(o["seps"][0]["w"]), 13, "the divider is the pre-T264 13px box: %r" % o["seps"])
         self.assertGreater(o["seps"][0]["h"], 0, "…and visible: %r" % o["seps"])

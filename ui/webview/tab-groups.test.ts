@@ -309,12 +309,13 @@ test("a folded section renders its header alone with the folded-away count and o
   assert.match(CSS, /\.tab-group-pip\.retrying \{ background: #e67e22; \}/, "amber, the tab's .tab-retrying hue");
 });
 
-test("row hairlines count section headers as row members (T134's floating look must not return), never the row breaks", () => {
-  // a wrapped row made only of folded headers got no line: the painter grouped `.tab` children only
+test("row hairlines count section headers and the inline divider as row members (T134's floating look must not return), never the row breaks", () => {
+  // a wrapped row made only of folded headers got no line: the painter grouped `.tab` children only; then T264's
+  // exclusion of the breaks, which wear the divider's class, dropped the inline divider too, a visible 13px item
+  // of its row that the pre-T264 rule counted. tab-row-keep.test.ts executes the painter over both cases
   const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
-  assert.match(painter, /if \(!\(t\.classList\.contains\("tab"\) \|\| t\.classList\.contains\("tab-group-head"\)\)\) continue;/);
-  // the zero-height row breaks (T264) are not rows: counting one drew a hairline at the strip's top edge
-  assert.doesNotMatch(painter, /tab-group-sep|tab-group-break/);
+  assert.match(painter, /if \(!\(t\.classList\.contains\("tab"\) \|\| t\.classList\.contains\("tab-group-head"\) \|\| \(t\.classList\.contains\("tab-group-sep"\) && !t\.classList\.contains\("tab-group-break"\)\)\)\) continue;/,
+    "tabs, headers and the inline divider; the zero-height row breaks (T264) are not rows: counting one drew a hairline at the strip's top edge");
 });
 
 test("the picker's Tags row is for SDK and Codex sessions: disabled behind a note on the tmux pick, and no `tags` ride a tmux create", () => {
@@ -472,7 +473,8 @@ test("executed + pinned: with stripGroupRows off (the fork default) the strip em
   assert.match(GEAR, /if \(sr\) sr\.checked = s\.stripGroupRows === true;/);
   assert.doesNotMatch(GEAR, /stripGroupRows: true/, "the gear's defaults mirror agrees: off");
   // the guide says so in one sentence
-  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need; the gear's \*\*One tag group per row in the tab strip\*\* starts every\s+group on its own row instead\./);
+  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need \(a header never ends a row with its tabs on the next one: it moves down\s+with them\); the gear's \*\*One tag group per row in the tab strip\*\* starts every group on its own row\s+instead\./,
+    "the guide says how the inline flow wraps (the keep-with-next rule, tab-row-keep.test.ts) and names the per-row setting");
 });
 
 test("the tab drag's virtual layout wraps where the strip wraps: headers after a break and the trail's break open rows (T264, under stripGroupRows; the inline divider measures its own box)", () => {

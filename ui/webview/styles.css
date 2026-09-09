@@ -549,7 +549,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    strip as it was before T264. Its 6px gutters are PADDING, not margin, and the 1px line is the content
    box: its box is then the full 13px it occupies in the row, so the tab drag's virtual layout (which
    measures getBoundingClientRect widths) wraps where the real strip wraps. Scoped off the row break
-   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. */
+   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. A
+   row member for the per-row hairlines (render.ts paintTabRowLines), like a tab: a visible item of
+   its row, where the break is none; and it keeps with the trail's first tab (the break rule below). */
 .tab-group-sep:not(.tab-group-break) { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
 /* ONE GROUP PER LINE (T264, the user 2026-09-08: the grouped strip read as one long concatenation).
    ON THE FORK the breaks are emitted only under the gear's "One tag group per row in the tab strip"
@@ -562,7 +564,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    Under the setting the untagged trail stands behind no visible divider: a line of its own, with
    no chip, already says "in no tag" (the trail stays unlabeled by the user's ruling); the element
    keeps the .tab-group-sep class as the boundary sectionHeadOf reads. The tab drag's virtual layout
-   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps. */
+   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps.
+   THE INLINE LAYOUT PLACES BREAKS TOO (2026-09-09; render.ts keepGroupsWithTabs): one, marked
+   .tab-keep-break, ahead of a group header or the trail's divider whose first tab wrapped to the next
+   row, so a group never opens at a row's end with its tabs below. The painter clears and re-places
+   them on every strip rebuild and on the strip's ResizeObserver, the events that paint the hairlines;
+   they are this same item, styled by this rule, and no rule names .tab-keep-break on its own. */
 .tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
