@@ -6584,24 +6584,37 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
   // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
   // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
-  // after the "+"; the pane's Show button stays the way back. Only while the strip is sectioned and the
-  // right-clicked copy has a home section: hides do not apply on the flat strip or the phone layout, so
-  // the row is absent there. The label reads the stored state (Hide tab on a shown copy, Show tab on a
-  // hidden one), and the click SETS that state's opposite, the pin row's idiom. No kernel round trip:
-  // nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
+  // after the "+"; the pane's Show button stays the way back, and the sub-line says how to reach it
+  // (open the group, click its count). Present only while the strip is sectioned and the right-clicked
+  // copy has a home section, and never on the phone layout (phoneLayout, the gate the Group tabs by tag
+  // switch uses: planStrip flattens there, so a hide would write and show nothing): hides do not apply
+  // on the flat strip, to an untagged session, under a tag whose create is still in flight or on the
+  // phone, so the row is absent there. THE LABEL IS A SNAPSHOT, THE CLICK IS LIVE (round 1): the label
+  // reads the stored state at build (Hide tab on a shown copy, Show tab on a hidden one); the click
+  // resolves the copy's section again, since the Tags flyout's Move to and remove leave this menu open
+  // with the copy in another group (a hide addressed to the old section pruned to nothing), and SETS the
+  // state the label promised, the pin row's idiom: a copy already in that state where it now sits (the
+  // pane hid it there) is left as it is, never flipped back. No home at click time (moved out of every
+  // group, or the strip flattened in another pane): the click dismisses and writes nothing. No kernel
+  // round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
   // was the one door to a hide (2026-09-08); the user asked for the menu door.
   // (The kernel-side hide-session mechanism stays RETIRED, the user 2026-08-24: the tag system covers
   // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
   // for the picker's tagged-session jump.)
   {
-    const home = homeNow();
+    const home = phoneLayout() ? undefined : homeNow();
     if (home) {
-      const sec = sectionRef(home);
-      const hidden = isHidden(tabGroups(), sec, id);
+      const hidden = isHidden(tabGroups(), sectionRef(home), id);
       toggle("tab", hidden,
         hidden ? "Show tab" : "Hide tab",
-        hidden ? `back on the strip in ${home.name}` : `off the strip while ${home.name} is open; the group's count shows it as +1`,
-        () => writeTabGroupsPruned(setHidden(tabGroups(), sec, id, !hidden)),
+        hidden ? `back on the strip in ${home.name}` : `off the strip in ${home.name}; to show it again, open the group and click its count`,
+        () => {
+          const now = homeNow();
+          if (!now) return;
+          const sec = sectionRef(now), st = tabGroups();
+          if (isHidden(st, sec, id) === !hidden) return;
+          writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
+        },
         " ctx-item-hide");
     }
   }

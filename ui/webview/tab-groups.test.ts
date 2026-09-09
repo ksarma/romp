@@ -1901,7 +1901,7 @@ test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT
   const menuAt = RENDER.indexOf("function showTabMenu(");
   const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
   assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \?/);
-  assert.equal(menu.split("homeNow()").length - 1, 2, "the Hide tab row's read and the flyout's");
+  assert.equal(menu.split("homeNow()").length - 1, 3, "the Hide tab row's read at build, its click's (the click is live, review round 1) and the flyout's");
   assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('toggle("tab"') && menu.indexOf('toggle("tab"') < menu.indexOf("const home = homeNow();   // read per build"));
   assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");
   assert.match(RENDER, /startTabRename\(id, copy\)/);

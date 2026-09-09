@@ -472,10 +472,13 @@ The chat tab strip keeps its grouping choices in the browser's own storage, unde
 are folded, which tabs show while their group is folded (**Show when folded**), and
 which sessions are hidden inside their group (**Hide**, in the section's at-a-glance
 view). The tab's right-click menu writes the same hide entry: **Hide tab** on a shown copy,
-**Show tab** on a hidden one (a hidden copy has no tab on the strip, so the view's **Show** puts
-it back). The row is present only while the tabs are grouped by tag and the right-clicked copy is
-in a group; on the flat strip and the phone layout, where hides do not apply, the menu has no such
-row. A pin or a hide names the session and its group (the tag's name, and the tag's id
+**Show tab** on a hidden one (a hidden copy has no tab on the strip; the way back is the view's
+**Show**, and the group's count opens the view while the group is open). The row is present only
+while the tabs are grouped by tag and the right-clicked copy is in a group whose tag the kernel
+has already created (a tag still being created has no row until the kernel answers); on the flat
+strip, on the phone layout and for the untagged sessions after the divider, where hides do not
+apply, the menu has no such row. A pin or a hide names the session and its group (the tag's name,
+and the tag's id
 when it is this kernel's), follows the tag through a rename, and is dropped at the next
 pin or hide change once the session has left the group or closed; a fold or an open
 carries it as it is. Folding or opening a group never changes which of
