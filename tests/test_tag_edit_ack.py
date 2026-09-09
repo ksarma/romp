@@ -25,17 +25,20 @@ import errno
 import io
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state). This is
+# the loads' floor only: every test runs under a state root of its own (_own_state below).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -54,14 +57,40 @@ def store_tag(name):
     return next((t for t in km._timeline_views()["tags"] if t["name"] == name), None)
 
 
+def _own_state(test):
+    """A state root of the test's own for its duration: made here, bound into the judge for the test,
+    put back and removed when the test ends (a cleanup, so it runs after tearDown). The judge is ONE
+    module object per process (load_source re-executes into it), so jd.STATE is shared with every
+    module the xdist worker collected, and a neighbour's fixture that rebinds it to a temp dir it removes
+    without putting the prior root back (tests/test_episode_boundary.py's setUp/tearDown does) leaves the
+    shared root pointing at a removed directory. Every writer here goes through _atomic_write, which
+    recreates the parent, so most classes recreated the directory on their first write; the ones that write
+    the views file directly (ReaderRestampUnwritable, ReaderRestampUnwritableNamesTheDrop) failed with
+    FileNotFoundError on timeline-views.json whenever such a test ran just before them on the same worker.
+    The path-keyed caches are cleared of this root's entries with it."""
+    saved = km.jd.STATE
+    root = tempfile.mkdtemp()
+    km.jd._rebind_state(Path(root))
+    views = str(km._views_path())
+
+    def restore():
+        km._flags_cache.pop(views, None)
+        km._VIEWS_SEQ_FLOOR.pop(views, None)
+        km.jd._rebind_state(saved)
+        try:
+            os.chmod(root, 0o755)    # the unwritable-store tests leave the dir 0o555 if they fail before their finally
+        except OSError:
+            pass
+        shutil.rmtree(root, ignore_errors=True)
+    test.addCleanup(restore)
+    return Path(root)
+
+
 class _Wire(unittest.TestCase):
     """A dashboard's timeline socket, through the real dispatcher; every ack it receives is kept."""
 
     def setUp(self):
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
+        _own_state(self)
         self.notices = []
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: self.notices.append((text, ok))
@@ -942,6 +971,7 @@ class Capability(_Wire):
         from pathlib import Path as _P
         s0 = self.seed()["seq"]
         tmp = _tf.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -976,10 +1006,7 @@ class SetterReturnsRefusals(unittest.TestCase):
     ignored None keep ignoring a list."""
 
     def setUp(self):
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
+        _own_state(self)
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: None
 
@@ -1213,6 +1240,7 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
         home = km.jd.STATE
         self.assertGreaterEqual(km._views_seq_floor(), s1, "the first store's floor is raised by its own writes")
         other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, True)
         km.jd.STATE = Path(other)
         p2 = km._views_path()
         try:
@@ -2387,6 +2415,7 @@ class SentinelConnectPushCaps(_Wire):
         from pathlib import Path as _P
         s0 = self.seed()["seq"]
         tmp = _tf.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
