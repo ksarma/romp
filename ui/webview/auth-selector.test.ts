@@ -53,7 +53,9 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
   // (a.default reads "key" under ROMP_EXPECTED_AUTH=key on an apiKeyHelper box, which holds no key of romp's),
   // else the login named by its account: pickerBillingRow's `fixed`, executed in billing-label.test.ts
   assert.match(RENDER, /fixed\.textContent = row\.fixed;/);
-  assert.match(BILLING, /const fixed = !show \|\| both \? "" : \(\(a!\.key \|\| a!\.default === "key"\) \? "API key" : billingSide\("login", a!\.acct\)\);/);
+  // the written-out choice follows the kernel's default (what a spawn without a pick bills), the key arm
+  // only for a reply carrying no default (verification round 2, 2026-09-09)
+  assert.match(BILLING, /const keyed = !!a && \(a\.default \? a\.default === "key" : !!a\.key\);\s*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
   assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow \} from "\.\/billing-label";/);
   assert.match(RENDER, /const auFixed = el\("span", "picker-auth-fixed"\);/);
   // in button mode, the Login button's hover names WHICH account

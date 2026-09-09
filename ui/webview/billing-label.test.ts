@@ -80,6 +80,9 @@ test("the picker's Billing row shows whenever the host can name what a new sessi
   assert.deepEqual(pickerBillingRow({ login: true, key: true, acct: "user@example.com", default: "key" }),
     { show: true, both: true, fixed: "" });
   // a login alone: written out, naming the account when known
+  // a keyed box under a remembered login pick with no login signed in: the spawn seeds the login, so the row says so
+  assert.deepEqual(pickerBillingRow({ login: false, key: true, acct: "", default: "login" }),
+    { show: true, both: false, fixed: "Login" }, "the written-out choice follows default, not the key romp holds");
   assert.deepEqual(pickerBillingRow({ login: true, key: false, acct: "user@example.com", default: "login" }),
     { show: true, both: false, fixed: "Login (user@example.com)" });
   assert.equal(pickerBillingRow({ login: true, default: "login" }).fixed, "Login");

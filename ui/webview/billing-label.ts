@@ -50,7 +50,11 @@ export interface BillingAvail {
 export function pickerBillingRow(a: BillingAvail | null | undefined): { show: boolean; both: boolean; fixed: string } {
   const show = !!(a && (a.login || a.key || a.default === "key"));
   const both = !!(a && a.login && a.key);
-  const fixed = !show || both ? "" : ((a!.key || a!.default === "key") ? "API key" : billingSide("login", a!.acct));
+  // the written-out choice is the kernel's `default`, exactly what a spawn without a pick bills (new_session_auth):
+  // a remembered login pick on a keyed box seeds the login into the created session, so the key romp holds
+  // is not the answer there; the key arm serves only a reply carrying no default
+  const keyed = !!a && (a.default ? a.default === "key" : !!a.key);
+  const fixed = !show || both ? "" : (keyed ? "API key" : billingSide("login", a!.acct));
   return { show, both, fixed };
 }
 

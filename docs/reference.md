@@ -520,11 +520,12 @@ The new-session picker's **Billing** row states the case whenever the backend
 toggle says SDK: segmented buttons when the selected host offers both choices,
 and with only one real choice, the same spot simply writes out which applies —
 `Login (name@example.com)` or `API key` — so what a session will bill is never
-a mystery. A live session additionally wears a statusline badge for
-*switching*, beside mode/model/effort, and that control keeps the stricter
-rule: it exists only when both choices are real (a one-option selector is
-noise). Switching reconnects the session to apply (the key rides the launch
-environment), with the same switching-dots the effort badge wears.
+a mystery. A live session's *switching* control is the Billing entry of the
+tab's right-click menu (it left the statusline on 2026-08-09), and that
+control keeps the stricter rule: it exists only when both choices are real (a
+one-option selector is noise). Switching reconnects the session to apply (the
+key rides the launch environment), with the same switching-dots the effort
+badge wears.
 
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key` — no fragment of the key, not
