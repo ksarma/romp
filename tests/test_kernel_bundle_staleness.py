@@ -13,13 +13,16 @@ enough — rebuilt everything, so the trigger looked like it worked.
 
 These tests assert the check's inputs against esbuild.js's ACTUAL entry points, so a new entry point
 added there without a matching watch root fails here rather than silently never shipping."""
+import fnmatch
 import os
+import shutil
 import tempfile
 import re
 import unittest
+from pathlib import Path
 from romp_load import load_source
 
-import lab_dist   # the served labs' build key (tests/lab_dist.py); the parity pin at the end reads it
+import lab_dist   # the served labs' build harness (tests/lab_dist.py); the parity and token pins at the end read it
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -96,6 +99,42 @@ class ServedLabsKeyTheSameInputs(unittest.TestCase):
         self.assertGreater(len(keyed), 100, "the harness keyed a real tree")
         missing = sorted(str(p) for p in km._bundle_inputs(cv) if os.path.realpath(str(p)) not in keyed)
         self.assertEqual(missing, [], "bundle inputs the kernel rebuilds for that tests/lab_dist.py does not key")
+
+
+class HarnessFilesDoNotMoveTheCacheBustToken(unittest.TestCase):
+    """tests/lab_dist.py keeps its lock and marker INSIDE dist, and writes the marker through a staging name
+    there too. The kernel's _dist_ver token is the newest mtime over dist's bundles (`*.js` in its code; its
+    docstring names `*.css` too), appended to every script and link url, so a harness file the glob counted
+    would make every served lab run change the token the dashboard's clients see. Pinned by RUNNING the
+    kernel's token over a temp dist: the three harness names, rewritten after the bundle, leave it where
+    the bundle put it, and the control (a newer bundle) moves it, so a token that ignored dist entirely
+    (the function returns 0 on a missing dir) cannot pass by accident."""
+
+    def setUp(self):
+        self.td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.td, True)
+        self._saved = km.DIST
+        km.DIST = Path(self.td)
+        self.addCleanup(setattr, km, "DIST", self._saved)
+        self.bundle = os.path.join(self.td, "render.js")
+        with open(self.bundle, "w") as f:
+            f.write("(()=>{})();")
+        self.t0 = 1_700_000_000
+        os.utime(self.bundle, (self.t0, self.t0))
+
+    def test_the_lock_the_marker_and_the_markers_staging_name_leave_the_token_alone(self):
+        self.assertEqual(km._dist_ver(), self.t0, "the token is the bundle's mtime (nonzero: dist is read)")
+        names = [lab_dist.LOCK_NAME, lab_dist.MARKER_NAME, ".%s.tmp-%d-0" % (lab_dist.MARKER_NAME.lstrip("."), os.getpid())]
+        for name in names:
+            for suffix in ("*.js", "*.css"):
+                self.assertFalse(fnmatch.fnmatchcase(name, suffix), "%s matches the token's glob %s" % (name, suffix))
+            path = os.path.join(self.td, name)
+            with open(path, "w") as f:
+                f.write("x\n")
+            os.utime(path, (self.t0 + 600, self.t0 + 600))    # newer than the bundle, as a real run leaves them
+        self.assertEqual(km._dist_ver(), self.t0, "a harness file newer than the bundle does not move the token")
+        os.utime(self.bundle, (self.t0 + 60, self.t0 + 60))     # the control: a rebuilt bundle moves it
+        self.assertEqual(km._dist_ver(), self.t0 + 60)
 
 
 if __name__ == "__main__":

@@ -11,11 +11,15 @@ does (holding the staging window open long enough to matter):
   3. a marker that names the current inputs skips the build; a changed input, a removed dist, a dependency
      change, a build by another command or a change of build command rebuilds; the marker records the key
      computed BEFORE the build, so a source edited mid-build is caught by the next call;
-  4. the inputs are derived from esbuild.js (entry points in both forms, then the trees their relative
-     imports reach), the dist being built is left out at the top level only, and on the real config the
-     derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins file-level parity);
+  4. the inputs are derived from esbuild.js (entry points in both forms, a comment inside the array dropping
+     nothing, a partial parse an error; then the trees their relative imports reach, one executed test per
+     import shape the scan follows), the dist being built is left out at the top level only, and on the
+     real config the derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins
+     file-level parity);
   5. a build that fails skips the caller (the served labs' standing behaviour) and leaves no marker; a
-     build that exceeds its bound fails loudly, releases the lock, and the bound is the kernel's;
+     build that exceeds its bound raises BuildTimeout, a RuntimeError and never a SkipTest, and releases the
+     lock (the bound itself is pinned to the kernel's figures in tests/test_kernel_bundle_vendor_inputs.py,
+     by running the kernel's two build calls over a recording fake);
   6. the copy leaves out a staging file the harness did not write, and survives a staged builder running
      outside the lock (the defence-in-depth half);
   7. the lock and the marker are left out of a VSIX (.vscodeignore) and of git (.gitignore);
@@ -40,7 +44,6 @@ import lab_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
-KERNEL = os.path.join(ROOT, "kernel", "kernel.py")
 
 # The fake builder: appends its pid to builds.log, then writes every output to a hidden staging sibling
 # (`.<name>.tmp-<pid>-<n>`, esbuild.js's shape), holds that window open for FAKE_HOLD seconds, and renames
@@ -401,6 +404,17 @@ class InputsDeriveFromEsbuild(unittest.TestCase):
                'import engine from "../../vendor/pkg/engine.js";\nexport const a = 1;\n')
         _write(os.path.join(self.root, "vendor", "pkg", "engine.js"), "module.exports = 1;\n")
         _write(os.path.join(self.root, "tools", "extra", "thing.ts"), "export const t = 1;\n")
+        # the other import shapes the scan follows, each reaching a top-level tree of its own (tA to tE), so a
+        # shape the scan stopped following shows as a missing root; every target is a real file (a root that
+        # does not exist is skipped by design)
+        _write(os.path.join(self.root, "ui", "webview", "plain.js"),
+               'import "../../tA/a.js";\nconst b = import("../../tB/b.js");\nconst c = require("../../tC/c.js");\n'
+               'const p = "../data/x.json";\n')
+        _write(os.path.join(self.root, "ui", "webview", "styles.css"),
+               '@import "../../tD/d.css";\n@import url("../../tE/e.css");\n')
+        for t, name in (("tA", "a.js"), ("tB", "b.js"), ("tC", "c.js"), ("tD", "d.css"), ("tE", "e.css")):
+            _write(os.path.join(self.root, t, name), "/* %s */\n" % t)
+        _write(os.path.join(self.root, "data", "x.json"), "{}\n")
         _write(self.config, '''
 const extension = { entryPoints: ["src/extension.ts"], outfile: "dist/extension.js" };
 const webview = {
@@ -414,18 +428,91 @@ const webview = {
 function testBuild() { const entries = []; return { entryPoints: entries, outdir: "out-tests" }; }
 ''')
 
+    ENTRIES = ["ext/node_modules/pkg/build/worker.mjs", "ext/src/extension.ts", "tools/extra/thing.ts",
+               "ui/webview/render.ts"]
+
     def rel(self, pairs):
         return [(os.path.relpath(p, self.root), r) for p, r in pairs]
 
+    def entries(self):
+        return sorted(os.path.relpath(p, self.root) for p in lab_dist.esbuild_entry_points(self.ext))
+
+    def imports_of(self, name, text):
+        """The relative specifiers the scan reads out of one synthetic webview source holding `text`."""
+        path = os.path.join(self.root, "ui", "webview", name)
+        _write(path, text)
+        return list(lab_dist._relative_imports(path))
+
     def test_entry_points_parse_in_both_forms(self):
-        got = sorted(os.path.relpath(p, self.root) for p in lab_dist.esbuild_entry_points(self.ext))
-        self.assertEqual(got, ["ext/node_modules/pkg/build/worker.mjs", "ext/src/extension.ts",
-                               "tools/extra/thing.ts", "ui/webview/render.ts"])
+        self.assertEqual(self.entries(), self.ENTRIES)
+
+    def test_a_comment_holding_a_bracket_inside_the_array_drops_no_entry(self):
+        """Line comments are stripped over the whole source BEFORE the array is cut at its `]`: a `]` inside an
+        in-array comment used to end the array there, and every entry after the comment was dropped in
+        silence (the error fired only when nothing at all parsed). The real esbuild.js carries `]` in
+        comments outside its arrays today; this is the day one moves inside."""
+        _write(self.config, '''
+const webview = {
+  entryPoints: [
+    "../ui/webview/render.ts",   // see plans/x.md [rationale]
+    { in: "node_modules/pkg/build/worker.mjs", out: "worker" },  // the object form [2]
+    "../tools/extra/thing.ts",
+  ],
+};
+const extension = { entryPoints: ["src/extension.ts"], outfile: "dist/extension.js" };
+''')
+        self.assertEqual(self.entries(), self.ENTRIES, "every entry after the bracketed comment is still parsed")
+
+    def test_an_array_the_parser_does_not_read_whole_is_an_error(self):
+        """A spread, a variable, a block comment, a template literal or an object without `in:` inside the
+        array: each would leave an input unkeyed if the parser returned the entries around it, so each is
+        the loud error, naming the piece it could not read (the template literal's `${name}` reads as an
+        object with no `in:`, which is the error it gets)."""
+        for text, unread in (('entryPoints: ["src/a.ts", ...more]', "...more"),
+                             ('entryPoints: ["src/a.ts", shared]', "shared"),
+                             ('entryPoints: ["src/a.ts", /* "src/b.ts" */ "src/c.ts"]', "/**/"),
+                             ('entryPoints: [`src/${name}.ts`]', "{name}"),
+                             ('entryPoints: ["src/a.ts", { out: "w" }]', '{ out: "w" }')):
+            _write(self.config, "const x = { %s };\n" % text)
+            with self.assertRaises(ValueError, msg=text) as cm:
+                lab_dist.esbuild_entry_points(self.ext)
+            self.assertIn(repr(unread), str(cm.exception), text)
+            self.assertIn("cannot be keyed", str(cm.exception), text)
 
     def test_roots_are_the_entry_points_trees_plus_the_trees_their_imports_reach(self):
         self.assertEqual(self.rel(lab_dist.default_inputs(self.root, self.ext)),
-                         [("ext", True), ("tools", True), ("ui", True), ("vendor", True)],
-                         "ext and ui and tools from the entries, vendor from render.ts's import; node_modules never")
+                         [("ext", True), ("tA", True), ("tB", True), ("tC", True), ("tD", True), ("tE", True),
+                          ("tools", True), ("ui", True), ("vendor", True)],
+                         "ext and ui and tools from the entries, vendor from render.ts's `from` import, tA to tE "
+                         "from the other four import shapes; data (a string that is not an import) and "
+                         "node_modules never")
+
+    # One executed test per import shape _IMPORT_SHAPE follows, so the shape a regression stopped following is
+    # the test that names it (the real trees' cross-tree imports are all `from`-shaped today, so the real-config
+    # test below cannot tell).
+    def test_an_es_from_import_is_followed(self):
+        self.assertEqual(self.imports_of("s1.ts", 'import { x } from "../../vendor/pkg/engine.js";\n'),
+                         ["../../vendor/pkg/engine.js"])
+
+    def test_a_bare_side_effect_import_is_followed(self):
+        self.assertEqual(self.imports_of("s2.js", 'import "../../tA/a.js";\n'), ["../../tA/a.js"])
+
+    def test_a_dynamic_import_is_followed(self):
+        self.assertEqual(self.imports_of("s3.js", 'const b = import("../../tB/b.js");\n'), ["../../tB/b.js"])
+        self.assertEqual(self.imports_of("s3b.js", 'const b = import( "../../tB/b.js" );\n'), ["../../tB/b.js"])
+
+    def test_a_require_is_followed(self):
+        self.assertEqual(self.imports_of("s4.js", 'const c = require("../../tC/c.js");\n'), ["../../tC/c.js"])
+        self.assertEqual(self.imports_of("s4b.js", "const c = require ('./local.js');\n"), ["./local.js"])
+
+    def test_a_css_import_is_followed(self):
+        self.assertEqual(self.imports_of("s5.css", '@import "../../tD/d.css";\n'), ["../../tD/d.css"])
+
+    def test_a_css_import_url_is_followed(self):
+        self.assertEqual(self.imports_of("s6.css", '@import url("../../tE/e.css");\n'), ["../../tE/e.css"])
+
+    def test_a_relative_string_that_is_not_an_import_is_not_followed(self):
+        self.assertEqual(self.imports_of("s7.js", 'const p = "../data/x.json";\nconst q = fetch("./api/x");\n'), [])
 
     def test_the_keyed_files_follow_the_derivation(self):
         build = lab_dist.DistBuild(ext=self.ext, cmd=[sys.executable, "x"], root=self.root)
@@ -483,66 +570,104 @@ function testBuild() { const entries = []; return { entryPoints: entries, outdir
 
 
 class BuildBounded(_Checkout):
+    """A build past its bound is a HARD error: BuildTimeout, a RuntimeError, never a SkipTest (a skip would
+    report a wedged esbuild as a checkout that cannot build and leave the module green). The two pins
+    below catch unittest.SkipTest FIRST and fail on it, so a BuildTimeout re-based on SkipTest, or a
+    `raise SkipTest` in the timeout branch, fails here instead of skipping. The bound's VALUE is pinned to
+    the kernel's figures in tests/test_kernel_bundle_vendor_inputs.py, where the kernel is loaded."""
+
+    def build_past_the_bound(self, build):
+        """Runs `build.ensure_built()` and returns the BuildTimeout it raised; a SkipTest, or no error, fails."""
+        self.assertTrue(issubclass(lab_dist.BuildTimeout, RuntimeError), "BuildTimeout is an error, not a skip")
+        self.assertFalse(issubclass(lab_dist.BuildTimeout, unittest.SkipTest))
+        try:
+            build.ensure_built()
+        except unittest.SkipTest as e:
+            self.fail("a build past its bound is a hard error, never a skip: %r" % e)
+        except lab_dist.BuildTimeout as e:
+            self.assertIs(type(e), lab_dist.BuildTimeout)
+            return e
+        self.fail("a build past its bound raised nothing")
+
+    def assert_lock_free(self):
+        """The lock went with the error: a non-blocking exclusive flock from a fresh descriptor succeeds."""
+        fd = os.open(os.path.join(self.build.dist, lab_dist.LOCK_NAME), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.fail("the harness lock is still held after the bound cut the build")
+        finally:
+            os.close(fd)
 
     def test_a_build_past_its_bound_fails_loudly_and_releases_the_lock(self):
         def wedged(cmd, cwd, timeout):
             raise subprocess.TimeoutExpired(cmd, timeout, output=b"", stderr=b"esbuild: still bundling\n")
         build = lab_dist.DistBuild(ext=self.ext, cmd=self.build.cmd, inputs=self.build.inputs, timeout=7, run=wedged)
-        with self.assertRaises(lab_dist.BuildTimeout) as cm:
-            build.ensure_built()
-        msg = str(cm.exception)
+        msg = str(self.build_past_the_bound(build))
         self.assertIn("fake_esbuild.py", msg, "names the command")
         self.assertIn(self.ext, msg, "and where it ran")
         self.assertRegex(msg, r"ran \d+\.\d s, the bound is 7 s", "and the elapsed time against the bound")
         self.assertIn("still bundling", msg, "and the output tail")
         self.assertIsNone(build.read_marker(), "no marker for a build that did not finish")
         self.assertEqual(self.builds(), [])
-        result = []                         # the lock went with the error: a caller with a working builder proceeds
+        self.assert_lock_free()
+        result = []                         # and a caller with a working builder proceeds
         t = threading.Thread(target=lambda: result.append(self.build.ensure_built()))
         t.start()
         t.join(30)
         self.assertEqual(result, [True], "the next caller took the lock and built")
 
     def test_the_default_runner_enforces_the_bound(self):
-        """The real path: the subprocess is killed at the bound, the staged files it left are not served."""
+        """The real path: the subprocess is killed at the bound (the fake would hold for 30 s), BuildTimeout is
+        raised, no marker is written, the lock is free, and the next copy builds and is whole. Only what
+        the kill makes certain is asserted: whether the killed fake got as far as staging its outputs
+        before the bound depends on the machine's load, so the staging leftovers are not asserted here;
+        CopyIgnoresForeignStaging plants staging names and pins that the copy leaves them out."""
         os.environ["FAKE_HOLD"] = "30"
         self.addCleanup(os.environ.pop, "FAKE_HOLD", None)
         build = lab_dist.DistBuild(ext=self.ext, cmd=self.build.cmd, inputs=self.build.inputs, timeout=0.5)
         started = time.monotonic()
-        with self.assertRaises(lab_dist.BuildTimeout):
-            build.ensure_built()
+        e = self.build_past_the_bound(build)
         self.assertLess(time.monotonic() - started, 20, "the bound cut the build, not the fake's own 30 s hold")
+        self.assertIsInstance(e.__cause__, subprocess.TimeoutExpired, "raised from the runner's TimeoutExpired")
         self.assertIsNone(build.read_marker())
-        self.assertTrue([n for n in os.listdir(build.dist) if ".tmp-" in n], "the killed build left its staging files")
+        self.assert_lock_free()
         os.environ.pop("FAKE_HOLD")
         dest = os.path.join(self.root, "lab", "dist")
         self.build.copy_to(dest)
         self.assert_complete_copy(dest)
 
-    def test_the_bound_is_the_kernels(self):
-        """The kernel bounds the same command in two places; the harness uses the larger, so a build the
-        kernel would still wait for is never cut here first."""
-        src = _read(KERNEL)
-        bounds = []
-        for fn, call in (("_rebuild_dist", r'subprocess\.run\(\["node", "esbuild\.js"\]'), ("_ensure_bundles", r"subprocess\.run\(argv")):
-            body = re.search(r"def %s\(\):.*?(?=\ndef )" % fn, src, re.S)
-            self.assertIsNotNone(body, fn)
-            found = [int(x) for x in re.findall(call + r".*?timeout=(\d+)", body.group(0), re.S)]
-            self.assertTrue(found, "%s bounds its esbuild run" % fn)
-            bounds += found
-        self.assertEqual(lab_dist.BUILD_TIMEOUT, max(bounds), "the kernel's bounds: %r" % bounds)
-
 
 class CopyIgnoresForeignStaging(_Checkout):
 
+    # staging names as esbuild.js and the harness's own marker write shape them, at the top and in a subdirectory
+    PLANTED = (".pdf-worker.js.tmp-99999-0", os.path.join("fonts", ".b.woff2.tmp-99999-1"),
+               ".%s.tmp-99999-0" % lab_dist.MARKER_NAME.lstrip("."))
+
     def test_a_staging_file_from_outside_the_harness_is_left_out(self):
         self.build.ensure_built()
-        for name in (".pdf-worker.js.tmp-99999-0", os.path.join("fonts", ".b.woff2.tmp-99999-1")):
+        for name in self.PLANTED:
             open(os.path.join(self.build.dist, name), "w").close()
         dest = os.path.join(self.root, "lab", "dist")
         self.build.copy_to(dest)
         self.assert_complete_copy(dest)
         self.assertEqual(len(self.builds()), 1, "a staging name is not a foreign write of the served outputs")
+
+    def test_copy_dist_leaves_planted_staging_names_out(self):
+        """The served modules' own call, `lab_dist.copy_dist(dest)`, over a dist holding staging names planted
+        before the call (a build killed at its bound, or a staged builder outside the lock, leaves exactly
+        these): the copy holds the served outputs only, whole, and neither the lock nor the marker."""
+        self.build.ensure_built()
+        for name in self.PLANTED:
+            open(os.path.join(self.build.dist, name), "w").close()
+        dest = os.path.join(self.root, "lab", "dist")
+        with patch.object(lab_dist, "_DEFAULT", self.build):
+            lab_dist.copy_dist(dest)
+        self.assert_complete_copy(dest)
+        copied = {os.path.relpath(os.path.join(d, f), dest) for d, _, fs in os.walk(dest) for f in fs}
+        for name in self.PLANTED + (lab_dist.LOCK_NAME, lab_dist.MARKER_NAME):
+            self.assertNotIn(name, copied, "%s was copied into the served tree" % name)
+        self.assertEqual(len(self.builds()), 1)
 
     def test_copies_survive_a_staged_builder_running_outside_the_lock(self):
         """A STAGED build that does not take the harness lock (a developer's `node esbuild.js`) renames
@@ -599,7 +724,8 @@ class Packaging(unittest.TestCase):
 _ESBUILD_TEXT_READERS = {"test_lab_dist.py", "test_bundle_build_mode.py", "test_kernel_bundle_staleness.py",
                          "test_kernel_bundle_vendor_inputs.py"}        # source pins over esbuild.js; none runs it
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py"}            # test_github_repo copies a repo, never dist
-_KEY_READERS = {"test_kernel_bundle_staleness.py"}                     # imports lab_dist for the input parity pin
+_KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
+                "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 
 
 def offences(name, src):
@@ -621,7 +747,14 @@ class ServedModulesUseTheHelper(unittest.TestCase):
     def test_no_test_module_builds_or_copies_dist_on_its_own(self):
         """The ownership holds only while every served lab goes through the helper. This is a TEXT ratchet
         over tests/*.py (the guarantee itself lives in lab_dist): a module that mentions esbuild.js or calls
-        copytree, in any spelling, is an offender unless the allowlists above name it and say why."""
+        copytree, in any spelling, is an offender unless the allowlists above name it and say why.
+
+        The rule it holds: EVERY served module goes through lab_dist.copy_dist, including a module that
+        arrives from upstream through a fold still carrying the old `node esbuild.js` + copytree block.
+        Such a module is converted in the merge that brings it and this harness together (whichever of the
+        two lands second): the fold branch cannot convert it (lab_dist does not exist there), and this
+        branch cannot convert a file it does not have. The ratchet turns red on main until that merge
+        converts it, which is the point: the conversion is not optional."""
         offenders = []
         for path in sorted(glob.glob(os.path.join(HERE, "*.py"))):
             name = os.path.basename(path)

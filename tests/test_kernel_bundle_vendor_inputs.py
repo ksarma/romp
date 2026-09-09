@@ -28,6 +28,8 @@ import unittest
 from romp_load import load_source
 from pathlib import Path
 
+import lab_dist   # the served labs' build harness (tests/lab_dist.py); its BUILD_TIMEOUT is pinned below
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
@@ -126,15 +128,18 @@ class _SyntheticCheckout(unittest.TestCase):
 
 
 class TheBootScanSeesAVendoredChange(_SyntheticCheckout):
-    """_ensure_bundles, with the build call recorded instead of run."""
+    """_ensure_bundles, with the build call recorded instead of run (`builds` holds each argv; `calls` holds
+    each argv with its keyword arguments, for the bound pin)."""
 
     def setUp(self):
         super().setUp()
         self.builds = []
+        self.calls = []
         real = km.subprocess
 
         def fake_run(argv, **kw):
             self.builds.append(list(argv))
+            self.calls.append((list(argv), dict(kw)))
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
         km.subprocess = types.SimpleNamespace(run=fake_run, TimeoutExpired=real.TimeoutExpired,
                                               CalledProcessError=real.CalledProcessError)
@@ -158,6 +163,25 @@ class TheBootScanSeesAVendoredChange(_SyntheticCheckout):
         self._touch(self.render_ts, age=100)             # the harness tells a real staleness from none
         km._ensure_bundles()
         self.assertEqual(len(self.builds), 1)
+
+    def test_the_served_labs_build_bound_is_the_larger_of_the_kernels_two(self):
+        """tests/lab_dist.py bounds the served labs' build at BUILD_TIMEOUT, the kernel's own bound for the
+        same command: the larger of _ensure_bundles's and _rebuild_dist's, so a build the kernel would still
+        wait for is never cut first by the labs. Both figures are read by RUNNING the kernel's two build
+        paths over the recording fake and taking the `timeout=` each passed for `node esbuild.js`, never
+        from the kernel's text (a regex over the source took a named constant, an options dict or a class
+        interposed before the next def as a reason to alarm or to find nothing). The npm-install retry's
+        own bound is not an esbuild call and is filtered out by argv."""
+        self._touch(self.render_ts, age=100)             # stale, so _ensure_bundles reaches its build call
+        km._ensure_bundles()
+        ok, tail = km._rebuild_dist()                    # no checkout needed: it formats a cwd and runs the fake
+        self.assertTrue(ok, tail)
+        esbuild = [kw.get("timeout") for argv, kw in self.calls if argv[:2] == ["node", "esbuild.js"]]
+        self.assertEqual(len(esbuild), 2, "one esbuild call from each path: %r" % self.calls)
+        self.assertTrue(all(isinstance(t, (int, float)) for t in esbuild), "every esbuild call is bounded: %r" % esbuild)
+        self.assertEqual(sorted(esbuild), [120, 180], "the kernel's two bounds")
+        self.assertEqual(lab_dist.BUILD_TIMEOUT, max(esbuild),
+                         "tests/lab_dist.py BUILD_TIMEOUT is the larger of the kernel's two esbuild bounds")
 
 
 class TheConvergeScanSeesAVendoredChange(_SyntheticCheckout):

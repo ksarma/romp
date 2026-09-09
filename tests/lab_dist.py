@@ -49,8 +49,10 @@ This module owns the build. The rules:
   match the key, and let copy_to copy an empty dist). Three readers of dist must leave both alone: git
   ignores dist/ whole; vsce packages dist and is governed by .vscodeignore, not .gitignore, so
   vscode-extension/.vscodeignore names both files (tests/test_lab_dist.py pins both rules); and the
-  kernel's `_dist_ver` token counts only .js and .css names, which neither is. The copy's ignore filter
-  leaves both behind.
+  kernel's `_dist_ver` token globs bundle suffixes (`*.js` in its code; its docstring names `*.css` too),
+  and neither harness name, nor the marker's staging name, ends in either
+  (tests/test_kernel_bundle_staleness.py runs the token over a dist holding all three and pins that it
+  does not move). The copy's ignore filter leaves both behind.
 - Defence in depth: the copy ignores esbuild's staging names (`*.tmp-*`) and the harness's own files.
   The lock is what makes a copy correct against a build THIS harness ran. The ignore covers a STAGED
   build that did not take the lock (`node esbuild.js`, with or without --production, `npm run build`,
@@ -92,7 +94,8 @@ _HARNESS_OWN = {LOCK_NAME, MARKER_NAME}
 
 # The bound on one build, in seconds: the kernel's for the same command (kernel/kernel.py: `_rebuild_dist` runs
 # `node esbuild.js` under timeout=180, `_ensure_bundles` under 120), the larger of the two. A real build takes
-# about a second, so only a wedge reaches it. tests/test_lab_dist.py pins it to the kernel's figures.
+# about a second, so only a wedge reaches it. tests/test_kernel_bundle_vendor_inputs.py pins it to the kernel's
+# figures by RUNNING the kernel's two build calls over a recording fake, never by reading the kernel's text.
 BUILD_TIMEOUT = 180
 
 # The suffixes esbuild bundles from the input trees: the kernel's `_bundle_inputs` set (.ts, .js, .mjs, .css)
@@ -151,19 +154,32 @@ def esbuild_entry_points(ext=EXT):
     """The entry points esbuild.js names, as absolute paths: every literal `entryPoints: [...]` array, in the
     string form ("../ui/webview/render.ts") and the object form ({ in: "node_modules/.../pdf.worker.mjs",
     out: "pdf-worker" }). The test build's `entryPoints: entries` is a variable, not an array, and is left
-    out: it writes out-tests, not dist. Loud when nothing parses: an unkeyed build is the silent failure."""
+    out: it writes out-tests, not dist. Loud when the parse is not whole: no array, an array holding
+    something this parser does not read (a spread, a variable, a block comment), or an object without
+    `in:`. An entry dropped in silence is an unkeyed input, the silent failure this module exists to
+    prevent, so a partial parse is an error, never a shorter list."""
     config = os.path.join(ext, "esbuild.js")
     with open(config, encoding="utf-8") as f:
         src = f.read()
+    # Line comments go first, over the WHOLE source: a `]` inside a comment within the array would otherwise end
+    # the array early and drop every entry after it (a partial parse, which the leftover check below cannot see
+    # once the text is gone). The residual is a `//` inside a string literal (a URL) on an array line: the cut
+    # string leaves an unbalanced quote behind, which the leftover check reports. None in the real file today.
+    src = re.sub(r"//[^\n]*", "", src)
     entries = []
-    for block in re.findall(r"entryPoints:\s*(\[.*?\])", src, re.S):
-        block = re.sub(r"//[^\n]*", "", block)
+    for block in re.findall(r"entryPoints:\s*\[(.*?)\]", src, re.S):
         for obj in re.findall(r"\{[^}]*\}", block):
             m = re.search(r"""\bin:\s*["']([^"']+)["']""", obj)
-            if m:
-                entries.append(m.group(1))
+            if not m:
+                raise ValueError("an entryPoints object without `in:` in %s, %r: the build's inputs cannot be keyed"
+                                 % (config, " ".join(obj.split())))
+            entries.append(m.group(1))
         block = re.sub(r"\{[^}]*\}", "", block)
         entries.extend(re.findall(r"""["']([^"']+)["']""", block))
+        leftover = re.sub(r"""["'][^"']+["']|[\s,]""", "", block)
+        if leftover:
+            raise ValueError("an entryPoints array in %s holds %r, which this parser does not read: the build's "
+                             "inputs cannot be keyed" % (config, leftover))
     if not entries:
         raise ValueError("no entryPoints array found in %s: the build's inputs cannot be keyed" % config)
     return [os.path.normpath(os.path.join(ext, e)) for e in entries]
