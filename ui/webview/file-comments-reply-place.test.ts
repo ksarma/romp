@@ -586,9 +586,14 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
 
 test("source: render builds the cards before the composer and puts the typing box's keyboard back; placeComposer finds the card by comment id and moves the box only when it is out of place; the sections' slot order stands", () => {
   assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/, "the slot's place: head, the box, cards, send, log");
-  assert.match(SRC, /const typing = document\.activeElement === this\.input;\n\s*const scroll = this\.input\.scrollTop;\n\s*this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/,
+  // the reads come first — the composer's box and the Send confirm's note box (the send follow-on), both rebuilt around —
+  // then the reply's latch and the arrivals' bookkeeping (the seen and new sets, the dots on the body's marks: the arrivals
+  // follow-on), which build nothing; the rebuild after them: the head, the cards around the box, the composer. Between the
+  // reads and the head any line stands except a call that rebuilds a section or places the box
+  assert.match(SRC, /const typing = document\.activeElement === this\.input;\n\s*const scroll = this\.input\.scrollTop;\n\s*const noting = document\.activeElement === this\.noteBox;[^\n]*\n\s*const noteScroll = this\.noteBox\.scrollTop;\n\s*this\.latchReplyCard\(\);[^\n]*\n(?:(?!.*\.(?:replaceChildren|swapCards|renderComposer|placeComposer)\()[^\n]*\n)*\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/,
     "where the keyboard is, read before the rebuild; the cards swapped around the box first, then the composer: the box stands in a card of the FRESH list — the one the swap kept, or the one placeComposer moves it into");
   assert.match(SRC, /if \(typing && document\.activeElement !== this\.input\) this\.input\.focus\(\{ preventScroll: true \}\);/, "a moved node drops its focus; render puts it back");
+  assert.match(SRC, /if \(this\.noteBox\.scrollTop !== noteScroll\) this\.noteBox\.scrollTop = noteScroll;/, "the note box keeps its scroll offset across the rebuild, as the composer's box does (its keyboard: file-comments-send-note.test.ts)");
   const place = SRC.slice(SRC.indexOf("  private placeComposer(): boolean {"), SRC.indexOf("  private renderCards("));
   assert.ok(place.includes(`this.sections.cards.querySelector('.fc-card[data-id="' + id + '"], .fc-hosted[data-id="' + id + '"]')`), "the card by comment id — its own, or its box on the change card");
   assert.ok(place.includes("if (at < 0 || at !== want - 1) parent.insertBefore(box, next);"), "no move when the box is already where it belongs (a move drops the keyboard)");

@@ -61,6 +61,11 @@ EXPECTED_BARE = {
     # marker found in a comment body — not markers a fixture writes: the sent text must carry exactly
     # that form, so the assertion spells it.
     "test_file_comments.py": 2,
+    # test_kernel_file_comments_note.py (the Send confirm's note, 2026-09-09) pins the kernel's neutralization of
+    # the note against the same probe: its NEUTRAL constant spells the neutralizer's OUTPUT for the msg-id marker
+    # in the probe — "<!- -romp-msg-id: 4-->" — beside the goal-id's, one bare hit for the same reason as the row
+    # above (the sent text must carry exactly that form; the MARKED input beside it is comment-form and not counted).
+    "test_kernel_file_comments_note.py": 1,
 }
 
 

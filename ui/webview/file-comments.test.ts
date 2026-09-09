@@ -332,8 +332,8 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
   { skip: PYTHON ? false : "python3 not installed on this machine" }, () => {
   const REPO = path.resolve(process.cwd(), "..");
   const KERNEL = fs.readFileSync(path.join(REPO, "kernel", "kernel.py"), "utf8");
-  assert.match(KERNEL, /_file_comments_message\(p, comments, accepted, rejected, bool\(msg\.get\("tracked"\)\), _is_text_path\(p\)\)/,
-    "the send op's call — is_text is the kernel's verdict on the path, which is what this cross-run mirrors");
+  assert.match(KERNEL, /_file_comments_message\(p, comments, accepted, rejected, bool\(msg\.get\("tracked"\)\), _is_text_path\(p\),\s*note=note\)/,
+    "the send op's call — is_text is the kernel's verdict on the path, which is what this cross-run mirrors; the note rides the same call (the Send confirm's box, 2026-09-09)");
 
   const one = [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." }];
   const three = [
@@ -379,6 +379,15 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     { absPath: "/repo/notes-api/vault/résumé.md", comments: one, accepted: 0, rejected: 0, tracked: true },
     { absPath: "/repo/notes-api/docs/<!--romp-x-->/report.md", comments: markers, accepted: 0, rejected: 0, tracked: true },
     { absPath: "/repo/notes-api/<!-- romp-x -->/latency.png", comments: markers, accepted: 2, rejected: 3, tracked: true },
+    // the note (the Send confirm's box, 2026-09-09): first after the header in both shapes; alone, the header, the note
+    // and the closing ask; markers in it neutralized; an empty one as no note
+    { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: true, note: "Keep the tone of the first draft." },
+    { absPath: ABS, comments: three, accepted: 2, rejected: 1, tracked: false, note: "Two lines.\nThe second says why." },
+    { absPath: ABS, comments: [], accepted: 3, rejected: 0, tracked: true, note: "A note with the decisions." },
+    { absPath: ABS, comments: [], accepted: 0, rejected: 0, tracked: true, note: "Only a note this time." },
+    { absPath: "/repo/notes-api/docs/latency.png", comments: [], accepted: 0, rejected: 0, tracked: false, note: "Regenerate it at 300 dpi." },
+    { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: true, note: "see <!--romp-msg-id: 4--> and romp-goal-id: 3" },
+    { absPath: ABS, comments: [], accepted: 1, rejected: 0, tracked: true, note: "" },
   ];
   // One python3, all cases on stdin, one JSON array back: the kernel's text for each, in order.
   const script = [
@@ -389,7 +398,7 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     "out = []",
     "for c in json.load(sys.stdin):",
     "    p = c['absPath']",
-    "    out.append(km._file_comments_message(p, c['comments'], c['accepted'], c['rejected'], bool(c['tracked']), km._is_text_path(p)))",
+    "    out.append(km._file_comments_message(p, c['comments'], c['accepted'], c['rejected'], bool(c['tracked']), km._is_text_path(p), note=c.get('note', '')))",
     "json.dump(out, sys.stdout)",
   ].join("\n");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "romp-fc-parity-"));
@@ -415,7 +424,11 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
       "I went over " + ABS + ".\n\nI accepted 3 of your changes and rejected 0.\n\nNo comments this time, so nothing needs a reply.\n",
       "I went over " + ABS + ".\n\nNo comments this time, so nothing needs a reply.\n", "I went over /repo/notes-api/docs/latency.png.\n\nI accepted 0 of your changes and rejected 2.\n",
       "I went over /repo/notes-api/vault/it's here.md.\n", "I went over /repo/notes-api/<!- - romp-x -->/report.md.\n",
-      "When you have made more changes, ask me for another look the same way you asked for this one,\nnaming the file.\n"]) {
+      "When you have made more changes, ask me for another look the same way you asked for this one,\nnaming the file.\n",
+      "I left 1 comment on " + ABS + ".\n\nKeep the tone of the first draft.\n\nComment ", "\n\nTwo lines.\nThe second says why.\n\nComment ",
+      "I went over " + ABS + ".\n\nA note with the decisions.\n\nI accepted 3 of your changes and rejected 0.\n\nWhen you have made more changes",
+      "I went over " + ABS + ".\n\nOnly a note this time.\n\nWhen you have made more changes", "\n\nsee <!- -romp-msg-id: 4--> and romp-goal-id; 3\n\nComment ",
+      "I went over " + ABS + ".\n\nI accepted 1 of your changes and rejected 0.\n\nNo comments this time, so nothing needs a reply.\n"]) {
       assert.ok(all.includes(frag), "the case list reaches: " + frag);
     }
     assert.ok(!all.includes("I left 0 comments"), "the retired header is gone from every case");
@@ -723,20 +736,20 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.ok(at("const parts: SendParts = sendParts(s);") < at('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message is built first");
   assert.ok(at("if (!r) return;") < at("await this.sendOnce(msg, false)"), "a refused toggle aborts before the send");
   assert.ok(at("tracked = !!r.trackedBy;") < at("await this.sendOnce(msg, false)"), "tracked is the post-toggle verdict");
-  assert.match(send, /this\.sentNote = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);/);
+  assert.match(send, /const base = reply\.queued \? "Queued for " \+ who : "Sent to " \+ who \+ " at " \+ clock\(Date\.now\(\)\);\n\s*this\.sentNote = sentNoteWords\(base, acceptAll \? pending : 0, moved\);/, "the sent note, and what the accept moved to Resolved when it did (2026-09-09)");
   assert.match(send, /if \(reply\.warning\) this\.errors\.set\("send", \{ text: reply\.warning, reload: false, warn: true \}\);/, "sent but nothing stamped: the kernel's own reason shows");
   assert.match(SRC, /warning: \[str\(m\.warning\), str\(m\.logWarning\)\]\.filter\(Boolean\)\.join\(" "\) \|\| undefined/,
     "a send whose comments-log append failed is loud too: the kernel's logWarning rides the same warn row");
   assert.match(SRC, /btn\(this\.sending \? "Sending…" : "Send to session" \+ \(n \? " \(" \+ n \+ "\)" : ""\), "fcsend"\)/, "count = unsent; relabeled while sending");
-  assert.match(SRC, /const stale = !!this\.statusRefusal;\n\s*b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid \|\| stale;/,
-    "Send stands down while a status refusal stands: the unsent list was derived from a disk the kernel can no longer read");
+  assert.match(SRC, /const stale = !!this\.statusRefusal;\n(?:\s*\/\/[^\n]*\n)*\s*b\.disabled = !s \|\| this\.sending \|\| !this\.ctx\.sid \|\| stale;/,
+    "Send stands down while a status refusal stands: the unsent list was derived from a disk the kernel can no longer read (and no longer for nothing unsent: a note of the person's own sends alone, 2026-09-09)");
   assert.match(send, /if \(!s \|\| this\.statusRefusal \|\| this\.sending \|\| !this\.ctx\.sid\) return;/, "and doSend refuses the same way, a click never sends over a stale status");
   assert.match(SRC, /this\.todoOpts\(opts, s\);/, "the answer-a-todo control: the checkbox, or the radio group when several todos name the file (the todo-file follow-on)");
   assert.match(SRC, /"answer " \+ TODO_OPENED_FROM/, "the generic wording stands for the opened-from todo the status does not list (decision 36)");
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/, "all three checked by default (decision 8; the third is Slice 2's accept-pending box)");
-  assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)\)\);/,
-    "the preview is the same builder the tests pin against the kernel's literal, fed the path the kernel will name (filePath), never a relative or ~ spelling, and the send's own A and R");
+  assert.match(SRC, /this\.noteBox\.placeholder = who === "the session" \? "Anything to add\?" : "Anything to add for " \+ who \+ "\?";\n\s*if \(this\.noteBox\.value !== this\.sendNote\) this\.noteBox\.value = this\.sendNote;\n\s*cf\.appendChild\(this\.noteBox\);/,
+    "the confirm carries the note box in the preview's place (2026-09-09): the person's words, kept across renders, named for the session; the message itself is the kernel's to build");
   // the send's editing-off refusal takes the branch every mutating verb takes (mutateOnce): the kernel refuses
   // a send while file editing is off because the send's log entry is a disk write, and the refusal text carries
   // the phrase the consent helper matches — so the panel re-offers the consent and sends once more on yes

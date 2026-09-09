@@ -272,11 +272,13 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(MODEL, /return \{ accepted: parts\.accepted \+ \(acceptPending && pending > 0 \? pending : 0\), rejected: parts\.rejected \};/);
   // the third checkbox: checked by default, offered when any change is pending, wired through the same change listener
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/);
-  assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", "accept the " \+ pending \+ " pending " \+ \(pending === 1 \? "change" : "changes"\)\)\);/);
+  assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", acceptOptionLabel\(pending, this\.arrivedPending\(\), resolvedByAccept\(s\.store, s\.hunks \|\| \[\]\)\)\)\);/, "the words are the model's (acceptOptionLabel), naming the pending changes that arrived since the person last looked (the arrivals follow-on, 2026-09-09) and the comments the accept resolves (the lost-update probe, the same day)");
   assert.match(SRC, /else if \(k === "todo" \|\| k === "track" \|\| k === "accept"\) this\.sendOpts\[k\] = t\.checked;/, "the three checkboxes land in sendOpts…");
   assert.match(SRC, /if \(k === "todopick"\) this\.todoPick = t\.value;/, "…and the todo radio group (the todo-file follow-on) in todoPick; anything else flips nothing");
-  assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/, "the preview and the list use the send's own counts");
-  assert.match(SRC, /buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)/);
+  assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/, "the list uses the send's own counts");
+  // the confirm shows no message since the note box replaced the preview (2026-09-09): the panel builds none, the kernel does
+  assert.doesNotMatch(SRC, /buildSendMessage\(/);
+  assert.match(SRC, /cf\.appendChild\(this\.noteBox\);/, "the note box stands in the confirm");
 });
 
 test("the paint pass: unpaintChanges before each repaint, the change painters after the comment highlights, stylesFor from the colour map, the marks owned", () => {
@@ -722,7 +724,7 @@ test("Reject refused twice: the second refusal shows verbatim under the card, wi
   assert.deepEqual(acc.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003" });
 });
 
-test("Accept all through the send confirm: the third checkbox, checked, names the N; the list and the preview carry A = unsent + N; Send runs accept-all, then the send with those counts", async (t: TestContext) => {
+test("Accept all through the send confirm: the third checkbox, checked, names the N; the list carries A = unsent + N; Send runs accept-all, then the send with those counts", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } }));
   act(aside, "fcsend")!.click();
@@ -732,8 +734,8 @@ test("Accept all through the send confirm: the third checkbox, checked, names th
   assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes");
   assert.equal(aside.querySelector('input[data-opt="track"]'), null, "the file is tracked: no tracking box");
   assert.ok(texts(aside.querySelectorAll(".fc-list li")).includes("3 accepted, 0 rejected"), "the log's 1 plus the 2 the send accepts");
-  act(aside, "fcpreview")!.click();
-  assert.ok(aside.querySelector(".fc-msg")!.textContent.includes("\nI accepted 3 of your changes and rejected 0.\n\nTo respond:\n"), "the preview is the sent text");
+  assert.equal(act(aside, "fcpreview"), null, "no message preview in the confirm (the note box took its place, 2026-09-09)");
+  assert.ok(aside.querySelector(".fc-confirm .fc-send-note"), "the note box stands in the confirm");
   act(aside, "fcsendgo")!.click(); await flush();
   const acc = lastOf(w, "fileComments", "accept-all");
   assert.ok(acc, "accept-all goes before the send");

@@ -45268,7 +45268,7 @@ def _file_comments_file_id(p):
 
 def _sh_word(s):
     """`s` as ONE word on a POSIX command line — shlex.quote, restated here because the webview's
-    preview builder (ui/webview/file-comments-model.ts, buildSendMessage) must port it byte for byte:
+    builder (ui/webview/file-comments-model.ts, buildSendMessage) must port it byte for byte:
     an empty string is ''; a word made only of [A-Za-z0-9_@%+=:,./-] passes through unchanged, so an
     ordinary path reads as the plan's own `--file <absPath>`; anything else is wrapped in single
     quotes, each single quote inside it written as '"'"'. Single quotes keep a space from splitting
@@ -45284,8 +45284,14 @@ def _sh_word(s):
 # shapes cannot drift apart. The line break before "naming the file." is the plan's own.
 _SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
 
+# The most characters the note from the Send confirm's text box may carry (the user 2026-09-09:
+# the confirm shows a box for the person's own words instead of the message preview). The send op refuses a
+# longer note before anything else is asked or sent, naming this bound; the webview refuses at the same
+# number before the request goes, so a refusal here means a client that skipped its own check.
+_SEND_NOTE_MAX = 4000
 
-def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
+
+def _file_comments_message(path, comments, accepted, rejected, tracked, is_text, note=""):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
     {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
@@ -45299,7 +45305,16 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
-    The webview's preview builder produces this text byte for byte, so change both or neither.
+    The webview's builder (ui/webview/file-comments-model.ts, buildSendMessage) produces this text
+    byte for byte, so change both or neither.
+
+    `note` is what the person typed in the Send confirm's text box (the user 2026-09-09:
+    the box replaced the message preview), in their own words. Non-empty, it is the first paragraph
+    after the header line in BOTH shapes, with no label: before the comments here, before the
+    accepted/rejected line below. It is marker-neutralized like every request-supplied string. The
+    send op trims it before this call and the builder does not trim again, so the two builders do the
+    same thing to the same input. A note with no comments and no decisions still makes a message: the
+    header, the note and the closing ask.
 
     With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
     all, is unsent until a send carries it, and the send op admits an empty list when a decision
@@ -45309,18 +45324,26 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
     file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
     the loop still comes back. The prefix stays: to the vendored skill it means "you are the
-    editor for the file named here", which is as true of a decision as of a comment."""
+    editor for the file named here", which is as true of a decision as of a comment. The line saying
+    nothing needs a reply is emitted only when there is no note: with one, whether something needs
+    a reply is the person's to say."""
     ap = _neutralize_romp_markers(str(path or ""))
+    nt = _neutralize_romp_markers(str(note or ""))
     if not comments:
         lines = ["[obsidian-diff] I went over %s." % ap, ""]
+        if nt:
+            lines += [nt, ""]
         if (accepted or 0) + (rejected or 0) > 0:
             lines += ["I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0), ""]
-        lines += ["No comments this time, so nothing needs a reply.",
-                  "When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
+        if not nt:
+            lines.append("No comments this time, so nothing needs a reply.")
+        lines += ["When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
         return "\n".join(lines) + "\n"
     word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
+    if nt:
+        lines += [nt, ""]
     for c in comments:
         lines.append("Comment %s (%s):" % (_neutralize_romp_markers(str(c.get("id") or "")),
                                            _neutralize_romp_markers(str(c.get("desc") or ""))))
@@ -45397,6 +45420,14 @@ def _file_comments_send_op(msg):
     `sid`, not `id`), so the op checks _kernel_knows itself. The comments are on disk before any
     send, so a refusal loses nothing.
 
+    `note` (optional; the text box on the Send confirm, the user 2026-09-09) is the
+    person's own words for the session: absent or null reads as none, anything that is not text
+    refuses, text is trimmed, and a trimmed note longer than _SEND_NOTE_MAX refuses right after the
+    counts are read, before the watermark is checked or anything is sent. A note alone, with no
+    comments and no decisions, is a message worth sending, so the nothing-to-send refusal stands down
+    for it. The builder places the note (see _file_comments_message) and the log's send entry records
+    it as `note`, neutralized, when it is non-empty; an entry without a note keeps its earlier shape.
+
     Why the consent gates the SEND and not just the append: a send is a disk write — its `send`
     entry is the comments log's only record of what went, and the panel's unsent list is derived
     from that log (plans/file-review.md, The comments log) — so a send the log cannot record must
@@ -45437,12 +45468,25 @@ def _file_comments_send_op(msg):
         accepted, rejected = int(msg.get("accepted") or 0), int(msg.get("rejected") or 0)
     except (TypeError, ValueError):
         return fail("nothing was sent: the accepted/rejected counts were not numbers")
-    if not comments and accepted + rejected == 0:
+    note = msg.get("note")
+    if note is None:
+        note = ""
+    elif not isinstance(note, str):
+        return fail("nothing was sent: the note was not text")
+    else:
+        note = note.strip()
+    if len(note) > _SEND_NOTE_MAX:
+        # before the nothing-to-send gate and the watermark: the person's words are refused on their own
+        # account, with the bound named, whatever else the send carries
+        return fail("nothing was sent: the note is %d characters and a send carries at most %d; shorten it"
+                    % (len(note), _SEND_NOTE_MAX))
+    if not comments and accepted + rejected == 0 and not note:
         return fail("nothing to send: %s has no unsent comments or decisions" % _tilde(p))
     watermark, bad = _send_watermark(msg.get("watermark"))
     if bad:
         return fail(bad)
-    body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p))
+    body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p),
+                                  note=note)
     tid = str(msg["todoId"]) if msg.get("todoId") else None
     got, warning = _deliver_todo_reply(Sessions.backend_for(sid), sid, body, tid, must_stamp=False)
     if got is None:
@@ -45467,6 +45511,11 @@ def _file_comments_send_op(msg):
         # reaches .trackchanges/ as the author label of every reply the session writes (ROMP_SESSION_NAME
         # in the vendored CLIs), so a committed log widens nothing the sidecar does not.
         entry["sessionName"] = name
+    if note:
+        # the person's words as the message carried them (neutralized, like the comment bodies above), so the
+        # panel's log shows what was said; absent when nothing was typed, so an entry without a note keeps
+        # the shape every earlier entry has
+        entry["note"] = _neutralize_romp_markers(note)
     # the append rides the consent checked at the top of this op, the way _save_file checks once and
     # then writes: one gate per op, ahead of everything the op does
     out, err = _file_comments_call(p, "log-send", entry)

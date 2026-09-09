@@ -406,6 +406,7 @@ passage in either view, Rendered or Raw, and press the **Comment** button that a
 hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
+Saving brings the new card into view, unless you scrolled, clicked, tapped, or pressed a key while the save was under way; then the text stays where you left it.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
@@ -492,21 +493,25 @@ the editor rewrites its line endings, which would move them; accept or reject th
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
 what it refers to and the commands the session needs to answer it. The number on the button
-is what will go, and the confirm lists it, with the message itself one click away. When a
+is what will go, and the confirm lists it, with a box for anything you want to add in your own
+words, which go first in the message; words alone send too. When a
 todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
 answers that todo with the same send; when several todos name the file, a row of choices
 picks the one to answer, or none. When tracking is off, another checkbox
 turns it on first, so the session's revisions come back as changes. When changes are pending,
 a third checkbox, **accept the pending changes**, accepts them all before the send, so the
 session's later edits arrive as new changes instead of folding into an old one; the message
-then says how many changes you accepted and rejected. All are checked by default. One send
+then says how many changes you accepted and rejected, and when accepting them resolves comments
+the session had answered, the checkbox says so beforehand and the panel opens **Resolved** and
+names them afterwards, so nothing leaves the list unannounced. All are checked by default. One send
 answers one todo; a todo that named several files is answered by the first, and later sends
 no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
 it when the session has gone quiet, in which case the message goes when it wakes.
 
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the
-session rewrote is shown as it is now. The first comment, like the first save, asks once
+session rewrote is shown as it is now.
+A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them. The first comment, like the first save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
