@@ -102,14 +102,18 @@ test("the picker's Billing row shows whenever the host can name what a new sessi
   assert.equal(pickerBillingRow(null).show, false, "no availability reply yet (an older kernel never sends one)");
 });
 
-test("the written-out row's hover names why the other side is off, in the kernel's reason, and claims nothing else", () => {
+test("the written-out row's hover names why the other side is off, in the kernel's reason, keyed on the helper as upstream keys it", () => {
   // upstream #1147 (the user 2026-09-08): the picker never disappears, and the side it cannot offer says why
   assert.equal(pickerBillingTitle({ login: false, key: true, default: "key" }), "Login unavailable: no Claude login signed in on this machine");
   assert.equal(pickerBillingTitle({ login: false, key: true, default: "key", loginWhy: "X" }), "Login unavailable: X");
   assert.equal(pickerBillingTitle({ login: true, key: false, default: "login", keyWhy: "Y" }), "API key unavailable: Y");
   assert.equal(pickerBillingTitle({ login: true, key: false, default: "login" }), "API key unavailable: no apiKeyHelper configured");
-  // a login beside a declared key: the declared side is written out, and the login is PRESENT, so no claim
-  assert.equal(pickerBillingTitle({ login: true, key: false, default: "key" }), "");
+  // a login beside a declared key (ROMP_EXPECTED_AUTH=key, no helper): the row writes out the declared side, and the
+  // hover is what upstream renders for this reply, that no helper is configured. The 2026-09-09 fold's resolve had
+  // returned "" here; no fork test had pinned that, so upstream's rendering stands (slice 3)
+  assert.equal(pickerBillingTitle({ login: true, key: false, default: "key" }), "API key unavailable: no apiKeyHelper configured");
+  // the same declaration with no login either: the fork shows the row where upstream hides it; the hover is the same
+  assert.equal(pickerBillingTitle({ login: false, key: false, default: "key" }), "API key unavailable: no apiKeyHelper configured");
   assert.equal(pickerBillingTitle({ login: true, key: true }), "", "buttons, no hover");
   assert.equal(pickerBillingTitle({ login: false, key: false, default: "login" }), "", "a hidden row has no hover");
   assert.equal(pickerBillingTitle(null), "");

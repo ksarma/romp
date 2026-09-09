@@ -912,6 +912,20 @@ class Wiring(unittest.TestCase):
         self.assertIn("setShow(upm, v.updateMode)", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
 
+    def test_the_update_control_is_headed_automatic_updates(self):
+        # The row's heading is upstream's "Automatic updates" (the 2026-09-09 fold, slice 3). The fork had
+        # retitled it "Updates and update notices" (2026-09-03, so that someone looking for the switch that
+        # stops the notices about new commits could tell this was it); the fold trims the fork's divergence to
+        # what upstream lacks, and the help line's own words cover the notices ("one banner covers both",
+        # "Off never checks"). Both sites in gear.js carry the heading, the row and the stale-pick toast's
+        # label table, and the reference names the control by the same heading so a reader finds it in the gear.
+        self.assertIn("<b>Automatic updates <span class=rs-mixed hidden></span></b>", self.gear)
+        self.assertIn("'update-mode': 'Automatic updates',", self.gear)
+        self.assertNotIn("Updates and update notices", self.gear)
+        ref = re.sub(r"\s+", " ", (Path(BIN).parent / "docs" / "reference.md").read_text())
+        self.assertIn("**Automatic updates** control (under *Updates & debug*)", ref)
+        self.assertNotIn("Updates and update notices", ref)
+
     def test_the_copy_says_an_automatic_update_restarts_at_once_or_converges_in_place(self):
         # The help line for Install automatically said the converge restarts "at the next quiet
         # moment". Since T269 every deploy restart is immediate (_run_main_update's immediate=True

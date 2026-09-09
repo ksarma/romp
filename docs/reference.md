@@ -30,7 +30,7 @@ update` starts a session called "update".
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
-**Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
+**Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
 and keeps running what it has until they restart Romp themselves. An automatic converge takes one

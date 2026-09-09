@@ -74,15 +74,18 @@ export function pickerBillingRow(a: BillingAvail | null | undefined): { show: bo
   return { show, both, fixed };
 }
 
-// The written-out row's hover: why the OTHER side is not on offer, in the kernel's reason (the user 2026-09-08),
-// when the reply says that side is unavailable. "" when the row is hidden, when it offers buttons, and when the
-// other side is available but not offered because the declared default decides (a login beside a declared key):
-// the hover never claims a side is missing that the kernel reported present.
+// The written-out row's hover: why the OTHER side is not on offer, in the kernel's reason (upstream #1147, the
+// user 2026-09-08), keyed as upstream keys it, on whether the box's settings carry an apiKeyHelper: with one the
+// login side is explained, without one the key side. "" when the row is hidden or offers buttons. On a box that
+// declares the key (ROMP_EXPECTED_AUTH=key) with no helper the row writes out the declared side and this hover
+// says no helper is configured: two facts of the kernel's side by side, rendered as upstream renders that reply
+// (the 2026-09-09 fold, slice 3: the resolve's "" for a login beside a declared key was a departure no fork test
+// had pinned, so upstream's behaviour stands).
 export function pickerBillingTitle(a: BillingAvail | null | undefined): string {
   const row = pickerBillingRow(a);
   if (!row.show || row.both) return "";
-  if (pickerKeyed(a!)) return a!.login ? "" : `Login unavailable: ${a!.loginWhy || "no Claude login signed in on this machine"}`;
-  return a!.key ? "" : `API key unavailable: ${a!.keyWhy || "no apiKeyHelper configured"}`;
+  return a!.key ? `Login unavailable: ${a!.loginWhy || "no Claude login signed in on this machine"}`
+                : `API key unavailable: ${a!.keyWhy || "no apiKeyHelper configured"}`;
 }
 
 // The explicit pick this box cannot bill, when the status names one: the kernel's word (authPickUnavailable),

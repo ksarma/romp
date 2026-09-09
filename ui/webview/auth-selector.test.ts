@@ -55,11 +55,11 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
   assert.match(RENDER, /fixed\.textContent = row\.fixed;/);
   // the written-out choice follows the kernel's default (what a spawn without a pick bills), the key arm
   // only for a reply carrying no default (verification round 2, 2026-09-09)
-  assert.match(BILLING, /function pickerKeyed\(a: BillingAvail\): boolean \{ return a\.default \? a\.default === "key" : !!a\.key; \}/);   // 2026-09-09 fold: factored out, the hover helper reads it too
+  assert.match(BILLING, /function pickerKeyed\(a: BillingAvail\): boolean \{ return a\.default \? a\.default === "key" : !!a\.key; \}/);   // 2026-09-09 fold: factored out of pickerBillingRow (the hover is keyed on a.key, as upstream keys it)
   assert.match(BILLING, /const keyed = !!a && pickerKeyed\(a\);[^\n]*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
   assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle \} from "\.\/billing-label";/);
   // …and the written-out row's hover names why the OTHER side is not on offer, in the kernel's reason (upstream #1147,
-  // the user 2026-09-08): pickerBillingTitle, executed in billing-label.test.ts (it claims nothing the kernel reported present)
+  // the user 2026-09-08): pickerBillingTitle, executed in billing-label.test.ts (upstream's expression, keyed on the helper)
   assert.match(RENDER, /fixed\.title = pickerBillingTitle\(a\);/);
   assert.match(RENDER, /const auFixed = el\("span", "picker-auth-fixed"\);/);
   // in button mode, the Login button's hover names WHICH account
