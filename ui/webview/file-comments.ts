@@ -89,7 +89,7 @@ import {
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
   statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
   resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
-  noteTooLong, trimNote,   // the Send confirm's note box (the owner's ruling, 2026-09-09); trimNote: the note as the kernel reads it
+  noteTooLong, trimNote,   // the Send confirm's note box (the user's ruling, 2026-09-09); trimNote: the note as the kernel reads it
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -616,7 +616,7 @@ const HOLD_WORDS = "The card stays open while its reply is written; Save or Canc
  *  may also drag the box's handle (resize: vertical), past the cap too, and a sheet clamp would take the drag with it. */
 export const COMPOSER_ROWS = 3;
 export const COMPOSER_MAX_ROWS = 12;
-/** The Send confirm's note box grows to this many rows, then scrolls (the owner's ruling, 2026-09-09: about eight). */
+/** The Send confirm's note box grows to this many rows, then scrolls (the user's ruling, 2026-09-09: about eight). */
 export const SEND_NOTE_ROWS = 8;
 /** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
  *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
@@ -995,7 +995,7 @@ class Panel {
   // review). An answer written to either puts the other back to its default (checked; null, the first offered).
   todoPick: string | null = null;
   openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
-  // the Send confirm's note (the owner's ruling, 2026-09-09: the grey preview of the message was a system message tied to the
+  // the Send confirm's note (the user's ruling, 2026-09-09: the grey preview of the message was a system message tied to the
   // send and not worth showing, so a box for the person's own words took its place). `sendNote` is the words as typed, kept
   // across every re-render while the confirm is open (a status landing, a poll) and cleared by a successful send or by
   // closing the confirm on purpose (Cancel); a refused send keeps them. `noteBox` is one persistent textarea, moved into
@@ -1100,7 +1100,7 @@ class Panel {
   // like openCards, so the choice survives a re-render
   openBodies = new Set<string>();
   // ── the arrivals notice (the arrivals follow-on, 2026-09-09; file-comments-model.ts statusEntries, arrivalWords). The
-  // user sent comments, the session answered with eleven changes and seven replies while he kept commenting, and nothing
+  // user sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing
   // in the panel said so until the next Send accepted the changes by default. `seenKeys` is the set of entry keys the
   // person has seen — a change, a comment, a reply (statusEntries) — null until the panel's first render with a status
   // seeds it with everything then in the status. That status is the probe's, asked at mount with the panel closed, and
@@ -3855,7 +3855,7 @@ class Panel {
         }
         pending = decided.length;
         // the comments the accept resolved: unresolved before, resolved in the reply. The Resolved fold opens before the
-        // renders that follow, so the cards stay in view with the session's replies, and the sent note names them
+        // renders that follow, so the cards stay in view with the session's replies, and the acknowledgment line names them (sentNoteWords)
         moved = (a.store ? a.store.comments : []).filter((c) => openBefore.has(c.id) && !!c.resolved).length;
         if (moved) this.resolvedOpen = true;
       }
@@ -4296,7 +4296,7 @@ class Panel {
     const h = autosizeComposer(ta);
     if (h !== null) this.sizedTo = h;
   }
-  /** The Send confirm's note box follows its content the same way, to SEND_NOTE_ROWS (the owner's ruling, 2026-09-09: about
+  /** The Send confirm's note box follows its content the same way, to SEND_NOTE_ROWS (the user's ruling, 2026-09-09: about
    *  eight rows, then scrolling), with the same two guards: the box wears .fc-input's resize handle, and a height the person
    *  dragged stands until the confirm closes with nothing kept (renderSend clears it with noteSizedTo, as closeComposer does
    *  the composer's). Before the guards, every keystroke snapped a dragged box back to its rows (the review, 2026-09-09). */
@@ -4929,7 +4929,7 @@ class Panel {
       this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       // the pending changes that arrived since the person last looked are named on the option (the arrivals follow-on,
-      // 2026-09-09): the user's Send accepted eleven he had not seen. The words change; the default stays decision 8's
+      // 2026-09-09): the user's Send accepted eleven they had not seen. The words change; the default stays decision 8's
       // ...and the comments the accept resolves along with their changes (the host's rule; the lost-update probe, 2026-09-09)
       if (pending) opts.appendChild(this.opt("accept", acceptOptionLabel(pending, this.arrivedPending(), resolvedByAccept(s.store, s.hunks || []))));
       if (opts.childNodes.length) cf.appendChild(opts);

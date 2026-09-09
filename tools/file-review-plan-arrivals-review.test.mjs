@@ -78,6 +78,23 @@ test('the arrivals paragraph, decision 40 and the Docs sentence speak of the use
     assert.ok(!hit, `${name} genders the user: ${hit && hit[0]} in "${hit && text.slice(Math.max(0, hit.index - 60), hit.index + 40)}"`);
   }
   assert.ok(note.includes('The first report: the user sent comments, the session answered with eleven changes and seven replies while they kept commenting'));
+  // …and so do the modules the follow-on added or wrote into (the review's consolidation, 2026-09-09: the round left
+  // "he" and "the owner" in comments and docstrings across eleven files while the plan said "the user", "they").
+  // The base plan's attribution shape is "(the user <date>: …)"; the panel and the model carried neither word before.
+  const SPEAK = [
+    ['ui', 'webview', 'file-comments.ts'], ['ui', 'webview', 'file-comments-model.ts'], ['tools', 'file-comments-host.mjs'],
+    ['tests', 'test_kernel_file_comments_note.py'], ['tests', 'test_guide_files_arrivals.py'], ['tests', 'test_guide_files_save_standdown.py'],
+    ['tests', 'test_context_send_note.py'],
+  ];
+  for (const f of fs.readdirSync(path.join(REPO, 'ui', 'webview'))) {
+    if (/^file-comments-(arrivals|send-note|send-resolves|model-arrivals|model-note)[\w-]*\.test\.ts$/.test(f)) SPEAK.push(['ui', 'webview', f]);
+  }
+  for (const parts of SPEAK) {
+    const text = read(...parts), name = parts.join('/');
+    const he = text.match(/\b(he|his|him)\b/);
+    assert.ok(!he, `${name} genders the user: ${he && he[0]} in "${he && text.slice(Math.max(0, he.index - 60), he.index + 40)}"`);
+    assert.ok(!/\bthe owner\b/.test(text), `${name} says "the owner" where the plan says "the user"`);
+  }
   assert.ok(note.includes('the first they knew of them was the next Send accepting the changes by default'));
   assert.ok(note.includes('The second report: they saved a reply, scrolled on while the host answered'));
   assert.ok(d40.includes('a text box for anything they want to add takes its place'));

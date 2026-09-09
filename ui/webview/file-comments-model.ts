@@ -416,7 +416,7 @@ export function isTextPath(fp: string): boolean {
 export type MessageOpts = {
   absPath: string; comments: SendComment[]; accepted: number; rejected: number;
   tracked: boolean;   // the post-toggle verdict: picks the second bullet on a text file
-  /** the person's own words from the Send confirm's box (the owner's ruling, 2026-09-09: the box replaced the message
+  /** the person's own words from the Send confirm's box (the user's ruling, 2026-09-09: the box replaced the message
    *  preview), already trimmed by the caller; empty or absent means none. The first paragraph after the header line in
    *  both shapes, unlabeled, marker-neutralized like every other request-supplied string. */
   note?: string;
@@ -1007,8 +1007,8 @@ export function folderOf(path: string): string {
 
 // ── arrivals (the arrivals follow-on, 2026-09-09) ──────────────────────────────────────────────────
 // A session's changes and replies land in the status while the panel is open, and until this follow-on nothing
-// said so: the user sent comments, the session answered with eleven changes and seven replies while he kept
-// commenting, and the first he knew of them was the next Send accepting the changes by default. The panel keeps
+// said so: the user sent comments, the session answered with eleven changes and seven replies while they kept
+// commenting, and the first they knew of them was the next Send accepting the changes by default. The panel keeps
 // the set of ENTRIES the person has seen (a change, a comment, a reply, each by a key), and an entry by another
 // author that is not in that set is an arrival. Nothing here reads the DOM: the panel decides what is on screen.
 
@@ -1087,7 +1087,7 @@ export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorI
 }
 
 /** The unresolved comments bound to a pending change: what a Send's accept-all resolves along with the changes (the host
- *  resolves a comment when its change is accepted). The confirm says so before the send and the sent note after it (the
+ *  resolves a comment when its change is accepted). The confirm says so before the send and the acknowledgment line after it (sentNoteWords; the
  *  lost-update probe, 2026-09-09: seven comments the session's edits had answered folded under a collapsed Resolved with
  *  nothing said). */
 export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
@@ -1108,7 +1108,8 @@ export function acceptOptionLabel(pending: number, arrived: number, resolves = 0
   return parts.length ? base + " (" + parts.join("; ") + ")" : base;
 }
 
-/** The sent note after a send whose accept-all resolved comments: the base ("Sent to api at 10:32", "Queued for api") and
+/** The acknowledgment line after a send whose accept-all resolved comments (the panel's `sentNote`; the words under Send, not a
+ *  note in CONTEXT.md's sense, which is the Send box's): the base ("Sent to api at 10:32", "Queued for api") and
  *  what moved to Resolved, so nothing leaves the visible list without a visible word; the base alone when nothing moved. */
 export function sentNoteWords(base: string, accepted: number, moved: number): string {
   if (moved <= 0) return base;

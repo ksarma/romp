@@ -213,6 +213,19 @@ class TheCodeMakesTheEntryTrue(unittest.TestCase):
         self.assertIn("with a box for anything you want to add in your own words, which go first in the message; "
                       "words alone send too.", send)
 
+    def test_nothing_calls_the_acknowledgment_a_sent_note(self):
+        # the entry says the panel's acknowledgment after a send is not a note; the plan, the model, the panel and their
+        # tests call it the acknowledgment (line), never "the sent note" in prose -- the field `sentNote` is an
+        # identifier older than the entry and stays (the review's consolidation, 2026-09-09: the round wrote "the sent
+        # note" in seven places across these files)
+        for parts in (("plans", "file-review.md"), ("ui", "webview", "file-comments-model.ts"), ("ui", "webview", "file-comments.ts"),
+                      ("ui", "webview", "file-comments-send-note.test.ts"), ("ui", "webview", "file-comments-send-resolves.test.ts"),
+                      ("docs", "guide.md")):
+            text = _read(*parts)
+            hit = re.search(r"\bsent[ -]note\b", text, re.I)
+            self.assertIsNone(hit, "%s calls the acknowledgment a note: %r"
+                              % ("/".join(parts), text[max(0, hit.start() - 60):hit.end() + 40] if hit else None))
+
 
 if __name__ == "__main__":
     unittest.main()

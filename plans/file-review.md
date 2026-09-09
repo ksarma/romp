@@ -1686,7 +1686,7 @@ day (decision 40), which travel first in the message as `note`. From the lost-up
 resolves the comments bound to the changes it accepts (the host's rule), and in the incident seven comments the session's
 edits had answered folded under a collapsed Resolved with nothing said; the option now reads "(resolves M comments; K
 arrived since you last looked)" in one parenthesis (`resolvedByAccept`), and after a send whose accept-all resolved
-comments the Resolved fold opens before the renders that follow and the sent note reads "Sent to <session> at <time> ·
+comments the Resolved fold opens before the renders that follow and the acknowledgment line after the send reads "Sent to <session> at <time> ·
 accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
 visible list without a visible word. The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
@@ -2575,7 +2575,7 @@ document stands on its own, each with the reasoning it was given.
     line, unlabeled, before the comments, marker-neutralized like every other request-supplied string; a note with
     nothing else unsent still sends, as the header, the note and the closing ask, so Send opens the confirm with
     nothing unsent and the confirm's own Send waits for words. The comments log's send entry gains `note`, and the
-    panel's Log shows it. The sent-note line is unchanged. A kernel change: the panel and the kernel land together,
+    panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
     and the kernel restarts to go live.
 
 ## Open questions for the user

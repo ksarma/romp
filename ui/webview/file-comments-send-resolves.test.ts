@@ -4,7 +4,7 @@
 // session's edits had answered (the host resolves a comment when its change is accepted), and the panel folded them under a
 // collapsed "Resolved (N)" with nothing said. Now the confirm's accept option reads "(resolves M comments)" when M unresolved
 // comments are bound to the pending changes, composed with the arrivals' count in one parenthesis; and after a send whose
-// accept-all resolved comments, the Resolved fold opens before the renders that follow and the sent note names what moved.
+// accept-all resolved comments, the Resolved fold opens before the renders that follow and the acknowledgment line names what moved.
 // The host's rule and the box's default are unchanged. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -414,7 +414,7 @@ test("the confirm's accept option names the comments the accept resolves, in one
   assert.equal(aside.querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes");
 });
 
-test("a send whose accept-all resolves the comment: the Resolved fold opens with the comment's card and the session's reply in it, and the sent note names what moved (before: a collapsed fold, no card, the plain note)", async (t: TestContext) => {
+test("a send whose accept-all resolves the comment: the Resolved fold opens with the comment's card and the session's reply in it, and the acknowledgment line names what moved (before: a collapsed fold, no card, the plain acknowledgment)", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, withChanges());
   assert.equal(foldOf(aside), null, "nothing resolved yet: no fold");
@@ -438,7 +438,7 @@ test("a send whose accept-all resolves the comment: the Resolved fold opens with
   const open = aside.querySelector('.fc-card[data-id="' + bound(true).id + '"]')!;
   assert.ok(open.classList.contains("open"));
   assert.ok(open.textContent.includes(REPLY), "with the session's reply");
-  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at .+ · accepted 2 changes; 1 comment with the session's replies moved to Resolved$/, "the sent note names what moved (before: the plain note)");
+  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at .+ · accepted 2 changes; 1 comment with the session's replies moved to Resolved$/, "the acknowledgment line names what moved (before: the plain acknowledgment)");
 });
 
 test("a send that resolves nothing leaves the fold and the note as they were", async (t: TestContext) => {
@@ -451,5 +451,5 @@ test("a send that resolves nothing leaves the fold and the note as they were", a
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: acc.reqId, ...status({ storeMtimeNs: "1757145600000000005", hunks: [], unsent: { comments: [first.id], replies: [], accepted: 2, rejected: 0, watermark: null } }), accepted: ["h1", "h3"] } })); await flush(); await flush();
   sent(w); await flush(); answer(w, status({ storeMtimeNs: "1757145600000000005", hunks: [], unsent: NO_UNSENT })); await flush();
   assert.equal(foldOf(aside), null, "no resolved comment, no fold");
-  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at [^·]+$/, "the plain note");
+  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at [^·]+$/, "the plain acknowledgment");
 });

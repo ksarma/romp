@@ -37,9 +37,9 @@ const docs = between(plan, '\n## Docs', '\n## Deliberately not in v1');
 
 test('the paragraph stands under Slice 2 and records both reports in the user\'s terms, paraphrased', () => {
   assert.ok(between(plan, '### Slice 2: the session', '### Slice 3: region comments on images').includes(LABEL));
-  assert.ok(note.includes('the session answered with eleven changes and seven replies while he kept commenting'));
+  assert.ok(note.includes('the session answered with eleven changes and seven replies while they kept commenting'));
   assert.ok(note.includes('the next Send accepting the changes by default'));
-  assert.ok(note.includes('he saved a reply, scrolled on while the host answered, and the reply\'s landing pulled the text back to the card'));
+  assert.ok(note.includes('they saved a reply, scrolled on while the host answered, and the reply\'s landing pulled the text back to the card'));
   assert.ok(!/"[^"]*\b(I|my|me)\b[^"]*"/.test(note.replace(/"api made [^"]*"/, '').replace(/"accept the [^"]*"/, '')), 'no quoted utterance of the user\'s');
 });
 

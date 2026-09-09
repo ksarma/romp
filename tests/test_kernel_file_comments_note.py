@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""File comments (plans/file-review.md) — the note the Send confirm's text box adds to a send (the owner's
+"""File comments (plans/file-review.md) — the note the Send confirm's text box adds to a send (the user's
 ruling, 2026-09-09).
 
-The Send confirm used to show a preview of the message a send would carry; the owner ruled the preview a
-system message not worth showing and asked for a text box in its place, for anything he wants to add in
-his own words. The note travels in the fileCommentsSend request as `note` (optional text). The builder
+The Send confirm used to show a preview of the message a send would carry; the user ruled the preview a
+system message not worth showing and asked for a text box in its place, for anything they want to add in
+their own words. The note travels in the fileCommentsSend request as `note` (optional text). The builder
 places it as the first paragraph after the header line, unlabeled, in both shapes of the message: before
 the comments, or before the accepted/rejected line. A note with no comments and no decisions still sends,
 as the header, the note and the closing ask; the line saying nothing needs a reply is emitted only when

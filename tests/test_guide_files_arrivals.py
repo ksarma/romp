@@ -3,8 +3,8 @@
 that a save brings the new card into view unless you scrolled, clicked, tapped, or pressed a key meanwhile; the panel does both.
 
 The arrivals follow-on (2026-09-09): the user sent comments, the session answered with eleven changes and seven replies while
-he kept commenting, and nothing in the panel said so until the next Send accepted the changes by default; and a reply he
-saved pulled the text back to its card after he had scrolled on. The panel now keeps the set of entries the person has seen,
+they kept commenting, and nothing in the panel said so until the next Send accepted the changes by default; and a reply they
+saved pulled the text back to its card after they had scrolled on. The panel now keeps the set of entries the person has seen,
 names the rest in a line under the header with a dot on each card until a gesture finds it on screen, and stands the save's
 scroll down once the person has moved on. The guide's Files section gained one sentence for each; each clause is
 cross-checked against the panel, the model and the sheets, so a reworded sentence, a renamed control or a dropped rule

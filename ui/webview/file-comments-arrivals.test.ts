@@ -1,7 +1,7 @@
 // The arrivals follow-on (plans/file-review.md, "The arrivals follow-on (2026-09-09)" under Slice 2), driven over the review
 // stand-in file-comments-focus.test.ts drives (copied here, as the sibling focus modules copy it). Two rules, both from the
 // user's reports of 2026-09-09. The NOTICE: the user sent comments, the session answered with eleven changes and seven
-// replies while he kept commenting, and nothing said so until the next Send accepted the changes by default. The panel now
+// replies while they kept commenting, and nothing said so until the next Send accepted the changes by default. The panel now
 // keeps the set of entries the person has seen (a change, a comment, a reply), files a status's entries by another author
 // that are not in it as arrivals, and while any stand shows one line under the header naming them — a button that shows the
 // first of them — with a dot on each arrival's card and marks; seen is a gesture of the person's (a pointer press, a key, a

@@ -1,4 +1,4 @@
-// The Send confirm's note box (the owner's ruling, 2026-09-09; plans/file-review.md, decision 40 and the arrivals follow-on
+// The Send confirm's note box (the user's ruling, 2026-09-09; plans/file-review.md, decision 40 and the arrivals follow-on
 // under Slice 2), driven AS A PANEL over the third review round's stand-in (file-comments-review-fixes-3.test.ts, copied
 // here): the confirm no longer shows the grey message preview or its toggle; in their place a multi-line box for the
 // person's own words, empty by default, its placeholder naming the session, three rows growing to about eight. The text
@@ -492,7 +492,7 @@ test("nothing unsent: Send still opens the confirm, whose own Send is off until 
   assert.deepEqual(msg.comments, []); assert.equal(msg.accepted, 0); assert.equal(msg.rejected, 0);
   assert.equal(aside.querySelector(".fc-confirm"), null, "the confirm is down while the send is out (Sending…), as before");
   sent(w); await flush(); answer(w, status({ unsent: NO_UNSENT })); await flush();
-  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at /, "the sent note as before");
+  assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at /, "the acknowledgment as before");
 });
 
 test("a note the kernel would strip to nothing is none here too: NEL or an ASCII separator alone leaves the confirm's Send off with nothing unsent, and beside comments travels as no note", async (t: TestContext) => {
