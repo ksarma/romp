@@ -82,6 +82,7 @@ import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from ".
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
+import { billingRowText, billingSubText, pickerBillingRow } from "./billing-label";
 import { chatMdExtensions, userMdHtml } from "./chat-md";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
@@ -282,7 +283,7 @@ interface UserTodo { id: string; text: string; detail?: string; createdT?: numbe
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -5297,21 +5298,15 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // Billing: whether this tab bills the API key or the Claude login — and WHICH login account (the
   // user 2026-08-09: shown whenever the backend reports it, one-auth machines included; only a tmux
   // session, whose CLI env romp does not control, reports nothing). No key material, ever.
-  // When the CLI's own init landed on the OTHER side (authLive — say, a key found via apiKeyHelper
-  // on a session launched for the login), the row carries the live truth beside the intent instead
-  // of wearing the lie (the user 2026-08-15). The account name yields its parenthetical then: it is
-  // not the account being billed.
-  // the row tells the TRUTH in every landing shape (T124: after a switch it showed the pick as
-  // applied fact through the whole reconnect window, and a wrong-side landing read as a quiet
-  // parenthetical): a pending pick says so, a confirmed contradiction leads with the warning.
-  if (s.status.auth) rows.push(["Billing",
-    s.status.authPending
-      ? (s.status.auth === "key" ? "API key" : "Login") + " (applying — not confirmed yet)"
-      : s.status.authLive && s.status.authLive !== s.status.auth
-        ? `⚠ ${s.status.auth === "key" ? "API key" : "Login"} picked, but the CLI reports `
-          + `${s.status.authLive === "key" ? "the API key" : "the login"} — this session bills that`
-        : s.status.auth === "key" ? "API key"
-          : (s.status.authAcct ? `Login (${s.status.authAcct})` : "Login")]);
+  // The words are billing-label.ts's (one decision for this row and the tab menu's Billing item): the
+  // CLI's own report (authLive) leads once an init has landed, the intent (auth) stands in before one;
+  // a pending switch reads as pending, never as applied fact (T124), and an EXPLICIT pick the CLI
+  // contradicted leads with a warning naming what is billed (the user 2026-08-15). A seeded default
+  // the CLI disagrees with is no contradiction (authPicked tells the two apart): until 2026-09-09
+  // every unpicked session on an apiKeyHelper box read plain "Login", its seeded intent, because the
+  // kernel's live merge never forwarded the CLI's report; had it, the old wording would have called that
+  // seeded default a pick the CLI contradicted (the user 2026-09-09).
+  if (s.status.auth) rows.push(["Billing", billingRowText(s.status)]);
   for (const [k, v] of rows) {
     const r = el("div", "tab-tip-row");
     const ke = el("span", "tab-tip-k"); ke.textContent = k;
@@ -6523,10 +6518,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const bodyEl = el("span", "ctx-item-body");
     const l = el("span", "ctx-item-label"); l.textContent = "Billing"; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub");
-    sb.textContent = st.authPending ? "applying…"
-      : st.authLive && st.authLive !== st.auth
-        ? `⚠ CLI reports ${st.authLive === "key" ? "API key" : "login"}`   // the pick did not take — say so where the switch lives (T124)
-        : (st.auth === "key" ? "API key" : (st.authAcct ? `Login (${st.authAcct})` : "Login"));
+    // billing-label.ts's words (the hover row's decision, shorter): a pick that did not take says so
+    // where the switch lives (T124); the CLI's report otherwise, the intent before any report
+    sb.textContent = billingSubText(st);
     bodyEl.appendChild(sb);
     item.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; item.appendChild(caret);
@@ -7569,16 +7563,19 @@ function syncPickerAuth(): void {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap) return;
   const a = pickerAuthAvail;
-  const show = !pickMode && !!(a && (a.login || a.key)) && pickerBackendChoice() === "sdk";
+  // the row's decision is billing-label.ts's (pickerBillingRow, executed in billing-label.test.ts): shown
+  // whenever the host can name what a new session bills (a login, a key of romp's, or a declared key), buttons
+  // when both choices are real, else the single applying choice written out, naming the login account when known
+  const row = pickerBillingRow(a);
+  const show = !pickMode && row.show && pickerBackendChoice() === "sdk";
   wrap.style.display = show ? "" : "none";
   if (!show) return;
-  const both = !!(a!.login && a!.key);
+  const both = row.both;
   wrap.querySelectorAll(".picker-be-opt").forEach((x) => ((x as HTMLElement).style.display = both ? "" : "none"));
   const fixed = wrap.querySelector(".picker-auth-fixed") as HTMLElement | null;
   if (fixed) {
     fixed.style.display = both ? "none" : "";
-    // one real choice → written out in the buttons' place, naming the login account when known
-    fixed.textContent = both ? "" : (a!.key ? "API key" : (a!.acct ? `Login (${a!.acct})` : "Login"));
+    fixed.textContent = row.fixed;
   }
   if (!both) return;   // the fixed text is the whole row — nothing to seed
   // the Login button's hover names WHICH account (the user 2026-08-09)

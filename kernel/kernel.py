@@ -10469,14 +10469,18 @@ def _auto_pause_on_spend_limit(now, tmux):
 def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
-    before its init landed) can only be billing the login when this box holds no key at all
-    (_auth_key_present), and is taken as billing a key otherwise. The spend pause reads it at both edges
-    (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's spend rule
-    compares a candidate's against it)."""
+    whose row failed to build) is taken to bill what a session on this box bills absent a pick of its own
+    (_unpicked_default: the backend's one rule, the key romp holds to inject, else the side the box
+    declares through ROMP_EXPECTED_AUTH when no gear pick has made it inert, else the login). The key
+    comes before the declaration because the launch injects a configured source for every unpicked
+    session whatever the box declares; a box whose sessions authenticate through Claude Code's
+    apiKeyHelper holds no key of romp's, so the declaration decides there. The spend pause reads it at
+    both edges (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's
+    spend rule compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
     if a:
         return a == "login"
-    return not _auth_key_present()
+    return _unpicked_default() == "login"
 
 
 def _auto_resume_retry(now, tmux):
@@ -17239,6 +17243,14 @@ def _sdk_locked():
             jd._ENV_OK_FN = sbmod.credential_auth_ok        # a served call re-arms that invalidation
             jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
             jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
+            # The unpicked-billing rule (sdk_backend.unpicked_auth, the fallback behind effective_auth and
+            # default_auth) reaches _judge_auth through the same kind of wire, so a judge call on an
+            # unpicked session bills the side the session's own badge names: on a declared-key box with no
+            # key of romp's the judge classified every unpicked call as login-billed while every other
+            # reader said key (review round 1, 2026-09-09). The judge passes its own key verdict in
+            # (_work_key_configured, which consults the command source's set first); jd.STATE is the state
+            # dir the backend below is built on, so the defaults file read is the same file.
+            jd._UNPICKED_AUTH_FN = lambda key: sbmod.unpicked_auth(jd.STATE, key)
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:
@@ -17406,13 +17418,34 @@ def _sdk_problem(text):
 
 
 def _auth_key_present():
-    """Whether the manager's environment carried an API key (now held by the SDK backend). A bool on
-    purpose: no fragment of the key — not even a last-4 tail — leaves the kernel process for a label
-    (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
+    """Whether romp itself holds an API key source for its launches (the SDK backend's selected source).
+    A bool on purpose: no fragment of the key, not even a last-4 tail, leaves the kernel process for a
+    label (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
     display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
-    attribute read off the backend singleton, safe per-push."""
+    attribute read off the backend singleton, safe per-push. False says romp injects nothing, NOT that
+    the sessions bill the login: on a box whose sessions authenticate through Claude Code's apiKeyHelper
+    they bill a key romp never sees; readers that need the billed side take the CLI's own report
+    (authLive) first and the backend's unpicked rule (_unpicked_default) for a row with none."""
     be = _sdk()
     return bool(getattr(be, "work_key_configured", False)) if be else False
+
+
+def _unpicked_default():
+    """The side a session on this box bills absent an explicit Billing pick of its own, by the backend's
+    one rule (SdkBackend.new_session_auth: the remembered gear pick a spawn would seed, else
+    sdk_backend.unpicked_auth: the key romp holds, else the box declaration when no pick has made it
+    inert, else the login). The kernel's two readers of a row that reports nothing take it (_bills_login's
+    fallback, _auth_avail's picker default), so the kernel cannot order the tests differently from the
+    backend again (review round 1, 2026-09-09: the two read the declaration before the key, the backend
+    after it, and a keyed box declaring login seeded the picker on Login for sessions that launched
+    keyed). A direct call, not a getattr guard: a backend without the method is a bug to surface (the
+    kernel-to-backend binding is pinned by an executed test), not a login box. No backend at all (the
+    module failed to load, a boot problem said aloud elsewhere) reads the login: nothing of romp's is
+    injected then."""
+    be = _sdk()
+    if be is None:
+        return "login"
+    return be.new_session_auth()
 
 
 def _work_key_fp():
@@ -17445,20 +17478,12 @@ def _auth_avail():
     rather than being second-guessed here). key = the manager's environment carried ANTHROPIC_API_KEY,
     now held by the SDK backend (work_api_key claimed it out of os.environ) — a bool only, never any
     fragment of the key (see _auth_key_present). acct = the login's display name (_claude_account_label),
-    so 'Login' can say WHICH account it means. default = what a fresh session would use absent an
-    explicit pick."""
-    key = _auth_key_present()
-    d = {}
-    try:
-        d = json.loads((jd.STATE / "sdk-defaults.json").read_text())
-        d = d if isinstance(d, dict) else {}
-    except Exception:
-        d = {}
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    if default == "key" and not key:
-        default = "login"
-    return {"login": bool(_claude_account()), "key": key,
-            "acct": _claude_account_label(), "default": default}
+    so 'Login' can say WHICH account it means. default = what a session created now without an explicit
+    pick would bill (_unpicked_default, the backend's rule: the remembered pick a spawn would seed, a
+    set-aside key pick excepted; else the key romp holds; else the side ROMP_EXPECTED_AUTH declares,
+    which is how the apiKeyHelper box, holding no key of romp's, writes out `API key`; else the login)."""
+    return {"login": bool(_claude_account()), "key": _auth_key_present(),
+            "acct": _claude_account_label(), "default": _unpicked_default()}
 
 
 def _cap_switch_offer(sid, aerr):
@@ -19670,6 +19695,13 @@ class Sessions:
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                                 "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
+                                # the CLI's OWN report ("" until an init lands) and whether `auth` is an explicit
+                                # pick: build_session's Billing fields read them off this map, and until
+                                # 2026-09-09 the merge dropped authLive, so every reader of the map (the hover
+                                # row, _bills_login, the cap-switch offer, the judge-limit banner) saw "" and
+                                # fell to the seeded intent, "login" on a box whose CLI reported the key
+                                "authLive": st.get("authLive", ""),
+                                "authPicked": bool(st.get("authPicked")),
                                 "authPending": bool(st.get("authPending")),   # an /auth switch reconnecting → badge dots
                                 "color": (st.get("color") or None), "mode": st.get("mode", ""), "backend": "sdk",
                                 "subagents": st.get("subagents") or [],   # live Task subagents (SDK only) → lane pill
@@ -35545,6 +35577,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
+                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
+                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # reports" only for a pick; an unpicked session shows the CLI's side plainly
+                  "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices — the gate for the CONTROLS (statusline
                   # badge menu / picker buttons); display no longer hangs on it (the user 2026-08-09)
                   "authBoth": _auth_both(),

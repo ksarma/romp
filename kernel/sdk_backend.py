@@ -3657,14 +3657,37 @@ def _defaults_path(state_dir: Path) -> Path:
     return Path(state_dir) / "sdk-defaults.json"
 
 
+_DEFAULTS_CACHE: dict = {}   # {path: (stat identity, dict)}: read_sdk_defaults parses the file once per identity
+
+
 def read_sdk_defaults(state_dir: Path) -> dict:
     """{'model': <alias|'default'>, 'effort': <level>, 'mode': <permission mode>} — whatever the user last
-    picked on any session, seeded into the next new session by spawn(); {} if never set."""
+    picked on any session, seeded into the next new session by spawn(); {} if never set.
+
+    Parsed once per file identity: a stat (about 2 us) stands in for the open and parse (about 30 us) on
+    every later read until the file changes, keyed the way keysource.read_source keys its cache (inode,
+    mtime, ctime, size), so a write, the atomic writer's or a hand edit's, is seen on the next read and
+    nothing is timed. The read reached the per-row path on 2026-09-09 (unpicked_auth under every
+    live_sessions row on a keyless box, once per pusher cycle) and measured at +58% per row uncached
+    (review round 1). A copy is returned: callers merge into the dict before writing it back."""
+    p = _defaults_path(state_dir)
+    key = str(p)
     try:
-        d = json.loads(_defaults_path(state_dir).read_text())
-        return d if isinstance(d, dict) else {}
+        st = os.stat(p)
+    except OSError:
+        _DEFAULTS_CACHE.pop(key, None)
+        return {}
+    ident = (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+    hit = _DEFAULTS_CACHE.get(key)
+    if hit is not None and hit[0] == ident:
+        return dict(hit[1])
+    try:
+        d = json.loads(p.read_text())
     except (OSError, ValueError):
         return {}
+    d = d if isinstance(d, dict) else {}
+    _DEFAULTS_CACHE[key] = (ident, d)
+    return dict(d)
 
 
 _defaults_lock = threading.Lock()   # serializes the read-modify-writes below: the kernel thread (set_model, the
@@ -4197,6 +4220,52 @@ def _declared_auth(state_dir) -> tuple:
         return a, "pick"
     v = _expected_auth()
     return v, ("env" if v else "")
+
+
+def unpicked_auth(state_dir, key: bool) -> str:
+    """The side a session whose reg holds NO Billing pick bills: the one fallback behind
+    SdkSession.effective_auth, SdkBackend.default_auth (the dormant twin) and the judges' billing
+    (judge.py _judge_auth reads it through the kernel's _UNPICKED_AUTH_FN wire, and mirrors it for the
+    standalone judge), so the badge, the judge billing and the spend readers agree. The key when romp
+    holds a source to inject (`key`, the pre-selector world: an ambient key billed every session, and
+    the launch injects a configured source for every unpicked session whatever the box declares, so
+    the key comes before the declaration); else the side the box expects (_declared_auth): a remembered
+    gear pick's side (a login pick is re-seeded into every new reg, and an unpicked reg under one
+    predates the pick and launches the same way), except a remembered KEY pick on a box with no key
+    source, which spawn sets aside (it seeds nothing, so the inertness it would grant protects nothing)
+    and under which ROMP_EXPECTED_AUTH speaks again; else the declaration; else the login. Before the
+    declaration was read here, every session on an apiKeyHelper box reported 'login' as its intent: romp
+    holds no key of its own there, and the fallback took that for a login (the user 2026-09-09) while the
+    CLI's own report said the key. A session a spawn would create is new_session_auth's question: the
+    seed a spawn writes comes first there."""
+    if key:
+        return "key"
+    exp, src = _declared_auth(state_dir)
+    if src == "pick" and exp == "key":
+        return _expected_auth() or "login"
+    return exp or "login"
+
+
+def seeded_auth(defaults: dict, key: bool) -> str:
+    """The `auth` spawn seeds into a new reg absent an explicit pick: the remembered gear pick (set_auth's
+    durable trace in the defaults), except a KEY pick on a box with no key source, which is set aside
+    (the picker offers no key choice there, so a re-seed would apply a pick the user cannot make); "" when
+    nothing is seeded. One rule for spawn and for new_session_auth, so the picker's default and the reg a
+    spawn writes cannot disagree."""
+    a = defaults.get("auth")
+    if a == "login" or (a == "key" and key):
+        return a
+    return ""
+
+
+def new_session_auth(state_dir, key: bool) -> str:
+    """The side a session spawned now with no explicit pick would bill: the seed spawn would write
+    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's readers of a row that reports
+    nothing take this (_bills_login's fallback, _auth_avail's picker default), one function, one order
+    (review round 1, 2026-09-09: the two kernel readers read the declaration before the key while the
+    backend read it after, so a keyed box declaring login seeded the picker on Login for sessions that
+    launched keyed)."""
+    return seeded_auth(read_sdk_defaults(Path(state_dir)), key) or unpicked_auth(state_dir, key)
 
 
 # ---------------------------------------------------------------------------
@@ -4850,7 +4919,8 @@ class SdkSession:
         #   Billing row's live truth; restored with the flag so the hover stays honest across restarts
         self.auth = reg.get("auth") if reg.get("auth") in ("login", "key") else ""   # the user's
         #   per-session auth pick (the user 2026-08-08: some sessions on the personal login, some on
-        #   the work key). "" = no explicit pick → effective_auth() preserves the pre-selector world.
+        #   the work key). "" = no explicit pick → effective_auth() falls to unpicked_auth (the key romp
+        #   holds, else the box's ROMP_EXPECTED_AUTH declaration, else the login).
         self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
         #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
         self._launched_keyed = False  # what _options actually handed the CLI (key injected or not);
@@ -5730,7 +5800,7 @@ class SdkSession:
             return "key"
         if key is None:
             key = self.backend.work_key_configured
-        return "key" if key else "login"
+        return unpicked_auth(self.backend.state_dir, key)
 
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
@@ -8057,6 +8127,8 @@ class SdkSession:
                 "authLive": self.auth_live,   # what the CLI's init actually reported ("" until one
                 #   lands) — the Billing row says so when it disagrees with the launch intent above
                 #   (a key found via apiKeyHelper bills the key while `auth` still reads login)
+                "authPicked": bool(self.auth),   # `auth` is an explicit pick (picker, gear, remembered)
+                #   rather than the box default; the Billing row words a contradiction as one only then
                 "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
                 "mode": self.perm_mode, "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
                 "ctxOver": self._ctx_over,   # the % above is CLAMPED — true when the CLI reported 100+
@@ -10081,13 +10153,18 @@ class SdkBackend:
                           "is billing the %s. %s"
                           % (sess.name, "the API key" if meant_key else "the login", source,
                              "API key" if keyed else "login", remedy), problem=True)
+        first = not sess.auth_live   # no report on record: never an init, or set_auth cleared the last one
         sess.auth_live = "key" if keyed else "login"   # the CLI's own report, for the Billing row
-        if keyed == sess.api_key_auth:
+        if keyed == sess.api_key_auth and not first:
             return
         sess.api_key_auth = keyed
         # Persisted with the flip: runtime-only, a kernel restart reset a keyed session to False and
         # its rate-limit events landed in the login's usage.json until the next init corrected it —
-        # exactly the max-merge contamination the per-session gate exists to prevent.
+        # exactly the max-merge contamination the per-session gate exists to prevent. The FIRST report
+        # persists whichever side it names: a login landing equals the flag's default, and without the
+        # write a restart read it as "no init ever landed" and the Billing row fell back to the intent
+        # for a session whose CLI had already spoken (the persisted report is what the constructor and
+        # the dormant row restore as authLive).
         self._update_reg(sess.sid, apiKeyAuth=keyed)
         self._log("auth (%s): apiKeySource=%r — %s" % (sess.name, source,
                   "this session bills an API key: its usage polls and rate-limit events are ignored"
@@ -10750,19 +10827,24 @@ class SdkBackend:
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
         # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
-        # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
-        a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
-        if a == "key" and not auth and not self.work_key_configured:
-            # A REMEMBERED key default on a box with no key source seeds nothing. Not because of the launch
-            # or the per-init check: both come out the same either way (nothing of romp's injected, and a
-            # login landing rings through the remembered pick in _declared_auth just as it would through a
-            # seeded one). Because the picker offers no key choice on this box (_auth_avail shows login), so
-            # a re-seed would apply a pick the user cannot make here, and because what the session SAYS
-            # about itself — Billing badge, judge billing, cycling — should read what it is: unpicked. A
-            # remembered pick set aside is said once, as a problem row (review find, 2026-09-07). A re-seed
-            # is never an explicit pick (_declared_auth); an EXPLICIT `auth` from the picker still lands.
-            a = ""
-            self._note_seed_skipped()
+        # session), the seeded_auth rule; unset stays unset, and effective_auth's fallback (unpicked_auth)
+        # IS the pre-selector behavior.
+        if auth in ("login", "key"):
+            a = auth
+        else:
+            a = seeded_auth(d, self.work_key_configured)
+            if not a and d.get("auth") == "key":
+                # A REMEMBERED key default on a box with no key source seeds nothing (seeded_auth). Not
+                # because of the launch or the per-init check: both come out the same either way (nothing of
+                # romp's injected, and a login landing rings through the remembered pick in _declared_auth
+                # just as it would through a seeded one). Because the picker offers no key choice on this
+                # box, so a re-seed would apply a pick the user cannot make here, and because what the
+                # session SAYS about itself (Billing badge, judge billing, cycling) should read what it is:
+                # unpicked, which is unpicked_auth's answer (the box declaration when it speaks, since a
+                # set-aside pick protects nothing, else the login). A remembered pick set aside is said once,
+                # as a problem row (review find, 2026-09-07). A re-seed is never an explicit pick
+                # (_declared_auth); an EXPLICIT `auth` from the picker still lands, above.
+                self._note_seed_skipped()
         if a:
             reg["auth"] = a
         # Per-session env is a per-spawn ask, never a remembered default (a var one session needed is
@@ -12689,7 +12771,14 @@ class SdkBackend:
         a = (reg or {}).get("auth")
         if a in ("login", "key"):
             return a
-        return "key" if self.work_key_configured else "login"
+        return unpicked_auth(self.state_dir, self.work_key_configured)
+
+    def new_session_auth(self) -> str:
+        """new_session_auth over this backend's state dir and key source: the side a session spawned now
+        with no explicit pick would bill, for the kernel's readers of a row that reports nothing
+        (_bills_login's fallback, _auth_avail's picker default). Called directly there, never through a
+        getattr guard: a backend without this method is a bug to surface, not a login box."""
+        return new_session_auth(self.state_dir, self.work_key_configured)
 
     def sid_for_name(self, name: str) -> str:
         """The sid of the ONE alive session (not a comment thread) whose reg carries `name`, else "".
@@ -12908,7 +12997,7 @@ class SdkBackend:
                                  % (sid, traceback.format_exc()))
                 out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
                             "effortPending": False, "effort": "", "auth": "", "authLive": "",
-                            "authPending": False, "mode": "", "fast": "", "fastReason": "",
+                            "authPicked": False, "authPending": False, "mode": "", "fast": "", "fastReason": "",
                             "color": None, "connected": False, "spawning": False, "retryCount": 0,
                             "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
         return out
@@ -12945,6 +13034,7 @@ class SdkBackend:
                     # session's Billing row keeps telling it; absent = no init ever landed
                     "authLive": ("key" if reg.get("apiKeyAuth") else "login")
                                 if isinstance(reg.get("apiKeyAuth"), bool) else "",
+                    "authPicked": reg.get("auth") in ("login", "key"),   # snapshot()'s twin
                     "authPending": bool(reg.get("authPending")),
                     "mode": reg.get("mode", ""),
                     # last persisted fast state (liveFast, like liveCtx above) → the badge

@@ -16,6 +16,17 @@ the per-init apiKeySource mismatch line was a permanent false alarm. The mechani
     episode (the rail timer calls it every 60s), as a problem only when no declaration explains it;
     the keyed no-window payload carries spend and nothing about rate limits (the notice was deleted 2026-08-24)
     the bars are absent.
+  * The declaration also SEEDS the unpicked billing intent (the user 2026-09-09, whose every session
+    read "login" on an apiKeyHelper box): with no key of romp's and no pick, effective_auth and
+    default_auth read the declared side (unpicked_auth); a pick, explicit or remembered, still wins,
+    and nothing is written to the reg (authPicked stays False). A remembered KEY pick on a box with no
+    key source is one spawn sets aside, and under it the declaration speaks again (review round 1,
+    2026-09-09). The kernel's readers of a row that reports nothing (_bills_login's fallback,
+    _auth_avail's default) call the backend's new_session_auth directly, one rule and one order with
+    the backend (the key romp holds before the declaration), executed here on a REAL backend; and the
+    live merge forwards authLive and authPicked, which it had dropped since the field was born. The
+    defaults file behind the declaration read is parsed once per file identity, since the read is per
+    row.
 
 Synthetic sids/paths only; no real key material or session data.
 """
@@ -24,6 +35,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -336,14 +348,27 @@ class ApiKeyAuthPersists(_Declared):
         self.assertFalse(s2.api_key_auth)
         self.assertEqual(s2.auth_live, "login")
 
-    def test_no_flip_no_write(self):
-        # a login session that has never been keyed: the early return means no reg field, so a
-        # restart restores auth_live "" (no CONFIRMED side) rather than a manufactured "login"
+    def test_the_first_login_report_persists_and_a_repeat_does_not(self):
+        # a login session's FIRST init equals the flag's default, and until 2026-09-09 the early return
+        # skipped the write: a restart then restored auth_live "" ("no init ever landed") for a session
+        # whose CLI had spoken, and the Billing row fell back to the intent. The first report persists
+        # whichever side it names; a repeat of the same side writes nothing more.
         sid = self.be.spawn("n", "/tmp")
         s = sb.SdkSession(self.be, self._reg(sid))
         self.be._note_auth_source(s, "none")
         self.assertEqual(s.auth_live, "login", "the runtime truth is set on every init")
-        self.assertNotIn("apiKeyAuth", self._reg(sid))
+        self.assertIs(self._reg(sid)["apiKeyAuth"], False, "the first report is on record")
+        s2 = sb.SdkSession(self.be, self._reg(sid))
+        self.assertEqual((s2.auth_live, s2.api_key_auth), ("login", False),
+                         "a restart restores the CLI's report, not 'no init yet'")
+        writes = []
+        real = self.be._update_reg
+        self.be._update_reg = lambda sid_, **f: writes.append(f) or real(sid_, **f)
+        try:
+            self.be._note_auth_source(s2, "none")
+        finally:
+            self.be._update_reg = real
+        self.assertEqual([w for w in writes if "apiKeyAuth" in w], [], "the same side again: no write")
 
 
 class AuthLiveOnTheWire(_Declared):
@@ -367,6 +392,248 @@ class AuthLiveOnTheWire(_Declared):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('"authLive": tm.get("authLive", "")', src,
                       "the tab-hover Billing row reads the live truth off the session payload")
+        self.assertIn('"authPicked": bool(tm.get("authPicked"))', src,
+                      "…and whether the intent beside it is an explicit pick")
+        # the merge that builds the map the payload reads: until 2026-09-09 it forwarded `auth` and
+        # `authPending` from the SDK row and dropped `authLive`, so the payload's read above was always ""
+        self.assertIn('"authLive": st.get("authLive", "")', src, "Sessions.live forwards the CLI's report")
+        self.assertIn('"authPicked": bool(st.get("authPicked"))', src)
+
+
+class DeclarationSeedsTheUnpickedDefault(_Declared):
+    """The declaration decides what an UNPICKED session bills when romp holds no key (the user 2026-09-09:
+    every session on an apiKeyHelper box read "login" as its intent, so the hover said Login for sessions
+    whose CLI reported the key). The reg is not written: a seeded default is not a pick (authPicked False),
+    and a pick, explicit or remembered, still wins, the declaration inert under it (_declared_auth)."""
+
+    def test_declared_key_seeds_the_unpicked_intent_without_writing_a_pick(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self.assertFalse(self.be.work_key_configured, "the helper box: romp holds no key of its own")
+        self.assertEqual(self._sess(1).effective_auth(), "key")
+        sid = self.be.spawn("n", "/tmp")
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "a seeded default is not a pick")
+        row = self.be.live_sessions()[sid]
+        self.assertEqual((row["auth"], row["authPicked"]), ("key", False), "the dormant row reads the same")
+        s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        snap = s.snapshot()
+        self.assertEqual((snap["auth"], snap["authPicked"]), ("key", False))
+        self.assertEqual(self.be.default_auth({}), self._sess(2).effective_auth(),
+                         "the dormant twin and the live read share the one fallback")
+
+    def test_a_pick_wins_over_the_declaration(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        s = self._sess(1, auth="login")
+        self.assertEqual(s.effective_auth(), "login")
+        self.assertIs(s.snapshot()["authPicked"], True)
+        sid = self.be.spawn("n", "/tmp", auth="login")
+        row = self.be.live_sessions()[sid]
+        self.assertEqual((row["auth"], row["authPicked"]), ("login", True))
+
+    def test_a_remembered_pick_makes_the_declaration_inert_here_too(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        sb.write_sdk_default(self.be.state_dir, auth="login")   # set_auth's durable trace
+        self.assertEqual(self._sess(1).effective_auth(), "login",
+                         "the remembered pick is the box's expectation now; the env word stops speaking")
+        self.assertEqual(self.be.default_auth({}), "login")
+
+    def test_declared_login_and_no_declaration_both_read_login_on_a_keyless_box(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        self.assertEqual(self._sess(1).effective_auth(), "login")
+        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        self.assertEqual(self._sess(2).effective_auth(), "login", "the pre-declaration world, unchanged")
+        self.assertEqual(sb.unpicked_auth(Path(self.d), True), "key", "a key romp holds still comes first")
+
+    def test_a_set_aside_key_pick_lets_the_declaration_speak(self):
+        # the user's own migration: a key pick made while the box held a key, the key since moved to Claude
+        # Code's apiKeyHelper and the box declaring so. spawn sets the pick aside (no key source), so the
+        # inertness a pick grants protects nothing here, and the declaration decides the unpicked default
+        # (review round 1, 2026-09-09: before this the pick made the declaration inert AND seeded nothing,
+        # so every new session read login against both the pick and the declaration)
+        sb.write_sdk_default(self.be.state_dir, auth="key")
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self.assertEqual(self._sess(1).effective_auth(), "key")
+        self.assertEqual(self.be.default_auth({}), "key")
+        self.assertEqual(self.be.new_session_auth(), "key", "the picker's written-out choice reads the key too")
+        sid = self.be.spawn("n", "/tmp")
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "the pick is still set aside: nothing seeded")
+        row = self.be.live_sessions()[sid]
+        self.assertEqual((row["auth"], row["authPicked"]), ("key", False))
+        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        self.assertEqual(self._sess(2).effective_auth(), "login",
+                         "undeclared, the set-aside rule stands: an unpicked session reads the login (dc3eabee)")
+        self.assertEqual(self.be.new_session_auth(), "login")
+
+    def test_the_defaults_file_is_parsed_once_per_identity(self):
+        # the declaration read is per row (unpicked_auth under every dormant row of live_sessions): one parse
+        # per file identity, a stat per read after it, and a write (the atomic writer's here) is seen on the
+        # next read. Never a timer.
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        sb.write_sdk_default(self.be.state_dir, effort="high")   # the file exists and holds no pick
+        for n in range(12):
+            self.be.spawn("s%d" % n, "/tmp")
+        reads = []
+        real = Path.read_text
+
+        def counting(p, *a, **k):
+            if p.name == "sdk-defaults.json":
+                reads.append(str(p))
+            return real(p, *a, **k)
+
+        with mock.patch.object(Path, "read_text", counting):
+            rows = self.be.live_sessions()
+            self.assertEqual(len(rows), 12)
+            self.assertLessEqual(len(reads), 1, "one build, at most one parse")
+            self.assertTrue(all(r["auth"] == "key" for r in rows.values()))
+            reads.clear()
+            self.be.live_sessions()
+            self.assertEqual(reads, [], "a second build under the same identity parses nothing")
+            sb.write_sdk_default(self.be.state_dir, auth="login")   # set_auth's writer: a new identity
+            reads.clear()
+            rows = self.be.live_sessions()
+            self.assertEqual(len(reads), 1, "the write is seen: one parse, then cached again")
+            self.assertTrue(all(r["auth"] == "login" for r in rows.values()), "and the new pick is what is read")
+
+
+class KernelReadersShareTheBackendsRule(unittest.TestCase):
+    """_bills_login's fallback for a row that reports nothing and _auth_avail's picker default read the
+    backend's ONE rule (SdkBackend.new_session_auth, called directly) on a REAL backend. Review round 1
+    (2026-09-09) found the two kernel readers consulting the declaration before the key while the backend
+    consulted it after, so a keyed box declaring login seeded the picker on Login for sessions that
+    launched keyed; and found no test executing the backend method the kernel reached through a getattr
+    guard, so a rename restored the pre-fix readers with every test green. The matrix below runs every
+    reader over key held or not, declaration key/login/unset and pick none/login/key, and states the one
+    answer for each of the two questions: what an UNPICKED reg bills (unpicked_auth: the key first) and
+    what a session SPAWNED NOW bills (new_session_auth: the seed a spawn writes first). They differ in one
+    cell only, a remembered login pick on a keyed box: the reg a spawn writes carries the pick, an older
+    unpicked reg launches keyed."""
+
+    KEY = "romp-test-fixture-key-not-real"   # the documented pin: work_key_configured reads True, nothing validates it
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self._exp_before = os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        self._saved = (km._sdk, km._claude_account, km._claude_account_label, km.jd.STATE)
+        km.jd.STATE = Path(self.d)
+        km._claude_account = lambda: "aaaaaaaaaaaa"
+        km._claude_account_label = lambda: "user@example.com"
+        self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
+        self.be.work_key = ""
+        km._sdk = lambda: self.be
+
+    def tearDown(self):
+        (km._sdk, km._claude_account, km._claude_account_label, km.jd.STATE) = self._saved
+        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        if self._exp_before is not None:
+            os.environ["ROMP_EXPECTED_AUTH"] = self._exp_before
+
+    def _world(self, declared="", pick="", key=False):
+        if declared:
+            os.environ["ROMP_EXPECTED_AUTH"] = declared
+        else:
+            os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        p = Path(self.d) / "sdk-defaults.json"
+        if pick:
+            p.write_text(json.dumps({"auth": pick}))
+        else:
+            p.unlink(missing_ok=True)
+        self.be.work_key = self.KEY if key else ""
+
+    def test_every_reader_gives_one_answer_over_the_matrix(self):
+        n = 0
+        for key in (False, True):
+            for declared in ("", "key", "login"):
+                for pick in ("", "login", "key"):
+                    self._world(declared, pick, key)
+                    tag = "key=%s declared=%r pick=%r" % (key, declared, pick)
+                    # an UNPICKED reg: the key romp holds; else a login pick's side; else the declaration (a
+                    # key pick without a key is set aside and lets it speak); else the login
+                    unpicked = "key" if key else ("login" if pick == "login" else (declared or "login"))
+                    self.assertEqual(sb.unpicked_auth(Path(self.d), key), unpicked, tag)
+                    self.assertEqual(self.be.default_auth({}), unpicked, tag)
+                    n += 1
+                    live = sb.SdkSession(self.be, {"sid": "11111111-2222-3333-4444-%012d" % n, "name": "u", "cwd": "/tmp"})
+                    self.assertEqual(live.effective_auth(), unpicked, tag)
+                    # a session SPAWNED NOW: the seed a spawn writes (a login pick; a key pick when the key is
+                    # held), else the unpicked rule. The kernel's two readers take this one.
+                    fresh = "login" if pick == "login" else ("key" if key else (declared or "login"))
+                    self.assertEqual(self.be.new_session_auth(), fresh, tag)
+                    self.assertEqual(km._auth_avail()["default"], fresh, tag)
+                    self.assertEqual(km._bills_login({"state": "idle"}), fresh == "login", tag)
+                    self.assertEqual(km._bills_login(None), fresh == "login", tag)
+                    sid = self.be.spawn("n", "/tmp")
+                    self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, sid)), fresh,
+                                     tag + ": the picker default IS what a spawn without a pick bills")
+
+    def test_a_keyed_box_declaring_login_reads_the_key_everywhere(self):
+        # the cell review round 1 found split: the boot check flags this declaration as a contradiction but
+        # does not refuse it, and _options injects the configured key for every unpicked session, so every
+        # reader must say key (the base commit did; the fix's two kernel readers said login)
+        self._world("login", "", key=True)
+        self.assertEqual(sb.unpicked_auth(Path(self.d), True), "key")
+        self.assertEqual(self.be.new_session_auth(), "key")
+        self.assertEqual(km._auth_avail()["default"], "key")
+        self.assertFalse(km._bills_login({"state": "idle"}))
+
+    def test_a_row_that_reports_still_wins(self):
+        self._world("key")
+        self.assertTrue(km._bills_login({"authLive": "login"}), "the CLI's own report outranks the declaration")
+        self.assertTrue(km._bills_login({"auth": "login"}), "…and so does the intent on the row")
+
+    def test_auth_avail_default_follows_the_rule(self):
+        self._world("key")
+        a = km._auth_avail()
+        self.assertEqual((a["key"], a["default"]), (False, "key"),
+                         "romp holds no key to offer, yet the one applying choice is the key")
+        self._world("")
+        self.assertEqual(km._auth_avail()["default"], "login")
+        self._world("key", pick="login")
+        self.assertEqual(km._auth_avail()["default"], "login", "a remembered login pick stays the default")
+        self._world("key", pick="key")
+        self.assertEqual(km._auth_avail()["default"], "key",
+                         "a remembered KEY pick on a keyless box is set aside, and the declaration speaks for the default")
+        self._world("", pick="key")
+        self.assertEqual(km._auth_avail()["default"], "login", "undeclared, the set-aside pick reads as unpicked: the login")
+
+    def test_the_kernel_calls_the_backend_method_directly_and_a_missing_one_is_loud(self):
+        # the binding the fix depends on, executed on the real method (a getattr guard hid its loss before)
+        self._world("key")
+        self.assertEqual(self.be.new_session_auth(), "key")
+        self.assertEqual(km._unpicked_default(), "key")
+        self.assertFalse(km._bills_login({"state": "idle"}))
+        self.assertEqual(km._auth_avail()["default"], "key")
+        km._sdk = lambda: type("B", (), {"work_key_configured": False})()   # a backend without the method
+        with self.assertRaises(AttributeError):
+            km._unpicked_default()
+        km._sdk = lambda: None
+        self.assertEqual(km._unpicked_default(), "login", "no backend module at all: nothing of romp's is injected")
+
+
+class LiveMergeCarriesTheCliReport(unittest.TestCase):
+    """Sessions.live() forwards authLive and authPicked from the SDK row. It never had authLive: since the
+    field was born (2026-08-15) the merge copied `auth` and `authPending` and dropped it, so build_session's
+    `tm.get("authLive", "")` and every kernel reader of the map (_bills_login, _cap_switch_offer,
+    _judge_limit_view) saw "" and fell to the seeded intent."""
+
+    SID = "11111111-2222-3333-4444-000000000909"
+
+    def setUp(self):
+        self._saved = (km._sdk, km._codex)
+        km._TMUX.live_sessions = lambda: {}
+        km._codex = lambda: None
+        row = {"state": "waiting", "since": "", "model": "", "effort": "", "auth": "login",
+               "authLive": "key", "authPicked": False, "authPending": False, "mode": "", "fast": "",
+               "fastReason": "", "color": None, "connected": False, "spawning": False, "retryCount": 0,
+               "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
+        km._sdk = lambda: type("B", (), {"live_sessions": lambda self: {LiveMergeCarriesTheCliReport.SID: row}})()
+
+    def tearDown(self):
+        (km._sdk, km._codex) = self._saved
+        km._TMUX.__dict__.pop("live_sessions", None)   # the instance attr shadowed the class method
+
+    def test_the_merged_row_carries_the_report_and_the_pick_flag(self):
+        tm = km.Sessions.live()[self.SID]
+        self.assertEqual((tm["auth"], tm["authLive"], tm["authPicked"]), ("login", "key", False))
+        self.assertFalse(km._bills_login(tm), "the reader that records a cap's billing sees the CLI's side")
 
 
 class RefreshUsageAllKeyed(_Declared):
