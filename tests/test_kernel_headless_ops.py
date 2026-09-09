@@ -952,6 +952,120 @@ class UnknownSessionRefused(_RouteServer):
                             ("/send", {"id": FAR_SID, "text": "hello"}), ("/interrupt", {"id": FAR_SID_B})],
                          "every by-name request forwards the FAR sid, never the name")
 
+    def test_a_far_host_whose_key_carries_a_colon_is_picked_by_the_409s_own_spelling(self):
+        # _remote_session_named split `who` at its FIRST colon, so a session on a host whose roster key
+        # carries one (an IPv6 literal such as fd00::1, which _safe_ssh_host admits) could never be picked by
+        # the host:name spelling the 409 itself printed: `fd00::1:far-web` answered 404. The match is composed
+        # per roster host instead (nm == who, or who == host + ":" + nm), so hosts may carry colons while
+        # names may not; a user@host key, colon-free, round-trips as before (review round 5, 2026-09-09).
+        srv = _far_kernel(200, json.dumps({"ok": True, "deferred": True}))
+        rows = {"fd00::1": _remote_row(srv, host="fd00::1", sids=[FAR_SID], names={FAR_SID: "far-web"}),
+                "me@TESTHOST-B": _remote_row(srv, host="me@TESTHOST-B", sids=[FAR_SID_B],
+                                             names={FAR_SID_B: "far-web"})}
+        try:
+            with mock.patch.dict(km._remotes, rows, clear=True), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})):
+                code, resp = self._post("/end", {"name": "far-web", "when": "idle"})
+                self.assertEqual(code, 409, resp)
+                self.assertIn("fd00::1:far-web", resp.get("error", ""))
+                self.assertIn("me@TESTHOST-B:far-web", resp.get("error", ""))
+                for spelling in ("fd00::1:far-web", "me@TESTHOST-B:far-web"):
+                    code, resp = self._post("/end", {"name": spelling, "when": "idle"})
+                    self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}), spelling)
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/end", {"id": FAR_SID, "when": "idle"}),
+                                        ("/end", {"id": FAR_SID_B, "when": "idle"})],
+                         "each spelling forwards its own host's far sid")
+
+    def test_an_away_hosts_stale_names_route_nowhere(self):
+        # the supervisor clears a row's `sids` when the ssh probe declares the host away and never clears its
+        # `names`, so a far session's stale name routed a by-name request into the dead tunnel (200 "isn't
+        # answering", a redial demanded per request) while the same request by id answered 404, and the stale
+        # name made a false 409 against a live host's same-named session. Only a far sid the row's sids list
+        # carries counts now, the liveness the by-id route reads, so both doors answer alike (review round 5,
+        # 2026-09-09). A plain tunnel death without ssh corroboration keeps both lists, so both doors still
+        # forward and demand the redial: the pre-existing consistent behaviour, not exercised here.
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        dead_port = s.getsockname()[1]
+        s.close()
+        away = {"host": "TESTHOST", "local_port": dead_port, "token": "", "sids": [], "names": {FAR_SID: "far-web"}}
+        redials = []
+        srv = _far_kernel(200, json.dumps({"ok": True}))
+        live_b = _remote_row(srv, host="TESTHOST-B", sids=[FAR_SID_B], names={FAR_SID_B: "far-web"})
+        fake = mock.Mock()
+        try:
+            with mock.patch.dict(km._remotes, {"TESTHOST": away}, clear=True), \
+                 mock.patch.object(km, "_demand_redial", lambda host, kind: redials.append((host, kind))), \
+                 mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})):
+                for path, body in (("/end", {"name": "far-web"}), ("/end", {"name": "far-web", "when": "idle"}),
+                                   ("/send", {"name": "far-web", "text": "hello"}),
+                                   ("/interrupt", {"name": "far-web"}), ("/end", {"id": FAR_SID})):
+                    code, resp = self._post(path, body)
+                    self.assertEqual(code, 404, (path, body, resp))
+                    self.assertIn("no live session named", resp.get("error", ""), (path, body))
+                self.assertEqual(redials, [], "nothing dials a host the probe declared away")
+                fake.kill.assert_not_called()
+                fake.send.assert_not_called()
+                fake.interrupt.assert_not_called()
+                # beside a live host's same-named session the stale name is no candidate: no 409, and the
+                # request forwards to the live host
+                with mock.patch.dict(km._remotes, {"TESTHOST-B": live_b}):
+                    code, resp = self._post("/interrupt", {"name": "far-web"})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+                self.assertEqual(redials, [])
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID_B})])
+
+    def test_two_same_named_sessions_on_one_host_are_refused_by_id(self):
+        # two live same-named sessions on ONE attached host: the refusal said "more than one attached
+        # machine; say which: h:web, h:web" (one machine, one spelling twice), and `h:web` then picked
+        # whichever far sid the roster iterated first. The refusal names each as host:name [sid8] and says
+        # the bare full far sid routes by id (_host_for_sid), the one spelling that tells them apart, and
+        # host:name with more than one hit refuses the same way. Mixed (host A twice, host B once): A's
+        # ids and B:web; B:web picks, A:web refuses with the ids (review round 5, 2026-09-09).
+        a, b = "aaaa7777-8888-9999-0000-111111111111", "bbbb7777-8888-9999-0000-111111111111"
+        srv = _far_kernel(200, json.dumps({"ok": True}))
+        row = _remote_row(srv, sids=[a, b], names={a: "web", b: "web"})
+        row_b = _remote_row(srv, host="TESTHOST-B", sids=[FAR_SID_B], names={FAR_SID_B: "web"})
+        try:
+            with mock.patch.dict(km._remotes, {"TESTHOST": row}, clear=True), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})):
+                for who in ("web", "TESTHOST:web"):
+                    code, resp = self._post("/interrupt", {"name": who})
+                    self.assertEqual(code, 409, (who, resp))
+                    err = resp.get("error", "")
+                    self.assertIn("more than one session on TESTHOST answers to 'web'", err, who)
+                    self.assertNotIn("attached machine", err, who)
+                    self.assertEqual(err.count("TESTHOST:web [%s]" % a[:8]), 1, err)
+                    self.assertEqual(err.count("TESTHOST:web [%s]" % b[:8]), 1, err)
+                    self.assertIn("routes by id", err, who)
+                for body in ({"id": b}, {"name": b}):
+                    code, resp = self._post("/interrupt", body)
+                    self.assertEqual((code, resp), (200, {"ok": True}), body)
+                with mock.patch.dict(km._remotes, {"TESTHOST-B": row_b}):
+                    code, resp = self._post("/interrupt", {"name": "web"})
+                    self.assertEqual(code, 409, resp)
+                    err = resp.get("error", "")
+                    self.assertIn("more than one attached machine", err)
+                    for cand in ("TESTHOST:web [%s]" % a[:8], "TESTHOST:web [%s]" % b[:8], "TESTHOST-B:web"):
+                        self.assertEqual(err.count(cand), 1, (cand, err))
+                    self.assertNotIn("TESTHOST-B:web [", err, "a host with one session of the name needs no id")
+                    code, resp = self._post("/interrupt", {"name": "TESTHOST-B:web"})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+                    code, resp = self._post("/interrupt", {"name": "TESTHOST:web"})
+                    self.assertEqual(code, 409, resp)
+                    self.assertIn("TESTHOST:web [%s]" % a[:8], resp.get("error", ""))
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/interrupt", {"id": b}), ("/interrupt", {"id": b}),
+                                        ("/interrupt", {"id": FAR_SID_B})],
+                         "only an unambiguous target forwards, and by its own far sid")
+
     def test_a_far_kernels_answer_is_relayed_in_its_own_words(self):
         # against a REAL far kernel on loopback, so the helper's body read is under test, not a stub of
         # it. The far gate's JSON 404 carries the reason: relayed with the far host named and the same

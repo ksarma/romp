@@ -22614,29 +22614,58 @@ def _remote_name_of(host, sid):
 def _remote_session_named(who):
     """The attached host that lists a session NAMED `who`, with that session's far sid: (row, far_sid), from
     the supervisor's polled roster (_remotes[host]["names"], the copy _remote_name_of reads, beside the
-    sids _host_for_sid routes by). None when no attached host lists the name. A name two hosts list is
-    ambiguous: a refusal body (409) naming the candidates as host:name, the spelling list_agents prints,
-    and `host:name` as `who` picks one (session names carry no colon, so the first colon is the host's).
-    Asked by the control routes (_control_target) only after every LOCAL door missed, so a local session
-    wins: `romp end far-web`, `romp send far-web ...` and `romp interrupt far-web` from the hub answered
-    404 "no live session named 'far-web'" while the roster listed the name and the far session ran on,
-    though the same requests by id forwarded (review round 4, 2026-09-09). Read-only under _remotes_lock;
-    the match takes the remote arm with the far sid exactly as the sid path does."""
+    sids _host_for_sid routes by). None when no attached host lists the name. `who` is a bare name or the
+    `host:name` spelling list_agents prints, and the match is COMPOSED per roster host (nm == who, or who ==
+    host + ":" + nm), never a split of `who` at a colon: hosts may carry colons (an IPv6 literal such as
+    fd00::1 passes _safe_ssh_host) while names may not (NAME_RE), so a split at the first colon could never
+    pick a session on such a host by the very spelling the 409 below had printed (review round 5,
+    2026-09-09; the postal bus still parses host:name at the first colon, a gap of its own). Only a far sid
+    the row's `sids` list carries counts: the supervisor clears `sids` when it declares a host away (the ssh
+    probe's own verdict) and never clears `names`, so a stale name on an away host routed a by-name request
+    into the dead tunnel, a redial demanded per request, while the same request by id answered 404; the
+    sids list is the liveness the by-id route reads, so both doors agree (round 5). A plain tunnel death
+    without ssh corroboration keeps both lists, so both doors forward and demand the redial, as before.
+    Refusals, a 409 body: a name several hosts list names the candidates as host:name, the spelling that
+    picks one; a name several sessions on ONE host answer to names each as host:name [sid8] and says the
+    bare full far sid routes by id (_host_for_sid), since no host:name spelling can tell them apart (round
+    5: the refusal offered one spelling twice, and that spelling then picked whichever session the roster
+    iterated first). Asked by the control routes (_control_target) only after every LOCAL door missed, so a
+    local session wins: `romp end far-web` from the hub answered 404 "no live session named 'far-web'"
+    while the roster listed the name and the far session ran on, though the same requests by id forwarded
+    (review round 4). Read-only under _remotes_lock; the match takes the remote arm with the far sid
+    exactly as the sid path does."""
     who = str(who or "")
-    host_q, sep, name_q = who.partition(":")
-    hits = []
+    hits = []                                            # (host, row, far_sid, name)
     with _remotes_lock:
         for host, r in _remotes.items():
+            live = (r or {}).get("sids") or []
             for far_sid, nm in ((r or {}).get("names") or {}).items():
-                if nm == who or (sep and host == host_q and nm == name_q):
-                    hits.append((host, r, far_sid))
+                if far_sid in live and (nm == who or who == "%s:%s" % (host, nm)):
+                    hits.append((host, r, far_sid, nm))
     if not hits:
         return None
-    if len(hits) == 1 or sep:
+    if len(hits) == 1:
         return hits[0][1], hits[0][2]
+    by_host = {}                                         # (host, name) -> {far sids}
+    for host, _, far_sid, nm in hits:
+        by_host.setdefault((host, nm), set()).add(far_sid)
+    cands = []
+    for (host, nm), sids in sorted(by_host.items()):
+        if len(sids) == 1:
+            cands.append("%s:%s" % (host, nm))
+        else:
+            cands.extend("%s:%s [%s]" % (host, nm, sid[:8]) for sid in sorted(sids))
+    if len(by_host) == 1:
+        (host, nm), sids = next(iter(by_host.items()))
+        return {"ok": False, "_status": 409,
+                "error": "more than one session on %s answers to '%s' (%s); say which by its full session id, "
+                         "which routes by id" % (host, nm, ", ".join(cands))}
+    note = ("" if all(len(v) == 1 for v in by_host.values()) else
+            " (an id in brackets marks a host where more than one session answers to the name; say which of "
+            "those by its full session id, which routes by id)")
     return {"ok": False, "_status": 409,
-            "error": "'%s' names a session on more than one attached machine; say which: %s"
-                     % (who, ", ".join(sorted("%s:%s" % (h, who) for h, _, _ in hits)))}
+            "error": "'%s' names a session on more than one attached machine; say which: %s%s"
+                     % (who, ", ".join(cands), note)}
 
 
 def _host_for_sid(sid):
