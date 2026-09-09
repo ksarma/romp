@@ -242,7 +242,7 @@ type World = {
   disk: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>; heads: string[];
   editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes (Slice 5)
-  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, as it registered it through guardClose
+  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, the FIRST it registered through guardClose (the Send box's note ask comes second; file-comments-send-note.test.ts drives it)
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -291,7 +291,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { w.closeAsk = ask; },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { if (!w.closeAsk) w.closeAsk = ask; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
