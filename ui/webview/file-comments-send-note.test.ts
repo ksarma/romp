@@ -472,7 +472,7 @@ test("nothing unsent: Send still opens the confirm, whose own Send is off until 
   const send = aside.querySelector('[data-act="fcsend"]')!;
   assert.equal(send.disabled, false, "Send is on with nothing unsent (before: off)");
   assert.equal(send.textContent, "Send to session", "no count");
-  assert.equal(aside.querySelector(".fc-send .fc-note")!.textContent, "Nothing unsent: every comment, reply, and decision has gone.", "the caption still says so");
+  assert.equal(aside.querySelector(".fc-send .fc-note")!.textContent, "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes.", "the caption says so, and that a note still goes: the visible line, not the title alone");
   openConfirm(aside);
   assert.ok(noteBox(aside), "the confirm is up, with the box");
   assert.equal(aside.querySelector(".fc-confirm .fc-note")!.textContent, "Nothing is unsent; a note goes to api:");

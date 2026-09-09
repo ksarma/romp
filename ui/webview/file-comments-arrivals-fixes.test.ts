@@ -826,13 +826,13 @@ test("Escape in the note box stops at the box: the document's listener (the view
 test("with nothing unsent the caption under Send says so once: while the confirm is up its own first line says it, and the caption stands aside; Cancel brings it back", async (t) => {
   const { w } = await open(t, textWorld(), status({ unsent: NO_UNSENT }));
   const captions = (): string[] => w.aside().querySelectorAll(".fc-send .fc-note").map((n) => n.textContent);
-  assert.deepEqual(captions(), ["Nothing unsent: every comment, reply, and decision has gone."]);
+  assert.deepEqual(captions(), ["Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes."], "the visible line says what the title says: Send is on for a note");
   assert.equal(actIn(w.aside(), "fcsend")!.disabled, false, "Send opens the confirm for a note");
   actIn(w.aside(), "fcsend")!.click();
   assert.deepEqual(captions(), ["Nothing is unsent; a note goes to api:"], "one line, the confirm's (before: the caption above it too, the same fact twice in a row)");
   assert.ok(noteBox(w), "the box under it");
   actIn(w.aside(), "fcsendcancel")!.click();
-  assert.deepEqual(captions(), ["Nothing unsent: every comment, reply, and decision has gone."], "closed: the caption again");
+  assert.deepEqual(captions(), ["Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes."], "closed: the caption again");
   w.close();
 });
 

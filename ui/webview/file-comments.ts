@@ -4893,10 +4893,12 @@ class Panel {
     // why Send is off, VISIBLE (the GitHub link's caption idiom): a tooltip never reaches touch, and a
     // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent, and not
     // while the confirm is up: its own first line says the same thing, and the same words are shown once, never stacked
-    // (renderChangesFoot's rule; the review, 2026-09-09).
+    // (renderChangesFoot's rule; the review, 2026-09-09). Send stays ON with nothing unsent (the note), so the caption says
+    // a note still goes, as the button's title does: the title alone said it, and a title never reaches touch (the review's
+    // consolidation, 2026-09-09).
     if (!this.ctx.sid) box.appendChild(el("div", "fc-note", "No session owns this file; open it from a session's link or todo to send."));
     else if (stale && s && n) box.appendChild(el("div", "fc-note", "The comments could not be re-read, so nothing can be sent until Reload above succeeds."));
-    else if (s && !n && !this.sending && !this.sendConfirm && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
+    else if (s && !n && !this.sending && !this.sendConfirm && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes."));
     // the box closed with nothing kept — Cancel, or a send that took the words — starts the next confirm at its three rows:
     // the inline height autosizeNote wrote, or a drag did, goes with the words on the render that follows the clear, the way
     // closeComposer clears the composer's; a refused send keeps the words and the height with them (the confirm stands
