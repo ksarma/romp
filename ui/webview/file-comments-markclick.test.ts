@@ -1,23 +1,24 @@
 // The click that ends a drag-selection inside a body mark opens nothing (plans/file-review.md, Slice 2, the marks' click
-// rule; the fix of 2026-09-09; file-comments.ts dragClick). The user's requirement: a comment must be possible inside a
-// tracked change other than by replying to the change. A change mark and a comment highlight are controls (data-act
-// fcchange and fcopen, tabIndex, role=button), and a drag begun and ended inside one fires a click on it, the common
-// ancestor of the press and the release; the click opened the card and its scroll hid the Comment float the same mouseup
-// had offered. The guard reads the click's own state: a non-collapsed selection whose anchor and focus both lie in the
-// viewer's body is a drag's, and the handler does nothing; a collapsed selection, none, one outside the body or one with
-// an end outside opens the card as before; a click with no pointer behind it (`detail` 0: Enter or Space through the
-// row's keydown, element.click()) opens the card whatever selection stands. The guard's line is the BODY, not the clicked
-// mark: a non-collapsed selection whose ends both lie in another row, none in the mark, is the body's too and the click
-// opens nothing. The `elsewhere` cases pin that line on purpose, so a guard narrowed to the clicked mark (`x.contains`)
-// turns them red instead of passing unnoticed: the review of 2026-09-09 found the shipped module green under either
-// width. A real browser reaches the case, since not every press collapses a standing selection: a deletion label
+// rule; the fix of 2026-09-09; file-comments.ts dragClick and endInside). The user's requirement: a comment must be
+// possible inside a tracked change other than by replying to the change. A change mark and a comment highlight are
+// controls (data-act fcchange and fcopen, tabIndex, role=button), and a drag begun and ended inside one fires a click on
+// it, the common ancestor of the press and the release; the click opened the card and its scroll hid the Comment float
+// the same mouseup had offered. The guard reads the click's own state against the CLICKED mark: a non-collapsed
+// selection whose anchor and focus both lie inside that mark is the drag's, and the handler does nothing; a collapsed
+// selection, none, one in the aside, one with an end outside the mark, or one standing elsewhere in the body with none
+// of it in the mark leaves the click a click, and the card opens as before; a click with no pointer behind it (`detail`
+// 0: Enter or Space through the row's keydown, element.click()) opens the card whatever selection stands. The guard's
+// line is the clicked mark, not the body. As first built it read any selection with both ends in the body as a drag's,
+// and a real browser reaches that state, since not every press collapses a standing selection: a deletion's label
 // (`span.fc-del`, `user-select: none`, its text CSS-generated) and a mark inside an author's link keep it, and the click
-// arrives with the selection standing in another paragraph (the same review's probe, Chromium and Firefox). Whether that
-// click should open the card, the guard narrowed to the mark, is the user's call on the record; a narrowing flips the
-// `elsewhere` expectations with the guard. Driven here over the behavior suite's DOM stand-in with the selection faked
-// per case (window.getSelection is what the panel reads), the pointer's click carrying detail 1 and the keyboard's 0 as
-// browsers dispatch them; file-comments-markclick-browser.test.ts drags a real mouse in Chromium and Firefox. Synthetic
-// fixtures only: the notes-api world, placeholder ids.
+// arrives with the selection standing in another paragraph (the review of 2026-09-09, with a real mouse in Chromium and
+// Firefox), so a click on such a mark opened nothing until the reader clicked plain text. The `elsewhere` cases pin the
+// narrowed line: a guard widened back to the body turns them red. file-comments-markclick-controls.test.ts drives the
+// narrowing's own cases (the deletion's point, a selection spanning the mark from outside, the edge reports, the pulse
+// taken back, the panel closed). Driven here over the behavior suite's DOM stand-in with the selection faked per case
+// (window.getSelection is what the panel reads), the pointer's click carrying detail 1 and the keyboard's 0 as browsers
+// dispatch them; file-comments-markclick-browser.test.ts drags a real mouse in Chromium and Firefox. Synthetic fixtures
+// only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
@@ -327,7 +328,8 @@ const texts = (els: El[]) => els.map((e) => e.textContent);
 // ── the panel, driven ─────────────────────────────────────────────────────────────────────────────
 /** A pointer's click on `el`: detail 1, as a mouse or a finger dispatches it (the stand-in's click() is element.click(), detail 0). */
 const mouse = (el: El): void => { dispatch(el, new Ev("click", { detail: 1 })); };
-type Sel = { isCollapsed: boolean; anchorNode: El | Txt | null; focusNode: El | Txt | null } | null;
+/** What the guard reads of a selection: its ends, with their offsets (a real Selection always carries them; endInside reads them). */
+type Sel = { isCollapsed: boolean; anchorNode: El | Txt | null; focusNode: El | Txt | null; anchorOffset: number; focusOffset: number } | null;
 type Outcome = { open: boolean; scrolled: number; focusMoved: boolean; asides: number };
 /** Open the panel over the stand-in, fake the live selection as `selOf` reads it off the mark and the aside, activate the
  *  mark by the pointer or by Enter, and read what followed: the card's state, the scrolls, the focus, the aside count. */
@@ -348,23 +350,24 @@ async function activate(t: TestContext, act: "fcchange" | "fcopen", id: string, 
   const c = card(aside, key);
   return { open: !!c && c.classes.includes("open"), scrolled: scrolledInto.length - scrolls, focusMoved: doc.activeElement !== focus, asides: w.main.querySelectorAll(".fileview-aside").length };
 }
-const inMark = (m: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: m.childNodes[0] });
-const caretInMark = (m: El): Sel => ({ isCollapsed: true, anchorNode: m.childNodes[0], focusNode: m.childNodes[0] });
+const inMark = (m: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: m.childNodes[0], anchorOffset: 2, focusOffset: 9 });
+const caretInMark = (m: El): Sel => ({ isCollapsed: true, anchorNode: m.childNodes[0], focusNode: m.childNodes[0], anchorOffset: 3, focusOffset: 3 });
 const none = (): Sel => null;
-const inAside = (_m: El, aside: El): Sel => { const head = aside.querySelector(".fc-card-head")!; return { isCollapsed: false, anchorNode: head, focusNode: head }; };
-const halfIn = (m: El, aside: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: aside.querySelector(".fc-card-head") });
+const inAside = (_m: El, aside: El): Sel => { const head = aside.querySelector(".fc-card-head")!; return { isCollapsed: false, anchorNode: head, focusNode: head, anchorOffset: 0, focusOffset: 1 }; };
+const halfIn = (m: El, aside: El): Sel => ({ isCollapsed: false, anchorNode: m.childNodes[0], focusNode: aside.querySelector(".fc-card-head"), anchorOffset: 2, focusOffset: 0 });
 /** A selection standing elsewhere in the body: both ends in the Risks row's text, a Raw row that carries neither the
- *  change mark nor the comment highlight, so nothing of it lies in the clicked mark. The body's, not the mark's. */
+ *  change mark nor the comment highlight, so nothing of it lies in the clicked mark: the state a reader leaves by
+ *  selecting a passage to read or copy, which a press on a deletion's label or on a mark inside a link does not collapse. */
 const elsewhere = (m: El): Sel => {
   const body = m.closest(".fileview-body")!;
   const row = body.querySelectorAll(".fv-ct").find((ct) => ct.textContent.startsWith("Risks remain"))!;
   assert.ok(row && !row.contains(m) && !m.contains(row), "the Risks row stands apart from the mark");
   const words = row.childNodes[0];
   assert.ok(words instanceof Txt && !m.contains(words), "the selection's ends lie in another row's text, none in the mark");
-  return { isCollapsed: false, anchorNode: words, focusNode: words };
+  return { isCollapsed: false, anchorNode: words, focusNode: words, anchorOffset: 0, focusOffset: 5 };
 };
 
-test("a change mark: the pointer's click arriving with a selection inside the body opens nothing — no card, no scroll, no focus change", async (t) => {
+test("a change mark: the pointer's click arriving with a selection inside the mark opens nothing — no card, no scroll, no focus change", async (t) => {
   const r = await activate(t, "fcchange", "h2", "chg:h2", inMark);
   assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
 });
@@ -374,14 +377,17 @@ test("a change mark: a click with the selection collapsed, or none, opens the ca
   assert.equal((await activate(t, "fcchange", "h2", "chg:h2", none)).open, true, "no selection at all: the card opens");
 });
 
-test("a change mark: a selection outside the body, or with one end outside it, is not the body's drag — the card opens", async (t) => {
+test("a change mark: a selection outside the body, or with one end outside the mark, is not the mark's drag — the card opens", async (t) => {
   assert.equal((await activate(t, "fcchange", "h2", "chg:h2", inAside)).open, true, "words selected in the aside: the card opens");
   assert.equal((await activate(t, "fcchange", "h2", "chg:h2", halfIn)).open, true, "a selection with its focus in the aside: the card opens");
 });
 
-test("a change mark: a selection standing elsewhere in the body, both ends in another row and none in the mark, is the body's too — the click opens nothing (the guard's line is the body, not the clicked mark)", async (t) => {
+test("a change mark: a selection standing elsewhere in the body, both ends in another row and none in the mark, is not this click's drag — the card opens, the same outcome as a plain click's (the guard's line is the clicked mark, not the body)", async (t) => {
   const r = await activate(t, "fcchange", "h2", "chg:h2", elsewhere);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
+  assert.equal(r.open, true, JSON.stringify(r));
+  assert.ok(r.scrolled > 0, "…and the card's open scrolls the mark into view, as a plain click's does: " + JSON.stringify(r));
+  const plain = await activate(t, "fcchange", "h2", "chg:h2", caretInMark);
+  assert.deepEqual(r, plain, "the selection standing elsewhere changes nothing of the click: " + JSON.stringify({ r, plain }));
 });
 
 test("a change mark: Enter on the focused mark opens the card with the body selection standing (a click with no pointer behind it is never a drag's)", async (t) => {
@@ -396,7 +402,9 @@ test("a comment highlight: the same guard — the drag's click opens nothing, th
   assert.equal((await activate(t, "fcopen", passage.id, passage.id, inMark, "enter")).open, true, "Enter opens it");
 });
 
-test("a comment highlight: a selection standing elsewhere in the body, none of it in the highlight, is the body's too — the click opens nothing", async (t) => {
+test("a comment highlight: a selection standing elsewhere in the body, none of it in the highlight, is not its drag either — the card opens, the same outcome as a plain click's", async (t) => {
   const r = await activate(t, "fcopen", passage.id, passage.id, elsewhere);
-  assert.deepEqual(r, { open: false, scrolled: 0, focusMoved: false, asides: 1 }, JSON.stringify(r));
+  assert.equal(r.open, true, JSON.stringify(r));
+  const plain = await activate(t, "fcopen", passage.id, passage.id, caretInMark);
+  assert.deepEqual(r, plain, "the selection standing elsewhere changes nothing of the click: " + JSON.stringify({ r, plain }));
 });
