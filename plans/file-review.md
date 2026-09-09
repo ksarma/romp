@@ -705,7 +705,10 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and
   the marks to one kind, Comments and Changes carrying their counts and All none, and is kept the
   same way; Send to session is not narrowed. An unpainted change
-  always has a card, so the compact view never dead-ends. Session colors come from one
+  always has a card, so the compact view never dead-ends. A comment can be made inside a change
+  without replying to it (2026-09-09): a click or a tap on a change mark or a comment highlight opens
+  its card, and a selection made by dragging inside one leaves a comment on those words, since the
+  click that ends a drag is not a tap (the panel's `dragClick`). Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
 - **Comment on a selection**: selecting a passage still seeds the quote chip when a chat composer
@@ -2398,6 +2401,16 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-filter-fixes.test.mjs` holds the note's second-round sentences to the panel
   and this inventory to the tree: every suite named `file-comments-filter…` under `ui/webview` is named
   here and in the note.
+- The marks' drag rule (2026-09-09, decision 41): `ui/webview/file-comments-markclick.test.ts` drives the
+  `fcchange` and `fcopen` handlers over the behavior suite's stand-in with the live selection faked per case
+  (inside the body, collapsed, none, in the aside, one end out; the pointer's click with `detail` 1 and the
+  keyboard's activation through the row's keydown with 0, as browsers dispatch them);
+  `ui/webview/file-comments-markclick-browser.test.ts` drags a real mouse inside an insertion's mark over the
+  real viewer and panel in Chromium and Firefox, Rendered and Raw, the mark off the body's centre so the old
+  behaviour scrolled: no card opens, the body does not scroll, the float stands, the composer opens on the
+  selection, Save posts a passage comment the reply paints as its own card and highlight, a plain click on the
+  mark still opens its card and scrolls, and the keyboard's activation of the focused mark opens it with the
+  selection standing.
 
 ## Docs
 
@@ -2581,6 +2594,23 @@ document stands on its own, each with the reasoning it was given.
     nothing unsent and the confirm's own Send waits for words. The comments log's send entry gains `note`, and the
     panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
     and the kernel restarts to go live.
+
+41. **A comment can be made inside a tracked change without replying to the change** (2026-09-09). The user wants
+    selecting words inside a change's new text and commenting on them to work as it does for any other passage;
+    Reply on the change's card must not be the only way to comment on a change. The mapping, the composer and the
+    save already accepted such a passage. The mark blocked it by mouse: a change mark and a comment highlight are
+    controls (`fcchange`, `fcopen`), a drag begun and ended inside one fires a click on it, the common ancestor of
+    the press and the release, and the card's open (`showCard`, `centerOn`) scrolled the mark to the body's centre
+    and hid the Comment float the same mouseup had offered beside the selection (`hideFloatOnScroll`). The rule is
+    event-based: the click that ends a drag is not a tap. In the `fcchange` and `fcopen` handlers a click arriving
+    with a non-collapsed selection whose anchor and focus both lie in the viewer's body does nothing (`dragClick`):
+    no card, no scroll, no focus change; the float stands and the composer opens on the selection as for any
+    passage. A plain click or a tap collapses the selection at the press and opens the card as before; a selection
+    elsewhere (the aside, another pane) changes nothing; a click with no pointer behind it (`detail` 0: the
+    keyboard's activation of the focused mark) opens the card whatever selection stands. The comment saved is an
+    ordinary passage comment, its own card and highlight, no `suggestionId`. `file-comments-markclick.test.ts`
+    drives the guard over the stand-in; `file-comments-markclick-browser.test.ts` drags a real mouse inside an
+    insertion's mark in Chromium and Firefox, Rendered and Raw. Client-only; no kernel change.
 
 ## Open questions for the user
 
