@@ -619,22 +619,26 @@ test("the direct delivery path records the same two levels as the window path: f
     fm.perf = p;
     const seen: string[] = [];
     fm.onFrame(p.wrapFrameHandler((e) => { seen.push(e.data.type); h.clock.t += 4; }));
-    // federation's own work costs 1 ms on the fake clock: a timed stand-in around inboundNow is not reachable, so the
+    // federation's own work costs nothing on the fake clock: a timed stand-in around inboundNow is not reachable, so the
     // layer's own time shows as the outer bracket's total minus the pane's; the clock only moves inside the pane here
     fm.inbound("", { type: "feed", asks: [], now: 1 });
-    fm.inbound("", { type: "feedDelta", asks: [], removeAsks: [] });
+    fm.inbound("", { type: "feed", asks: [], now: 2 });
     assert.deepEqual(seen, ["feed", "feed"], "both frames reached the handler directly");
     assert.deepEqual(emitted, [], "and none was dispatched on window");
     const frames = (p.snapshot() as any).frames;
     assert.equal(frames["feed"].n, 2);
     assert.equal(frames["feed"].ms_sum, 8, "the pane's bracket: its own 4 ms per frame");
-    assert.equal(frames["fed:feed"].n, 1);
+    assert.equal(frames["fed:feed"].n, 2);
     assert.equal(frames["fed:feed"].ms_sum, 0, "the layer's own time: the total minus the nested pane bracket");
-    assert.equal(frames["fed:feedDelta"].n, 1);
-    assert.equal(frames["fed:feedDelta"].ms_sum, 0);
+    // the feed delta wire (feedDelta, federation.ts): the layer's bracket is the WIRE type, the pane's the merged frame's
+    fm.inbound("", { type: "feedDelta", asks: [], removeAsks: [] });
+    assert.deepEqual(seen, ["feed", "feed", "feed"], "a delta reaches the handler as a merged feed frame");
+    const afterDelta = (p.snapshot() as any).frames;
+    assert.equal(afterDelta["fed:feedDelta"].n, 1, "the layer's bracket names the wire type");
+    assert.equal(afterDelta["fed:feedDelta"].ms_sum, 0);
     // a slow frame is attributed to the wire type at the outermost bracket, as on the window path
     fm.onFrame(() => { h.clock.t += 120; });
-    fm.inbound("", { type: "feed", asks: [], now: 2 });
+    fm.inbound("", { type: "feed", asks: [], now: 3 });
     const rows = h.posted.filter((m) => m.what === "slowframe");
     assert.equal(rows.length, 1);
     assert.equal(rows[0].data.type, "feed");
@@ -848,18 +852,19 @@ test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport p
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const readUi = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 
-test("each pane bundle's one frame listener is installed through perfFrameHandler under its own app name, on both delivery paths", () => {
-  // the pane hands the wrapped handler to listenForFrames (frame-listener.ts), which puts the SAME function on
-  // window and in federation's direct-delivery registry: one install per pane, no bare window listener beside it
+test("each pane bundle's one frame listener is installed through listenForFrames, wrapped by perfFrameHandler under its own app name", () => {
+  // the pane hands ONE handler to frame-listener.ts, which puts it on window and in federation's registry; a bare
+  // window listener beside that call would be a second delivery path, and an unwrapped one a frame the collector
+  // never sees (the import line has no paren, so the call is the only match for the count)
   const panes: Array<[string, string]> = [["render.ts", "chat"], ["feed.ts", "feed"], ["fleet.ts", "fleet"], ["timeline-main.ts", "timeline"]];
   for (const [file, app] of panes) {
     const src = readUi(file);
     assert.match(src, /import \{ perfFrameHandler \} from "\.\/perf-telemetry";/, file + " imports the wrapper");
-    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the installer");
+    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the helper");
+    const installs = src.match(/listenForFrames\(/g) || [];
+    assert.equal(installs.length, 1, file + " installs its frame listener once");
     const bare = src.match(/window\.addEventListener\("message", /g) || [];
-    assert.equal(bare.length, 0, file + " installs no window message listener of its own");
-    const installs = src.match(/\blistenForFrames\(/g) || [];
-    assert.equal(installs.length, 1, file + " has one frame listener");
+    assert.equal(bare.length, 0, file + " has no bare window message listener");
     assert.ok(src.includes('listenForFrames(perfFrameHandler("' + app + '", '),
       file + " installs it through perfFrameHandler as app " + app);
   }

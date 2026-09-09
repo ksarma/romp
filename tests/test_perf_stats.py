@@ -112,7 +112,7 @@ class Collector(unittest.TestCase):
             self.assertEqual(p[k], 0.0, k)
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
-        self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson"})
+        self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved"},
                          "the chat builder carries the active/background split, the miss attribution (round-4 P3) "
@@ -235,10 +235,12 @@ class Collector(unittest.TestCase):
                          "the SDK registry reader's memo: the captions memo's shape")
         self.assertEqual(set(snap["memos"]["lanes"]),
                          {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
-                          "segs_hit", "segs_miss"},
-                         "the per-lane segment memo (perf round 4, item A): one outcome per lane per bars build "
+                          "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"},
+                         "the per-lane segment memo (perf round 4, item A): one outcome per LIVE lane per bars build "
                          "(served, derived, live tail, complained, unshared store), entries dropped, its "
-                         "occupancy, and the segments served against derived")
+                         "occupancy, the segments served against derived, and the dead lanes' outcomes since the "
+                         "2026-09-09 fold (served from the dead-lane memo, derived directly, served as a cached "
+                         "failed parse)")
         for blk in ("captions", "states_overlay", "thread_reg", "lanes"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))

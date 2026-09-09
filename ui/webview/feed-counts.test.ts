@@ -36,7 +36,7 @@ test("expansion invariance, executed: folding moves cards onto the header withou
 });
 
 test("just the number — the word 'cards' never renders; words live on hover", () => {
-  assert.match(FEED, /setText\(foldn, String\(e\.folded\)\);/);   // compare-first: headers repaint every render (2026-09-06)
+  assert.match(FEED, /setText\(foldn, String\(e\.folded\)\);/);   // compare-first: headers repaint every render
   assert.ok(!/setText\(foldn, [^;]*card/.test(FEED), "no wording variant survives");
   assert.match(FEED, /foldn\.title = e\.folded === 1 \? "1 card folded under this session"/,
     "the tooltip keeps the words the visible chip dropped");

@@ -227,7 +227,12 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.match(HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/, "the flag over the same set");
   assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block: an open header with hidden members carries the marks too");
   assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan's headers, hides included, for setActive's unfold (read per holder: tab-groups.test, T264b)");
-  assert.match(TABS, /it\.folded, it\.active, it\.hidden, it\.hides\] : it\.id\)\)/, "a hide flip changes the plan's signature, so the strip repaints");
+  // the strip's signature carries the plan's items whole (upstream's shape, T264b; the fork's explicit tuple of the same
+  // fields was superseded at the 2026-09-09 fold), and a StripHead carries `hides` (tab-groups.ts planStrip), so a hide
+  // flip changes the signature and the strip repaints
+  assert.match(TABS, /activeId \? tabInView\(activeId\) : null, plan\.items,\n/, "the plan, hides included, is in the strip's signature (tab-strip-skip.test lists it)");
+  assert.match(GROUPS, /export type StripHead = \{ head: TabSection; folded: boolean; active: boolean; hidden: string\[\]; hides: string\[\] \};/, "the item the signature serializes carries the hides");
+  assert.notEqual(JSON.stringify(planStrip(ALL, unions, apiHidden, "web", false).items), JSON.stringify(planStrip(ALL, unions, d, "web", false).items), "a hide flip alone is a new signature");
 });
 
 test("executed: the pane's model. Hidden rows are flagged and keep needs-you; the heading counts them; the fold's words; the Hide and Show words; a flip alone is a new model", () => {

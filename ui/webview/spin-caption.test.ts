@@ -167,14 +167,13 @@ test("a settled card displaced to Working loses its line but never its caption",
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 
 test("feed.ts routes the card's swirl through spinFor and keeps no inline copy of the ladder", () => {
-  // slice 2: the rows' vocabulary rides the same import; waitedSuffix left it when durNodes took over the readout
-  assert.match(FEED, /import \{ spinFor, awaitWord, groupRows, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow \} from "\.\/spin-caption";/);
+  assert.match(FEED, /import \{ spinFor, awaitWord, groupRows, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow \} from "\.\/spin-caption";/);   // slice 2: the rows' vocabulary rides the same import
   // the elapsed readout reaches the OTHER two awaiting surfaces through the same helper: the
-  // "Awaiting task" pill and the "Awaiting <peer>" chip (the user 2026-08-23). Since 2026-09-06 that
-  // helper is durNodes — waitedSuffix's rule (" · " + the duration for a known start, nothing otherwise)
-  // rendered as a stamped element the 15 s live pass keeps moving (feed-age.ts fmt "dur")
+  // "Awaiting task" pill and the "Awaiting <peer>" chip (the user 2026-08-23). That helper is durNodes —
+  // waitedSuffix's rule (" · " + the duration for a known start, nothing otherwise) rendered as a stamped
+  // element the 15 s live pass keeps moving (feed-age.ts fmt "dur")
   assert.match(FEED, /function durNodes\(since: number \| null \| undefined\): \(string \| HTMLElement\)\[\] \{\n\s*return since && since > 0 \? \[" · ", durSpan\(since\)\] : \[\];/);
-  assert.match(FEED, /\.\.\.durNodes\(it\.awaiting && it\.awaiting\.since\)\);\s*\/\/ the waited time, live/);
+  assert.match(FEED, /pillLbl\.append\(\.\.\.durNodes\(it\.awaiting && it\.awaiting\.since\)\);\s*\/\/ the waited time, live/);
   assert.match(FEED, /const woDur = durNodes\(wo\.since\);/);
   // …and the ladder itself runs on the kernel's clock, like every other age on the board
   assert.match(FEED, /dCompleted, nowSec\(\)\);/);
@@ -325,7 +324,7 @@ test("the spin caption derives its word from the kernel's count", () => {
   assert.equal(legacy.caption, "Awaiting agents", "an older kernel with no count reads as before");
 });
 
-// --- the caption's running duration as a separate part (2026-09-06) ---------------------------------
+// --- the caption's running duration as a separate part -----------------------------------------------
 test("a caption that ends in a duration also says where the duration starts: caption === dur.text + workingFor(now - since)", () => {
   const NOW = 100_000;
   const check = (s: ReturnType<typeof spinFor>) => {

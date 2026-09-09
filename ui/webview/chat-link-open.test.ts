@@ -82,7 +82,8 @@ test("the web path is checked before the vscode path (web origin wins)", () => {
 // `<a name>`, which scrolled the transcript on the base, did nothing once the prefix landed (the 2026-09-07 review of
 // Slice 1). The handler now resolves a `#` href the way GitHub's page script does, through the one lookup the viewer's
 // fragmentTarget reads too (md-sanitize.ts userContentTarget): the message's own body first, then the document; found,
-// scrollIntoView and preventDefault; not found, the click is the browser's, as before. The click it stands aside for is
+// scrolled to (the pane's attributed write for a target inside #content, the browser's scrollIntoView elsewhere) and
+// preventDefault; not found, the click is the browser's, as before. The click it stands aside for is
 // the platform's own tab gesture (md-links.ts browserTabClick: Shift; Cmd on macOS, Ctrl elsewhere), since a Super-click
 // off macOS is a plain click to the browser and standing aside for it left the default lookup to find nothing (review
 // round 2). The real clicks run in md-sanitize-chat-links-browser.test.ts and md-sanitize-chat-modified-click-browser.test.ts.
@@ -122,7 +123,14 @@ test("a `#` href in a message is resolved under the user-content- prefix, in the
   // is removed. scrollIntoView does neither, so a reply's link over a note folded into a <details>, which the default action
   // opened and landed on main, left the details closed and the click cancelled (the round-6 review of Slice 1).
   // md-sanitize-chat-links-browser.test.ts clicks both shapes over the real bundle.
-  assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(let n: Element \| null = target; n; n = n\.parentElement\) \{\n(?:[^\n]*\n){2,4}?\s*\}\n\s*target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "found: revealed (the walk from the target up), scrolled to and the default cancelled; not found: left to the browser");
+  // The land itself: a target inside #content (the transcript) is scrolled to through scrollElInto, the pane's attributed
+  // scrollTop write, under "section-link" as the journal's reason word (T262j: every mover of #content is a writeScroll;
+  // scroll-movers.test.ts counts the movers). A target elsewhere on the page (userContentTarget's document fallback) keeps
+  // the bare scrollIntoView: scrollElInto writes #content's scrollTop from the target's rect, so it is correct only for a
+  // node inside #content. The pin follows the resolved code (the 2026-09-09 fold's section-link ruling).
+  assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(let n: Element \| null = target; n; n = n\.parentElement\) \{\n(?:[^\n]*\n){2,4}?\s*\}\n(?:\s*\/\/[^\n]*\n)*\s*const cont = document\.getElementById\("content"\);\n\s*if \(cont && cont\.contains\(target\)\) scrollElInto\(cont, target, "start", "section-link"\);\n\s*else target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/,
+    "found: revealed (the walk from the target up), scrolled to (inside #content as the pane's own attributed write; elsewhere the browser's way) and the default cancelled; not found: left to the browser");
+  assert.doesNotMatch(branch, /^\s*target\.scrollIntoView/m, "no unconditional scrollIntoView: a target inside #content is always the attributed write");
   const reveal = /for \(let n: Element \| null = target; n; n = n\.parentElement\) \{\n([\s\S]*?)\n\s*\}\n/.exec(branch)![1];
   assert.match(reveal, /\(n\.getAttribute\("hidden"\) \|\| ""\)\.toLowerCase\(\) === "until-found"\) n\.removeAttribute\("hidden"\);/, "a hidden=until-found on the target or an ancestor is removed (the attribute's value is case-insensitive)");
   assert.match(reveal, /p\.localName === "details" && n\.localName !== "summary" && !p\.hasAttribute\("open"\)\) p\.setAttribute\("open", ""\);/, "a closed details whose CONTENT holds the target is opened; a target in the summary opens nothing, as in the browser");

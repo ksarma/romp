@@ -19,8 +19,8 @@ import { hostPrefix } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
 import { liveNow } from "./feed-age";
 import { TIP_GRACE_MS } from "./tip";
-import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { listenForFrames } from "./frame-listener";
 
 type Color = { bg: string; fg: string } | null;

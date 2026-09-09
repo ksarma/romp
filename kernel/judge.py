@@ -11560,6 +11560,49 @@ def _learn_alias(alias, o):
         alias.setdefault(str(o["from_host"]) + ":" + str(o["from"]), []).append((at, str(o["from_id"])))
 
 
+def _learn_return(returned, o):
+    """Record one TERMINAL row naming a sent message: returned[mid] is the latest t the message was over
+    with nobody ever receiving it — so a sent row whose id is here is neither an ask nor an answer:
+    nothing will ever answer it, and nobody ever read it. Two kinds, joined by the id alone. `bounced`:
+    the bus gave it back — a peer refused it, the recipient exited and its unread mail was destroyed, an
+    inbox file it could not read, a write a crash cut short, an oversize push (every bounced row the bus
+    writes is terminal; a parked message awaiting relay has no row, that state is outbox residency). A
+    MAILDIR `recall`: the sender withdrew it before anyone read it — that arm's unlink from the
+    recipient's new/ is the atomic claim against read_box's rename to cur/, so the row is written only
+    for mail nobody read, and it names the maildir name deliver() logged as the sent id; exactly as
+    terminal as a bounce (2026-09-08; before, a recall was not read, and the sender wore "Awaiting
+    <peer>" for a question it had withdrawn).
+
+    NOT an OUTBOX recall (review find, 2026-09-08). That arm unlinks any outbox file of the sender's and
+    writes the same row, but an outbox item OUTLIVES THE CARRY: the exchange relays outbox_list on both
+    sides without removing anything; a SUCCESSFUL carry leaves the file until _ack_arrived removes it
+    on the END-TO-END ack (a bounce removes it too, but writes a bounced row the readers honour) —
+    one round trip normally, the whole outage when a response was lost and _peer_loop re-relays under
+    its 30 s-capped backoff. A recall inside that window names a message the far recipient already
+    holds (_relay_in delivered and pushed it) and may answer; reading it as terminal would close a LIVE
+    ask. The two arms are told apart by the id the row names: the relay send mints
+    `mid = "px-" + _unique()` and the outbox recall logs that stem, while a maildir name is a bare
+    _unique() — `<epoch>.<pid>_<rand>.<host>` — and never carries the prefix. So a recall naming a relay
+    mid is read as nothing here, and a recalled cross-host send stays an open ask (and a recalled
+    cross-host delegate still plants its tracker), exactly as before. The bus owns the fix: refuse to
+    recall a carried item, or stamp the recall row with the box it came from — a writer change for
+    another PR.
+
+    The ONE shape all three scans share — the judge's ask maps, the kernel's wait maps (which also need
+    the time, for the return clock) and the courier's cross-host plant: both map builders skip a sent
+    row whose id is here before last_any, so it is not its sender's WORD toward the recipient either,
+    and a reply that came back or was withdrawn unread answers nothing."""
+    if o.get("ev") == "recall" and str(o.get("id") or "").startswith("px-"):
+        return                                   # the outbox arm (a relay mid): not terminal, see above
+    if o.get("ev") in ("bounced", "recall") and o.get("id"):
+        try:
+            at = int(o.get("t") or 0)
+        except (TypeError, ValueError):
+            at = 0
+        mid = str(o["id"])
+        returned[mid] = max(returned.get(mid, 0), at)
+
+
 def _alias_settle(alias):
     """Order each name's sightings by t and collapse CONSECUTIVE sightings of one sid into one entry, so
     the history is per WEARER CHANGE, not per row (a chatty peer name otherwise carries thousands of
@@ -11603,7 +11646,12 @@ def _postal_ask_maps():
     carries it (relay rows since 2026-09-08), else the name alias AT the row's send time (_alias_at),
     else the raw "peer:<host>:<name>". `alias` is the time-ordered name→sid history the re-key used;
     consumers resolve a name through _alias_at with the time of the message they hold, never by a
-    bare lookup."""
+    bare lookup. A sent row whose id a terminal row names (`bounced`: the send came back — refused,
+    recipient gone, never left; a maildir `recall`: the sender withdrew it unread — an outbox recall is
+    not terminal, see _learn_return) makes no entry at all — neither an ask nor an answer, so a returned
+    or withdrawn reply leaves the asker's question open — read exactly as the kernel's wait maps read it
+    (2026-09-08, _learn_return, the shape both scans share). The alias history still learns from it:
+    identity is not word."""
     try:
         st = MESSAGES.stat()
         key = (st.st_mtime_ns, st.st_size)
@@ -11611,8 +11659,7 @@ def _postal_ask_maps():
         return {}, {}, {}
     if _PEER_ASK_CACHE[0] == key:
         return _PEER_ASK_CACHE[1]
-    last_any, last_ask, rows, alias = {}, {}, [], {}
-    ended = set()   # ids a terminal `bounced` row closed: mail that never reached anyone
+    last_any, last_ask, rows, alias, returned = {}, {}, [], {}, {}   # returned: mid -> t of its terminal bounced row
     try:
         for line in MESSAGES.read_text(errors="replace").splitlines():
             try:
@@ -11623,16 +11670,16 @@ def _postal_ask_maps():
                 continue
             rows.append(o)
             _learn_alias(alias, o)
-            if o.get("ev") == "bounced" and o.get("id"):
-                ended.add(str(o["id"]))
+            _learn_return(returned, o)
         _alias_settle(alias)
         for o in rows:
             f, t_, ts = o.get("from_id"), o.get("to_id"), o.get("t")
             if not (f and t_ and ts):
                 continue
-            if str(o.get("id") or "") in ended:
-                continue   # refused or destroyed: never reached the recipient, so neither an ask nor an
-                #            answer (review find, 2026-09-08): the kernel's _postal_wait_maps rule, mirrored
+            if str(o.get("id") or "") in returned:
+                continue   # refused, destroyed or withdrawn unread: never reached the recipient, so neither an
+                #            ask nor an answer (review find, 2026-09-08): the kernel's _postal_wait_maps rule, mirrored
+                #            (the return's time rides in `returned` for the kernel's clock; membership is the rule here)
             ts = int(ts)
             if isinstance(t_, str) and t_.startswith("peer:"):
                 if o.get("to_sid"):
@@ -15353,42 +15400,48 @@ def courier_llm(message_text, menu_text, declared=""):
     return _judge_run(_triage_model(), COURIER_SYS, user, judge="courier", mark=mk).strip()[:300]
 
 
-_postal_from_memo = [(None, ({}, []))]   # ((messages.jsonl mtime, size), (mp, xcands)) as ONE tuple, rebound
-#                                          whole: stored as two slots, a reader between the stores paired the new
-#                                          key with the old map and missed a mid the new log has (the 2026-09-06
+_postal_from_memo = [(None, ({}, [], {}))]   # ((messages.jsonl mtime, size), (mp, xcands, returned)) as ONE tuple,
+#                                          rebound whole: stored as two slots, a reader between the stores paired the
+#                                          new key with the old map and missed a mid the new log has (the 2026-09-06
 #                                          free-threading review, race 7). mp is {mid: _postal_row's tuple}; xcands
-#                                          the cross-host delegate "sent" rows run_courier plants from. Tests reset
-#                                          it to (None, {}): a non-equal key is a miss and the slot is never unpacked.
+#                                          the cross-host delegate "sent" rows run_courier plants from; returned the
+#                                          terminal rows' {mid: t} (_learn_return) that arm skips. Tests reset it to
+#                                          (None, {}): a non-equal key is a miss and the slot is never unpacked.
 
 
 def _postal_ledger():
-    """One memoized parse of the postal ledger for its two judge-side readers: (mp, xcands), where mp is
-    {mid: _postal_row's tuple} for every "sent" row with an id, and xcands the "sent" rows that are
+    """One memoized parse of the postal ledger for its two judge-side readers: (mp, xcands, returned), where
+    mp is {mid: _postal_row's tuple} for every "sent" row with an id, xcands the "sent" rows that are
     cross-host delegates (kind delegate, a toName, a to_id "peer:..."), the candidates run_courier's
     sender-side plant filters per pass by discovered sender and by the retry horizon (a clock predicate
-    and this pass's discovered senders, neither frozen here). Keyed on the file's (st_mtime, st_size), published as ONE
-    tuple (key, (mp, xcands)) rebound whole (the pusher thread reads _postal_row concurrently, see
+    and this pass's discovered senders, neither frozen here), and returned the terminal rows' {mid: t}
+    (_learn_return: a bounce, a maildir recall) the plant skips (2026-09-08: a delegate that came back
+    never reached the peer). Keyed on the file's (st_mtime, st_size), published as ONE tuple
+    (key, (mp, xcands, returned)) rebound whole (the pusher thread reads _postal_row concurrently, see
     _postal_from_memo). run_courier used to parse the whole ledger itself every pass for the candidate
     rows, beside _postal_row's parse of the same file (J6 of the round-4 perf plan, 2026-09-07); the
     ledger appends about once every few minutes live, so this refills about once per forty passes.
-    ({}, []) when the ledger is absent or unreadable, the answer both readers gave, and nothing is
+    ({}, [], {}) when the ledger is absent or unreadable, the answer both readers gave, and nothing is
     memoized for it."""
     try:
         st = os.stat(MESSAGES)
         key = (st.st_mtime, st.st_size)
     except OSError:
-        return {}, []
+        return {}, [], {}
     ent = _postal_from_memo[0]
     if ent[0] == key:
         return ent[1]
-    mp, xcands = {}, []
+    mp, xcands, returned = {}, [], {}
     try:
         for line in MESSAGES.read_text(errors="replace").splitlines():
             try:
                 r = json.loads(line)
             except Exception:
                 continue
-            if not isinstance(r, dict) or r.get("ev") != "sent" or not r.get("id"):
+            if not isinstance(r, dict):
+                continue
+            _learn_return(returned, r)
+            if r.get("ev") != "sent" or not r.get("id"):
                 continue
             ua = r.get("userAsk")
             mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
@@ -15398,9 +15451,9 @@ def _postal_ledger():
             if r.get("kind") == "delegate" and r.get("toName") and str(r.get("to_id") or "").startswith("peer:"):
                 xcands.append(r)
     except OSError:
-        return {}, []
-    _postal_from_memo[0] = (key, (mp, xcands))
-    return mp, xcands
+        return {}, [], {}
+    _postal_from_memo[0] = (key, (mp, xcands, returned))
+    return mp, xcands, returned
 
 
 def _postal_row(mid):
@@ -16228,6 +16281,11 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     # handoff's send time when the peer has spoken (it must have, to reply), else the raw relay
     # key. Anchored so a name a later session reused cannot make that stranger's mail the
     # report-back (2026-09-08).
+    # last_any carries no row that came back or was withdrawn unread (2026-09-08, _postal_ask_maps): a
+    # reply the asker never received is not a report-back, so neither arm below marks a tracker done
+    # on it. Cross-host it bites on the asker's host when its own orphan sweep destroys the delivered
+    # copy unread (a relayed reply is a local sent row here, and the sweep's bounce names its id); a
+    # relay the far host refused writes no sent row here at all.
     last_any, _la, alias = _postal_ask_maps()
     _rmemo = {}                                        # recipient sid -> merged nodes (per-pass, read-only)
 
@@ -16494,9 +16552,18 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     # The candidate rows come from the ledger memo (_postal_ledger: one parse per ledger version, shared
     # with _postal_row; this arm parsed the whole ledger itself every pass before 2026-09-07). The
     # discovered-sender and horizon filters run here, per pass: the horizon is a clock predicate and the
-    # discovered senders are this pass's, so neither is frozen in the memo.
-    xrows = [o for o in _postal_ledger()[1]
-             if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON]
+    # discovered senders are this pass's, so neither is frozen in the memo. The memo's third value is the
+    # ledger's terminal rows (_learn_return): a delegate that came back never reached the peer (2026-09-08):
+    # a tracker planted from it would wait on a report-back no event can bring, since the remote arm's
+    # ending is the peer's own reply at/after the send. The bounced row is terminal, so the skip is final,
+    # not a retry. An OUTBOX recall of a cross-host delegate is NOT read as terminal (_learn_return: the item
+    # may already have been carried and delivered), so a recalled delegate still plants, as before. (A
+    # tracker planted BEFORE the return arrived is not closed here: ending it needs a verdict that says the
+    # handoff came back, not "reported back" — a writer, outside this reader's scope.)
+    _mp, xcands, xback = _postal_ledger()
+    xrows = [o for o in xcands
+             if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON
+             and str(o["id"]) not in xback]
     for o in xrows:
         try:
             sstore = load_goals(o["from_id"])

@@ -127,7 +127,13 @@ function hostScript(kind: "chat" | "feed"): string {
     ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\nconst selectionOpenIn = (window as any).__rompProbe.selectionOpenIn as (el: Node) => boolean;\n"
       + "const isMarkdownUrl = (window as any).__rompProbe.isMarkdownUrl as (href: string, origin: string) => boolean;\nconst openUrlView = (window as any).__rompProbe.openUrlView as (href: string) => void;\n"
       + "const LINK_SEL = (window as any).__rompProbe.LINK_SEL as string;\nconst linkHref = (window as any).__rompProbe.linkHref as (a: Element) => string;\nconst userContentTarget = (window as any).__rompProbe.userContentTarget as (root: ParentNode, id: string) => Element | undefined;\n"
-      + "const browserTabClick = (window as any).__rompProbe.browserTabClick as (e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean) => boolean;\n" + isMac![0] + "\n";
+      + "const browserTabClick = (window as any).__rompProbe.browserTabClick as (e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean) => boolean;\n" + isMac![0] + "\n"
+      // …and the `#` branch's attributed scroller for a target inside #content (render.ts scrollElInto, T262j: every mover of
+      // #content is a writeScroll). A recorder here, not the real one: it is render.ts's own function, so the bundle cannot
+      // export it, and this page has no #content, so the branch's document fallback (the browser's scrollIntoView) is the
+      // one a click could reach; none does, since the viewer's section links stand in no message body and the branch
+      // returns at its `if (!msg) return;`. Recorded so a leg that does reach it can read the call.
+      + "(window as any).__contentScrolls = [];\nconst scrollElInto = (_content: HTMLElement, el: Element, block: \"start\" | \"center\" | \"nearest\", writer: string): void => { (window as any).__contentScrolls.push({ id: el.id, block, writer }); };\n";
     // Every name the lifted opener uses that render.ts imports (a default, a namespace or a named import, from a sibling module
     // or a package) or declares at its top level (a const, let, var, function or class) must be one of the consts above: a
     // missing one throws a ReferenceError at the first click that reaches its branch, and the leg then reads a page error, or

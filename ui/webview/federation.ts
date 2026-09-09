@@ -757,12 +757,12 @@ export class FederationManager {
    *  that reads event.data receives a STRUCTURED CLONE of it, made synchronously inside dispatchEvent. For a
    *  merged feed of several megabytes that is tens of milliseconds and as many megabytes of garbage per frame, in
    *  every feed-consuming pane, counted under this layer's fed:<type> bracket (its own work is under a
-   *  millisecond); the probe measured 35-46 ms per dispatch of a 7 MB frame and 0 ms for a direct call
-   *  (2026-09-06). Nothing outside romp's bundles receives a merged frame now, so nothing can clone it.
+   *  millisecond); a probe measured 35-46 ms per dispatch of a 7 MB frame and 0 ms for a direct call. Nothing
+   *  outside romp's bundles receives a merged frame now, so nothing can clone it.
    *
    *  A throwing handler is reported and the rest still run — the DOM's report-and-continue for event listeners.
    *  Without this a throw would propagate through inbound into the shim's socket callback and skip this layer's
-   *  remaining work (the passthrough after a caps re-emit, the bars emission after a detach's lanes emission). */
+   *  remaining work (the bars emission after a detach's lanes emission). */
   private emit(data: any): void {
     const ev = new MessageEvent("message", { data });
     const subs = this.frameSubs;

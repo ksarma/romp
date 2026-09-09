@@ -1,4 +1,4 @@
-// The "worked …" footer's rule, pure (2026-09-06): which reply carries the footer, and how long it says.
+// The "worked …" footer's rule, pure: which reply carries the footer, and how long it says.
 //
 // A reply's footer depends on LATER events — the turn has to be complete (a genuine human prompt landed
 // after it) or the session idle — which made it the one thing on a rendered turn that a later event could

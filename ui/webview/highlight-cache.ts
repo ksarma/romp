@@ -1,10 +1,11 @@
-// Highlighted HTML for a fenced code block, cached by (language, source) — 2026-09-06.
+// Highlighted HTML for a fenced code block, cached by (language, source).
 //
 // hljs.highlightAuto over the ten registered grammars is the single largest cost of a chat tail that
-// re-renders a fence: 63% of a compact-mode tail in the profile, and every window rebuild on a tab switch
-// or a scroll-back tokenizes the same fences again. The result is a pure function of the two strings, so
-// the repeat work is the only thing this removes: an unlabeled fence still gets the full grammar set (a
-// narrower subset is a product change, not an optimization), and a labeled one still goes to its grammar.
+// re-renders a fence (63% of a compact-mode tail in one deployment's profile), and every window rebuild on
+// a tab switch or a scroll-back tokenizes the same fences again. The result is a pure function of the two
+// strings, so the repeat work is the only thing this removes: an unlabeled fence still gets the full grammar
+// set (a narrower subset is a product change, not an optimization), and a labeled one still goes to its
+// grammar.
 // Bounded: at most CAP entries and about BUDGET characters of output, oldest out first (a Map keeps
 // insertion order; a hit is re-inserted so it counts as newest). Very large sources are not cached at all.
 //

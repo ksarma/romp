@@ -1,33 +1,34 @@
-// The feed pane's per-card UPDATE GATE (2026-09-06): reconcileCol calls updateAskCard only for a card
-// whose inputs changed since it was last painted. Before the gate every render re-ran updateAskCard
-// on every card (~810 on the recorded board): the class rewrite, the tint, the name nodes minted
-// anew, the delegation lines rebuilt — a whole-board style invalidation — and then the scroll
-// restore at the end of render() forced a synchronous layout of the whole invalidated tree. A
-// 542 KB feedDelta carrying 58 changed cards cost as much as a full 6.6 MB frame (about 480 ms in the
-// handler paired against this change in one load window, 775 ms in the first unpaired recording; the
-// headless-Chrome bench, tools/ui-bench.mjs, PR #227): about 55% the forced layout at the scrollTop restore,
-// about 20% the 810 updateAskCard calls, about 10% the FLIP rect passes, about 10% the parse.
-// Skipping the unchanged cards shrinks the dirty set that layout has to process as well as the JS.
+// The feed pane's per-card UPDATE GATE: reconcileCol calls updateAskCard only for a card whose inputs
+// changed since it was last painted. The paint key this replaces serialised every card on every render
+// (JSON.stringify per card) and carried two whole-board terms — a fifteen-second clock, and an epoch bumped
+// by every change to the working/awaiting/unknown sets and by every settings write — so the first frame in
+// each 15 s window, and every frame during activity, repainted EVERY card: the className rewrite, the tint,
+// the name nodes minted anew, the delegation lines rebuilt (a whole-board style invalidation), and then the
+// scroll restore at the end of render() forced a synchronous layout of all of it. This key is O(1) per
+// card and names only what that card reads, so a change repaints the cards it reaches and no others.
 //
 // What a card's face depends on, and how each dependency reaches the gate:
-//   - the ask object itself. The delta path keeps an unchanged card's object BY REFERENCE
-//     (feed-delta.ts upsertById; federation.ts mergeHostFeeds pushes it through unchanged), so a new
-//     object means the kernel sent this card: `card._it !== it` (updateAskCard stashes `_it`).
-//   - every board-level input updateAskCard reads OUTSIDE the ask object: cardInputsKey folds them
-//     into one string, computed from an env the render builds once. The list below is the complete
-//     set (a source scan of updateAskCard, applySections, quarWho, wireNodeZones and dotFor); a
-//     missed input shows as a stale badge on an unchanged card, so keep it complete.
-//   - a local gesture (a section toggle, the bell, hover/pin): its handler writes the DOM directly
-//     and, where a column could change, calls render(); hover/pin are also in the key.
-//   - time: the 15 s live pass (feed.ts livePass) moves every stamped age, tint and duration. The
-//     gate is what makes stamping them necessary: a card that is not re-sent is not re-painted.
+//   - the ask object itself. An unchanged card keeps its OBJECT through the delivery path: the pane shim
+//     reassembles a `{type:"delta"}` frame reusing every untouched item (kernel.py _shim, applyDelta), and
+//     federation's merge pushes each host's items through by reference (federation.ts mergeHostFeeds) —
+//     both pinned by tests, because a defensive copy anywhere on that path would silently turn this gate
+//     into always-update. So a new object means the kernel re-sent this card: `card._it !== it`
+//     (updateAskCard stashes `_it`).
+//   - every board-level input updateAskCard reads OUTSIDE the ask object: cardInputsKey folds them into
+//     one string, computed from an env the render builds once. The list below is the complete set (a
+//     source scan of updateAskCard, applySections, quarWho, dotFor and prRepoOf); a missed input shows as
+//     a stale badge on an unchanged card, so keep it complete.
+//   - a local gesture (a section toggle, the bell, hover/pin): its handler writes the DOM directly and,
+//     where a column could change, calls render(); hover/pin are also in the key.
+//   - time: the 15 s tick rewrites every card's age label itself; a duration baked into a caption string
+//     (the awaiting box, the waiting-on chip, a paragraph age) moves on the card's next repaint.
 // The card's column and its place in the column are NOT gated — reconcileCol re-applies both every
-// render — so a card whose column or sort key changed still moves (a column change always arrives
-// as a new object; a follow-move prediction is a copy).
+// render — so a card whose column or sort key changed still moves (a column change always arrives as a
+// new object; a follow-move prediction is a copy, see applyFollowMove).
 //
-// Deliberately NOT in the key: secChoice / cardTreeExpanded (their handlers repaint the card
-// locally; the settings-driven reset rides prefs.collapsed), pendingDone (the modal reads it, the
-// card does not), the clock (the live pass owns it). Pure: node --test runs it without a DOM.
+// Deliberately NOT in the key: secChoice / cardTreeExpanded (their handlers repaint the card locally; the
+// settings-driven reset rides prefs.collapsed), pendingDone (the modal's tree reads it, the card's checklist
+// does not). Pure: node --test runs it without a DOM.
 
 /** The slice of an ask the key reads. Structural, so tests pass plain objects. */
 export interface GateItem {
@@ -55,12 +56,17 @@ export interface GateEnv {
   /** cardNotifyOn: the bell's effective state (pendingNotify over the payload's notify). */
   notifyOn: (it: GateItem) => boolean;
   /** feedPrefs: grouped hides the name row, collapsed is the section default (resolveSec), and a
-   *  colormap change must repaint every tint at once (onSettingsChanged → render(), as today). */
+   *  colormap change must repaint every tint at once (onSettingsChanged → render(), as today): the card
+   *  wash and the age tints are computed here from the card's age on the selected colormap (age-color.ts). */
   prefs: { grouped: boolean; collapsed: boolean; colormap: string };
   /** hostIsDown(sid): the struck "host:" prefix on a remote session's name. */
   hostDown: (sid: string) => boolean;
   /** feedSelfHost: the quarantine route's recipient host. */
   selfHost: string;
+  /** prRepoOf(sid): the GitHub repository (owner/repo, or null) the card's session works in, read off the
+   *  frame's session rows; the title, checklist, takeaway and tree link their `#123` to it (pr-links.ts). A
+   *  session whose repository arrives or changes must relink an otherwise unchanged card. */
+  repo: (sid: string) => string | null;
   /** A per-render counter for cards that must never skip: a quarantine card reads sessionColors by
    *  name, a map the payload rebuilds every frame, so its key is unique per render. */
   seq: number;
@@ -80,6 +86,7 @@ export function cardInputsKey(it: GateItem, env: GateEnv): string {
     env.prefs.colormap,
     env.hostDown(it.sid) ? "d" : "",
     env.selfHost,
+    env.repo(it.sid) || "",
     // the colour echo (feed.ts applyColorEcho) writes `a.color` IN PLACE — the one write into a shared
     // ask object — so identity cannot carry it; the colour rides the key instead
     (it.color && it.color.bg) || "",

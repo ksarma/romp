@@ -21,7 +21,7 @@ update` starts a session called "update".
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
 | `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
-| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them; a remote stopped by `romp down` is synced and left stopped |
+| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them at once (every deploy restart is immediate; boot reconcile resumes the cut turns with their history); a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
@@ -32,20 +32,29 @@ update` starts a session called "update".
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
-ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
-*Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. Reloads
-are separate from that control and happen in every mode: a page the kernel serves reloads itself
-when the kernel serving it restarts or serves a newer build than the page runs, once any gesture
-in progress has ended and any file still shipping has settled, and the notification center's one
-line says which happened. The banner that reads "A newer romp build is available" appears only
-where the page cannot reload itself, such as a host that forbids it; the VS Code panes keep their
-own prompt, because their bundle comes from the installed extension. A chat page with an
-attachment still uploading first finishes the upload, then reloads. The message waiting on the
-upload is sent if that session's tab is the active one; otherwise it stays in that tab's composer
-with the file attached, and a notice says so. A notice still on screen when the page reloads,
-that one or a failed save's, is shown again on the fresh page. If the upload has not finished
-within a minute, the page reloads anyway and reports the lost attachment on the next load.
+ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
+checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
+and keeps running what it has until they restart Romp themselves. An automatic converge takes one
+of two routes, decided by what the new commits touch. When the new commits change code the
+running kernel executes, Romp restarts at once, and the restart cuts the turns in flight, which
+resume with their history on the new code; a comment or formatting edit that leaves that code's
+parsed form unchanged does not count. A change anywhere else (the UI, the docs, the CLI, the
+postal bus, tests) converges in place with the kernel left up: the served bundles are rebuilt, a
+postal change restarts the bus alone, and no turn is cut. A converge to `main` in
+this mode comes no sooner than 25 minutes after the last deploy restart, so a busy `main` costs
+at most one restart per batch of merges. The one command that waits for a quiet window is
+`romp refresh --quiet`. Reloads are separate from that control and happen in every
+mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
+newer build than the page runs, once any gesture in progress has ended and any file still
+shipping has settled, and the notification center's one line says which happened. The banner that
+reads "A newer romp build is available" appears only where the page cannot reload itself, such as
+a host that forbids it; the VS Code panes keep their own prompt, because their bundle comes from
+the installed extension. A chat page with an attachment still uploading first finishes the
+upload, then reloads. The message waiting on the upload is sent if that session's tab is the
+active one; otherwise it stays in that tab's composer with the file attached, and a notice says
+so. A notice still on screen when the page reloads, that one or a failed save's, is shown again
+on the fresh page. If the upload has not finished within a minute, the page reloads anyway and
+reports the lost attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -148,7 +157,7 @@ These are for scripting and for agents rather than daily use:
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
-| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
+| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop). The ONLY door to the quiet window: a deploy (a peer's `romp update`, a release self-update, an automatic converge) restarts immediately, by the user's 2026-09-08 decision |
 | `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
 
@@ -2166,7 +2175,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   derived and not held); `evict` (entries dropped for lanes that left a full
   build's lane set or past the 256-entry bound), the gauge `entries`, and
   `segs_hit` and `segs_miss`, the segments served against derived, which
-  weight the hit rate by cost.
+  weight the hit rate by cost. Since the 2026-09-09 fold those counters read the live lanes alone: a dead lane is
+  the timeline's dead-lane memo's, and its outcomes ride the same block as `dead_serve`
+  (served from that memo), `dead_miss` (derived, and cached unless its store faulted or a
+  stage complained) and `dead_failed_serve` (served as the empty lane a failed parse was
+  cached as, until the transcript's stat moves).
   `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
   a parsed transcript (the uuids and user texts the transcript already holds,
   and the newest human turn's time), one entry per session keyed on the
