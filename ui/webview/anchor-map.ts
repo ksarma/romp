@@ -1450,11 +1450,50 @@ function nthNonWs(node: DNode, k: number): { t: DText; off: number } | null {
 }
 
 const BLOCK_CONTAINERS = new Set(["UL", "OL", "LI", "BLOCKQUOTE", "DIV", "TABLE", "THEAD", "TBODY", "TR", "SECTION", "ARTICLE", "BODY"]);
-/** Whitespace-only text between block elements: marking it would paint a stray blob. */
+/** The elements the browser lays out as block-level boxes (display block, list-item, table or a table's parts), among the tags
+ *  marked emits and the sanitizer lets an author write; and KaTeX's display root, the one span the sheets lay out as a block
+ *  (`.katex-display`). A whitespace-only text node with one of these beside it renders nothing (white space at a line's edge is
+ *  collapsed away, and between two blocks it makes no line at all), so a mark around it would be the only thing giving it a box. */
+const BLOCK_BOXES = new Set([
+  "P", "DIV", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "HR", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "CAPTION", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
+  "DETAILS", "SUMMARY", "FIGURE", "FIGCAPTION", "DL", "DT", "DD",
+  "SECTION", "ARTICLE", "ASIDE", "NAV", "HEADER", "FOOTER", "MAIN", "ADDRESS", "FORM", "FIELDSET",
+]);
+const isBlockBox = (n: DNode): boolean => isElement(n) && (BLOCK_BOXES.has(n.tagName.toUpperCase()) || hasClass(n, "katex-display"));
+/** The nearest sibling of `t` on the side `dir` (-1 before, 1 after) that is not a whitespace-only text node; null at the parent's edge. */
+function besideNonWs(t: DNode, dir: -1 | 1): DNode | null {
+  const p = t.parentNode;
+  if (!p) return null;
+  const kids = p.childNodes;
+  let i = -1;
+  for (let k = 0; k < kids.length; k++) if (kids[k] === t) { i = k; break; }
+  if (i < 0) return null;
+  for (let k = i + dir; k >= 0 && k < kids.length; k += dir) {
+    const n = kids[k];
+    if (isText(n) && stripWs(n.data) === "") continue;
+    return n;
+  }
+  return null;
+}
+/** Whitespace-only text between block elements: marking it would paint a stray blob. Two readings, either enough: the node's
+ *  parent is a block container (BLOCK_CONTAINERS, main's rule), or a block-level box stands beside it on either side, any
+ *  whitespace-only siblings between them looked past (BLOCK_BOXES). The parent's tag alone missed the "\n" text nodes marked
+ *  leaves between the blocks inside a folded callout's `details` (md-config.ts: `<details><summary>..</summary><p>..</p>\n<p>..
+ *  </p>\n</details>`), DETAILS not being on the list, so a comment across two body paragraphs of a fold, or from a fold's last
+ *  block into the block after it, wrapped each such node as a mark of its own: an empty ringed box on a line between the blocks
+ *  (4 x 18 px in Chromium), the details 22 px taller per mark and everything below moved down, on every paint pass and in the
+ *  composer's pending target; a closed fold showed the box the moment a card's quote button opened it. The same markdown was
+ *  a plain blockquote on main and painted clean; an author's `<details>`, `<dl>` and `<figure>` showed the box there too (the
+ *  Slice 4 review, round 8; anchor-map-obsidian.test.ts, md-config-fold-paint-browser.test.ts over the real bundle). A
+ *  whitespace-only text node between two INLINE elements in a paragraph is the passage's own space and is still painted. */
 const skipBlockWs = (t: DText): boolean => {
   if (stripWs(t.data) !== "") return false;
   const p = t.parentNode;
-  return !!p && isElement(p) && BLOCK_CONTAINERS.has(p.tagName.toUpperCase());
+  if (!p || !isElement(p)) return false;
+  if (BLOCK_CONTAINERS.has(p.tagName.toUpperCase())) return true;
+  const before = besideNonWs(t, -1), after = besideNonWs(t, 1);
+  return (!!before && isBlockBox(before)) || (!!after && isBlockBox(after));
 };
 
 /** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,

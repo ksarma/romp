@@ -7,8 +7,8 @@
 // memoised lex equal to the plain one on every shape that exercises the frames (quotes, callouts, list items, rejected
 // and accepted candidates), the two-step block tokenizer equal to the lazy regex it replaced, the finder called once per
 // frame (on a probe extension, and on the math hint itself through the frame it writes), and the lex linear in the
-// paragraph count, timed as the median ratio of paired runs so a loaded machine cannot fail a linear lex. Synthetic notes
-// only.
+// paragraph count, timed as the median ratio of one large lex to as many small lexes as make up the same paragraphs, so
+// contention falls on both sides of the ratio alike (the `linear` helper says what was measured). Synthetic notes only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { Marked, marked } from "marked";
@@ -49,28 +49,42 @@ const equations = (n: number): string => Array.from({ length: n }, (_, i) => `Eq
 const once = (fn: () => unknown): number => { const t0 = process.hrtime.bigint(); fn(); return Number(process.hrtime.bigint() - t0) / 1e6; };
 const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
 const SMALL = 2000, LARGE = 16000, PAIRS = 7;
-const LINEAR_BOUND = 3 * (LARGE / SMALL);   // 24: three times the linear ratio (8), well under the quadratic one (64)
-const ABSOLUTE_MS = 1500;                   // the large note's median; the cold first run may take twice that
-/** Holds `lex` linear in the paragraph count on `note`'s shape: the LARGE-paragraph note against the SMALL one, eight
- *  times the paragraphs, so a linear lex takes about eight times as long (nine measured, the allocation grows too) and a
- *  quadratic one sixty-four (sixty measured on the pre-memo sources). The two are timed back to back, PAIRS times over,
- *  and the median of the pair ratios is bounded at three times the linear expectation. A ratio of two timings taken
- *  under the same load is what a loaded machine or a parallel suite cannot move much, and the median of seven pairs
- *  discards a burst that lands on one: under thirty-two busy processes on sixteen cores the medians measured 5 to 11,
- *  one pair in 126 over 24. The earlier bound, ten times a small timing taken first (the least of three runs), failed
- *  once in eight full suites when the large lex alone carried the load (round 7, the merge audit). An absolute bound
- *  stays as the coarse guard: the large note lexes in tens of milliseconds (250 under that load), where the quadratic
- *  lex took four to sixteen seconds. Not a benchmark. */
+const SMALL_RUNS = LARGE / SMALL;   // 8: this many small lexes are the large note's paragraphs, equal work for a linear lex
+const LINEAR_BOUND = 3;             // the large lex against the eight small ones: about 1 for a linear lex, 8 for a quadratic
+const ABSOLUTE_MS = 1500;           // the large note's median; the cold first run may take twice that
+/** Holds `lex` linear in the paragraph count on `note`'s shape: the LARGE-paragraph note lexed once against the SMALL
+ *  one lexed SMALL_RUNS times, the same paragraphs on either side, so a linear lex takes about as long on each (the ratio
+ *  measured 1.0 to 1.1 alone) and a quadratic one eight times as long on the large note (7.5 to 7.8 on the pre-memo
+ *  sources at 205f5f3d, no pair under 7.3). The two sides are timed back to back, PAIRS times over, and the median of
+ *  the pair ratios is bounded at LINEAR_BOUND, under half the quadratic measurement. Equal work is what holds the ratio
+ *  under contention: the review round 7 timed one small lex against one large one, bounded at three times their
+ *  paragraph ratio (24), and a CPU quota (eight test workers in a 400% cgroup scope, the shape of a runner with a CPU
+ *  limit) or nice-19 starvation under other load inflated that ratio three times, steadily across every pair, because
+ *  the 6 ms small lex fit inside an unthrottled slice while the 60 ms large one spanned several and waited alone; a
+ *  median of pairs discards a burst that lands on one pair, not a wait that lands on every large lex, and 7 of 24 file
+ *  runs under the quota failed it (medians up to 30 in a probe of the same shape, 12 of 48 legs over 24). With both
+ *  sides longer than a slice they wait alike, measured with a probe of this helper's shape (review round 8): under that
+ *  quota, eight copies at once, medians 0.72 to 1.61 over 48 legs, worst single pair 2.18, and three rounds of eight
+ *  copies of this file with no failure; this file at nice 19 under sixteen nice-19 spinners, medians 1.08 to 1.41 over
+ *  six legs, worst pair 2.72, eight runs with no failure. An absolute bound stays as the coarse guard: the large note
+ *  lexes in tens of milliseconds (190 under the quota; the round-7 recheck saw 640 at nice 19 on a box already at load
+ *  18), where the quadratic lex took four to sixteen seconds. Test 7 below counts the finder's calls exactly, at no risk
+ *  from load; these legs time the whole. Not a benchmark. */
 function linear(lex: (src: string) => unknown, note: (n: number) => string, what: string): void {
   const small = note(SMALL), large = note(LARGE);
   lex(small);
   const first = once(() => lex(large));
   assert.ok(first < 2 * ABSOLUTE_MS, `${what}: ${LARGE.toLocaleString("en-US")} paragraphs took ${first.toFixed(0)} ms on the first run, a quadratic lex's seconds`);
   const ratios: number[] = [], larges: number[] = [], smalls: number[] = [];
-  for (let i = 0; i < PAIRS; i++) { const s = once(() => lex(small)), l = once(() => lex(large)); smalls.push(s); larges.push(l); ratios.push(l / s); }
-  const shown = `${LARGE.toLocaleString("en-US")} paragraphs ${median(larges).toFixed(0)} ms against ${median(smalls).toFixed(1)} ms for ${SMALL.toLocaleString("en-US")}, pair ratios ${ratios.map((r) => r.toFixed(1)).join(" ")}`;
+  for (let i = 0; i < PAIRS; i++) {
+    let s = 0;
+    for (let k = 0; k < SMALL_RUNS; k++) s += once(() => lex(small));
+    const l = once(() => lex(large));
+    smalls.push(s); larges.push(l); ratios.push(l / s);
+  }
+  const shown = `${LARGE.toLocaleString("en-US")} paragraphs ${median(larges).toFixed(0)} ms against ${median(smalls).toFixed(0)} ms for ${SMALL_RUNS} lexes of ${SMALL.toLocaleString("en-US")}, pair ratios ${ratios.map((r) => r.toFixed(2)).join(" ")}`;
   assert.ok(median(larges) < ABSOLUTE_MS, `${what}: ${shown}: over a second for a lex of tens of milliseconds`);
-  assert.ok(median(ratios) < LINEAR_BOUND, `${what}: ${shown}: not linear`);
+  assert.ok(median(ratios) < LINEAR_BOUND, `${what}: ${shown}: not linear, the large note costs more than its share of paragraphs`);
 }
 
 test("the two-step block tokenizer is the lazy regex it replaced, on every candidate of the corpus", () => {
@@ -159,8 +173,9 @@ test("the math grammar lexes a note in time linear in its paragraph count: tiny 
   // Before the memo: 8,000 one-line paragraphs 1.0 s from the math hint alone (the callout's, since removed, added 0.3 s), 8,000
   // `$$5 and $$10` lines 3.9 s (the hint's candidate walk, then the tokenizer's lazy scan to the end at every one of
   // them, the base's own 0.7 s), and 16,000 of either four times that. After: tens of milliseconds, eight times the
-  // 2,000-paragraph note's. The prices leg is the one pin on the tokenizer's closer memo (math.ts, closersLeft): the
-  // hint's count is held exactly by the frame test below, the tokenizer's rescans only by this timing.
+  // 2,000-paragraph note's. The prices leg and md-config-math-block-start.test.ts test 6 (1,500 rejected candidates
+  // against prose, at eight times) are the pins on the tokenizer's closer memo (math.ts, closersLeft): the hint's count
+  // is held exactly by the frame test below, the tokenizer's rescans only by timing.
   const m = new Marked({ extensions: [mathBlock, mathInline] });
   m.setOptions({ gfm: true, breaks: false });
   linear((src) => m.lexer(src), tiny, "tiny paragraphs");

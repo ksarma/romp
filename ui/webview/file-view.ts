@@ -2598,21 +2598,20 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
 // twins' count changed, the title queue holds every same-titled fold the first pass left unpaired, so a same-titled fold
 // with a body of its own removed or added AHEAD of them in the same write shifts the states the same way, the number of
 // twins ahead unchanged (the Slice 4 review, round 7). Three folds byte-identical in class, title and body give no
-// content rule anything to decide on, so those
-// are order-only cases, accepted (the Slice 4 review, round 6). Paired in the first pass anyway, as before round 4, the
-// one fold still carrying the shared body took the queue's first state whichever fold that was, so the two placeholders
-// swapped states when the person read the second while a session wrote into the first (the Slice 4 review, round 4).
-// Round 4's rule, an exact key pairs only when it names ONE noted fold and ONE new fold, sent untouched twins whole to
-// the second pass, where a same-titled fold inserted ahead of them took the first twin's state and every twin took the
-// next one's, and one removed from ahead of them shifted the states the other way, so the twin the person read shut
-// either way (the Slice 4 review, round 5). Order alone decides what content cannot: a twin added or removed ahead of
-// the twin the person reads (above), the leftovers of an edit that both removes one same-titled fold and rewrites
-// another's body, and a twin rewritten in the same write that inserts a same-titled fold, whose text change is the
-// insertion's and reads as it (the likelier single edit, and the reading the round-3 sentence above states). A Raw
-// paint has no folds and neither reads nor writes, so the state read when the rendered view left stands until it is
-// painted again. The state moves on the person's own clicks and the `#` reveal alone: no per-paint derivation, no timer
-// (CLAUDE.md, cards move on new information). md-config-fold-state-browser.test.ts drives the gestures, the same-title
-// reloads, the identical twins and the twins' same-titled neighbours included.
+// content rule anything to decide on, so those are order-only cases, accepted (the Slice 4 review, round 6). Paired in
+// the first pass anyway, as before round 4, the one fold still carrying the shared body took the queue's first state
+// whichever fold that was, so the two placeholders swapped states when the person read the second while a session wrote
+// into the first (the Slice 4 review, round 4). Round 4's rule, an exact key pairs only when it names ONE noted fold and
+// ONE new fold, sent untouched twins whole to the second pass, where a same-titled fold inserted ahead of them took the
+// first twin's state and every twin took the next one's, and one removed from ahead of them shifted the states the other
+// way, so the twin the person read shut either way (the Slice 4 review, round 5). Order alone decides what content
+// cannot: a twin added or removed ahead of the twin the person reads (above), the leftovers of an edit that both removes
+// one same-titled fold and rewrites another's body, and a twin rewritten in the same write that inserts a same-titled
+// fold, whose text change is the insertion's and reads as it (the likelier single edit, and the reading the round-3
+// sentence above states). A Raw paint has no folds and neither reads nor writes, so the state read when the rendered
+// view left stands until it is painted again. The state moves on the person's own clicks and the `#` reveal alone: no
+// per-paint derivation, no timer (CLAUDE.md, cards move on new information). md-config-fold-state-browser.test.ts drives
+// the gestures, the same-title reloads, the identical twins and the twins' same-titled neighbours included.
 type Fold = { key: string; body: string; open: boolean };
 function foldKey(d: Element): string {
   let summary = "";

@@ -532,6 +532,80 @@ test("a formula the range does not hold stays outside the highlight, and a displ
   assert.deepEqual(box.childNodes.filter((n) => n.nodeType === 1).map((n) => (n as FakeElement).tagName).slice(15, 18), ["P", "SPAN", "P"]);
 });
 
+test("a highlight across two blocks inside a folded callout, or from a fold's body into the block after it, paints the blocks' text and never the whitespace between them: no whitespace-only mark, none directly under the details, the fold's children as rendered", () => {
+  // marked's block output leaves a "\n" text node after each block inside a folded callout's details (md-config.ts: `<details><summary>
+  // ..</summary><p>..</p>\n<p>..</p>\n</details>`), the same node it leaves between blocks at the top level, in a list item or in a
+  // quote. skipBlockWs read the PARENT's tag from a list of block containers, and DETAILS was not on it, so wrapRuns wrapped each
+  // such node as a mark of its own: an empty ringed box on a line between the blocks, 4 x 18 px in Chromium, the details 22 px
+  // taller per mark and everything below moved down, on every paint pass and in the composer's pending target too; a closed fold
+  // showed the box the moment it opened. On main the same markdown is a plain blockquote (in the list) and painted clean (the Slice
+  // 4 review, round 8). A whitespace-only text node beside a block box renders nothing whatever its parent's tag (the browser
+  // collapses it), so the rule reads the node's neighbours too: a block-level sibling on either side, and the node is skipped.
+  // The rule reads tags, so an author's `<details>`, `<dl>` or `<figure>` (the same box on main) is held the same way; a range
+  // across their elements is not paintable from the source today (the fallback's quote holds the tags), so none is driven here.
+  const SRC = [
+    "# Title", "",
+    "Intro para.", "",
+    "> [!note]+ Two paragraphs", "> First body para.", ">", "> Second body para.", "",
+    "Para after the open fold.", "",
+    "> [!note]- Closed two", "> Closed first para.", ">", "> Closed second para.", "",
+    "Para after the closed fold.", "",
+    "> [!tip]+ Three blocks", "> Lead para.", ">", "> - alpha item", "> - beta item", ">", "> Tail para.", "",
+    "Para after the three blocks.", "",
+    "> [!note]+ Outer", "> Outer body.", ">", "> > [!note]+ Inner", "> > Inner first.", "> >", "> > Inner second.", ">", "> Outer after.", "",
+    "Para after the nested fold.", "",
+    "Last para.", "",
+  ].join("\n");
+  const span = (a: string, b: string): { start: number; end: number } => { const s = SRC.indexOf(a), e = SRC.indexOf(b, s); assert.ok(s >= 0 && e >= 0, a + " .. " + b); return { start: s, end: e + b.length }; };
+  const stripWs = (s: string): string => s.replace(/\s+/g, "");
+  const wsOnly = (m: FakeElement): boolean => stripWs(m.textContent) === "";
+  const under = (m: FakeElement): string => { const p = m.parentNode as FakeElement; return p.tagName + "." + ((p.getAttribute("class") || "").split(" ")[0]); };
+  const isTitle = (m: FakeElement): boolean => (((m.parentNode as FakeElement).getAttribute("class") || "").split(" ")).includes("md-callout-title");
+  const wsKids = (f: FakeElement): number => f.childNodes.filter((c) => c.nodeType === 3 && stripWs((c as FakeText).data) === "").length;
+  const cases: Array<[string, string, { start: number; end: number }, string[]]> = [
+    ["two body paragraphs of an open fold", "fc-hl", span("First body para.", "Second body para."), ["First body para.", "Second body para."]],
+    ["from a fold's last paragraph into the paragraph after it", "fc-hl", span("Second body para.", "Para after the open fold."), ["Second body para.", "Para after the open fold."]],
+    ["two body paragraphs of a closed fold (the details' text is in the DOM shut or open)", "fc-hl", span("Closed first para.", "Closed second para."), ["Closed first para.", "Closed second para."]],
+    ["the composer's pending target, the same shape", "fc-presel", span("First body para.", "Second body para."), ["First body para.", "Second body para."]],
+    ["three blocks of a fold (a paragraph, a list, a paragraph) and the paragraph after", "fc-hl", span("Lead para.", "Para after the three blocks."), ["Lead para.", "alpha item", "beta item", "Tail para.", "Para after the three blocks."]],
+    ["across a fold nested in a fold", "fc-hl", span("Outer body.", "Outer after."), ["Outer body.", "Inner first.", "Inner second.", "Outer after."]],
+  ];
+  for (const [why, cls, range, texts] of cases) {
+    const box = buildRendered(SRC);
+    const before = new Map<FakeElement, string[]>();
+    const folds: FakeElement[] = [];
+    const walk = (n: FakeNode) => { for (const c of n.childNodes) if (c.nodeType === 1) { const el = c as FakeElement; if (el.tagName === "DETAILS") { folds.push(el); before.set(el, shape(el)); } walk(el); } };
+    walk(box);
+    assert.equal(folds.length, 5, why + ": the five folds, the nested one among them");
+    assert.ok(folds.every((f) => wsKids(f) >= 1), why + ": every fold holds whitespace-only text nodes between its blocks: " + folds.map((f) => JSON.stringify(shape(f))).join(" | "));
+    const marks = paintRendered(El(box), SRC, range, cls) as unknown as FakeElement[] | null;
+    assert.ok(marks && marks.length >= 2, why + ": both ends painted: " + JSON.stringify(marks && marks.map((m) => m.textContent)));
+    const ws = marks!.filter(wsOnly);
+    assert.deepEqual(ws.map((m) => under(m) + " " + JSON.stringify(m.textContent)), [], why + ": no whitespace-only mark");
+    // a nested fold's title (its summary) is inside the range and painted with the rest, the standing rule for a hole a range covers;
+    // it is left out of the block texts so this test says nothing about that rule
+    assert.deepEqual(marks!.filter((m) => !isTitle(m)).map((m) => m.textContent), texts, why + ": the blocks' text, each block one mark");
+    for (const m of marks!) assert.notEqual((m.parentNode as FakeElement).tagName, "DETAILS", why + ": no mark stands directly under a fold: " + under(m));
+    for (const f of folds) assert.equal(wsKids(f), (before.get(f) as string[]).filter((s) => /^#text\(\s*\)$/.test(s)).length, why + ": the fold's own whitespace nodes stand where they were, none moved under a mark: " + JSON.stringify(shape(f)));
+    // a repaint after the panel's unpaint gives the same marks: the whitespace nodes were never moved into a mark
+    unpaintAll(box);
+    for (const f of folds) assert.deepEqual(shape(f), before.get(f), why + ": unpainted, the fold as rendered");
+    const again = paintRendered(El(box), SRC, range, cls) as unknown as FakeElement[];
+    assert.deepEqual(again.filter((m) => !isTitle(m)).map((m) => m.textContent), texts, why + ": the same marks on a repaint");
+  }
+  // the control: a single paragraph inside a fold, one mark and no whitespace involved (what the fold-body legs elsewhere paint)
+  const one = buildRendered(SRC);
+  const single = paintRendered(El(one), SRC, span("First body para.", "First body para."), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(single.map((m) => m.textContent), ["First body para."]);
+  // the rule stays a rule about whitespace BESIDE A BLOCK: a space between two inline elements inside a paragraph is the passage's
+  // own text, a whitespace-only text node under the paragraph with an inline element on each side, and is painted with it
+  const inl = "Some *em text* **strong text** here.\n";
+  const ib = buildRendered(inl);
+  assert.deepEqual(shape(topEl(ib, 0)), ["#text(Some )", "EM.", "#text( )", "STRONG.", "#text( here.)"], "the fixture: a whitespace-only text node between two inline elements");
+  const im = paintRendered(El(ib), inl, { start: inl.indexOf("*em"), end: inl.indexOf("text**") + "text**".length }, "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(im.map((m) => m.textContent), ["em text", " ", "strong text"], "the space between two inline elements is painted with the passage");
+});
+
 test("a lazy `===` or `--` line under a callout's or a quote's body line is that paragraph's text and maps to its own characters: marked's setext guard puts four spaces before it in the token's text, and the suffix view reads through them (before: the whole block refused, with a reason naming a tab)", () => {
   // marked's blockquote tokenizer prefixes a lazy underline with four spaces so the nested lex reads a paragraph's text and not
   // a setext heading; md-config.ts's callout borrows the preparation from the body's second line on. The spaces are the guard's,

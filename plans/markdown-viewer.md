@@ -1249,43 +1249,52 @@ as built departs from the text above, why, and which test holds each rule:
    a pass against 6.4 ms scoped). A run of whitespace-only text nodes between blocks, the pair the sanitizer leaves
    where a block-level comment or a `<style>` stood, is never a mark of its own (round 7: wrapRuns skipped one such
    node alone and ringed the pair as an empty box between the blocks, which moved everything below down 30 px on every
-   fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts hold both). anchor-map-obsidian.test.ts
-   and the browser leg select across the formula and
-   get the TeX between. The fill's two fallback shapes, KaTeX's `span.katex-error` on TeX it cannot parse and the
-   belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts FORMULA_CLASSES), so a display
-   fallback keeps the 1:1 pairing and an inline one maps around; before that a display fallback took no element and
-   every block after it paired one early, and the reader's place was a block off (the review round 1). The control
-   list keys on class tokens the sanitizer lets an author write, as Slice 3's `code-copy` did: a hand-typed span
-   wearing `katex`, `katex-error`, `md-math-src`, `md-fnback`, `md-frontmatter-head` or `fv-gate` is a control too,
-   its text skipped, so a quote covering it is refused with the Raw view offered while a comment on the prose beside
-   it paints (Slice 1's note records the shape for the math markup); the collision is tolerated, as item 9's is, since
-   only the fills could mark their own elements and marked's renderer emits `md-fnback` and `md-frontmatter-head`
-   before the sanitizer, with reader-place.ts's list mirroring this one (the review round 7). A selection
-   endpoint inside a formula's glyphs is the formula touched ("touches a formula", the Raw view offered at the
-   formula's line); the edge that selects none of it maps the prose beside it; an endpoint inside another control (a
-   back link's label, the fold label, a gate's label) stands at the control's edge, so a triple-click on a footnote
-   definition maps its words (anchor-map-obsidian.test.ts tests 8 to 11, md-config-math-map-browser.test.ts). The
-   block tokenizer's start hint names only a newline before a line the tokenizer will accept (math.ts nextBlockMath,
-   one pass with a memo of the first closer per family, its answer remembered per lexer frame by md-block-start.ts):
-   marked clips the paragraph at the hint and resumes it when the tokenizer says no, with a newline the source did not
-   hold, so a rejected line (`$$x$$ is inline here.`, an unclosed `$$`) broke the raw tiling from that paragraph to
-   the end of the note, and a match at the string's own start, one character into a line, cut `A $$x$$` in two
-   (md-config-math-block-start.test.ts, whose bound holds the hint to one pass per call: a first cut that ran the
-   block tokenizer at every candidate lexed a note of 1,500 rejected candidates in 13 s and never shipped). marked
-   also joins two paragraphs its own regex separated (a header-looking line over a delimiter row with a different cell
-   count, a lowercase `<prefix>` line, a bare `* ` or `1. ` bullet, each interrupting the paragraph and then refused
-   by its tokenizer) whenever a block hint has a hit anywhere later in the note, with a newline in the raw the source
-   does not hold; and with no hint at all it joins a paragraph and an indented line under it that a
-   delimiter-row-shaped line or a `---` follows (the gfm table interrupt admits any indentation on its header line,
-   the code tokenizer runs before the table's and takes the indented line, and the lexer joins it onto the paragraph
-   with the indentation gone from `text`, CommonMark's own reading of a continuation line), at the top level, in a
-   quote's body and in a list item's block text. The anchor map rebuilds such a paragraph's source lines from its raw
-   and text (each text line the raw line it came from less up to four spaces, a blank raw line no text line matches a
-   join's newline; anchor-map.ts sourceRaw and joinedSourceRaw, in the block table and the walk) and maps the text
-   into them line by line through the suffix view, so either join costs the map nothing (the review rounds 2 and 3 for
-   the hint's join: before it every block from the join to the end of the note refused; round 5 for the indented
-   line's, pre-existing at the base, where the round-3 placement by `text` alone stopped at the first stripped space
-   and every later span collapsed alike; md-config-merged-paragraph.test.ts,
+   fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts hold both; and since round 8 the rule
+   reads the node's neighbours as well as its parent: skipBlockWs judged the parent's tag from a list of block
+   containers that lacked DETAILS, so a comment across two body paragraphs of a folded callout, or from a fold's last
+   block into the block after it, ringed each newline text node marked leaves between the blocks inside the details,
+   an empty 4 x 18 px box that grew the fold 22 px per mark and moved everything below, in the composer's pending
+   target too, where the same markdown, a plain blockquote on main, painted clean; a whitespace-only text node with a
+   block-level box beside it on either side is skipped whatever its parent (anchor-map.ts BLOCK_BOXES,
+   `.katex-display` among them; anchor-map-obsidian.test.ts, and md-config-fold-paint-browser.test.ts measures every
+   fold's height and every block's place unchanged over the real bundle). anchor-map-obsidian.test.ts and the browser
+   leg select across the formula and get the TeX between. The fill's two fallback shapes, KaTeX's `span.katex-error`
+   on TeX it cannot parse and the belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts
+   FORMULA_CLASSES), so a display fallback keeps the 1:1 pairing and an inline one maps around; before that a display
+   fallback took no element and every block after it paired one early, and the reader's place was a block off (the
+   review round 1). The control list keys on class tokens the sanitizer lets an author write, as Slice 3's `code-copy`
+   did: a hand-typed span wearing `katex`, `katex-error`, `md-math-src`, `md-fnback`, `md-frontmatter-head` or
+   `fv-gate` is a control too, its text skipped, so a quote covering it is refused with the Raw view offered while a
+   comment on the prose beside it paints (Slice 1's note records the shape for the math markup); the collision is
+   tolerated, as item 9's is, since only the fills could mark their own elements and marked's renderer emits
+   `md-fnback` and `md-frontmatter-head` before the sanitizer (the review round 7). reader-place.ts also keys its list
+   on class tokens, but on five of these seven: the two fallback shapes are not skipped there on purpose, since an
+   html block's fallback can only come from a placeholder the author typed, whose TeX the source parse reads too (its
+   header; the review round 8). A selection endpoint inside a formula's glyphs is the formula touched ("touches a
+   formula", the Raw view offered at the formula's line); the edge that selects none of it maps the prose beside it;
+   an endpoint inside another control (a back link's label, the fold label, a gate's label) stands at the control's
+   edge, so a triple-click on a footnote definition maps its words (anchor-map-obsidian.test.ts tests 8 to 11,
+   md-config-math-map-browser.test.ts). The block tokenizer's start hint names only a newline before a line the
+   tokenizer will accept (math.ts nextBlockMath, one pass with a memo of the first closer per family, its answer
+   remembered per lexer frame by md-block-start.ts): marked clips the paragraph at the hint and resumes it when the
+   tokenizer says no, with a newline the source did not hold, so a rejected line (`$$x$$ is inline here.`, an unclosed
+   `$$`) broke the raw tiling from that paragraph to the end of the note, and a match at the string's own start, one
+   character into a line, cut `A $$x$$` in two (md-config-math-block-start.test.ts, whose bound holds the hint to one
+   pass per call: a first cut that ran the block tokenizer at every candidate lexed a note of 1,500 rejected
+   candidates in 13 s and never shipped). marked also joins two paragraphs its own regex separated (a header-looking
+   line over a delimiter row with a different cell count, a lowercase `<prefix>` line, a bare `* ` or `1. ` bullet,
+   each interrupting the paragraph and then refused by its tokenizer) whenever a block hint has a hit anywhere later
+   in the note, with a newline in the raw the source does not hold; and with no hint at all it joins a paragraph and
+   an indented line under it that a delimiter-row-shaped line or a `---` follows (the gfm table interrupt admits any
+   indentation on its header line, the code tokenizer runs before the table's and takes the indented line, and the
+   lexer joins it onto the paragraph with the indentation gone from `text`, CommonMark's own reading of a continuation
+   line), at the top level, in a quote's body and in a list item's block text. The anchor map rebuilds such a
+   paragraph's source lines from its raw and text (each text line the raw line it came from less up to four spaces, a
+   blank raw line no text line matches a join's newline; anchor-map.ts sourceRaw and joinedSourceRaw, in the block
+   table and the walk) and maps the text into them line by line through the suffix view, so either join costs the map
+   nothing (the review rounds 2 and 3 for the hint's join: before it every block from the join to the end of the note
+   refused; round 5 for the indented line's, pre-existing at the base, where the round-3 placement by `text` alone
+   stopped at the first stripped space and every later span collapsed alike; md-config-merged-paragraph.test.ts,
    md-config-merged-paragraph-browser.test.ts). The joined rendering, one `<p>` where bare marked gives two, is
    marked's own and GitHub's for those shapes, and it turns on a `$$` further down the note (item 10). marked calls
    every block hint before every paragraph on the whole remaining source, so a hint that scans the rest of the note
@@ -1295,14 +1304,16 @@ as built departs from the text above, why, and which test holds each rule:
    body is a frame of its own; the callout's hint, memoised the same way in round 2, is gone since round 3, item 5),
    the math tokenizer's closer search too, and the lex is linear in the paragraph count: 36 ms for those 8,000
    paragraphs, 35 ms for 8,000 rejected `$$` lines where the base took 736 (md-config-block-start-memo.test.ts holds
-   the memoised lex equal to the plain one and the singleton's lex linear: since the review round 7 as the median of
-   seven paired ratios of a 16,000-paragraph note to a 2,000-paragraph one, bounded at 24 where a linear lex measures
-   9 and the pre-memo one 60, with a 1,500 ms guard on the large note's median, and the math hint's own finder counted
-   once per frame through the frame it writes; the earlier bound, ten times a small timing taken first, failed under a
-   parallel suite's load on the merge audit). KaTeX's flagged text takes a theme token,
-   `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into the span's inline style), declared in both theme
-   blocks of both sheets at 4.5:1 or better on `--bg`, overridden to black in the print block on `.fileview-md` (a
-   custom property inherits, so it reaches the flagged span and an unsupported command's glyphs inside a rendered
+   the memoised lex equal to the plain one and the singleton's lex linear: since the review round 8 as the median of
+   seven paired ratios of one lex of a 16,000-paragraph note to eight lexes of a 2,000-paragraph one, equal work for a
+   linear lex, bounded at 3 where a linear lex measures 1.0 to 1.1 and the pre-memo one 7.5, with a 1,500 ms guard on
+   the large note's median, and the math hint's own finder counted once per frame through the frame it writes; round
+   7's single-lex pairs, bounded at 24 where a linear lex measured 9, inflated three times under a CPU quota, steadily
+   across every pair, because only the large lex outlasted a scheduler slice, and the earlier bound, ten times a small
+   timing taken first, failed under a parallel suite's load on the merge audit). KaTeX's flagged text takes a theme
+   token, `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into the span's inline style), declared in both
+   theme blocks of both sheets at 4.5:1 or better on `--bg`, overridden to black in the print block on `.fileview-md`
+   (a custom property inherits, so it reaches the flagged span and an unsupported command's glyphs inside a rendered
    formula alike; set on `.katex-error` alone, those glyphs printed in the screen red) and to the bubble's own ink in
    the person's bubble (`currentColor`: the page's red read at 1.67:1 and 1.28:1 on the two fills; the review round 2,
    md-config-math-inks-browser.test.ts), as the source fallback prints; KaTeX's default #cc0000 read at 2.8:1 on the
@@ -1342,20 +1353,19 @@ as built departs from the text above, why, and which test holds each rule:
    (an identical one, whose arrival or departure changes the key's count; a same-titled fold with a body of its own
    leaves the twins paired in the first pass while their count stands; once it changed, one removed or added ahead of
    them in the same write shifts their states the same way, the review round 7): three identical `> [!note]- Todo`
-   twins, the middle one open, the first
-   removed, and the person's twin is now the first, takes the first noted state, shut, and the one below it opens, the
-   content having nothing to tell identical twins apart, the limit the review round 6 states here and in foldKeeper's
-   header; the review round 5: round 4's rule, one noted fold and one new fold only, sent untouched twins whole to the
-   second pass too, where a same-titled fold inserted or removed ahead of them shifted their states by one, the fifth
-   leg of the fold-state test), then the leftovers by class and summary text alone, so a fold a session's edit rewrote
-   keeps its state and a fold that stands as it was keeps its own when a fold of the same class and title was removed
-   or inserted ahead of it (the review round 3: with class and summary text as the whole key, two `> [!note]- Same
-   title` callouts shared one queue, and a reload the Comments panel's poll asked for after such an edit opened the
-   fold the person had left shut; the same leg drives that reload through the panel's poll). Order alone decides an
-   edit that both removes one same-titled fold and rewrites another's body, a twin rewritten in the same write that
-   inserts a same-titled fold, whose text change is the insertion's, and an identical twin added or removed ahead of
-   the twin the person reads. A body of `#` lines alone is a comment-only mapping and folds, as pandoc, Jekyll and
-   Obsidian read it; in a reply that shape is inside item 1's open ruling.
+   twins, the middle one open, the first removed, and the person's twin is now the first, takes the first noted state,
+   shut, and the one below it opens, the content having nothing to tell identical twins apart, the limit the review
+   round 6 states here and in foldKeeper's header; the review round 5: round 4's rule, one noted fold and one new fold
+   only, sent untouched twins whole to the second pass too, where a same-titled fold inserted or removed ahead of them
+   shifted their states by one, the fifth leg of the fold-state test), then the leftovers by class and summary text
+   alone, so a fold a session's edit rewrote keeps its state and a fold that stands as it was keeps its own when a
+   fold of the same class and title was removed or inserted ahead of it (the review round 3: with class and summary
+   text as the whole key, two `> [!note]- Same title` callouts shared one queue, and a reload the Comments panel's
+   poll asked for after such an edit opened the fold the person had left shut; the same leg drives that reload through
+   the panel's poll). Order alone decides an edit that both removes one same-titled fold and rewrites another's body,
+   a twin rewritten in the same write that inserts a same-titled fold, whose text change is the insertion's, and an
+   identical twin added or removed ahead of the twin the person reads. A body of `#` lines alone is a comment-only
+   mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside item 1's open ruling.
 4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1 block
    pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number, and ONLY when the
    document defines the id (GitHub's rule; the lexer lexes every block before any inline text, so the definitions are
@@ -1637,7 +1647,15 @@ as built departs from the text above, why, and which test holds each rule:
    the column overflows the column on screen with no scroll, the tail readable from Raw, where one with a top-level
    `+` or `=` wraps between its bases (item 1, KaTeX's nowrap, which no sheet rule scales; an inline-block scroll box
    of its own would lift every inline formula off the text's baseline, CSS 2.1 section 10.8.1, and make a breakable
-   one a block, measured in round 6).
+   one a block, measured in round 6). Open after the review round 8: a hole's text is painted when it stands between
+   two positioned characters of a range and not when it stands at the range's edge (paintRendered's skip of an
+   endpoint that found no position and wrapBetween's wrap of everything between the two it has are main's path for
+   tables and code blocks, which the slice's callout title and front matter inherit; the slice's one change on those
+   lines passes the formulas), so a comment on a whole alert paints its body alone and one running past it paints the
+   generated title too, text the source does not hold; painting a hole at the edge would paint tables and code blocks
+   there as well, and never painting generated text would make the title a control, which changes
+   mapRenderedSelection's refusal of an endpoint inside it (item 5; anchor-map-obsidian.test.ts's refusal test), so
+   the rule for holes is Slice 5's, with its painter items.
 
 ### Slice 5: comments anchor on real notes
 
