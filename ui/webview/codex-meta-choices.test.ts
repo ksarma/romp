@@ -440,6 +440,8 @@ test("executed: the landing closes a chat menu whose tab was dismissed under it,
 
 // A comment thread's popover menu names its sid (forSid, never the active tab), so the guard above does not
 // touch it: the active tab may change under it and the landing still rebuilds against the thread's badge.
+// A regression pin for a Codex thread: threadMetaStatus reports backend "sdk" for every thread today, so no
+// thread menu is a Codex menu yet, and the stub hands the popover a status the real function cannot return.
 test("executed: a thread popover's waiting menu still rebuilds on the landing whatever tab is active", async () => {
   const TID = "22222222-3333-4444-8555-666666666666";
   const OTHER = "33333333-4444-4555-8666-777777777777";

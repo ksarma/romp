@@ -1314,7 +1314,9 @@ class EchoAtoms(unittest.TestCase):
     echo keys on (SdkBackend's echo atoms carry it): _merge_live_atoms hides the echo behind its queued
     bubble and never counts it as live work; build_session's queued fold and /diag/sendvis
     (_sendvis_diag) read it; build_session's _live_cmd_keys reads it only off an atom carrying
-    `command`, which a Codex echo never does today (the comment-thread frame's held fold reads SDK
+    `command`, which a Codex echo never does today, and _merge_live_atoms's by-id landing map
+    (_note_send_landings, run over the same live list) only off one carrying `_send_id`, which a
+    Codex echo never carries (send() mints none; the comment-thread frame's held fold reads SDK
     echoes only: _comments_frame binds _sdk()). Until 2026-09-09 CodexBackend.live_atoms left it off,
     so a Codex echo painted as a solid user atom beside its own queued bubble and forced the last turn
     open (the merge itself is pinned in tests/test_codex_echo_merge.py). The backend's own retire,
@@ -1432,6 +1434,88 @@ class EchoAtoms(unittest.TestCase):
         self.assertFalse(be.send(sid, "ok"))
         self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111"],
                          "the earlier echo survives; only the failed send's own echo is taken back")
+
+
+class GateClosings(unittest.TestCase):
+    """gate_closings counts the live set going EMPTY, once per transition, at the write that empties it.
+    The kernel's /models gate opens with the first live Codex session, and the two doors that open it
+    (the spawn, the revive) read this count before and after landing their row to learn whether the
+    gate closed under them: a count of live rows read after the fact could not tell "still open" from
+    "closed and reopened" (two creates racing a kill of the only other session both read 2), and fired
+    where nothing had flipped (a kill of another row after the landing). Every live-to-dead write is a
+    site: kill, the name-write retire, spawn's failure pops, and a failed revive's rollback. Synthetic
+    fixtures only; the backend runs clientless (a launch-error row lands live, as it does in the kernel)."""
+
+    def _corrupt(self, td):
+        os.makedirs(os.path.join(td, "codex"), exist_ok=True)
+        with open(os.path.join(td, "codex", "registry.json"), "w") as f:
+            f.write("{ not json")
+
+    def test_a_kill_counts_only_when_it_empties_the_live_set(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            a = be.spawn("web", "/TESTDIR")
+            b = be.spawn("api", "/TESTDIR")
+            self.assertEqual(be.gate_closings(), 0, "two spawns: the set filled, never emptied")
+            self.assertTrue(be.kill(a))
+            self.assertEqual(be.gate_closings(), 0, "one row still live: the gate stayed open")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 1, "the last live row died: one closing")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 1, "a second kill of a dead row is no transition")
+            self.assertTrue(be.resume("api", b))
+            self.assertEqual(be.gate_closings(), 1, "dead to live never counts")
+            self.assertTrue(be.resume("api", b))
+            self.assertEqual(be.gate_closings(), 1, "nor does a revive of a row already live")
+            self.assertTrue(be.kill(b))
+            self.assertEqual(be.gate_closings(), 2, "empty again: the second closing")
+
+    def test_the_name_write_retire_counts_one_closing_for_flip_and_pop_together(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "names"), "w") as f:
+                f.write("not a dir")               # names/ is uncreatable: the names write raises
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            with self.assertRaises(Exception):
+                be.spawn("web", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (0, 1),
+                             "the row was live between its put and its retire; the flip counts, the pop of the "
+                             "dead row does not count again")
+
+    def test_a_spawn_whose_registry_write_fails_counts_the_pop_of_its_live_row(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self._corrupt(td)
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            with self.assertRaises(RuntimeError):
+                be.spawn("web", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (0, 1),
+                             "the put published a live row; a door that snapshotted it must hear it went away")
+
+    def test_a_spawn_failure_pop_beside_a_live_row_counts_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            be.spawn("web", "/TESTDIR")
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.spawn("api", "/TESTDIR")
+            self.assertEqual((len(be._sessions), be.gate_closings()), (1, 0), "the first row kept the gate open")
+
+    def test_a_failed_revives_rollback_counts_the_closing_it_makes(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            sid = be.spawn("web", "/TESTDIR")
+            be.kill(sid)
+            self.assertEqual(be.gate_closings(), 1)
+            self._corrupt(td)
+            with self.assertRaises(RuntimeError):
+                be.resume("web", sid)
+            self.assertTrue(be._session(sid).dead)
+            self.assertEqual(be.gate_closings(), 2,
+                             "the flip held a live row for the save's duration; taking it back emptied the set")
 
 
 class LaunchErrorNames(unittest.TestCase):

@@ -323,6 +323,15 @@ class CodexBackend:
         self._client_lock = threading.Lock()
         self._sessions = {}           # sid → _Session
         self._sessions_lock = threading.RLock()
+        # Gate closings: how many times the LIVE set went empty, counted under _sessions_lock at the
+        # write that emptied it. The kernel's /models gate opens with the first live Codex session, and
+        # the two doors that open it (the spawn, the revive) compare this count across their own window
+        # to learn whether the gate closed under them (kernel._codex_gate_opened): a count read after
+        # the fact cannot tell "still open" from "closed and reopened", and two doors racing a kill
+        # both read the same count. Every live-to-dead writer goes through _retire_row or _drop_row
+        # (kill, the name-write retire, spawn's failure pops) or counts inline (resume's rollback);
+        # a new one must too, or the doors miss the closing it makes.
+        self._gate_closings = 0
         self._reg_lock = threading.Lock()
         self._load_registry()
         # A kernel restart must not strand a durable backend queue until the user happens to send
@@ -389,6 +398,39 @@ class CodexBackend:
     def _put_session(self, s):
         with self._sessions_lock:
             self._sessions[s.sid] = s
+
+    def gate_closings(self):
+        """How many times the live set has gone empty (see __init__): a door reads it before it lands its
+        row and again after, and a difference is the gate closing under it, whatever the count of live
+        rows says afterwards."""
+        with self._sessions_lock:
+            return self._gate_closings
+
+    def _live_row_remains_locked(self):
+        # under _sessions_lock; `dead` is a plain attribute, and every live-to-dead write holds this lock
+        return any(not t.dead for t in self._sessions.values())
+
+    def _retire_row(self, s):
+        """Flip `s` dead and count a gate closing when it was the last live row. Called under s.lock
+        (kill, the name-write retire), which spawn's `with s.lock: self._put_session(s)` already orders
+        before _sessions_lock; the flip and the emptiness check share one hold of _sessions_lock, so two
+        rows dying at once count one closing, not none (each check seeing the other row still live) or
+        two (both checks seeing none), and a second kill of a dead row counts none."""
+        with self._sessions_lock:
+            was_live = not s.dead
+            s.dead = True
+            if was_live and not self._live_row_remains_locked():
+                self._gate_closings += 1
+
+    def _drop_row(self, s):
+        """Remove `s` from the registry, counting a gate closing when a LIVE row left the set empty:
+        spawn's failure paths pop the row they just put live (a door that snapshotted the gate open on
+        that row needs to hear it went away); the name-write retire pops a row _retire_row already
+        flipped, which is no second closing."""
+        with self._sessions_lock:
+            gone = self._sessions.pop(s.sid, None)
+            if gone is not None and not gone.dead and not self._live_row_remains_locked():
+                self._gate_closings += 1
 
     _names_lock = threading.Lock()   # serializes this backend's names/<sid> read-modify-writes
 
@@ -1009,14 +1051,13 @@ class CodexBackend:
             self._write_name(s, bg, fg)
         except BaseException:
             with s.lock:
-                s.dead = True
+                self._retire_row(s)
                 try:
                     self._save_registry(s, fields=("dead",))
                 except Exception as e2:
                     self.log("codex spawn: could not retire %s after its name write failed (%s)"
                              % (s.sid, e2))
-            with self._sessions_lock:
-                self._sessions.pop(s.sid, None)
+            self._drop_row(s)
             raise
 
     def _write_name(self, s, bg="", fg=""):
@@ -1069,8 +1110,7 @@ class CodexBackend:
                     # no durable row → no in-memory row: the phantom rendered as a live lane
                     # with NO names file, so a retry of the same name minted a duplicate — the
                     # r27 hole re-opened on exactly the raising path (the r28 verification)
-                    with self._sessions_lock:
-                        self._sessions.pop(sid, None)
+                    self._drop_row(s)
                     raise
             self._publish_spawn_name(s)    # a LIVE launch-error row without a shared name let a
             #                                retry mint a duplicate live "web" (the v1.3.12 audit)
@@ -1089,8 +1129,7 @@ class CodexBackend:
                 try:
                     self._save_registry(s, create=True)
                 except BaseException:
-                    with self._sessions_lock:
-                        self._sessions.pop(sid, None)
+                    self._drop_row(s)
                     raise
             self._publish_spawn_name(s)    # same rule as the client-missing branch above
             return sid
@@ -1101,8 +1140,7 @@ class CodexBackend:
             try:
                 self._save_registry(s, create=True)
             except BaseException:
-                with self._sessions_lock:
-                    self._sessions.pop(sid, None)
+                self._drop_row(s)
                 raise
         self._ensure_norm(s)
         # touch the materialized transcript NOW: discovery lists real files, and an empty jsonl
@@ -1138,8 +1176,13 @@ class CodexBackend:
                 # roll the flip back: with dead=False already published in memory, a FAILED
                 # revive rendered a live lane beside its own reviveFailed message, and the next
                 # kernel restart silently killed it again (the r28 verification, executed)
-                (s.dead, s.loaded, s.name, s.cwd, s.state, s.since,
-                 s.change_generation) = prior
+                with self._sessions_lock:
+                    (s.dead, s.loaded, s.name, s.cwd, s.state, s.since,
+                     s.change_generation) = prior
+                    # the flip held a live row for the save's duration, and a door's gate snapshot
+                    # may have seen it: taking it back is a closing when no other row is live
+                    if s.dead and not self._live_row_remains_locked():
+                        self._gate_closings += 1
                 raise
         if queued:
             self._ensure_worker(s)
@@ -1152,7 +1195,7 @@ class CodexBackend:
             return False
         save_error = None
         with s.lock:
-            s.dead = True
+            self._retire_row(s)              # the flip, and the gate closing if it was the last live row
             turn_id, tid, worker = s.turn_id, s.tid, s.worker
             # Persist the lifecycle mutation before releasing the session lock. A concurrent resume
             # must order after this write instead of being overwritten by a delayed kill snapshot.
@@ -1554,8 +1597,10 @@ class CodexBackend:
                 # it as live work (an echo-only merge keeps the turn's real ended state); build_session's
                 # queued fold reads it, as does /diag/sendvis (_sendvis_diag lists every live echo's
                 # text); build_session's _live_cmd_keys reads it only off an atom carrying `command`,
-                # which a Codex echo never does today (see prune_live). (The comment-thread frame's
-                # held fold reads SDK echoes only: _comments_frame binds _sdk(), so no Codex echo
+                # which a Codex echo never does today (see prune_live), and _merge_live_atoms's by-id
+                # landing map (_note_send_landings, run over the same live list) only off one carrying
+                # `_send_id`, which a Codex echo never carries (send() mints none). (The comment-thread
+                # frame's held fold reads SDK echoes only: _comments_frame binds _sdk(), so no Codex echo
                 # reaches it.) Without the marker (until 2026-09-09) a Codex echo painted as a solid
                 # user atom beside its own queued bubble, painted once more beside its landed record,
                 # and forced the last turn open: a false "working" chip for a session whose only live

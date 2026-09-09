@@ -8,15 +8,19 @@ Codex session opened it. Now the section carries `error` in every empty state (t
 backend name themselves, so the menu never reads an empty list as the app-server's answer), and the first
 live Codex session fires the models frame the pick memory and the catalog fetch already send, through
 EITHER door that opens the gate: the spawn (_create_codex_session_inner) and the revive of a dead session
-(_revive_session_inner's Codex arm; the first cut covered the spawn alone). The frame fires on either of two
-signals: the door's OWN before-snapshot of the gate (_codex_gate_closed), or a live count of exactly one read
-after the row landed. Two first creates or two first revives can interleave (a thread per POST /new, one per WS
-client), and a test on the count alone saw 2 in both and fired for neither (executed with a barrier below); the
-snapshot fires both. A create whose snapshot saw another session live, killed before this row landed, is the
-order the snapshot misses and the count catches. Sequential second doors fire on neither. A backend that raises
-under the snapshot reads as closed and fires; one that raises under the helper's own read breaks neither door
-and names the door on stderr. The backend is a FAKE here (no app-server, no network); the handler runs
-in-process on a loopback ThreadingHTTPServer, the test_kernel_cors idiom. Synthetic fixtures only.
+(_revive_session_inner's Codex arm; the first cut covered the spawn alone). The frame fires when the gate was
+closed anywhere between the door's own before-snapshot (_codex_gate_closed) and its landing: the snapshot saw
+no live session, or the backend's closings counter (gate_closings, incremented where a row leaves the live set
+and none remains) moved since the snapshot. Two first creates or two first revives can interleave (a thread
+per POST /new, one per WS client), and a test on the count alone saw 2 in both and fired for neither (executed
+with a barrier below); the snapshot fires both. A kill of the only other session between a door's snapshot and
+its landing is the order the snapshot misses and the counter catches, and two creates racing that kill (both
+snapshots saw the row, both landings followed it) is the order a count of exactly one after landing missed too.
+Sequential second doors fire on neither; a kill after the row landed and a revive of an already-live row send
+nothing, since the set never emptied. A backend that raises under the snapshot reads as closed and fires; one
+that raises under the helper's own read breaks neither door and names the door on stderr. The backend is a
+FAKE here (no app-server, no network); the handler runs in-process on a loopback ThreadingHTTPServer, the
+test_kernel_cors idiom. Synthetic fixtures only.
 """
 import contextlib
 import http.client
@@ -44,6 +48,7 @@ km = load_source("romp_kernel_codex_models", os.path.join(BIN, "romp-kernel"))
 
 SID = "11111111-2222-4333-8444-555555555555"
 SID2 = "22222222-3333-4444-8555-666666666666"
+SID3 = "33333333-4444-4555-8666-777777777777"
 MODELS = [{"value": "gpt-5-test", "label": "GPT-5 Test"}]
 
 
@@ -63,7 +68,9 @@ class FakeCodex:
     what successive spawns mint (the last one repeats). `barrier`: a threading.Barrier that spawn and
     resume wait on AFTER landing their row, so two doors driven from two threads both hold a live row
     before either reaches the gate check, the interleaving the real backend's tail (registry save,
-    transcript touch, names write) leaves open."""
+    transcript touch, names write) leaves open. `closings`: the real backend's gate_closings counter,
+    incremented when a kill (fake.kill, a kill on another thread) leaves the live set empty, the event
+    the doors compare across their window."""
 
     def __init__(self, models=None, error=None, live=None, raise_catalog=None, dead=(), sids=(SID,), barrier=None):
         self.models, self.error, self.live = list(models or []), error, dict(live or {})
@@ -72,10 +79,22 @@ class FakeCodex:
         self.dead = set(dead)
         self.sids, self.spawns = list(sids), 0
         self.barrier = barrier
+        self.closings = 0
         self._lock = threading.Lock()
 
     def live_sessions(self):
         return self.live
+
+    def gate_closings(self):
+        with self._lock:
+            return self.closings
+
+    def kill(self, sid):
+        with self._lock:
+            self.live.pop(sid, None)
+            self.dead.add(sid)
+            if not self.live:
+                self.closings += 1   # the set went empty: the gate closed, whatever lands after
 
     def _session(self, sid):
         return object() if sid in self.live or sid in self.dead else None
@@ -87,7 +106,7 @@ class FakeCodex:
     def resume(self, name, sid, cwd=None):
         with self._lock:
             if sid not in self.dead:
-                return False
+                return sid in self.live   # the real resume flips dead=False on any known row and answers True
             self.dead.discard(sid)
             self.live[sid] = {"state": "waiting", "model": "gpt-5-test", "backend": "codex", "name": name}
         self._landed()
@@ -246,8 +265,8 @@ class GateFlipFrame(unittest.TestCase):
     # reaches the gate check; the same for two revives after a kernel restart that found every Codex
     # session dead. The frame used to key on `len(live_sessions()) == 1` read AFTER the row landed, so
     # both threads saw 2 and neither sent one: every open dashboard's Codex list stayed empty until the
-    # chat's own open-time re-read, and the timeline lane never re-reads (executed with this barrier).
-    # Keyed on each door's own before-snapshot as well, both fire. The assertion is the SET of apps
+    # chat's own open-time re-read, and the timeline lane re-reads only on the frame (executed with this
+    # barrier). Keyed on each door's own before-snapshot, both fire. The assertion is the SET of apps
     # reached, not a frame count: two frames per app is the designed outcome here (each a cheap re-read;
     # the rev increments and the picker drops the lower), one is fine, zero is the bug.
     def _race(self, run, names):
@@ -302,14 +321,14 @@ class GateFlipFrame(unittest.TestCase):
 
     def test_a_kill_between_the_snapshot_and_the_landing_still_sends_the_frame(self):
         # The order the snapshot alone misses. SID is live, so this create's snapshot sees the gate OPEN;
-        # SID is killed before this row lands (the fake's spawn drops it first: a kill on another thread);
+        # SID is killed before this row lands (the fake's spawn kills it first: a kill on another thread);
         # the row lands as the only live session. The gate went closed and open again inside the window,
         # and a /models read there answered the closed gate's empty list, so the pickers need the frame:
-        # the count read after landing (exactly one) is the signal, and every app hears it once.
+        # the closing the kill counted is the signal, and every app hears it once.
         fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
         land = fake.spawn
         def spawn(nm, cwd, bg, fg):
-            del fake.live[SID]          # the kill lands here, between the snapshot and this row
+            fake.kill(SID)              # the kill lands here, between the snapshot and this row
             return land(nm, cwd, bg, fg)
         fake.spawn = spawn
         km._codex_backend = fake
@@ -322,13 +341,101 @@ class GateFlipFrame(unittest.TestCase):
                          "the only live session after a kill interleaved with the create: every app hears the gate open")
         self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
 
+    def test_two_creates_racing_a_kill_of_the_only_other_session_still_send_the_frame(self):
+        # The order the snapshot and a count of exactly one after landing BOTH missed. SID3 is the only
+        # live session; two creates take their snapshots (both see it: the gate reads open to both); SID3
+        # is killed; both rows land; both counts read 2. The gate went closed and open again with neither
+        # rule firing, and a /models read in the closed window kept the empty list for good. The closing
+        # is counted where it happens, so both doors read a moved counter and at least one frame goes out.
+        # Three barriers order it: `entry` holds both threads until both snapshots are taken, `killed`
+        # holds both until the kill landed, and the fake's own barrier holds both rows landed before
+        # either door checks the gate.
+        fake = FakeCodex(models=MODELS, live={SID3: {"backend": "codex"}}, sids=(SID, SID2),
+                         barrier=threading.Barrier(2, timeout=10))
+        entry, killed = threading.Barrier(2, timeout=10), threading.Barrier(2, timeout=10)
+        land = fake.spawn
+        def spawn(nm, cwd, bg, fg):
+            if entry.wait() == 0:       # both snapshots are taken; one thread plays the kill
+                fake.kill(SID3)
+            killed.wait()               # the kill landed before either row does
+            return land(nm, cwd, bg, fg)
+        fake.spawn = spawn
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            self._race(lambda nm: km._create_codex_session_inner(nm, "/TESTDIR"), ("web", "api"))
+        self.assertEqual((sorted(fake.live), fake.closings), (sorted([SID, SID2]), 1), "both landed after the kill")
+        frames = self._frames()
+        self.assertEqual(set(a for a, _ in frames), {"chat", "feed", "timeline"},
+                         "two creates raced a kill of the only other session: every app still hears the gate open")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_second_door_landing_whole_inside_the_firsts_window_sends_exactly_one_frame(self):
+        # The other shape of the same hole: SID3 is killed after door A's snapshot, A's row lands, and door D
+        # runs whole (snapshot, landing, gate check) inside A's landing-to-check window (the real spawn's
+        # tail: registry save, transcript touch, names write, push) before A checks the gate. D's snapshot
+        # saw A's row and D's count read 2; A's count read 2 too, so a count of one fired for neither.
+        # Now D's window holds no closing (the kill came before its snapshot) and A's holds one: exactly
+        # one frame per app, from A.
+        fake = FakeCodex(models=MODELS, live={SID3: {"backend": "codex"}}, sids=(SID, SID2))
+        land, inner = fake.spawn, []
+        def spawn(nm, cwd, bg, fg):
+            if nm != "web":
+                return land(nm, cwd, bg, fg)          # door D's own landing
+            fake.kill(SID3)                           # the only other session dies after A's snapshot
+            sid = land(nm, cwd, bg, fg)               # A's row lands
+            inner.append(km._create_codex_session_inner("api", "/TESTDIR")[0])   # door D, whole, inside A's window
+            return sid
+        fake.spawn = spawn
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            sid, _ = km._create_codex_session_inner("web", "/TESTDIR")
+        self.assertEqual((sid, inner, sorted(fake.live)), (SID, [SID2], sorted([SID, SID2])))
+        frames = self._frames()
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "the door whose window held the closing sends the frame, the one inside it sends none")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_kill_after_the_landing_sends_no_frame_since_the_gate_never_closed(self):
+        # SID is live at the snapshot and this row lands beside it; SID is killed after the landing and
+        # before the gate check. The set never emptied (this row was in it), so the gate never closed and
+        # the pickers' list is unchanged: no frame. A count of exactly one read after the landing fired
+        # here, one re-read for nothing.
+        fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
+        land = fake.spawn
+        def spawn(nm, cwd, bg, fg):
+            sid = land(nm, cwd, bg, fg)
+            fake.kill(SID)              # after this row landed: two live, then one, never none
+            return sid
+        fake.spawn = spawn
+        km._codex_backend = fake
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            sid, _ = km._create_codex_session_inner("api", "/TESTDIR")
+        self.assertEqual((sid, sorted(fake.live), fake.closings), (SID2, [SID2], 0))
+        self.assertEqual(self._frames(), [], "the gate never closed: nothing the payload carries changed")
+
+    def test_reviving_an_already_live_sole_session_sends_no_frame(self):
+        # The real CodexBackend.resume flips dead=False on any known row and answers True, so a revive of a
+        # row that is already live (a stale Revive click, a retried revive) succeeds without touching the
+        # gate. The set never emptied and the snapshot saw the row: no frame. A count of exactly one fired
+        # here too.
+        fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}})
+        km._codex_backend = fake
+        focused, failed = [], []
+        with _revive_patched(focused, failed):
+            km._revive_session_inner(SID, {"wid": "w-chat"})
+        self.assertEqual((failed, [m["type"] for m in focused], list(fake.live)), ([], ["focus"], [SID]))
+        self.assertEqual(self._frames(), [], "a live row revived again: the gate did not move")
+
     def test_a_snapshot_that_raises_reads_as_closed_and_sends_the_frame(self):
-        # _codex_gate_closed's rule: a backend that raises under the snapshot reads as closed, erring toward
-        # a frame (one re-read too many beats a picker that never hears the list landed). Pinned where the
-        # count says otherwise: SID is live, so the count after landing reads 2 and only the snapshot can
-        # fire. The fake raises on the snapshot's read alone, named by its caller's frame (_pick_identity_color
-        # reads live_sessions before the snapshot and the helper after it), so the helper's own read works
-        # and nothing reaches stderr: the raise was swallowed where it was read, not logged as a lost frame.
+        # _codex_gate_closed's rule: a backend that raises under the snapshot reads as closed with no count
+        # to compare, erring toward a frame (one re-read too many beats a picker that never hears the list
+        # landed). Pinned where nothing else fires: SID is live and stays live, so no closing is counted
+        # and only the snapshot can fire. The fake raises on the snapshot's read alone, named by its
+        # caller's frame (_pick_identity_color reads live_sessions before the snapshot and the helper after
+        # it), so the helper's own read works and nothing reaches stderr: the raise was swallowed where it
+        # was read, not logged as a lost frame.
         fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
         real = fake.live_sessions
         def live_sessions():
