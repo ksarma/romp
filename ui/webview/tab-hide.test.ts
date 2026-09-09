@@ -15,7 +15,7 @@ import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, tog
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
          homeSectionOf, neighborOfFolded, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
-import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
+import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, compactCount, stripAndHidden, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -182,18 +182,25 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.equal(standInPip([{ session: null, ledger: null }]), null, "a placeholder tab: nothing");
   assert.equal(snapshotRow("api", { name: "api", status: { state: "ready" } }, { needsInput: true }).needsYou, true, "the row's chip, from the same onYou");
   assert.equal(hiddenNeeds([snapshotRow("api", { name: "api", status: { state: "ready" } }, { needsInput: true }, true)]), 1, "and the fold's count");
-  // the words: the count says how many are hidden (the guide's promise; round 1: it stayed the total, and "3" beside two
-  // tabs read as a wrong number); the label and the title carry the total
-  assert.deepEqual(headWords("infra", 3, 1, false, false), { count: "1 hidden", label: "infra, 3 sessions, 1 hidden",
-    title: "infra — 3 sessions, 1 hidden; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
-  assert.equal(headWords("infra", 3, 2, false, true).count, "2 hidden");
+  // the words: the count is the compact `<shown>+<hidden>` (the user 2026-09-08, who runs a dozen tag groups: the words
+  // "2 hidden" took too much of the strip; round 1 had made the count say how many are hidden because the bare total,
+  // "3" beside two tabs, read as a wrong number, and the compact form keeps that honesty, its first number the tabs on
+  // the strip, in the width of a plain count); the label keeps the full words, the title spells the form out
+  assert.deepEqual(headWords("infra", 3, 1, false, false), { count: "2+1", label: "infra, 3 sessions, 1 hidden",
+    title: "infra — 3 sessions, 2 on the strip and 1 hidden; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
+  assert.equal(headWords("infra", 3, 2, false, true).count, "1+2");
+  assert.equal(headWords("infra", 8, 2, false, false).count, "6+2", "eight members, two hidden: six tabs on the strip");
+  assert.equal(headWords("infra", 3, 3, false, false).count, "0+3", "every member hidden: no tab on the strip, and the count says so");
+  assert.equal(headWords("infra", 3, 3, false, false).title, "infra — 3 sessions, none on the strip and 3 hidden; click to fold this group and see its sessions at a glance; drag to reorder the groups");
+  assert.deepEqual([compactCount(8, 2), compactCount(3, 0), compactCount(1, 1)], ["6+2", "3", "0+1"], "the one source of the form (the door's words lead with it: sectionDoorTitle below)");
+  assert.deepEqual([stripAndHidden(8, 2), stripAndHidden(3, 3)], ["6 on the strip and 2 hidden", "none on the strip and 3 hidden"], "the form spelled out, for the hover and the door's name");
   assert.equal(headWords("infra", 3, 2, false, true).label, "infra, 3 sessions, 2 hidden, holds the tab you are reading");
   assert.deepEqual([headWords("infra", 3, 0, false, false).count, headWords("infra", 3, 0, false, false).label], ["3", "infra, 3 sessions"], "nothing hidden: the words as they were");
-  assert.equal(headWords("infra", 3, 1, false, true, true).title, "infra — 3 sessions, 1 hidden; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
+  assert.equal(headWords("infra", 3, 1, false, true, true).title, "infra — 3 sessions, 2 on the strip and 1 hidden; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
   // ROUND 4: the open header the pane shows WITHOUT the tab being read still folds on its click (toggle-group), and its title
   // says so without "and see its sessions at a glance": the sessions are in the pane already, and the count beside it says
   // "shown below" (the round-3 words, sectionDoorTitle `shown`)
-  assert.equal(headWords("infra", 3, 1, false, false, false, true).title, "infra — 3 sessions, 1 hidden; click to fold this group; drag to reorder the groups");
+  assert.equal(headWords("infra", 3, 1, false, false, false, true).title, "infra — 3 sessions, 2 on the strip and 1 hidden; click to fold this group; drag to reorder the groups");
   assert.equal(headWords("archived", 1, 0, false, false, false, true).title, "archived — 1 session; click to fold this group; drag to reorder the groups");
   assert.doesNotMatch(headWords("infra", 3, 1, false, false, false, true).title, /at a glance/);
   assert.deepEqual([headWords("infra", 3, 1, false, false, false, true).count, headWords("infra", 3, 1, false, false, false, true).label],
@@ -376,15 +383,15 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
-  assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
+  assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count shows two numbers, \*\*6\+2\*\* for six on the strip and two hidden \(the tooltip spells it out\)\./, "the compact count (headWords, compactCount; the user 2026-09-08: the words were too wide a head), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
   assert.match(flat, /While the group is open, its count opens this view without folding the group, so hiding a session never needs a fold; the dot and the flag, which appear once something is hidden, do the same\. On a folded header the flag opens the group, as before\./, "the non-folding door, on every open header (round 2: the sentence had claimed the count for a door before the first hide, when it was a plain span)");
   assert.match(flat, /On a folded header the flag opens the group, as before\. While this view shows an open group, its count, dot and flag take you back to the transcript\. Clicking a hidden session's row/, "round 3: the count, the dot and the flag of the group the pane shows are the way back (the sentence on the header's second click, pinned by tab-snapshot.test, stands as it was); round 4: an OPEN group's (a folded group the view shows has no door: its count is a plain span and its flag opens the group)");
   assert.doesNotMatch(flat, /While this view shows a group, its count/, "round 4: the unqualified sentence promised the way back on a folded group's marks too");
-  assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);
+  assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the session has another tag whose group is folded and does not hide it: that group opens and the tab shows there, the hide standing where it was\./, "round 5: the pick's unfold is per holder (unfoldSectionOf), so another folded group of the session's tags opens for it");
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
-  assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section if the section is folded \(a hidden session's section stays as it was; see the next paragraph\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1)");
+  assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section if the section is folded \(with several tags, the first folded group of them that does not hide it; a section that hides the session stays as it was; see the next paragraph\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1) and for several tags (round 5)");
   assert.ok(!para.includes("—"), "no em dash in the new guide text");
   assert.ok(!/fleet/i.test(para));
   const ref = REF.slice(REF.indexOf("### The tab strip's per-browser choices"), REF.indexOf("### Model and effort, from the statusline or a typed command")).replace(/\s+/g, " ");
@@ -425,14 +432,15 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   // the two mediums: the flag on an open header over a hidden member ran open-group, a write that opened a group already
   // open (nothing moved), and the pane, the one place to Hide or Show, sat behind the header's click, which folds the
   // group over its reader (a hide cost fold, Hide, open: three gestures and two strip moves). Now the open header's count
-  // reads "K hidden" and is a button (the door a keyboard reaches), the pip and the flag act the same (show-group), and
+  // reads the compact "S+K" and is a button (the door a keyboard reaches), the pip and the flag act the same (show-group), and
   // the handler sets snapView and renders: no store write, so the fold stands. tab-hide-browser.test drives it in Chromium.
   assert.equal(SHOW_GROUP_CLICK, "click to show this group's sessions");
   // ROUND 2: the door's words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count), so the name a voice control hears
-  // contains the label it sees ("1 hidden", or the total); with nothing hidden the click clause says what the pane is
+  // contains the label it sees ("2+1", spelled out after it, or the total); with nothing hidden the click clause says what the pane is
   // for, since every session is on the strip already
-  assert.equal(sectionDoorTitle(1, 3), "1 hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
-  assert.equal(sectionDoorTitle(2, 3), "2 hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(1, 3), "2+1: 2 on the strip and 1 hidden while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(2, 3), "1+2: 1 on the strip and 2 hidden while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(3, 3), "0+3: none on the strip and 3 hidden while this group is open; " + SHOW_GROUP_CLICK, "every member hidden");
   assert.equal(sectionDoorTitle(0, 3), "3 sessions; click to see them at a glance and hide any from the strip");
   assert.equal(sectionDoorTitle(0, 1), "1 session; click to see it at a glance and hide it from the strip");
   for (const [hid, total] of [[0, 1], [0, 3], [1, 3], [2, 3], [3, 3]] as const)
@@ -455,8 +463,8 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   assert.equal(BACK_TO_TRANSCRIPT_CLICK, "click to go back to the transcript");
   assert.equal(sectionDoorTitle(0, 3, true), "3 sessions, shown below; click to go back to the transcript");
   assert.equal(sectionDoorTitle(0, 1, true), "1 session, shown below; click to go back to the transcript");
-  assert.equal(sectionDoorTitle(1, 3, true), "1 hidden from the strip while this group is open; the group's sessions are shown below; click to go back to the transcript");
-  assert.equal(sectionDoorTitle(3, 3, true), "3 hidden from the strip while this group is open; the group's sessions are shown below; click to go back to the transcript");
+  assert.equal(sectionDoorTitle(1, 3, true), "2+1: 2 on the strip and 1 hidden while this group is open; the group's sessions are shown below; click to go back to the transcript");
+  assert.equal(sectionDoorTitle(3, 3, true), "0+3: none on the strip and 3 hidden while this group is open; the group's sessions are shown below; click to go back to the transcript");
   for (const [hid, total] of [[0, 1], [0, 3], [1, 3], [2, 3], [3, 3]] as const) {
     assert.ok(sectionDoorTitle(hid, total, true).startsWith(headWords("infra", total, hid, false, false).count), `label in name, shown: ${hid} of ${total}`);
     assert.ok(sectionDoorTitle(hid, total, true).endsWith("; " + BACK_TO_TRANSCRIPT_CLICK), `the way back, shown: ${hid} of ${total}`);

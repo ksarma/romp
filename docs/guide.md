@@ -140,7 +140,9 @@ reorders the tags on every surface (the timeline's tag table shows the same orde
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
-button's menu, turns the sections off for this browser.
+button's menu, turns the sections off for this browser. The groups follow one another across the
+strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
+group on its own row instead.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
@@ -156,7 +158,8 @@ the feed. What it is doing now comes from its current task, else from the headli
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
 its formatting; click one to open that session, which also opens its section if the section is
-folded (a hidden session's section stays as it was; see the next paragraph). The rows update as
+folded (with several tags, the first folded group of them that does not hide it; a section that
+hides the session stays as it was; see the next paragraph). The rows update as
 the sessions work and change only when something about a session changes; the **needs you** word
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
@@ -170,17 +173,19 @@ and moves its row under a **Hidden (N)** fold at the foot of the view, one click
 **Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
 open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
-when one of them needs you), and its count says how many are hidden. When a hidden session needs
-you, the fold's head says so in red before you open it, and its row says **needs you**. While the
+when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
+hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
+red before you open it, and its row says **needs you**. While the
 group is open, its count opens this view without folding the group, so hiding a session never needs
 a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
 the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
 you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
-standing in for the tab, and leaves it hidden, its group folded or open as it was. A session set to
-**Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes when
-you show it again. A hidden session keeps the setting when its group is renamed, and shows again
-wherever it lands when it leaves the group. Like the sections, hiding is per browser and for the
-desktop layout.
+standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the
+session has another tag whose group is folded and does not hide it: that group opens and the tab
+shows there, the hide standing where it was. A session set to **Show when folded** stays hidden
+while it is hidden: the hide wins, and the setting resumes when you show it again. A hidden
+session keeps the setting when its group is renamed, and shows again wherever it lands when it
+leaves the group. Like the sections, hiding is per browser and for the desktop layout.
 
 ### The feed
 

@@ -1999,17 +1999,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   on the `goals` line so that item can be judged from a measurement.
   `unreadable_stores` is a gauge, not a counter: the goals files currently in
   a fault episode. A read-failure episode is a file that exists and did not
-  read; bytes that do not parse are no episode (`load_goals` quarantines them
-  aside and answers a fresh store). `load_goals` raises on a read fault, never
-  an empty store; the per-session boundary (`load_goals_or_fault`) contains
-  the fault to that session, files one `store-unreadable` judge-errors row per
-  episode and skips the session's goal-derived work for that build or pass; a
-  judge pass that meets the fault files a `pass-crash` row for the session;
-  nothing is published over the file, and the next good read or publish
-  through the boundary ends the episode. A publish that failed
-  (`store-unwritable`) stands in the same table. `romp perf` prints it on the
-  `goals` line when it is not zero, and the kernel warns the chat pane once
-  per episode for a listed session.
+  read; bytes that do not parse are no episode on a read (`load_goals`
+  quarantines them aside and answers a fresh store); met by a save's strict
+  read they end the publish and stand as a `store-unwritable` episode.
+  `load_goals` raises on a read fault, never an empty store; the per-session
+  boundary (`load_goals_or_fault`) contains the fault to that session, files
+  one `store-unreadable` judge-errors row per episode and skips the session's
+  goal-derived work for that build or pass; a judge pass that reaches the
+  store outside that boundary files a `pass-crash` row for the session
+  instead (the captioner reads through it, so its fault is the
+  `store-unreadable` row); nothing is published over the file, and the next
+  good read or publish through the boundary ends the episode. A publish that
+  failed (`store-unwritable`), on the write or on the save's own read of the
+  file, stands in the same table. `romp perf` prints it on the `goals` line
+  when it is not zero, and the kernel warns the chat pane once per episode
+  for a listed session.
   `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
   session's whole states file: the episode-boundary check consults it only for
   a head the memoized episode log does not hold yet, so at steady state the
