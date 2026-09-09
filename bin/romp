@@ -1023,7 +1023,7 @@ if [[ "${1:-}" == "perf" ]]; then
     # frame, the browser's long-animation-frame reports with the callbacks they name, heap and DOM size — the
     # Files pane's row times the viewer's own paint pass (fileview:paint, fileview:reflow) since nothing is
     # pushed to it, and the shell (the top-level window, app "shell") posts a row with no frame types, the
-    # long frames the browser reports to it alone (an iframe's land there), 2026-09-09 — plus
+    # long frames the browser reports to it alone (an iframe's long frames land there), 2026-09-09 — plus
     # a "slowframe" row the moment a frame's whole handling runs 100 ms or more, five a minute at most, the
     # rest counted in the minute row. The kernel appends them to $STATE/client-diag.jsonl with the dashboard
     # id (wid) and its clock, and rotates that file to .1 past 8 MB; this reads both, folds the last <n>

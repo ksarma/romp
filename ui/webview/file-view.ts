@@ -110,12 +110,13 @@ marked.use({
 // default for markdown (the user 2026-08-09); Raw stays one click away.
 /** Run a paint pass of the viewer as one timed frame of the page's performance collector (ui/webview/perf-telemetry.ts,
  *  window.__rompPerf), under the type `fileview:<why>`: `paint` for a text body painted anew, `reflow` for the panel's
- *  re-paint over unchanged text (the body's width moved, or a text-size step). The Files pane gets no frames pushed to it, so this is the only work its
- *  collector times; the cost of a large reviewed file (the panel re-wraps every highlight per pass) then shows per
- *  minute in `romp perf client` under app "files", with the main-thread-free sample the collector takes after an
- *  outermost bracket, instead of a long frame nobody attributed (2026-09-09: a divider drag with a big note open
- *  blocked the main thread for about 20 s and no pane recorded it). On the chat page the same brackets count under the
- *  chat's collector. No collector (a page without one, a stand-in): the pass runs untimed, exactly as before. */
+ *  re-place of its cards over reflowed text (the body's width changed, or a text-size step). The Files pane gets no
+ *  frames pushed to it, so these brackets and the socket's op replies (`fed:<type>`) are the only work its collector
+ *  times; the cost of a large reviewed file then shows per minute in `romp perf client` under app "files", with the
+ *  main-thread-free sample the collector takes after an outermost bracket, instead of a long frame nobody attributed
+ *  (2026-09-09: a divider drag with a big note open blocked the main thread for about 20 s and no pane recorded it).
+ *  On the chat page the same brackets count under the chat's collector. No collector (a page without one, a
+ *  stand-in): the pass runs untimed, exactly as before. */
 export function perfTimed<T>(why: string, fn: () => T): T {
   let p: any = null;
   try { p = typeof window !== "undefined" ? (window as any).__rompPerf : null; } catch { p = null; }
@@ -1062,9 +1063,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
   // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
   // keep nothing: there the text itself is new.
-  // Both reflows (a text-size step, the body's width moving under a divider drag or the aside) run through here, so
-  // this is where the pass is timed as one fileview:reflow frame of the page's collector (perfTimed): the panel's
-  // re-wrap of every highlight is the cost a large reviewed file pays per drag frame, and it shows per minute.
+  // Both reflows (a text-size step, the body's width changing) run through here, so this is where the pass is timed
+  // as one fileview:reflow frame of the page's collector (perfTimed): the panel's re-place of its cards over the
+  // reflowed text is what a large reviewed file pays per reflow, and it shows per minute.
   const fireRenderedKeepingSelection = () => perfTimed("reflow", () => {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"

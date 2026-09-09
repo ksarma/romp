@@ -1238,7 +1238,7 @@ test("source: the Slice 5 seam — text() answers the buffer in edit mode, the m
   assert.doesNotMatch(VIEW, /@codemirror|track-decorations|editor-chunk"/, "the viewer imports nothing from the chunk: the option is data through the mount call");
 });
 
-test("the paint pass runs as one fileview:paint frame of the page's performance collector, the panel's re-paint after the body's width moved as one fileview:reflow frame (the bracket is fireRenderedKeepingSelection's, which both reflow triggers run through), and the pane's minute row carries both with the pass cost; no collector, the pass runs untimed", async (t) => {
+test("the paint pass runs as one fileview:paint frame of the page's performance collector, the panel's re-place of its cards after the body's width changed as one fileview:reflow frame (the bracket is fireRenderedKeepingSelection's, which both reflow triggers run through), and the pane's minute row carries both with the pass cost; no collector, the pass runs untimed", async (t) => {
   // The Files pane gets no frames pushed to it; its collector (perf-telemetry.ts, published as window.__rompPerf by
   // federation) times nothing unless the viewer brackets its own work (file-view.ts perfTimed), which is what made a
   // 20 s divider drag over a large reviewed note invisible to `romp perf client` (2026-09-09). The collector here is
@@ -1273,15 +1273,14 @@ test("the paint pass runs as one fileview:paint frame of the page's performance 
   let snap: any = perf.snapshot();
   assert.deepEqual(Object.keys(snap.frames), ["fileview:paint"], "the open's paint passes, and nothing else, were timed");
   assert.equal(snap.frames["fileview:paint"].n, painted, "one bracket per paint pass (the onRendered hooks ran inside it)");
-  // the body's width moves (the divider dragged): the panel re-paints once per changed width, as fileview:reflow
+  // the body's width changes (the divider released): the panel re-places its cards once per changed width, as fileview:reflow
   const wo = observers.find((r) => r.targets.includes(o.body));
   assert.ok(wo, "the viewer observes the body's width");
-  (o.body as any).style = { setProperty: () => {} };   // the stand-in's style has no setProperty; the report writes the body width through it
   const reportsBefore = paints;
   wo!.cb([{ contentRect: { width: 600 } }]);           // the first report is the size at observe(), not a change
-  assert.equal(paints, reportsBefore, "no re-paint on the first report");
+  assert.equal(paints, reportsBefore, "no reflow on the first report");
   wo!.cb([{ contentRect: { width: 400 } }]);           // narrower: the re-paint
-  assert.equal(paints, reportsBefore + 1, "one re-paint");
+  assert.equal(paints, reportsBefore + 1, "one reflow");
   wo!.cb([{ contentRect: { width: 400 } }]);           // the same width again: nothing
   assert.equal(paints, reportsBefore + 1);
   snap = perf.snapshot();
