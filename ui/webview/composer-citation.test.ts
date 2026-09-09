@@ -56,9 +56,14 @@ test("Backspace at the start of the box deletes the citation like a character", 
 
 test("sending with a GOAL citation routes as an askFollowUp (reopen) and consumes the chip", () => {
   // the three routing branches live in routeUserMessage since the staged flush (2026-08-15) — ONE
-  // owner for the live send and the staged release; deliver feeds it activeId as the sid
+  // owner for the live send and the staged release; deliver feeds it through flushStaged since the
+  // one-message fold (2026-09-08): the typed message, its chips and the echo's thumbnail paths
+  // (2026-08-25) ride as the batch's last item, and with nothing staged route exactly as before
   assert.match(RENDER, /const cites = composerCitations\.get\(activeId\);/);
-  assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);   // + the echo's thumbnail paths (2026-08-25)
+  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
+  // (with nothing staged, stagedPosts returns the typed message as itself, cites and images intact:
+  // staged-messages.test.ts executes that; here the one call site that routes each post)
+  assert.match(RENDER, /for \(const p of stagedPosts\(batch, typed\)\) routeUserMessage\(sid, p\.text, p\.cites as Citation\[\] \| undefined, p\.imgPaths\);/);
   assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /else \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, sendId: p\.sendId \}\); \}/);
   assert.match(RENDER, /if \(cites\) \{ composerCitations\.delete\(activeId\); renderComposerChips\(activeId\); \}/);
@@ -99,7 +104,12 @@ test("a citation follow-up carries its SID, so a reply to a REMOTE card reaches 
   // still flashed to Working (the kernel's cardPredict fires before any of that) and snapped back on the
   // ok:false ack, so the only visible trace was a bounce.
   assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, sendId: p\.sendId \}\); \}/);
-  assert.match(RENDER, /routeUserMessage\(activeId, text, cites, attached\.filter\(\(p\) => previewKind\(p\) === "img"\)\);/);   // deliver's sid IS the active session
+  // deliver's sid IS the active session: `sid` is bound to activeId when the send is armed, deliver
+  // refuses if the tab switched, and flushStaged (the one send since the one-message fold, 2026-09-08)
+  // hands that sid to every routeUserMessage call
+  assert.match(RENDER, /const sid = activeId;   \/\/ the session this send \(and any confirm below\) was armed for/);
+  assert.match(RENDER, /if \(activeId !== sid\) return;   \/\/ a confirm outlived a tab switch/);
+  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
   // every OTHER card-addressed op already routes this way — the citation follow-up was the lone omission
   assert.match(FEED, /type: "askClear", itemId: it\.itemId, sid: it\.sid/);
   assert.match(FEED, /type: "askFollowUp", itemId: tgt \? tgt\.itemId : fbId, title: tgt \? tgt\.title : fbTitle, text: txt, sid: fbSid/);
@@ -238,8 +248,13 @@ test("quote chips send a plain message wrapped by quoteReplyBody — never askFo
   assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); const p = registerOptimistic\(sid, body, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body, sendId: p\.sendId \}\); \}/);
   // the wrap: one section per stacked chip (lead-in + the highlighted text as a markdown quote block), in
   // strip order, then the typed message — a single chip composes byte-identically to the pre-stack form
-  // a context-only body (staged with an empty box) carries no dangling blank tail
-  assert.match(RENDER, /return text \? sections\.join\("\\n\\n"\) \+ "\\n\\n" \+ text : sections\.join\("\\n\\n"\);/);
+  // a context-only body (staged with an empty box) carries no dangling blank tail. The function lives in
+  // staged-messages.ts since the one-message fold (2026-09-08), imported here; its test executes it.
+  const STAGED_MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "staged-messages.ts"), "utf8");
+  assert.match(STAGED_MOD, /export function quoteReplyBody\(cites: \{ quote\?: string; src\?: string \| null \}\[\], text: string\): string \{/);
+  assert.match(STAGED_MOD, /return quoted && text \? quoted \+ "\\n\\n" \+ text : quoted \|\| text;/);
+  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedPosts \} from "\.\/staged-messages";/);
+  assert.doesNotMatch(RENDER, /^function quoteReplyBody\(/m, "one definition, in the module");
   // the chip's audit preview shows the SAME composed body — the whole outgoing message, every stacked
   // quote, whichever chip was clicked — client-side (no /followup-preview fetch)
   assert.match(RENDER, /body\.textContent = quoteReplyBody\(cites\.filter\(\(c\) => c\.quote\), draft \|\| "\(your message\)"\);/);
@@ -294,7 +309,8 @@ test("a VS Code EDITOR highlight seeds the same chip, labeled + wrapped with its
   assert.match(RENDER, /const i = list\.findIndex\(\(c\) => !!c\.src\);\s*\n\s*if \(i >= 0\) list\[i\] = chip; else list\.push\(chip\);/);
   // the chip title leads with the origin; the wrap lead-in points at the code, not the conversation
   assert.match(RENDER, /const title = \(src \? src \+ " — " \+ snip : snip\)\.slice\(0, 140\);/);
-  assert.match(RENDER, /const lead = c\.src \? "Replying to this highlighted code \(" \+ c\.src \+ "\):" : "Replying to this part of the conversation:";/);
+  const STAGED_MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "staged-messages.ts"), "utf8");   // quoteReplyBody's home since 2026-09-08
+  assert.match(STAGED_MOD, /const lead = c\.src \? "Replying to this highlighted code \(" \+ c\.src \+ "\):" : "Replying to this part of the conversation:";/);
 });
 
 test("deselecting in the editor (editorSelectionCleared) drops the editor chip, scoped + focus-safe (the user 2026-07-14)", () => {
