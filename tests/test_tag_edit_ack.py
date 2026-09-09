@@ -22,6 +22,7 @@ stderr and sync-notice paths still fire) plus the ack. Frames pushed to other cl
 Synthetic sids only."""
 import contextlib
 import errno
+import inspect
 import io
 import json
 import os
@@ -63,11 +64,17 @@ def _own_state(test):
     module object per process (load_source re-executes into it), so jd.STATE is shared with every
     module the xdist worker collected, and a neighbour's fixture that rebinds it to a temp dir it removes
     without putting the prior root back (tests/test_episode_boundary.py's setUp/tearDown does) leaves the
-    shared root pointing at a removed directory. Every writer here goes through _atomic_write, which
-    recreates the parent, so most classes recreated the directory on their first write; the ones that write
-    the views file directly (ReaderRestampUnwritable, ReaderRestampUnwritableNamesTheDrop) failed with
-    FileNotFoundError on timeline-views.json whenever such a test ran just before them on the same worker.
-    The path-keyed caches are cleared of this root's entries with it."""
+    shared root pointing at a removed directory. The exposure is per test, not per class: _atomic_write
+    recreates the parent, so a test whose first touch of the views file went through it (a seed(), a setter
+    call) recreated the directory, and a test whose first touch is a direct write_text (a legacy, torn,
+    over-cap or foreign fixture written before any seed) failed with FileNotFoundError on
+    timeline-views.json when it was the first tag-edit test on a worker after such a polluter. Verified on
+    the base, polluter module first and one class at a time: LegacyStoreStampedOnce,
+    LegacyTagsStampedOnFirstRead, MigrationStampsTheArchivedTag, ReaderRestampKeepsTheDiskCap and
+    ReaderRestampUnwritableNamesTheDrop fail as classes; ReaderRestampUnwritable passes as a class (its
+    first test seeds first) and its read-only test fails when it runs first; the other 18 classes pass. A
+    root per test covers every class, whichever of its tests runs first. The path-keyed caches are cleared
+    of this root's entries with it. OwnStateRoot below pins this without the external polluter."""
     saved = km.jd.STATE
     root = tempfile.mkdtemp()
     km.jd._rebind_state(Path(root))
@@ -101,10 +108,6 @@ class _Wire(unittest.TestCase):
 
     def tearDown(self):
         km._sync_notice = self._sync
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
 
     @contextlib.contextmanager
     def real_notices(self):
@@ -139,6 +142,53 @@ class _Wire(unittest.TestCase):
                          "views": {"active": "all", "tags": [dict(WEB)]}})
         self.assertEqual((ack["type"], ack["ok"], ack["refused"]), ("viewsAck", True, []))
         return ack["views"]
+
+
+class OwnStateRoot(_Wire):
+    """_own_state: the binding a preceding test left behind decides nothing about where this module's
+    tests write, and comes back untouched afterwards. setUp leaves jd.STATE the way a neighbour's
+    tearDown does (bound to a temp root that has been removed, the prior root not put back) BEFORE
+    _Wire.setUp runs, so the fixture is all that stands between a direct write_text and
+    FileNotFoundError; without _own_state the first test here fails as the legacy-fixture classes did."""
+
+    def setUp(self):
+        found = km.jd.STATE
+        self.addCleanup(km.jd._rebind_state, found)    # registered first, so it runs last: the root found here
+                                                        # comes back after _own_state's own restore has run
+        gone = Path(tempfile.mkdtemp())
+        gone.rmdir()
+        km.jd._rebind_state(gone)                       # the polluter's shape: a temp root, removed, never put back
+        self.gone = gone
+        super().setUp()
+
+    def test_a_dangling_binding_left_by_an_earlier_test_is_not_inherited_by_a_direct_write(self):
+        p = km._views_path()
+        p.write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))   # a legacy fixture: write_text before any seed;
+                                                                            # FileNotFoundError under the dangling root
+        self.assertNotEqual(p.parent, self.gone, "the write landed under a root of this test's own, not the dangling one")
+        self.assertTrue(p.parent.is_dir(), "and that root exists")
+        self.assertIsNotNone(store_tag("web"), "and the reader reads the file back from it")
+
+    def test_a_cleanup_puts_the_prior_root_back_and_drops_the_views_path_from_the_caches(self):
+        case = unittest.TestCase()
+        before = km.jd.STATE
+        root = _own_state(case)
+        views = str(km._views_path())
+        self.assertEqual(km.jd.STATE, root)
+        self.assertNotEqual(root, before)
+        km._views_path().write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))
+        store_tag("web")                                # a read: caches the blob and raises the floor under this path
+        self.assertIn(views, km._flags_cache)
+        self.assertIn(views, km._VIEWS_SEQ_FLOOR)
+        case.doCleanups()
+        self.assertEqual(km.jd.STATE, before, "the binding _own_state found comes back")
+        self.assertFalse(root.exists(), "and the root it made is gone")
+        self.assertNotIn(views, km._flags_cache)
+        self.assertNotIn(views, km._VIEWS_SEQ_FLOOR)
+
+    def test_every_setup_in_the_module_binds_its_own_root(self):
+        for cls in (_Wire, SetterReturnsRefusals):
+            self.assertIn("_own_state(self)", inspect.getsource(cls.setUp), cls.__name__)
 
 
 class TargetedTagEdits(_Wire):
@@ -1012,10 +1062,6 @@ class SetterReturnsRefusals(unittest.TestCase):
 
     def tearDown(self):
         km._sync_notice = self._sync
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
 
     def test_clean_writes_return_an_empty_list_and_stale_ones_the_rows(self):
         self.assertEqual(km._set_timeline_views({"active": "all", "tags": [dict(WEB)]}), [])
