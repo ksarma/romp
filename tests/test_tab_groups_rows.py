@@ -316,7 +316,9 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         want = {"web": ["web-frontend", "web-backend", "web-gateway", "web-search", "web-billing"],
                 "infra": ["web-search", "infra-ci", "infra-deploy"], "archived": [], None: ["scratch"]}
         for g, _h, tabs in secs:
-            self.assertEqual([t["id"] for t in tabs], [by_name[n] for n in want[g]], "%r: its tabs, contiguous after its header, nothing else between: %r" % (g, tabs))
+            # membership, not order: within a group the strip orders tabs by the user's order and recency, and
+            # _sections already proves contiguity (every tab between this header and the next belongs here)
+            self.assertCountEqual([t["id"] for t in tabs], [by_name[n] for n in want[g]], "%r: its tabs, contiguous after its header, nothing else between: %r" % (g, tabs))
         # nothing zero-sized sits in the strip besides the T134 hairlines: every item is a header, a tab or the divider
         zero = [i for i in o["items"] if i["w"] == 0 and i["h"] == 0 and "tab-row-line" not in i["cls"].split()]
         self.assertEqual(zero, [], "no zero-height item (a break) in the inline strip: %r" % zero)
