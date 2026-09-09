@@ -188,7 +188,9 @@ the load-time rebase could not re-place, which a host preserves and shows rather
 a `fingerprint` over the current text. A file comment is a change comment when `suggestionId` is
 set (the README calls it the cross-editor key, and the Obsidian host classifies on it); a passage
 comment keeps its anchor and gains a `suggestionId` when the agent answers it with `track-edit
---thread`, and is then shown on the change's card. The VS Code host classifies on the absent
+--thread`, and is then shown on the change's card — a shape the format allows and romp's message
+no longer asks for (decision 42: the session makes edits with plain `track-edit` and answers a
+comment with `track-reply`). The VS Code host classifies on the absent
 anchor instead (`vscode/src/panel.ts:206`), so it shows such a comment as a passage comment; a
 comment written by the CLIs has exactly one of the two fields until then. The file on disk is
 always the current text with every change applied. The root is the nearest `.obsidian/`, `.git/`, or `.trackchanges/` ancestor; nothing reads git,
@@ -450,9 +452,11 @@ parents and returns null), `status` answers `root: null, storePath: null, tracke
 null` and the panel still offers Comment on this file and Track changes; `comment` and `set-tracked` then create `.trackchanges/` beside the file
 and call `findVaultRoot` again, which now returns the file's directory, and the CLIs resolve the
 same root from then on with no `TRACKCHANGES_ROOT`; `log-edit` never creates it. The host script's
-accept verbs never drop a comment bound by `suggestionId`;
-they set `resolved: true` on it, a stated divergence from the Obsidian host's accept-all, kept so
-the comment ids in a sent message stay addressable by `track-reply`.
+decisions never drop a comment bound by `suggestionId`, a stated divergence from the Obsidian host's
+accept-all, kept so the comment ids in a sent message stay addressable by `track-reply`; and since
+decision 42 (2026-09-09) they never resolve one either — before it, accept and a save's decisions set
+`resolved: true` on the bound comments. The comments a decision stages equal the loaded ones apart
+from `anchorAt`, and the host checks that before every decision's write (`requireCommentsUntouched`).
 
 **`fileCommentsSend`**, the send op:
 
@@ -521,7 +525,7 @@ I accepted 4 of your changes and rejected 1.
 
 To respond:
   • reply in words:     node ~/.claude/hooks/track-reply.mjs --file <absPath> --thread <id> --note "<your reply>"
-  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file <absPath> --thread <id> --old "<exact text>" --new "<replacement>"
+  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file <absPath> --old "<exact text>" --new "<replacement>"
 
 When you have addressed these, ask me for another look the same way you asked for this one,
 naming the file.
@@ -542,8 +546,10 @@ exists (patch 0005).
 The format is modeled on the VS Code host's `buildThreadPing` (`vscode/src/dispatch.ts:519-533`)
 but is romp's own text. It keeps what the skill describes: the `[obsidian-diff]` prefix, the
 absolute path, a comment id per comment (the CLI flag is still `--thread`, the format's word),
-and the exact `track-reply` and `track-edit --thread` command lines. The tracking-on second
-bullet restates the skill's own instruction, since no host emits one today (the VS Code bullet
+and the exact `track-reply` and `track-edit` command lines — plain `track-edit`, with no `--thread`,
+since decision 42 (2026-09-09): the link that folded a revision into the comment's card confused the
+user, so the message no longer asks for it and the vendored skill's copy says the same (patch 0006).
+The tracking-on second bullet restates the skill's own instruction, since no host emits one today (the VS Code bullet
 says to edit normally, and the Obsidian host's message builder is a stub in its repo). With `tracked` false
 the second bullet becomes the VS Code host's wording: edit the file normally and note it with
 `track-reply`. For an image or PDF the second bullet says to regenerate the file with normal
@@ -723,10 +729,15 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   "Queued for <session>" when the reply carries `queued: true`, and keeps polling while open. The
   confirm carries up to three checkboxes, all checked by default: **answer the todo** when the
   file was opened from one; **turn on tracking so the session's edits come back as changes** when
-  it is off (file scope); and, from Slice 2, **accept the N pending changes** when any exist, so
-  the session's later edits arrive as fresh changes rather than coalescing into an old one. The
-  sequence is fixed: the message is built from the current sidecar, then `set-tracked`, then
-  `accept-all`, then `fileCommentsSend` with `tracked` set to the post-toggle verdict; a refusal
+  it is off (file scope); and, from Slice 2, **accept the N pending changes you have seen** when any
+  pending change exists, so the session's later edits arrive as fresh changes rather than coalescing
+  into an old one — the SEEN ones only (decision 41, 2026-09-09): a change whose card or mark was on
+  screen at one of the person's gestures, or that the panel's first status held; the option names
+  how many unseen ones stay pending, and with every pending change unseen the box is unchecked and
+  disabled and says nothing is accepted until they look. The sequence is fixed: the message is built
+  from the current sidecar, then `set-tracked`, then `accept` with the seen changes' ids (the card's
+  own accept, never an accept-all), then `fileCommentsSend` with `tracked` set to the post-toggle
+  verdict and the accepted count read from the accept's reply; a refusal
   at any step aborts the sequence before the send and shows the refusal; the log entry is appended
   after the send succeeds or queues. One send per file: when a todo names several files, the
   first send answers it and later sends for the other files show no todo checkbox.
@@ -1026,13 +1037,15 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 ### Slice 2: the session's changes as accept/reject cards and inline marks
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
-a Reply bound to the change so the agent's `track-edit --thread` revisions fold into it; inline
+a Reply bound to the change (a change comment, which the session answers in words with
+`track-reply`; the `track-edit --thread` link that folded its revisions into the card left the
+loop with decision 42); inline
 marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
 follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
 accepts and rejects and offers the accept-pending-changes checkbox.
 
-Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and marks bound
-comments resolved without dropping them; reject applies the engine's reverse edits to the file
+Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and leaves bound
+comments as they are, neither dropped nor resolved (decision 42; before it, marked resolved); reject applies the engine's reverse edits to the file
 and writes sidecar then file with rollback; both fence on the sidecar mtime and reject also on
 the file mtime; after a reject the owning session receives the trace; a `track-edit` landing
 mid-round makes the next Accept refuse and reload; accept-all on a file with no comments prunes
@@ -1658,6 +1671,32 @@ any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
+The seen follow-on (2026-09-09): two rulings of the user's on what the arrivals follow-on surfaced. The first
+(decision 41): a Send had accepted eleven changes they had not looked at; they keep the box and its default, but an
+unseen change is never accepted by a send. Built: the panel splits the pending changes against the seen set
+(`partitionPending` in `file-comments-model.ts`, over the same entry keys `statusEntries` writes; `pendingSplit` in the
+panel, empty on both sides while the editor is up), and the confirm's accept option (`acceptOption`, `syncAcceptOption`)
+reads "accept the N pending changes you have seen" with, when K unseen exist, "(K unseen stay pending)" — the unseen
+pending changes are the arrivals line's count, so the option no longer says "arrived since you last looked" itself
+(`acceptOptionLabel`); with nothing seen it reads "accept the pending changes you have seen (all K pending changes are
+unseen; nothing is accepted until you look)" and the box is unchecked and disabled, the person's own choice
+(`sendOpts.accept`) kept for when a look brings a change to the seen side. `doSend` accepts the seen changes by id
+through the card's own accept (`mutate("accept", { ids })`, never an accept-all), reads the split after the send's own
+gesture so a card on screen at the Send press counts as seen the way any gesture counts it, and states in the message the
+count the accept's reply lists (`accepted`), never the confirm's; the in-place update after a gesture (`reflectSeen`)
+rewrites the option's words and its checked and disabled state through the same `syncAcceptOption` the render uses. The
+second ruling (decision 42): the message's `track-edit --thread <id>` line, which bound a revision to the comment so the
+card showed the edit inside it, confused them and is gone: both builders (`buildSendMessage`, the kernel's
+`_file_comments_message`) say plain `track-edit` for edits and `track-reply` for answering a comment in words, the
+vendored skill says the same (patch 0006), and the host's decisions never resolve a comment (`requireCommentsUntouched`
+holds the staged comments to the loaded ones apart from `anchorAt`). With nothing resolved by an accept, the confirm's
+"resolves M comments" clause and the acknowledgment line's tail are retired. Tests: `file-comments-model-seen.test.ts`
+(the split and the words), `file-comments-send-seen.test.ts` (the stand-in: two seen and one unseen accept the two by id
+and leave the third pending; all unseen make no accept call and a disabled box; the words follow a gesture in place and
+on the re-render; the message's count is the reply's), `file-comments-send-seen-browser.test.ts` (Chromium and Firefox,
+the two-seen-one-unseen scene), `tests/test_guide_files_seen.py` (the guide's sentence held to the panel) and
+`tools/file-review-plan-seen.test.mjs` (this note held to the code and the modules it names).
+
 The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: the user
 sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
 the panel said so; the first they knew of them was the next Send accepting the changes by default. Built: the panel keeps
@@ -1687,12 +1726,11 @@ render, the line through the row's press hold (`pressHold`), since a line remove
 the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
 when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
 day (decision 40), which travel first in the message as `note`. From the lost-update probe of the same day: the accept
-resolves the comments bound to the changes it accepts (the host's rule), and in the incident seven comments the session's
-edits had answered folded under a collapsed Resolved with nothing said; the option now reads "(resolves M comments; K
-arrived since you last looked)" in one parenthesis (`resolvedByAccept`), and after a send whose accept-all resolved
-comments the Resolved fold opens before the renders that follow and the acknowledgment line after the send reads "Sent to <session> at <time> ·
-accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
-visible list without a visible word. The set lives with the
+then resolved the comments bound to the changes it accepted (the host's rule at the time), and in the incident seven
+comments the session's edits had answered folded under a collapsed Resolved with nothing said; the option gained a
+"resolves M comments" clause and the acknowledgment line a tail naming what moved to Resolved. Decision 42 (the same
+day) ended the host's resolve-on-accept, so nothing leaves the visible list on a send any more and both went with it (the
+seen follow-on below). The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
 the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
@@ -2332,6 +2370,16 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   close asks and the viewer's close and replace-open paths. `tools/file-review-plan-arrivals-review.test.mjs`
   holds the review's three plan fixes (the request block's `note?` and the op prose to the kernel and
   the panel, the user ungendered, the Docs sentence's gestures to the guide).
+- The seen follow-on (2026-09-09): `file-comments-model-seen.test.ts` (the pending changes split against
+  the seen set; the accept option's words with seen, unseen and resolve counts, and with nothing seen);
+  `file-comments-send-seen.test.ts` drives the panel over the review stand-in (two seen and one unseen:
+  the option's words, the accept by id for the two, the message's count from the reply, the third still
+  pending; all unseen: no accept call, the box unchecked and disabled; the person's own uncheck kept; a
+  gesture while the confirm is up moving a change to the seen side in place and on the re-render);
+  `file-comments-send-seen-browser.test.ts` measures the two-seen-one-unseen scene in Chromium and
+  Firefox; `tests/test_guide_files_seen.py` holds the guide's sentence to the panel;
+  `tools/file-review-plan-seen.test.mjs` holds the follow-on's paragraph and decisions 41 and 42 to the
+  code, the message builders and the modules they name.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2418,7 +2466,8 @@ passage whatever stands above it and that a long card folds to a few lines with 
 With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
 last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
 view unless you scrolled, clicked, tapped, or pressed a key meanwhile (`tests/test_guide_files_arrivals.py` holds both
-sentences to the panel).
+sentences to the panel). With the seen follow-on (2026-09-09), that the Send's checkbox accepts only the pending changes
+you have seen and says how many unseen ones stay pending (`tests/test_guide_files_seen.py` holds the sentence to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2581,6 +2630,23 @@ document stands on its own, each with the reasoning it was given.
     nothing unsent and the confirm's own Send waits for words. The comments log's send entry gains `note`, and the
     panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
     and the kernel restarts to go live.
+
+41. **The Send's accept takes the changes you have seen, never an unseen one** (2026-09-09). The user's ruling on
+    what the arrivals follow-on surfaced (a Send had accepted eleven changes they had not looked at): the box stays,
+    and so does its default, but a send never accepts a change they have not seen. The option accepts the pending
+    changes the person has seen — a change whose card or mark was on screen at one of their gestures, the arrivals
+    follow-on's rule — by id, through the same accept the card's button uses, and says how many unseen ones stay
+    pending; with nothing seen the box is unchecked and disabled and says so. The message states the count the
+    accept's reply lists. The seen follow-on under Slice 2 has the build.
+
+42. **The edit-to-comment link leaves the loop, and a decision never resolves a comment** (2026-09-09). The message
+    told the session to revise with `track-edit --thread <id>`, which binds the edit to the comment so its card shows
+    the edit inside the comment; the user found the link too confusing and asked for it to go. Both message builders
+    now say plain `track-edit` for edits and `track-reply <id>` for answering a comment in words, the vendored skill's
+    copy says the same (patch 0006), and the host's accept and save leave a comment bound to a decided change as it
+    was, open: resolving is the person's own act. Comments already bound stay as they are on disk and render as
+    before. With nothing resolved by an accept, the confirm's "resolves M comments" clause and the acknowledgment
+    line's "moved to Resolved" tail are retired.
 
 ## Open questions for the user
 
