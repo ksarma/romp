@@ -7257,7 +7257,19 @@ class SdkSession:
             # have moved since (the store is ruled per write, by token).
             if hasattr(self, "_model_accepted"):   # __new__-built test doubles skip __init__
                 self._model_accept(self.chosen_model or None)
-            self.perm_mode = d.get("permissionMode") or self.perm_mode
+            reported_mode = d.get("permissionMode")
+            if "mode" in self._reconnect_surfaces and self.perm_mode == "bypassPermissions":
+                # a pick INTO bypass is pending on a reconnect (held for live work, or deferred to a turn's
+                # end; _reset_reconnect_state at the loop top and _withdraw_held_pick are the removers), so
+                # perm_mode holds the DECLARED intent and this init reports the mode the process still RUNS:
+                # that is the stamp's (_launched_mode), which snapshot and the held-consult guard read. Until
+                # review round 3 (2026-09-09) the init overwrote perm_mode with the running mode at the first
+                # CLI-started turn of the hold, so the guard in _can_use_tool stopped applying and every later
+                # consult took the ask path against the declared bypass
+                if reported_mode:
+                    self._launched_mode = reported_mode
+            else:
+                self.perm_mode = reported_mode or self.perm_mode
             # Fast-mode truth rides the init payload — the AUTHORITATIVE re-assert behind set_fast's
             # optimistic flip, shared with the connect-time initialize response (_adopt_fast_state).
             self._adopt_fast_state(d)

@@ -6630,6 +6630,11 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         fake.ClaudeSDKClient, fake.ClaudeAgentOptions, fake.HookMatcher = self._Client, self._Options, (lambda **kw: kw)
         fake.AssistantMessage, fake.ResultMessage, fake.SystemMessage = self._Asst, _ResultMessage, self._Sys
         fake.TextBlock = _TextBlock
+        class _PRA:   # _can_use_tool imports the SDK's result classes at call time (test_i2's stubs)
+            def __init__(self, behavior="allow", **kw): self.behavior = behavior
+        class _PRD:
+            def __init__(self, behavior="deny", **kw): self.behavior = behavior
+        fake.PermissionResultAllow, fake.PermissionResultDeny = _PRA, _PRD
         self._saved_sdk = sys.modules.get("claude_agent_sdk")
         sys.modules["claude_agent_sdk"] = fake
         async def _noop_refresh(self_): pass
@@ -6678,10 +6683,11 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
     def _push(self, client, frame):
         client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
 
-    def _turn(self, client):
+    def _turn(self, client, mode="default"):
         """One turn the CLI starts on its own (the delivery turn after a background task's end, or any turn
-        romp did not feed): init, a reply, the result. Its settle is the arm's one event."""
-        self._push(client, self._Sys("init", {"model": "claude-x", "permissionMode": "default",
+        romp did not feed): init, a reply, the result. Its settle is the arm's one event. `mode` is the
+        permission mode the init reports, the one the process runs."""
+        self._push(client, self._Sys("init", {"model": "claude-x", "permissionMode": mode,
                                               "session_id": self.FSID}, self._uid()))
         self._push(client, self._Asst("here is the result", self._uid()))
         self._push(client, type("ResultMessage", (_ResultMessage,), dict(
@@ -6749,6 +6755,55 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertEqual(self._applied(), ["low"])
         self.assertFalse(s._reconnect_held_for_work); self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertEqual(s.snapshot()["effort"], "low")
+
+
+    def test_a_held_bypass_pick_survives_a_cli_started_turns_init_and_the_landing_agrees(self):
+        # the per-turn init reset perm_mode to the running mode at the first CLI-started turn of a hold, so
+        # the held-consult auto-allow stopped applying and every later consult took the ask path against the
+        # declared bypass (review round 3). perm_mode is the declared intent for the whole hold; the init's
+        # report goes to the stamp (the mode the process runs), and after the arm and the landing the two agree
+        s, c1 = self.s, self._connect()
+        self.assertEqual(s._launched_mode, "default")
+        asyncio.run(s._subagent_start_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))
+        self._wait(lambda: s._reconnect_when_idle, "the request ran on the loop")
+        self.assertTrue(s._reconnect_held_for_work)
+        self.assertEqual(s.perm_mode, "bypassPermissions"); self.assertEqual(s.snapshot()["mode"], "default")
+        self._turn(c1)                                   # a CLI-started turn during the hold: its init reports default
+        self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")
+        time.sleep(0.2)
+        self.assertEqual(len(self._Client.instances), 1, "no reconnect: the settle found live work")
+        self.assertEqual(s.perm_mode, "bypassPermissions", "the declared intent survives the init")
+        self.assertEqual(s._launched_mode, "default", "the init's report is the running mode")
+        self.assertEqual(s.snapshot()["mode"], "default")
+        self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["mode"])
+        # the consult guard still auto-allows, with its line and no ask
+        res = asyncio.run(s._can_use_tool("Bash", {"command": "ls"}, object()))
+        self.assertEqual(res.behavior, "allow")
+        self.assertIsNone(self.be._pending_ask.get(self.SID), "no ask reached the user")
+        self.assertTrue(any("while the bypass pick is held" in l for l in self.lines), self.lines[-6:])
+        self.assertEqual([l for l in self.lines if "contract says this cannot happen" in l], [])
+        # the work ends; the delivery turn's settle arms; the new client launches bypass
+        asyncio.run(s._subagent_stop_hook({"agent_id": "a1", "agent_type": "general-purpose"}, None, None))
+        s._settled_msg = None
+        self._turn(c1)
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
+                   "the reconnect at the settle that found no live work")
+        c2 = self._Client.instances[1]
+        self.assertEqual(c2.options.permission_mode, "bypassPermissions")
+        self.assertEqual(s._launched_mode, "bypassPermissions", "the landing stamps the launched mode")
+        self.assertEqual(s.perm_mode, "bypassPermissions")
+        self.assertEqual(s.snapshot()["mode"], "bypassPermissions")
+        self.assertIsNone(s.snapshot()["pickHeld"])
+        s._settled_msg = None
+        self._turn(c2, mode="bypassPermissions")         # the new process's first init confirms it
+        self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the first turn settled")
+        self.assertEqual((s.perm_mode, s._launched_mode), ("bypassPermissions", "bypassPermissions"))
+        # with no mode pick pending, today's behaviour: the init's report IS perm_mode
+        s._settled_msg = None
+        self._turn(c2, mode="acceptEdits")
+        self._wait(lambda: s.inflight == 0 and s._settled_msg is not None, "the turn settled")
+        self.assertEqual(s.perm_mode, "acceptEdits")
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):
