@@ -159,6 +159,36 @@ class HeadlessRoutes(_RouteServer):
         fake.kill.assert_called_once()
         self.assertIn(("chat", {"type": "closed", "id": fake.kill.call_args[0][0]}), sent)
 
+    def test_the_end_route_and_the_ws_endSession_op_run_one_end_routine(self):
+        # The two intentional kill doors a client reaches, POST /end (`romp end <session>`) and the
+        # dashboard's endSession op, each call _end_and_record once, with the sid and the backend that owns
+        # it, and neither kills on its own. The routine's epilogue (the death record, _comment_kill_all, the
+        # closed frame) is exercised through the thread doors below; this test holds the doors to the one
+        # routine, so a door that grows its own inline sweep, or skips the routine, fails here rather than
+        # drifting (review round 4, 2026-09-09: the extension's source pin on the two inline sweeps went
+        # stale when round 3 folded them into the routine; that pin now reads the same seam).
+        fake = mock.Mock()
+        calls = []
+
+        def record(sid, be, now, via, fresh=False):
+            calls.append((sid, be, via, fresh))
+            return True
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km, "_end_and_record", record), \
+             mock.patch.object(km, "_confirm_close_now", lambda sid: None), \
+             mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+             mock.patch.object(km, "_send_to_app", lambda app, m: None):
+            code, resp = self._post("/end", {"id": "sid-x"})
+            self.assertEqual((code, resp), (200, {"ok": True}))
+            self.assertTrue(km._drive({"type": "endSession", "id": "sid-x"}, {"send": lambda s: None}))
+        self.assertEqual([c[:2] for c in calls], [("sid-x", fake), ("sid-x", fake)],
+                         "each door runs the routine once, with the sid and its owning backend")
+        self.assertEqual([c[3] for c in calls], [False, False],
+                         "an immediate door reads the owner's cycle snapshot; only the sweep asks fresh")
+        self.assertEqual(len({c[2] for c in calls}), 2, "each door names itself in the kill attribution")
+        fake.kill.assert_not_called()   # the routine owns the kill; no door kills beside it
+        fake.interrupt.assert_not_called()
+
     def test_send_route_reports_queued_vs_sent(self):
         # `queued` says which arm the send took (2026-09-03): an agent sending ITSELF a slash command from
         # inside its own turn read 'ok' and could not know the command was parked until that turn ended
