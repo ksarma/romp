@@ -182,6 +182,10 @@ STUB
 # the problem — honoring the FLAGS romp passes, the way real curl splits on a 4xx:
 # a short-flag cluster carrying -f discards the body and exits 22; plain -s prints
 # the body and exits 0. So the test proves the flags, not just the message.
+# MOCK_CURL_SEND_404=1 does the same on the /send leg (the kernel's 404 for a session
+# it lists none of), with the status rendered into the -w trailer the leg asks for.
+# Every branch that answers a call carrying -w appends that trailer, as real curl
+# does: the status-reading callers split the last line off as the code.
 _stub_curl() {
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
@@ -194,7 +198,16 @@ url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
 if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
-if [[ -n "${MOCK_CURL_SEND_QUEUED:-}" && "$url" == */send ]]; then echo '{"ok": true, "queued": true}'; exit 0; fi
+_w=""; _prev=""
+for a in "$@"; do [[ "$_prev" == "-w" ]] && _w="$a"; _prev="$a"; done
+if [[ -n "${MOCK_CURL_SEND_QUEUED:-}" && "$url" == */send ]]; then printf '{"ok": true, "queued": true}%b\n' "${_w//\%\{http_code\}/200}"; exit 0; fi
+if [[ -n "${MOCK_CURL_SEND_404:-}" && "$url" == */send ]]; then
+  for a in "$@"; do
+    if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
+  done
+  printf '{"ok": false, "error": "no live session named '"'"'ideabox'"'"'"}%b\n' "${_w//\%\{http_code\}/404}"
+  exit 0
+fi
 if [[ -n "${MOCK_CURL_WATCH_PR_REFUSE:-}" && "$url" == */watch-pr ]]; then
   echo '{"ok": false, "retryable": true, "error": "the watch could not be saved ([Errno 28] No space left on device) - nothing is watching TESTORG/testrepo#7; retry once the state directory takes writes again"}'
   exit 0
@@ -209,8 +222,6 @@ fi
 # `romp tag`'s GET asks for the status as a trailer (-w '\n%{http_code}'), the way `romp perf`
 # does: append it as real curl would, so the read sees a 200 and not a body it must report as an
 # answer with no status
-_w=""; _prev=""
-for a in "$@"; do [[ "$_prev" == "-w" ]] && _w="$a"; _prev="$a"; done
 if [[ -n "$_w" ]]; then printf '{"ok": true}%b' "${_w//\%\{http_code\}/200}"; else echo '{"ok": true}'; fi
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -280,10 +291,12 @@ echo "curl $*" >> "$MOCK_LOG"
 [[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+_w=""; _prev=""
+for a in "$@"; do [[ "$_prev" == "-w" ]] && _w="$a"; _prev="$a"; done
 if [[ "$url" == */new ]]; then
   echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "existing": true, "thread": true, "parent": "11111111-2222-3333-4444-555555555555"}'
 else
-  echo '{"ok": true}'
+  printf '{"ok": true}%b\n' "${_w//\%\{http_code\}/200}"   # the -m leg reads the status off the trailer
 fi
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -1340,6 +1353,23 @@ MOCK
     [ "$status" -eq 1 ]
     [[ "$output" == *"did NOT land"* ]]
     [[ "$output" == *"romp send ideabox"* ]]
+}
+
+@test "new -m: a send the kernel refused with a 404 prints the kernel's reason, never the reason-less line" {
+    # the /send route refuses a session it lists none of with a 404 whose body names it; `curl -sf` on
+    # this leg threw the body away and said only that the message did NOT land. The leg reads the
+    # status the way the send verb does, so the reason and the retry both print (the stub honors -f the
+    # way the /new 400 stub does, so a leg that went back to -f fails here)
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_SEND_404=1
+    run run_romp new -m "look into the flaky test" ideabox
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp new: the kernel refused the message: no live session named 'ideabox'"* ]]
+    [[ "$output" == *"romp send ideabox"* ]]
+    [[ "$output" != *"did NOT land"* ]]
+    grep -q '/send' "$MOCK_LOG"
 }
 
 @test "new: a kernel 400 surfaces the kernel's own refusal, never 'not reachable'" {

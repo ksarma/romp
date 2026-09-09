@@ -712,10 +712,10 @@ EOF
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
-    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words"
+    _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1"
     _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
-    _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn"
-    _romp_cmd "romp end <session>"         -            "End a session"
+    _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn; an unknown session is refused with the kernel's reason, exit 1"
+    _romp_cmd "romp end <session>|self [--now|--when-idle]" - "End a session, at once by default; --when-idle ends it once its turn settles (self, the calling session, defaults to that; --now overrides); an unknown session is refused with the kernel's reason, exit 1"
     _romp_cmd "romp checkin <host>"        -            "Publish this machine to an attached hub (romp checkout withdraws)"
     _romp_cmd "romp engine claude|codex"   -            "One switch: which vendor runs the judges + what new sessions default to"
     _romp_cmd "romp default-dir [PATH]"    -            "Default working dir for new sessions (no arg prints; \"\" clears)"
@@ -2324,6 +2324,33 @@ else:
     done
 fi
 
+# One kernel POST for the session verbs (send, interrupt, end) and for `romp new -m`'s first-message
+# leg: the answer lands in _pbody and its status in _pcode. Returns 0 on a 2xx; 1 when the kernel
+# ANSWERED a non-2xx, with the reason in _perr (the body's `error` when it carries the routes' JSON
+# error shape, else "the kernel answered HTTP <code>: <body>"); 2 when curl never connected (a dead
+# kernel: no status). Never `curl -sf`: -f folded every 4xx into the exit a dead kernel gets and threw
+# the body away, so the kernel's 404 for a name no session answers to printed "kernel not reachable"
+# and its reason never reached the caller. The status rides -w and is read here, the perf and tag
+# verbs' pattern (_tag_curl above). One copy for both call sites: the -m leg kept its own `curl -sf`
+# after the verbs dropped theirs (review find, 2026-09-09). Reads $_kport.
+_romp_post() {   # _romp_post <route> <json payload>
+    local _out
+    _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/$1" \
+                  -H 'Content-Type: application/json' -d "$2")" || return 2
+    _pcode="${_out##*$'\n'}"
+    _pbody="${_out%$'\n'*}"
+    if [[ "$_pcode" == 2?? ]]; then return 0; fi
+    _perr="$(python3 -c 'import json, sys
+try:
+    v = json.loads(sys.argv[1])
+except Exception:
+    v = None
+e = v.get("error") if isinstance(v, dict) else None
+print(e if e else "the kernel answered HTTP %s: %s" % (sys.argv[2], sys.argv[1]))' "$_pbody" "$_pcode" 2>/dev/null \
+        || printf 'the kernel answered HTTP %s: %s' "$_pcode" "$_pbody")"
+    return 1
+}
+
 # `romp send|interrupt|end <session> [text]` — headless session control through the kernel HTTP
 # API (the kernel owns the transport and routes to whichever backend drives the session, tmux or SDK).
 # Before this, interrupt/end existed only as browser WS ops: a session could be FED headlessly but
@@ -2334,8 +2361,15 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     _verb="${1#--}"; shift
     _who="${1:-}"
     # -h|--help is the verb's own (the up/down arms' convention), so it never reaches the kernel as a
-    # session name; every other dash-leading word is still a name, as the compact verb allows
+    # session name, and so is one of the verb's own flags in the session's slot (`romp end --now web`,
+    # `romp send --tag kick web hi`): usage on stderr and exit 2, as `romp compact --wait` answers its
+    # misplaced flags, instead of a POST for a session named --now. Every other dash-leading word is a
+    # session name and goes to the kernel, which is what compact allows too.
     case "$_who" in
+        --now|--when-idle)
+            if [[ "$_verb" == end ]]; then echo "usage: romp end <session>|self [--now|--when-idle]" >&2; exit 2; fi ;;
+        --tag)
+            if [[ "$_verb" == send ]]; then echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; fi ;;
         -h|--help)
             case "$_verb" in
                 send)
@@ -2407,27 +2441,13 @@ w=sys.argv[2] if len(sys.argv)>2 else ""
 if w: d["when"]=w
 print(json.dumps(d))' "$_who" "$_when")"
     fi
-    # The status rides -w and is read here (the perf/tag verbs' pattern): curl's -f folded every 4xx
-    # into the same silent exit as a dead kernel, so the kernel's 404 for a name no session answers to
-    # printed "kernel not reachable" and its reason never reached the caller.
-    _out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' -X POST "http://127.0.0.1:$_kport/$_verb" \
-                  -H 'Content-Type: application/json' -d "$_payload")" \
-        || { echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
-    _code="${_out##*$'\n'}"
-    _resp="${_out%$'\n'*}"
-    if [[ "$_code" != 2?? ]]; then
-        # the body's own reason when it carries one (the routes' JSON error shape), else the raw answer
-        _err="$(python3 -c 'import json, sys
-try:
-    v = json.loads(sys.argv[1])
-except Exception:
-    v = None
-e = v.get("error") if isinstance(v, dict) else None
-print(e if e else "the kernel answered HTTP %s: %s" % (sys.argv[2], sys.argv[1]))' "$_resp" "$_code" 2>/dev/null \
-            || printf 'the kernel answered HTTP %s: %s' "$_code" "$_resp")"
-        echo "romp $_verb: $_err" >&2
-        exit 1
-    fi
+    # the status is read off the answer (_romp_post above): a dead kernel is "not reachable", a kernel
+    # that answered a non-2xx is quoted with its reason, exit 1 either way
+    _rc=0
+    _romp_post "$_verb" "$_payload" || _rc=$?
+    if [[ $_rc -eq 2 ]]; then echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; fi
+    if [[ $_rc -ne 0 ]]; then echo "romp $_verb: $_perr" >&2; exit 1; fi
+    _resp="$_pbody"
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
         if [[ "$_verb" == "send" && ( "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ) ]]; then
             # the kernel PARKED it (a turn is open / compacting / the account is limit-held) and delivers it
@@ -3281,9 +3301,17 @@ d = ({"id": r["id"]} if r.get("id") else {"name": sys.argv[1]})
 d["text"] = sys.argv[2]
 if len(sys.argv) > 3 and sys.argv[3]: d["tag"] = sys.argv[3]
 print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg" "$_resp")"
-            _mresp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/send" \
-                          -H 'Content-Type: application/json' -d "$_mpayload")" \
-                || { echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1; }
+            # the same status-reading POST the send verb makes (_romp_post): a kernel that answered a
+            # non-2xx (the 404 for a session it lists none of) is quoted with its reason, where `curl -sf`
+            # folded it into the reason-less line a dead kernel gets (review find, 2026-09-09)
+            _rc=0
+            _romp_post send "$_mpayload" || _rc=$?
+            if [[ $_rc -eq 2 ]]; then
+                echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1
+            elif [[ $_rc -ne 0 ]]; then
+                echo "romp new: the kernel refused the message: $_perr. Retry: romp send $session_arg '<text>'" >&2; exit 1
+            fi
+            _mresp="$_pbody"
             if [[ "$_mresp" == *'"ok": true'* || "$_mresp" == *'"ok":true'* ]]; then
                 if [[ "$_mresp" == *'"queued": true'* || "$_mresp" == *'"queued":true'* ]]; then
                     # the kernel PARKED it (the fresh session is not quiet yet): it delivers when it is

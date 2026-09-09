@@ -175,6 +175,63 @@ PY
     grep -q '"name": "typo"' "$TEST_DIR/req"
 }
 
+@test "a non-JSON refusal body is quoted with its status, and the printf fallback says the same when the parser dies" {
+    # the kernel's own refusals carry {ok:false, error}; a proxy's plain-text 502, or a JSON body with no
+    # error field, has no reason to lift, so the status and the raw answer are printed instead
+    start_fake_kernel 'gateway down' 502
+    run "$ROMP_SCRIPT" interrupt web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp interrupt: the kernel answered HTTP 502: gateway down"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"          # the fake is one-shot: a second one needs a fresh port file
+    start_fake_kernel '{"ok": false}' 500
+    run "$ROMP_SCRIPT" end web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'romp end: the kernel answered HTTP 500: {"ok": false}'* ]]
+    # the parser itself failing (a python3 that dies on the reason script, and on nothing else: the
+    # payload build in the same block needs the real one) falls to the printf line with the same words
+    _real="$(command -v python3)"
+    mkdir -p "$TEST_DIR/shim"
+    cat > "$TEST_DIR/shim/python3" <<SHIM
+#!/usr/bin/env bash
+[[ "\$*" == *"the kernel answered HTTP"* ]] && exit 1
+exec "$_real" "\$@"
+SHIM
+    chmod +x "$TEST_DIR/shim/python3"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"
+    start_fake_kernel 'gateway down' 503
+    PATH="$TEST_DIR/shim:$PATH" run "$ROMP_SCRIPT" interrupt web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp interrupt: the kernel answered HTTP 503: gateway down"* ]]
+}
+
+@test "a verb's own flag in the session slot is usage and exit 2, never a session named --now" {
+    # `romp end --now web` used to POST {"name": "--now"} (and, since the gate, come back "no live session
+    # named '--now'"); the compact verb answers its own misplaced flags with usage, so these do too. Every
+    # other dash-leading word is still a session name
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" end --now web
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp end <session>|self [--now|--when-idle]"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" end --when-idle web
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp end"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" send --tag kick web hello there
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp send <session> [--tag <label>] <text>"* ]]
+    [[ "$output" != *"kernel not reachable"* ]]
+    # --tag is end's session name and --now is send's: neither verb owns the other's flag
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" end --tag
+    [ "$status" -eq 0 ]
+    grep -q '"name": "--tag"' "$TEST_DIR/req"
+    rm -f "$TEST_DIR/port" "$TEST_DIR/req"
+    start_fake_kernel '{"ok": true}'
+    run "$ROMP_SCRIPT" send -oddname hello
+    [ "$status" -eq 0 ]
+    grep -q '"name": "-oddname"' "$TEST_DIR/req"
+}
+
 @test "romp send, interrupt and end each answer --help without a kernel" {
     # `romp end --help` used to POST a session named --help (the phantom-sid bug from the other side)
     for verb in send interrupt end; do
