@@ -32,6 +32,10 @@ const PANE_CSS = read("waiting-pane.css");
 const SID = "11111111-2222-3333-4444-555555555555";
 const PR_URL = "https://github.com/example-org/notes-api/pull/398";
 const DOC_URL = "https://example.invalid/notes-api/docs/plan";
+// a bare single-label host with a port and a path whose last segment is dotted but has no extension shape (the user
+// 2026-09-09, whose todo title carried one): before the URL pass the path walk read `8766/walk/hand_sample_v2_v2.12new`
+// as a relative FILE (the slashed-path arm matched from the port's digits, and `.12new` passed the extension gate)
+const PORT_URL = "http://TESTHOST:8766/walk/hand_sample_v2_v2.12new";
 
 // ── a DOM stand-in just big enough for the walk: elements with class/dataset/title/href, text nodes, a tree
 // walker over text nodes in document order, closest() over tag names and classes, replaceWith
@@ -101,10 +105,66 @@ test("urlSegments: http and https, trailing sentence punctuation left out, a par
   assert.deepEqual(hrefs("HTTPS://EXAMPLE.INVALID/X"), ["HTTPS://EXAMPLE.INVALID/X"], "the scheme is case-insensitive and the text is kept as typed");
   assert.deepEqual(hrefs("https:// is a bare scheme, ftp://example.invalid/x another scheme, example.invalid/x no scheme"), [], "no host, no http(s): prose");
   assert.deepEqual(hrefs("a URL with a query https://example.invalid/q?f=/docs/a.md&x=1 ends at the space"), ["https://example.invalid/q?f=/docs/a.md&x=1"]);
+  assert.deepEqual(hrefs("see " + PORT_URL + " for the sample"), [PORT_URL], "a single-label host with a port, and a last segment with dots and digits and no extension: the whole address");
   for (const s of ["see " + PR_URL + ".", "(" + PR_URL + ")", "a " + PR_URL + " b " + DOC_URL + "."]) {
     assert.equal(urlSegments(s).map((x) => x.text).join(""), s, "the segments spell the text exactly: " + JSON.stringify(s));
   }
   assert.deepEqual(urlRanges("see " + PR_URL + "."), [[4, 4 + PR_URL.length]]);
+});
+
+// ── the trim is linear (the 2026-09-09 review): the loop it replaced re-counted the candidate per stripped closer
+/** the trim as it was: one count of the whole candidate for every closer stripped, O(N^2) on a run of closers */
+function oldTrim(u: string): string {
+  const TRAIL = ".,;:!?'\"";
+  const PAIRS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  for (;;) {
+    const last = u[u.length - 1];
+    if (TRAIL.includes(last)) { u = u.slice(0, -1); continue; }
+    const open = PAIRS[last];
+    if (open) {
+      let depth = 0;
+      for (const c of u) { if (c === open) depth++; else if (c === last) depth--; }
+      if (depth < 0) { u = u.slice(0, -1); continue; }
+    }
+    return u;
+  }
+}
+test("trimUrl is linear: a URL followed by 40K closing parens links as the bare URL with the run left as text, in the time a short one takes", async () => {
+  const { urlSegments } = await import("./url-links");
+  const tail = ")".repeat(40000);
+  const t0 = performance.now();
+  const segs = urlSegments("Review " + PR_URL + tail);
+  const took = performance.now() - t0;
+  assert.deepEqual(segs, [{ text: "Review " }, { text: PR_URL, href: PR_URL }, { text: tail }]);
+  assert.ok(took < 2000, "the old loop took about five seconds here; the linear one takes milliseconds (loose bound: the suite runs under load): " + took.toFixed(0) + " ms");
+  const mixed = "])}".repeat(10000) + ".";
+  assert.deepEqual(urlSegments(DOC_URL + mixed).map((x) => x.href), [DOC_URL, undefined], "a mixed run of closers with a period: the same verdict");
+  // a URL that opens brackets of its own keeps the closers the openers pair with, whatever the run after
+  const wiki = "https://example.invalid/wiki/Foo_(bar)";
+  assert.deepEqual(urlSegments(wiki + ")".repeat(5000)).map((x) => x.href), [wiki, undefined]);
+});
+
+test("the linear trim gives the old loop's verdict on every short generated tail: brackets, trail punctuation and letters mixed, with and without openers inside the URL", async () => {
+  const { urlSegments } = await import("./url-links");
+  const alphabet = "()[]{}.,;:!?ab/";
+  let seed = 20260909;
+  const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const bases = [PR_URL, "https://example.invalid/wiki/Foo_(bar)", "https://example.invalid/a[1]{2}(3", "http://x.y/(", "https://example.invalid/q?f=[a]&g=(b)"];
+  let checked = 0;
+  for (const base of bases) {
+    for (let len = 0; len <= 6; len++) {
+      for (let i = 0; i < (len === 0 ? 1 : 60); i++) {
+        let tail = "";
+        for (let k = 0; k < len; k++) tail += alphabet[rnd(alphabet.length)];
+        const cand = base + tail;                                  // URL_RE takes the candidate whole: no whitespace or quote in the alphabet
+        const want = oldTrim(cand);
+        const got = urlSegments("see " + cand + " now").filter((x) => x.href).map((x) => x.href);
+        assert.deepEqual(got, [want], "the two trims differ on " + JSON.stringify(cand));
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 1500, "the generated set is not trivial: " + checked);
 });
 
 // ── the walk, executed over a todo's text: anchors as typed, punctuation outside, paths still paths, a URL dead to the path walk
@@ -169,6 +229,19 @@ test("URLs first, then the path walk: a URL and a file path in one text each lin
   assert.equal(anchorsOf(old).length, 0);
   // text already inside an anchor is never re-marked: a second URL pass makes nothing
   assert.deepEqual(linkifyUrls(t as unknown as HTMLElement), []);
+  // a single-label host with a port and a dotted, extensionless last segment (the user 2026-09-09): one URL anchor
+  // carrying the whole address, port and all, and no file link, since the address is dead text to the path walk
+  const port = span("Check the sample at " + PORT_URL + " and say if it reads right");
+  const madePort = linkifyUrls(port as unknown as HTMLElement) as unknown as Elm[];
+  const portHits = linkifyPathTokens(port as unknown as HTMLElement, SID);
+  assert.deepEqual(madePort.map((a) => a.href), [PORT_URL], "the whole address, the port and the dotted last segment included");
+  assert.deepEqual(portHits, [], "no file link: nothing in the address was read as a path");
+  assert.deepEqual(anchorsOf(port).map((a) => [a.className, a.textContent]), [["url-link", PORT_URL]]);
+  assert.deepEqual(port.kids.map((k) => k.tagName), ["a"], "one anchor, no span");
+  assert.deepEqual(port.texts, ["Check the sample at ", " and say if it reads right"]);
+  // the diagnosis, the path walk alone: the port's digits started a relative path and `.12new` passed the extension gate
+  const oldPort = span("Check the sample at " + PORT_URL + " and say if it reads right");
+  assert.deepEqual(linkifyPathTokens(oldPort as unknown as HTMLElement, SID).map((h) => h.open), ["8766/walk/hand_sample_v2_v2.12new"]);
 });
 
 // ── the opener (the Waiting-on-you pane): the PR opener's mechanics, keyed on the URL anchors' class
@@ -230,17 +303,36 @@ test("installUrlLinkOpener serves only URL anchors with an http(s) href, and pos
 });
 
 // ── the chip: a todo's own `link` beside its file chip, the same dress, the whole address on hover
-test("urlChip / urlChipLabel: the address without its scheme as the label, the whole address as the title, a new tab on click, the caller's chip class beside url-link", async () => {
+test("urlChip / urlChipLabel: a label that keeps the distinguishing part in view (owner/repo#N for a GitHub pull request or issue; the host and the last two segments otherwise), the whole address as the title, a new tab on click, the caller's chip class beside url-link", async () => {
   const { urlChip, urlChipLabel, URL_LINK_CLASS } = await import("./url-links");
-  assert.equal(urlChipLabel(PR_URL), "github.com/example-org/notes-api/pull/398");
+  // the pill cuts a long label from the end, so the number a GitHub address ends in was the first thing lost
+  // (the 2026-09-09 review): a pull request or issue reads as pr-links.ts titles a `#N` reference
+  assert.equal(urlChipLabel(PR_URL), "example-org/notes-api#398");
+  assert.equal(urlChipLabel("https://github.com/example-org/notes-api/issues/12"), "example-org/notes-api#12");
+  assert.equal(urlChipLabel("https://github.com/example-org/notes-api/pull/398/files"), "example-org/notes-api#398", "a tab of the pull request is the same pull request");
+  assert.equal(urlChipLabel("https://github.com/example-org/notes-api/pull/398#issuecomment-7"), "example-org/notes-api#398", "so is a comment on it");
+  assert.equal(urlChipLabel("https://github.com/other-org/notes-api/pull/398"), "other-org/notes-api#398", "the owner stays: a fork and its upstream share a name and their numbers overlap");
+  assert.equal(urlChipLabel("https://github.com/example-org/notes-api"), "github.com/example-org/notes-api", "a repository's page is not a pull request: the generic form");
+  assert.equal(urlChipLabel("https://github.com/example-org/notes-api/pulls"), "github.com/…/notes-api/pulls");
+  // any other address: whole while the path is two segments or fewer, else the host, an ellipsis, the last two
   assert.equal(urlChipLabel("http://example.invalid/"), "example.invalid", "a trailing slash is dropped");
   assert.equal(urlChipLabel("HTTPS://Example.invalid/x/"), "Example.invalid/x", "the host as typed");
+  assert.equal(urlChipLabel("https://example.invalid/notes-api/design/"), "example.invalid/notes-api/design");
+  assert.equal(urlChipLabel(DOC_URL), "example.invalid/…/docs/plan", "the middle elided, the tail kept");
+  assert.equal(urlChipLabel("https://example.invalid/a/b/c/d/e"), "example.invalid/…/d/e");
+  assert.equal(urlChipLabel("https://example.invalid/q?f=/docs/a.md&x=1"), "example.invalid/q?f=/docs/a.md&x=1", "a query rides its segment and is not split");
+  assert.equal(urlChipLabel("https://example.invalid/a/b/c?x=1#frag"), "example.invalid/…/b/c?x=1#frag");
+  assert.equal(urlChipLabel(PORT_URL), "TESTHOST:8766/walk/hand_sample_v2_v2.12new", "two segments: whole, and the port is part of the host");
+  for (const u of [PR_URL, DOC_URL, "https://example.invalid/a/b/c/d/e", PORT_URL]) {
+    const lastSeg = u.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop()!;
+    assert.ok(urlChipLabel(u).endsWith(lastSeg) || /#\d+$/.test(urlChipLabel(u)), "a long address's label still ends with its last segment (or the number): " + urlChipLabel(u));
+  }
   const c = urlChip(PR_URL, "ut-link") as unknown as Elm;
   assert.equal(c.tagName, "a");
   assert.equal(c.className, URL_LINK_CLASS + " ut-link");
   assert.equal(c.href, PR_URL);
-  assert.equal(c.title, PR_URL);
-  assert.equal(c.textContent, "github.com/example-org/notes-api/pull/398");
+  assert.equal(c.title, PR_URL, "the whole address on hover");
+  assert.equal(c.textContent, "example-org/notes-api#398");
   assert.equal(c.target, "_blank");
   assert.equal(c.rel, "noopener noreferrer");
   const w = urlChip(DOC_URL, "wt-link") as unknown as Elm;
@@ -253,9 +345,19 @@ test("render.ts: the two todo linkers run linkifyUrls before the path walk; the 
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   assert.doesNotMatch(RENDER, /installUrlLinkOpener|installPrLinkOpener/, "the chat's own a[href] delegate already opens every absolute-scheme anchor");
-  assert.match(RENDER, /if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;/, "that delegate opens http(s) hrefs");
-  assert.match(RENDER, /window\.open\(href, "_blank", "noopener,noreferrer"\); \/\/ web dashboard/);
-  assert.match(RENDER, /vscodeApi\.postMessage\(\{ type: "openLink", href \}\);  \/\/ VS Code webview/);
+  // the branch these anchors take (render-todo-file-chip.test.ts CLICKS them through the lifted delegate; this pins the
+  // path at source): an http(s) href names a scheme, so it skips the scheme-less branch and its protocol gate, and
+  // lands on the pair that spends the click, then the opener the host has
+  const opener = RENDER.slice(RENDER.indexOf('document.addEventListener("click", (e) => {\n  const a = (e.target as Element)?.closest?.(LINK_SEL)'), RENDER.indexOf("}, true);", RENDER.indexOf("closest?.(LINK_SEL)")));
+  assert.ok(opener.length > 500, "the document-level anchor opener");
+  const scheme = opener.indexOf("if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {");
+  const spend = opener.indexOf("e.preventDefault();\n  e.stopPropagation();");
+  const web = opener.indexOf('window.open(href, "_blank", "noopener,noreferrer"); // web dashboard');
+  const code = opener.indexOf('vscodeApi.postMessage({ type: "openLink", href });  // VS Code webview');
+  assert.ok(scheme > 0 && spend > scheme && web > spend && code > web, "the scheme test, then (for an absolute href, outside that branch) preventDefault and stopPropagation, then window.open on the web and openLink under VS Code");
+  const schemeless = opener.slice(scheme, spend);
+  assert.match(schemeless, /if \(!url \|\| \(url\.protocol !== "http:" && url\.protocol !== "https:"\)\) return;/, "the protocol gate is the scheme-less branch's alone: an absolute http(s) href never reaches it");
+  assert.equal(opener.slice(0, scheme).indexOf("e.stopPropagation()"), -1, "nothing before the scheme test stops the click: the fold under a URL anchor is spared by the pair after it");
 });
 
 test("waiting.ts: linkTodoPaths runs linkifyUrls before its framed gate (a URL opens from any page), and the pane installs the URL opener beside the PR one", () => {

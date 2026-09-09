@@ -240,8 +240,18 @@ class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
 
     def test_the_paragraph_states_the_link_argument_and_what_is_refused(self):
         self.assertIn("A todo can carry a web address of its own as well, through the tool's `link` argument: an http or "
-                      "https address, shown as a chip beside the file's on the session's card and in the pane alike, the "
-                      "address without its scheme as the label and the whole address on hover, opening in a new tab.", self.para)
+                      "https address, shown as a chip beside the file's on the session's card and in the pane alike, opening "
+                      "in a new tab. The chip's label keeps the part that tells two addresses apart: a GitHub `pull/N` or `issues/N` "
+                      "address reads `owner/repo#N`, any other address as its host and last two path segments; the whole "
+                      "address is on hover.", self.para)
+        # the label's source (url-links.ts urlChipLabel; url-links.test.ts executes the forms)
+        urls = _read("ui", "webview", "url-links.ts")
+        self.assertIn('if (gh) return gh[1] + "/" + gh[2] + "#" + gh[3];', urls)
+        self.assertIn('return segs[0] + "/…/" + segs.slice(-2).join("/") + tail;', urls)
+        # the bounds on a todo's text and detail (the 2026-09-09 review), stated once and held to both processes
+        self.assertIn("A todo's text takes at most 300 characters and its detail 4000, a pinned note's bounds; a longer one "
+                      "is refused before anything is filed, and the tool's reply names the bound.", self.para)
+        self.assertEqual((km.USER_TODO_TEXT_MAX, km.USER_TODO_DETAIL_MAX), (300, 4000))
         self.assertIn("Only such an address is taken: anything else (another scheme, a bare host, a value with whitespace "
                       "in it, one past 2048 characters) is refused, the todo is not filed, and the tool's reply says why.",
                       self.para)

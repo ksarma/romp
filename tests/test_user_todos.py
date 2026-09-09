@@ -321,6 +321,11 @@ class LinkCarriedByATodo(_StoreSandbox):
         self.assertIn("is not a string", km._user_todo_link(["x"])[1])
         self.assertIn("whitespace or a control character", km._user_todo_link("https://example.invalid/a b")[1])
         self.assertIn("\\0", km._user_todo_link("https://example.invalid/a\x00b")[1], "a NUL is spelled out: in a reply it is invisible")
+        for value, esc in (("https://example.invalid/a\x1bb", "\\x1b"), ("https://example.invalid/\x9bx", "\\x9b"), ("https://example.invalid/a\x7fb", "\\x7f")):
+            err = km._user_todo_link(value)[1]
+            self.assertIn("whitespace or a control character", err, "a C1 control is a control character too (the term as _PINNED_CTRL_RE reads it; the 2026-09-09 review)")
+            self.assertIn(esc, err, "spelled out, as the NUL is")
+            self.assertNotIn(value[-2], err, "the byte itself never rides the reason")
         long = "https://example.invalid/" + "x" * km._TODO_LINK_MAX
         err = km._user_todo_link(long)[1]
         self.assertIn("longer than %d characters" % km._TODO_LINK_MAX, err)
@@ -784,9 +789,10 @@ class Routes(_StoreSandbox):
         self.assertEqual(code, 400)
         self.assertEqual(seen, [])
 
-    def test_a_remote_kernel_that_echoes_no_link_is_named_on_stderr_and_echoes_none_here(self):
+    def test_a_remote_kernel_that_echoes_no_link_is_named_in_the_reply_under_its_own_key_and_on_stderr(self):
         # version skew, the file's own rule: a kernel that predates a todo's link files the todo without it and
-        # echoes none; the caller reads the missing echo (the postal tool says so in its reply)
+        # echoes none; the reply says so under `linkWarning` (its own key: the tool labels `warning` as the file's)
+        # and stderr keeps the record (the 2026-09-09 review: before, the reply was plain success)
         remote = {"host": "TESTHOST", "local_port": 1, "token": "t"}
         err = io.StringIO()
         with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
@@ -794,9 +800,31 @@ class Routes(_StoreSandbox):
              contextlib.redirect_stderr(err):
             code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review of the pull request", "link": LINK})
         self.assertEqual(code, 200)
-        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a34"}, "no link echoed: the signal the tool reads")
+        self.assertEqual((res["ok"], res["todoId"]), (True, "ut-9f2c1a34"))
+        self.assertNotIn("link", res, "no link echoed: the signal the tool reads")
+        self.assertNotIn("warning", res, "the file's key is the file's alone")
+        self.assertIn("the link " + LINK + " was not recorded", res["linkWarning"])
+        self.assertIn("the kernel on TESTHOST predates a todo's link", res["linkWarning"])
+        self.assertIn("update romp there and restart it", res["linkWarning"], "the remedy for the machine")
+        self.assertIn("address in its text", res["linkWarning"], "and for this todo: the text links too")
         self.assertIn("link not recorded on TESTHOST", err.getvalue())
         self.assertIn("predates a todo's link", err.getvalue())
+        # a file and a link both lost to the same older kernel: each named under its own key
+        err = io.StringIO()
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
+             mock.patch.object(km, "_remote_forward", lambda r, p, b: {"ok": True, "todoId": "ut-9f2c1a34"}), \
+             contextlib.redirect_stderr(err):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look", "file": "/tmp/notes-api/a.md", "link": LINK})
+        self.assertEqual(code, 200)
+        self.assertIn("the file path /tmp/notes-api/a.md was not recorded", res["warning"])
+        self.assertNotIn(LINK, res["warning"], "the file's sentence names the file alone")
+        self.assertIn("the link " + LINK + " was not recorded", res["linkWarning"])
+        self.assertEqual(err.getvalue().count("not recorded on TESTHOST"), 2, "both losses on record")
+        # a remote that echoes the link: no warning of either kind
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
+             mock.patch.object(km, "_remote_forward", lambda r, p, b: {"ok": True, "todoId": "ut-9f2c1a34", "link": b.get("link")}):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review", "link": LINK})
+        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a34", "link": LINK})
 
 
 # A PRIVATE synthetic sid for the account tests below (the goal-store fixture rule, generalized:

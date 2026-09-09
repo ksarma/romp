@@ -58,6 +58,11 @@ CASES = [
     ("https://example.invalid/a\tb", False),
     ("https://example.invalid/a\nb", False),
     ("https://example.invalid/a\x00b", False),
+    ("https://example.invalid/a\x1bb", False),         # ESC: a C0 control
+    ("https://example.invalid/a\x7fb", False),         # DEL
+    ("https://example.invalid/\x9bx", False),          # a C1 control, which str.isspace does not read as whitespace (the 2026-09-09 review)
+    ("https://example.invalid/a\x85b", False),         # NEL: C1, and whitespace to isspace
+    ("https://example.invalid/a\x80b", False),         # the first C1 code point
     ("https://example.invalid/" + "x" * 2048, False),
     (["https://example.invalid/x"], False),
     ({"href": LINK}, False),
@@ -123,6 +128,25 @@ class TheTwoChecksAgree(unittest.TestCase):
         self.assertEqual(pm.TODO_LINK_MAX, km._TODO_LINK_MAX)
         self.assertEqual(pm._TODO_LINK_RE.pattern, km._TODO_LINK_RE.pattern)
         self.assertEqual(pm._TODO_LINK_RE.flags, km._TODO_LINK_RE.flags)
+
+    def test_every_refused_control_is_spelled_out_on_both_sides(self):
+        # a NUL was spelled out and every other control rode the reason as itself, invisible in a reply (the 2026-09-09 review)
+        for value, esc in (("https://example.invalid/a\x1bb", "\\x1b"), ("https://example.invalid/a\x7fb", "\\x7f"),
+                           ("https://example.invalid/\x9bx", "\\x9b"), ("https://example.invalid/a\x85b", "\\x85"),
+                           ("https://example.invalid/a\x00b", "\\0")):
+            with self.subTest(link=value):
+                for side, err in (("the tool", pm._todo_link_error(value)), ("the kernel", km._user_todo_link(value)[1])):
+                    self.assertIn("whitespace or a control character", err, side)
+                    self.assertIn(esc, err, side + ": the byte is spelled out")
+                    self.assertFalse(any(ord(c) < 32 or 0x7f <= ord(c) <= 0x9f for c in err), side + ": no control character rides the reason")
+
+    def test_the_text_and_detail_bounds_are_the_same_constants_and_the_pinned_notes(self):
+        # the 2026-09-09 review: neither had a cap, and the webview links every open todo's text and detail on every
+        # Waiting pane frame and every chat push, so one unbounded string cost every reader
+        self.assertEqual((pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX), (km.USER_TODO_TEXT_MAX, km.USER_TODO_DETAIL_MAX))
+        self.assertEqual((km.USER_TODO_TEXT_MAX, km.USER_TODO_DETAIL_MAX), (km.PINNED_TEXT_MAX, km.PINNED_DETAIL_MAX),
+                         "a todo's bounds are a pinned note's")
+        self.assertEqual((pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX), (300, 4000), "the numbers the tool descriptions and the reference state")
 
 
 class WiredToTheKernel(unittest.TestCase):
@@ -202,6 +226,31 @@ class WiredToTheKernel(unittest.TestCase):
         out, err = pm._mcp_call("add_user_todo", {"text": TEXT})
         self.assertTrue(err)
         self.assertIn("will NOT see it", out)
+
+    def test_an_over_long_text_or_detail_is_refused_by_the_tool_before_any_post_and_by_the_route_as_a_400(self):
+        long_text = "N" * (pm.TODO_TEXT_MAX + 1)
+        out, err = pm._mcp_call("add_user_todo", {"text": long_text})
+        self.assertTrue(err)
+        self.assertIn("Too long: the line takes at most %d characters and this one is %d" % (pm.TODO_TEXT_MAX, pm.TODO_TEXT_MAX + 1), out)
+        self.assertIn("Nothing was saved", out)
+        out, err = pm._mcp_call("add_user_todo", {"text": TEXT, "detail": "d" * (pm.TODO_DETAIL_MAX + 1)})
+        self.assertTrue(err)
+        self.assertIn("'detail' takes at most %d characters" % pm.TODO_DETAIL_MAX, out)
+        self.assertEqual(self.posts, [], "no post")
+        self.assertEqual(km._user_todos(), {}, "no row")
+        # at the bound: filed
+        out, err = pm._mcp_call("add_user_todo", {"text": "N" * pm.TODO_TEXT_MAX, "detail": "d" * pm.TODO_DETAIL_MAX})
+        self.assertFalse(err, out)
+        self.assertEqual(len(km._user_todos()[PSID]), 1)
+        # a hand-built POST past the bound: the route's 400 naming the field and the bound, nothing filed
+        for body, key in (({"id": PSID, "text": long_text}, "text"),
+                          ({"id": PSID, "text": TEXT, "detail": "d" * (km.USER_TODO_DETAIL_MAX + 1)}, "detail")):
+            with self.subTest(field=key):
+                code, raw = _serve_post("/usertodo", body, {"X-Romp-Token": km.TOKEN})
+                self.assertEqual(code, 400)
+                self.assertIn("%s is longer than %d characters" % (key, getattr(km, "USER_TODO_%s_MAX" % key.upper())),
+                              json.loads(raw.decode())["error"])
+        self.assertEqual(len(km._user_todos()[PSID]), 1, "nothing more filed")
 
     def test_a_link_beside_a_file_rides_both_and_the_text_links_too(self):
         root = os.path.join(self.td.name, "notes-api")

@@ -36,18 +36,24 @@ const URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
 // has no opening partner inside the URL.
 const URL_TRAIL = ".,;:!?'\"";
 const PAIRS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+const OPENERS: Record<string, string> = Object.fromEntries(Object.entries(PAIRS).map(([close, open]) => [open, close]));
+// The trim reads the candidate ONCE: a count of closers minus openers per bracket kind, then a walk back from the
+// end that strips a trail character (no bracket, so the counts stand) or a closer whose kind still has more closers
+// than openers (and takes one off that kind's count), and stops at anything else. The loop it replaced re-counted
+// the whole candidate for every closer it stripped, quadratic on a URL followed by a run of closers: 40K of them
+// took five seconds, and a todo's text runs through this on every Waiting pane frame and every chat push (the
+// 2026-09-09 review). Same verdicts: a strip changes exactly the count the walk keeps.
 function trimUrl(u: string): string {
-  for (;;) {
-    const last = u[u.length - 1];
-    if (URL_TRAIL.includes(last)) { u = u.slice(0, -1); continue; }
-    const open = PAIRS[last];
-    if (open) {
-      let depth = 0;
-      for (const c of u) { if (c === open) depth++; else if (c === last) depth--; }
-      if (depth < 0) { u = u.slice(0, -1); continue; }   // one more closer than opener: it closes the sentence's bracket
-    }
-    return u;
+  const net: Record<string, number> = { ")": 0, "]": 0, "}": 0 };   // closers minus openers, per kind
+  for (const c of u) { if (c in net) net[c]++; else if (c in OPENERS) net[OPENERS[c]]--; }
+  let end = u.length;
+  while (end > 0) {
+    const last = u[end - 1];
+    if (URL_TRAIL.includes(last)) { end--; continue; }
+    if (last in net && net[last] > 0) { net[last]--; end--; continue; }   // one more closer than opener: it closes the sentence's bracket
+    break;
   }
+  return end === u.length ? u : u.slice(0, end);
 }
 /** `text` cut into runs, each a URL (`href` set) or plain text; the URLs trimmed of trailing punctuation. */
 export function urlSegments(text: string): Array<{ text: string; href?: string }> {
@@ -132,12 +138,27 @@ export function installUrlLinkOpener(doc: OpenerDoc, post: OpenerPost, env?: Ope
   installLinkOpener(doc, post, urlLinkHrefAt, env);
 }
 
-/** A URL as a chip's label: the address without its scheme and without a trailing slash (`github.com/x/y/pull/1`
- *  for `https://github.com/x/y/pull/1`), the whole address on hover. The chip's dress is the caller's (the
- *  todo-file chip's, beside which it sits). */
+// A GitHub pull request or issue: the owner, the repository and the number, whatever follows the number (a tab,
+// a comment's fragment, a query).
+const GITHUB_REF_RE = /^https?:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/(?:pull|issues)\/(\d+)(?:[/?#]|$)/i;
+/** A URL as a chip's label, the part that tells two links apart kept in view: a GitHub pull request or issue reads
+ *  `owner/repo#N` (the form pr-links.ts titles a `#N` reference with; the owner stays, since a fork and its
+ *  upstream share a name and their numbers overlap); any other address is the host and the last two path
+ *  segments with the middle elided (`example.invalid/…/docs/plan`), or the whole address without its scheme and
+ *  trailing slash when the path is that short. The chip's pill cuts a long label from the END (32% of the row,
+ *  text-overflow ellipsis), so the old label, the address minus its scheme, lost exactly its distinguishing tail
+ *  (`github.com/example-org/notes-…` for two todos on two pull requests; the 2026-09-09 review). The whole address
+ *  is the chip's title, and the Reply modal shows the label whole. */
 export function urlChipLabel(href: string): string {
+  const gh = GITHUB_REF_RE.exec(href);
+  if (gh) return gh[1] + "/" + gh[2] + "#" + gh[3];
   const bare = href.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  return bare || href;
+  if (!bare) return href;
+  const cut = bare.search(/[?#]/);                                  // the query and fragment ride the last segment
+  const head = cut < 0 ? bare : bare.slice(0, cut), tail = cut < 0 ? "" : bare.slice(cut);
+  const segs = head.split("/");                                     // the host, then the path's segments
+  if (segs.length <= 3) return bare;
+  return segs[0] + "/…/" + segs.slice(-2).join("/") + tail;
 }
 /** The chip itself: an anchor with URL_LINK_CLASS (so the pane opener serves it) plus the caller's chip class,
  *  the label above as its text, the full address as its title, opening in a new tab. */

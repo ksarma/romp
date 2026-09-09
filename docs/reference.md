@@ -90,11 +90,14 @@ a session whose working directory the kernel does not know, a `file://` URI that
 path, a URL of another scheme, and a spelling no path can have (a NUL byte in it, or a length past the
 machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
 names one. A todo can carry a web address of its own as well, through the tool's `link` argument: an http or
-https address, shown as a chip beside the file's on the session's card and in the pane alike, the address
-without its scheme as the label and the whole address on hover, opening in a new tab. Only such an address is
-taken: anything else (another scheme, a bare host, a value with whitespace in it, one past 2048 characters) is
-refused, the todo is not filed, and the tool's reply says why. The kernel does not fetch the address, so a
-mistyped host is stored as typed. The handed-back list shows the address after the path.
+https address, shown as a chip beside the file's on the session's card and in the pane alike, opening in a new
+tab. The chip's label keeps the part that tells two addresses apart: a GitHub `pull/N` or `issues/N` address
+reads `owner/repo#N`, any other address as its host and last two path segments; the whole address is on hover. Only
+such an address is taken: anything else (another scheme, a bare host, a value with whitespace in it, one past
+2048 characters) is refused, the todo is not filed, and the tool's reply says why. The kernel does not fetch the
+address, so a mistyped host is stored as typed. The handed-back list shows the address after the path. A todo's
+text takes at most 300 characters and its detail 4000, a pinned note's bounds; a longer one is refused before
+anything is filed, and the tool's reply names the bound.
 
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in

@@ -95,6 +95,16 @@ class ToolSurface(unittest.TestCase):
         # in the same breath it files the need
         self.assertIn("withdraw_user_todo", self._tool("add_user_todo")["description"])
 
+    def test_the_descriptions_name_the_bounds_on_text_and_detail(self):
+        # the 2026-09-09 review: neither had a cap, and the webview re-links both on every pane frame and chat push
+        t = self._tool("add_user_todo")
+        self.assertIn("at most 300 characters", t["description"])
+        self.assertIn("at most 4000", t["description"])
+        props = t["inputSchema"]["properties"]
+        self.assertIn("at most 300 characters", props["text"]["description"])
+        self.assertIn("at most 4000 characters", props["detail"]["description"])
+        self.assertEqual((pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX), (300, 4000))
+
 
 class Dispatch(unittest.TestCase):
     def setUp(self):
@@ -351,6 +361,42 @@ class Link(unittest.TestCase):
         self.assertIn("About the file:", out)
         self.assertIn("About the link:", out)
         self.assertTrue(out.index("About the file") < out.index("About the link"))
+
+    def test_the_kernels_own_link_warning_is_relayed_and_no_skew_of_the_tools_is_read(self):
+        # a hub kernel that forwarded the todo to an older remote says so under `linkWarning` (its own key, apart from
+        # the file's `warning`): the tool relays the kernel's words after the filing and adds no sentence of its own
+        lw = ("the link %s was not recorded (the kernel on TESTHOST predates a todo's link: update romp there and "
+              "restart it); the todo stands there without it" % self.LINK)
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d", "linkWarning": lw}
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request", "link": self.LINK})
+        self.assertFalse(err, "the todo was filed")
+        self.assertIn("Noted (id ut-0a1b2c3d)", out)
+        self.assertIn("About the link: " + lw, out)
+        self.assertNotIn("older version", out, "the kernel's account stands alone")
+        self.assertEqual(out.count("About the link"), 1)
+        self.assertTrue(out.index("Noted") < out.index("About the link"))
+        # a file warning and a link warning from the same reply: each under its own label, the file's first
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d", "warning": "the file path /TESTDIR/notes-api/a.md was not recorded", "linkWarning": lw}
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look", "file": "/TESTDIR/notes-api/a.md", "link": self.LINK})
+        self.assertIn("About the file: the file path /TESTDIR/notes-api/a.md was not recorded", out)
+        self.assertIn("About the link: " + lw, out)
+        self.assertTrue(out.index("About the file") < out.index("About the link"))
+
+    def test_an_over_long_text_or_detail_is_refused_before_any_post(self):
+        out, err = pm._mcp_call("add_user_todo", {"text": "N" * (pm.TODO_TEXT_MAX + 1), "link": self.LINK})
+        self.assertTrue(err)
+        self.assertIn("Too long: the line takes at most %d characters and this one is %d" % (pm.TODO_TEXT_MAX, pm.TODO_TEXT_MAX + 1), out)
+        self.assertIn("rest can go in 'detail'", out)
+        self.assertIn("Nothing was saved", out)
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review", "detail": "d" * (pm.TODO_DETAIL_MAX + 1)})
+        self.assertTrue(err)
+        self.assertIn("Too long: 'detail' takes at most %d characters and this one is %d" % (pm.TODO_DETAIL_MAX, pm.TODO_DETAIL_MAX + 1), out)
+        self.assertEqual(self.posts, [], "the kernel was never asked")
+        # the whitespace the tool strips does not count: a padded line at the bound is filed
+        out, err = pm._mcp_call("add_user_todo", {"text": "  " + "N" * pm.TODO_TEXT_MAX + "  ", "detail": " " + "d" * pm.TODO_DETAIL_MAX})
+        self.assertFalse(err, out)
+        self.assertEqual(len(self.posts), 1)
+        self.assertEqual((len(self.posts[0][1]["text"]), len(self.posts[0][1]["detail"])), (pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX))
 
     def test_the_replies_keep_the_veil(self):
         # the refusal and the skew sentence are the tool's own words (test_injected_voice.py renders them too)

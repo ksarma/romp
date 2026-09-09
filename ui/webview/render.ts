@@ -1990,8 +1990,9 @@ function todoFileChip(file: string, sid: string | null): HTMLElement {
 }
 // The web address a todo CARRIES (the user 2026-09-08, whose todo titles named pull requests by URL): the record's
 // own `link`, an http(s) address the kernel accepted when the todo was filed, trails the row's text and the Reply
-// modal's quoted line as a chip in the file chip's dress (`.ut-link` beside `.ut-file`): the address without its
-// scheme as the label, the whole address on hover, and a new tab on click. The chip is an ordinary anchor
+// modal's quoted line as a chip in the file chip's dress (`.ut-link` beside `.ut-file`): a short label that keeps the
+// part telling two links apart (url-links.ts urlChipLabel: `owner/repo#N` for a GitHub pull request or issue, else the
+// host and the last two path segments), the whole address on hover, and a new tab on click. The chip is an ordinary anchor
 // (url-links.ts urlChip: target _blank, rel noopener noreferrer), which the chat's document-level a[href] delegate
 // opens like every absolute-scheme anchor (web: the browser's tab; VS Code: the host's openExternal), at the
 // capture phase, so the span's uttoggle under it never fires; nothing is bound on the chip, and the card rebuilds

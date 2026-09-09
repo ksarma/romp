@@ -27,6 +27,7 @@ test_injected_voice.py. SYNTHETIC fixtures only.
 """
 import json
 import os
+import re
 import tempfile
 import unittest
 from romp_load import load_source
@@ -72,6 +73,17 @@ class ToolSurface(unittest.TestCase):
         self.assertIn("300", props["text"]["description"])
         self.assertIn("4000", props["detail"]["description"])
         self.assertEqual((pm.PIN_TEXT_MAX, pm.PIN_DETAIL_MAX), (300, 4000))
+
+    def test_the_descriptions_name_every_kind_of_link_the_strip_makes(self):
+        # docs/reference.md says a file path, a web address or a pull request number in a note links the way it
+        # does in a user todo (the strip runs the todo row's linkers); the schema the agent reads says the same
+        # (the 2026-09-09 review: the two named different sets)
+        props = self._tool("pin_note")["inputSchema"]["properties"]
+        self.assertIn("a file path, a web address or a pull-request number in it becomes a link", props["text"]["description"])
+        self.assertIn("paths, web addresses and pull-request numbers link the same way", props["detail"]["description"])
+        with open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8") as f:
+            ref = re.sub(r"\s+", " ", f.read())
+        self.assertIn("A file path, a web address or a pull request number in a note links the way it does in a user todo.", ref)
 
     def test_offered_whatever_the_user_todos_switch_says(self):
         pm.USER_TODOS_SWITCH.unlink(missing_ok=True)          # the switch is OFF by default

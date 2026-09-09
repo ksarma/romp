@@ -397,7 +397,7 @@ const LINK = "https://github.com/example-org/notes-api/pull/398";
 const WITH_LINK = { id: "t3", text: "Review the pull request", createdT: T0 - 60, detail: "The description is stale.", file: FILE, link: LINK };
 const LINK_ONLY = { id: "t4", text: "Read the design note online", createdT: T0 - 30, link: "https://example.invalid/notes-api/design/" };
 
-test("a todo with a link: the row wears the link chip after the file chip; the label is the address without its scheme, the whole address on hover; an anchor, not a path link", async () => {
+test("a todo with a link: the row wears the link chip after the file chip; the label keeps the distinguishing part (owner/repo#N for a pull request), the whole address on hover; an anchor, not a path link", async () => {
   await dispatch(frame([WITH_LINK, LINK_ONLY, NO_FILE]));
   const r = row("t3");
   const chip = r.querySelector(".wt-link");
@@ -405,7 +405,7 @@ test("a todo with a link: the row wears the link chip after the file chip; the l
   assert.equal(chip!.tagName, "A", "an ordinary anchor");
   assert.ok(chip!.classList.contains("url-link"), "the URL anchors' class: the pane's URL opener serves it");
   assert.equal(chip!.getAttribute("href"), LINK);
-  assert.equal(chip!.textContent, "github.com/example-org/notes-api/pull/398", "the label: the address without its scheme");
+  assert.equal(chip!.textContent, "example-org/notes-api#398", "the label: the pull request's owner/repo#N (url-links.ts urlChipLabel; the pill cuts a long label from the end, and this keeps the number in view)");
   assert.equal(chip!.title, LINK, "the whole address on hover");
   assert.equal((chip as any).target, "_blank");
   assert.equal((chip as any).rel, "noopener noreferrer");
@@ -415,7 +415,8 @@ test("a todo with a link: the row wears the link chip after the file chip; the l
   const names = line.children.map((c) => (c.classList.contains("wt-link") ? "wt-link" : c.classList.contains("wt-file") ? "wt-file" : c.className.split(" ")[0]));
   assert.deepEqual(names, ["wt-sess", "ut-text", "wt-file", "wt-link", "wt-age", "ut-btn", "ut-btn"], "session, text, the file chip, the link chip, then the age and the buttons");
   assert.equal((r.querySelector(".ut-reply") as any)._utlink, LINK, "the Reply button rides the address to the modal");
-  // a link without a file: the link chip alone, its trailing slash dropped from the label
+  // a link without a file: the link chip alone; an address that is not a pull request reads as its host and path
+  // (two segments here, so whole), its scheme and trailing slash dropped
   const r4 = row("t4");
   assert.equal(r4.querySelector(".wt-file"), null);
   assert.equal(r4.querySelector(".wt-link")!.textContent, "example.invalid/notes-api/design");
@@ -469,7 +470,7 @@ test("Reply on a todo with a link: the modal shows the file chip and then the li
   const chip = box.querySelector(".wt-link")!;
   assert.equal(chip.getAttribute("href"), LINK);
   assert.equal(chip.title, LINK);
-  assert.equal(chip.textContent, "github.com/example-org/notes-api/pull/398");
+  assert.equal(chip.textContent, "example-org/notes-api#398", "the same label as the row's; the modal shows it whole");
   modal!.remove();
 });
 

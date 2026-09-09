@@ -154,7 +154,8 @@ function fileChip(file: string, sid: string): HTMLElement {
 }
 // The web address a todo CARRIES (the user 2026-09-08): the record's own `link`, an http(s) address the kernel
 // accepted at filing, is a chip on the row and in the Reply modal in the file chip's dress (`.wt-link` beside
-// `.wt-file`): the address without its scheme as the label, the whole address on hover, a new tab on click. An
+// `.wt-file`): a short label that keeps the part telling two links apart (url-links.ts urlChipLabel: `owner/repo#N`
+// for a GitHub pull request or issue, else the host and the last two path segments), the whole address on hover, a new tab on click. An
 // ordinary anchor (url-links.ts urlChip), served by the URL opener installed above, framed or not: unlike the
 // file chip it needs no Files pane, so it is live on every page and wears the accent everywhere.
 function linkChip(link: string): HTMLElement {
