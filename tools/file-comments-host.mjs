@@ -32,8 +32,10 @@
 //     never calls reviveThreadFromSuperseded, which overwrites the live sidecar from a park.
 //   * a decision about a change that is no longer pending (accepted already, or coalesced away by a
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
-//     different change under the same name; and accept never drops a comment bound to the change
-//     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
+//     different change under the same name; and a decision never touches a comment: accept drops
+//     the change's record and leaves a comment bound to it (`suggestionId`) as it was, open or
+//     resolved, so the ids in a sent message stay addressable and resolving stays the person's own
+//     act (decision 42, 2026-09-09; before it, accept marked the bound comments resolved);
 //   * the same for the decisions a `save` carries from the editor: every accepted or rejected id must
 //     be rooted in a change the sidecar holds or the comments log already records as decided — the id
 //     itself or a fragment of it (`<id>~n`, the engine's split scheme) — else `no-change` by id and
@@ -2493,11 +2495,32 @@ function cannotRecord(ctx, paths, e, then, what) {
   return new Refusal('unreadable', `cannot record ${what || 'the decision'} in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
 }
 
+// A decision never touches a comment (decision 42, 2026-09-09): the comments a decision stages are
+// the loaded ones, field for field, apart from `anchorAt`, the romp-only position every sidecar write
+// refreshes against the current text (refreshAnchorAts, in stageSidecar). The check runs before the
+// stage, on the store as the verb leaves it; a difference is a fault in this script, and it refuses
+// with nothing written rather than land a comment a decision changed.
+function commentsApartFromAnchorAt(comments) {
+  return JSON.stringify((comments || []).map((c) => {
+    if (!c || typeof c !== 'object') return c;
+    const { anchorAt, ...rest } = c;   // eslint-disable-line no-unused-vars
+    return rest;
+  }));
+}
+function requireCommentsUntouched(ctx, store, loadedComments, verb) {
+  if (!store) return;
+  if (commentsApartFromAnchorAt(store.comments) !== loadedComments) {
+    throw new Refusal('internal', `the ${verb} would have changed a comment in ${ctx.shown}, which a decision never does; nothing was changed — reload and retry`);
+  }
+}
+
 // accept / accept-all: the engine drops the records and the file is untouched (a change's effect
-// is already in the text). Every comment bound to an accepted change by `suggestionId` is marked
-// resolved and KEPT — a stated divergence from the Obsidian host, which drops them — so the ids a
-// sent message named still answer to track-reply. The match is on the field alone, anchor or not:
-// track-edit --thread gives a passage comment a suggestionId while it keeps its anchor.
+// is already in the text). The comments are not touched: a comment bound to an accepted change by
+// `suggestionId` is KEPT as it was — a stated divergence from the Obsidian host, which drops them — so
+// the ids a sent message named still answer to track-reply, and it is NOT marked resolved (decision
+// 42, 2026-09-09: resolving is the person's own act; the accept used to resolve the bound comments,
+// and comments the session's edits had answered left the visible list with nothing said). The
+// self-check (requireCommentsUntouched) holds that for every decision, here and in save.
 // The writes, in order: the sidecar's bytes staged beside it, the log entry, the rename that lands
 // the sidecar. A failed stage or append refuses with nothing changed (the change is still pending,
 // the log says nothing); the rename is the one step after the append, and its failure — a
@@ -2509,11 +2532,9 @@ function doAccept(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, false);
   const decided = decidedChanges(ctx, store, all);
   const ids = decided.map((h) => h.id);
-  const set = new Set(ids.map(String));
+  const loadedComments = commentsApartFromAnchorAt(store.comments);
   store.suggestions = (all ? engine.acceptAll(store.suggestions) : engine.acceptSuggestions(store.suggestions, ids)).suggestions;
-  for (const c of store.comments) {
-    if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
-  }
+  requireCommentsUntouched(ctx, store, loadedComments, all ? 'accept-all' : 'accept');
   store[WRITE_SHIFTS] = { settled: decided };   // the accepted insertions stand in the text; the refresh reads their shift before the records go
   let staged;
   try {
@@ -2903,9 +2924,9 @@ export function editDiff(oldText, newText, name) {
 // reply this save would send — the records as `store` and `hunks`, the log entries it appends —
 // must be one the kernel carries (`too-large`, checkReplyFits). Then reject's order (doReject), the
 // log's entries between the sidecar and the file: the file's new bytes staged beside it
-// (prepareFileWrite), the sidecar landed against the new text (the records, every comment bound by
-// `suggestionId` to a decided change marked resolved and KEPT, the detached ops as they were, the
-// fingerprint over `content`), the log's entries appended — one `edit` in the kernel's direct-edit
+// (prepareFileWrite), the sidecar landed against the new text (the records, the comments as they were
+// loaded — a decision taken in the editor never resolves a comment bound to it either (decision 42),
+// the detached ops as they were, the fingerprint over `content`), the log's entries appended — one `edit` in the kernel's direct-edit
 // shape (built before the writes from the old and new text; the mtime after is the staged file's,
 // which the rename keeps), then an `accept` and a `reject` entry for each non-empty list — and the
 // rename that lands the file. The entries go only for a file that already has a sidecar, a comments
@@ -3031,12 +3052,9 @@ function doSave(ctx) {
   if (store) {
     try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
     const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
+    const loadedComments = commentsApartFromAnchorAt(store.comments);
     store.suggestions = fit.records;
-    if (taken.size) {
-      for (const c of store.comments) {
-        if (c && c.suggestionId != null && taken.has(String(c.suggestionId))) c.resolved = true;
-      }
-    }
+    requireCommentsUntouched(ctx, store, loadedComments, 'save');   // the decisions this save carries touch no comment (decision 42)
     // the person's edit moved what follows it, and the changes the editor accepted stand in the text
     // while their records leave the sidecar in this write: the refresh follows a tied passage through
     // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)

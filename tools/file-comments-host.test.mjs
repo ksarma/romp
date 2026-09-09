@@ -864,7 +864,7 @@ test('a decision older than the log tail still reaches the panel: `decided` carr
   assert.equal(r.log.filter((e) => e.kind === 'accept').length, 0, 'the tail no longer holds the accept');
   assert.deepEqual(r.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'the decision rides `decided`, read off the whole log');
   const c = r.store.comments.find((x) => x.suggestionId === h.id);
-  assert.ok(c && c.resolved, 'the bound comment stays in the sidecar (resolved), which is why the panel needs the texts');
+  assert.ok(c && !c.resolved, 'the bound comment stays in the sidecar, open (a decision never resolves a comment: decision 42), which is why the panel needs the texts');
   // the pure derivation, on the edges: a pending or detached change is the sidecar's to describe, never the log's
   const entries = [{ kind: 'reject', changes: [{ id: 'x', oldText: 'a', newText: '' }] }, { kind: 'accept', changes: [{ id: 'x', oldText: 'a', newText: 'b' }, { id: 'y', oldText: '', newText: 'n' }] }];
   const bound = (id) => ({ id: 'c1', author: 'you', ts: 1, body: 'k', suggestionId: id, replies: [], resolved: false });
@@ -1284,7 +1284,7 @@ test('accept and reject fences: "" over an existing sidecar, a stale sidecar mti
   refused(w2, { verb: 'accept', path: w2.report, args: { ids: [s1.hunks[0].id] }, fence: fenceFor(s1) }, 'store-moved');
 });
 
-test('comment {suggestionId} writes a change comment with no anchor and no target, track-reply answers it, and accept keeps it as resolved', () => {
+test('comment {suggestionId} writes a change comment with no anchor and no target, track-reply answers it, and accept keeps it as it was, open (decision 42: a decision never resolves a comment)', () => {
   const w = world();
   const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
   const h = st.hunks[0];
@@ -1312,7 +1312,9 @@ test('comment {suggestionId} writes a change comment with no anchor and no targe
   assert.equal(after.replies.length, 1);
   assert.equal(after.replies[0].author, 'web');
   assert.equal(after.replies[0].body, 'Kept.');
-  // Accept marks it resolved and keeps every field; the comment keeps the sidecar alive.
+  // Accept keeps every field of it as it was — open, the binding, the replies (before decision 42 it marked the comment
+  // resolved, and comments the session's edits had answered left the visible list with nothing said); the comment keeps the
+  // sidecar alive.
   const st2 = status(w, w.report);
   const r2 = accept(w, w.report, st2, [h.id]);
   assert.deepEqual(r2.accepted, [h.id]);
@@ -1320,7 +1322,8 @@ test('comment {suggestionId} writes a change comment with no anchor and no targe
   assert.ok(fs.existsSync(r2.storePath), 'a bound comment keeps the sidecar');
   const disk = readSidecar(r2.storePath);
   assert.deepEqual(disk.suggestions, []);
-  assert.deepEqual(disk.comments, [{ ...after, resolved: true }]);
+  assert.deepEqual(disk.comments, [after], 'the comment as loaded, field for field (before: resolved: true)');
+  assert.equal(disk.comments[0].resolved, false, 'not resolved by the accept');
   assert.equal(disk.comments[0].suggestionId, h.id, 'the binding stays, so the id a sent message named still answers');
   assert.deepEqual(r2.store.comments, disk.comments);
   // ...and track-reply still reaches it after the accept.
@@ -1334,7 +1337,7 @@ test('comment {suggestionId} writes a change comment with no anchor and no targe
   assert.match(both.stderr, /takes no anchor/);
 });
 
-test('accept resolves every comment bound by suggestionId, anchor or not, and leaves unbound comments alone', () => {
+test('accept leaves every comment as it was, bound by suggestionId or not, anchor or not: a decision never resolves a comment (decision 42; before it, accept resolved the bound ones)', () => {
   const w = world();
   const { anchor, hintOffset } = anchorAt(w.text, 'cut p95 latency by 40%', 0);
   let st = comment(w, w.report, status(w, w.report), { anchor, note: 'Say reduced, not cut.', hintOffset });
@@ -1351,16 +1354,18 @@ test('accept resolves every comment bound by suggestionId, anchor or not, and le
   assert.deepEqual(answered.anchor, passage.anchor, 'the passage comment keeps its anchor');
   assert.equal(answered.suggestionId, hunkFor(st, 'cut p95 latency by 40%').id);
   assert.equal(answered.replies[0].kind, 'edit');
-  // Accepting only the OTHER change resolves nothing.
+  // Accepting only the OTHER change touches neither comment.
   const other = hunkFor(st, 'shipping the cache in v1.2');
   let r = accept(w, w.report, st, [other.id]);
   assert.deepEqual(r.store.comments.map((c) => c.resolved), [false, false]);
-  // accept-all resolves the bound one and keeps both.
+  // accept-all of the bound one keeps both as they were: open, the binding and the anchor kept (before: the bound one resolved).
+  const before = r.store.comments.map((c) => { const { anchorAt, ...rest } = c; return rest; });   // eslint-disable-line no-unused-vars
   r = acceptAll(w, w.report, r);
   assert.deepEqual(r.accepted, [answered.suggestionId]);
   assert.equal(r.store.comments.length, 2);
+  assert.deepEqual(r.store.comments.map((c) => { const { anchorAt, ...rest } = c; return rest; }), before, 'every comment as loaded apart from anchorAt');   // eslint-disable-line no-unused-vars
   const byId = Object.fromEntries(r.store.comments.map((c) => [c.id, c]));
-  assert.equal(byId[passage.id].resolved, true);
+  assert.equal(byId[passage.id].resolved, false);
   assert.deepEqual(byId[passage.id].anchor, passage.anchor);
   assert.equal(byId[passage.id].suggestionId, answered.suggestionId);
   assert.deepEqual(byId[passage.id].replies, answered.replies);

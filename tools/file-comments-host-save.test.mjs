@@ -208,7 +208,7 @@ test('fitRecords keeps a record whose text sits at its offset, rebuilt in record
 
 // ── the happy path ──────────────────────────────────────────────────
 
-test('save writes the file and the remapped sidecar together, resolves the comments bound to what was decided, and logs the edit and the accept', () => {
+test('save writes the file and the remapped sidecar together, leaves every comment as it was (a decision never resolves one, decision 42), and logs the edit and the accept', () => {
   const w = world();
   writeTrackedPaths(w.root, ['docs/report.md']);
   edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
@@ -242,7 +242,8 @@ test('save writes the file and the remapped sidecar together, resolves the comme
   assert.notEqual(r.storeMtimeNs, st.storeMtimeNs);
   assert.equal(r.storePath, st.storePath);
   // The sidecar: the remapped record in recordAgentEdit's shape, its anchor unchanged because the
-  // text around it is, the fingerprint over the new text, the comments kept with the bound one resolved.
+  // text around it is, the fingerprint over the new text, the comments kept as they were — the bound one open too: a
+  // decision taken in the editor never resolves a comment (decision 42; before it, the save marked the bound one resolved).
   const disk = readSidecar(st.storePath);
   assert.equal(disk.v, 3);
   assert.deepEqual(disk.fingerprint, fingerprintOf(content));
@@ -259,14 +260,14 @@ test('save writes the file and the remapped sidecar together, resolves the comme
   assert.equal(s.oldText, 'shipping the cache in v1.2');
   assert.deepEqual(s.anchor, recordB.anchor, 'an unmoved record keeps its anchor byte for byte');
   assert.deepEqual(s.anchor, engine.makeAnchor(content, s.from, s.from + s.newText.length));
-  assert.deepEqual(disk.comments.map((c) => [c.id, c.resolved, c.body]), [[bound.id, true, 'Keep the number.'], [whole.id, false, 'Overall fine.']]);
+  assert.deepEqual(disk.comments.map((c) => [c.id, c.resolved, c.body]), [[bound.id, false, 'Keep the number.'], [whole.id, false, 'Overall fine.']]);
   // The reply is the status the panel holds next.
   assert.deepEqual(r.hunks, engine.toHunks(r.store.suggestions));
   assert.equal(r.hunks.length, 1);
   assert.equal(r.hunks[0].id, B.id);
   assert.equal(r.hunks[0].curFrom, B.curFrom + ' (draft)'.length);
   assert.ok(fits(content, r.hunks[0]));
-  assert.deepEqual(r.store.comments.map((c) => c.resolved), [true, false]);
+  assert.deepEqual(r.store.comments.map((c) => c.resolved), [false, false]);
   assert.deepEqual(r.trackedBy, { kind: 'file', entry: 'docs/report.md' });
   assert.equal('accepted' in r, false);
   assert.equal('rejected' in r, false);
@@ -295,7 +296,7 @@ test('save writes the file and the remapped sidecar together, resolves the comme
   assert.ok(st2.hunks.some((h) => h.id === B.id));
   const text2 = fs.readFileSync(w.report, 'utf8');
   for (const h of st2.hunks) assert.ok(fits(text2, h), `${h.id} fits`);
-  assert.deepEqual(st2.store.comments.map((c) => c.resolved), [true, false]);
+  assert.deepEqual(st2.store.comments.map((c) => c.resolved), [false, false]);
   assert.equal(st2.store.detached.length, 0);
 });
 
