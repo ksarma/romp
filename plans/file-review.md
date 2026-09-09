@@ -1650,6 +1650,43 @@ any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
+The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: he sent
+comments, the session answered with eleven changes and seven replies while he kept commenting, and nothing in the
+panel said so; the first he knew of them was the next Send accepting the changes by default. Built: the panel keeps
+the set of ENTRIES the person has seen (a pending or detached change, a comment, a reply, each by a key:
+`statusEntries` in `file-comments-model.ts`), seeded at its first render with a status from everything in it (a file
+opened fresh has no arrivals), and every status after that files an entry by another author that is not in the set as
+an ARRIVAL (`noteArrivals`); the person's own writes, `you` by decision 6, join the set outright and are never
+arrivals. While any arrival stands, one line under the header names them in the model's words (`arrivalWords`: "api
+made 11 changes and 7 replies since you last looked", singulars handled, "and N comments" when the session added
+comments of its own, the authors named as the chips name them and several joined with "and"), a button through the
+delegate table (`fcarrivals`) whose click shows the first arrival in the list's order as the focus (`goToArrival`,
+`showCard`; when the list shows none of them the filter goes to All first); the arrival cards and their marks in the
+text wear `data-new`, a dot in the accent at the head's left and in a mark's corner, in both sheets' file-comments
+block. Seen is event-based (`gesture`): a gesture of the person's marks every arrival whose card is then in the
+track's box seen (`entryShown`: the placed top inside the box; the list layout reads the card's box against the
+aside's and the window's), and the ones it scrolled into view are seen by the gesture that follows; a card not
+rendered, behind a fold or the filter, is not on screen and stays an arrival. A gesture is a pointer press or a key
+anywhere in the body row, a wheel or a touch move (the two events that begin a scroll of the person's: the scroll
+event itself is not one, since the lock's writes, a centering and the save's scroll fire it with no gesture behind
+them, and a wheel fires before the scroll it starts), a save, a send; never a timer. The line's own press marks
+nothing, so the glance the click buys survives the click; the dots and the line change in place rather than by a
+render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
+the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
+when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's. The set lives with the
+panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
+second report: he saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
+the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
+save as a gesture and samples the count (`gestures`) when Save is pressed; when the reply lands, `scrollToSaved`
+scrolls only if the count stood (no gesture of theirs in between; the event is the person's own input, never a time
+window) AND the saved card is not already whole in the track's box (`cardWhole`: a card in view needs no scroll; a
+whole-file comment's card at the top of the track with the text scrolled down does); standing down, the card still
+becomes the focus for the layout (`focusOn`), so it lands level with its mark wherever that is, and nothing scrolls;
+the composer's acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
+`file-comments-arrivals.test.ts` (the stand-in: both rules driven), `file-comments-arrivals-browser.test.ts` (Chromium
+and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel) and
+`tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
+
 ### Slice 3: region comments on images
 
 User-visible: on a standalone image, or on a figure embedded in a rendered markdown file, the
@@ -2258,6 +2295,20 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   switch's own with Show changes inline off, from Raw and from Rendered, on a change card and on the deletion's; the
   pass `revealInRaw` runs itself on a file with no Rendered view; the switch's own on the comment's branch, level with
   its Raw highlight).
+- The arrivals follow-on (2026-09-09): `file-comments-model-arrivals.test.ts` (a status's entries,
+  the arrivals against a seen set, the line's words, the accept option's);
+  `file-comments-arrivals.test.ts` drives the panel over the review stand-in (the line and the dots
+  on a status landing, none for the person's own writes or the first status; seen by a wheel, a key,
+  a press and a touch move, in the track's box only, never by time; the line's click and its own
+  press; the accept option's words; the set across a repaint, a status and a close and reopen; the
+  save's scroll standing down on each gesture kind, still scrolling when nothing happened and the
+  card is out of view, and not for a card whole in the box);
+  `file-comments-arrivals-browser.test.ts` measures both in Chromium and Firefox (the line in the
+  accent with its dot, the dots on the cards' heads and the marks, a real wheel marking the arrival
+  in the box seen; a whole-file comment's save bringing the text to its card, and not after a
+  wheel); `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
+  modules it names.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2341,6 +2392,9 @@ narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds t
 panel and both sheets); with the focus follow-on (2026-09-08), that the card you click sits level with its
 passage whatever stands above it and that a long card folds to a few lines with Show more at its foot
 (`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
+With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
+last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
+view unless you scrolled on meanwhile (`tests/test_guide_files_arrivals.py` holds both sentences to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,

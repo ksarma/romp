@@ -406,6 +406,7 @@ passage in either view, Rendered or Raw, and press the **Comment** button that a
 hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
+Saving brings the new card into view, unless you scrolled on while the save was under way; then the text stays where you left it.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
@@ -506,7 +507,8 @@ it when the session has gone quiet, in which case the message goes when it wakes
 
 While the panel is open it checks the file, its comments, and the project's tracking list
 every few seconds, so a reply the session writes appears without a reload and a file the
-session rewrote is shown as it is now. The first comment, like the first save, asks once
+session rewrote is shown as it is now.
+A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them. The first comment, like the first save, asks once
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
