@@ -17,3 +17,5 @@ APPROVED 2026-09-07 as an RFC: the fork owner approved offering the user-todos s
 OFFERED 2026-09-07: all three slices ride one RFC, their draft PR #994 (label major-feature, head a408815d; discussion issue #993), with the per-install switch off by default, docs and twelve synthetic captures, and the fork #325 withdraw fix folded; under #991's policy it merges on the other maintainer's approval plus a non-author comment on #993.
 
 2026-09-07: #994 head is now b8a906f3 (38 commits; a review fold added 23 commits; CI scaffold fork PR #356).
+
+2026-09-09: the slice's send outcomes commit is b40df67a (rebased head 840f21e5); the follow-up e9273b33 rides the same PR.
