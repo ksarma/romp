@@ -84,8 +84,12 @@ test("presentation: one chip per NAME, identity dot, ✕ — and never a host pr
 
 test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' adds the target and drops the HOME tag on ONE blob; '+' adds without moving", () => {
   const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
-  assert.match(fly, /const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*const home = home0 && !home0\.pending \? home0 : undefined;/,
+  // the computation sits in showTabMenu's scope since the menu's Hide tab row shares it (the user 2026-09-09; tab-hide.test
+  // executes both readers): homeNow, which the flyout reads on every build of its own
+  assert.match(fly, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)/,
     "the group THIS COPY sits in (T264b: a session under several tags has a copy per group, and the menu speaks for the right-clicked copy's group), else the first holder; only while the strip is sectioned, and never a tag whose create is still in flight");
+  assert.match(RENDER, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/,
+    "the computation itself, once, in showTabMenu's scope: the copy's group, else the first holder, only while sectioned, never a pending tag");
   assert.match(fly, /lb\.textContent = "Move to " \+ g\.name; bodyE\.appendChild\(lb\);/);
   assert.match(fly, /moveUnion\(home, g\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move");
   assert.match(fly, /plus\.title = "add this tag too — the session keeps its other tags";/, "…and multi-tag stays one click away");

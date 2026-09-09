@@ -37,7 +37,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, setHidden, prunePinned, reachableFrom, headWords,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
@@ -6430,7 +6430,7 @@ function setSessionEmoji(id: string, emoji: string) {
 
 // Small inline-SVG icon for the tab menu's toggle items (trusted constant markup; `off` slashes + dims it,
 // matching the timeline lane toggles). 16-unit viewBox; currentColor so .ctx-icon/.off set the tint.
-function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile", off: boolean): HTMLElement {
+function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile" | "tab", off: boolean): HTMLElement {
   const span = el("span", "ctx-icon" + (off ? " off" : ""));
   const slash = off ? '<line x1="1.6" y1="14.4" x2="14.4" y2="1.6"/>' : "";
   const body = kind === "feed"
@@ -6447,6 +6447,8 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
           ? '<path d="M3 13 L3.6 10.4 L10.8 3.2 A1.3 1.3 0 0 1 12.8 5.2 L5.6 12.4 Z"/><line x1="9.8" y1="4.2" x2="11.8" y2="6.2"/>'  // pencil (rename)
         : kind === "smile"
           ? '<circle cx="8" cy="8" r="6"/><path d="M5.4 9.6 C6.2 11 9.8 11 10.6 9.6"/><circle cx="6" cy="6.6" r="0.7" fill="currentColor"/><circle cx="10" cy="6.6" r="0.7" fill="currentColor"/>'  // smiley (tab emoji)
+        : kind === "tab"
+          ? '<path d="M2 12.4 L2 6.4 A1.3 1.3 0 0 1 3.3 5.1 L7.2 5.1 L8.4 3.4 L12.7 3.4 A1.3 1.3 0 0 1 14 4.7 L14 12.4"/><line x1="1.2" y1="12.4" x2="14.8" y2="12.4"/>'  // a tab on the strip (hide tab); slashed when the tab is hidden
           : '<path d="M8 2 C5.9 2.2 4.7 3.8 4.7 5.8 L4.7 8 L3.4 9.9 L12.6 9.9 L11.3 8 L11.3 5.8 C11.3 3.8 10.1 2.2 8 2 Z"/><path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>';  // bell (system notifications)
   span.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
     + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + slash + "</svg>";
@@ -6543,8 +6545,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   const offFeed = !!(s && s.hideFromFeed);
   const offMail = !!(s && s.postalServiceOff);
   const onBell = !!(s && s.notify);
-  const toggle = (kind: "feed" | "mail" | "bell", off: boolean, lab: string, sub: string, fn: () => void) => {
-    const item = el("div", "ctx-item ctx-item-toggle");
+  const toggle = (kind: "feed" | "mail" | "bell" | "tab", off: boolean, lab: string, sub: string, fn: () => void, cls = "") => {
+    const item = el("div", "ctx-item ctx-item-toggle" + cls);
     item.appendChild(ctxIcon(kind, off));
     const bodyEl = el("span", "ctx-item-body");
     const l = el("span", "ctx-item-label"); l.textContent = lab; bodyEl.appendChild(l);
@@ -6567,9 +6569,42 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     onBell ? "Stop notifying" : "Notify me",
     onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes",
     () => setSessionFlag(id, "notify", !onBell));
-  // (The hide-session mechanism is fully RETIRED, the user 2026-08-24 — the tag system covers
-  // backgrounding; the kernel migrated existing hidden entries into the "archived" tag. revealIn
-  // survives for the picker's tagged-session jump.)
+  // THE RIGHT-CLICKED COPY'S HOME SECTION, read when a caller asks: the copy's own group while the strip
+  // is sectioned, else the first holder in tagOrder (the flat strip names no copy), and none while Group
+  // tabs by tag is off or that tag's create is still in flight (no id to address). Shared by the Hide
+  // tab row below and the Tags flyout's Move-to and Show-when-folded rows; the flyout re-reads it on
+  // every build of its own, since a move or a remove there changes the copy's group.
+  const unionFor = () => viewTagUnion(effViews());
+  const holding = () => unionFor().filter((g) => g.members.includes(id));
+  const homeNow = (): TagUnion | undefined => {
+    const home0 = readTabGroups().on ? ((copy !== undefined ? holding().find((g) => g.name === copy) : undefined) ?? holding()[0]) : undefined;
+    return home0 && !home0.pending ? home0 : undefined;
+  };
+  // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
+  // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
+  // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
+  // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
+  // after the "+"; the pane's Show button stays the way back. Only while the strip is sectioned and the
+  // right-clicked copy has a home section: hides do not apply on the flat strip or the phone layout, so
+  // the row is absent there. The label reads the stored state (Hide tab on a shown copy, Show tab on a
+  // hidden one), and the click SETS that state's opposite, the pin row's idiom. No kernel round trip:
+  // nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
+  // was the one door to a hide (2026-09-08); the user asked for the menu door.
+  // (The kernel-side hide-session mechanism stays RETIRED, the user 2026-08-24: the tag system covers
+  // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
+  // for the picker's tagged-session jump.)
+  {
+    const home = homeNow();
+    if (home) {
+      const sec = sectionRef(home);
+      const hidden = isHidden(tabGroups(), sec, id);
+      toggle("tab", hidden,
+        hidden ? "Show tab" : "Hide tab",
+        hidden ? `back on the strip in ${home.name}` : `off the strip while ${home.name} is open; the group's count shows it as +1`,
+        () => writeTabGroupsPruned(setHidden(tabGroups(), sec, id, !hidden)),
+        " ctx-item-hide");
+    }
+  }
   // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
   // statusline badge). Only when the machine offers BOTH choices (st.authBoth) — a one-auth machine
   // keeps the fact on the tab hover, never a dead selector — and the key stays labelled plainly
@@ -6630,8 +6665,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // push (a refused edit re-appears — the kernel's loud tagEditFailed lands on the timeline
   // dialog, 628's surface).
   {
-    const unionFor = () => viewTagUnion(effViews());
-    const holding = () => unionFor().filter((g) => g.members.includes(id));
+    // unionFor and holding are showTabMenu's (above the Hide tab row), shared with that row
     const tagsItem = el("div", "ctx-item ctx-item-toggle ctx-item-tags");
     tagsItem.appendChild(ctxIcon("tag", false));
     const bodyEl = el("span", "ctx-item-body");
@@ -6769,8 +6803,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         // whose create is still in flight cannot be moved out of (no id to address); the rows read
         // "+ <name>" until the ack. Whether "move" between equivalent tags is the right verb at all is
         // the user's call (flagged with T264b); the mechanics are unchanged here.
-        const home0 = readTabGroups().on ? ((copy !== undefined ? holding().find((g) => g.name === copy) : undefined) ?? holding()[0]) : undefined;
-        const home = home0 && !home0.pending ? home0 : undefined;
+        const home = homeNow();   // read per build: a move or a remove above changes the copy's group (the Hide tab row reads the same)
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);

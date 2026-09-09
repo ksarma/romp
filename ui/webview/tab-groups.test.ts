@@ -1895,6 +1895,15 @@ test("the tab menu speaks for the right-clicked copy's group: Move to drops THAT
   assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string, copy\?: string\)/);
   assert.match(RENDER, /const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;/,
     "the copy's own group, else the first holder (the flat strip names no copy)");
+  // the computation sits in showTabMenu's scope since the menu's Hide tab row (the user 2026-09-09; tab-hide.test executes it): one
+  // function, homeNow, read by that row at build and by the Tags flyout on every build of its own, so the Move-to and
+  // Show-when-folded rows still speak for the copy's group after a move or a remove inside the flyout
+  const menuAt = RENDER.indexOf("function showTabMenu(");
+  const menu = RENDER.slice(menuAt, RENDER.indexOf("document.body.appendChild(menu);", menuAt));
+  assert.match(menu, /const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \?/);
+  assert.equal(menu.split("homeNow()").length - 1, 2, "the Hide tab row's read and the flyout's");
+  assert.ok(menu.indexOf("const homeNow = ") < menu.indexOf('toggle("tab"') && menu.indexOf('toggle("tab"') < menu.indexOf("const home = homeNow();   // read per build"));
+  assert.match(menu, /const home = homeNow\(\);   \/\/ read per build[^\n]*\n\s*for \(const g of others\) \{/, "the flyout's read, where its own copy of the two lines stood");
   assert.match(RENDER, /startTabRename\(id, copy\)/);
   assert.match(RENDER, /function startTabRename\(id: string, copy\?: string\)/);
   assert.match(RENDER, /t\.dataset\.id === id && \(copy === undefined \|\| t\.dataset\.copy === copy\)\)\s*\n\s*\?\? Array\.from\(bar\.children\)\.find\(\(t\): t is HTMLElement => t instanceof HTMLElement && t\.dataset\.id === id\)\);/,

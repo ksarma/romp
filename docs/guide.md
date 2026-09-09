@@ -172,8 +172,13 @@ the desktop layout; the phone layout keeps its flat list.
 **Hiding a session inside its group.** Each row in this view has a **Hide** button, or **Show**
 once the session is hidden. Hiding a session takes its tab off the strip while its group is open
 and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
-**Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
-open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
+**Show** button puts the tab back at once. You can also hide a session from its tab: right-click
+the tab and pick **Hide tab**. The line under the label names the group the session hides in and
+says that the group's count will show it after the plus. The menu has **Hide tab** only while the
+tabs are grouped by tag, since nothing is hidden on the flat strip or on a phone. A hidden session
+has no tab to right-click, so this view's **Show** button puts it back. Hiding is separate from
+folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
+come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
 when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
 hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in

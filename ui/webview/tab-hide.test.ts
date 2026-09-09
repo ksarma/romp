@@ -10,10 +10,11 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { viewTagUnion } from "./session-views";
 import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, toggleSectionCollapsed, isSectionCollapsed, planStrip,
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
-         homeSectionOf, neighborOfFolded, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
+         homeSectionOf, neighborOfFolded, sectionRef, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
 import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, compactCount, stripAndHidden, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
@@ -278,7 +279,7 @@ test("pinned: render.ts. The host's delegate takes hide, show and toggle-hidden;
   assert.match(SNAP, /function setRowHidden\(id: string \| undefined, on: boolean\): void \{\s*\n\s*const head = snapView \? lastStripItems\.find\(\(it\): it is StripHead => "head" in it && it\.head\.name === snapView\) : undefined;\s*\n\s*if \(!id \|\| !head \|\| head\.head\.name === null\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(tabGroups\(\), head\.head, id, on\)\);\s*\n\}/);
   assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one prune site (writeTabGroupsPruned), shared with the pin row");
   assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);/);
-  assert.equal(RENDER.split("writeTabGroupsPruned(").length - 1, 3, "the definition, the pin row, the snapshot's write");
+  assert.equal(RENDER.split("writeTabGroupsPruned(").length - 1, 4, "the definition, the pin row, the snapshot's write, the tab menu's Hide tab row (the menu door, below)");
   // the row: a real button beside the open button, its act and face from the row's rendered state
   assert.match(SNAP, /const act = document\.createElement\("button"\);\s*\n\s*act\.type = "button";\s*\n\s*item\.append\(btn, act\);/, "a native button: Tab reaches it, Enter and Space are its own click");
   assert.match(SNAP, /act\.className = "snap-act";\s*\n\s*act\.dataset\.act = r\.hidden \? "show" : "hide"; act\.dataset\.id = r\.id;\s*\n\s*act\.textContent = w\.text;\s*\n\s*act\.title = w\.title;\s*\n\s*act\.setAttribute\("aria-label", w\.label\);/,
@@ -387,6 +388,9 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   const flat = para.replace(/\s+/g, " ");   // the pins read the words, not the wrap
   assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
+  // THE MENU DOOR (the user 2026-09-09): the tab's right-click menu hides too; the paragraph says where the row is and is not
+  assert.match(flat, /You can also hide a session from its tab: right-click the tab and pick \*\*Hide tab\*\*\. The line under the label names the group the session hides in and says that the group's count will show it after the plus\./);
+  assert.match(flat, /The menu has \*\*Hide tab\*\* only while the tabs are grouped by tag, since nothing is hidden on the flat strip or on a phone\. A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\./);
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
   assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count shows two numbers, \*\*6\+2\*\* for six on the strip and two hidden \(the tooltip spells it out\)\./, "the compact count (headWords, compactCount; the user 2026-09-08: the words were too wide a head), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
@@ -403,6 +407,8 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(ref, /`romp:tabgroups`, not on the kernel/);
   assert.match(ref, /which sessions are hidden inside their group \(\*\*Hide\*\*, in the section's at-a-glance view\)/, "the guide's name for the surface (round 1: \"the group view\" appeared nowhere else)");
   assert.doesNotMatch(REF, /group view/);
+  assert.match(ref, /The tab's right-click menu writes the same hide entry: \*\*Hide tab\*\* on a shown copy, \*\*Show tab\*\* on a hidden one \(a hidden copy has no tab on the strip, so the view's \*\*Show\*\* puts it back\)\./, "the menu door (the user 2026-09-09)");
+  assert.match(ref, /The row is present only while the tabs are grouped by tag and the right-clicked copy is in a group; on the flat strip and the phone layout, where hides do not apply, the menu has no such row\./);
   assert.match(ref, /is dropped at the next pin or hide change once the session has left the group or closed; a fold or an open carries it as it is\./, "the prune rule as it is: the pin and hide writes prune, the fold writes do not (round 1)");
   assert.match(ref, /A key in the store that this build does not know is carried through its writes unchanged\./);
   assert.match(ref, /Folding or opening a group never changes which of its sessions are hidden\. A store written before hiding existed reads as nothing hidden\./);
@@ -521,6 +527,212 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   assert.deepEqual([open.infra.folded, open.tabs], [false, ["web", "tests", "loose"]]);
   const shown = setHidden(apiHidden, INFRA, "api", false);
   assert.deepEqual([strip(shown).infra.folded, strip(shown).tabs, shown.collapsed, shown.expanded], [false, ["web", "api", "tests", "loose"], [], []], "Show: the tab is back at once, the fold untouched");
+});
+
+// ── THE MENU DOOR (the user 2026-09-09) ──────────────────────────────────────────────────────────────────────────────────
+// A hide from the tab's right-click menu, with neither the pane nor the Sessions and tags dialog open. This reverses the
+// ruling that the pane was the one door (the tabhide design, 2026-09-08). showTabMenu ITSELF runs here: transpiled from
+// render.ts with esbuild when the test runs (the chat-exact-tail-exec idiom) over a stand-in for the page, which is fake
+// elements recording their class, words, children and listeners, the real store and unions, and recorders for the writes
+// the menu makes; the row's presence, place, words and write are read off the menu the real code built. A slice that stops
+// compiling against the stand-in fails loudly here (a ReferenceError), which is the point.
+const requireCjs = createRequire(__filename);
+class FakeEl {
+  tag: string; className: string; children: FakeEl[] = []; parent: FakeEl | null = null;
+  textContent = ""; innerHTML = ""; title = ""; type = ""; placeholder = ""; maxLength = 0;
+  style: Record<string, string> = {}; dataset: Record<string, string> = {}; attrs: Record<string, string> = {};
+  listeners: Record<string, Array<(ev: unknown) => void>> = {};
+  constructor(tag: string, cls = "") { this.tag = tag; this.className = cls; }
+  appendChild(c: FakeEl) { this.children.push(c); c.parent = this; return c; }
+  append(...cs: FakeEl[]) { for (const c of cs) this.appendChild(c); }
+  replaceChildren(...cs: FakeEl[]) { this.children = []; this.append(...cs); }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+  addEventListener(k: string, fn: (ev: unknown) => void) { (this.listeners[k] ||= []).push(fn); }
+  setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  getBoundingClientRect() { return { left: 0, top: 0, right: 120, bottom: 20, width: 120, height: 20 }; }
+  querySelector(): FakeEl | null { return null; }
+  focus() {}
+  has(cls: string) { return this.className.split(/\s+/).includes(cls); }
+  get classList() { return { contains: (c: string) => this.has(c), add: (c: string) => { this.className += " " + c; }, remove: () => {}, toggle: () => {} }; }
+  click() { const ev = { stopPropagation() {} }; for (const fn of this.listeners.click || []) fn(ev); }
+  /** every descendant, depth first, self included */
+  all(): FakeEl[] { return [this, ...this.children.flatMap((c) => c.all())]; }
+  label() { return this.all().find((n) => n.has("ctx-item-label"))?.textContent; }
+  sub() { return this.all().find((n) => n.has("ctx-item-sub"))?.textContent; }
+  icon() { return this.all().find((n) => n.has("ctx-icon")); }
+}
+type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown> };
+type MenuApi = { open: (id: string, copy?: string) => FakeEl };
+function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
+  const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
+  const end = RENDER.indexOf("ctxMenuAt = { x: mx, y: my };", a);
+  const b = RENDER.indexOf("\n}\n", end) + 3;
+  assert.ok(a > 0 && end > a && b > end, "showTabMenu's anchors moved; re-anchor this lift");
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b), { loader: "ts" }).code;
+  // the page as showTabMenu reads it: the maps and helpers named as render.ts names them
+  const prelude = `
+    const H = HOOKS;
+    const { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden } = H.mods;
+    const el = (tag, cls) => new FakeEl(tag, cls);
+    const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
+    const sessions = H.sessions, tabMeta = new Map();
+    const paletteColors = [];
+    const dismissTabMenu = () => { H.dismissed++; };
+    const closeEmojiPrompt = () => {};
+    const setSessionFlag = (id, k, v) => { H.flags.push([id, k, v]); };
+    const setSessionColor = () => {}, startTabRename = () => {}, showMovePrompt = () => {}, showEmojiPrompt = () => {};
+    const billingSubText = () => "";
+    const vscodeApi = null;
+    let pendingSessionViews = null, tagsFlyNewInput = null;
+    const renderTabs = () => { H.renders++; };
+    const postTagEdit = () => {}, syncNewTagInput = () => {}, createInFlight = () => false, viewsWrites = [];
+    const viewTags = (v) => (v && v.tags) || [];
+    const effViews = () => H.views;
+    const knownTabIds = () => new Set(H.known);
+    const reachableHosts = () => new Set();
+    function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
+    function writeTabGroupsPruned(st) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.writes.push(out); writeTabGroups(out); }
+    const browseRouteNow = () => "pane", openBrowse = () => {};
+    const location = { protocol: "vscode-webview:" };
+    const window = { innerWidth: 1200, innerHeight: 800, setTimeout: () => 0, clearTimeout: () => {} };
+    const document = { body: new FakeEl("body"), getElementById: () => null };
+    let ctxMenuEl = null, ctxMenuAt = null;
+  `;
+  const epilogue = `
+    return { open: (id, copy) => { showTabMenu({ clientX: 10, clientY: 10 }, id, copy); return ctxMenuEl; } };
+  `;
+  return new Function("HOOKS", prelude + js + epilogue) as (hooks: MenuHooks) => MenuApi;
+}
+/** the store the menu reads and writes, as the earlier tests stub it */
+function withStore<T>(fn: (store: Map<string, string>) => T): T {
+  const store = new Map<string, string>();
+  const g: any = globalThis;
+  const savedLS = g.localStorage;
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  try { return fn(store); } finally { g.localStorage = savedLS; }
+}
+
+test("executed: THE MENU DOOR. Hide tab sits with the toggles after Notify me, names the copy's group, hides in THAT section on a click and dismisses; the label reads Show tab once hidden; the row is absent off the grouped strip", () => {
+  const hooks: MenuHooks = {
+    views: V, known: ALL,
+    sessions: new Map<string, unknown>([["web", { name: "web", status: { state: "ready" } }], ["api", { name: "api", status: { state: "working" } }], ["loose", { name: "loose", status: { state: "ready" } }]]),
+    writes: [], dismissed: 0, renders: 0, flags: [],
+    mods: { FakeEl, viewTagUnion, readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden },
+  };
+  withStore(() => {
+    const api = liftShowTabMenu()(hooks);
+    const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
+    // S1: grouping on (a fresh store), web in infra, the menu opened on its infra copy: the row, its words, its glyph
+    let menu = api.open("web", "infra");
+    let row = rowOf(menu);
+    assert.ok(row, "the row exists on the grouped strip");
+    assert.equal(row!.label(), "Hide tab");
+    assert.equal(row!.sub(), "off the strip while infra is open; the group's count shows it as +1", "the sub-line names the group and what the header will show");
+    assert.deepEqual([row!.icon()!.dataset.kind, row!.icon()!.has("off")], ["tab", false], "the tab glyph, unslashed while the tab shows");
+    assert.ok(row!.has("ctx-item") && row!.has("ctx-item-toggle"), "the toggles' dress");
+    // its place: directly after Notify me, before Billing and Tags, no divider added inside the behaviour section
+    const items = menu.children;
+    const at = (pred: (it: FakeEl) => boolean) => items.findIndex(pred);
+    const feedAt = at((it) => it.label() === "Hide from feed"), bellAt = at((it) => it.label() === "Notify me"), hideAt = at((it) => it.has("ctx-item-hide")), tagsAt = at((it) => it.has("ctx-item-tags"));
+    assert.ok(feedAt > 0 && bellAt > feedAt && tagsAt > bellAt, "the toggles then Tags, as before");
+    assert.equal(hideAt, bellAt + 1, "directly after Notify me");
+    assert.ok(hideAt < tagsAt);
+    assert.ok(!items.slice(feedAt, tagsAt).some((it) => it.has("ctx-sep")), "no divider between the first toggle and Tags: one behaviour section (tab-tags.test pins the source)");
+    // S2: the click: one write through the prune site, this section's entry in the pin's shape, the fold and the pins untouched,
+    // the menu dismissed, no strip render of its own (TABGROUPS_EVENT repaints it, the write's own path) and no session flag
+    const d0 = hooks.dismissed;   // showTabMenu dismisses any earlier menu as it opens; the click's own dismissal is the one counted
+    row!.click();
+    assert.equal(hooks.dismissed, d0 + 1, "the click dismisses the menu");
+    assert.equal(hooks.writes.length, 1);
+    assert.deepEqual(hooks.writes[0].hidden, [{ sid: "web", name: "infra", id: "g1" }]);
+    assert.equal(isHidden(hooks.writes[0], INFRA, "web"), true);
+    assert.deepEqual([hooks.writes[0].collapsed, hooks.writes[0].pinned, hooks.writes[0].on], [[], [], true]);
+    assert.deepEqual([hooks.renders, hooks.flags], [0, []]);
+    // the strip's own path reads what the click wrote: web off the strip while infra is open, the header standing in
+    const after = strip(readTabGroups(unions));
+    assert.deepEqual([after.tabs, after.infra.hides, after.infra.folded], [["api", "tests", "loose"], ["web"], false]);
+    // S3: the label reads the stored state. The same menu on the hidden copy reads Show tab (the strip shows no such tab today;
+    // the words are true wherever the menu opens), the glyph slashed, and its click shows: an explicit off, never a toggle of
+    // whatever a later render stored
+    menu = api.open("web", "infra");
+    row = rowOf(menu);
+    assert.equal(row!.label(), "Show tab");
+    assert.equal(row!.sub(), "back on the strip in infra");
+    assert.equal(row!.icon()!.has("off"), true);
+    const d1 = hooks.dismissed;
+    row!.click();
+    assert.equal(hooks.writes.length, 2);
+    assert.deepEqual(hooks.writes[1].hidden, []);
+    assert.deepEqual(strip(readTabGroups(unions)).tabs, ["web", "api", "tests", "loose"], "back at once");
+    assert.equal(hooks.dismissed, d1 + 1);
+    // S4: a session under two tags (T264b) has a copy in each group, and the menu speaks for the copy it opened from: api in infra
+    // and archived, opened on the archived copy, hides under archived alone; on the infra copy, under infra; with no copy named
+    // (an older caller) the first holder in tagOrder
+    const V2 = { ...V, tags: [V.tags[0], { ...V.tags[1], members: ["old1", "old2", "api"] }], seq: 4 };
+    hooks.views = V2;
+    const ARCHIVED: SectionRef = { name: "archived", localId: "g2" };
+    menu = api.open("api", "archived");
+    assert.equal(rowOf(menu)!.sub(), "off the strip while archived is open; the group's count shows it as +1", "the copy's own group");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes[2].hidden, [{ sid: "api", name: "archived", id: "g2" }], "THAT copy's section, not the first holder's");
+    assert.deepEqual([isHidden(hooks.writes[2], ARCHIVED, "api"), isHidden(hooks.writes[2], INFRA, "api")], [true, false]);
+    const u2 = viewTagUnion(V2);
+    const open2 = strip(setSectionCollapsed(readTabGroups(u2), "archived", false), "web", ALL, u2);
+    assert.deepEqual(open2.tabs, ["web", "api", "tests", "old1", "old2", "loose"], "api's infra copy is on the strip; archived, open, shows it as +1");
+    assert.deepEqual(heads(open2.p.items).find((h) => h.head.name === "archived")!.hides, ["api"]);
+    menu = api.open("api", "infra");
+    assert.equal(rowOf(menu)!.label(), "Hide tab", "the infra copy is shown: its row hides");
+    assert.equal(rowOf(menu)!.sub(), "off the strip while infra is open; the group's count shows it as +1");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes[3].hidden, [{ sid: "api", name: "archived", id: "g2" }, { sid: "api", name: "infra", id: "g1" }], "one entry per section, the other left standing");
+    menu = api.open("api");
+    assert.equal(rowOf(menu)!.label(), "Show tab", "no copy named: the first holder in tagOrder (infra), where api is hidden now");
+    assert.equal(rowOf(menu)!.sub(), "back on the strip in infra");
+    // S5: ABSENT where hides do not apply. Group tabs by tag off: no row, the other toggles as before; a session under no tag:
+    // no home section, no row; a copy whose tag's create is still in flight (a pending union): no id to address, no row
+    hooks.views = V;
+    writeTabGroups({ ...readTabGroups(unions), on: false });
+    menu = api.open("web", "infra");
+    assert.equal(rowOf(menu), undefined, "the flat strip hides nothing: no row");
+    assert.ok(menu.children.some((it) => it.label() === "Hide from feed") && menu.children.some((it) => it.has("ctx-item-tags")), "the rest of the menu stands");
+    writeTabGroups({ ...readTabGroups(unions), on: true });
+    menu = api.open("loose");
+    assert.equal(rowOf(menu), undefined, "no tag, no group to hide in");
+    assert.ok(rowOf(api.open("web", "infra")), "and back on the grouped strip the row is back");
+    hooks.views = { ...V, tags: [...V.tags, { id: "pending-k1", name: "draft", color: "#7aa2f7", members: ["web"] }], seq: 5 };
+    menu = api.open("web", "draft");
+    assert.equal(rowOf(menu), undefined, "a home whose create is in flight: no row (no id to address, as the flyout's Move-to rows read it)");
+    assert.equal(hooks.writes.length, 4, "no write from any of the absent cases");
+  });
+});
+
+test("pinned: the menu door in render.ts. The toggle helper builds the row with the tab glyph and its class; the write is the pin row's, explicit; the copy's home section is computed once in showTabMenu and shared with the Tags flyout; the comment records the reversal", () => {
+  const at = RENDER.indexOf("function showTabMenu(");
+  const MENU = RENDER.slice(at, RENDER.indexOf("document.body.appendChild(menu);", at));
+  // the home computation, hoisted: ONE bare readTabGroups().on read (tab-groups.test pins the count at two in all of render.ts),
+  // the byte-identical home0 expression the copy-aware menu test pins, and two callers
+  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*const home0 = readTabGroups\(\)\.on \? \(\(copy !== undefined \? holding\(\)\.find\(\(g\) => g\.name === copy\) : undefined\) \?\? holding\(\)\[0\]\) : undefined;\s*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};/);
+  assert.equal(MENU.split("homeNow()").length - 1, 2, "the row's read and the flyout's per-build read");
+  assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
+  assert.ok(MENU.indexOf("const homeNow = ") < MENU.indexOf('toggle("tab"') && MENU.indexOf('toggle("tab"') < MENU.indexOf("const home = homeNow();   // read per build"), "declared before the row; the flyout's read after it");
+  assert.match(MENU, /\/\/ unionFor and holding are showTabMenu's \(above the Hide tab row\), shared with that row\s*\n\s*const tagsItem = el\("div", "ctx-item ctx-item-toggle ctx-item-tags"\);/, "the Tags block declares neither");
+  // the row: the toggle helper, the tab kind, the state read from the store with the unions, the explicit write through the one prune site
+  assert.match(MENU, /const toggle = \(kind: "feed" \| "mail" \| "bell" \| "tab", off: boolean, lab: string, sub: string, fn: \(\) => void, cls = ""\) => \{\s*\n\s*const item = el\("div", "ctx-item ctx-item-toggle" \+ cls\);/);
+  assert.match(MENU, /\{\s*\n\s*const home = homeNow\(\);\s*\n\s*if \(home\) \{\s*\n\s*const sec = sectionRef\(home\);\s*\n\s*const hidden = isHidden\(tabGroups\(\), sec, id\);\s*\n\s*toggle\("tab", hidden,\s*\n\s*hidden \? "Show tab" : "Hide tab",\s*\n\s*hidden \? `back on the strip in \$\{home\.name\}` : `off the strip while \$\{home\.name\} is open; the group's count shows it as \+1`,\s*\n\s*\(\) => writeTabGroupsPruned\(setHidden\(tabGroups\(\), sec, id, !hidden\)\),\s*\n\s*" ctx-item-hide"\);\s*\n\s*\}\s*\n\s*\}/);
+  const bellAt = MENU.indexOf('toggle("bell"'), tabAt = MENU.indexOf('toggle("tab"'), billingAt = MENU.indexOf("// Billing submenu"), tagsAt = MENU.indexOf('l.textContent = "Tags"');
+  assert.ok(bellAt > 0 && tabAt > bellAt && billingAt > tabAt && tagsAt > billingAt, "after the bell, before Billing and Tags");
+  const row = MENU.slice(MENU.indexOf("// HIDE TAB (the user 2026-09-09)"), billingAt);
+  assert.doesNotMatch(row, /renderTabs\(\)|setTimeout|postMessage|toggleHidden|readTabGroups\(/, "no render of its own, no timer, no wire, never a toggle of the stored bit, never a store read without the unions on a path that writes");
+  assert.match(row, /This reverses the earlier ruling that the pane\s*\n\s*\/\/ was the one door to a hide \(2026-09-08\); the user asked for the menu door\./);
+  assert.match(row, /hides do not apply on the flat strip or the phone layout, so\s*\n\s*\/\/ the row is absent there\./);
+  assert.ok(!row.includes("\u2014"), "no em dash in the new comment");
+  // the glyph: a new ctxIcon kind, a tab on the strip's baseline, slashed by the helper's own `off` when hidden
+  assert.match(RENDER, /function ctxIcon\(kind: "feed" \| "mail" \| "bell" \| "bill" \| "folder" \| "tag" \| "pencil" \| "smile" \| "tab", off: boolean\): HTMLElement \{/);
+  assert.match(RENDER, /: kind === "tab"\s*\n\s*\? '<path d="M2 12\.4 L2 6\.4 [^']*"\/><line x1="1\.2" y1="12\.4" x2="14\.8" y2="12\.4"\/>'/);
+  assert.match(RENDER, /import \{ planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned,/, "isHidden reaches render.ts");
+  // the flyout reads the shared computation on every build of its own
+  assert.match(MENU, /const home = homeNow\(\);   \/\/ read per build: a move or a remove above changes the copy's group \(the Hide tab row reads the same\)\s*\n\s*for \(const g of others\) \{/);
+  assert.doesNotMatch(MENU, /const home = home0 && !home0\.pending \? home0 : undefined;/, "the flyout's own copy of the computation is gone");
 });
 
 test("executed + pinned: ONCE PER GESTURE (round 1). A double-click on Hide acts on one row: the platform's click count, no timer", () => {
