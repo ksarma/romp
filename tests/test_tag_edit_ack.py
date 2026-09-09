@@ -31,6 +31,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 from pathlib import Path
 from romp_load import load_source
@@ -227,22 +228,33 @@ class OwnStateRoot(_Wire):
         the root, and leave the kernel globals a setUp assigns as the walk found them. A class whose setUp
         stopped calling _own_state writes under the shared root again, the shape this module failed in
         after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk.
-        A pytest-style test (a Test* class that is no TestCase, a class with test methods that is no
-        TestCase, a module-level test function) would run with no state root at all: the walk refuses the
-        module when one appears, naming it."""
+        A pytest-style test (a Test* class that is no TestCase, a module-level test function; pytest's own
+        collection rule, so a helper class with a test-named method is not one, and a name pytest skips over
+        __test__ = False is not one either) would run with no state root at all: the walk refuses the module
+        when one appears, naming it."""
         module = sys.modules[__name__]
         namespace = vars(module)
         # pytest collects every TestCase subclass bound in the module, imported names included, and skips
-        # abstract ones; the roster is that set, so nothing pytest runs from here escapes the walk.
+        # abstract ones and any hidden with __test__ = False (_pytest/unittest.py; the attribute is inherited,
+        # so a subclass of a hidden helper sets __test__ = True to be collected); the roster is that set, so
+        # nothing pytest runs from here escapes the walk and nothing it skips is refused.
         roster = [cls for _, cls in inspect.getmembers(module, inspect.isclass)
                   if issubclass(cls, unittest.TestCase) and cls is not unittest.TestCase
-                  and not inspect.isabstract(cls)]
+                  and not inspect.isabstract(cls) and getattr(cls, "__test__", True)]
+
+        # pytest's rule for everything else bound in the module (_pytest/python.py with its default
+        # python_classes and python_functions; the repo sets neither): a class named Test* or a module-level
+        # callable named test*, or either opting in with __test__ = True, minus abstract classes and anything
+        # opting out with __test__ = False. A helper class with a test-named method is not collected, so it is
+        # not refused.
+        def collected(name, obj, prefix):
+            return ((name.startswith(prefix) or getattr(obj, "__test__", False) is True)
+                    and bool(getattr(obj, "__test__", True)))
         pytest_style = sorted(
             name for name, obj in namespace.items()
-            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
-                and (name.startswith("Test")
-                     or any(n.startswith("test") and callable(getattr(obj, n, None)) for n in dir(obj))))
-            or (not inspect.isclass(obj) and callable(obj) and name.startswith("test")))
+            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase) and not inspect.isabstract(obj)
+                and collected(name, obj, "Test"))
+            or (not inspect.isclass(obj) and callable(obj) and collected(name, obj, "test")))
         self.assertFalse(pytest_style, "pytest-style tests run with no state root; make them _Wire subclasses: %s"
                          % pytest_style)
         stale = (self.EXEMPT | self.BASES) - set(roster)
@@ -263,12 +275,9 @@ class OwnStateRoot(_Wire):
                 if cls in self.EXEMPT:
                     continue
                 case = cls(names[0])
-                result = unittest.TestResult()
-                case._outcome = unittest.case._Outcome(result)    # doCleanups files a raising cleanup here (an
-                                                                  # assertion under failures, anything else under
-                                                                  # errors) instead of dropping it on the floor
                 set_up = False
                 made = None
+                raised = []
                 try:
                     case.setUp()
                     set_up = True
@@ -282,9 +291,21 @@ class OwnStateRoot(_Wire):
                         if set_up:
                             case.tearDown()
                     finally:
-                        clean = case.doCleanups()
-                raised = [tb for _, tb in result.errors + result.failures]
-                self.assertTrue(clean, "%s's cleanups raised:\n%s" % (cls.__name__, "\n".join(raised)))
+                        # The instance's cleanups, run here and not through doCleanups: that files a raising
+                        # cleanup on the instance's _Outcome, and where it lands differs by version (3.10 keeps
+                        # it on the outcome, 3.11 onward hands it to the TestResult), so a walk reading one
+                        # place showed an empty message on the other. The same order as doCleanups (LIFO, and
+                        # every cleanup runs after one raises), from the list addCleanup appends to, the one
+                        # private attribute touched here, unchanged from 3.10 to 3.14t; each exception is kept
+                        # as its traceback, so the failure below reads the same on every interpreter.
+                        while case._cleanups:
+                            function, args, kwargs = case._cleanups.pop()
+                            try:
+                                function(*args, **kwargs)
+                            except Exception:
+                                raised.append(traceback.format_exc())
+                if raised:
+                    self.fail("%s's cleanups raised:\n%s" % (cls.__name__, "\n".join(raised)))
                 self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
                 self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
                 for name, value in self._kernel_globals().items():
