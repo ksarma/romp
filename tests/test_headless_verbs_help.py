@@ -8,9 +8,11 @@ flags; the row and the reference were the bare forms (review find, rules-2), and
 kept a bare form of its own with a trailing space (review round 2). The precedent is
 tests/test_keyswap_refusal.py's HelpAndDocsAgree.
 
-`romp <verb> --help` and the bare `romp <verb>` are rendered by running the script hermetically (no kernel:
-ROMP_KERNEL_PORT=1, a temp HOME); the row and the reference are read from the source. Synthetic env only,
-nothing is posted."""
+`romp <verb> --help`, the bare `romp <verb>` and the `romp help` row are rendered by running the script
+hermetically (no kernel: ROMP_KERNEL_PORT=1, a temp HOME); only the reference is read as file text. The row
+used to be read from the `_romp_cmd` source line, which passed while a rendering change (a clipped column, a
+skipped row) showed the user something else (review round 4, 2026-09-09). Synthetic env only, nothing is
+posted."""
 import os
 import re
 import subprocess
@@ -55,8 +57,13 @@ def _flags(text):
 
 class HelpSurfacesAgree(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        out = _run("help")
+        assert out.returncode == 0, out.stderr
+        cls.help_out = out.stdout
+
     def setUp(self):
-        self.src = _read("bin/romp")
         self.ref = _read("docs/reference.md")
 
     def _usage_form(self, verb):
@@ -66,10 +73,16 @@ class HelpSurfacesAgree(unittest.TestCase):
         self.assertTrue(first.startswith("usage: romp %s " % verb), first)
         return first[len("usage: "):], out.stdout
 
-    def _help_row(self, verb):
-        m = re.search(r'_romp_cmd "(romp %s [^"]*)"\s+-\s+"([^"]*)"' % verb, self.src)
-        self.assertIsNotNone(m, "romp help has a row for %s" % verb)
-        return m.group(1), m.group(2)
+    def _help_row(self, verb, form):
+        """The `romp help` row for the verb as RENDERED (`printf '  %-28s %s'`): asserts the row spells
+        `form` and returns its description. The trailing space in the selector keeps `romp send` apart from
+        `romp sessions` and `romp end` from `romp engine`; the form contains spaces and a form longer than
+        the column is followed by one, so the row is matched by prefix, never split on whitespace."""
+        rows = [ln for ln in self.help_out.splitlines() if ln.startswith("  romp %s " % verb)]
+        self.assertEqual(len(rows), 1, "romp help renders one row for %s: %r" % (verb, rows))
+        self.assertTrue(rows[0].startswith("  " + form + " "),
+                        "%s: the romp help row spells the --help form: %r" % (verb, rows[0]))
+        return rows[0][len("  " + form):].lstrip()
 
     def _reference_row(self, form):
         cell = "| `%s` |" % form.replace("|", "\\|")            # a table cell escapes the pipe
@@ -80,18 +93,17 @@ class HelpSurfacesAgree(unittest.TestCase):
     def test_each_verb_spells_one_invocation_on_all_three_surfaces(self):
         for verb in VERBS:
             form, _ = self._usage_form(verb)
-            row_form, _ = self._help_row(verb)
-            self.assertEqual(row_form, form, "%s: the romp help row spells the --help form" % verb)
+            self._help_row(verb, form)                         # asserts the rendered row spells the --help form
             self._reference_row(form)                          # asserts the reference carries the same form
 
     def test_each_verb_names_the_same_flags_everywhere(self):
         for verb in VERBS:
             form, rendered = self._usage_form(verb)
-            row_form, row_desc = self._help_row(verb)
+            row_desc = self._help_row(verb, form)
             ref_row = self._reference_row(form)
             expect = _flags(form)
             self.assertEqual(_flags(rendered), expect, "%s --help names no flag its usage line lacks" % verb)
-            self.assertEqual(_flags(row_form) | (_flags(row_desc) & expect), expect, verb)
+            self.assertEqual(_flags(form) | (_flags(row_desc) & expect), expect, verb)
             self.assertTrue(expect <= _flags(ref_row), "%s: the reference row names %s" % (verb, sorted(expect)))
 
     def test_end_names_self_and_both_timing_flags(self):
@@ -116,7 +128,7 @@ class HelpSurfacesAgree(unittest.TestCase):
         for verb in VERBS:
             form, rendered = self._usage_form(verb)
             self.assertIn(REFUSAL_HELP, rendered, verb)
-            self.assertIn(REFUSAL_ROW, self._help_row(verb)[1], verb)
+            self.assertIn(REFUSAL_ROW, self._help_row(verb, form), verb)
             self.assertIn(REFUSAL_DOC, self._reference_row(form), verb)
 
 

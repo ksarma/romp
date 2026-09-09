@@ -171,7 +171,7 @@ class HeadlessRoutes(_RouteServer):
         fake = mock.Mock()
         calls = []
 
-        def record(sid, be, now, via, fresh=False):
+        def record(sid, be, now, via, fresh=False, why=None):
             calls.append((sid, be, via, fresh))
             return True
         with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
@@ -825,8 +825,15 @@ class UnknownSessionRefused(_RouteServer):
         # never dressed as an unknown session; any other non-200 the same way. Before round 2 every far
         # 404 was composed locally as the unknown-name text (review round 2, 2026-09-09).
         gate = json.dumps({"ok": False, "error": "no live session named '%s'" % self.GHOST})
+        # a far kernel running this change answers /send's backend refusal with a 409 that already ends
+        # in "the message was not delivered"; the arm's own coda doubled it in the relayed body (review
+        # round 4, 2026-09-09). The far words come through verbatim, the sentence once
+        refused = json.dumps({"ok": False, "error": "the session '%s' is not running; the message was not "
+                                                   "delivered" % self.GHOST})
         cases = ((404, gate, "application/json",
                   ("no live session named '%s'" % self.GHOST, "TESTHOST"), ("HTTP 404",)),
+                 (409, refused, "application/json",
+                  ("is not running", "the message was not delivered", "TESTHOST"), ("HTTP 409",)),
                  (404, "not found", "text/plain",
                   ("HTTP 404", "not found", "TESTHOST"), (self.GHOST,)),
                  (503, "gateway down\nsecond line", "text/plain",
@@ -847,6 +854,8 @@ class UnknownSessionRefused(_RouteServer):
                     self.assertIn(s, resp.get("error", ""), (path, far_body))
                 for s in absent:
                     self.assertNotIn(s, resp.get("error", ""), (path, far_body))
+                self.assertLessEqual(resp.get("error", "").count("the message was not delivered"), 1,
+                                     "the coda is the far kernel's sentence or the local refusal's, never both")
             # a dead tunnel: nothing listens on the port, so the call never lands (status 0)
             import socket
             s = socket.socket()
@@ -892,6 +901,115 @@ class UnknownSessionRefused(_RouteServer):
             self.assertIn("HTTP 503", resp.get("error", ""), path)
             self.assertIn("gateway down", resp.get("error", ""), path)
             self.assertIn("TESTHOST", resp.get("error", ""), path)
+
+    def test_an_unconfirmed_end_names_its_cause_at_both_doors(self):
+        # _confirmed_ended answers None for two causes, an SDK reg that exists but would not read (round 3)
+        # and a failed owner scan, and both immediate doors phrased every None as "tmux isn't answering",
+        # including on a headless box with no tmux at all. The cause rides beside the verdict (`why`) and one
+        # routine, _unconfirmed_end_text, phrases both doors from it (review round 4, 2026-09-09). The reg
+        # case: a reg valid at the gate that the kill leaves unreadable (a record broken between the gate
+        # and the corroboration), so the door itself reaches the corroboration. Nothing durable is written
+        # for either cause: no death record, no closed frame.
+        reg_path = km.jd.STATE / "sdk" / "sid-q.json"
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        deaths, sent, faileds = [], [], []
+        client = {"send": lambda s: faileds.append(json.loads(s))}
+        fake = mock.Mock()
+        fake.kill.side_effect = lambda sid: reg_path.write_bytes(b"{not json") or True
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.object(km, "_confirm_close_now", lambda sid: None), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                reg_path.write_text(json.dumps({"sid": "sid-q", "alive": True}))
+                code, resp = self._post("/end", {"id": "sid-q"})
+                self.assertEqual(code, 200)
+                self.assertIs(resp.get("ok"), False)
+                self.assertIn("the session's record could not be read", resp.get("error", ""))
+                self.assertNotIn("tmux", resp.get("error", ""))
+                reg_path.write_text(json.dumps({"sid": "sid-q", "alive": True}))
+                self.assertTrue(km._drive({"type": "endSession", "id": "sid-q"}, client))
+                self.assertEqual([f["type"] for f in faileds], ["endFailed"])
+                self.assertIn("the session's record could not be read", faileds[0]["text"])
+                self.assertIn("Couldn't confirm", faileds[0]["text"])
+                self.assertIn("web", faileds[0]["text"], "the toast names the session")
+                self.assertNotIn("tmux", faileds[0]["text"])
+                # the probe cause: no reg, a tmux server up, the owner scan fails
+                reg_path.unlink()
+                fake.kill.side_effect = None
+                del faileds[:]
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "alive_sids", lambda *a, **k: None):
+                    code, resp = self._post("/end", {"id": "sid-q"})
+                    self.assertEqual(code, 200)
+                    self.assertIn("tmux isn't answering", resp.get("error", ""))
+                    self.assertNotIn("record", resp.get("error", ""))
+                    self.assertTrue(km._drive({"type": "endSession", "id": "sid-q"}, client))
+                    self.assertIn("tmux isn't answering", faileds[0]["text"])
+                    self.assertNotIn("record", faileds[0]["text"])
+                self.assertEqual(deaths, [], "an unconfirmed end records no death")
+                self.assertEqual([m for m in sent if m.get("type") == "closed"], [], "and broadcasts no closed frame")
+        finally:
+            try:
+                reg_path.unlink()
+            except OSError:
+                pass
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_the_ws_drive_gate_and_the_http_gate_give_one_verdict_per_state(self):
+        # the WS _drive gate (_kernel_knows: names, the SDK registry, the live map) and the HTTP gate
+        # (_unknown_session_refusal: names, the live map, then a threadOf reg only) were two predicates
+        # with a different third door: a dead non-thread SDK reg with no names/ entry was ended by the
+        # dashboard's endSession op and refused 404 by /end, /interrupt and /send. One predicate now, and
+        # this table holds the two doors to one verdict per state (review round 4, 2026-09-09). The map
+        # _resolve_sid read is what the routes hand the predicate, so the refusal path still scans once.
+        dead, named, live = ("aaaa1111-2222-3333-4444-555555555555", "bbbb1111-2222-3333-4444-555555555555",
+                             "cccc1111-2222-3333-4444-555555555555")
+        sdir = km.jd.STATE / "sdk"
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / (dead + ".json")).write_text(json.dumps({"sid": dead, "alive": False, "cwd": "/tmp"}))
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        _register(named, "named-only")
+        states = (("no record", self.GHOST, False), ("dead SDK reg, no names entry", dead, True),
+                  ("comment thread", THREAD_TSID, True), ("names entry only", named, True),
+                  ("live, unregistered", live, True))
+        refused = []
+        fake = mock.Mock()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {live: {}})), \
+                 mock.patch.object(km, "_refuse_drive", side_effect=lambda c, op, sid, msg: refused.append(sid)), \
+                 mock.patch.object(km, "_end_and_record", lambda sid, be, now, via, fresh=False, why=None: True), \
+                 mock.patch.object(km, "_send_or_park", lambda be, sid, text: True), \
+                 mock.patch.object(km, "_route_meta_command", lambda be, sid, text, state=None: False), \
+                 mock.patch.object(km, "_confirm_close_now", lambda sid: None), \
+                 mock.patch.object(km, "_send_to_app", lambda app, m: None), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                for label, sid, admitted in states:
+                    del refused[:]
+                    self.assertTrue(km._drive({"type": "interrupt", "id": sid}, {"send": lambda s: None}))
+                    self.assertEqual(not refused, admitted, "the WS drive gate on %s" % label)
+                    for path, body in (("/end", {"id": sid}), ("/interrupt", {"id": sid}),
+                                       ("/send", {"id": sid, "text": "hello"})):
+                        code, resp = self._post(path, body)
+                        self.assertEqual(code != 404, admitted, "%s on %s answered %s" % (path, label, code))
+        finally:
+            for f in (sdir / (dead + ".json"),):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+            _unregister(named)
+            km._thread_reg_memo.clear()
 
 
 class CodexRuntimeSelection(unittest.TestCase):

@@ -18277,14 +18277,24 @@ def _picker_mid_series(sid):
     return isinstance(i, int) and isinstance(n, int) and i < n
 
 
-def _kernel_knows(sid):
+def _kernel_knows(sid, live=None):
     """Does THIS kernel have a session by this id at all? The names registry is the authority: it is sid-keyed
     and written at launch by BOTH backends, and the entry outlives the session, so a dormant or long-dead
     session still answers True and can be sent to (that revives it). The SDK's own view is checked too, so a
-    session mid-launch — spawned but not yet named — is never called foreign. So is the LIVE set, which both
-    backends report from their own view: a session this kernel can see running right now is ours whatever the
-    registry says, and that ordering keeps an unreadable names file from ever turning a live session away.
-    False means exactly one thing: no session with this id exists here, so nothing local can act on it."""
+    session mid-launch — spawned but not yet named — is never called foreign; a comment thread passes at
+    this door too (its reg is sdk/<tsid>.json, which owns() stats), though sdk_backend.fork withholds its
+    names/ entry and live_sessions hides threadOf regs. So is the LIVE set, which both backends report from
+    their own view: a session this kernel can see running right now is ours whatever the registry says, and
+    that ordering keeps an unreadable names file from ever turning a live session away.
+    False means exactly one thing: no session with this id exists here, so nothing local can act on it.
+    THE one predicate for both client gates, the WS _drive gate and the HTTP control gate
+    (_unknown_session_refusal for /send, /interrupt and /end): a second predicate at the routes (names,
+    the live map, then a threadOf reg only) admitted a dead non-thread SDK reg with no names/ entry at the
+    dashboard's endSession op and refused it 404 at `romp end <sid>` (review round 4, 2026-09-09). `live`
+    is a Sessions.live() map the caller already read (the routes' _resolve_sid scan), consulted in place
+    of a fresh scan so a refused request scans once; None scans here. A live-scan exception reads False,
+    the refusal, at every caller: _drive then refuses loudly (_refuse_drive's modal, undelivered record and
+    log line), and the routes pass the map they read, so the scan never runs here for them."""
     sid = str(sid or "")
     if not sid:
         return False
@@ -18296,6 +18306,8 @@ def _kernel_knows(sid):
             return True
     except Exception:
         pass
+    if live is not None:
+        return sid in live
     try:
         return sid in Sessions.live()
     except Exception:
@@ -18946,7 +18958,8 @@ def _drive(msg, client):
         # error→[] collapse certified a false death exactly when a wedged server also swallowed the
         # kill: unconfirmed → the honest signal is a warn to the asker, never a dismissal; the death
         # record and the comment-thread teardown belong to a death that actually, provably occurred.
-        ended = _end_and_record(sid, be, time.time(), "endSession WS op")
+        why = {}
+        ended = _end_and_record(sid, be, time.time(), "endSession WS op", why=why)
         if ended is not True:
             # TYPED and sid-bearing (2026-08-18): the bare warn told the closer to "Try again" while
             # its own closingTabs suppression hid the very tab to retry on for up to 15s, after which
@@ -18956,8 +18969,7 @@ def _drive(msg, client):
             nm = _name_of(sid) or sid
             client["send"](json.dumps({"type": "endFailed", "id": sid,
                                        "text": ("Couldn't end “%s” — it's still running. Try again." % nm)
-                                               if ended is False else
-                                               ("Couldn't confirm “%s” ended — tmux isn't answering. Try again." % nm)}))
+                                               if ended is False else _unconfirmed_end_text(why, nm)}))
         else:
             _confirm_close_now(sid)      # the kill IS the event: the fresh tab set rides it, not the next pusher cycle
         _push_soon()
@@ -22532,16 +22544,19 @@ def _remote_forward_answer(r, path, body, method="POST"):
     return resp.status, parsed, text
 
 
-def _remote_refusal(r, st, res, text, tail=""):
+def _remote_refusal(r, st, res, text):
     """The body the session-control arms answer for a far kernel's non-200 (see _remote_forward_answer):
     the far JSON `error` with the far host named, else the status and the body's first non-empty line.
-    `tail` is the arm's own coda (/send: that the message was not delivered)."""
+    The far kernel's words are relayed VERBATIM, with no coda of the arm's own: the /send arm used to
+    append "; the message was not delivered", and a far kernel whose /send 409 already ends with that
+    sentence came through with it twice (review round 4, 2026-09-09). The coda is the LOCAL refusal's
+    (the /send route's 409), where the sentence is composed once."""
     host = r.get("host", "?")
     if isinstance(res, dict) and res.get("error"):
-        return {"ok": False, "error": "%s (the kernel on %s)%s" % (res["error"], host, tail)}
+        return {"ok": False, "error": "%s (the kernel on %s)" % (res["error"], host)}
     first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
-    return {"ok": False, "error": "the remote kernel for %s answered HTTP %s%s%s"
-            % (host, st, (": " + first) if first else "", tail)}
+    return {"ok": False, "error": "the remote kernel for %s answered HTTP %s%s"
+            % (host, st, (": " + first) if first else "")}
 
 
 def _poll_remote_version(r):
@@ -25968,7 +25983,7 @@ def _death_boot_pass(now=None):
         sys.stderr.write("death-boot: recorded %d session death(s) from before this kernel\n" % n)
 
 
-def _confirmed_ended(sid, fresh=False, scan=None):
+def _confirmed_ended(sid, fresh=False, scan=None, why=None):
     """Did this session actually END — may a kill/close path record the death, tear down its comment
     threads, and broadcast `closed`? Every post-kill honesty gate asks HERE: _end_and_record (the routine
     behind endSession, the /end route and the end-on-idle sweep's kill arm), the sweep's already-dead
@@ -25998,7 +26013,11 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     real probe failure) for a batch pass sharing ONE scan across its probes
     (_death_sweep_tick's per-pass idiom) instead of forking a subprocess per sid; the default
     takes its own. Called only when the owner scan is actually needed, so a supplier may
-    memoize lazily."""
+    memoize lazily.
+    `why`, when a dict, receives the None verdict's CAUSE under "cause": "reg" (the SDK reg exists but
+    would not read) or "probe" (the owner scan failed), so a door can phrase its refusal from what
+    actually failed (_unconfirmed_end_text) instead of naming tmux for every None (review round 4,
+    2026-09-09). The verdict itself stays tri-state; the cause rides beside it."""
     sid = str(sid)
     if sid in (Sessions.live() if fresh else _tmux_sessions()):
         return False                             # still listed → nothing ended
@@ -26017,6 +26036,8 @@ def _confirmed_ended(sid, fresh=False, scan=None):
             # down. Said here each time: _thread_reg logs once per episode (review round 3, 2026-09-09)
             sys.stderr.write("kill-corroborate: the SDK reg for %s exists but would not read; treating as "
                              "unconfirmed (no death record, no closed broadcast)\n" % sid)
+            if why is not None:
+                why["cause"] = "reg"
             return None
         return not (reg.get("alive") and reg.get("threadOf"))
     if not _TMUX.available():
@@ -26025,6 +26046,8 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     if scan is None:
         sys.stderr.write("kill-corroborate: liveness probe failed for %s — treating as still running "
                          "(no death record, no closed broadcast)\n" % sid)
+        if why is not None:
+            why["cause"] = "probe"
         return None
     return False if sid in scan else True
 
@@ -26068,7 +26091,7 @@ def _death_stamp_due(sid):
     return int((last or {}).get("t") or 0) > int(m.get("t") or 0)
 
 
-def _end_and_record(sid, be, now, via, fresh=False):
+def _end_and_record(sid, be, now, via, fresh=False, why=None):
     """The ONE end routine behind the three kill doors that record a death: the dashboard's endSession op,
     POST /end (`romp end <session>`, `romp end self --now`) and the end-on-idle sweep (`romp end self`,
     served at the turn's settle). One intentional kill stays outside it on purpose: cancelCreate's
@@ -26086,17 +26109,38 @@ def _end_and_record(sid, be, now, via, fresh=False):
     them, and its comment promised a dormant thread a reply would revive, which no code performed:
     SdkBackend.send refuses an alive=False reg). Returns _confirmed_ended's verdict: True (ended and
     recorded), False (still running) or None (the owner could not say); on either falsy verdict nothing
-    is written and the caller phrases its own refusal. `fresh` is the sweep's post-kill read (see
+    is written and the caller phrases its own refusal, from the cause _confirmed_ended files in `why`
+    (a dict the caller passes; see _unconfirmed_end_text). `fresh` is the sweep's post-kill read (see
     _confirmed_ended: a probe taken mid-cycle must never consult the cycle's snapshot)."""
     sys.stderr.write("kill: %s via %s\n" % (sid, via))   # kill attribution (the user 2026-07-16)
     be.kill(sid)
-    ended = _confirmed_ended(sid, fresh=True) if fresh else _confirmed_ended(sid)
+    ended = _confirmed_ended(sid, fresh=True, why=why) if fresh else _confirmed_ended(sid, why=why)
     if ended is not True:
         return ended
     _record_death(sid, int(now), "kill")
     _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
     _send_to_app("chat", {"type": "closed", "id": sid})
     return True
+
+
+_UNCONFIRMED_END_CAUSE = {
+    "reg": "the session's record could not be read",
+    "probe": "tmux isn't answering",
+}
+
+
+def _unconfirmed_end_text(why, name=None):
+    """The refusal both immediate end doors phrase for _end_and_record's None verdict: POST /end's ok:false
+    error, and with `name` the WS endSession op's endFailed toast. The cause is the one _confirmed_ended
+    filed in `why`: "tmux isn't answering" only when the owner scan was the door that failed, "the
+    session's record could not be read" for an SDK reg that exists but would not read. Both doors used
+    to say tmux for every None, including on a headless box with no tmux at all (review round 4,
+    2026-09-09). One routine, so the doors cannot drift; a None with no filed cause (a stubbed probe)
+    names the owner generically rather than guessing tmux."""
+    cause = _UNCONFIRMED_END_CAUSE.get((why or {}).get("cause"), "the liveness owner did not answer")
+    if name:
+        return "Couldn't confirm \u201c%s\u201d ended: %s. Try again." % (name, cause)
+    return "couldn't confirm the end: %s; try again" % cause
 
 
 # SELF-CLOSE, deferred to idle (the user 2026-08-15: "close yourself after you've done this thing"
@@ -26570,24 +26614,21 @@ def _unknown_session_refusal(sid, who, live=None):
     hands back its input unchanged when nothing matches, so a typo reaches the backends as a phantom sid:
     /end "killed" it and _confirmed_ended, finding nothing listed, certified the death; /send handed it to
     the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
-    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). Three doors
-    admit a sid, each a record the kernel itself wrote for a session it registered: the names registry (a
-    registered sid, live or between turns), the live map (a session up before its registry entry lands),
-    and the SDK registry's threadOf (a comment thread). The third is not the fork-comment door's check,
-    which reads the registered PARENT: a thread has no names/ entry (sdk_backend.fork withholds it) and
-    live_sessions skips threadOf regs, while _sid_of resolves a thread's name to its tsid on purpose
-    (T223), so the first two doors alone refused every thread, by name and by id, and `romp end self`
-    from inside one (review find, 2026-09-09). _thread_reg answers {} for a sid with no reg, so a typo
-    still falls through. `live` is the map _resolve_sid already read, when it read one, so the refusal
-    path scans once; a caller without one leaves it None and the map is read here. Ask this AFTER the
-    remote forward, since a session on an attached host is in neither local map. `who` is the caller's
-    spelling, so the reason names what they typed."""
+    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The verdict
+    is _kernel_knows's, the WS _drive gate's own predicate: the names registry (a registered sid, live or
+    between turns), the SDK registry (a reg the SDK backend wrote, a comment thread's among them: a thread
+    has no names/ entry, since sdk_backend.fork withholds it, and live_sessions skips threadOf regs, while
+    _sid_of resolves a thread's name to its tsid on purpose, T223, so a gate of names and live map alone
+    refused every thread, by name and by id, and `romp end self` from inside one; review find,
+    2026-09-09) and the live map (a session up before its registry entry lands). One predicate for both
+    client doors: the routes' own copy admitted through a threadOf reg only, so a dead non-thread SDK reg
+    with no names/ entry was ended by the dashboard and refused 404 here (review round 4, 2026-09-09).
+    `live` is the map _resolve_sid already read, when it read one, so the refusal path scans once; a
+    caller without one leaves it None and _kernel_knows reads the map. Ask this AFTER the remote forward,
+    since a session on an attached host is in neither local map. `who` is the caller's spelling, so the
+    reason names what they typed."""
     sid = str(sid)
-    if _name_of(sid):
-        return None
-    if live is None:
-        live = Sessions.live()
-    if sid in live or _thread_reg(sid).get("threadOf"):
+    if _kernel_knows(sid, live=live):
         return None
     return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
 
@@ -57719,9 +57760,10 @@ class Handler(BaseHTTPRequestHandler):
                         # the far kernel answered no: relayed with its status and in its words, the far host
                         # named (_remote_refusal). Its gate's JSON 404 carries the reason; a text/plain 404
                         # is a route that kernel predates, the reading the other remote arms give the
-                        # status, never an unknown session (review round 2, 2026-09-09)
-                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text,
-                                                                         "; the message was not delivered")),
+                        # status, never an unknown session (review round 2, 2026-09-09). Its words verbatim:
+                        # a far 409 already says the message was not delivered, and this arm's own coda
+                        # doubled it (review round 4)
+                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text)),
                                           "application/json")
                     if res is None:                                 # the far kernel didn't answer — say so, never
                         return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
@@ -57855,13 +57897,13 @@ class Handler(BaseHTTPRequestHandler):
                     # kill the owner doesn't AFFIRMATIVELY confirm gets an honest ok:false, no death record,
                     # no `closed` broadcast: a closed for a still-live sid dismisses it on every client and
                     # re-draws as the dead swirl on the next push
-                    ended = _end_and_record(sid, be, time.time(), "/kill route")
+                    why = {}
+                    ended = _end_and_record(sid, be, time.time(), "/kill route", why=why)
                     if ended is not True:
                         _push_soon()   # ack-fast (the 2026-08-30 wedge: request threads poke the pusher, never build inline)
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": "the session is still running — the kill didn't take"
-                                                                    if ended is False else
-                                                                    "couldn't confirm the end — tmux isn't answering; try again"}),
+                                                                    if ended is False else _unconfirmed_end_text(why)}),
                                           "application/json")
                 _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")

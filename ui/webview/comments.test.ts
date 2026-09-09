@@ -245,10 +245,10 @@ test("POST /end and the WS endSession op end a session through one routine, and 
   // that drifts. cancelCreate's _end_pending_sid, the one intentional kill outside the routine, records no
   // death by design and is not pinned here. The executed twin, both client doors calling the routine once
   // with one sid and one backend, is tests/test_kernel_headless_ops.py.
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "endSession WS op"\)/);
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "\/kill route"\)/);
+  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "endSession WS op", why=why\)/);
+  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "\/kill route", why=why\)/);
   assert.match(KERNEL, /ended = _end_and_record\(sid, Sessions\.backend_for\(sid\), now,\s*\n\s*"end-on-idle \(self-close/);
-  assert.match(KERNEL, /def _end_and_record\(sid, be, now, via, fresh=False\):(?:(?!\ndef )[\s\S])*?\n    _comment_kill_all\(sid, be\)/);
+  assert.match(KERNEL, /def _end_and_record\(sid, be, now, via, fresh=False, why=None\):(?:(?!\ndef )[\s\S])*?\n    _comment_kill_all\(sid, be\)/);
 });
 
 test("a thread that couldn't start says so — the error note renders in the thread", () => {

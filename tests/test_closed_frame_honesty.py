@@ -83,7 +83,7 @@ class ClosedHonestyBase(unittest.TestCase):
         patch("_tmux_sessions", lambda: self.live)
         patch("_record_death", lambda sid, t, kind: self.deaths.append((sid, kind)))
         patch("_comment_kill_all", lambda sid, be: self.comment_kills.append(sid))
-        patch("_kernel_knows", lambda sid: True)
+        patch("_kernel_knows", lambda sid, live=None: True)   # the HTTP gate passes the map it read
         patch("_name_of", lambda sid: "web")
         self._saved_bf = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
