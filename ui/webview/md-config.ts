@@ -45,21 +45,30 @@ function inlineRules(lexer: object): { link: RegExp; code: RegExp } {
   return (lexer as { tokenizer: { rules: { inline: { link: RegExp; code: RegExp } } } }).tokenizer.rules.inline;
 }
 /** The mark rule's view of `src` (which starts at the opener): a copy cut after the first `==` past the opener that
- *  lies outside a code span, plus the character after it (the closer's lookahead), with every code span before that
- *  point masked to a filler of the same length, `[`, `a`s and `]`, the filler marked's own inlineTokens masks links and
- *  code spans to before it runs em and strong (its blockSkip), a masked copy an extension's tokenizer is not handed.
- *  A match over the copy neither opens nor closes inside a code span and reads the source's offsets unchanged, the
- *  filler being neither `=`, a space, nor a word character at either end. Under the rule's no-`==` content a match ends
- *  at that first `==` or not at all, so nothing past it is read, and null when no `==` follows at all: the work per
- *  candidate stays the distance to its closer, as the bare regex's was (masking the whole remaining paragraph per
- *  candidate instead made a 490,000-character paragraph of 8,000 highlights with code spans take 64 s against 11 s;
- *  and the tokenizer checks the opener before building the view, since marked tries every inline extension at every
- *  token's start, where the view built for each start took a 410,000-character paragraph of comparisons from 5.5 s to
- *  21 s). marked's code rule is tried at each backtick run before that point in turn, left to right as the lexer meets
+ *  lies outside a code span and is not escaped, plus the character after it (the closer's lookahead), with every code
+ *  span before that point masked to a filler of the same length, `[`, `a`s and `]`, the filler marked's own inlineTokens
+ *  masks links and code spans to before it runs em and strong (its blockSkip), a masked copy an extension's tokenizer
+ *  is not handed. A `==` whose first `=` an odd count of backslashes precedes is marked's escape of that `=` and a lone
+ *  `=` after it (round 5 of the review; the count is the source's, as for a backtick), so the view runs past it to the
+ *  next candidate. A match over the copy neither opens nor closes inside a code span or at an escaped `=` and reads the
+ *  source's offsets unchanged, the filler being neither `=`, a space, nor a word character at either end. Under the
+ *  rule's no-`==` content a match ends at that first `==` or not at all, so nothing past it is read, and null when no
+ *  `==` follows at all: the work per candidate stays the distance to its closer, as the bare regex's was (masking the
+ *  whole remaining paragraph per candidate instead made a 490,000-character paragraph of 8,000 highlights with code
+ *  spans take 64 s against 11 s; and the tokenizer checks the opener before building the view, since marked tries every
+ *  inline extension at every token's start, where the view built for each start took a 410,000-character paragraph of
+ *  comparisons from 5.5 s to 21 s). marked's code rule is tried at each backtick run before that point in turn, left to right as the lexer meets
  *  them, as a sticky match so no substring is cut per run: a run the rule refuses (unclosed, or a run its length never
  *  closes, `` ``a` ``) is text and masks nothing, and a backtick an odd count of backslashes precedes is marked's escape,
  *  not a run. Exported for md-config.test.ts, which pins the cut. */
 const stickyCodeRules = new WeakMap<RegExp, RegExp>();
+/** Whether an odd count of backslashes precedes `src[at]`: marked's escape of that character (its escape rule reads
+ *  a backslash followed by ASCII punctuation, a backtick, an `=` and a backslash included, so an even run escapes itself). */
+function escapedAt(src: string, at: number): boolean {
+  let slashes = 0;
+  for (let j = at - 1; j >= 0 && src.charCodeAt(j) === 92; j--) slashes++;
+  return slashes % 2 === 1;
+}
 export function markView(lexer: object, src: string): string | null {
   let i = 2, out = "", done = 0;
   let re: RegExp | undefined;
@@ -67,10 +76,11 @@ export function markView(lexer: object, src: string): string | null {
     const eq = src.indexOf("==", i);
     if (eq < 0) return null;
     const bt = src.indexOf("`", i);
-    if (bt < 0 || eq < bt) return out + src.slice(done, eq + 3);
-    let slashes = 0;
-    for (let j = bt - 1; j >= 0 && src.charCodeAt(j) === 92; j--) slashes++;
-    if (slashes % 2 === 1) { i = bt + 1; continue; }   // an escaped backtick: marked's escape token, no run
+    if (bt < 0 || eq < bt) {
+      if (escapedAt(src, eq)) { i = eq + 1; continue; }   // `\==`: marked's escape of the first `=`, then a lone `=`; neither a closer nor a run
+      return out + src.slice(done, eq + 3);
+    }
+    if (escapedAt(src, bt)) { i = bt + 1; continue; }   // an escaped backtick: marked's escape token, no run
     if (!re) {
       const code = inlineRules(lexer).code;
       re = stickyCodeRules.get(code);
@@ -289,11 +299,17 @@ export const footnoteDef: TokenizerAndRendererExtension = {
 // marker line is spelled as marked spells a quote's: `>`, an optional space or tab, then up to three spaces of
 // indentation before `[!` (a tab or a fourth space past that is indented code inside the quote), which is how GitHub
 // reads an alert typed with tabs or two spaces (round 3 of the review: the recognition took one space alone, so
-// `>\t[!NOTE]` rendered a plain quote reading `[!NOTE]`). The body is de-prefixed and lexed as blocks the way marked's
-// blockquote lexes its own, its two preparations included: the marker's optional space may be a tab (round 2 of the
-// review: `>\tbody` kept its tab, which the nested lex expanded into indented code), and a lazy `===` or `--` line is
-// prefixed with four spaces first, so it is a paragraph's text and not a setext underline of the body line before it
-// (round 2: a lazy `===` made the line before it an h1 inside the callout, where the blockquote kept both as text; a
+// `>\t[!NOTE]` rendered a plain quote reading `[!NOTE]`). The body is de-prefixed with CommonMark's marker, a `>` after
+// at most three spaces (QUOTE_PREFIX_RE), and lexed as blocks the way marked's blockquote lexes its own, its two
+// preparations included. The marker's indentation is a deliberate difference from marked's blockquote (round 5
+// of the review): marked strips a `>` under any indentation (` *>`), so a lazy continuation line indented four or more
+// spaces that begins with `>` loses its `>` there, where CommonMark reads such a line as paragraph text (a marker
+// takes at most three spaces of indentation) and commonmark.js and GitHub show the `>`; the callout keeps it, GitHub
+// being what the callout follows, and the anchor map's suffix view holds either way (each line of the text is a suffix
+// of its raw line whether the `>` is stripped or kept). The two preparations: the marker's optional space may be a tab
+// (round 2 of the review: `>\tbody` kept its tab, which the nested lex expanded into indented code), and a lazy `===` or
+// `--` line is prefixed with four spaces first, so it is a paragraph's text and not a setext underline of the body line
+// before it (round 2: a lazy `===` made the line before it an h1 inside the callout, where the blockquote kept both as text; a
 // `>`-prefixed one stays the quote's own heading; a `---` line is an hr, which ends the quote before it). The guard
 // skips the body's FIRST line: marked's blockquote keeps its first line, so there a guarded line continues that
 // paragraph, but the callout takes the marker line as the title, and a lazy underline right under it has no paragraph
@@ -385,13 +401,21 @@ export const callout: TokenizerAndRendererExtension = {
 // literal when a word followed it (round 3) and closed it inside the span when a space did (`==x `y== z` w==`
 // highlighted `y` and broke the span, rounds 2 and 3). Only a code span is skipped: `==**a==b**==` stays literal, a
 // `==` inside strong being a `==` in prose; and the double-tilde rule above keeps the blind spot its two copies had
-// (`~~see `a~~b` here~~` closes at the first `~~`), no change of this slice's. The element carries a class, `md-mark`,
+// (`~~see `a~~b` here~~` closes at the first `~~`), no change of this slice's. A backslash-escaped `=` is the highlight's
+// text (round 5 of the review): marked masks every escaped punctuation character before its em and strong run and hands
+// an extension the unmasked source, so the `==` of `\==` closed the highlight when a space followed it, and `==a \== b==
+// end` highlighted `a \` and left ` b== end` literal, where `\=` is marked's escape everywhere else in the paragraph
+// (`a \== b` renders `a == b`). Now a backslash and the character after it are one atom of the content (MARK_RE) and
+// the view skips a `==` an odd count of backslashes precedes (markView), so `==a \== b==` highlights `a == b`, `==x
+// \\== y` closes at its `==` (two backslashes escape each other) and `==a\==` is literal, one `=` escaped and one
+// left, as `*a\*` is literal to marked. The double-tilde rule keeps this blind spot too, as marked's own gfm del has
+// it (`~~a \~~ b~~` closes at the escaped pair). The element carries a class, `md-mark`,
 // so the sheets' rule names the highlight alone and the comment and change marks the panel paints as <mark> elements
 // (mark.fc-hl, .fc-presel, .fc-ins, .fc-del; anchor-map.ts makeMark) keep their own dress (round 3: `.fileview-md mark`
 // outranked their single-class rules, so every comment highlight in the Rendered view wore the amber wash).
 export const MARK_CLASS = "md-mark";
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
-const MARK_RE = /^==(?=[^\s=])((?:(?!==)[\s\S])*?[^\s=])==(?![A-Za-z0-9_=])/;
+const MARK_RE = /^==(?=[^\s=])((?:\\[\s\S]|(?!==)[^\\])*?(?:\\[\s\S]|[^\s=\\]))==(?![A-Za-z0-9_=])/;
 const OPERAND_END_RE = /[A-Za-z0-9_=)\]'"]$/;
 export const mark: TokenizerAndRendererExtension = {
   name: "mark",

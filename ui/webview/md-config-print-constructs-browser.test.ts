@@ -11,8 +11,13 @@
 // the variable its rail and wash ride, so a callout prints a black rail over a faint grey wash beside the plain quote's
 // black rail. Measured here over the real viewer bundle, the kernel's THEME_CSS after the sheet as the pages have it, on
 // the pane, the chat modal and the feed page, default theme and light: the screen values first (the dim tier, the tints),
-// then under `page.emulateMedia({ media: "print" })`, then back under screen media, where each value returns. Skips loudly
-// without a browser. Synthetic values only: hosts under .test, no real note.
+// then under `page.emulateMedia({ media: "print" })`, then back under screen media, where each value returns. Round 5 found
+// two constructs the line had missed: the embed chip `![[Other]]` renders in a file document, `a.fv-embed`, kept its
+// hairline box (rgba(255, 255, 255, 0.12) on the feed page's dark themes, white on the white paper, where its text printed
+// black through `.fileview-md a`), and the ==mark== kept its screen wash, 35% of the theme's --warn, so the same note printed
+// two tints from two themes (rgb(241, 223, 186) from the dark page, rgb(220, 203, 166) from the light one); the block names
+// the chip on the construct line and gives the mark one print wash, 15% black, read here on every cell and held to one value
+// across the themes. Skips loudly without a browser. Synthetic values only: hosts under .test, no real note.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -31,17 +36,19 @@ const NOTE = ["---", "title: Print me", "tags: [a, b]", "---", "", "# Print me",
   "> [!custom] A type the sheet does not map", "> Its body.", "",
   "> [!TIP]- A folded tip", "> Its body.", "",
   "A remote picture: ![remote](https://figures.example.test/pic.png)", "",
+  "A ==highlighted run== beside an embed ![[Other]] of another note.", "",
   "The last paragraph.", ""].join("\n");
 const BLACK = "rgb(0, 0, 0)", WHITE = "rgb(255, 255, 255)", CLEAR = "rgba(0, 0, 0, 0)";
 
 // ── the sheets: the block names the constructs, byte-equal ─────────────────────────────────────────
 
-test("the print block blacks the footnote, the front matter and the gate placeholder (ink and border), takes the placeholder's wash off and sets a callout's --callout to black, in both sheets", () => {
+test("the print block blacks the footnote, the front matter, the gate placeholder and the embed chip (ink and border), takes the placeholder's wash off, sets a callout's --callout to black and gives the ==mark== one neutral wash, in both sheets", () => {
   for (const f of ["styles.css", "feed.css"]) {
     const css = read(f); const block = css.slice(css.indexOf("@media print {"));
-    assert.ok(block.includes(".fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate { color: black; border-color: black; }"), f + ": the three construct rules, two classes deep, outranked `.fileview-md { color: black }` and the border list");
+    assert.ok(block.includes(".fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }"), f + ": the four construct rules, two classes deep, outranked `.fileview-md { color: black }` and the border list (the embed chip joined in round 5)");
     assert.ok(block.includes(".fileview-md .fv-gate { background: none; }"), f + ": the placeholder's wash goes, as every other wash in the block");
     assert.ok(block.includes(".fileview-md .md-callout { --callout: black; }"), f + ": the rail and the wash ride --callout, so the variable is what the block sets");
+    assert.ok(block.includes(".fileview-md mark.md-mark { background: color-mix(in srgb, black 15%, transparent); }"), f + ": the ==mark== prints one neutral wash whatever the theme (round 5: it kept 35% of the theme's --warn)");
   }
   const at = (css: string) => css.slice(css.indexOf("@media print {"));
   assert.equal(at(read("styles.css")), at(read("feed.css")), "the block mirrors exactly (file-view-print-browser.test.ts pins the slice from its comment on)");
@@ -61,11 +68,15 @@ function parse(s: string): RGBA {
 
 type Callout = { cls: string; tag: string; rail: string; railW: string; wash: string; ink: string; title: string };
 type Facts = { matchesPrint: boolean; page: string; body: string; quote: { ink: string; rail: string }; frontMatter: { open: boolean; ink: string; label: string; yaml: string; border: string; borderW: string } | null;
-  footnote: { ink: string; rail: string; railW: string; back: string } | null; callouts: Callout[]; gate: { ink: string; label: string; border: string; style: string; wash: string; text: string } | null };
+  footnote: { ink: string; rail: string; railW: string; back: string } | null; callouts: Callout[]; gate: { ink: string; label: string; border: string; style: string; wash: string; text: string } | null;
+  embed: { ink: string; border: string; style: string; borderW: string; text: string } | null; mark: { ink: string; wash: string; text: string } | null };
 function facts(): Facts {
   const md = document.querySelector(".fileview-md")!; const cs = (e: Element) => getComputedStyle(e); const q = (s: string) => md.querySelector(s);
   const fm = q("details.md-frontmatter") as HTMLDetailsElement | null, fn = q(".md-footnote"), gate = q('.fv-gate[data-act="fv-load"]'), quote = q(":scope > blockquote:not(.md-callout)")!;
+  const embed = q("a.fv-embed"), mark = q("mark.md-mark");
   return {
+    embed: embed ? { ink: cs(embed).color, border: cs(embed).borderTopColor, style: cs(embed).borderTopStyle, borderW: cs(embed).borderTopWidth, text: (embed.textContent || "").trim() } : null,
+    mark: mark ? { ink: cs(mark).color, wash: cs(mark).backgroundColor, text: (mark.textContent || "").trim() } : null,
     matchesPrint: matchMedia("print").matches, page: cs(document.body).backgroundColor, body: cs(q(":scope > p")!).color,
     quote: { ink: cs(quote).color, rail: cs(quote).borderLeftColor },
     frontMatter: fm ? { open: fm.open, ink: cs(fm).color, label: cs(fm.querySelector("summary")!).color, yaml: cs(fm.querySelector("pre")!).color, border: cs(fm).borderTopColor, borderW: cs(fm).borderTopWidth } : null,
@@ -75,13 +86,15 @@ function facts(): Facts {
   };
 }
 
-test("under print media a footnote definition, the front matter, a gated figure's placeholder and every callout print black ink and black rails on the white page, on the pane, the chat modal and the feed page; screen media restores each", { timeout: 240000 }, async (t) => {
+test("under print media a footnote definition, the front matter, a gated figure's placeholder, the embed chip and every callout print black ink and black rails on the white page, and the ==mark== one neutral wash from every theme, on the pane, the chat modal and the feed page; screen media restores each", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
+    const markWashes = new Map<string, string>();   // the mark's print wash per cell: one value from every theme and surface
     for (const [mode, light] of [["pane", false], ["chat", false], ["feed", false], ["pane", true], ["feed", true]] as [Mode, boolean][]) {
       const cell = `${mode} ${light ? "light" : "dark"}`;
       const { page, errors } = await openViewer(browser, mode, 900, 700, { docs: { [REPORT]: NOTE }, theme: THEME_CSS });
       if (light) { await page.evaluate(() => { document.body.classList.add("theme-light"); }); await frames(page, 2); }
-      await page.waitForFunction(() => document.querySelectorAll(".fileview-md .md-callout").length >= 3 && !!document.querySelector('.fileview-md .fv-gate[data-act="fv-load"]') && !!document.querySelector(".fileview-md .md-footnote"), null, { timeout: 10000 });
+      await page.waitForFunction(() => document.querySelectorAll(".fileview-md .md-callout").length >= 3 && !!document.querySelector('.fileview-md .fv-gate[data-act="fv-load"]') && !!document.querySelector(".fileview-md .md-footnote")
+        && !!document.querySelector(".fileview-md a.fv-embed") && !!document.querySelector(".fileview-md mark.md-mark"), null, { timeout: 10000 });
       // the fold open, so its YAML is laid out and reads a colour (a closed details hides its body in print too; the label prints always)
       await page.evaluate(() => { (document.querySelector(".fileview-md details.md-frontmatter") as HTMLDetailsElement).open = true; }); await frames(page, 2);
       const screen = await page.evaluate(facts) as Facts;
@@ -95,6 +108,10 @@ test("under print media a footnote definition, the front matter, a gated figure'
       assert.notEqual(screen.footnote!.ink, BLACK, cell + ": on screen the footnote reads dim"); assert.equal(screen.footnote!.ink, screen.quote.ink, cell + ": ...the plain quote's tier");
       assert.equal(screen.frontMatter!.ink, screen.quote.ink, cell + ": ...the front matter too"); assert.equal(screen.gate!.ink, screen.quote.ink, cell + ": ...and the placeholder");
       assert.notEqual(screen.callouts[0].rail, screen.quote.rail, cell + ": on screen the note callout's rail is its tint, not the quote's hairline");
+      assert.ok(screen.embed && screen.mark, cell + ": the note renders the embed chip and the ==mark==");
+      assert.equal(screen.embed!.text, "Other", cell + ": ![[Other]] is the chip naming the note"); assert.equal(screen.mark!.text, "highlighted run");
+      assert.equal(screen.embed!.border, screen.footnote!.rail, cell + ": on screen the chip's box is the hairline, the footnote rail's token"); assert.notEqual(screen.embed!.border, BLACK);
+      assert.notEqual(screen.mark!.wash, CLEAR, cell + ": on screen the mark wears its wash"); assert.notDeepEqual(parse(screen.mark!.wash).slice(0, 3).map(Math.round), [0, 0, 0], cell + ": ...the theme's amber, not a neutral (" + screen.mark!.wash + ")");
       await page.emulateMedia({ media: "print" }); await frames(page, 3);
       const pr = await page.evaluate(facts) as Facts;
       assert.equal(pr.matchesPrint, true, cell + ": print media");
@@ -117,11 +134,21 @@ test("under print media a footnote definition, the front matter, a gated figure'
       assert.equal(gate.ink, BLACK, cell + ": the placeholder prints black (before: " + screen.gate!.ink + ")"); assert.equal(gate.label, BLACK, cell + ": ...its label too");
       assert.equal(gate.border, BLACK, cell + ": the placeholder's dashed box prints black (before: " + screen.gate!.border + ")"); assert.equal(gate.style, "dashed", cell + ": ...still dashed");
       assert.equal(gate.wash, CLEAR, cell + ": the placeholder's wash is off (before: " + screen.gate!.wash + ")");
+      // round 5: the embed chip's box and the mark's wash
+      const embed = pr.embed!, mark = pr.mark!;
+      assert.equal(embed.border, BLACK, cell + ": the embed chip's box prints black (before: " + screen.embed!.border + ", the screen token: white on white on the feed page)");
+      assert.equal(embed.style, "solid", cell + ": ...still drawn"); assert.equal(embed.borderW, "1px"); assert.equal(embed.ink, BLACK, cell + ": ...its text black");
+      assert.equal(mark.ink, BLACK, cell + ": the mark's text prints black");
+      const wash = parse(mark.wash);
+      assert.deepEqual(wash.slice(0, 3).map(Math.round), [0, 0, 0], cell + ": the mark's print wash is neutral, not the theme's amber (" + mark.wash + "; before: " + screen.mark!.wash + ")");
+      assert.ok(wash[3] > 0.12 && wash[3] < 0.18, cell + ": ...at the rule's 15% (" + mark.wash + ")");
+      markWashes.set(cell, mark.wash);
       await page.emulateMedia({ media: "screen" }); await frames(page, 3);
       const back = await page.evaluate(facts) as Facts;
       assert.deepEqual(back, screen, cell + ": every screen value returns");
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }
+    assert.equal(new Set(markWashes.values()).size, 1, "one print wash for the mark from every theme and surface (before: two tints, one per theme): " + JSON.stringify(Object.fromEntries(markWashes)));
   });
 });

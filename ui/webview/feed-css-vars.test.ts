@@ -44,9 +44,13 @@ test("every fallback-less var() used outside the light block is defined outside 
     "used without a fallback and defined only under body.theme-light (define it in :root too): " + missing.join(", "));
 });
 
-test("the callout tints' status tokens resolve on the feed page in the dark themes", () => {
-  // the incident pin (Slice 4, review round 2): the two tokens the tip and important callout rules name stand in :root
+test("the callout tints' tokens resolve on the feed page in the dark themes", () => {
+  // the incident pin (Slice 4, review round 2): the two tokens the tip and important callout rules named stood in :root; since
+  // round 5 the rules name tokens of their own, --callout-tip and --callout-important (the status fills were 2.27:1 and 2.09:1
+  // rails on the light page), which stand in :root too, and the two status tokens stay as the ones this sheet mirrors
   const root = CSS.slice(CSS.indexOf(":root {"), CSS.indexOf("\n}", CSS.indexOf(":root {")));
+  assert.match(root, /--callout-tip:\s*#54B204;/, "--callout-tip is defined in feed.css's :root (mirrors styles.css)");
+  assert.match(root, /--callout-important:\s*#14b8a6;/, "--callout-important is defined in feed.css's :root (mirrors styles.css)");
   assert.match(root, /--st-awaitbg-bg:\s*#54B204;/, "--st-awaitbg-bg is defined in feed.css's :root (mirrors styles.css)");
   assert.match(root, /--st-compacting-bg:\s*#14b8a6;/, "--st-compacting-bg is defined in feed.css's :root (mirrors styles.css)");
 });

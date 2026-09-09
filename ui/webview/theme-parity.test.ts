@@ -74,6 +74,8 @@ const PAIRS: Array<[string, string, number]> = [
   ["--hl-meta", "--bg", 4.5],
   ["--hl-attr", "--bg", 4.5],
   ["--math-err", "--bg", 4.5],      // KaTeX's flagged text (math.ts MATH_ERROR_COLOR; Slice 4 of plans/markdown-viewer.md, review round 1)
+  ["--callout-tip", "--bg", 3],     // a callout's rail, the type's one carrier (Slice 4, review round 5: the status fills the tip and
+  ["--callout-important", "--bg", 3],   // important rails read before were 2.27:1 and 2.09:1 on the light page)
 ];
 
 for (const sheet of ["styles.css", "feed.css"]) {
@@ -106,7 +108,7 @@ for (const sheet of ["styles.css", "feed.css"]) {
       }
       // a skip must be loud (PR #763 item 6): pin how many pairs actually ran per sheet/theme —
       // grow these numbers when PAIRS grows, never let them silently shrink
-      const expected = sheet === "styles.css" ? PAIRS.length : 20;   // feed's :root holds a deliberate subset (no --box-bg in its dark block, so the code-block pair runs in styles.css and in feed's light block)
+      const expected = sheet === "styles.css" ? PAIRS.length : 22;   // feed's :root holds a deliberate subset (no --box-bg in its dark block, so the code-block pair runs in styles.css and in feed's light block)
       assert.ok(evaluated >= expected,
         `${sheet} ${name}: only ${evaluated}/${expected} contrast pairs evaluated — silent skip`);
     }

@@ -2532,16 +2532,26 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
 // callouts, or two untitled folded callouts of one type (whose generated title is the type, the common Obsidian shape),
 // shared one queue, so removing the first handed its state to the second, and a new one inserted ahead took the state of
 // the fold behind it (the Slice 4 review, round 3). A fold whose title changed, or a new one, shows as authored. The
-// first pass pairs only an exact key that names ONE noted fold and ONE new fold: two folds identical in class, title and
-// body share a key the pass has nothing to tell them apart by, so both fall whole to the second pass and its order. Paired
-// in the first pass anyway, the one fold still carrying the shared body took the queue's first state whichever fold that
-// was, and the fold a session had just filled in took the leftover, so two `> [!note]- Todo` placeholders swapped states
-// when the person read the second while a session wrote into the first (the Slice 4 review, round 4). The leftovers of an
-// edit that both removes one same-titled fold and rewrites another's body are told apart by order too. A Raw paint has no
-// folds and neither reads nor writes, so the state read when the rendered view left stands until it is painted again. The
-// state moves on the person's own clicks and the `#` reveal alone: no per-paint derivation, no timer (CLAUDE.md, cards
-// move on new information). md-config-fold-state-browser.test.ts drives the gestures, the same-title reloads and the
-// identical twins included.
+// first pass pairs an exact key only when it names AS MANY noted folds as new folds, the k-th new to the k-th noted: two
+// folds identical in class, title and body (two `> [!note]- Todo` placeholders a template left) share a key the pass has
+// nothing to tell them apart by. While their count stands, the twins pair in order and each keeps its own state, whatever
+// a same-titled fold with a body of its own did around them: inserted or removed ahead of them, between them or after
+// them, it pairs by title in the second pass or shows as authored. When their count changed, a session filled one in,
+// added one or removed one, the whole key falls to the second pass and its order, whose first noted state of that title
+// goes to the first new fold of that title, so the fold the person reads keeps its state and the filled fold takes the
+// leftover; paired in the first pass anyway, the one fold still carrying the shared body took the queue's first state
+// whichever fold that was, so the two placeholders swapped states when the person read the second while a session wrote
+// into the first (the Slice 4 review, round 4). Round 4's rule, an exact key pairs only when it names ONE noted fold and
+// ONE new fold, sent untouched twins whole to the second pass, where a same-titled fold inserted ahead of them took the
+// first twin's state and every twin took the next one's, and one removed from ahead of them shifted the states the other
+// way, so the twin the person read shut either way (the Slice 4 review, round 5). Order alone decides what content
+// cannot: the leftovers of an edit that both removes one same-titled fold and rewrites another's body, and a twin
+// rewritten in the same write that inserts a same-titled fold, whose text change is the insertion's and reads as it (the
+// likelier single edit, and the reading the round-3 sentence above states). A Raw paint has no folds and neither reads
+// nor writes, so the state read when the rendered view left stands until it is painted again. The state moves on the
+// person's own clicks and the `#` reveal alone: no per-paint derivation, no timer (CLAUDE.md, cards move on new
+// information). md-config-fold-state-browser.test.ts drives the gestures, the same-title reloads, the identical twins
+// and the twins' same-titled neighbours included.
 type Fold = { key: string; body: string; open: boolean };
 function foldKey(d: Element): string {
   let summary = "";
@@ -2569,18 +2579,23 @@ function foldKeeper(body: HTMLElement): { note: () => void; restore: () => void 
       const now = Array.from(md.querySelectorAll("details"));
       const taken = new Set<Fold>();                     // noted folds the first pass matched
       const state = new Map<Element, boolean>();
-      // pass 1: the same fold, by class, title and body text, when that exact key names ONE noted fold and ONE new fold;
-      // a key two folds share (identical folds, or a fold a session duplicated) is left whole to pass 2 and its order
+      // pass 1: the same fold, by class, title and body text, when that exact key names AS MANY noted folds as new folds,
+      // the k-th new paired with the k-th noted in document order; a key whose count changed (a fold filled in, added or
+      // removed among folds identical in class, title and body) is left whole to pass 2 and its order
       const byExact = new Map<string, Fold[]>();
       for (const f of folds) { const k = exactKey(f.key, f.body); const q = byExact.get(k); if (q) q.push(f); else byExact.set(k, [f]); }
       const nowKeys = now.map((d) => exactKey(foldKey(d), foldBody(d)));
       const nowExact = new Map<string, number>();
       for (const k of nowKeys) nowExact.set(k, (nowExact.get(k) || 0) + 1);
+      const paired = new Set<string>();                  // the exact keys with equal counts, read before the queues shrink
+      byExact.forEach((q, k) => { if (nowExact.get(k) === q.length) paired.add(k); });
       now.forEach((d, i) => {
         const k = nowKeys[i];
         const q = byExact.get(k);
-        if (!q || q.length !== 1 || nowExact.get(k) !== 1) return;
-        taken.add(q[0]); state.set(d, q[0].open);
+        if (!q || !paired.has(k)) return;
+        const f = q.shift();
+        if (!f) return;
+        taken.add(f); state.set(d, f.open);
       });
       // pass 2: the leftovers by class and title, in order: a fold whose body an edit changed keeps its state
       const byKey = new Map<string, Fold[]>();

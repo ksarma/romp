@@ -292,12 +292,12 @@ test("Files pane: across a reload the Comments panel's poll asked for, a fold ke
 
 // Two folds identical in class, title AND body: two `> [!note]- Todo` placeholders a template left, with no body at all
 // or with the same `(answer here)` line, one of which a session fills in while the person reads the other. The two share
-// one exact key (class, summary text and body text), so the first pass has nothing to tell them apart by and must leave
-// both to the second pass's order: when it paired them anyway, the one fold still carrying the shared body took the
-// queue's FIRST state whichever fold that was, and the fold the session had just filled took the leftover, so the fold
-// the person was reading shut and the one the session edited opened (the Slice 4 review, round 4; round 3's two-pass
-// match regressed this shape, which 7ab8524e's order match got right). Each shape runs on its own page: the person
-// opens one fold, the session fills the OTHER, and the opened fold is the one that stays open.
+// one exact key (class, summary text and body text), so the first pass has nothing to tell them apart by and, their count
+// changed by the fill, must leave the key whole to the second pass's order: when it paired them anyway, the one fold still
+// carrying the shared body took the queue's FIRST state whichever fold that was, and the fold the session had just filled
+// took the leftover, so the fold the person was reading shut and the one the session edited opened (the Slice 4 review,
+// round 4; round 3's two-pass match regressed this shape, which 7ab8524e's order match got right). Each shape runs on its
+// own page: the person opens one fold, the session fills the OTHER, and the opened fold is the one that stays open.
 const TWIN = (body: string) => (body ? ["> [!note]- Todo", "> " + body, ""] : ["> [!note]- Todo", ""]);
 const TWINS_OF = (first: string, second: string) => NOTE_OF([...TWIN(first), "Middle para.", "", ...TWIN(second)], false);
 const FILLED = "Filled in by a session.";
@@ -325,6 +325,54 @@ test("Files pane: two folds identical in class, title and body keep their states
       assert.deepEqual(await foldBodies(page), expected, `after the reload the fold the person opened is still the open one; the filled fold stands shut as authored (${label})`);
 
       assert.deepEqual(errors, [], `no page errors (${label})`);
+      await page.context().close();
+    }
+  });
+});
+
+// The twins untouched while a same-titled fold with a body of its own is inserted ahead of or between them, or removed
+// from ahead of or between them, the person reading the second twin. The twins' exact key names as many noted folds as
+// new ones, so the first pass pairs them in document order and each keeps its own state; the inserted fold shows as
+// authored and the removed fold's state leaves with it. Round 4's guard (an exact key pairs only when it names ONE noted
+// fold and ONE new fold) sent the untouched twins whole to the second pass's class-and-title order, where an inserted
+// fold took the first twin's state and every twin took the next one's, so the twin the person was reading shut and its
+// neighbour opened; a removal shifted the states the other way, the twin being read shut and nothing opened (the Slice 4
+// review, round 5; 6a4527cf got these four right and the twin leg's swap wrong, so both legs stand). Each shape on its
+// own page, over the reload the Comments panel's poll asks for.
+const DISTINCT = TWIN("Inserted by a session.");   // the twins' class and title, a body of its own
+const TWIN_PAIR = [...TWIN(""), "Middle para.", "", ...TWIN("")];
+type NeighbourShape = { label: string; before: string[]; opened: number; after: string[]; present: string; gone: string; expected: Array<[string, string, boolean]> };
+const TWIN_SHUT: [string, string, boolean] = [NOTE_CLS, "", false], TWIN_OPEN: [string, string, boolean] = [NOTE_CLS, "", true];
+const DISTINCT_SHUT: [string, string, boolean] = [NOTE_CLS, "Inserted by a session.", false];
+const NEIGHBOUR_SHAPES: NeighbourShape[] = [
+  { label: "a same-titled fold inserted AHEAD of the twins", before: TWIN_PAIR, opened: 1, after: [...DISTINCT, ...TWIN_PAIR],
+    present: "Inserted by a session.", gone: "", expected: [DISTINCT_SHUT, TWIN_SHUT, TWIN_OPEN] },
+  { label: "a same-titled fold inserted BETWEEN the twins", before: TWIN_PAIR, opened: 1, after: [...TWIN(""), ...DISTINCT, "Middle para.", "", ...TWIN("")],
+    present: "Inserted by a session.", gone: "", expected: [TWIN_SHUT, DISTINCT_SHUT, TWIN_OPEN] },
+  { label: "the same-titled fold that stood AHEAD of the twins removed", before: [...DISTINCT, ...TWIN_PAIR], opened: 2, after: TWIN_PAIR,
+    present: "Last para.", gone: "Inserted by a session.", expected: [TWIN_SHUT, TWIN_OPEN] },
+  { label: "the same-titled fold that stood BETWEEN the twins removed", before: [...TWIN(""), ...DISTINCT, "Middle para.", "", ...TWIN("")], opened: 2, after: TWIN_PAIR,
+    present: "Last para.", gone: "Inserted by a session.", expected: [TWIN_SHUT, TWIN_OPEN] },
+];
+
+test("Files pane: two identical twins keep their own states across the reload when a same-titled fold with a body of its own is inserted ahead of or between them, or removed from ahead of or between them: the twin the person opened stays open, every other fold stands shut", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const js = filesBundle();
+    for (const s of NEIGHBOUR_SHAPES) {
+      const disk: Disk = { text: NOTE_OF(s.before, false), mtime: "1" };
+      const { page, errors } = await openNote(browser, js, "file", disk);
+      await openPanel(page);
+      const authored = await foldBodies(page);
+      assert.deepEqual(authored.map((f) => f[2]), authored.map(() => false), `authored: every fold shut (${s.label})`);
+      await noteSummary(page, s.opened).click();
+      await settle(page);
+      assert.deepEqual((await foldBodies(page)).map((f) => f[2]), authored.map((_, i) => i === s.opened), `the person opened fold ${s.opened} (${s.label})`);
+
+      // the session's edit lands; the panel's poll sees the mtime move and asks the reload
+      await editOnDisk(page, disk, NOTE_OF(s.after, false), "2", s.present, s.gone);
+      assert.deepEqual(await foldBodies(page), s.expected, `after the reload the twin the person opened is still the open one and every other fold stands shut (${s.label})`);
+
+      assert.deepEqual(errors, [], `no page errors (${s.label})`);
       await page.context().close();
     }
   });

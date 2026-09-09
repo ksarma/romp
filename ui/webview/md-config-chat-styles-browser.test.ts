@@ -16,8 +16,16 @@
 // dark, 1.39:1 light, where the bubble's text reads at 4.67:1 and 5.13:1), and a folded callout (`> [!note]-`, a
 // details) and an unfolded one (a blockquote) wore different rails and inks, since the bubble's blockquote rule outranked
 // the callout rule's rail and ink for the blockquote form alone; the bubble leg types both shapes and both forms and reads
-// the footnote and the fold in the bubble's own ink, the two forms equal. Both themes.
-// Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text only.
+// the footnote and the fold in the bubble's own ink, the two forms equal. Round 5: every ink the slice sets in the bubble
+// holds 4.5:1 on both fills, measured over the wash it sits on. A white wash under white ink lightens the fill and lowers
+// the ratio, so round 4's callout ink (the quote's 0.88 white over the 7% white wash) read at 3.59:1 and 3.87:1 and the
+// mark (white over the code span's 20% white wash) at 3.35:1 and 3.51:1; both washes darken the fill now (8% and 18%
+// black) under the bubble's own ink. The fold's YAML, a pre in the bubble's page-coloured well with no code child,
+// inherited round 4's white and read at 1.19:1 on the light theme's cream; it takes the page's --fg. A dead wikilink kept
+// the shared rule's 0.7 opacity, tuned to --fg on --bg, and read at 3.10:1 and 3.38:1 on the fill; it is at full ink in
+// the bubble. The bubble leg opens the fold and reads every one of these at the bar, both forms of the callout included.
+// Both themes. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text
+// only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -53,12 +61,12 @@ const REPLY = [
   "> [!NOTE]", "> This only affects the web dashboard.", "",
   "> [!WARNING]", "> Careful here.", "",
   "> plain quote for reference", "",
-  "The ==important== bit and a footnote[^1].", "",
+  "The ==important== bit and a footnote[^1], see [[Note]].", "",
   "[^1]: The footnote definition text.", "",
 ].join("\n");
 // what the person types: a note pasted whole (its YAML opener folds as front matter), a footnote, a callout and the same
 // callout folded, the two forms of one construct one line apart
-const TYPED = ["---", "title: Pasted note", "---", "", "==this== is what I typed[^1]", "", "> [!NOTE]", "> pasted from an issue", "",
+const TYPED = ["---", "title: Pasted note", "---", "", "==this== is what I typed[^1], see [[Note]]", "", "> [!NOTE]", "> pasted from an issue", "",
   "> [!NOTE]- the same, folded", "> its body", "", "[^1]: the source I pasted"].join("\n");
 
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}</style></head><body>
@@ -108,6 +116,8 @@ const READ_DRESS = `(function (rootId) {
     "details.md-callout > p": ["color"],
     "details.md-frontmatter": ["borderTopWidth", "borderTopStyle", "borderTopColor", "borderTopLeftRadius", "color"],
     "details.md-frontmatter > summary": ["color"],
+    "details.md-frontmatter > pre": ["color", "backgroundColor"],   // the YAML, laid out only while the fold is open (the bubble leg opens it)
+    "span.fv-wikilink": ["color", "opacity", "textDecorationLine"],   // the dead wikilink span (no directory to resolve against in the chat)
     "div.md-footnote": ["borderLeftWidth", "borderLeftColor", "color"],
     "sup.md-fnref": ["lineHeight"],
     "mark.cmt-hl": ["backgroundColor"],
@@ -206,12 +216,16 @@ function contrast(a: RGBA, b: RGBA): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 const BAR = 4.5;   // WCAG's minimum for reading text; the slice's own bar for KaTeX's flagged text and the callout titles
-const QUOTE_INK = "rgba(255, 255, 255, 0.88)";   // the bubble's quote tint: a quoted passage, the math source fallback, a callout's rail and ink
+const QUOTE_INK = "rgba(255, 255, 255, 0.88)";   // the bubble's quote tint: a quoted passage, the math source fallback, a callout's rail
+/** The ink's WCAG contrast over the ground it sits on (the fill, or a wash composited over the fill); `alpha` scales the ink (an opacity). */
+const ratioOn = (ink: string, ground: RGBA, alpha = 1): number => { const c = parse(ink); return contrast(over([c[0], c[1], c[2], c[3] * alpha], ground), ground); };
 
-test("the person's own bubble: a ==mark==, a callout in both forms, a footnote and the front matter they typed wear the bubble's white family, not the browser's yellow or the page's tints", { timeout: 180000 }, async (t) => {
+test("the person's own bubble: a ==mark==, a callout in both forms, a footnote, a dead wikilink and the front matter they typed wear the bubble's white family at 4.5:1 over what they sit on, not the browser's yellow or the page's tints", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     await page.setContent(PAGE, { waitUntil: "load" });
+    // the fold open, so its YAML is laid out and reads a colour (round 5: the pre's ink was never read, the fold shut)
+    await page.evaluate("document.querySelector('#u details.md-frontmatter').open = true");
     for (const theme of ["dark", "light"]) {
       if (theme === "light") await page.evaluate("document.body.classList.add('theme-light')");
       const u = await page.evaluate(READ_DRESS + '("u")') as Dress;
@@ -221,14 +235,17 @@ test("the person's own bubble: a ==mark==, a callout in both forms, a footnote a
       assert.notEqual(mark.backgroundColor, UA_MARK_BG, theme + ": the bubble's mark is not the browser's yellow");
       assert.equal(mark.color, u["__root"]!.color, theme + ": the bubble's mark keeps the bubble's ink");
       assert.notEqual(mark.backgroundColor, a["mark:not(.cmt-hl)"]!.backgroundColor, theme + ": the bubble's mark is not the page's amber wash (a muddy tint on the saturated fill)");
-      assert.match(mark.backgroundColor, /^rgba\(255, 255, 255, /, theme + ": the bubble's mark is a white wash, as the bubble's code spans are");
+      // round 5: a white wash under white ink lightens the fill and lowers the ratio (the code span's 20% white wash the mark
+      // copied put it at 3.35:1 and 3.51:1, the lowest contrast in the message); the mark's wash darkens the fill instead
+      assert.match(mark.backgroundColor, /^rgba\(0, 0, 0, /, theme + ": the bubble's mark is a wash that darkens the fill (before: the code span's 20% white)");
       const title = u[".md-callout-note > .md-callout-title"]!, quote = u["blockquote:not(.md-callout)"];
       assert.ok(title, theme + ": the typed callout rendered in the bubble");
       assert.equal(title.fontWeight, "600", theme + ": the bubble's callout title is bold");
       assert.notEqual(title.color, a[".md-callout-note > .md-callout-title"]!.color, theme + ": the bubble's callout title is not the page's body ink (the page's grey on the saturated fill)");
-      assert.match(title.color, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout title is in the white family (the bubble's quote ink, inherited)");
+      assert.equal(title.color, u["__root"]!.color, theme + ": the bubble's callout title reads in the bubble's own ink (round 5; before: the quote's 0.88 tint, 3.59:1 and 3.87:1 over the wash)");
       const rail = u["blockquote.md-callout.md-callout-note"]!;
       assert.match(rail.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout rail is in the white family");
+      assert.match(rail.backgroundColor, /^rgba\(0, 0, 0, /, theme + ": the bubble's callout wash darkens the fill (round 5; before: 7% white through --callout, which lowered the ink's ratio)");
       assert.equal(quote, null, theme + ": (the fixture types no plain quote)");
       // round 4: the two forms of one callout. The bubble's blockquote rule (.user-bubble.md blockquote, a type selector deep)
       // outranked the shared callout rule's rail and ink for the blockquote form, so `> [!note]` wore the plain quote's 0.40
@@ -241,7 +258,7 @@ test("the person's own bubble: a ==mark==, a callout in both forms, a footnote a
       assert.equal(rail.borderLeftColor, QUOTE_INK, theme + ": ...the quote tint the rule's --callout names");
       assert.equal(fold.backgroundColor, rail.backgroundColor, theme + ": ...and one wash");
       assert.equal(fold.color, rail.color, theme + ": the two forms read in one ink (before: the bubble's white against the quote's 0.88)");
-      assert.equal(rail.color, QUOTE_INK, theme + ": ...the quote ink, as the sheet's comment says the callout inherits");
+      assert.equal(rail.color, u["__root"]!.color, theme + ": ...the bubble's own ink (round 5; round 4 unified them downward to the quote's 0.88 tint)");
       assert.equal(foldTitle.color, title.color, theme + ": the two titles read in one ink");
       assert.equal(foldTitle.fontWeight, "600", theme + ": the folded callout's title is bold too");
       assert.equal(u["details.md-callout > p"]!.color, u[".md-callout-note > p:not(.md-callout-title)"]!.color, theme + ": the two bodies read in one ink");
@@ -256,9 +273,32 @@ test("the person's own bubble: a ==mark==, a callout in both forms, a footnote a
       assert.notEqual(fn.color, a["div.md-footnote"]!.color, theme + ": ...not the page's dim grey on the saturated fill");
       assert.equal(fm.color, u["__root"]!.color, theme + ": the front matter reads in the bubble's own ink (before: the page's " + a["details.md-frontmatter"]!.color + ")");
       assert.equal(fmLabel.color, u["__root"]!.color, theme + ": ...its fold label too");
-      for (const [what, ink] of [["the footnote definition", fn.color], ["the front matter's label", fmLabel.color]] as [string, string][]) {
-        const ratio = contrast(over(parse(ink), fill), fill);
-        assert.ok(ratio >= BAR, theme + ": " + what + " reads at " + ratio.toFixed(2) + ":1 on the fill " + u["__root"]!.backgroundColor + "; the bar is " + BAR + ":1");
+      // round 5: the fold's YAML is a pre in the bubble's page-coloured well (the bubble's pre rule) with no code child, so
+      // it inherited the fold's white and read at 1.19:1 on the light theme's cream; it takes the page's own reading ink
+      const yaml = u["details.md-frontmatter > pre"]!;
+      assert.ok(yaml, theme + ": the fold is open and its YAML laid out");
+      assert.notEqual(yaml.backgroundColor, u["__root"]!.backgroundColor, theme + ": the YAML sits in the page-coloured well, not on the fill");
+      assert.equal(parse(yaml.backgroundColor)[3], 1, theme + ": ...an opaque well (" + yaml.backgroundColor + ")");
+      assert.notEqual(yaml.color, fm.color, theme + ": the YAML does not inherit the fold's ink (white on the well: 1.19:1 in light before round 5)");
+      // round 5: a dead wikilink kept the shared rule's 0.7 opacity, tuned to --fg on --bg, and read at 3.10:1 and 3.38:1 on the fill
+      const wiki = u["span.fv-wikilink"]!, replyWiki = a["span.fv-wikilink"]!;
+      assert.ok(wiki && replyWiki, theme + ": the typed [[Note]] rendered as the dead span in the bubble and in the reply");
+      assert.equal(wiki.opacity, "1", theme + ": the bubble's dead wikilink is at full ink (the reply's keeps the shared " + replyWiki.opacity + ")");
+      assert.equal(replyWiki.opacity, "0.7", theme + ": ...the shared rule stands elsewhere");
+      assert.match(wiki.textDecorationLine, /underline/, theme + ": ...and keeps the dead link's underline");
+      assert.equal(wiki.color, u["__root"]!.color, theme + ": ...in the bubble's own ink");
+      // every ink the slice sets in the bubble, at the bar, over the ground it sits on: the fill, a wash over the fill, the well
+      const railGround = over(parse(rail.backgroundColor), fill), foldGround = over(parse(fold.backgroundColor), fill), markGround = over(parse(mark.backgroundColor), fill);
+      const inks: [string, string, RGBA, number][] = [
+        ["the footnote definition", fn.color, fill, 1], ["the front matter's label", fmLabel.color, fill, 1],
+        ["the front matter's YAML", yaml.color, parse(yaml.backgroundColor), 1],
+        ["the callout's body", u[".md-callout-note > p:not(.md-callout-title)"]!.color, railGround, 1], ["the callout's title", title.color, railGround, 1],
+        ["the folded callout's body", u["details.md-callout > p"]!.color, foldGround, 1], ["the folded callout's title", foldTitle.color, foldGround, 1],
+        ["the ==mark==", mark.color, markGround, 1], ["the dead wikilink", wiki.color, fill, parseFloat(wiki.opacity)],
+      ];
+      for (const [what, ink, ground, alpha] of inks) {
+        const ratio = ratioOn(ink, ground, alpha);
+        assert.ok(ratio >= BAR, theme + ": " + what + " reads at " + ratio.toFixed(2) + ":1 (" + ink + " on rgb(" + ground.slice(0, 3).map(Math.round).join(", ") + ")); the bar is " + BAR + ":1");
       }
       assert.match(fn.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the footnote's rail is in the white family (the quote's tint), not the page's hairline");
       assert.match(fm.borderTopColor, /^rgba\(255, 255, 255, /, theme + ": the front matter's box is in the white family, not the page's hairline");

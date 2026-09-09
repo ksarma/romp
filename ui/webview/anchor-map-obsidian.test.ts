@@ -13,7 +13,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
+import { Lexer, marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, type SelLike, type MapResult } from "./anchor-map";
 
@@ -545,4 +545,41 @@ test("a lazy `===` or `--` line under a callout's or a quote's body line is that
   assert.match(refused.reason, /could not place|a tab after its marker/);
   const after = ok(mapIn(tb, tabbed, "After para."), "the paragraph after the refused quote");
   assert.deepEqual(after.range, { start: tabbed.indexOf("After para."), end: tabbed.indexOf("After para.") + "After para.".length });
+});
+
+test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer strips the marker and rtrims the newlines left, so the raw has a line more than the text; with a space or a tab after the marker, indented, at the end of the note, two paragraphs, nested, inside a list item", () => {
+  // (the Slice 4 review, round 5: the whole quote refused with "a block whose lines the mapping could not place" and a selection on its first
+  // line was sent to the Raw view, where a callout of the same shape mapped, md-config.ts keeping the trailing newlines in its text; the same
+  // at the base, the round-3 suffix view being where the tail check lives)
+  const mapIn = (box: FakeElement, source: string, text: string): MapResult => mapRenderedSelection(sel(point(box, text), point(box, text, true)), El(box), source);
+  const closed = "> first\n>\n\nAfter para.\n";
+  const t = Lexer.lex(closed)[0] as { type: string; raw: string; text: string };
+  assert.deepEqual([t.type, t.raw, t.text], ["blockquote", "> first\n>\n\n", "first"], "the shape this test is about: the raw ends in the `>` line, the text does not");
+  const cases: Array<[string, string[], string]> = [
+    [closed, ["first", "After para."], "a bare > closing the quote"],
+    ["> first\n> \n\nAfter para.\n", ["first", "After para."], "a > and a space"],
+    ["> first\n>\t\n\nAfter para.\n", ["first", "After para."], "a > and a tab"],
+    ["> first\n>", ["first"], "a bare > at the end of the note"],
+    ["> first\n>\n=\n\nAfter para.\n", ["first", "=", "After para."], "a = line after the closing >"],
+    ["> one para\n>\n> two para\n>\n\nAfter para.\n", ["one para", "two para", "After para."], "two paragraphs, a > between them and one closing"],
+    ["> first\n   >\n\nAfter para.\n", ["first", "After para."], "the closing > indented three spaces"],
+    ["> outer\n> > inner\n> >\n\nAfter para.\n", ["outer", "inner", "After para."], "a nested quote closed with > >"],
+    ["- item\n\n> first\n>\n\nAfter para.\n", ["item", "first", "After para."], "after a list"],
+    ["- > inner\n  >\n\nAfter para.\n", ["inner", "After para."], "a quote inside a list item"],
+    ["> [!note] T\n> body text\n>\n\nAfter para.\n", ["body text", "After para."], "a callout of the same shape (mapped before this too)"],
+    ["> first\n>\n> second\n\nAfter para.\n", ["first", "second", "After para."], "a bare > in the middle (mapped before this too: the text keeps that blank line)"],
+  ];
+  for (const [src, needles, why] of cases) {
+    const box = buildRendered(src);
+    for (const s of needles) {
+      const r = ok(mapIn(box, src, s), why + ": " + s);
+      const i = src.indexOf(s);
+      assert.deepEqual(r.range, { start: i, end: i + s.length }, why + ": " + s + " maps to its own offset");
+      assert.equal(r.quote, s, why);
+    }
+  }
+  // the tail check still refuses a raw line past the text that carries text: a quote line the lexer turned into code after a tab
+  const tabbed = "> quote\n>\t\tcode line\n\nAfter para.\n";
+  const tb = buildRendered(tabbed);
+  assert.match(bad(mapIn(tb, tabbed, "quote"), "a tab after the marker").reason, /could not place|a tab after its marker/);
 });

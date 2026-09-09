@@ -5,8 +5,10 @@
 // anywhere later in the note, with a newline in the raw the source does not hold; with this slice's display formulas in
 // files.js (and its callouts, until round 3 dropped their hint) the join reached the Files pane, and every selection
 // from the join to the end of the note refused with "a paragraph the mapping could not place" (the Slice 4 review,
-// rounds 2 and 3). Here a synthetic note with all three triggers, a nested one inside a callout, a display formula and
-// a callout below is opened as a file
+// rounds 2 and 3); and the code join, an indented line under a paragraph that a delimiter-row-shaped line follows, needs
+// no hint and collapsed the rest of the note's spans alike (round 5). Here a synthetic note with all three triggers, a
+// nested one inside a callout, the code join in its four-space and tab forms, a display formula and a callout below is
+// opened as a file
 // document through the pane's relay, so the text goes through marked under md-config.ts, DOMPurify, the viewer's passes
 // and KaTeX's fill, and the page's own DOM is what the map reads: every top-level element is its own block, and a
 // selection in each paragraph, the joined ones, the ones between and the last one well past the formula, maps to its
@@ -28,13 +30,16 @@ const PANE = fs.readFileSync(path.join(UI, "files-pane.css"), "utf8");
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const FILE_PATH = "/tmp/TESTHOST/notes-api/docs/merged.md";
-/** The note: the seeded table shape, the html-looking line, the bare bullet, the same table shape inside a callout whose
- *  body ends in a formula, a display formula and a callout below, prose between and after. */
+/** The note: the seeded table shape, the html-looking line, the bare bullet, the code join (four spaces, then a tab), the
+ *  same table shape inside a callout whose body ends in a formula, a display formula and a callout below, prose between
+ *  and after. */
 const NOTE = [
   "Intro line\nColumn A\n|---|---|",
   "After merged.",
   "Run the tool with\n<prefix>/bin/tool\nand check the output.",
   "Para line\n1. \nMore text.",
+  "Results:\n    metric | value\n|---|---|",
+  "Some prose\n\tan afterthought\n|---|",
   "> [!note] Title\n> Intro inside\n> Column A\n> |---|---|\n> After inside\n> $$\n> y\n> $$",
   "Middle para.",
   "$$\nx\n$$",
@@ -114,20 +119,22 @@ function mapInPage({ needles, source }: { needles: string[]; source: string }) {
 test("over the real Files bundle, a note whose paragraphs marked joined maps every paragraph, the joined ones and every one after them, to its own offset", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openNote(browser, filesBundle());
-    const needles = ["Intro line", "Column A", "After merged.", "Run the tool", "and check the output.", "Para line", "More text.", "Intro inside", "After inside", "Middle para.", "Callout body.", "Last one here."];
+    const needles = ["Intro line", "Column A", "After merged.", "Run the tool", "and check the output.", "Para line", "More text.", "Results:", "metric | value", "Some prose", "an afterthought", "Intro inside", "After inside", "Middle para.", "Callout body.", "Last one here."];
     const r = await page.evaluate(mapInPage, { needles, source: NOTE });   // the function itself is what the page runs
     // one element per block, in order: the joined paragraphs render as ONE <p> each, the callouts as blockquotes, the formula as KaTeX's span
-    assert.deepEqual(r.tags, ["P", "P", "P", "P", "BLOCKQUOTE", "P", "SPAN", "BLOCKQUOTE", "P"], JSON.stringify(r.tags));
+    assert.deepEqual(r.tags, ["P", "P", "P", "P", "P", "P", "BLOCKQUOTE", "P", "SPAN", "BLOCKQUOTE", "P"], JSON.stringify(r.tags));
     assert.deepEqual(r.owners, r.tags.map((_: string, i: number) => i), "element i is block i (the 1:1 pairing over the real DOM)");
     assert.equal(r.spans.length, r.tags.length, "as many blocks as top-level elements");
     // the block table reads the note: each span is its block's text, at its own offset, in order
     const blockTexts = r.spans.map((s: { start: number; end: number }) => NOTE.slice(s.start, s.end));
     assert.deepEqual(blockTexts, [
       "Intro line\nColumn A\n|---|---|", "After merged.", "Run the tool with\n<prefix>/bin/tool\nand check the output.", "Para line\n1. \nMore text.",
+      "Results:\n    metric | value\n|---|---|", "Some prose\n\tan afterthought\n|---|",
       "> [!note] Title\n> Intro inside\n> Column A\n> |---|---|\n> After inside\n> $$\n> y\n> $$", "Middle para.", "$$\nx\n$$", "> [!tip] Tip\n> Callout body.", "Last one here.",
     ]);
     for (let i = 1; i < r.spans.length; i++) assert.ok(r.spans[i].start > r.spans[i - 1].end, "spans in order: " + JSON.stringify(r.spans));
-    // every selection maps to its indexOf offset: inside the joined paragraphs, between them, inside the callout, and past the formula
+    // every selection maps to its indexOf offset: inside the joined paragraphs (the code join's indented lines too), between them,
+    // inside the callout, and past the formula
     const m = r.map as Record<string, any>;
     for (const s of needles) {
       assert.equal(m[s].ok, true, s + ": " + JSON.stringify(m[s]));

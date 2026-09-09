@@ -193,6 +193,15 @@ body.scheme-solarized-dark {
   --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
   --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;   /* teal — the compacting accent (text + compression bar) */
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;   /* alarm red — session stopped on an API error */
+  /* the callout tints of the tip and important families (Slice 4 of plans/markdown-viewer.md; .md-callout-tip and
+     .md-callout-important read them): here the awaiting green and the compacting teal, the status chips' own fills, 6.15:1
+     and 6.70:1 rails on this page. The light block re-points both: the same hexes on its cream page are 2.27:1 and 2.09:1,
+     under the 3:1 non-text floor, and since the type shows on the rail and the wash alone a tip and an important callout
+     there were hard to tell from each other and from an unmapped type (the review, round 5). A theme-conditional need is a
+     token in both blocks, never a body.theme-light branch in the rule. Mirrored in feed.css (own :root); theme-parity.test.ts
+     holds both at 3:1 on --bg in both themes. */
+  --callout-tip: #54B204;
+  --callout-important: #14b8a6;
 
   /* the assistant's READING face (.assistant): the UI face in dark, mono in light (the light block re-points it).
      --font-doc is the VIEWER's face for a rendered note (.fileview-md): sans in both themes (decision 3 of
@@ -253,6 +262,8 @@ body.theme-light {
   --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
   --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
+  --callout-tip: #3E7D0E;         /* the light --green: 4.25:1 on the page (the awaiting green reads at 2.27:1 there) */
+  --callout-important: #0F766E;   /* a teal at 4.59:1 on the page (the compacting teal reads at 2.09:1 there) */
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
   --menu-bg: #FBF6EF;
@@ -2025,16 +2036,26 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .user-bubble.md { --math-err: currentColor; }
 /* the Obsidian constructs in YOUR bubble (Slice 4 of plans/markdown-viewer.md; their shared rules sit with the viewer's
    rules, after .fileview-md hr): the ==mark== wash and a callout's tint are the page's amber and accent, muddy on the
-   saturated fill, so both join the white family here: the mark as the code span's wash, the callout's rail, wash and ink
-   as the quoted passage's tint. The wash rides the callout's --callout variable; the rail and the ink are set here
+   saturated fill, so both join the white family here. Every ink the slice sets in the bubble holds 4.5:1 on both fills,
+   measured over the wash it sits on (the slice's review, round 5): a white wash under white ink lightens the fill and
+   lowers the ratio, so the bubble's washes DARKEN the fill instead. The mark is an 18% black wash under the bubble's own
+   ink (6.40:1 dark, 6.92:1 light); the code span's 20% white wash it copied in round 1 put the same ink at 3.35:1 and
+   3.51:1, the lowest contrast in the message (that span's wash predates the slice and stands). A callout's rail is the
+   quoted passage's 0.88 white through --callout, its ink the bubble's own (inherit: 5.36:1 dark, 5.85:1 light over the
+   wash) and its wash an 8% black, the shared rule's 8% in the darkening direction; round 4 had set both forms to the
+   quote's 0.88 tint, 3.59:1 and 3.87:1 over the 7% white wash --callout gave them. The rail and the ink are set here
    outright, for both forms of a callout: the blockquote rule above, a type selector deep, outranks the shared callout
    rule's `border-left` and `color: inherit` for the blockquote form and not for the folded one (a details), so with the
    variable alone `> [!note]` wore the plain quote's 0.40 rail under the 0.88 ink while `> [!note]-` one line below took
-   the 0.88 rail and the bubble's plain white (the slice's review, round 4). The .md form alone, as the fallback above:
-   the constructs exist only in sanitized markdown. The mark rule keys on the renderer's class as the shared one does, so
-   the comment highlight mark.cmt-hl is not its subject. md-config-chat-styles-browser.test.ts reads both forms. */
-.user-bubble.md mark.md-mark { background: rgba(255, 255, 255, 0.2); color: inherit; }
-.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); border-left-color: var(--callout); color: rgba(255, 255, 255, 0.88); }
+   the 0.88 rail and the bubble's plain white (round 4). A wikilink that resolves nowhere keeps the shared rule's dotted
+   underline at the bubble's full ink: that rule's 0.7 opacity is tuned to --fg on --bg (5.6:1 in a reply) and put white
+   on the fill at 3.10:1 and 3.38:1 (round 5). The .md form alone, as the fallback above: the constructs exist only in
+   sanitized markdown. The mark rule keys on the renderer's class as the shared one does, so the comment highlight
+   mark.cmt-hl is not its subject. md-config-chat-styles-browser.test.ts reads every construct here at the bar, both forms
+   of the callout included. */
+.user-bubble.md mark.md-mark { background: rgba(0, 0, 0, 0.18); color: inherit; }
+.user-bubble.md .md-callout { --callout: rgba(255, 255, 255, 0.88); border-left-color: var(--callout); color: inherit; background: rgba(0, 0, 0, 0.08); }
+.user-bubble.md .fv-wikilink { opacity: 1; }
 /* a footnote definition and the front-matter fold in YOUR bubble: their shared rules ink them var(--dim), the page's grey, tuned
    to --bg and on the saturated fill at 1.66:1 (dark) and 1.39:1 (light) where the bubble's text reads at 4.67:1 and 5.13:1, the
    grey the blockquote comment above names at ~2:1 (the slice's review, round 4). Both take the bubble's own ink (inherit: #ffffff,
@@ -2042,6 +2063,11 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    footnote's rail and the fold's box, where var(--box-border) is near invisible on the fill. Doubled class on purpose: the shared
    rules are (0,2,0) and (0,2,1) and these outrank them. The .md form alone, as above. */
 .user-bubble.md .md-footnote, .user-bubble.md details.md-frontmatter { color: inherit; border-color: rgba(255, 255, 255, 0.40); }
+/* the fold's YAML sits in the bubble's PAGE-coloured pre well (the pre rule below) with no `code` child, so no code ink reaches
+   it and it inherits the fold's: round 4's inherit put it in the bubble's white on the light theme's cream, 1.19:1, where the
+   var(--dim) it inherited before read at 5.99:1 and 5.92:1 (the slice's review, round 5). The well is the page's ground, so
+   the YAML takes the page's reading ink, --fg (13.96:1 light, 10.38:1 dark). (0,3,2) over the shared rule's (0,2,2). */
+.user-bubble.md details.md-frontmatter pre { color: var(--fg); }
 /* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
    ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
    whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
@@ -4176,7 +4202,12 @@ body.filebrowse-open { overflow: hidden; }
    md-config-mark-classes-browser.test.ts reads the comment marks inside and outside the view). The title's tint tokens
    are rails and fills, not inks (the hairline 1.4:1, the caution red 2.9:1 on the dark themes, the light theme's tip and
    important under 2.2:1), so the title inherits the body's ink and the type shows on the rail and the wash (round 3;
-   md-config-callout-title-ink-browser.test.ts holds every title at 4.5:1). The gate's hide rule keys on the placeholder's
+   md-config-callout-title-ink-browser.test.ts holds every title at 4.5:1). The tip and important tints are tokens of their
+   own, --callout-tip and --callout-important (round 5): the status fills they read before, the same hex in both themes, were
+   2.27:1 and 2.09:1 rails on the light page, under the 3:1 non-text floor, and the rail and the wash are the one carrier of
+   the type since round 3, so a tip and an important callout there were hard to tell from each other and from an unmapped
+   type; the light block points both at inks of its own (the title-ink leg holds the five alerts' rails at 3:1 on the page
+   under both sheets and the three themes). The gate's hide rule keys on the placeholder's
    own mark, its data-act, which the sanitizer never lets an author write: keyed on the class it hid every child element
    of an author's `span.fv-gate` around prose (round 3; md-config-gate-author-span-browser.test.ts); the box's chrome on
    the class stays, the recorded call. The embed chip and the gate are the file kind's alone (an embed resolves only
@@ -4192,8 +4223,8 @@ body.filebrowse-open { overflow: hidden; }
 .md .md-callout-title, .fileview-md .md-callout-title { margin: 0 0 0.3em; font-weight: 600; color: inherit; }
 .md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title { cursor: pointer; user-select: none; }
 .md .md-callout-note, .fileview-md .md-callout-note, .md .md-callout-info, .fileview-md .md-callout-info, .md .md-callout-abstract, .fileview-md .md-callout-abstract, .md .md-callout-summary, .fileview-md .md-callout-summary, .md .md-callout-tldr, .fileview-md .md-callout-tldr, .md .md-callout-todo, .fileview-md .md-callout-todo, .md .md-callout-quote, .fileview-md .md-callout-quote, .md .md-callout-cite, .fileview-md .md-callout-cite, .md .md-callout-example, .fileview-md .md-callout-example { --callout: var(--accent); }
-.md .md-callout-tip, .fileview-md .md-callout-tip, .md .md-callout-hint, .fileview-md .md-callout-hint, .md .md-callout-success, .fileview-md .md-callout-success, .md .md-callout-check, .fileview-md .md-callout-check, .md .md-callout-done, .fileview-md .md-callout-done { --callout: var(--st-awaitbg-bg); }
-.md .md-callout-important, .fileview-md .md-callout-important { --callout: var(--st-compacting-bg); }
+.md .md-callout-tip, .fileview-md .md-callout-tip, .md .md-callout-hint, .fileview-md .md-callout-hint, .md .md-callout-success, .fileview-md .md-callout-success, .md .md-callout-check, .fileview-md .md-callout-check, .md .md-callout-done, .fileview-md .md-callout-done { --callout: var(--callout-tip); }
+.md .md-callout-important, .fileview-md .md-callout-important { --callout: var(--callout-important); }
 .md .md-callout-warning, .fileview-md .md-callout-warning, .md .md-callout-attention, .fileview-md .md-callout-attention, .md .md-callout-question, .fileview-md .md-callout-question, .md .md-callout-help, .fileview-md .md-callout-help, .md .md-callout-faq, .fileview-md .md-callout-faq { --callout: var(--warn); }
 .md .md-callout-caution, .fileview-md .md-callout-caution, .md .md-callout-danger, .fileview-md .md-callout-danger, .md .md-callout-error, .fileview-md .md-callout-error, .md .md-callout-failure, .fileview-md .md-callout-failure, .md .md-callout-fail, .fileview-md .md-callout-fail, .md .md-callout-missing, .fileview-md .md-callout-missing, .md .md-callout-bug, .fileview-md .md-callout-bug { --callout: var(--err); }
 .md mark.md-mark, .fileview-md mark.md-mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; padding: 0 0.15em; border-radius: 2px; }
@@ -4754,8 +4785,17 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
    and their rails and boxes, and every callout's rail, kept the screen tokens (a note's accent at 1.6:1, the hairline white on
    white on the feed page); ink and border black, the placeholder's wash off, and a callout's --callout black, the variable its rail
    and wash ride, so it prints a black rail over a faint neutral wash (the Slice 4 review, round 4;
-   md-config-print-constructs-browser.test.ts measures these on three surfaces). Byte-equal in styles.css and feed.css
-   (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides are in files-pane.css. */
+   md-config-print-constructs-browser.test.ts measures these on three surfaces). Round 5 named the embed chip too, a.fv-embed,
+   whose hairline box the construct line had missed (white on white on the feed page), and gave the ==mark== one print wash,
+   15% black, where it kept 35% of the theme's amber and the same note printed two tints from two themes. A display formula's
+   scroll box (.katex-display, overflow-x auto on screen) opens here as the table's does, since paper cannot scroll it and the
+   box cut a formula at the column's edge: a formula of the page's own takes the table's room and shift (its box grows to its
+   content, at least the column, at most the body less the inset, centred in the body), so a formula between the column and
+   the body prints whole across both gutters and a wider one starts at the gutter and is cut at the paper's edge (KaTeX's
+   nowrap: a formula never wraps), while a narrow one keeps its column box and an equation tag its place at the column's edge
+   (md-config-print-wide-formula-browser.test.ts measures the three shapes on the pane and the feed page). Byte-equal in
+   styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the Files pane's own overrides
+   are in files-pane.css. */
 @media print {
   :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
@@ -4769,9 +4809,10 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
   .fileview-md { --math-err: black; }
-  .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate { color: black; border-color: black; }
+  .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }
   .fileview-md .fv-gate { background: none; }
   .fileview-md .md-callout { --callout: black; }
+  .fileview-md mark.md-mark { background: color-mix(in srgb, black 15%, transparent); }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
   .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }
@@ -4781,6 +4822,8 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md pre code .cl::before, .fileview-body .fv-cl::before { opacity: 1; }
   .fileview-md table { display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; }
   .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
+  .fileview-md .katex-display { overflow: visible; }
+  .fileview-md > .katex-display { width: max-content; min-width: 100%; max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }
   .fileview-body img.fc-img { outline: none !important; }
   .fileview-body .fc-overlay { display: none; }

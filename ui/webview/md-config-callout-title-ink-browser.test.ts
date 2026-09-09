@@ -8,8 +8,14 @@
 // rail and the wash. The fixture goes through the real grammar (marked under applyMdConfig, then sanitizeMd) into
 // `.fileview-md`; for every callout, the five GitHub alerts, a custom type and a folded one, the assertion is WCAG's
 // contrast of the title's ink composited over the wash and the page, at least 4.5:1, the bar the slice applied to
-// KaTeX's flagged text (`--math-err`), and the title in the body's own ink. Both sheets, the three theme classes
-// theme.ts applies. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// KaTeX's flagged text (`--math-err`), and the title in the body's own ink. Round 5: with the title in the body's ink the
+// rail and the wash are the type's one carrier, and the wash at 8% is 1.1:1 on any page, so the rail must read; the tip
+// and important rails took the status chips' fills (`--st-awaitbg-bg`, `--st-compacting-bg`), the same hex in both
+// themes, 6.15:1 and 6.70:1 on the dark page and 2.27:1 and 2.09:1 on the light one, under WCAG's 3:1 non-text floor,
+// so on the light theme a titled `> [!tip]-` and `> [!important]-` were hard to tell from each other and from an unmapped
+// type's hairline. The two tints are tokens of their own now, `--callout-tip` and `--callout-important`, the light block
+// pointing them at inks of its own; the five alerts' rails are held here at 3:1 on the page. Both sheets, the three theme
+// classes theme.ts applies. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
 // Synthetic text only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -102,8 +108,10 @@ const READ = `(function () {
 
 const THEMES: Array<[string, string]> = [["classic", ""], ["yatharth", "chat-theme-yatharth"], ["yatharth-light", "chat-theme-yatharth theme-light"]];
 const BAR = 4.5;   // WCAG's minimum for reading text; the slice's own bar for KaTeX's flagged text (--math-err)
+const RAIL_FLOOR = 3;   // WCAG's non-text floor (1.4.11), the sheets' own for informational chrome (the PDF page's wait cue holds it too)
+const ALERTS = /md-callout-(note|tip|important|warning|caution)\b/;   // GitHub's five, the mapped types whose rail carries the type
 
-test("every callout's title, the five alerts, an unknown type, a typo and a folded one, reads at 4.5:1 or better in the body's own ink, under both sheets and the three themes", { timeout: 180000 }, async (t) => {
+test("every callout's title, the five alerts, an unknown type, a typo and a folded one, reads at 4.5:1 or better in the body's own ink, and the five alerts' rails at 3:1 or better on the page, under both sheets and the three themes", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [name, css] of SHEETS) {
       for (const [theme, cls] of THEMES) {
@@ -136,8 +144,15 @@ test("every callout's title, the five alerts, an unknown type, a typo and a fold
           assert.notEqual(c.rail, "rgba(0, 0, 0, 0)", label(c) + ": the rail is drawn (the tint moved to it, not lost)");
         }
         // the tint still tells the types apart on the rail: the five alerts wear five rails
-        const rails = s.callouts.filter((c) => /md-callout-(note|tip|important|warning|caution)\b/.test(c.cls) && c.tag === "blockquote").map((c) => c.rail);
+        const alerts = s.callouts.filter((c) => ALERTS.test(c.cls) && c.tag === "blockquote");
+        const rails = alerts.map((c) => c.rail);
         assert.equal(new Set(rails).size, 5, where + ": the five alerts wear five rail tints: " + rails.join(" | "));
+        // ...and every one of them reads on the page (round 5: the tip and important rails at 2.27:1 and 2.09:1 on the light page)
+        for (const c of alerts) {
+          const rail = over(parse(c.rail), pageBg);
+          const ratio = contrast(rail, pageBg);
+          assert.ok(ratio >= RAIL_FLOOR, label(c) + ": the rail (" + c.rail + ") reads at " + ratio.toFixed(2) + ":1 on the page " + s.page + "; the non-text floor is " + RAIL_FLOOR + ":1");
+        }
       }
     }
   });

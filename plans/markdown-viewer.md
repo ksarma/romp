@@ -1178,14 +1178,32 @@ as built departs from the text above, why, and which test holds each rule:
    1.66:1 (dark) and 1.39:1 (light) on the saturated fill, and read now in the bubble's own ink, with the quote's 0.40
    white for the footnote's rail and the fold's box; and a callout's rail and ink are set outright there for both of
    its forms, since the bubble's blockquote rule outranked the shared callout rule for the blockquote form alone and
-   `> [!note]` and `> [!note]-` one line apart wore different rails and inks (the same leg types both). In print the
-   footnote definition, the front matter and a gated figure's placeholder print black ink and black borders with the
-   placeholder's wash off, and a callout's `--callout` is black, the variable its rail and wash ride, so every callout
-   prints a black rail over a faint neutral wash beside the plain quote's (the construct rules, two classes deep,
-   outranked the print block's one-class ink rule and its border list; md-config-print-constructs-browser.test.ts
-   measures the pane, the chat modal and the feed page under print media and back). md-config.test.ts executes the
-   grammar and the idempotence and pins who calls it; render-math.test.ts pins the list's literal and the three
-   callers; chat-md.test.ts pins the user instance; md-strikethrough.test.ts imports the rule from here.
+   `> [!note]` and `> [!note]-` one line apart wore different rails and inks (the same leg types both). Round 5 held
+   every ink the slice sets in the bubble to 4.5:1 on both fills, measured over the wash it sits on, and the bubble's
+   washes darken the fill (a white wash under white ink lowers the ratio): the mark's wash is an 18% black (6.40:1
+   dark, 6.92:1 light; the code span's 20% white wash it copied put the ink at 3.35:1 and 3.51:1), a callout's ink is
+   the bubble's own (inherit) over an 8% black wash, both forms alike (5.36:1 dark, 5.85:1 light; round 4's 0.88 tint
+   over the 7% white wash `--callout` gave them read 3.59:1 and 3.87:1), a dead wikilink keeps the shared rule's
+   dotted underline at the bubble's full ink (the shared 0.7 opacity, tuned to `--fg` on `--bg`, put white on the fill
+   at 3.10:1 and 3.38:1), and the fold's YAML takes the page's `--fg` in the bubble's page-coloured pre well (13.96:1
+   light, 10.38:1 dark; round 4's inherit was the bubble's white on the light theme's cream, 1.19:1, where the
+   `var(--dim)` it inherited before read at 5.99:1; the chat-styles leg opens the fold and reads the pre). In print
+   the footnote definition, the front matter and a gated figure's placeholder print black ink and black borders with
+   the placeholder's wash off, and a callout's `--callout` is black, the variable its rail and wash ride, so every
+   callout prints a black rail over a faint neutral wash beside the plain quote's (the construct rules, two classes
+   deep, outranked the print block's one-class ink rule and its border list;
+   md-config-print-constructs-browser.test.ts measures the pane, the chat modal and the feed page under print media
+   and back). Round 5 named the embed chip on the construct line too, `a.fv-embed`, whose hairline box printed white
+   on white on the feed page, gave the `==mark==` one print wash, 15% black, where it kept 35% of the theme's amber
+   and the same note printed two tints from two themes (both in md-config-print-constructs-browser.test.ts), and
+   opened a display formula's scroll box in print as the table's is: a formula of the page's own takes the table's
+   room and shift, so one between the column and the body prints whole and centred across both gutters (an 836px
+   formula in a 762px column, cut at the column's edge before), a narrow one keeps its column box and an equation tag
+   its place at the column's edge, and one wider than the paper starts at the gutter and is cut at the paper's edge,
+   KaTeX's nowrap being what no sheet rule scales (md-config-print-wide-formula-browser.test.ts measures the three
+   shapes on the pane and the feed page). md-config.test.ts executes the grammar and the idempotence and pins who
+   calls it; render-math.test.ts pins the list's literal and the three callers; chat-md.test.ts pins the user
+   instance; md-strikethrough.test.ts imports the rule from here.
 2. *Decision 1, math everywhere.* file-view.ts's import of md-config.ts brings the grammar, the fill and KaTeX into
    files.js and feed.js (math-bundles.test.ts: a metafile of each bundle built with the shipped config holds math.ts,
    md-config.ts and katex; the viewer imports nothing from render.ts, code-block.test.ts). Production sizes, raw and
@@ -1222,33 +1240,40 @@ as built departs from the text above, why, and which test holds each rule:
    also joins two paragraphs its own regex separated (a header-looking line over a delimiter row with a different cell
    count, a lowercase `<prefix>` line, a bare `* ` or `1. ` bullet, each interrupting the paragraph and then refused
    by its tokenizer) whenever a block hint has a hit anywhere later in the note, with a newline in the raw the source
-   does not hold; the anchor map places such a paragraph by its `text`, which is the source's text, plus the raw's
-   trailing newlines (anchor-map.ts sourceRaw, in the block table and the walk, so a join inside a quote's body maps
-   too), so the join costs the map nothing (the review rounds 2 and 3: before it every block from the join to the end
-   of the note refused; md-config-merged-paragraph.test.ts, md-config-merged-paragraph-browser.test.ts). The joined
-   rendering, one `<p>` where bare marked gives two, is marked's own and GitHub's for those shapes, and it turns on a
-   `$$` further down the note (item 10). marked calls every block hint before every paragraph on the whole remaining
-   source, so a hint that scans the rest of the note made the lex quadratic in the paragraph count (the review round
-   2: 8,000 one-line paragraphs 1.3 s on the singleton against 34 ms with no hint, a 200 KB reply twice the base's
-   time); the math hint's answer is remembered per lexer frame (md-block-start.ts memoBlockStart, exact because a
-   frame's sources are suffixes of one another and a nested body is a frame of its own; the callout's hint, memoised
-   the same way in round 2, is gone since round 3, item 5), the math tokenizer's closer search too, and the lex is
-   linear in the paragraph count: 36 ms for those 8,000 paragraphs, 35 ms for 8,000 rejected `$$` lines where the base
-   took 736 (md-config-block-start-memo.test.ts holds the memoised lex equal to the plain one and the singleton's lex
-   linear). KaTeX's flagged text takes a theme token, `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into
-   the span's inline style), declared in both theme blocks of both sheets at 4.5:1 or better on `--bg`, overridden to
-   black in the print block on `.fileview-md` (a custom property inherits, so it reaches the flagged span and an
-   unsupported command's glyphs inside a rendered formula alike; set on `.katex-error` alone, those glyphs printed in
-   the screen red) and to the bubble's own ink in the person's bubble (`currentColor`: the page's red read at 1.67:1
-   and 1.28:1 on the two fills; the review round 2, md-config-math-inks-browser.test.ts), as the source fallback
-   prints; KaTeX's default #cc0000 read at 2.8:1 on the dark page (md-config-math-error-colour.test.ts,
-   theme-parity.test.ts). The heading ids are minted BEFORE the fill, as sanitizeMd's caller pass (file-view.ts
-   mintHeadingIds, md-sanitize.ts `own`): read after it, `# Ratio $\frac{a}{b}$` slugged KaTeX's glyphs in layout
-   order (md-ratio-ba) where GitHub's slug and the note's own links spell md-ratio-fracab
-   (md-config-fragment-landing-browser.test.ts). The Web Worker of the design note is NOT built: VS Code's webview CSP
-   has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run over a paint (the
-   comments panel and the reader's place would meet placeholders); the synchronous bounded fill of Slice 1 stays, and
-   the note stays a direction.
+   does not hold; and with no hint at all it joins a paragraph and an indented line under it that a
+   delimiter-row-shaped line or a `---` follows (the gfm table interrupt admits any indentation on its header line,
+   the code tokenizer runs before the table's and takes the indented line, and the lexer joins it onto the paragraph
+   with the indentation gone from `text`, CommonMark's own reading of a continuation line), at the top level, in a
+   quote's body and in a list item's block text. The anchor map rebuilds such a paragraph's source lines from its raw
+   and text (each text line the raw line it came from less up to four spaces, a blank raw line no text line matches a
+   join's newline; anchor-map.ts sourceRaw and joinedSourceRaw, in the block table and the walk) and maps the text
+   into them line by line through the suffix view, so either join costs the map nothing (the review rounds 2 and 3 for
+   the hint's join: before it every block from the join to the end of the note refused; round 5 for the indented
+   line's, pre-existing at the base, where the round-3 placement by `text` alone stopped at the first stripped space
+   and every later span collapsed alike; md-config-merged-paragraph.test.ts,
+   md-config-merged-paragraph-browser.test.ts). The joined rendering, one `<p>` where bare marked gives two, is
+   marked's own and GitHub's for those shapes, and it turns on a `$$` further down the note (item 10). marked calls
+   every block hint before every paragraph on the whole remaining source, so a hint that scans the rest of the note
+   made the lex quadratic in the paragraph count (the review round 2: 8,000 one-line paragraphs 1.3 s on the singleton
+   against 34 ms with no hint, a 200 KB reply twice the base's time); the math hint's answer is remembered per lexer
+   frame (md-block-start.ts memoBlockStart, exact because a frame's sources are suffixes of one another and a nested
+   body is a frame of its own; the callout's hint, memoised the same way in round 2, is gone since round 3, item 5),
+   the math tokenizer's closer search too, and the lex is linear in the paragraph count: 36 ms for those 8,000
+   paragraphs, 35 ms for 8,000 rejected `$$` lines where the base took 736 (md-config-block-start-memo.test.ts holds
+   the memoised lex equal to the plain one and the singleton's lex linear). KaTeX's flagged text takes a theme token,
+   `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into the span's inline style), declared in both theme
+   blocks of both sheets at 4.5:1 or better on `--bg`, overridden to black in the print block on `.fileview-md` (a
+   custom property inherits, so it reaches the flagged span and an unsupported command's glyphs inside a rendered
+   formula alike; set on `.katex-error` alone, those glyphs printed in the screen red) and to the bubble's own ink in
+   the person's bubble (`currentColor`: the page's red read at 1.67:1 and 1.28:1 on the two fills; the review round 2,
+   md-config-math-inks-browser.test.ts), as the source fallback prints; KaTeX's default #cc0000 read at 2.8:1 on the
+   dark page (md-config-math-error-colour.test.ts, theme-parity.test.ts). The heading ids are minted BEFORE the fill,
+   as sanitizeMd's caller pass (file-view.ts mintHeadingIds, md-sanitize.ts `own`): read after it, `# Ratio
+   $\frac{a}{b}$` slugged KaTeX's glyphs in layout order (md-ratio-ba) where GitHub's slug and the note's own links
+   spell md-ratio-fracab (md-config-fragment-landing-browser.test.ts). The Web Worker of the design note is NOT built:
+   VS Code's webview CSP has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run
+   over a paint (the comments panel and the reader's place would meet placeholders); the synchronous bounded fill of
+   Slice 1 stays, and the note stays a direction.
 3. *Front matter* renders as ONE element, `details.md-frontmatter` with a `summary` reading "Front matter" and the
    YAML in a `pre`, escaped text and never author HTML. The tokenizer fires only for the document's first token
    (`tokens === this.lexer.tokens && tokens.length === 0`: a quote's or a list item's body is lexed into a fresh
@@ -1269,15 +1294,21 @@ as built departs from the text above, why, and which test holds each rule:
    (file-view.ts foldKeeper; before it the Rendered/Raw switch, a reload's landing, the editor's take and handback and
    a `#` reveal reset every fold to what the source says; the review round 2, md-config-fold-state-browser.test.ts
    drives the gestures over the real Files bundle). The match runs in two passes, each in document order: first by
-   class, summary text and body text, when that exact key names one noted fold and one new fold (the review round 4:
-   two identical `> [!note]- Todo` placeholders shared one exact-key queue, so a session filling the first while the
-   person read the second swapped their states; a key two folds share falls whole to the second pass and its order),
-   then the leftovers by class and summary text alone, so a fold a session's edit rewrote keeps its state and a fold
-   that stands as it was keeps its own when a fold of the same class and title was removed or inserted ahead of it
-   (the review round 3: with class and summary text as the whole key, two `> [!note]- Same title` callouts shared one
-   queue, and a reload the Comments panel's poll asked for after such an edit opened the fold the person had left
-   shut; the same leg drives that reload through the panel's poll). A body of `#` lines alone is a comment-only
-   mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside item 1's open ruling.
+   class, summary text and body text, when that exact key names as many noted folds as new folds, the k-th new paired
+   with the k-th noted (the review round 4: two identical `> [!note]- Todo` placeholders shared one exact-key queue,
+   so a session filling the first while the person read the second swapped their states; a key whose count changed, a
+   twin filled in, added or removed, falls whole to the second pass and its order, which hands the first noted state
+   of that title to the first new fold of that title, so the twin the person reads keeps its state; the review round
+   5: round 4's rule, one noted fold and one new fold only, sent untouched twins whole to the second pass too, where a
+   same-titled fold inserted or removed ahead of them shifted their states by one, the fifth leg of the fold-state
+   test), then the leftovers by class and summary text alone, so a fold a session's edit rewrote keeps its state and a
+   fold that stands as it was keeps its own when a fold of the same class and title was removed or inserted ahead of
+   it (the review round 3: with class and summary text as the whole key, two `> [!note]- Same title` callouts shared
+   one queue, and a reload the Comments panel's poll asked for after such an edit opened the fold the person had left
+   shut; the same leg drives that reload through the panel's poll). Order alone decides an edit that both removes one
+   same-titled fold and rewrites another's body, and a twin rewritten in the same write that inserts a same-titled
+   fold, whose text change is the insertion's. A body of `#` lines alone is a comment-only mapping and folds, as
+   pandoc, Jekyll and Obsidian read it; in a reply that shape is inside item 1's open ruling.
 4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1 block
    pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number, and ONLY when the
    document defines the id (GitHub's rule; the lexer lexes every block before any inline text, so the definitions are
@@ -1323,33 +1354,47 @@ as built departs from the text above, why, and which test holds each rule:
    kept its tab and the nested lex made it indented code) and a lazy `===` or `--` line is prefixed with four spaces
    so it stays a paragraph's text and not a setext underline (the review round 2), from the body's second line on: the
    body's first line has no paragraph before it to underline, and guarded it was indented code reading `===` (round
-   3). The anchor map's suffix view reads through those four spaces, which hold no source position, so the body line
-   and its underline map to their own characters (anchor-map.ts suffixLineView; before, the callout or the quote
-   refused whole with a reason naming a tab; round 3, anchor-map-obsidian.test.ts). The type rides in a class
+   3). The body's marker is CommonMark's, a `>` after at most three spaces, where marked's blockquote strips a `>`
+   under any indentation (` *>`): a lazy continuation line indented four or more spaces that begins with `>` keeps its
+   `>` as text in a callout, as commonmark.js and GitHub render it, and loses it in marked's plain quote (the review
+   round 5, resolved against the finder: the callout follows GitHub and the anchor map's suffix view holds either way;
+   md-config.test.ts pins both). The anchor map's suffix view reads through those four spaces, which hold no source
+   position, so the body line and its underline map to their own characters (anchor-map.ts suffixLineView; before, the
+   callout or the quote refused whole with a reason naming a tab; round 3, anchor-map-obsidian.test.ts). The same view
+   takes a quote's empty `>` line past the text as blank (QUOTE_BLANK_RE): marked's blockquote tokenizer strips the
+   marker and rtrims the newlines left, so a quote closed with an empty `>` line, a common way to write one, has a raw
+   line more than its text and refused whole from Rendered, its nested and list-hosted forms too, where a callout of
+   the same shape mapped (round 5, pre-existing at the base; anchor-map-obsidian.test.ts). The type rides in a class
    (`md-callout-note`), not the `data-callout` attribute the design named, since the sanitizer drops every data
    attribute; the sheets tint by class through the page's own tokens (note and its kin the accent, tip green,
    important teal, warning amber, caution red, any other type the hairline; feed.css's `:root` declares the awaiting
    green and the compacting teal the tip and important tints read, which stood in its light block alone, so on the two
    dark themes the feed page's tip and important callouts lost rail, wash and title tint: the review round 2,
    feed-css-vars.test.ts reads the sheet with the light block cut out and md-config-feed-callout-tints-browser.test.ts
-   six callouts under both sheets and three themes). The title reads in the body's ink, bold, and the type shows on
-   the rail and the wash alone (the review round 3): the tint tokens are rails and fills, not inks (the hairline at
-   1.45:1 and the caution red at 2.91:1 on the dark themes, the light theme's tip and important under 2.2:1), so a
-   title in the rail token failed every custom type; md-config-callout-title-ink-browser.test.ts holds every title at
-   4.5:1 under both sheets and the three themes, and the bubble's title inherits its quote ink. The title line is a
-   hole ("a callout's title", since the marker is not shown and a missing title is generated); the body maps as
-   blocks. `tagOf` gives BLOCKQUOTE, or DETAILS for a folded one, whose open or closed state survives a paint (item 3,
-   foldKeeper). A `#` target inside a folded callout, a closed `details`, is revealed before the scroll
-   (md-sanitize.ts revealFragmentTarget, the HTML spec's ancestor revealing steps, run by scrollToFragment for both
-   viewers; before it the click scrolled to nothing with the fold shut). The comments panel runs the same reveal on
-   its own marks before every scroll to one (file-comments.ts revealMarks: goTo, scrollCard and the head click's
-   centering, the margin pass re-run after a fold opened), so a comment on a folded callout's body or on the front
-   matter shows its highlight where a shut fold came to the center with none (the review round 2;
-   md-config-goto-closed-details-browser.test.ts). md-config.test.ts renders the five alerts, a titled type, the two
-   folds, the lazy line and the mid-paragraph marker; anchor-map-obsidian.test.ts holds the tags, the body's blocks (a
-   folded one's hidden body too) and the title's refusal, the generated title included;
-   md-config-fragment-landing-browser.test.ts lands a heading link, a `[[#Heading]]` wikilink and a footnote reference
-   inside a shut fold.
+   six callouts under both sheets and three themes). The tip and important tints are tokens of their own since round
+   5, `--callout-tip` and `--callout-important`, declared in both theme blocks of both sheets: on the dark themes the
+   awaiting green and the compacting teal as before; on the light theme the light `--green` (#3E7D0E, 4.25:1 on the
+   page) and a teal (#0F766E, 4.59:1), since the status fills, the same hex in both themes, were 2.27:1 and 2.09:1
+   rails on the cream page, under the 3:1 non-text floor, and the rail and the wash are the type's one carrier;
+   md-config-callout-title-ink-browser.test.ts holds the five alerts' rails at 3:1 on the page under both sheets and
+   the three themes, theme-parity.test.ts both tokens at 3:1 on `--bg` in both themes, and the feed-tints leg and
+   feed-css-vars.test.ts read the new tokens. The title reads in the body's ink, bold, and the type shows on the rail
+   and the wash alone (the review round 3): the tint tokens are rails and fills, not inks (the hairline at 1.45:1 and
+   the caution red at 2.91:1 on the dark themes, the light theme's tip and important under 2.2:1), so a title in the
+   rail token failed every custom type; md-config-callout-title-ink-browser.test.ts holds every title at 4.5:1 under
+   both sheets and the three themes, and the bubble's title inherits its quote ink. The title line is a hole ("a
+   callout's title", since the marker is not shown and a missing title is generated); the body maps as blocks. `tagOf`
+   gives BLOCKQUOTE, or DETAILS for a folded one, whose open or closed state survives a paint (item 3, foldKeeper). A
+   `#` target inside a folded callout, a closed `details`, is revealed before the scroll (md-sanitize.ts
+   revealFragmentTarget, the HTML spec's ancestor revealing steps, run by scrollToFragment for both viewers; before it
+   the click scrolled to nothing with the fold shut). The comments panel runs the same reveal on its own marks before
+   every scroll to one (file-comments.ts revealMarks: goTo, scrollCard and the head click's centering, the margin pass
+   re-run after a fold opened), so a comment on a folded callout's body or on the front matter shows its highlight
+   where a shut fold came to the center with none (the review round 2; md-config-goto-closed-details-browser.test.ts).
+   md-config.test.ts renders the five alerts, a titled type, the two folds, the lazy line and the mid-paragraph
+   marker; anchor-map-obsidian.test.ts holds the tags, the body's blocks (a folded one's hidden body too) and the
+   title's refusal, the generated title included; md-config-fragment-landing-browser.test.ts lands a heading link, a
+   `[[#Heading]]` wikilink and a footnote reference inside a shut fold.
 6. *`==mark==`* renders `<mark class="md-mark">` and maps by delimiter width like em and strong; the opener must touch
    its content, so `a == b` in prose stays literal, and neither delimiter may touch a word on its outside (the run of
    `=` is exactly two; the opener is refused after an ASCII letter, digit, underscore, closing bracket, quote or `=`,
@@ -1368,9 +1413,15 @@ as built departs from the text above, why, and which test holds each rule:
    highlights `see a==b here` with the comparison in code, as Obsidian renders it, and a `==` inside a span never
    closes the highlight (`==x `y== z` w==` is one highlight, where rounds 2 and 3 closed it at `y` and broke the
    span); only a code span is skipped, so `==**a==b**==` stays literal, and the double-tilde rule keeps the blind spot
-   its two copies always had. md-config.test.ts pins the shapes and the cut. The element's class is what both sheets'
-   rule keys on, `mark.md-mark` (a bare `.fileview-md mark` outranked the comments panel's single-class marks,
-   `.fc-hl`, `.fc-presel` and `.fc-ins`, so every highlight in the Rendered view wore the amber wash: round 3,
+   its two copies always had. A backslash-escaped `=` is the highlight's text (the review round 5): marked masks
+   escaped punctuation before its em and strong run and hands an extension the unmasked source, so `==a \== b== end`
+   closed at the `==` of `\==`, highlighted `a \` and left ` b== end` literal, where `\=` is marked's escape
+   everywhere else in the paragraph; a backslash and the character after it are one atom of the content and the view
+   skips a `==` an odd count of backslashes precedes, so `==a \== b==` highlights `a == b`, `==x \\== y` closes at its
+   `==` and `==a\==` is literal, one `=` escaped and one left; the double-tilde rule keeps the blind spot marked's own
+   gfm del has. md-config.test.ts pins the shapes and the cut. The element's class is what both sheets' rule keys on,
+   `mark.md-mark` (a bare `.fileview-md mark` outranked the comments panel's single-class marks, `.fc-hl`,
+   `.fc-presel` and `.fc-ins`, so every highlight in the Rendered view wore the amber wash: round 3,
    md-config-mark-classes-browser.test.ts compares the panel's marks inside the view with the same marks outside it,
    and md-config-math-map-browser.test.ts reads their dress on the real fill). md-config.test.ts renders it and keeps
    the comparisons literal; anchor-map-obsidian.test.ts maps its text by the delimiters.
@@ -1502,7 +1553,12 @@ as built departs from the text above, why, and which test holds each rule:
    rendering for those shapes; the map places both, item 2); a gated figure narrower than the placeholder's 14em
    minimum box gets a box of the minimum's width, so a 50px icon's placeholder is wider than the icon and the text
    below moves up by the difference after the click (the minimum is what lets the box name its host legibly; a box the
-   figure's width wraps the label to a dozen lines and overflows, measured in round 3).
+   figure's width wraps the label to a dozen lines and overflows, measured in round 3). Open after the review round 5:
+   marked's blockquote and the callout differ on a lazy line indented four or more spaces that begins with `>` (item
+   5; marked's deviation from CommonMark, not copied); the person's bubble's code span keeps the 20% white wash it
+   wore before the slice (white over it 3.35:1 dark, 3.51:1 light; item 1's washes are the slice's, that one is not);
+   a display formula wider than the paper prints cut at the paper's edge (item 1, KaTeX's nowrap, which no sheet rule
+   scales).
 
 ### Slice 5: comments anchor on real notes
 

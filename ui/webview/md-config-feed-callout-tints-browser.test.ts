@@ -12,7 +12,10 @@
 // title reads in the body's ink (round 3 moved it off the tint: the tokens are rails and fills, and as text the hairline
 // and the caution red were unreadable; md-config-callout-title-ink-browser.test.ts holds the contrast), and each type
 // reads the SAME tint under feed.css as under styles.css (fileview-parity pins the
-// rules byte-equal; this pins the tokens they name resolving alike). Three themes: classic (a bare body), yatharth and
+// rules byte-equal; this pins the tokens they name resolving alike). Round 5 gave the two tints tokens of their own,
+// `--callout-tip` and `--callout-important` (the status fills read at 2.27:1 and 2.09:1 as rails on the light page; the
+// light block points the new tokens at inks of its own, and md-config-callout-title-ink-browser.test.ts holds the rails
+// at 3:1), so those are the tokens read here. Three themes: classic (a bare body), yatharth and
 // yatharth-light, the classes theme.ts applies. Skips LOUDLY without a playwright browser (CI installs none), as the
 // other browser legs do. Synthetic text only.
 import { test } from "node:test";
@@ -57,8 +60,8 @@ const NOTE = [
 
 const PAGE = (css: string, bodyClass: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${css}</style></head><body class="${bodyClass}">
 <div class="fileview-md" id=f></div>
-<span id=tok-await style="color: var(--st-awaitbg-bg)">await</span>
-<span id=tok-compact style="color: var(--st-compacting-bg)">compact</span>
+<span id=tok-await style="color: var(--callout-tip)">tip</span>
+<span id=tok-compact style="color: var(--callout-important)">important</span>
 <script>window.__pageErrors=[];window.addEventListener("error",function(e){window.__pageErrors.push(String(e.message));});</script>
 <script>${probeBundle()}</script>
 <script>document.getElementById("f").innerHTML = window.__md(${JSON.stringify(NOTE)});</script>
@@ -125,11 +128,11 @@ function assertDressed(s: Scene, where: string): void {
   }
   const tints = ALERTS.map((t) => s.types[t]!.tint);
   assert.equal(new Set(tints).size, ALERTS.length, where + ": the five alerts wear five tints: " + tints.join(" | "));
-  // the two status tokens the tip and important rules name resolve on this page, and the callouts read them
-  assert.notEqual(s.tokens.await, s.body, where + ": --st-awaitbg-bg resolves on this page");
-  assert.notEqual(s.tokens.compact, s.body, where + ": --st-compacting-bg resolves on this page");
-  assert.equal(s.types.tip!.tint, s.tokens.await, where + ": tip is the awaiting green");
-  assert.equal(s.types.important!.tint, s.tokens.compact, where + ": important is the compacting teal");
+  // the two tint tokens the tip and important rules name resolve on this page, and the callouts read them
+  assert.notEqual(s.tokens.await, s.body, where + ": --callout-tip resolves on this page");
+  assert.notEqual(s.tokens.compact, s.body, where + ": --callout-important resolves on this page");
+  assert.equal(s.types.tip!.tint, s.tokens.await, where + ": tip is the tip tint (--callout-tip: the awaiting green on the dark themes)");
+  assert.equal(s.types.important!.tint, s.tokens.compact, where + ": important is the important tint (--callout-important: the compacting teal on the dark themes)");
   // an unknown type keeps the hairline rail: dressed less than an alert, never less than a plain quote
   assert.equal(s.types.custom!.rail, "3px", where + ": an unknown type keeps the 3px hairline rail");
 }

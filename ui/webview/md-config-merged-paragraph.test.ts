@@ -10,11 +10,18 @@
 // feed.js with this slice (the math hint is the grammar's one block hint: the callout's, which joined alike, went in
 // round 3, its line being a paragraph interrupt already, md-config.ts), the join fired, the raw tiled nothing from
 // there on, every later block's span collapsed to the join's start and every selection past it refused; inside a
-// quote's or a callout's body the same join refused that block alone (the Slice 4 review, rounds 2 and 3). The
-// mapping now places such a paragraph by its text plus the raw's trailing newlines, exactly when the raw is the text
-// with a newline doubled at each join. These tests hold that over every trigger shape at the top level and nested,
-// over controls that never joined (a callout below in place of the formula among them), and over a fuzz of the join;
-// md-config-merged-paragraph-browser.test.ts maps past the join over the real Files bundle. The
+// quote's or a callout's body the same join refused that block alone (the Slice 4 review, rounds 2 and 3). A second
+// join needs no hint: the gfm table interrupt admits any indentation on its header line, so a paragraph stops before a
+// line indented four columns (four spaces, or a tab) that a delimiter-row-shaped line or a `---` follows, the code
+// tokenizer, which runs before the table's, takes the indented line, and the lexer joins it onto the paragraph with the
+// indentation gone from `text` (CommonMark's own reading: an indented code block cannot interrupt a paragraph), at the
+// top level, in a quote's body and in a list item's block text; a walk of the raw that allowed for the doubled newline
+// alone stopped at the first stripped space and every later block's span collapsed to the join's start (round 5; the
+// same at the base). The mapping now rebuilds the source's lines from raw and text (each text line the raw line it came
+// from less up to four spaces, a blank raw line no text line matches a join's newline) and maps the text into them
+// line by line. These tests hold that over every trigger shape of both joins at the top level and nested, over
+// controls that never joined (a callout below in place of the formula among them), and over a fuzz of the joins;
+// md-config-merged-paragraph-browser.test.ts maps past both joins over the real Files bundle. The
 // rendered shape is anchor-map-obsidian.test.ts's stand-in (marked's output parsed into a DOM stand-in, the fill's
 // KaTeX root stood in for). Synthetic notes only.
 import { test } from "node:test";
@@ -165,8 +172,17 @@ function mapsAt(box: FakeElement, source: string, text: string, k = 0): void {
 
 const nonSpace = (src: string): Token[] => Lexer.lex(src).filter((t) => t.type !== "space");
 const trimNL = (s: string): string => s.replace(/\n+$/, "");
+/** The source as marked's lexer reads it: a line's leading tabs are four spaces each (its raws index that text). */
+const expandTabs = (s: string): string => s.replace(/^( *)(\t+)/gm, (_, sp: string, tabs: string) => sp + "    ".repeat(tabs.length));
+/** A joined paragraph's span reads the source's lines of its text: line i of the text is line i of the span less up to
+ *  four spaces of indentation, the code join's (anchor-map.ts sourceRaw). */
+function readsLines(got: string, text: string): boolean {
+  const g = expandTabs(got).split("\n"), t = text.split("\n");
+  return g.length === t.length && g.every((l, i) => l.endsWith(t[i]) && /^ {0,4}$/.test(l.slice(0, l.length - t[i].length)));
+}
 /** The block table against the tokens: as many spans as tokens, in order and disjoint, each paragraph's span reading
- *  the token's text (the source's text, whatever the raw holds) and every other token's span its raw. */
+ *  the token's text (the source's text, whatever the raw holds; a joined paragraph's, the source's lines of it) and
+ *  every other token's span its raw. */
 function checkSpans(source: string, why: string): { spans: SourceRange[]; tokens: Token[]; joins: number } {
   const tokens = nonSpace(source);
   const spans = sourceBlockSpans(source);
@@ -176,9 +192,14 @@ function checkSpans(source: string, why: string): { spans: SourceRange[]; tokens
     const t = tokens[i], s = spans[i];
     assert.ok(s.start > last || (i === 0 && s.start === 0), `${why}: span ${i} starts at ${s.start}, after ${last}: ${JSON.stringify(spans)}`);
     assert.ok(s.end >= s.start, why + ": span " + i + " is ordered");
-    const want = t.type === "paragraph" ? trimNL((t as { text: string }).text) : trimNL(t.raw);
-    assert.equal(source.slice(s.start, s.end), want, `${why}: span ${i} (${t.type}) reads the token`);
-    if (t.type === "paragraph" && t.raw.includes("\n\n")) joins++;
+    const got = source.slice(s.start, s.end);
+    if (t.type === "paragraph" && t.raw.includes("\n\n")) {
+      joins++;
+      assert.ok(readsLines(got, trimNL((t as { text: string }).text)), `${why}: span ${i} (a joined paragraph) reads the source's lines of the token's text: ${JSON.stringify(got)} against ${JSON.stringify((t as { text: string }).text)}`);
+    } else {
+      const want = t.type === "paragraph" ? trimNL((t as { text: string }).text) : trimNL(t.raw);
+      assert.equal(expandTabs(got), want, `${why}: span ${i} (${t.type}) reads the token`);
+    }
     last = s.end;
   }
   return { spans, tokens, joins };
@@ -290,6 +311,64 @@ test("every trigger shape joins and maps: the table's two cell-count mismatches,
   }
 });
 
+test("the code join: a paragraph, an indented line (four spaces, a tab, five spaces, two of them) and a delimiter-row-shaped line or a rule join with no hint and under one, and every line maps to its own characters", () => {
+  // marked's `code` tokenizer runs before the table's, so the cell count is beside the point (a matching count joins too)
+  const CODE_JOINS: Array<[string, string, string[]]> = [
+    ["four spaces over a two-cell delimiter row", "Intro line\n    Column A\n|---|---|", ["Intro line", "Column A", "|---|---|"]],
+    ["a tab over the row", "Intro line\n\tColumn A\n|---|---|", ["Intro line", "Column A", "|---|---|"]],
+    ["the matching cell count", "Results:\n    metric | value\n|---|---|", ["Results:", "metric | value"]],
+    ["five spaces, one of which stays in the text", "Intro\n     Column A\n|---|", ["Intro", "Column A"]],
+    ["an indented continuation line before the joined one", "Intro\n    a line\n    b line\n|---|", ["Intro", "a line", "b line"]],
+    ["a rule under the indented line", "Some prose\n    an afterthought\n---", ["Some prose", "an afterthought"]],
+    ["a heading after the row", "Some prose\n\ta | b\n|---|\n\n# Heading", ["Some prose", "a | b", "Heading"]],
+  ];
+  for (const [tn, trigger, needles] of CODE_JOINS) for (const [hn, tail] of [["no hint", ""], ["a formula below", "$$\nx\n$$\n\n"]]) {
+    const src = trigger + "\n\nAfter merged.\n\n" + tail + "Last one.\n";
+    const why = tn + ", " + hn;
+    // the lexer's join is what this test is about: the first token's raw holds a doubled newline and its text lost the indentation
+    const first = nonSpace(src)[0] as { type: string; raw: string; text: string };
+    assert.equal(first.type, "paragraph", why);
+    assert.ok(first.raw.includes("\n\n"), why + ": the shape joins (raw " + JSON.stringify(first.raw) + ")");
+    assert.notEqual(trimNL(first.raw.replace(/\n\n/g, "\n")), trimNL(first.text), why + ": the text lost the indentation, so the raw less the joins' newlines is not the text (raw " + JSON.stringify(first.raw) + ", text " + JSON.stringify(first.text) + ")");
+    checkSpans(src, why);
+    const box = checkPairing(src, why);
+    for (const n of needles) mapsAt(box, src, n);
+    mapsAt(box, src, "After merged.");
+    mapsAt(box, src, "Last one.");
+    // across the join: one paragraph, the source's text between, indentation included
+    const r = ok(mapRenderedSelection(sel(point(box, needles[0]), point(box, needles[1], true)), El(box), src), why + ": across the join");
+    assert.equal(r.quote, src.slice(src.indexOf(needles[0]), src.indexOf(needles[1]) + needles[1].length), why + ": the quote is the source between");
+  }
+  // the same join inside a quote's body, a callout's body and a list item's block text (the `text` token's join), and a tight
+  // list item whose second line is indented four columns past the content: every line maps to its own characters
+  const NESTED: Array<[string, string, string[]]> = [
+    ["a quote", "> Intro line\n>     Column A\n> |---|---|\n\nAfter.\n", ["Intro line", "Column A", "|---|---|", "After."]],
+    ["a callout", "> [!note] T\n> Intro line\n>     Column A\n> |---|---|\n\nAfter.\n", ["Intro line", "Column A", "|---|---|", "After."]],
+    ["a list item", "- Intro line\n      Column A\n  |---|---|\n\nAfter.\n", ["Intro line", "Column A", "|---|---|", "After."]],
+    ["a tight list item with an indented second line", "- a line\n      indented line\n- b line\n\nAfter.\n", ["a line", "indented line", "b line", "After."]],
+  ];
+  for (const [nn, src, needles] of NESTED) {
+    const outer = nonSpace(src)[0] as { type: string; tokens?: Token[]; items?: Array<{ tokens: Token[] }> };
+    const inner = (outer.items ? outer.items[0].tokens : outer.tokens!).filter((t) => t.type !== "space")[0] as { raw: string; text: string };
+    assert.ok(inner.raw.includes("\n\n    ") && !inner.text.includes("    "), nn + ": the join inside (raw " + JSON.stringify(inner.raw) + ")");
+    checkSpans(src, nn);
+    const box = checkPairing(src, nn);
+    for (const n of needles) mapsAt(box, src, n);
+  }
+  // controls: an indented line that nothing delimiter-shaped follows is the paragraph's own continuation (no join), and a
+  // line indented three spaces before the row is the next paragraph's first line, prose the table interrupt reads as a
+  // header and the code tokenizer does not take (no join; that block begins with spaces no element shows, so checkPairing's
+  // whole-element check is not for it, and each line is mapped on its own)
+  for (const [cn, control, pairing] of [["an indented continuation", "Intro line\n    Column A\nplain line", true], ["three spaces", "Intro line\n   Column A\n|---|---|", false]] as Array<[string, string, boolean]>) {
+    const src = control + "\n\nAfter.\n";
+    const first = nonSpace(src)[0];
+    assert.ok(!first.raw.includes("\n\n"), cn + ": no join (raw " + JSON.stringify(first.raw) + ")");
+    checkSpans(src, cn);
+    const box = pairing ? checkPairing(src, cn) : buildRendered(src);
+    for (const n of ["Intro line", "Column A", "After."]) mapsAt(box, src, n);
+  }
+});
+
 test("the same join inside a callout's body and a blockquote's body maps the lines inside, and the blocks around", () => {
   const CALLOUT = "Before para.\n\n> [!note] T\n> Intro\n> Column A\n> |---|---|\n> After inside\n> $$\n> x\n> $$\n\nOutside para.\n";
   const inner = (nonSpace(CALLOUT)[1] as { tokens: Token[] }).tokens.filter((t) => t.type !== "space");
@@ -315,11 +394,13 @@ test("a fuzz of the join: notes of the trigger shapes, the hints, plain prose an
   const rnd = (): number => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const pick = <T>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)];
   const PROSE = ["Plain paragraph one.", "Another line of prose here.", "Third prose piece with `code` and *em* inside it.", "Two lines\nof prose."];
-  const TRIGGERS = ["Intro line\nColumn A\n|---|---|", "Lead in\nHead | Two\n|---|", "Run the tool with\n<prefix>/bin/tool\nand check the output.", "Run it\n<preview>\nthen check.", "Para line\n* \nMore text.", "Para line\n1. \nMore text.", "Says\n<scripts/>\nand more."];
+  const TRIGGERS = ["Intro line\nColumn A\n|---|---|", "Lead in\nHead | Two\n|---|", "Run the tool with\n<prefix>/bin/tool\nand check the output.", "Run it\n<preview>\nthen check.", "Para line\n* \nMore text.", "Para line\n1. \nMore text.", "Says\n<scripts/>\nand more.",
+    "Indented next\n    Column A\n|---|---|", "Tabbed next\n\tCol | Two\n|---|", "Indented then a rule\n    an afterthought\n---"];   // the code join's shapes (round 5): they join with no hint
   const HINTS = ["$$\nx = 1\n$$"];   // the one block hint; a callout (below, under OTHER) registers none since round 3 and never joins
-  const OTHER = ["# Heading", "> plain quote\n> second line", "- item one\n- item two", "```\ncode\n```", "| a | b |\n|---|---|\n| 1 | 2 |", "Inline $x^2$ math here.", "<PREFIX>\nkept as prose", "<pre>\nblock\n</pre>", "* item\nlazy line", "---", "Quoted trigger:\n\n> Intro\n> Column A\n> |---|---|\n> After inside\n> $$\n> y\n> $$", "> [!note] Title\n> A callout body.", "> [!tip]- Folded\n> Hidden text."];
+  const OTHER = ["# Heading", "> plain quote\n> second line", "- item one\n- item two", "```\ncode\n```", "| a | b |\n|---|---|\n| 1 | 2 |", "Inline $x^2$ math here.", "<PREFIX>\nkept as prose", "<pre>\nblock\n</pre>", "* item\nlazy line", "---", "Quoted trigger:\n\n> Intro\n> Column A\n> |---|---|\n> After inside\n> $$\n> y\n> $$", "> [!note] Title\n> A callout body.", "> [!tip]- Folded\n> Hidden text.",
+    "> Quoted indent\n>     Column A\n> |---|---|", "- Listed indent\n      Column A\n  |---|---|", "    an indented code block"];   // the code join nested (round 5), and a real indented code block
   let joined = 0, notes = 0;
-  const JOIN_FLOOR = 600;   // the seed is fixed, so the count is: 826 of 2,500 with the callout shapes as controls (round 3; 308 joined when they were hints)
+  const JOIN_FLOOR = 1000;   // the seed is fixed, so the count is: 1,386 of 2,500 with the code join's three shapes among the triggers (round 5; 826 before them, round 3, with the callout shapes as controls; 308 when they were hints)
   for (let n = 0; n < 2500; n++) {
     const k = 2 + Math.floor(rnd() * 6);
     let src = "";

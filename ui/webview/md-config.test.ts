@@ -438,6 +438,57 @@ test("a wikilink names a file or a section: `[[ ]]`, `[[#]]`, `![[ ]]`, `[[a/]]`
     "a section link, a target with an empty fragment, a path, a padded title and a path embed still resolve");
 });
 
+// ── the 2026-09-09 review of Slice 4, round 5 ─────────────────────────────────────────────────────
+test("==mark== reads a backslash-escaped `=` as its text, as marked's escape rule reads it everywhere else in the paragraph: `==a \\== b==` highlights `a == b`, an even run of backslashes escapes itself so the closer after it stands, and an escaped `=` alone closes nothing", () => {
+  const cases: Array<[string, string, string]> = [
+    ["==a \\== b== end", `<p>${MARK}a == b</mark> end</p>\n`, "the escaped operator inside the highlight (round 4 took the `==` of `\\==` as the closer, highlighted `a \\` and left ` b== end` literal)"],
+    ["==\\=a==", `<p>${MARK}=a</mark></p>\n`, "an escaped `=` right after the opener"],
+    ["==a \\=b== end", `<p>${MARK}a =b</mark> end</p>\n`, "an escaped `=` a word follows, as before"],
+    ["==a \\===", `<p>${MARK}a =</mark></p>\n`, "the content ends in an escaped `=` and the closer follows it (round 4 cut the view at the escaped pair, and the closer's lookahead failed on the third `=`)"],
+    ["==a \\=== b==", `<p>${MARK}a =</mark> b==</p>\n`, "the first `==` after the escaped pair is the closer; the operator reading wins after it, as everywhere in the rule"],
+    ["==x \\\\== y", `<p>${MARK}x \\</mark> y</p>\n`, "two backslashes escape each other: the closer stands and the content is one backslash, as before"],
+    ["==a \\\\\\== b== end", `<p>${MARK}a \\== b</mark> end</p>\n`, "three: an escaped backslash, then an escaped `=` (round 4 highlighted `a \\\\` and left the rest literal)"],
+    ["==a\\== end", "<p>==a== end</p>\n", "an escaped `=` leaves one `=`, which closes nothing: literal, the escape shown as its `=`, as `*a\\*` is literal to marked (round 4 highlighted `a\\`)"],
+    ["==a \\b==", `<p>${MARK}a \\b</mark></p>\n`, "a backslash before a letter is text, as CommonMark reads it; neither character is a delimiter"],
+    ["a \\== b and ==c==", `<p>a == b and ${MARK}c</mark></p>\n`, "outside a highlight the escape reads as before"],
+    ["\\==a== b", "<p>==a== b</p>\n", "an escaped opener opens nothing, as before"],
+    ["==see \\== in `a==b`==", `<p>${MARK}see == in <code>a==b</code></mark></p>\n`, "an escaped `==` before a code span whose `==` is masked: the closer is the one after the span"],
+  ];
+  for (const [src, want, why] of cases) {
+    assert.equal(html(src), want, why + ": " + src);
+    assert.equal(userMdHtml(src), want, "the user's bubble agrees: " + src);
+  }
+  const toks = (Lexer.lex("==a \\== b== end")[0] as { tokens: Array<{ type: string; raw: string; tokens?: Array<{ type: string; raw: string }> }> }).tokens;
+  assert.deepEqual(toks.map((t) => [t.type, t.raw]), [["mark", "==a \\== b=="], ["text", " end"]], "the anchor map's lexer sees one mark whose raw is the source text, the delimiters placing it as before");
+  assert.deepEqual(toks[0].tokens!.map((t) => [t.type, t.raw]), [["text", "a "], ["escape", "\\="], ["text", "= b"]], "the escape is marked's own token inside it, the raws tiling the content");
+  const lexer = new Lexer();
+  const tail = " and ==more== `x==y` " + "z".repeat(100000) + " ==end==";
+  assert.equal(markView(lexer, "==a \\== b==" + tail), "==a \\== b== ", "the view runs past an escaped `==` to the first unescaped one outside a code span");
+  assert.equal(markView(lexer, "==x \\\\== y" + tail), "==x \\\\== ", "an even run of backslashes escapes no `=`: the cut is at that `==`");
+  assert.equal(markView(lexer, "==a \\===" + tail), "==a \\=== ", "the `==` after an escaped `=` is the cut, the tail's first character its lookahead");
+  assert.equal(markView(lexer, "==a\\==" + tail), "==a\\== and ==m", "no unescaped closer of its own: the view runs on to the tail's first `==`");
+  assert.equal(markView(lexer, "==no closer \\== here " + "z".repeat(100000)), null, "an escaped `==` alone is no closer: no view");
+  assert.equal(html("~~a \\~~ b~~ end"), "<p><del>a \\</del> b~~ end</p>\n", "the double-tilde rule keeps the blind spot marked's own gfm del has (`~~a \\~~ b~~` closes at the escaped pair): no change of this slice's, recorded in the header");
+});
+
+test("a callout's body drops a quote marker indented up to three spaces, CommonMark's marker: a lazy line indented four or more that begins with `>` keeps its `>` as text, as commonmark.js and GitHub render it; marked's blockquote strips it under any indentation, a deviation of marked's the callout does not copy", () => {
+  const head = '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">T</p>';
+  const four = "> [!note] T\n> body\n    > more\n\nAfter.\n";
+  const tab = "> [!note] T\n> body\n\t> more\n\nAfter.\n";
+  const three = "> [!note] T\n> body\n   > more\n\nAfter.\n";
+  assert.equal(html(four), `${head}<p>body\n    &gt; more</p>\n</blockquote><p>After.</p>\n`, "four spaces: a lazy continuation line, its `>` paragraph text (a browser collapses the spaces to one)");
+  assert.equal(html(tab), `${head}<p>body\n    &gt; more</p>\n</blockquote><p>After.</p>\n`, "a tab: the lexer expands it to four spaces first");
+  assert.equal(html(three), `${head}<p>body\nmore</p>\n</blockquote><p>After.</p>\n`, "three spaces: a marker, stripped as marked strips it");
+  assert.equal(html("> body\n    > more\n\nAfter.\n"), "<blockquote>\n<p>body\nmore</p>\n</blockquote>\n<p>After.</p>\n", "marked's own blockquote strips the four-space `>` (its ` *>`): the recorded divergence is marked's from CommonMark, not the callout's from GitHub");
+  for (const src of [four, tab, three]) {
+    assert.equal(userMdHtml(src), html(src).replace("<p>body\n", "<p>body<br>"), "the user's bubble agrees, its soft newline a <br> (breaks: true): " + JSON.stringify(src));
+    const tok = Lexer.lex(src)[0] as { type: string; raw: string; text: string };
+    assert.equal(tok.type, "callout", JSON.stringify(src));
+    assert.equal(tok.raw, "> [!note] T\n> body\n" + src.split("\n")[2].replace("\t", "    ") + "\n\n", "one token to the blank line, the trailing newlines marked's blockquote rule takes included, a leading tab expanded by the lexer");
+    tok.text.split("\n").forEach((line, i) => assert.ok(tok.raw.split("\n")[i].endsWith(line), JSON.stringify(src) + ": line " + i + " of the text is a suffix of the raw line, the shape the anchor map reads, whichever way the `>` goes"));
+  }
+});
+
 test("source: who applies the one configuration, and what it holds", () => {
   const config = UI("md-config.ts");
   assert.match(config, /export const mdExtensions: MarkedExtension\[\] = \[\n\s*delDoubleTilde,\n\s*\{ extensions: \[mathBlock, mathInline, frontMatter, footnoteDef, footnoteRef, callout, mark, wikilink\] \},\n\];/);
