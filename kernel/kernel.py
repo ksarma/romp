@@ -58092,6 +58092,26 @@ class Handler(BaseHTTPRequestHandler):
                 # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
                 # exactly as the composer's does — same door, same registry.
                 be = Sessions.backend_for(sid)
+                not_running = {"ok": False, "error": "the session '%s' is not running; the message was not delivered"
+                                                     % body["who"]}
+                if be is _TMUX:
+                    # a tmux-backed sid the kernel knows but no pane runs: TmuxBackend.send answers truthy (accepted
+                    # for delivery) and hands the paste to _tmux_send's daemon thread, which fails after the route
+                    # has answered, so /send said ok (200, queued:false) for a message nothing received, and a dead
+                    # Codex session by id took the same path (owns() False, so backend_for falls to tmux). The route
+                    # asks the server itself first, through the failure-aware primitive: None is a probe that did
+                    # not answer (503, nothing done), a set without the sid is a session that is not running (the
+                    # 409 the SDK refusal answers below), a tmux-less box runs nothing (the same 409), and neither
+                    # the setters nor the paste start. TmuxBackend.send keeps its shape on purpose: the WS
+                    # sendMessage arm ignores _send_or_park's result and relies on the never-delivered echo, and
+                    # the nudge callers arm _tmux_paste_mark on it (review round 5, 2026-09-09)
+                    alive = _TMUX.alive_sids() if _TMUX.available() else set()
+                    if alive is None:
+                        return self._send(503, json.dumps({"ok": False, "error":
+                            "tmux isn't answering, so '%s' could not be reached; nothing was done and the message "
+                            "was not delivered; try again" % body["who"]}), "application/json")
+                    if sid not in alive:
+                        return self._send(409, json.dumps(not_running), "application/json")
                 meta = {}
                 if _route_meta_command(be, sid, body["text"], state=meta):
                     queued = bool(meta.get("queued"))              # a parked /model, /effort or /fast says so too
@@ -58106,9 +58126,7 @@ class Handler(BaseHTTPRequestHandler):
                         # refusal's shape, never folded into ok:true (review round 3, 2026-09-09: the route
                         # answered 200 ok:true queued:false and `romp send` printed ok for a message nothing
                         # received). Exactly False: tmux answers a nonce or True, and a fake may answer None
-                        return self._send(409, json.dumps({"ok": False, "error":
-                            "the session '%s' is not running; the message was not delivered" % body["who"]}),
-                            "application/json")
+                        return self._send(409, json.dumps(not_running), "application/json")
                     queued = res == "parked"
                 # `queued` says which arm it took (the /compact route's shape): a sender that IS the
                 # target's open turn — an agent running `romp send <self> /clear` from its own Bash tool —

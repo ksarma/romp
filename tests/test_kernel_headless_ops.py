@@ -860,6 +860,51 @@ class UnknownSessionRefused(_RouteServer):
             _rm_thread(THREAD_PARENT, THREAD_TSID)
             _unregister(THREAD_PARENT)
 
+    def test_a_send_to_a_tmux_session_no_pane_runs_is_refused_before_the_paste(self):
+        # a KNOWN tmux-backed sid that no longer runs (a names/ entry, no pane, no SDK reg; a dead Codex
+        # session by id takes the same path): TmuxBackend.send answers truthy and hands the paste to
+        # _tmux_send's daemon thread, which failed after the route had answered 200 ok:true queued:false, so
+        # `romp send` printed ok for a message nothing received, where the CLI's help and the reference promise
+        # a 409 for a known session that is not running. The /send local arm asks the tmux server first,
+        # through the failure-aware primitive, before the setters and _send_or_park (a dead sid mid-turn would
+        # otherwise park and answer queued:true): a set without the sid is the 409 the SDK refusal answers,
+        # None is a 503 with nothing done, a tmux-less box the 409; a pane carrying the sid proceeds as before
+        # (review round 5, 2026-09-09). sid-x is registered with no SDK reg, so the REAL backend_for falls to
+        # the tmux backend.
+        parked, routed = [], []
+        refusal = {"ok": False, "error": "the session 'sid-x' is not running; the message was not delivered"}
+        km._pending_ops.clear()
+        try:
+            with mock.patch.object(km, "_send_or_park", lambda be, sid, text: parked.append((sid, text)) or True), \
+                 mock.patch.object(km, "_route_meta_command",
+                                   lambda be, sid, text, state=None: (routed.append(text), False)[1]), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                self.assertIs(km.Sessions.backend_for("sid-x"), km._TMUX)
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "alive_sids", lambda *a, **k: {"sid-q"}):
+                    for text in ("hello", "/model opus"):
+                        code, resp = self._post("/send", {"id": "sid-x", "text": text})
+                        self.assertEqual((code, resp), (409, refusal), text)
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "alive_sids", lambda *a, **k: None):
+                    code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("tmux isn't answering", resp.get("error", ""))
+                    self.assertIn("'sid-x'", resp.get("error", ""))
+                    self.assertIn("not delivered", resp.get("error", ""))
+                with mock.patch.object(km._TMUX, "available", lambda: False):
+                    code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+                    self.assertEqual((code, resp), (409, refusal), "a tmux-less box runs no tmux session")
+                self.assertEqual((parked, routed), ([], []), "nothing reached the setters or the paste")
+                self.assertEqual(km._pending_ops, {}, "nothing parked")
+                with mock.patch.object(km._TMUX, "available", lambda: True), \
+                     mock.patch.object(km._TMUX, "alive_sids", lambda *a, **k: {"sid-x", "sid-q"}):
+                    code, resp = self._post("/send", {"id": "sid-x", "text": "hello"})
+                    self.assertEqual((code, resp), (200, {"ok": True, "queued": False}))
+                self.assertEqual(parked, [("sid-x", "hello")], "a pane carrying the sid takes the send as before")
+        finally:
+            km._pending_ops.clear()
+
     def test_a_remote_deferred_end_forwards_the_deferral(self):
         # the remote arm forwarded {id} alone, so `romp end <far-sid> --when-idle` took the far kernel's
         # immediate arm and killed at once while the rows promised a settle (review round 3, 2026-09-09).
