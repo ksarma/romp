@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The guide's Files section says a line under the panel's header counts what the session added since you last looked, and
-that a save brings the new card into view unless you scrolled on meanwhile; the panel does both.
+that a save brings the new card into view unless you scrolled, clicked, tapped, or pressed a key meanwhile; the panel does both.
 
 The arrivals follow-on (2026-09-09): the user sent comments, the session answered with eleven changes and seven replies while
 he kept commenting, and nothing in the panel said so until the next Send accepted the changes by default; and a reply he
@@ -39,7 +39,8 @@ BEFORE_NOTICE = "a file the session rewrote is shown as it is now."
 NOTICE = ("A line under the panel's header counts the changes, comments, and replies the session added since you last looked, "
           "and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.")
 BEFORE_SAVE = "on a phone or a tablet the button is the way, and the line under the box says so."
-SAVE = "Saving brings the new card into view, unless you scrolled on while the save was under way; then the text stays where you left it."
+SAVE = ("Saving brings the new card into view, unless you scrolled, clicked, tapped, or pressed a key while the save was under way; "
+        "then the text stays where you left it.")
 
 
 class TheTwoSentences(unittest.TestCase):
@@ -56,6 +57,19 @@ class TheTwoSentences(unittest.TestCase):
         # the guide speaks in the reader's terms: no gesture, seen set, entry key or attribute name
         for word in ("gesture", "seenKeys", "data-new", "fcarrivals", "entryShown", "cardWhole"):
             self.assertNotIn(word, self.section)
+
+    def test_the_save_pin_agrees_with_the_stand_down_module(self):
+        # tests/test_guide_files_save_standdown.py requires words of the same sentence and forbids others; the exact text pinned
+        # here must satisfy both, or the two modules contradict and no guide wording is green (the arrivals review round 1
+        # rewrote the sentence and this pin alone, 2026-09-09)
+        sibling = _read("tests", "test_guide_files_save_standdown.py")
+        required = re.findall(r'self\.assertIn\("([^"]+)", self\.sentence\)', sibling)
+        forbidden = re.findall(r'self\.assertNotIn\("([^"]+)", self\.sentence\)', sibling)
+        self.assertTrue(required and forbidden, "the stand-down module's literal pins on the save sentence")
+        for phrase in required:
+            self.assertIn(phrase, SAVE)
+        for phrase in forbidden:
+            self.assertNotIn(phrase, SAVE)
 
 
 class TheSentencesMatchThePanel(unittest.TestCase):
@@ -91,7 +105,7 @@ class TheSentencesMatchThePanel(unittest.TestCase):
         self.assertIn("fcarrivals: () => this.goToArrival(),", self.panel)
         self.assertIn("this.showCard(first);", self.panel)
 
-    def test_saving_brings_the_card_into_view_unless_you_scrolled_on(self):
+    def test_saving_brings_the_card_into_view_unless_you_moved_on(self):
         self.assertIn("if (still && !this.cardWhole(key)) { this.scrollCard(key); return; }", self.panel)
         self.assertIn("if (r) this.scrollToSaved(c, had, r, note, pressed === this.gestures);", self.panel)
 

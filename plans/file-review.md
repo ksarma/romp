@@ -458,7 +458,7 @@ the comment ids in a sent message stay addressable by `track-reply`.
 
 ```
 request  {type:"fileCommentsSend", reqId, sid, path, tracked, comments:[{id, desc, body}],
-          accepted, rejected, watermark, todoId?}
+          accepted, rejected, watermark, todoId?, note?}
 reply    {type:"fileCommentsSent", reqId, queued}
 refusal  {type:"fileCommentsSendFailed", reqId, error}
 ```
@@ -477,8 +477,13 @@ new text for a comment bound by `suggestionId`, "this file" for a whole-file com
 region at x, y, w, h" (with the page for a PDF) for a region comment. `body` is the comment's
 unsent `you` turns joined with a blank line, oldest first; a comment whose opening was already
 sent lists only its new replies. `watermark` is the largest `ts` among the `you` comments and
-replies the client included, taken from the `status` reply it built the message from. The kernel builds the message below and marker-neutralizes the
-path and every body (`_neutralize_romp_markers`, `kernel.py:30786-30798`). Delivery follows the
+replies the client included, taken from the `status` reply it built the message from. `note` (the arrivals
+follow-on, 2026-09-09) is the Send confirm's box, trimmed and left out when empty; the kernel refuses a `note` that is
+not text, trims one that is, and refuses a trimmed note longer than 4000 characters (`_SEND_NOTE_MAX`), both refusals
+before the nothing-to-send gate (a note alone is something to send) and before the watermark is read; the panel refuses
+the same bound (`SEND_NOTE_MAX`, `file-comments-model.ts`) before any request goes; the message places it as decision
+40 says. The kernel builds the message below and marker-neutralizes the
+path, every body and the note (`_neutralize_romp_markers`, `kernel.py:30786-30798`). Delivery follows the
 `userTodoAnswer` handler (`kernel.py:12198-12250`) in its order and its ended-session refusal,
 factored into one helper both ops call with a flag, and deviates on purpose where the message is
 worth sending without a stamp: with the user-todos switch off, the message is sent, nothing is
@@ -1653,9 +1658,9 @@ any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
-The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: he sent
-comments, the session answered with eleven changes and seven replies while he kept commenting, and nothing in the
-panel said so; the first he knew of them was the next Send accepting the changes by default. Built: the panel keeps
+The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: the user
+sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
+the panel said so; the first they knew of them was the next Send accepting the changes by default. Built: the panel keeps
 the set of ENTRIES the person has seen (a pending or detached change, a comment, a reply, each by a key:
 `statusEntries` in `file-comments-model.ts`), seeded at its first render with a status from everything in it (a file
 opened fresh has no arrivals), and every status after that files an entry by another author that is not in the set as
@@ -1685,7 +1690,7 @@ comments the Resolved fold opens before the renders that follow and the sent not
 accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
 visible list without a visible word. The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
-second report: he saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
+second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
 the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
 save as a gesture and samples the count (`gestures`) when Save is pressed; when the reply lands, `scrollToSaved`
 scrolls only if the count stood (no gesture of theirs in between; the event is the person's own input, never a time
@@ -2320,7 +2325,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
   modules it names; `tools/file-review-plan-send-note-close.test.mjs` holds decision 40's sentences on
   the viewer's close guard (the composer's comment asked about, the note not yet) to the panel's close
-  asks and the viewer's close and replace-open paths.
+  asks and the viewer's close and replace-open paths. `tools/file-review-plan-arrivals-review.test.mjs`
+  holds the review's three plan fixes (the request block's `note?` and the op prose to the kernel and
+  the panel, the user ungendered, the Docs sentence's gestures to the guide).
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2406,7 +2413,8 @@ passage whatever stands above it and that a long card folds to a few lines with 
 (`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
 With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
 last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
-view unless you scrolled on meanwhile (`tests/test_guide_files_arrivals.py` holds both sentences to the panel).
+view unless you scrolled, clicked, tapped, or pressed a key meanwhile (`tests/test_guide_files_arrivals.py` holds both
+sentences to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2549,7 +2557,7 @@ document stands on its own, each with the reasoning it was given.
     and is outside that list, so the button adds a server-side surface the posture does not name.
     It awaits the user's ruling; until then the row's sentence is the offer.
 40. **The Send confirm's message preview gives way to a note box** (2026-09-09). The user's ruling: the grey preview
-    text in the confirm is a system message tied to the send and not worth showing; a text box for anything he wants
+    text in the confirm is a system message tied to the send and not worth showing; a text box for anything they want
     to add takes its place. The box is optional and empty by default (three rows, growing to about eight, then
     scrolling; Enter adds a line, the composer's chord or the Send button sends); its text survives every re-render
     while the confirm is open and is cleared only by a successful send or by Cancel. The arrivals follow-on's review

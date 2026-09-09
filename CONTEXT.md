@@ -48,7 +48,8 @@ A comment a person leaves on a file: on a passage of its text, on a region of an
 page, or on the file as a whole. It is stored beside the file, carries its replies, and can be
 resolved. It belongs to the file, not to a session or a conversation, and outlives both.
 _Avoid_: thread (a comment thread is a forked side session anchored to the chat), annotation,
-note, review comment (a file comment needs no review to exist)
+note (a note goes with one send and is never stored beside the file: the Note entry below),
+review comment (a file comment needs no review to exist)
 
 **Change**:
 An edit a session made to a file that awaits the person's accept or reject; the file already
@@ -82,8 +83,19 @@ _Avoid_: history (reads as git history), log alone (the chat has logs), ledger
 The one gesture that hands a file's unsent comments, replies, and decisions to the session that
 owns the file, as a single message in the person's voice; it may also answer one of that session's
 open user todos: a todo that names the file, however the file was opened, or the todo the file was
-opened from.
+opened from. A note the person types in the confirm goes first in that message, after its header
+line and before the comments, and a note with nothing else unsent still sends.
 _Avoid_: send review, ping, submit
+
+**Note (of a send)**:
+The person's own words, typed in the Send confirm's box and carried by that one send: the first
+paragraph of the message after its header line, unlabeled, before the comments. Optional; a note
+alone still sends. It belongs to the send, not to the file: it is not stored beside the file, names
+no passage, takes no reply, and is never a file comment; the comments log's send entry records it.
+The storage format's `note` field on a comment or a reply is that comment's body, not this. The
+panel's acknowledgment after a send (Sent to <session> at <time>, or Queued for <session>) is not a
+note either.
+_Avoid_: message (the whole send is the message; the note is one paragraph of it), comment
 
 ### Pre-existing attention vocabulary
 

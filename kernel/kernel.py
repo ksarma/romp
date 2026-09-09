@@ -45284,7 +45284,7 @@ def _sh_word(s):
 # shapes cannot drift apart. The line break before "naming the file." is the plan's own.
 _SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
 
-# The most characters the note from the Send confirm's text box may carry (the owner's ruling, 2026-09-09:
+# The most characters the note from the Send confirm's text box may carry (the user 2026-09-09:
 # the confirm shows a box for the person's own words instead of the message preview). The send op refuses a
 # longer note before anything else is asked or sent, naming this bound; the webview refuses at the same
 # number before the request goes, so a refusal here means a client that skipped its own check.
@@ -45308,7 +45308,7 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text,
     The webview's builder (ui/webview/file-comments-model.ts, buildSendMessage) produces this text
     byte for byte, so change both or neither.
 
-    `note` is what the person typed in the Send confirm's text box (the owner's ruling, 2026-09-09:
+    `note` is what the person typed in the Send confirm's text box (the user 2026-09-09:
     the box replaced the message preview), in their own words. Non-empty, it is the first paragraph
     after the header line in BOTH shapes, with no label: before the comments here, before the
     accepted/rejected line below. It is marker-neutralized like every request-supplied string. The
@@ -45420,7 +45420,7 @@ def _file_comments_send_op(msg):
     `sid`, not `id`), so the op checks _kernel_knows itself. The comments are on disk before any
     send, so a refusal loses nothing.
 
-    `note` (optional; the text box on the Send confirm, the owner's ruling, 2026-09-09) is the
+    `note` (optional; the text box on the Send confirm, the user 2026-09-09) is the
     person's own words for the session: absent or null reads as none, anything that is not text
     refuses, text is trimmed, and a trimmed note longer than _SEND_NOTE_MAX refuses right after the
     counts are read, before the watermark is checked or anything is sent. A note alone, with no

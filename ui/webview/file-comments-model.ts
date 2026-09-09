@@ -478,15 +478,37 @@ export function buildSendMessage(o: MessageOpts): string {
 /** The most characters the Send confirm's note may carry: the kernel's _SEND_NOTE_MAX, refused there too. The panel refuses
  *  before any request goes (noteTooLong), so a kernel refusal means a client that skipped its own check. */
 export const SEND_NOTE_MAX = 4000;
+/** The characters Python's `str.strip()` removes, as a regex class: everything `str.isspace()` admits (general category Zs,
+ *  or bidirectional class WS, B or S) — the five ASCII controls TAB to CR, the four information separators U+001C–U+001F,
+ *  the space, NEL (U+0085), no-break space, the Ogham space mark, the Zs spaces U+2000–U+200A, the line and paragraph
+ *  separators, the narrow no-break and medium mathematical spaces and the ideographic space. JavaScript's `trim()` strips
+ *  the same set less the separators and NEL, plus the byte-order mark (U+FEFF). Pinned exhaustively against a Python
+ *  interpreter in file-comments-model-note-trim.test.ts. */
+const PY_SPACE = "\\t\\n\\v\\f\\r\\x1C-\\x1F \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
+const PY_STRIP_ENDS = new RegExp("^[" + PY_SPACE + "]+|[" + PY_SPACE + "]+$", "g");
+/** The note as the kernel reads it. The panel puts the note on the wire through `trim()` (doSend) and the kernel strips
+ *  what arrives with `str.strip()` before it measures, places or logs it, so the note the kernel sees is
+ *  strip(trim(text)): this is that composition, in that order. The two trims differ only at the ends of the text and only
+ *  on characters nobody can see — JS drops a pasted byte-order mark that Python keeps; Python drops NEL and the ASCII
+ *  separators that JS keeps — so the panel measured "\u0085" + 4000 letters as 4001 and refused a note the kernel would
+ *  have taken, and read a note of one NEL as words to send that the kernel read as none. Idempotent under the kernel's
+ *  strip (its ends carry nothing Python removes), so the wire may carry `text.trim()` or this and the kernel counts the
+ *  same. Not applied inside buildSendMessage: the kernel's builder does not trim either (the send op did), and the two
+ *  builders take the same input to the same text. */
+export function trimNote(note: string): string {
+  return note.trim().replace(PY_STRIP_ENDS, "");
+}
 /** The panel's refusal for a note over the bound, or null when the note fits: one plain line naming the bound. The count is
- *  in code points, the kernel's unit (Python's `len` over the decoded string), not UTF-16 code units (`note.length`, which
- *  counts an emoji or another astral character twice): the two sides refuse the same notes and name the same number. */
+ *  the kernel's: over the note as it reads it (trimNote), in code points, its unit (Python's `len` over the decoded string),
+ *  not UTF-16 code units (`note.length`, which counts an emoji or another astral character twice). So the two sides refuse
+ *  the same notes and name the same number, whatever whitespace edges the text. */
 export function noteTooLong(note: string): string | null {
-  const n = noteLength(note);
+  const n = noteLength(trimNote(note));
   if (n <= SEND_NOTE_MAX) return null;
   return "Nothing sent: the note is " + n + " characters, and a send carries at most " + SEND_NOTE_MAX + ". Shorten it.";
 }
-/** A note's length as the kernel measures it: code points (a surrogate pair is one). */
+/** A text's length as the kernel measures it: code points (a surrogate pair is one). Counts the text given; noteTooLong
+ *  hands it the trimmed note. */
 export function noteLength(note: string): number {
   let n = 0;
   for (const _ of note) n++;

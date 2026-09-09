@@ -1003,6 +1003,7 @@ class Panel {
   // caret and the keyboard mid-word. The note goes in the request as `note`, trimmed, first in the message after its header
   // (buildSendMessage is the kernel's twin); over SEND_NOTE_MAX characters the send is refused here, before any request.
   sendNote = "";
+  noteRefusal: Err | null = null;             // the send slot's row that refused the note over the bound, while it stands (syncNoteRefusal)
   noteBox = el("textarea", "fc-input fc-send-note") as HTMLTextAreaElement;
   noteSizedTo: string | null = null;         // the inline height autosizeNote last set: any other was dragged there, and stands (the composer's sizedTo rule)
   colors: Map<string, FileViewIdentity> | null = null;
@@ -1102,17 +1103,22 @@ class Panel {
   // user sent comments, the session answered with eleven changes and seven replies while he kept commenting, and nothing
   // in the panel said so until the next Send accepted the changes by default. `seenKeys` is the set of entry keys the
   // person has seen — a change, a comment, a reply (statusEntries) — null until the panel's first render with a status
-  // seeds it with everything then in the status (a file opened fresh has no arrivals: the person is looking at all of
-  // it). Every status landing after that (noteArrivals) adds the person's own writes to the set (YOU) and files every
-  // other author's entry not in the set as an ARRIVAL, kept in `arrivals` until seen. Seen is event-based (gesture): a
+  // seeds it with everything then in the status. That status is the probe's, asked at mount with the panel closed, and
+  // the open's own re-ask (openPanel → refresh) lands after that render, so the first status to land while the panel is
+  // OPEN is all seen as well (`seenOpen`, noteArrivals): a file opened fresh has no arrivals — the person is looking at
+  // all of it — whatever the session added between the probe and the open (the review, 2026-09-09: a panel first opened
+  // minutes after the probe named everything since as arrivals). Every status landing after that (noteArrivals) adds
+  // the person's own writes to the set (YOU) and files every other author's entry not in the set as an ARRIVAL, kept in
+  // `arrivals` until seen. Seen is event-based (gesture): a
   // gesture of the person's — a pointer press, a key, a wheel, a touch move in the body row, a save, a send — marks the
   // arrivals whose cards are then in the track's box (entryShown) seen; the ones it scrolled into view are seen by the
   // gesture that follows. Never a timer. While any arrival stands the head shows one line naming them (renderHead), a
-  // button whose click shows the first of them (goToArrival); the line's own press marks nothing seen, so the glance the
-  // click buys is not lost to the click. The arrival cards and their marks wear data-new (renderCard, renderChangeCard,
+  // button whose click shows the first of them (goToArrival); the line's own press marks nothing seen, so the line stands
+  // through the click that asked to see the first arrival. The arrival cards and their marks wear data-new (renderCard, renderChangeCard,
   // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
   // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
   seenKeys: Set<string> | null = null;
+  seenOpen = false;                           // whether a status has landed while the panel was open: until one has, the next to land is a newly opened panel's first, all seen (noteArrivals)
   arrivals = new Map<string, Entry>();
   newKeys = new Set<string>();
   // the person's gestures, counted (gesture): the save samples the count when Save is pressed and its scroll to the saved
@@ -1199,7 +1205,7 @@ class Panel {
     this.noteBox.rows = COMPOSER_ROWS;                 // the Send confirm's note: three rows, grown to about eight (SEND_NOTE_ROWS), then scrolling
     this.noteBox.setAttribute("aria-label", "A note for the session");
     this.noteBox.addEventListener("keydown", this.noteKey);
-    this.noteBox.addEventListener("input", () => { this.sendNote = this.noteBox.value; this.autosizeNote(); this.syncSendGo(); });
+    this.noteBox.addEventListener("input", () => { this.sendNote = this.noteBox.value; this.autosizeNote(); this.syncSendGo(); this.syncNoteRefusal(true); });
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
     this.float.title = "Comment on the selected passage";
@@ -2440,11 +2446,21 @@ class Panel {
    *  standing takes the status's entry for it, in its place in the order: a change keeps its key when the sidecar's rebase
    *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now, so the
    *  accept option counts the arrived changes the accept will touch, not the ones it found pending at first sight (the
-   *  review, 2026-09-09). Nothing until the first render seeded the set (render): the panel's first status is all seen. */
+   *  review, 2026-09-09). Nothing until the first render seeded the set (render), and the first status to land while the
+   *  panel is open is all seen too (seenOpen): a newly opened panel's first status is never an arrival. */
   private noteArrivals(s: Status): void {
     const seen = this.seenKeys;
     if (seen === null) return;
     const entries = statusEntries(s);
+    // the first status to land while the panel is open is the newly opened panel's first (the fields' comment): the render
+    // seeded the set from the probe's status, asked with the panel closed, and everything this one adds is seen as well. One
+    // landing while closed — the open's re-ask answered after a close — is nobody's first: the reopen's own is
+    if (!this.seenOpen) {
+      if (!this.open) return;
+      this.seenOpen = true;
+      for (const e of entries) seen.add(e.key);
+      return;
+    }
     const now = new Set(entries.map((e) => e.key));
     for (const k of Array.from(this.arrivals.keys())) if (!now.has(k)) this.arrivals.delete(k);
     for (const e of entries) {
@@ -2550,7 +2566,18 @@ class Panel {
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
-  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided) : []; }
+  // the card model of the status showing, built once per status: it is a pure function of the status, which applyStatus
+  // replaces whole and nothing mutates, so the status's identity is the key (cardsOf). Before the memo every reader rebuilt it
+  // over the whole store, and gesture() reads it once per arrival (arrivalCard → cardKey) on every press, key, wheel and touch
+  // move, so with hundreds of unseen replies one wheel tick held the page for tens of milliseconds rebuilding one model (the
+  // review, 2026-09-09; file-comments-arrivals-review2.test.ts counts the builds through the store)
+  private cardsOf: Status | null = null;
+  private cardsMemo: Card[] = [];
+  cards(): Card[] {
+    if (!this.status) return [];
+    if (this.cardsOf !== this.status) { this.cardsOf = this.status; this.cardsMemo = cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided); }
+    return this.cardsMemo;
+  }
   /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
@@ -3784,6 +3811,12 @@ class Panel {
     // comments the session had answered folded under a collapsed Resolved with nothing said). Counted off the reply below
     const openBefore = new Set((s.store ? s.store.comments : []).filter((c) => !c.resolved).map((c) => c.id));
     let moved = 0;
+    // the keyboard in the note box as the send begins: the render below takes the confirm down for the wait (renderSend), and
+    // the box with it, and a box out of the document drops the keyboard to the body. A refusal brings the box back with its
+    // words (the confirm stands: sendConfirm) and the keyboard goes back into it (the finally), so the chord sends again —
+    // before, the next Cmd/Ctrl+Enter reached the body and sent nothing (the review, 2026-09-09). A send that went closes the
+    // confirm, and there is no box to put it back in
+    const noting = document.activeElement === this.noteBox;
     this.gesture();                                    // a send is a gesture of the person's (the arrivals follow-on)
     this.sending = true; this.errors.delete("send"); this.render();
     try {
@@ -3837,7 +3870,10 @@ class Panel {
       await this.refresh();
     } catch (err) {
       this.errors.set("send", { text: (err as { error: string }).error, reload: false });
-    } finally { this.sending = false; this.render(); }
+    } finally {
+      this.sending = false; this.render();
+      if (noting && this.sendConfirm && this.root && this.root.contains(this.noteBox)) this.noteBox.focus({ preventScroll: true });   // refused: the box is back, and the keyboard with it
+    }
   }
 
   /** The send itself, with the one retry every editing-off refusal gets (mutateOnce's branch): the kernel
@@ -4823,6 +4859,7 @@ class Panel {
   }
   private renderSend(s: Status | null): HTMLElement {
     const box = el("div", "fc-send");
+    this.syncNoteRefusal();                            // the bound refusal's row goes with the words it named (Cancel, a send)
     const n = s ? unsentCount(s.unsent) : 0;
     const b = btn(this.sending ? "Sending…" : "Send to session" + (n ? " (" + n + ")" : ""), "fcsend");
     // a status refusal (refresh, requireStatus) leaves the LAST status showing so the cards stay readable, but
@@ -4885,10 +4922,8 @@ class Panel {
       if (this.noteBox.value !== this.sendNote) this.noteBox.value = this.sendNote;
       cf.appendChild(this.noteBox);
       const acts = el("div", "fc-actions");
-      const go = btn("Send", "fcsendgo", "fileview-btn fc-primary");
-      go.disabled = !n && !this.sendNote.trim();       // nothing unsent and no note: nothing to send
-      go.title = go.disabled ? "Nothing is unsent; type a note to send one" : "Send";
-      acts.appendChild(go);
+      acts.appendChild(btn("Send", "fcsendgo", "fileview-btn fc-primary"));
+      this.syncSendGo(acts.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement);   // off with nothing unsent and no note: nothing to send
       acts.appendChild(btn("Cancel", "fcsendcancel"));
       cf.appendChild(acts);
       box.appendChild(cf);
@@ -4897,14 +4932,32 @@ class Panel {
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
   }
-  /** The confirm's Send follows the note box as the person types, in place: a render would rebuild the confirm around the
-   *  box. Off with nothing unsent and no note; on as soon as either stands. */
-  private syncSendGo(): void {
-    const go = this.root?.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement | null;
-    if (!go) return;
+  /** The confirm's Send: off with nothing unsent and no note, on as soon as either stands. `go` is the button renderSend just
+   *  built; without it, the one in the panel, followed in place as the person types (the box's input): a render would rebuild
+   *  the confirm around the box. */
+  private syncSendGo(go?: HTMLButtonElement): void {
+    const b = go || (this.root?.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement | null);
+    if (!b) return;
     const n = this.status ? unsentCount(this.status.unsent) : 0;
-    go.disabled = !n && !this.sendNote.trim();
-    go.title = go.disabled ? "Nothing is unsent; type a note to send one" : "Send";
+    b.disabled = !n && !this.sendNote.trim();
+    b.title = b.disabled ? "Nothing is unsent; type a note to send one" : "Send";
+  }
+  /** The bound refusal's row (doSend: a note over SEND_NOTE_MAX is refused before any request, in the send slot) is about the
+   *  words in the box and lives with them: it stands while the note is over the bound (the count it names may lag the typing;
+   *  the next Send names it afresh), and goes once the note is not — shortened under the bound, or gone with Cancel or a send —
+   *  where it stood under the Send button after Cancel and under an EMPTY box on the next confirm until its ✕ (the review,
+   *  2026-09-09). The row is known by its words, the bound text for the note in the box when it was rendered (noteRefusal); a
+   *  kernel's refusal in the same slot is not it and stands as before. `inPlace`: from the box's input, where a render would
+   *  rebuild the confirm around the box (syncSendGo), the row's own node is removed. */
+  private syncNoteRefusal(inPlace = false): void {
+    const row = this.errors.get("send") || null, over = noteTooLong(this.sendNote);
+    if (row && over && row.text === over) { this.noteRefusal = row; return; }
+    if (!this.noteRefusal || over) return;
+    if (row === this.noteRefusal) {
+      this.errors.delete("send");
+      if (inPlace) (this.root?.querySelector('.fc-err[data-slot="send"]') as HTMLElement | null)?.remove();
+    }
+    this.noteRefusal = null;
   }
   private opt(key: "todo" | "track" | "accept", label: string): HTMLElement {
     const l = el("label", "fc-opt");

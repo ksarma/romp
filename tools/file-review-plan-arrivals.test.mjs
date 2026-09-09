@@ -99,5 +99,13 @@ test('the Tests section and the Docs section carry the follow-on, naming the sam
   assert.ok(docs.includes('With the arrivals follow-on (2026-09-09), that a line under the panel\'s header counts what the session added since you last looked'));
   const files = guide.replace(/\s+/g, ' ');
   assert.ok(files.includes('A line under the panel\'s header counts the changes, comments, and replies the session added since you last looked'));
-  assert.ok(files.includes('Saving brings the new card into view, unless you scrolled on while the save was under way'));
+  // The save sentence is taken from the guide by its opening, not quoted whole: the arrivals review's first round rewrote
+  // it to name every gesture the panel counts (a click, a tap, a key, not scrolling alone), and a pin holding the first
+  // wording went red for a sentence that had only got more accurate. tests/test_guide_files_save_standdown.py derives
+  // the words from the constructor's listeners; this pin holds the sentence's opening and its round-1 clause, and
+  // refuses the first wording, so the two suites agree on which sentence the guide carries.
+  const save = files.match(/Saving brings the new card into view[^.]*\./);
+  assert.ok(save, 'the guide\'s save sentence');
+  assert.ok(save[0].includes('unless you scrolled, clicked, tapped, or pressed a key while the save was under way'), save[0]);
+  assert.ok(!save[0].includes('unless you scrolled on'), 'the first wording named scrolling as the only stand-down: ' + save[0]);
 });
