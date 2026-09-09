@@ -31,6 +31,27 @@ kernel against that directory: it mirrors the directory to a fresh temp copy (sd
 credential files excluded) and benches the mirror, so the live directory is only ever read. The
 mirror is removed afterwards unless `--keep-mirror`.
 
+The copy is only READ, whichever way it was given. Every write the kernel aims at the state
+directory lands in a shadow directory under the tool's private temp dir instead (the state shadow,
+below): the repo-root marker the kernel writes when it is imported, the session order the push
+appends new sids to, the order audit log. The end-of-run census fingerprints the copy before the
+kernel is imported and after the last row, on the error path too, and prints what changed; a run
+that reports anything but 0 changed, 0 new, 0 removed found a writer this tool does not know about.
+
+Redacted copies. A copy tool that rewrites the cwd in every registry file (a home path replaced by
+X-es) while Claude's projects/ directory keeps the original name leaves discovery with nothing: the
+kernel derives the project directory from the registry cwd (judge.py's _proj_dir), so no transcript
+is found for any session. `--cwd-map FROM=TO` (repeatable) rewrites a registry cwd's leading path
+components before that derivation — `--cwd-map /XXXX/XXXXXX=$HOME` maps
+/XXXX/XXXXXX/code/notes-api to $HOME/code/notes-api — and the report counts the hits per
+rule. It touches nothing else: the cwd the chat build hands to its git queries stays the redacted
+one (a directory that does not exist here, so those queries fail as they would on a machine without
+the checkout). A later version of the copy tool will rename the project directories to match;
+until then, use the map. The no-transcript error names the counts it worked from (live
+sessions, hits in the 48 h window and in the 365-day backfill, registry cwds and how many of them
+map to an existing project directory) so a wrong --claude-dir, a redacted cwd and a stale copy read
+differently.
+
 What is measured. Unless noted, each row is one untimed warm-up call followed by `--iters` timed
 calls, reported as ms min/median/max:
   liveness_snapshot      Sessions.live() — the pusher cycle's one liveness read (tmux backend off)
@@ -99,8 +120,9 @@ How the liveness snapshot is reconstructed, and what is approximated:
     the live rows, plus — as _alive_sessions does for the builders — every live sid outside that
     window resolved through the long backfill window, so the pick list, the parse warm-up and the
     builders see ONE world. A live sid with no transcript anywhere is listed in the report; a run
-    where discovery finds nothing for a non-empty live set is an error (a wrong --claude-dir, a
-    registry cwd that does not exist here, or a stale copy).
+    where neither the window nor the backfill finds a transcript for ANY live sid is an error (a wrong
+    --claude-dir, registry cwds a redaction rewrote — see --cwd-map above — or a copy older than the
+    backfill window), raised only after the backfill has run.
   * Transcripts are read from Claude Code's own directory ($CLAUDE_CONFIG_DIR or ~/.claude), which
     the registry references; `--claude-dir` points at a copy or a synthetic one.
 
@@ -126,8 +148,18 @@ error, never a silent skip):
   * pwd.getpwnam / pwd.getpwuid are wrapped as counters (nss_lookups in the output): the chat build's
     path-link pass calls os.path.expanduser on every path-shaped token, and a `~name/...` token makes
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
-  * Every kernel _atomic_write is checked to land under the state copy; the copy's files are
-    fingerprinted before and after so the output lists exactly what the run wrote.
+  * The state shadow: every kernel _atomic_write (the ONE write door for the small JSON state files
+    among them), every Path.write_text the kernel import performs against the state directory (the
+    repo-root marker) and the order audit log's append are redirected to <private dir>/shadow/<same
+    relative path>, and the kernel's ONE strict reader of the small JSON state files
+    (_read_state_json) reads a shadowed file from the shadow — so a read-modify-write such as the
+    session order's append of new sids lands once, as it does live, instead of re-firing on every
+    build against a file that never changed. A write aimed anywhere else is an error. The copy's
+    files, directories and symlink targets are fingerprinted before the kernel is imported and again
+    at the end, on EVERY exit path — a guard's error, an exception out of the candidate kernel (at
+    import or inside a builder), Ctrl-C — and the output lists what changed (nothing, or a writer this
+    tool does not know about) beside the relative paths that were shadowed; the JSON, when asked for,
+    is written on those paths too, with the error beside the census.
 
 Verification: run once under `strace -f -e trace=execve,connect`. Expected: the interpreter's own
 execve, plus (without `--no-git`) one execve of git per counted git query and nothing else; connect()
@@ -147,6 +179,7 @@ import pstats
 import pwd
 import re
 import shutil
+import stat
 import statistics
 import subprocess as _real_subprocess
 import sys
@@ -156,7 +189,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = 2
+SCHEMA = 3          # 3: writes.shadowed replaces writes.atomic_writes; live_transcripts.searched; cwd_map
 DEFAULT_CLIENTS = "chat,feed,timeline"
 PROFILE_TOP = 25
 MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json")
@@ -203,7 +236,50 @@ def parse_args(argv):
     ap.add_argument("--i-know-this-is-live", action="store_true",
                     help="allow --state to name the live default state directory; it is mirrored to a temp copy first")
     ap.add_argument("--keep-mirror", action="store_true", help="keep the temp mirror of a live directory (default: removed at exit)")
+    ap.add_argument("--cwd-map", action="append", default=[], metavar="FROM=TO",
+                    help="rewrite a registry cwd's leading path FROM to TO before the project directory is derived "
+                         "from it (a redacted copy whose projects/ kept the original names; see the module docstring); "
+                         "repeatable, first matching rule wins")
     return ap.parse_args(argv)
+
+
+def parse_cwd_maps(specs):
+    """[(FROM, TO)] from the --cwd-map values; a rule without '=' or with an empty FROM is a BenchError.
+    FROM and TO lose a trailing slash so the match is on whole path components."""
+    out = []
+    for spec in specs or ():
+        if "=" not in spec:
+            raise BenchError("--cwd-map %r: expected FROM=TO" % spec)
+        frm, to = spec.split("=", 1)
+        frm, to = frm.rstrip("/"), to.rstrip("/")
+        if not frm:
+            raise BenchError("--cwd-map %r: FROM is empty" % spec)
+        out.append((frm, to))
+    return out
+
+
+def install_cwd_map(jd, maps):
+    """Wrap jd._proj_dir so a registry cwd under a FROM prefix is rewritten to TO before the kernel
+    derives Claude's project directory from it (whole-component prefix match; the first matching rule
+    wins). judge.py resolves _proj_dir by name on every call, so the wrapper is seen by discovery, the
+    liveness rows' transcript paths and the chat build alike; nothing else reads the map. Returns the
+    per-rule hit counters (a list the wrapper updates). With no rules nothing is wrapped: the default
+    run's timed rows call the kernel's own _proj_dir, with no extra frame."""
+    if not maps:
+        return []
+    real = jd._proj_dir
+    hits = [0] * len(maps)
+
+    def mapped(d):
+        cwd = str(d)
+        for i, (frm, to) in enumerate(maps):
+            if cwd == frm or cwd.startswith(frm + "/"):
+                hits[i] += 1
+                cwd = to + cwd[len(frm):]
+                break
+        return real(cwd)
+    jd._proj_dir = mapped
+    return hits
 
 
 # ── live-directory refusal ──────────────────────────────────────────────────────────────────────
@@ -271,6 +347,54 @@ def prepare_env(state, claude_dir, private_dir):
     return changes
 
 
+# ── the state shadow (where writes aimed at the copy land) ──────────────────────────────────────
+class StateShadow:
+    """Where every write the kernel aims at the state copy lands instead: <root>/<the same relative
+    path>, in the tool's private temp dir. The copy stays byte-identical, and the kernel's own re-reads
+    of the small JSON state files (installed on _read_state_json by install_guards) see the shadow, so a
+    read-modify-write — the session order's append of new sids — lands once, as it does live, instead of
+    re-firing on every build against a file that never changed (each re-fire would add an audit record
+    with a captured stack to the very rows this tool times). `written` lists every relative path that
+    was diverted, in order, duplicates kept; the report dedups it."""
+
+    def __init__(self, state, root):
+        self.state = Path(state).resolve()
+        self.root = Path(root)
+        self.written = []
+
+    def rel(self, path):
+        """The path relative to the state copy, or None when `path` is not under it."""
+        p = Path(path).resolve()
+        if p == self.state or self.state in p.parents:
+            return p.relative_to(self.state)
+        return None
+
+    def target(self, path):
+        """Where a write to `path` lands: its shadow when it aims at the copy (recorded), itself when it
+        is already in the shadow (the audit log's own trim); a write aimed anywhere else is an error."""
+        r = self.rel(path)
+        if r is not None:
+            self.written.append(str(r))
+            t = self.root / r
+            t.parent.mkdir(parents=True, exist_ok=True)
+            return t
+        p = Path(path).resolve()
+        if self.root.resolve() in p.parents:
+            return p
+        raise BenchError("perf-bench: a write outside the state copy: %s" % p)
+
+    def read_path(self, path):
+        """Where a read of `path` looks: its shadow once one has been written, else `path` itself."""
+        r = self.rel(path)
+        if r is not None and (self.root / r).exists():
+            return self.root / r
+        return Path(path)
+
+
+def new_recorder():
+    return {"spawns": [], "notifications": [], "tripwires": [], "nss": {}}
+
+
 # ── side-effect tripwires ───────────────────────────────────────────────────────────────────────
 class SubprocessTripwire:
     """Stands in for the `subprocess` module inside the loaded romp modules: constants and helpers pass
@@ -324,11 +448,11 @@ class SubprocessTripwire:
         return getattr(self._real, name)
 
 
-def install_guards(km, sbmod, no_git=False):
-    """Neutralize the non-builder side effects the push path can reach; return (names, recorder).
-    A safety target the kernel revision lacks is an error: a renamed notification function would
-    otherwise leave the real one in place (Web Push to every subscription in the copy's store)."""
-    rec = {"spawns": [], "notifications": [], "atomic_writes": [], "tripwires": [], "nss": {}}
+def install_guards(km, sbmod, shadow, rec, no_git=False):
+    """Neutralize the non-builder side effects the push path can reach; return the list of names for
+    the report (`rec`, from new_recorder(), collects what the guards saw). A safety target the kernel
+    revision lacks is an error: a renamed notification function would otherwise leave the real one in
+    place (Web Push to every subscription in the copy's store)."""
     names = []
 
     def stub(attr, fn):
@@ -349,17 +473,24 @@ def install_guards(km, sbmod, no_git=False):
             mod.subprocess = tw
             rec["tripwires"].append(tw)
             names.append("%s.subprocess%s" % (getattr(mod, "__name__", "?"), " (git answers as failure)" if no_git else ""))
-    state = Path(km.jd.STATE).resolve()
     real_aw = km._atomic_write
 
-    def guarded(path, text, mode=None):
-        p = Path(path).resolve()
-        if state not in p.parents and p != state:
-            raise BenchError("perf-bench: _atomic_write outside the state copy: %s" % p)
-        rec["atomic_writes"].append(str(p.relative_to(state)))
-        return real_aw(path, text, mode) if mode is not None else real_aw(path, text)
-    km._atomic_write = guarded
-    names.append("km._atomic_write (checked)")
+    def shadowed_write(path, text, mode=None):
+        t = shadow.target(path)
+        return real_aw(t, text, mode) if mode is not None else real_aw(t, text)
+    stub("_atomic_write", shadowed_write)
+    names[-1] = "km._atomic_write (shadowed)"
+    real_rsj = getattr(km, "_read_state_json", None)   # stub() below is what refuses a kernel without it
+
+    def overlaid_read(path, st=None, *a, **k):
+        t = shadow.read_path(path)
+        if t != Path(path):
+            st = None                               # the caller's stat is of the copy's file, not the shadow's
+        return real_rsj(t, st, *a, **k)
+    stub("_read_state_json", overlaid_read)
+    names[-1] = "km._read_state_json (shadow overlay)"
+    stub("_order_audit_path", lambda: shadow.target(km.jd.STATE / "order-audit.jsonl"))
+    names[-1] = "km._order_audit_path (shadowed)"
     for fn in ("getpwnam", "getpwuid"):            # os.path.expanduser's name-service lookups, counted
         real = getattr(pwd, fn)
 
@@ -368,7 +499,7 @@ def install_guards(km, sbmod, no_git=False):
             return _real(*a, **k)
         setattr(pwd, fn, counted)
         names.append("pwd.%s (counted)" % fn)
-    return names, rec
+    return names
 
 
 def git_calls_total(rec):
@@ -440,11 +571,31 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
 
 
 # ── loading ─────────────────────────────────────────────────────────────────────────────────────
-def load_kernel(repo):
+def load_kernel(repo, shadow=None):
+    """Import the checkout's kernel in-process. With a `shadow`, every Path.write_text the import
+    performs against the state copy lands in the shadow instead (the kernel writes its repo-root
+    marker at import, before any guard can be installed on the module); the diversion is removed
+    once the import returns, and the guards install_guards puts on the named write doors take over."""
     import importlib.util
     kpath = os.path.join(repo, "kernel", "kernel.py")
     if not os.path.isfile(kpath):
         raise BenchError("no kernel at %s" % kpath)
+    real_write_text = Path.write_text
+
+    def diverted_write_text(self, data, *a, **k):
+        target = shadow.target(self) if shadow.rel(self) is not None else self
+        return real_write_text(target, data, *a, **k)
+    if shadow is not None:
+        Path.write_text = diverted_write_text
+    try:
+        km, sbmod = _import_kernel(repo, kpath)
+    finally:
+        Path.write_text = real_write_text
+    return km, sbmod
+
+
+def _import_kernel(repo, kpath):
+    import importlib.util
     # the repo's file-path importer (kernel/loadsource.py), loaded by path from the checkout under test
     _spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(repo, "kernel", "loadsource.py"))
     if _spec is None or not os.path.isfile(_spec.origin):
@@ -588,16 +739,28 @@ def fmt_profile(title, rows):
 
 # ── state fingerprint (what did the run write) ──────────────────────────────────────────────────
 def fingerprint(state):
+    """Every directory (keyed with a trailing slash), symlink (its target) and file (mtime and size)
+    under the copy, so a directory the kernel creates (its many mkdir sites on STATE subdirectories)
+    or a link it retargets shows in the census beside a changed file."""
     out = {}
     for root, dirs, files in os.walk(state):
         dirs[:] = [d for d in dirs if d != "sdkvenv"]
+        for d in dirs:
+            p = os.path.join(root, d)
+            try:
+                out[os.path.relpath(p, state) + "/"] = ("link", os.readlink(p)) if os.path.islink(p) else "dir"
+            except OSError:
+                continue
         for f in files:
             p = os.path.join(root, f)
             try:
                 st = os.lstat(p)
             except OSError:
                 continue
-            out[os.path.relpath(p, state)] = (st.st_mtime_ns, st.st_size)
+            if stat.S_ISLNK(st.st_mode):
+                out[os.path.relpath(p, state)] = ("link", os.readlink(p))
+            else:
+                out[os.path.relpath(p, state)] = (st.st_mtime_ns, st.st_size)
     return out
 
 
@@ -664,17 +827,60 @@ def total_bytes(clients):
 def run(args, state, mirror_of, out, private):
     repo = os.path.realpath(args.repo) if args.repo else os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
     out["repo"], out["repo_head"], out["state"], out["state_mirror_of"] = repo, git_head(repo), state, mirror_of
+    maps = parse_cwd_maps(args.cwd_map)
     out["env_changes"] = prepare_env(state, args.claude_dir, private)
+    shadow = StateShadow(state, os.path.join(private, "shadow"))
+    rec = new_recorder()
     fp_before = fingerprint(state)
     threads_before = {t.name for t in threading.enumerate()}
+    try:
+        _bench(args, state, repo, out, shadow, rec, maps)
+    finally:
+        # the census runs on EVERY exit path: a run that stopped on an error has still imported the
+        # kernel and may have built, and what it wrote into the copy is what the caller needs to know
+        out["writes"] = fingerprint_diff(fp_before, fingerprint(state))
+        out["writes"]["shadowed"] = sorted(set(shadow.written))
+        out["notifications_suppressed"] = len(rec["notifications"])
+        out["spawn_attempts"] = rec["spawns"]
+        out["git_queries"] = {"answered_as_failure": bool(args.no_git), "calls": git_calls_total(rec)}
+        out["nss_lookups"] = dict(rec["nss"])
+        out["threads_new"] = sorted({t.name for t in threading.enumerate()} - threads_before)
+    return out
 
-    km, sbmod = load_kernel(repo)
+
+def transcript_search(jd, state, sids):
+    """Counts of what discovery had to work with for `sids`: their distinct names-registry cwds, how many
+    of those resolve (through any --cwd-map) to a project directory that exists, and the transcripts in
+    those directories. Counts only, no paths: this goes into the report and the no-transcript error."""
+    cwds = set()
+    for sid in sids:
+        try:
+            parts = (Path(state) / "names" / sid).read_text().rstrip("\n").split("\t")
+        except OSError:
+            continue
+        if len(parts) > 1 and parts[1]:
+            cwds.add(parts[1])
+    present = jsonl = 0
+    for cwd in cwds:
+        pdir = jd._proj_dir(cwd)
+        if os.path.isdir(pdir):
+            present += 1
+            jsonl += sum(1 for n in os.listdir(pdir) if n.endswith(".jsonl"))
+    return {"cwds": len(cwds), "project_dirs": present, "transcripts": jsonl}
+
+
+def _bench(args, state, repo, out, shadow, rec, maps):
+    km, sbmod = load_kernel(repo, shadow)
     jd, em = km.jd, km.em
     be = make_backend(sbmod, state, args.dormant_rows, args.all_regs_live)
     km._sdk_backend = be                       # _sdk() returns this without constructing the real one
     if hasattr(km, "_codex_backend"):
         km._codex_backend = False              # "module unavailable": _codex() returns None, loads nothing
-    out["neutralized"], rec = install_guards(km, sbmod, no_git=args.no_git)
+    out["neutralized"] = install_guards(km, sbmod, shadow, rec, no_git=args.no_git)
+    map_hits = install_cwd_map(jd, maps)
+    if maps:
+        out["neutralized"].append("jd._proj_dir (cwd-map)")   # the derivation is wrapped: say so in the report
+    out["cwd_map"] = [{"from": frm, "to": to, "hits": 0} for frm, to in maps]
     bench = out["benchmarks"] = {}
     profiles = out["profiles"] = {}
     iters = max(1, args.iters)
@@ -800,10 +1006,6 @@ def run(args, state, mirror_of, out, private):
         # ONE world: discovery's live sessions, plus every live sid outside its window resolved the way
         # _alive_sessions resolves them for the builders
         sessions = [s for s in km._sessions(now()) if s["sid"] in tmux]
-        if tmux and not sessions:
-            raise BenchError("discovery found no transcript for any of the %d live sessions: a wrong --claude-dir, "
-                             "registry cwds that do not exist on this machine, or a copy older than the discovery "
-                             "window" % len(tmux))
         have = {s["sid"] for s in sessions}
         missing = [sid for sid in tmux if sid not in have]
         backfilled = []
@@ -821,6 +1023,22 @@ def run(args, state, mirror_of, out, private):
                 sessions.append({"sid": fsid, "name": name or fsid[:8], "anchor": anchor, "path": str(path), "mtime": mtime})
                 backfilled.append(sid)
         no_transcript = [sid for sid in missing if sid not in set(backfilled)]
+        searched = transcript_search(jd, state, tmux)
+        for rule, n in zip(out["cwd_map"], map_hits):
+            rule["hits"] = n
+        if tmux and not sessions:
+            # after the backfill, not before it: a copy whose transcripts are all older than the
+            # discovery window is a normal copy, and the backfill is what finds them
+            raise BenchError("discovery found no transcript for any of the %d live sessions: %d in the %d h window, "
+                             "%d more in the %d-day backfill; their %d registry cwd(s) resolve to %d existing project "
+                             "director%s holding %d transcript(s)%s. Causes: a wrong --claude-dir; registry cwds a "
+                             "redaction rewrote while the project directories kept their names (see --cwd-map); a copy "
+                             "whose transcripts are older than the backfill window"
+                             % (len(tmux), len(have), int(getattr(jd, "WINDOW", 0)) // 3600, len(backfilled),
+                                int(getattr(jd, "DEATH_BACKFILL_WINDOW", 0)) // 86400, searched["cwds"],
+                                searched["project_dirs"], "y" if searched["project_dirs"] == 1 else "ies",
+                                searched["transcripts"],
+                                (" (%s)" % ", ".join("cwd-map rule %d hit %d" % (i + 1, n) for i, n in enumerate(map_hits))) if maps else ""))
         for s in sessions:
             try:
                 s["bytes"] = os.path.getsize(s["path"])
@@ -830,7 +1048,7 @@ def run(args, state, mirror_of, out, private):
         picked = sessions[:max(0, args.sessions)]
         out["live_transcripts"] = {"count": len(sessions), "bytes": sum(s["bytes"] for s in sessions),
                                    "in_window": len(have), "backfilled": len(backfilled),
-                                   "no_transcript": [sid[:8] for sid in no_transcript]}
+                                   "no_transcript": [sid[:8] for sid in no_transcript], "searched": searched}
 
         # build_session: cold (every cache), emwarm (kernel caches only), warm — per picked transcript
         out["benched_sessions"] = []
@@ -996,15 +1214,6 @@ def run(args, state, mirror_of, out, private):
     finally:
         unscope()
 
-    out["writes"] = fingerprint_diff(fp_before, fingerprint(state))
-    out["writes"]["atomic_writes"] = sorted(set(rec["atomic_writes"]))
-    out["notifications_suppressed"] = len(rec["notifications"])
-    out["spawn_attempts"] = rec["spawns"]
-    out["git_queries"] = {"answered_as_failure": bool(args.no_git), "calls": git_calls_total(rec)}
-    out["nss_lookups"] = dict(rec["nss"])
-    out["threads_new"] = sorted({t.name for t in threading.enumerate()} - threads_before)
-    return out
-
 
 # ── reporting ───────────────────────────────────────────────────────────────────────────────────
 def fmt_ms(v):
@@ -1030,6 +1239,20 @@ def row_note(name, st):
     return "  ".join(parts)
 
 
+def render_writes(out):
+    """The write census, one block: what changed in the copy (nothing, when every writer is known) and
+    the relative paths whose writes the shadow took. Printed whether or not the run got as far as a
+    benchmark row, so an error run says what it did to the copy too."""
+    w = out.get("writes")
+    if w is None:
+        return ["writes into the state copy: not measured (the run stopped before the census could start)"]
+    L = ["writes into the state copy: %d changed, %d new, %d removed" % (w.get("changed", 0), w.get("new", 0), w.get("removed", 0))]
+    for s in w.get("sample", []):
+        L.append("  " + s)
+    L.append("writes shadowed (landed in the private dir, not the copy): %s" % (", ".join(w.get("shadowed") or []) or "none"))
+    return L
+
+
 def render_text(out, profile):
     L = []
     L.append("perf-bench  repo=%s (%s)  state=%s%s" % (out["repo"], out.get("repo_head") or "no git",
@@ -1042,6 +1265,12 @@ def render_text(out, profile):
                 lt.get("count", 0), lt.get("in_window", 0), lt.get("backfilled", 0), len(lt.get("no_transcript") or []), lt.get("bytes", 0) / 1e6))
     if lt.get("no_transcript"):
         L.append("live sids with no transcript anywhere: " + ", ".join(lt["no_transcript"]))
+    sr = lt.get("searched") or {}
+    if sr:
+        L.append("transcript search: %d registry cwd(s) -> %d existing project director%s holding %d transcript(s)%s"
+                 % (sr.get("cwds", 0), sr.get("project_dirs", 0), "y" if sr.get("project_dirs", 0) == 1 else "ies",
+                    sr.get("transcripts", 0),
+                    ("; cwd-map hits: " + ", ".join("rule %d=%d" % (i + 1, r.get("hits", 0)) for i, r in enumerate(out["cwd_map"]))) if out.get("cwd_map") else ""))
     if out.get("benched_sessions"):
         L.append("transcripts benched: " + ", ".join("%s (%.1f MB, %d events)" % (s["sid8"], s["bytes"] / 1e6, s["events"])
                                                     for s in out["benched_sessions"]))
@@ -1061,10 +1290,7 @@ def render_text(out, profile):
                 slots = ", ".join("%s=%d" % (k, v) for k, v in d["slots"].items()) or "nothing sent"
                 L.append("  %-9s %4d frames  %s" % (app, d["frames"], slots))
     L.append("")
-    w = out.get("writes", {})
-    L.append("writes into the state copy: %d changed, %d new, %d removed" % (w.get("changed", 0), w.get("new", 0), w.get("removed", 0)))
-    for s in w.get("sample", []):
-        L.append("  " + s)
+    L.extend(render_writes(out))
     L.append("neutralized: " + ", ".join(out.get("neutralized", [])))
     g = out.get("git_queries", {})
     L.append("git read-only queries %s: %s" % ("answered as failures (--no-git)" if g.get("answered_as_failure") else "run",
@@ -1152,6 +1378,11 @@ def main(argv=None):
     if not os.path.isdir(state):
         sys.stderr.write("perf-bench: %s is not a directory\n" % state)
         return 2
+    try:
+        parse_cwd_maps(args.cwd_map)                 # an argument error, refused before anything is touched
+    except BenchError as e:
+        sys.stderr.write("perf-bench: %s\n" % e)
+        return 2
     for sub in ("sdk", "names"):
         if not os.path.isdir(os.path.join(state, sub)):
             sys.stderr.write("perf-bench: %s has no %s/ — not a romp state directory?\n" % (state, sub))
@@ -1170,6 +1401,7 @@ def main(argv=None):
     out = {"schema": SCHEMA, "tool": "perf-bench", "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "python": sys.version.split()[0], "iters": args.iters, "sessions_requested": args.sessions}
     rc = 0
+    unexpected = None
     try:
         try:
             run(args, state, mirror_of, out, private)
@@ -1178,14 +1410,26 @@ def main(argv=None):
             # revision that trips a guard late in the run still yields its earlier numbers
             out["error"] = str(e)
             rc = 1
+        except BaseException as e:
+            # a candidate kernel that raises at import or inside a builder, or a Ctrl-C: the census
+            # run() took in its finally is the answer to "what did this do to the copy", so it prints
+            # and the JSON is written before the exception continues out of main() with its traceback
+            out["error"] = "%s: %s" % (type(e).__name__, e)
+            rc = 1
+            unexpected = e
         if out.get("benchmarks"):
             print(render_text(out, args.profile))
+        else:
+            print("\n".join(render_writes(out)))        # the run stopped before its first row: the census still prints
         if out.get("error"):
             sys.stderr.write("perf-bench: %s\n" % out["error"])
         if args.json:
             with open(args.json, "w") as f:
-                json.dump(out, f, indent=1, sort_keys=True)
+                json.dump(out, f, indent=1, sort_keys=True, default=repr)   # repr: a half-built row must not mask the error
             print("\njson written to %s%s" % (args.json, " (partial: the run stopped on an error)" if rc else ""))
+        sys.stdout.flush()
+        if unexpected is not None:
+            raise unexpected
     finally:
         shutil.rmtree(private, ignore_errors=True)
         if mirror_root:

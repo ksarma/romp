@@ -3257,6 +3257,9 @@ function doLogSend(ctx) {
     fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
     const fields = { sid: a.sid };
     if (typeof a.sessionName === 'string') fields.sessionName = a.sessionName;
+    // the person's own words from the Send confirm's text box (the user's ruling, 2026-09-09), present
+    // only when something was typed: the kernel omits the key for an empty note
+    if (typeof a.note === 'string') fields.note = a.note;
     fields.comments = a.comments.map((c) => ({ id: c.id, desc: c.desc, body: c.body }));
     fields.accepted = a.accepted;
     fields.rejected = a.rejected;

@@ -264,6 +264,130 @@ class FileNamedByATodo(_StoreSandbox):
         self.assertEqual(got[FSID][0]["file"], self.fp)
 
 
+LSID = "7e7e7e7e-1111-4222-8333-944444444444"
+LINK = "https://example.invalid/notes-api/pull/398"
+
+
+class LinkCarriedByATodo(_StoreSandbox):
+    """`link` (the user 2026-09-08, whose todo titles named pull requests by URL): a user todo may CARRY the web
+    address it is about, an http or https URL, checked at filing (_user_todo_link) and carried by every
+    serialization of the todo the way `file` is (the store, the open rows every surface ships, the lifecycle log
+    and its rebuild, the resume hand-back). Unlike a `file` that does not resolve, a value that is not such an
+    address is REFUSED and nothing is filed: there is no resolution step that could mend it, and the agent hears
+    the reason in the reply it would have read the id from."""
+
+    def test_a_web_address_is_stored_and_rides_the_open_rows(self):
+        tid = km._add_user_todo(LSID, "Need a review of the pull request", link=LINK)
+        rec = km._user_todos()[LSID][0]
+        self.assertEqual(rec["link"], LINK)
+        rows = km._open_user_todos(LSID)
+        self.assertEqual((rows[0]["id"], rows[0]["link"]), (tid, LINK), "the rows every surface ships carry it")
+        self.assertNotIn("file", rows[0], "a link is not a file")
+
+    def test_http_and_https_both_pass_and_the_address_is_stripped(self):
+        self.assertEqual(km._user_todo_link("  " + LINK + " \n"), (LINK, None), "stripped of surrounding whitespace")
+        self.assertEqual(km._user_todo_link("http://example.invalid/x?y=1#z"), ("http://example.invalid/x?y=1#z", None))
+        self.assertEqual(km._user_todo_link("HTTPS://Example.invalid/X"), ("HTTPS://Example.invalid/X", None), "the scheme case-insensitively; the rest as typed")
+        # the kernel does not fetch it: a mistyped host is stored as typed, like a mistyped absolute file
+        self.assertEqual(km._user_todo_link("https://exmaple.invalid/typo"), ("https://exmaple.invalid/typo", None))
+
+    def test_a_todo_without_a_link_stores_no_link_key(self):
+        km._add_user_todo(LSID, "Need the staging port")
+        km._add_user_todo(LSID, "Need the fixture format pick", "either is fine", link="   ")
+        km._add_user_todo(LSID, "Need the port", link=None)
+        for rec in km._user_todos()[LSID] + km._open_user_todos(LSID):
+            self.assertNotIn("link", rec, "a link-less todo keeps the shape it had")
+        self.assertEqual(km._user_todo_link(None), (None, None))
+        self.assertEqual(km._user_todo_link(""), (None, None))
+
+    def test_a_value_that_is_not_a_web_address_is_refused_and_nothing_is_filed(self):
+        bad = ["ftp://example.invalid/x", "example.invalid/x", "https://", "https:///nohost", "mailto:someone@example.invalid",
+               "javascript:alert(1)", "file:///tmp/notes-api/a.md", "https://example.invalid/a b", "https://example.invalid/a\tb",
+               "https://example.invalid/a\x00b", "https://example.invalid/" + "x" * km._TODO_LINK_MAX, ["https://example.invalid/x"],
+               {"href": "https://example.invalid/x"}, 7, True]
+        for value in bad:
+            with self.subTest(link=value):
+                stored, err = km._user_todo_link(value)
+                self.assertIsNone(stored)
+                self.assertIsInstance(err, str)
+                self.assertIn("http or https address", err, "the reply says what would have been taken")
+                with self.assertRaises(ValueError) as cm:
+                    km._add_user_todo(LSID, "Need a review of the pull request", link=value)
+                self.assertEqual(str(cm.exception), err, "the filer raises the same words the route answers")
+        self.assertEqual(km._user_todos().get(LSID), None, "nothing filed: no row, no store")
+        self.assertFalse((jd.STATE / km.USER_TODOS_LOG_FILE).exists(), "and no lifecycle line")
+
+    def test_each_refusal_names_its_reason(self):
+        self.assertIn("is not a string", km._user_todo_link(["x"])[1])
+        self.assertIn("whitespace or a control character", km._user_todo_link("https://example.invalid/a b")[1])
+        self.assertIn("\\x20", km._user_todo_link("https://example.invalid/a b")[1],
+                      "the space is spelled out too: one predicate decides the refusal and the spelling (the round-3 review)")
+        self.assertIn("\\0", km._user_todo_link("https://example.invalid/a\x00b")[1], "a NUL is spelled out: in a reply it is invisible")
+        for value, ch, esc in (("https://example.invalid/a\x1bb", "\x1b", "\\x1b"), ("https://example.invalid/\x9bx", "\x9b", "\\x9b"),
+                               ("https://example.invalid/a\x7fb", "\x7f", "\\x7f"),
+                               # the format characters and separators the C0/C1 gate let through, spelled \uNNNN (the round-3 review)
+                               ("https://example.invalid/a\u200bb", "\u200b", "\\u200b"), ("\ufeffhttps://example.invalid/x", "\ufeff", "\\ufeff"),
+                               ("https://example.invalid/a\u2028b", "\u2028", "\\u2028"), ("https://example.invalid/a\u2060b", "\u2060", "\\u2060")):
+            err = km._user_todo_link(value)[1]
+            self.assertIn("whitespace or a control character", err, "a C1 control or a format character is refused with the controls (the 2026-09-09 review)")
+            self.assertIn(esc, err, "spelled out, as the NUL is")
+            self.assertNotIn(ch, err, "the character itself never rides the reason")
+        self.assertIsNone(km._user_todo_link("https://example.invalid/caf\u00e9")[1], "a printable character outside ASCII passes")
+        long = "https://example.invalid/" + "x" * km._TODO_LINK_MAX
+        err = km._user_todo_link(long)[1]
+        self.assertIn("longer than %d characters" % km._TODO_LINK_MAX, err)
+        self.assertNotIn(long, err, "a spelling that long is shown by its head and its length, never whole")
+        self.assertIn("(%d characters)" % len(long), err)
+        self.assertIn("must start with http:// or https:// and name a host", km._user_todo_link("ftp://example.invalid/x")[1])
+        self.assertIn("must start with http:// or https:// and name a host", km._user_todo_link("https://")[1])
+
+    def test_the_lifecycle_log_carries_the_link_and_the_rebuild_restores_it(self):
+        tid = km._add_user_todo(LSID, "Need a review of the pull request", link=LINK)
+        km._add_user_todo(LSID, "Need the staging port")
+        km._resolve_user_todo(LSID, tid, "answered", reply="Approved")
+        lines = (jd.STATE / km.USER_TODOS_LOG_FILE).read_text().splitlines()
+        recs = [json.loads(ln) for ln in lines]
+        self.assertEqual([r.get("link") for r in recs], [LINK, None, LINK],
+                         "every line of a todo that carries a link carries it; a link-less line does not")
+        self.assertNotIn("link", recs[1])
+        rebuilt = km._user_todos_from_log(lines)
+        self.assertEqual(rebuilt[LSID][0]["link"], LINK)
+        self.assertEqual(rebuilt[LSID][0]["resolved"]["kind"], "answered")
+        self.assertNotIn("link", rebuilt[LSID][1])
+        # a resolution whose filing was rotated away still knows its link
+        got = km._user_todos_from_log([{"t": 9, "sid": LSID, "id": "ut-9", "kind": "withdrawn",
+                                        "text": "Need the port", "detail": "", "link": LINK}])
+        self.assertEqual(got[LSID][0]["link"], LINK)
+
+    def test_the_lost_line_carries_the_link(self):
+        tid = km._add_user_todo(LSID, "Need a review of the pull request", link=LINK)
+        km._resolve_user_todo(LSID, tid, "answered", reply="Approved")
+        self.assertTrue(km._reopen_user_todo(LSID, tid))
+        lines = [json.loads(ln) for ln in (jd.STATE / km.USER_TODOS_LOG_FILE).read_text().splitlines()]
+        self.assertEqual(lines[-1]["kind"], "lost")
+        self.assertEqual(lines[-1]["link"], LINK)
+        self.assertEqual(km._open_user_todos(LSID)[0]["link"], LINK, "open again, the link with it")
+
+    def test_the_resume_list_shows_the_address_after_the_path(self):
+        root = os.path.join(self.td.name, "notes-api")
+        os.makedirs(os.path.join(root, "docs"))
+        fp = os.path.join(root, "docs", "report.md")
+        with mock.patch.object(km, "_cwd_of", lambda sid: root):
+            km._add_user_todo(LSID, "Need a look at the findings report", file=fp, link=LINK)
+            km._add_user_todo(LSID, "Need a review of the pull request", link=LINK)
+            km._add_user_todo(LSID, "Need a look at the other note", file=fp)
+        block = km._user_todo_context_block(LSID)
+        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: "
+                                + re.escape(fp) + "; link: " + re.escape(LINK) + "\n")
+        self.assertRegex(block, r"- Need a review of the pull request \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); link: " + re.escape(LINK) + "\n")
+        self.assertRegex(block, r"- Need a look at the other note \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\); file: " + re.escape(fp) + "\n",
+                         "a todo with a file alone reads the same way")
+        self.assertEqual(len(re.findall(r"\); (?:file|link): ", block)), 3, "one tail per row, each after the row's parenthesis")
+        for ln in block.splitlines():
+            if ln.startswith("- "):
+                self.assertNotIn("\u2014", ln, "a row's tail follows a semicolon, not an em dash (the round-3 review)")
+
+
 class ResolutionStamps(_StoreSandbox):
     """Resolution STAMPS rather than deletes — the record carries its own history."""
 
@@ -613,6 +737,110 @@ class Routes(_StoreSandbox):
         self.assertNotIn("file", seen[0][1])
         self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a35"})
 
+    # ── `link` (the user 2026-09-08): checked before any write, echoed as stored, refused as a 400 ──
+
+    def test_register_takes_a_link_and_echoes_it(self):
+        code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review of the pull request",
+                                             "link": "  " + LINK + " "})
+        self.assertEqual(code, 200)
+        self.assertEqual(set(res), {"ok", "todoId", "link"})
+        self.assertEqual(res["link"], LINK, "echoed as the record keeps it: stripped")
+        self.assertEqual(km._user_todos()[FSID][0]["link"], LINK)
+        self.assertEqual(len(self.pushed_soon), 1)
+        # with a file beside it: both echoed, each as stored
+        root = os.path.join(self.td.name, "notes-api"); os.makedirs(root)
+        fp = os.path.join(root, "report.md")
+        with mock.patch.object(km, "_cwd_of", lambda sid: root if sid == FSID else ""):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look at the report and the pull request",
+                                                 "file": "report.md", "link": LINK})
+        self.assertEqual(code, 200)
+        self.assertEqual((res["file"], res["link"]), (fp, LINK))
+        # absent, null and blank all mean: no link, and the reply carries none
+        for body in ({"id": FSID, "text": "Need the port"}, {"id": FSID, "text": "Need the port", "link": None},
+                     {"id": FSID, "text": "Need the port", "link": "  "}):
+            code, res = self._post("/usertodo", body)
+            self.assertEqual(code, 200)
+            self.assertNotIn("link", res)
+        self.assertTrue(all("link" not in t for t in km._user_todos()[FSID][2:]))
+
+    def test_register_refuses_a_link_that_is_not_a_web_address_with_400_and_files_nothing(self):
+        for value in ("ftp://example.invalid/x", "example.invalid/x", "https://example.invalid/a b", ["https://example.invalid/x"], 7):
+            with self.subTest(link=value):
+                code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review of the pull request", "link": value})
+                self.assertEqual(code, 400)
+                self.assertFalse(res["ok"])
+                self.assertIn("http or https address", res["error"], "the reason, in the same words the filer raises")
+                self.assertEqual(res["error"], km._user_todo_link(value)[1])
+        self.assertEqual(km._user_todos(), {}, "nothing filed")
+        self.assertEqual(self.pushed_soon, [], "and nothing to push")
+        # a bad link is refused before the file is even looked at: no half-filed todo with a file and no link
+        code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look", "file": "/tmp/notes-api/a.md", "link": "ftp://x/y"})
+        self.assertEqual(code, 400)
+        self.assertEqual(km._user_todos(), {})
+
+    def test_the_remote_forward_passes_the_link_and_echoes_the_remotes_back(self):
+        seen = []
+        remote = {"host": "TESTHOST", "local_port": 1, "token": "t"}
+
+        def fwd(r, path, body):
+            seen.append((path, body))
+            return {"ok": True, "todoId": "ut-9f2c1a34", "link": body.get("link")}
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), mock.patch.object(km, "_remote_forward", fwd):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review of the pull request", "link": " " + LINK})
+        self.assertEqual(code, 200)
+        self.assertEqual(seen, [("/usertodo", {"id": FSID, "text": "Need a review of the pull request", "detail": "", "link": LINK})],
+                         "the link crosses stripped and checked; the remote checks it again")
+        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a34", "link": LINK})
+        self.assertEqual(km._user_todos(), {}, "nothing stored here: the remote owns that session's ledger")
+        # a bad link never reaches the tunnel
+        seen.clear()
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), mock.patch.object(km, "_remote_forward", fwd):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review", "link": "ftp://example.invalid/x"})
+        self.assertEqual(code, 400)
+        self.assertEqual(seen, [])
+
+    def test_a_remote_kernel_that_echoes_no_link_is_named_in_the_reply_under_its_own_key_and_on_stderr(self):
+        # version skew, the file's own rule: a kernel that predates a todo's link files the todo without it and
+        # echoes none; the reply says so under `linkWarning` (its own key: the tool labels `warning` as the file's)
+        # and stderr keeps the record (the 2026-09-09 review: before, the reply was plain success)
+        remote = {"host": "TESTHOST", "local_port": 1, "token": "t"}
+        err = io.StringIO()
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
+             mock.patch.object(km, "_remote_forward", lambda r, p, b: {"ok": True, "todoId": "ut-9f2c1a34"}), \
+             contextlib.redirect_stderr(err):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review of the pull request", "link": LINK})
+        self.assertEqual(code, 200)
+        self.assertEqual((res["ok"], res["todoId"]), (True, "ut-9f2c1a34"))
+        self.assertNotIn("link", res, "no link echoed: the signal the tool reads")
+        self.assertNotIn("warning", res, "the file's key is the file's alone")
+        self.assertIn("the link " + LINK + " was not recorded", res["linkWarning"])
+        self.assertIn("The session manager on TESTHOST runs an older version that does not keep a todo's link", res["linkWarning"])
+        self.assertIn("an update and a restart there fix that", res["linkWarning"], "the remedy for the machine")
+        self.assertIn("address in its detail", res["linkWarning"],
+                      "and for this todo: the detail links too, and holds an address the 300-character text may not (the round-3 review)")
+        for word in ("romp", "kernel", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check"):
+            self.assertNotIn(word, res["linkWarning"].lower(),
+                             "%r: the tool relays this sentence to the agent verbatim (test_injected_voice.py's veil), so the kernel "
+                             "is the session manager here, as in the tool's own skew sentence" % word)
+        self.assertIn("link not recorded on TESTHOST", err.getvalue())
+        self.assertIn("predates a todo's link", err.getvalue())
+        # a file and a link both lost to the same older kernel: each named under its own key
+        err = io.StringIO()
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
+             mock.patch.object(km, "_remote_forward", lambda r, p, b: {"ok": True, "todoId": "ut-9f2c1a34"}), \
+             contextlib.redirect_stderr(err):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look", "file": "/tmp/notes-api/a.md", "link": LINK})
+        self.assertEqual(code, 200)
+        self.assertIn("the file path /tmp/notes-api/a.md was not recorded", res["warning"])
+        self.assertNotIn(LINK, res["warning"], "the file's sentence names the file alone")
+        self.assertIn("the link " + LINK + " was not recorded", res["linkWarning"])
+        self.assertEqual(err.getvalue().count("not recorded on TESTHOST"), 2, "both losses on record")
+        # a remote that echoes the link: no warning of either kind
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), \
+             mock.patch.object(km, "_remote_forward", lambda r, p, b: {"ok": True, "todoId": "ut-9f2c1a34", "link": b.get("link")}):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a review", "link": LINK})
+        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a34", "link": LINK})
+
 
 # A PRIVATE synthetic sid for the account tests below (the goal-store fixture rule, generalized:
 # rows minted under the shared placeholder can be reached by another module's fixtures).
@@ -847,7 +1075,7 @@ class ContextBlock(_StoreSandbox):
         day = km.time.strftime("%Y-%m-%d", km.time.localtime(NOW))
         bullets = [ln for ln in block.splitlines() if ln.startswith("- ")]
         self.assertEqual(bullets, [
-            "- Need a look at the findings report (ut-11111111, opened %s) — file: /srv/notes-api/docs/report.md" % day,
+            "- Need a look at the findings report (ut-11111111, opened %s); file: /srv/notes-api/docs/report.md" % day,
             "- Need the staging port (ut-22222222, opened %s)" % day])
 
     def test_a_marker_shaped_file_path_is_neutralized(self):

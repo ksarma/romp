@@ -13,14 +13,16 @@ The fix, both faces:
     echoes the client's shipId, so a duplicate ack from a re-ship race retires exactly the chip
     that asked, and a stray twin is DROPPED instead of attached to the active tab. Since the fold
     that brought the reload core (T265: a kernel-served page reloads itself when the kernel serving
-    it restarts), the page also publishes a hold on that reload while any ship awaits its ack
-    (ui/webview/reload-hold.ts, window.__rompReloadHold; the core's shipsHold defers and re-checks),
-    so the heal runs first and the reload follows it. Without the hold the reload landed about 1.7 s
-    after the relaunch and took the payload with it (the fork's 2026-09-08 fold). The notices raised
-    when the LAST ship retires (a nack: the file was not saved, the held message not sent; the ack of
-    a held send on another tab) would die with that reload, which follows within the core's 500 ms
-    re-check, so the page snapshots the toasts on screen into the persisted state on the pre-reload
-    hook and the fresh page shows them again once (render.ts persistNoticesForReload, reload-hold.ts).
+    it restarts), the chat pane also holds that reload while any ship awaits its ack or a send is
+    held behind the ship gate (T272: render.ts wraps the shim's window.__rompPaneBusy and answers
+    'upload' / 'held-send'; the core asks it before firing), and tells the core when the last ack
+    lands or the gate clears (endReloadHoldIfIdle, __rompReload.ended()), so the heal runs first and
+    the reload follows it on that event. Without the hold the reload landed about 1.7 s after the
+    relaunch and took the payload with it. The notices raised when the LAST ship retires (a nack: the
+    file was not saved, the held message not sent; the ack of a held send on another tab) would die
+    with that reload, which follows in the next task, so the page snapshots the toasts on screen into
+    the persisted state on the core's pre-reload hook and the fresh page shows them again once
+    (render.ts persistNoticesForReload, reload-hold.ts liveNotices / takePendingNotices).
   * reload (the VS Code pipe reloads its webview on kernel reconnect): the payload dies with
     the page, so the ship NAMES persist beside the drafts and the next load says LOUDLY what
     was lost — never a silent vanish.
@@ -84,6 +86,26 @@ class SourcePins(unittest.TestCase):
         self.assertIn('ack["shipId"] = str(msg["shipId"])', KERNEL_SRC)
         self.assertIn("if (ackShip && !shipOwner(ackShip)) return;", RENDER)
 
+    def test_the_pane_holds_the_dashboards_reload_while_a_ship_or_a_held_send_is_in_flight(self):
+        # T272 (2026-09-08): the dashboard reloads itself on a kernel restart (T265), and a reload costs an upload in
+        # flight its bytes and a held send its release — the very wedge the reconnect re-ship heals in the same page.
+        # So the chat pane answers the reload core's busy ask while either is pending; the shim's own reasons first.
+        self.assertIn('(window as any).__rompPaneBusy = (): string => {', RENDER)
+        self.assertIn('if (pendingShips.size) return "upload";', RENDER)
+        self.assertIn('if (shipGateSid) return "held-send";', RENDER)
+        self.assertIn('const shimBusy = (window as any).__rompPaneBusy as (() => string) | undefined;', RENDER)
+
+    def test_the_chat_page_loads_the_shim_before_the_bundle_so_the_busy_report_wraps_the_shims(self):
+        # the wrapper above reads the shim's window.__rompPaneBusy first and replaces it; that only holds because the
+        # chat page emits the shim inline BEFORE <script src=/dist/render.js> — the other order would let the shim's
+        # own assignment overwrite the wrapper and drop the upload and held-send reasons with every pin above green
+        src = open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read()
+        page = src[src.index("def _chat_page():"):src.index("\ndef ", src.index("def _chat_page():") + 10)]
+        self.assertLess(page.index("<script>%s</script>"), page.index("/dist/render.js"), "the shim's script precedes the bundle in the chat page")
+        self.assertIn('_shim("chat", v', page)   # this fork's call carries caps=READY_GATE_CAP (the ready gate); the shim is the same
+        self.assertIn('window.__rompPaneBusy=function(){return (everConnected&&queue.length>queuedDiag)?"sends":"";};', src,
+                      "the shim defines the hook the pane wraps")
+
     def test_a_reload_loss_is_loud_never_a_silent_vanish(self):
         self.assertIn("shipsInFlight: [...pendingShips.values()].flat().map((p) => p.name)", RENDER)
         self.assertIn("still uploading when this page reloaded, so it was NOT attached", RENDER)
@@ -94,7 +116,7 @@ class SourcePins(unittest.TestCase):
         self.assertIn("function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }", RENDER)
         self.assertIn("(window as any).__rompPersistForReload = persistForReload;", RENDER)
         self.assertIn('window.addEventListener("pagehide", persistScrollForReload);', RENDER)
-        self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts"))', RENDER)
+        self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts")).concat(releasedNotices((window as any).__rompReload))', RENDER)
         self.assertIn("const taken = takePendingNotices(st);", RENDER)
         self.assertIn('if (st && typeof st === "object" && "pendingNotices" in st) vscodeApi?.setState?.(taken.rest);', RENDER)
         self.assertIn("for (const text of taken.notices) warnToast(text);", RENDER)
@@ -145,63 +167,64 @@ out.wedge.gateOffered = await waitBtn.count();
 if (out.wedge.gateOffered) await waitBtn.click();
 out.wedge.inputHeld = await page.inputValue("#composer-input");
 out.wedge.chipStillPendingHeld = await page.locator(".composer-file-pending").count();
-// ---- the order pin (the fork's 2026-09-08 fold, T215 meets T265): the page heals, THEN the reload core reloads it.
-// A marker names this document, and a latch inside it records the heal in sessionStorage (which survives the
-// reload) the moment the strip and the composer show it, so the driver can read what the old page saw after that
-// page is gone. The MutationObserver runs as a microtask, ahead of any navigation; the interval is the belt.
-const bootBefore = await page.evaluate((msg) => {
-  window.__probe = 1;
-  sessionStorage.removeItem("probe:healedHere");
-  const look = () => {
-    if (sessionStorage.getItem("probe:healedHere")) return;
-    const input = document.getElementById("composer-input");
-    const pending = document.querySelectorAll(".composer-file-pending").length;
-    if (pending === 0 && input && input.value === "")
-      sessionStorage.setItem("probe:healedHere", JSON.stringify({
-        hold: window.__rompReloadHold, waiting: window.__rompReload ? window.__rompReload.waiting : null,
-        contentHasMsg: (document.getElementById("content")?.textContent || "").includes(msg) }));
-  };
-  new MutationObserver(look).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
-  setInterval(look, 20);
-  return window.__rompReload ? window.__rompReload.boot : null;
-}, cfg.msg);
+// ---- the order pin (T215 meets T265, T272): the page heals, THEN the reload core reloads it. This page's boot id is
+// kept so the fresh page's can be compared (the marker that names this document is set with the request below).
+const bootBefore = await page.evaluate(() => window.__rompReload ? window.__rompReload.boot : null);
 out.wedge.bootBefore = bootBefore;
-out.wedge.holdWhileShipping = await page.evaluate(() => window.__rompReloadHold);
+// the pane's hold while the ship awaits its ack: render.ts wraps the shim's window.__rompPaneBusy and answers 'upload'
+out.wedge.holdWhileShipping = await page.evaluate(() => window.__rompPaneBusy ? window.__rompPaneBusy() : null);
 // ---- the restart: the old socket dies with the ack still owed; a fresh kernel takes the port ----
 process.kill(cfg.kernelPid, "SIGKILL");
 const k2 = spawn(cfg.relaunch.cmd, [], { env: cfg.relaunch.env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
 k2.unref();   // the kernel outlives this driver — an un-unref'd child held node open past RESULT
 fs.writeSync(1, "KPID:" + k2.pid + "\n");
-// a poll that survives the reload: an evaluate that lands while the document is being replaced throws, and that
-// is not an answer, so it asks again. Returns the predicate's (truthy) value, or false at the deadline.
-const settle = async (fn, arg, ms) => {
-  const t0 = Date.now();
-  for (;;) {
-    let v = false;
-    try { v = await page.evaluate(fn, arg); } catch (e) { /* mid-navigation */ }
-    if (v) return v;
-    if (Date.now() - t0 > ms) return false;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-};
+// T272: the restart's reload request normally rides the next keepalive (its cadence, not this test's); it is raised
+// HERE, while the ship is pending and the send held, so the hold is exercised on every run: on a pane without the
+// busy report the page reloads at once and the wait below dies (reloadedEarly), which is the failure this pins. The
+// probe marks THIS page: its disappearance is the reload firing on its own once the pane is idle again.
+await page.evaluate(() => { window.__probe = 1; const R = window.__rompReload; if (R) R.request("restart", "forced-by-the-test"); }).catch(() => {});
 // today (pre-fix) this wait dies: the chip pulses forever and the held send never fires.
-// with the fix: romp:wsup re-ships, the ack retires the chip, and fireHeldSend sends the message. The latch
-// writes only while the marker page lives, so a record means THAT page healed, before any reload.
-const rec = await settle(() => JSON.parse(sessionStorage.getItem("probe:healedHere") || "null"), null, 45000);
-out.wedge.healedAfterRestart = !!rec;
-out.wedge.healRecord = rec || null;
-// ...then the reload core's turn (T265): the marker is gone and the page carries the relaunched kernel's boot id
-out.wedge.reloadedAfterHeal = await settle(
-  (boot) => window.__probe !== 1 && !!window.__rompReload && window.__rompReload.boot !== boot, bootBefore, 30000);
-await page.waitForSelector("#composer-input", { timeout: 20000 }).catch(() => {});
+// with the fix: romp:wsup re-ships, the ack retires the chip, and fireHeldSend sends the message.
+// T272: the dashboard reloads itself on the restart (a new boot id, T265) — but only once this pane is no longer
+// busy: the pending ship and the held send hold the reload (render.ts __rompPaneBusy) until the ack lands and the
+// send fires, all on THIS page. A reload before that would take the upload's bytes with it (the loss toast) and
+// leave the send unfired: an early navigation here is the failure this test exists for, so it is recorded, never
+// swallowed.
+let reloadedEarly = false;
+// the heal is measured INSIDE the wait, on the page that healed: the reload the restart owes is let through the
+// instant the pane is idle again (the last ack and the held send's release tell the core, endReloadHoldIfIdle), so a
+// measurement taken a poll later may find a fresh page. The predicate also records that the reload was owed and
+// WAITING while the pane was busy (window.__rompReload.owed() && !fired() with the chip still pending) — the held
+// reload this fix is for.
+const heal = await page.waitForFunction((msg) => {
+  const R = window.__rompReload;
+  const input = document.getElementById("composer-input");
+  const pending = document.querySelectorAll(".composer-file-pending").length;
+  const content = document.getElementById("content");
+  if (R && R.owed() && !R.fired() && pending > 0) window.__t272HeldWhileBusy = String(R.waiting || "busy");
+  const ok = pending === 0 && !!input && input.value === "" && !!content && content.textContent.includes(msg);
+  return ok ? JSON.stringify({ pending, input: input.value, hasMsg: true, held: window.__t272HeldWhileBusy || null,
+                               owedNow: !!(R && R.owed()), firedNow: !!(R && R.fired()) }) : false;
+}, cfg.msg, { timeout: 45000 }).then(async (h) => JSON.parse(await h.jsonValue()))
+  .catch((e) => { if (/context was destroyed|navigation/i.test(String(e))) reloadedEarly = true; return null; });
+out.wedge.healedAfterRestart = !!heal;
+out.wedge.reloadedEarly = reloadedEarly;
+out.wedge.pendingAfterRestart = heal ? heal.pending : -1;
+out.wedge.inputAfterRestart = heal ? heal.input : null;
+out.wedge.contentHasMsg = heal ? heal.hasMsg : false;
+out.wedge.reloadHeldWhileBusy = heal ? heal.held : null;
+out.wedge.reloadOwedAfterHeal = heal ? heal.owedNow : null;
+// now the pane is idle: the owed reload fires ON ITS OWN (the ending event, never a nudge from this driver) — wait for
+// the page to go, then follow it
+out.wedge.reloadFiredAfterHeal = await page.waitForFunction(() => window.__probe !== 1, null, { timeout: 20000 }).then(() => true).catch(() => false);
+await page.waitForLoadState("load").catch(() => {});
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+await page.waitForTimeout(500);
+// the fresh page carries the relaunched kernel's boot id, and every ship settled BEFORE the reload, so the reload has
+// no loss to announce (the fork's two checks on the reloaded page; the loss toast is read here, on the core's own reload,
+// not on the regression leg's page.reload() below, whose record this load would already have consumed)
 out.wedge.bootAfter = await page.evaluate(() => window.__rompReload ? window.__rompReload.boot : null).catch(() => null);
-out.wedge.pendingAfterRestart = await page.locator(".composer-file-pending").count();
-out.wedge.inputAfterRestart = await page.inputValue("#composer-input");
-// the fresh page draws the transcript from the kernel, which holds the send the ack released
-out.wedge.contentHasMsg = await settle(
-  (msg) => (document.getElementById("content")?.textContent || "").includes(msg), cfg.msg, 15000);
-// every ship settled BEFORE the reload, so the reload has no loss to announce
 out.wedge.lossToast = await page.evaluate(
   () => (document.getElementById("warn-toasts")?.textContent || "").includes("still uploading"));
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-wedge.png" });
@@ -373,19 +396,23 @@ class ServedWedge(_ShipLab):
                          "the held send keeps the composer text until the upload settles: %r" % w)
         self.assertEqual(w["chipStillPendingHeld"], 1, "the chip is honestly pending while held: %r" % w)
         # the heart of T215: after the restart the reconnect re-ships, the ack lands, the send fires
+        self.assertFalse(w.get("reloadedEarly"), "the dashboard's own reload on the restart must WAIT for the pending ship and the "
+                                                  "held send (T272): a reload first would lose the upload's bytes and leave the send unfired: %r" % w)
         self.assertTrue(w["healedAfterRestart"],
                         "the reconnect must re-ship and release the held send — pre-fix this pulses "
                         "forever and the send never fires: %r (kernel log tail: %s)"
                         % (w, Path(self.klog).read_text()[-500:]))
+        self.assertIn(w.get("reloadHeldWhileBusy"), ("upload", "held-send", "sends"),
+                      "the restart's reload was owed and WAITING on this pane while the ship and the held send were in flight: %r" % w)
+        self.assertTrue(w.get("reloadFiredAfterHeal"), "…and fired on its own once the ack landed and the send left (the ending event, "
+                                                       "render.ts endReloadHoldIfIdle) — never waiting for the user's next click: %r" % w)
         self.assertEqual(w["pendingAfterRestart"], 0, "no chip may pulse over an upload that settled: %r" % w)
         self.assertEqual(w["inputAfterRestart"], "", "the held send must have fired: %r" % w)
         self.assertTrue(w["contentHasMsg"], "the sent message must be in the transcript view: %r" % w)
-        # ...and only THEN the reload core's reload (the fork's 2026-09-08 fold, T215 meets T265): the page held
-        # the reload while the ship awaited its ack, the core deferred, and the fresh page has no loss to announce
-        self.assertTrue(w["holdWhileShipping"],
-                        "the page publishes window.__rompReloadHold while a ship awaits its ack: %r" % w)
-        self.assertTrue(w["reloadedAfterHeal"],
-                        "the reload core reloads once the ships settled (a new boot id, the marker gone): %r" % w)
+        # ...and only THEN the reload core's reload (T215 meets T265, T272): the pane held the reload while the ship
+        # awaited its ack, the core deferred, and the fresh page has no loss to announce
+        self.assertEqual(w["holdWhileShipping"], "upload",
+                         "the pane answers the core's busy ask with 'upload' while a ship awaits its ack (render.ts __rompPaneBusy): %r" % w)
         self.assertNotEqual(w["bootAfter"], w["bootBefore"], "the fresh page carries the relaunched kernel's boot id: %r" % w)
         self.assertFalse(w["lossToast"], "the reload came after the ack, so it has no loss to announce: %r" % w)
         # regression: the restarted kernel serves a NORMAL ship+send exactly as before
@@ -483,7 +510,7 @@ const bootBefore = await page.evaluate(() => {
     if (sessionStorage.getItem("probe:nackSeen")) return;
     const toasts = document.getElementById("warn-toasts")?.textContent || "";
     if (toasts.includes("couldn't be saved"))
-      sessionStorage.setItem("probe:nackSeen", JSON.stringify({ text: toasts, hold: window.__rompReloadHold,
+      sessionStorage.setItem("probe:nackSeen", JSON.stringify({ text: toasts, hold: window.__rompPaneBusy ? window.__rompPaneBusy() : null,
         waiting: window.__rompReload ? window.__rompReload.waiting : null }));
   };
   new MutationObserver(look).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
@@ -545,7 +572,8 @@ process.exit(0);
 
 class NackNoticeSurvivesReload(_ShipLab):
     """The fork's 2026-09-08 fold, review F2, executed: the reload core's restart reload follows the LAST pending
-    ship's retirement within its 500 ms re-check, and the nack toast raised at that same moment (the file was not
+    ship's retirement on the pane's ending event (endReloadHoldIfIdle, __rompReload.ended(): the next task), and the
+    nack toast raised at that same moment (the file was not
     saved, the held message NOT sent) is DOM only: it died with the page, and the fresh page's loss toast had nothing
     to say (shipsInFlight was already empty), so a failed attachment and an unsent message went unannounced. The page
     now snapshots the toasts on screen into the persisted state on the pre-reload hook and the fresh page shows them

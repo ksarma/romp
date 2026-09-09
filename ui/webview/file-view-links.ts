@@ -43,6 +43,7 @@ import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_
 import { headingSlug } from "./md-links";   // the slug the viewer mints heading ids from (`md-` + slug), so a section link finds its heading
 import { userContentTarget } from "./md-sanitize";   // an author's id or name under the sanitizer's user-content- prefix, or bare (the chat's delegate reads the same lookup)
 import { resolveWikilink } from "./md-config";   // the stamp that lets a `[[Note]]` render as an anchor in a file document (Slice 4)
+import { urlSegments, urlRanges, linkifyUrls as markUrls } from "./url-links";   // the URL pass, shared with the todo linkers (url-links.ts)
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
 export const URL_LINK_CLASS = "fv-url";
@@ -72,51 +73,10 @@ export const noSectionTitle = (id: string): string => "No heading or anchor name
  *  paragraph, a list item, a cell, a heading, a fenced block, a quote). Text under none of these is a unit of its own. */
 export const LINE_UNITS = ".fv-cl, .cl, p, li, td, th, dt, dd, h1, h2, h3, h4, h5, h6, pre, blockquote, caption, figcaption, summary";
 
-// An http(s) URL in running text: the scheme, then everything up to whitespace or a character no URL carries
-// unescaped in prose or code (a quote, an angle bracket, a backtick).
-const URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
-// Sentence punctuation a URL is followed by, not part of: trimmed from the end, then a closing bracket that
-// has no opening partner inside the URL (`(see https://x.y/z)` ends before the paren; a Wikipedia-style
-// `https://x.y/Foo_(bar)` keeps its own).
-const URL_TRAIL = ".,;:!?'\"";
-const PAIRS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
-function trimUrl(u: string): string {
-  for (;;) {
-    const last = u[u.length - 1];
-    if (URL_TRAIL.includes(last)) { u = u.slice(0, -1); continue; }
-    const open = PAIRS[last];
-    if (open) {
-      let depth = 0;
-      for (const c of u) { if (c === open) depth++; else if (c === last) depth--; }
-      if (depth < 0) { u = u.slice(0, -1); continue; }   // one more closer than opener: it closes the sentence's bracket
-    }
-    return u;
-  }
-}
-/** `text` cut into runs, each a URL (`href` set) or plain text; the URLs trimmed of trailing punctuation. */
-export function urlSegments(text: string): Array<{ text: string; href?: string }> {
-  const out: Array<{ text: string; href?: string }> = [];
-  let last = 0;
-  URL_RE.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = URL_RE.exec(text));) {
-    const u = trimUrl(m[0]);
-    if (!u || !/^https?:\/\/[^/?#]+/i.test(u)) { URL_RE.lastIndex = m.index + m[0].length; continue; }   // a bare scheme, no host
-    if (m.index > last) out.push({ text: text.slice(last, m.index) });
-    out.push({ text: u, href: u });
-    last = m.index + u.length;
-    URL_RE.lastIndex = last;
-  }
-  if (!out.length) return [{ text }];
-  if (last < text.length) out.push({ text: text.slice(last) });
-  return out;
-}
-/** The URLs in `text` as [start, end) ranges of it: exactly what urlSegments would wrap. */
-export function urlRanges(text: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  let at = 0;
-  for (const s of urlSegments(text)) { if (s.href) out.push([at, at + s.text.length]); at += s.text.length; }
-  return out;
-}
+// The URL grammar (URL_RE, the trailing-punctuation trim, urlSegments, urlRanges) lives in url-links.ts now: the
+// todo linkers and the pinned-notes strip run the same pass over text that never sees the Markdown renderer (the
+// user 2026-09-08). Re-exported here, so the viewer's callers and its tests read it where they always did.
+export { urlSegments, urlRanges };
 
 // The gate's pieces (the grammar is written out in the header). What may stand right before a token: nothing (the
 // line's start), whitespace, or an opener; a token glued to anything else is the tail of something the matcher
@@ -266,34 +226,7 @@ export function resolveViewerPath(tok: string, filePath: string): string {
  *  delegate, and the chat's document-level opener, which runs first and opened the URL as well until it read the
  *  selection too; the 2026-09-07 review, round 3). Returns the anchors made. */
 export function linkifyUrls(root: HTMLElement): HTMLAnchorElement[] {
-  const made: HTMLAnchorElement[] = [];
-  const doc = root.ownerDocument || document;
-  for (const u of textUnits(root, LINE_UNITS, DEAD_TEXT)) {
-    if (!/https?:\/\//i.test(u.text)) continue;
-    const marks = new Map<TextSpan, Array<{ start: number; end: number; el: Node }>>();
-    let at = 0;
-    for (const s of urlSegments(u.text)) {
-      const start = at;
-      at += s.text.length;
-      if (!s.href) continue;
-      const span = spanHolding(u, start, at);
-      if (!span) continue;
-      const a = doc.createElement("a");
-      a.className = URL_LINK_CLASS;
-      a.href = s.href;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      a.title = s.href;
-      a.setAttribute("draggable", "false");
-      a.textContent = s.text;
-      let list = marks.get(span);
-      if (!list) { list = []; marks.set(span, list); }
-      list.push({ start, end: at, el: a });
-      made.push(a);
-    }
-    for (const [span, list] of marks) rewriteSpan(u, span, list);
-  }
-  return made;
+  return markUrls(root, { className: URL_LINK_CLASS, unit: LINE_UNITS, draggable: false });
 }
 
 /** Every text node under `root`, document order, through childNodes alone (a stand-in without a tree walker

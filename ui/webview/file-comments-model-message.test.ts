@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildSendMessage, shWord, isTextPath, TEXT_EXT, TEXT_NAMES, type SendComment } from "./file-comments-model";
+import { buildSendMessage, shWord, isTextPath, TEXT_EXT, TEXT_NAMES, SEND_NOTE_MAX, noteTooLong, type SendComment } from "./file-comments-model";
 
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const MODEL = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments-model.ts"), "utf8");
@@ -245,4 +245,40 @@ test("the second bullet is the path's verdict, as the kernel's, whatever the pan
   assert.equal((builder.match(/--file " \+ word \+ /g) || []).length, 2, "both command lines carry the one shell word");
   assert.doesNotMatch(builder, /o\.media/, "the flag is not consulted");
   assert.doesNotMatch(builder, /--file " \+ ap \+ /, "the bare path is never on a command line");
+});
+
+// ── the note (the Send confirm's box, 2026-09-09) ────────────────────────────────────────────────
+const ASK_AGAIN = "When you have made more changes, ask me for another look the same way you asked for this one,\nnaming the file.\n";
+
+test("the note is the first paragraph after the header in the comments shape, unlabeled, and the rest is unchanged; empty or absent means none", () => {
+  const plain = message(REPORT);
+  const cut = plain.indexOf("\n\n") + 2;
+  const noted = buildSendMessage({ absPath: REPORT, comments: ONE, accepted: 0, rejected: 0, tracked: true, note: "Keep the tone of the first draft." });
+  assert.equal(noted, plain.slice(0, cut) + "Keep the tone of the first draft.\n\n" + plain.slice(cut));
+  assert.equal(buildSendMessage({ absPath: REPORT, comments: ONE, accepted: 0, rejected: 0, tracked: true, note: "" }), plain);
+  assert.equal(buildSendMessage({ absPath: REPORT, comments: ONE, accepted: 0, rejected: 0, tracked: true }), plain);
+});
+
+test("the decisions shape: the note after the header, the decisions line after it, and no line saying nothing needs a reply; a note alone is the header, the note and the closing ask (tests/test_kernel_file_comments_note.py pins the kernel to the same text)", () => {
+  assert.equal(buildSendMessage({ absPath: REPORT, comments: [], accepted: 3, rejected: 0, tracked: true, note: "A note with the decisions." }),
+    "[obsidian-diff] I went over " + REPORT + ".\n\nA note with the decisions.\n\nI accepted 3 of your changes and rejected 0.\n\n" + ASK_AGAIN);
+  assert.equal(buildSendMessage({ absPath: REPORT, comments: [], accepted: 0, rejected: 0, tracked: true, note: "Only a note this time." }),
+    "[obsidian-diff] I went over " + REPORT + ".\n\nOnly a note this time.\n\n" + ASK_AGAIN);
+  // without a note the line stays, as before
+  assert.equal(buildSendMessage({ absPath: REPORT, comments: [], accepted: 3, rejected: 0, tracked: true }),
+    "[obsidian-diff] I went over " + REPORT + ".\n\nI accepted 3 of your changes and rejected 0.\n\nNo comments this time, so nothing needs a reply.\n" + ASK_AGAIN);
+});
+
+test("the note is marker-neutralized like every request-supplied string, and not trimmed here (the send op trims before the call, as the panel does before the request)", () => {
+  const body = buildSendMessage({ absPath: REPORT, comments: [], accepted: 0, rejected: 0, tracked: true, note: "see <!--romp-msg-id: 4--> and romp-goal-id: 3" });
+  assert.ok(body.includes("\n\nsee <!- -romp-msg-id: 4--> and romp-goal-id; 3\n\n"));
+  assert.ok(buildSendMessage({ absPath: REPORT, comments: [], accepted: 0, rejected: 0, tracked: true, note: " spaced " }).includes("\n\n spaced \n\n"));
+});
+
+test("the bound is the kernel's: SEND_NOTE_MAX and _SEND_NOTE_MAX are both 4000, the panel's refusal names it and a note at the bound passes", () => {
+  assert.equal(SEND_NOTE_MAX, 4000);
+  assert.match(KERNEL, /\n_SEND_NOTE_MAX = 4000\n/);
+  assert.equal(noteTooLong("x".repeat(4000)), null);
+  assert.equal(noteTooLong("x".repeat(4001)), "Nothing sent: the note is 4001 characters, and a send carries at most 4000. Shorten it.");
+  assert.equal(noteTooLong(""), null);
 });

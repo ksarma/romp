@@ -232,7 +232,7 @@ for (const name of ["chromium", "firefox"] as const) {
       const hosted = await page.evaluate(() => (window as any).__around());
       assert.equal(hosted.host, "fc-hosted", "the box stands in the hosted comment");
       assert.equal(hosted.hostId, withTurns.id);
-      assert.equal(hosted.prev, "fc-replies", "after the turns");
+      assert.equal(hosted.prev, "fc-replies fc-clip", "after the turns");
       assert.equal(hosted.next, "fc-actions", "before the buttons");
       assert.equal(hosted.above, turnGap, "the box stands off the turn above by one turn gap (it was 0)");
       assert.equal(hosted.below, turnGap, "and off the buttons below by the same (it was 0)");

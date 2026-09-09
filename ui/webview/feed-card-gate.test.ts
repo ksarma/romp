@@ -1,7 +1,10 @@
 // The per-card update gate (feed-card-gate.ts), EXECUTED: every board-level input updateAskCard reads
 // outside the ask object must flip the key, equal inputs must give equal keys, a quarantine card must
 // never skip, and cardNeedsUpdate must fire on a new object OR a new key. A missed input here is a stale
-// badge on an unchanged card, so the test walks the inputs one at a time. Synthetic notes-api world.
+// badge on an unchanged card, so the test walks the inputs one at a time. The gate's premise — an unchanged
+// card keeps its OBJECT through the delivery path — is run against the pane shim's delta reassembly in the
+// lane that owns the shim (tests/test_view_deltas.py, under node), run here against the bundle's own
+// feedDelta reassembly (feed-delta.ts upsertById) and pinned here on federation's merge. Synthetic notes-api world.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -30,6 +33,7 @@ const env = (over: Partial<GateEnv> = {}): GateEnv => ({
   prefs: { grouped: true, collapsed: false, colormap: "aurora" },
   hostDown: () => false,
   selfHost: "TESTHOST",
+  repo: () => null,
   seq: 1,
   ...over,
 });
@@ -59,6 +63,7 @@ test("each board-level input flips the key on its own", () => {
     "the colormap":                    { prefs: { grouped: true, collapsed: false, colormap: "viridis" } },
     "the session's host going down":   { hostDown: (sid) => sid === WEB },
     "this machine's own name":         { selfHost: "OTHERHOST" },
+    "the session's GitHub repository": { repo: (sid) => (sid === WEB ? "example/notes-api" : null) },
   };
   const seen = new Set<string>([base]);
   for (const [what, over] of Object.entries(flips)) {
@@ -77,6 +82,8 @@ test("inputs that belong to OTHER sessions leave this card's key alone", () => {
   assert.equal(cardInputsKey(it, env({ userTodos: { [API]: 3 } })), base, "another session's todos");
   assert.equal(cardInputsKey(it, env({ focusId: "g2", pinnedId: "g2" })), base, "focus and pin on another card");
   assert.equal(cardInputsKey(it, env({ hostDown: (sid) => sid === API })), base, "another host down");
+  assert.equal(cardInputsKey(it, env({ repo: (sid) => (sid === API ? "example/notes-api" : null) })), base,
+    "another session's repository");
 });
 
 test("the colour echo's in-place write reaches the gate through the key (the object identity cannot carry it)", () => {
@@ -115,7 +122,14 @@ test("sameKeySeq: the FLIP gate is order-sensitive and length-sensitive", () => 
   assert.equal(sameKeySeq([], []), true, "an empty column stays empty");
 });
 
-// --- the gate's premise: an unchanged card keeps its OBJECT through the delta path ---------------------
+// --- the gate's premise: an unchanged card keeps its OBJECT through the delivery path -----------------
+// The pane shim (kernel.py _shim) applies a `{type:"delta"}` frame itself and hands the bundle a full message,
+// reusing every untouched card object and minting a new one only for a card the delta set. That is the shim's
+// behaviour, so its own lane holds it: tests/test_view_deltas.py runs the kernel's shim JavaScript under node
+// against the kernel's own frames (review find, 2026-09-08: a kernel edit must not break this lane, and a test
+// that lifts kernel.py by source text is one that can). The bundle's own reassembly of a feedDelta frame
+// (feed-delta.ts, applied per host by federation.ts) is run below; federation's merge, the other hop, is
+// pinned after it.
 test("upsertById hands an untouched card back by reference and only the re-sent one as a new object — the identity the gate reads", () => {
   const a = card({ itemId: "g1" }), b = card({ itemId: "g2", sid: API, name: "api" }), c = card({ itemId: "g3" });
   const b2 = { ...b, column: "completed" };

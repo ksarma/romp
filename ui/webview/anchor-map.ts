@@ -104,9 +104,8 @@ const hasClass = (n: DNode, cls: string): boolean => {
 const WS = /\s/;
 const isWs = (c: string): boolean => WS.test(c);
 
-/** Every text node under `root`, document order. */
-function textNodes(root: DNode): DText[] {
-  const out: DText[] = [];
+/** Every text node under `root`, document order, appended to `out`. */
+function textNodes(root: DNode, out: DText[] = []): DText[] {
   const visit = (n: DNode) => {
     if (isText(n)) { out.push(n); return; }
     if (isControl(n)) return;
@@ -114,6 +113,12 @@ function textNodes(root: DNode): DText[] {
   };
   visit(root);
   return out;
+}
+/** The child of `root` that `n` sits under (`n` itself when it is one), or null when `n` is not under `root`. */
+function topChildOf(root: DNode, n: DNode): DNode | null {
+  let c = n;
+  while (c.parentNode && c.parentNode !== root) c = c.parentNode;
+  return c.parentNode === root ? c : null;
 }
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
@@ -1464,15 +1469,15 @@ function isInlineFormula(n: DNode, root: DNode): boolean {
   return !!p && p !== root && isElement(p) && !hasClass(p, "katex-display") && p.tagName.toUpperCase() !== "PRE";
 }
 /** What a Rendered highlight is made of, document order: every text node textNodes() returns and, standing among them, every
- *  inline formula (isInlineFormula), not looked into. */
-function highlightUnits(root: DNode): DNode[] {
-  const out: DNode[] = [];
+ *  inline formula (isInlineFormula), not looked into. Walks `from` (the whole of `root` by default, or one of its top-level
+ *  children: wrapBetween reads the blocks a mark touches and no more), judging a formula's standing against `root` itself. */
+function highlightUnits(root: DNode, from: DNode = root, out: DNode[] = []): DNode[] {
   const visit = (n: DNode) => {
     if (isText(n)) { out.push(n); return; }
     if (isControl(n)) { if (isInlineFormula(n, root)) out.push(n); return; }
     for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
   };
-  visit(root);
+  visit(from);
   return out;
 }
 /** Whether `b` is the sibling right after `a`. */
@@ -1512,10 +1517,30 @@ function wrapRuns(units: DNode[], className: string, data?: Record<string, strin
  *  that stand between the two positions and the ones in `formulas` (the formulas whose TeX the range holds, paintRendered's
  *  coveredFormulas): a formula before the start or after the end of the text extends the highlight to itself, and the text
  *  between it and the passage (whitespace, since the passage's first and last characters are its first and last non-blank
- *  ones in the range) goes under the highlight with it. */
+ *  ones in the range) goes under the highlight with it. The units between the two positions are read from the top-level
+ *  children of `root` the positions and the formulas sit under, and the children between those, not from the whole of
+ *  `root`: a walk of every text node under the root per mark made the Comments panel's paint pass cost marks x nodes
+ *  (0.11-0.22 ms per 1000 nodes per mark in Chromium; 466 marks over a 24k-node document were 1.1 s of a 1.4 s frame on
+ *  every width change, and 0.7 s of each added comment on a 79k-node file with 32 comments, 2026-09-09). A mark now costs
+ *  the blocks it touches. */
 function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; off: number },
                      className: string, data?: Record<string, string>, formulas: DNode[] = []): DElement[] {
-  const all = highlightUnits(root);
+  const ts = topChildOf(root, s.t), te = topChildOf(root, e.t);
+  if (!ts || !te) return [];
+  // the top-level children the highlight reads: the two the positions sit under, and the ones the covered formulas sit under
+  // (a formula before the start or after the end of the text extends the highlight to itself, so its block is read too)
+  const tops = new Set<DNode>([ts, te]);
+  for (const f of formulas) { const tf = topChildOf(root, f); if (tf) tops.add(tf); }
+  let all: DNode[];
+  if (tops.size === 1) all = highlightUnits(root, ts);
+  else {
+    const kids = root.childNodes;
+    let k0 = -1, k1 = -1;
+    for (let k = 0; k < kids.length; k++) if (tops.has(kids[k])) { if (k0 < 0) k0 = k; k1 = k; }
+    if (k0 < 0) return [];
+    all = [];
+    for (let k = k0; k <= k1; k++) highlightUnits(root, kids[k], all);
+  }
   let i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
   if (i0 < 0 || i1 < 0 || i1 < i0) return [];
   let a = s.off, b = e.off;

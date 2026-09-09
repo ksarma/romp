@@ -13,11 +13,14 @@ saying why. The mechanics under test:
     (_WORK_KEY_FN → sdk_backend.work_api_key, the one claimer) once it lands, and
     straight from os.environ before it / standalone — no second pop to race.
   * _judge_auth resolves a call's billing to the JUDGED SESSION's own pick (the
-    registry's `auth`), with the session picker's exact fallback: an explicit
-    'login' or 'key' pick stands as picked; anything else → key when one is
-    configured, else login. A key pick with no key is loud at the call boundary
-    (_judge_env raises, _judge_run files an auth error and latches), never a
-    silent fall to the login.
+    registry's `auth`), with the session badge's exact fallback: an explicit
+    'login' or 'key' pick stands as picked; anything else is the unpicked rule
+    (sdk_backend.unpicked_auth through the kernel's _UNPICKED_AUTH_FN wire, a
+    mirror of it standalone): key when one is configured, else the side the box
+    declares (ROMP_EXPECTED_AUTH) when no gear pick has made it inert, else
+    login. A key pick with no key is loud at the call boundary (_judge_env
+    raises, _judge_run files an auth error and latches), never a silent fall to
+    the login.
   * _judge_env strips the ambient key from every child env and injects it back
     explicitly for a key-mode call only (removal, not blanking — the CLI treats
     an empty var as key-mode-without-a-key and refuses).
@@ -79,15 +82,20 @@ class _JudgeAuthBase(unittest.TestCase):
         self._fn_before = jd._WORK_KEY_FN
         self._configured_before = jd._WORK_KEY_CONFIGURED_FN
         self._login_before = jd._LOGIN_AUTH_ENV_FN
+        self._unpicked_before = jd._UNPICKED_AUTH_FN
         jd._WORK_KEY_FN = None
         jd._WORK_KEY_CONFIGURED_FN = None
         jd._LOGIN_AUTH_ENV_FN = None
+        jd._UNPICKED_AUTH_FN = None
+        # the box declaration is part of the unpicked rule now: the tests below declare their own, and a
+        # declared box's shell (this fork's own) must not leak into the undeclared cases
+        self._exp_before = os.environ.pop("ROMP_EXPECTED_AUTH", None)
         self._set_before = (jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN, jd._ENV_OK_FN)
         jd._ENV_SET_FN = jd._ENV_INVALIDATE_FN = jd._ENV_OK_FN = None
         jd._auth_cache[:] = [None, {}]
         jd._UNKEYED_SAID.clear()          # the once-per-process line is asserted per test
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
-        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"),
+        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"), jd.STATE / "sdk-defaults.json",
                   jd.STATE / "retry-paused.json", jd.STATE / "usage.json"):
             try:
                 p.unlink()
@@ -102,6 +110,10 @@ class _JudgeAuthBase(unittest.TestCase):
         jd._WORK_KEY_FN = self._fn_before
         jd._WORK_KEY_CONFIGURED_FN = self._configured_before
         jd._LOGIN_AUTH_ENV_FN = self._login_before
+        jd._UNPICKED_AUTH_FN = self._unpicked_before
+        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        if self._exp_before is not None:
+            os.environ["ROMP_EXPECTED_AUTH"] = self._exp_before
         jd._ENV_SET_FN, jd._ENV_INVALIDATE_FN, jd._ENV_OK_FN = self._set_before
         jd._judge_ctx.fsid = None
         jd._judge_ctx.paused = False
@@ -109,7 +121,7 @@ class _JudgeAuthBase(unittest.TestCase):
         # XDG state home, and a leftover judge-auth.json row for the shared synthetic sid floors
         # OTHER files' build_feed cards to needs-you (25 stays-in-Working tests, found 2026-08-12)
         jd._auth_cache[:] = [None, {}]
-        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json")):
+        for p in (jd.JUDGE_AUTH, jd.SDKDIR / (SID + ".json"), jd.STATE / "sdk-defaults.json"):
             try:
                 p.unlink()
             except OSError:
@@ -532,6 +544,144 @@ class JudgeRunLatchAndInjection(_JudgeAuthBase):
         self.assertFalse("ANTHROPIC_API_KEY" in seen["env"], "ANTHROPIC_API_KEY present in the codex child env")
 
 
+class UnpickedBillingOnADeclaredBox(_JudgeAuthBase):
+    """The unpicked fallback is the backend's rule (sdk_backend.unpicked_auth, through the kernel's wire or
+    its standalone mirror), not the key test alone (review round 1, 2026-09-09). On a box whose sessions
+    authenticate through Claude Code's apiKeyHelper (ROMP_EXPECTED_AUTH=key, no key of romp's) the judge
+    classified every unpicked call as login-billed while the session's badge, _bills_login and the
+    judge-limit banner said key: the rate-limit gate then read the LOGIN account's windows for a call that
+    bills the key, a limit-shaped envelope minted the never-expiring login-account latch, and a credential
+    error recorded the wrong side. Every cell below runs with no wire (the mirror); the wire case at the end
+    shows the kernel's word standing in for it."""
+
+    def _defaults(self, **d):
+        (jd.STATE / "sdk-defaults.json").write_text(json.dumps(d))
+
+    def _ok(self):
+        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"result": "ok", "usage": {}, "duration_ms": 3}))
+
+    def test_a_declared_key_box_bills_the_key_for_an_unpicked_session(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self.assertEqual(jd._judge_auth(SID), "key")          # no reg on disk: unpicked
+        self.assertEqual(jd._judge_auth(None), "key", "a call with no session takes the same default")
+
+    def test_declared_login_and_undeclared_both_read_login(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        self.assertEqual(jd._judge_auth(SID), "login")
+        os.environ.pop("ROMP_EXPECTED_AUTH")
+        self.assertEqual(jd._judge_auth(SID), "login", "the pre-declaration rule, unchanged")
+
+    def test_a_key_romp_holds_comes_before_the_declaration(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        jd._WORK_KEY_FN = lambda: FAKE_KEY
+        self.assertEqual(jd._judge_auth(SID), "key", "the launch injects a configured key for every unpicked session")
+
+    def test_a_remembered_login_pick_makes_the_declaration_inert(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self._defaults(auth="login")                          # set_auth's durable trace: the gear pick
+        self.assertEqual(jd._judge_auth(SID), "login")
+
+    def test_a_set_aside_key_pick_lets_the_declaration_speak(self):
+        self._defaults(auth="key")                            # a key pick on a keyless box: spawn seeds nothing under it
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self.assertEqual(jd._judge_auth(SID), "key")
+        os.environ.pop("ROMP_EXPECTED_AUTH")
+        self.assertEqual(jd._judge_auth(SID), "login", "undeclared, a set-aside pick reads as unpicked: the login")
+
+    def test_an_explicit_pick_still_wins(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        self._reg("login")
+        self.assertEqual(jd._judge_auth(SID), "login")
+
+    def test_the_kernel_wire_decides_when_up_and_receives_the_judges_key_verdict(self):
+        seen = []
+        jd._UNPICKED_AUTH_FN = lambda key: seen.append(key) or "key"
+        self.assertEqual(jd._judge_auth(SID), "key", "no declaration, no key: the wire's word stands")
+        self.assertEqual(seen, [False])
+        jd._WORK_KEY_FN = lambda: FAKE_KEY
+        jd._judge_auth(SID)
+        self.assertIs(seen[-1], True, "the judge's own key verdict rides in (it consults the command set first)")
+        self._reg("login")
+        self.assertEqual(jd._judge_auth(SID), "login")
+        self.assertEqual(len(seen), 2, "an explicit pick never reaches the wire")
+
+    def test_the_gate_reads_no_login_window_for_a_declared_key_unpicked_call(self):
+        # the 2026-08-28 scoping: only a LOGIN-billed call is gated on usage.json. An unpicked call on a
+        # declared-key box is key-billed now, so a full login window no longer skips it; the same call with
+        # nothing declared is login-billed and skipped, as before.
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        jd._judge_ctx.fsid = SID
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / "usage.json").write_text(json.dumps({
+                "five_hour": {"pct": 100, "resets_at": int(time.time()) + 3600}}))
+            with patch.multiple(jd, STATE=state, JUDGE_LIMIT=state / "judge-limit.json",
+                                _limit_cache=[None, {}], _RATE_GATE_LOGGED={}), \
+                    patch.object(jd, "_judge_engine", return_value="claude"), \
+                    patch.object(jd.subprocess, "run", return_value=self._ok()) as run, \
+                    patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "ok")
+                run.assert_called_once()
+                self.assertFalse(jd._judge_ctx.paused)
+                self.assertIsNone(jd._limit_down(), "a key-billed call reads no login window")
+                os.environ.pop("ROMP_EXPECTED_AUTH")
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+                run.assert_called_once()
+                self.assertTrue(jd._judge_ctx.paused, "control: undeclared, the same call is login-billed and gated")
+                self.assertEqual(jd._limit_down()["bucket"], "five_hour")
+
+    def test_a_limit_envelope_on_a_declared_key_unpicked_call_mints_no_login_account_latch(self):
+        # the latch at the limit envelope is LOGIN-billed only: a key-billed 429 is pay-per-token with no
+        # window behind it, and the "account" latch it would mint carries no resets_at (never self-expires)
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        jd._judge_ctx.fsid = SID
+        envelope = SimpleNamespace(returncode=0, stderr="",
+                                   stdout=json.dumps({"is_error": True, "result": "rate_limit_error: too many requests"}))
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            with patch.multiple(jd, STATE=state, JUDGE_LIMIT=state / "judge-limit.json",
+                                _limit_cache=[None, {}], _RATE_GATE_LOGGED={}), \
+                    patch.object(jd, "_judge_engine", return_value="claude"), \
+                    patch.object(jd.subprocess, "run", return_value=envelope), \
+                    patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+                self.assertIsNone(jd._limit_down(), "a key-billed limit envelope mints no login-account latch")
+                self.assertEqual(jd._auth_down_map(), {}, "and a 429 is not a credential failure")
+                os.environ.pop("ROMP_EXPECTED_AUTH")
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
+                self.assertEqual((jd._limit_down() or {}).get("bucket"), "account",
+                                 "control: the login-classified call latches the account banner")
+
+
+class UnpickedMirrorMatchesTheBackend(_JudgeAuthBase):
+    """judge.py loads standalone, so _unpicked_auth's fallback is a COPY of sdk_backend.unpicked_auth, not an
+    import (the _is_auth_error pattern); the two must agree on every cell of key held or not, declaration
+    key/login/unset, remembered pick none/login/key. Runs unwired (the mirror) against the real backend
+    function over the same state dir and environment."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sb = load_source("romp_sdk_backend_authbill", os.path.join(BIN, "romp_sdk_backend.py"))
+
+    def test_the_mirror_and_the_backend_agree_on_every_cell(self):
+        p = jd.STATE / "sdk-defaults.json"
+        for key in (False, True):
+            for declared in ("", "key", "login"):
+                for pick in ("", "login", "key"):
+                    if declared:
+                        os.environ["ROMP_EXPECTED_AUTH"] = declared
+                    else:
+                        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+                    if pick:
+                        p.write_text(json.dumps({"auth": pick}))
+                    else:
+                        p.unlink(missing_ok=True)
+                    tag = "key=%s declared=%r pick=%r" % (key, declared, pick)
+                    want = "key" if key else ("login" if pick == "login" else (declared or "login"))
+                    self.assertEqual(self.sb.unpicked_auth(jd.STATE, key), want, tag)
+                    self.assertEqual(jd._unpicked_auth(key), want, tag)
+
+
 class KernelWiringAndFloorPins(unittest.TestCase):
     """The kernel side, pinned the way every build_feed behavior is (inspect.getsource)."""
 
@@ -542,6 +692,12 @@ class KernelWiringAndFloorPins(unittest.TestCase):
     def test_the_kernel_wires_judges_to_the_one_key_claimer(self):
         import inspect
         self.assertIn("jd._WORK_KEY_FN = sbmod.work_api_key", inspect.getsource(self.km._sdk_locked))
+
+    def test_the_kernel_wires_the_unpicked_billing_rule_over_its_own_state_dir(self):
+        import inspect
+        self.assertIn("jd._UNPICKED_AUTH_FN = lambda key: sbmod.unpicked_auth(jd.STATE, key)",
+                      inspect.getsource(self.km._sdk_locked),
+                      "the judge reads the backend's rule, not a second copy, once the kernel is up")
 
     def test_the_kernel_wires_the_command_set_and_its_invalidation_the_same_way(self):
         import inspect

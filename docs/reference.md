@@ -21,7 +21,7 @@ update` starts a session called "update".
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
 | `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
-| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them; a remote stopped by `romp down` is synced and left stopped |
+| `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them at once (every deploy restart is immediate; boot reconcile resumes the cut turns with their history); a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
@@ -32,20 +32,29 @@ update` starts a session called "update".
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
-ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
-*Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. Reloads
-are separate from that control and happen in every mode: a page the kernel serves reloads itself
-when the kernel serving it restarts or serves a newer build than the page runs, once any gesture
-in progress has ended and any file still shipping has settled, and the notification center's one
-line says which happened. The banner that reads "A newer romp build is available" appears only
-where the page cannot reload itself, such as a host that forbids it; the VS Code panes keep their
-own prompt, because their bundle comes from the installed extension. A chat page with an
-attachment still uploading first finishes the upload, then reloads. The message waiting on the
-upload is sent if that session's tab is the active one; otherwise it stays in that tab's composer
-with the file attached, and a notice says so. A notice still on screen when the page reloads,
-that one or a failed save's, is shown again on the fresh page. If the upload has not finished
-within a minute, the page reloads anyway and reports the lost attachment on the next load.
+ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
+checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
+and keeps running what it has until they restart Romp themselves. An automatic converge takes one
+of two routes, decided by what the new commits touch. When the new commits change code the
+running kernel executes, Romp restarts at once, and the restart cuts the turns in flight, which
+resume with their history on the new code; a comment or formatting edit that leaves that code's
+parsed form unchanged does not count. A change anywhere else (the UI, the docs, the CLI, the
+postal bus, tests) converges in place with the kernel left up: the served bundles are rebuilt, a
+postal change restarts the bus alone, and no turn is cut. A converge to `main` in
+this mode comes no sooner than 25 minutes after the last deploy restart, so a busy `main` costs
+at most one restart per batch of merges. The one command that waits for a quiet window is
+`romp refresh --quiet`. Reloads are separate from that control and happen in every
+mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
+newer build than the page runs, once any gesture in progress has ended and any file still
+shipping has settled, and the notification center's one line says which happened. The banner that
+reads "A newer romp build is available" appears only where the page cannot reload itself, such as
+a host that forbids it; the VS Code panes keep their own prompt, because their bundle comes from
+the installed extension. A chat page with an attachment still uploading first finishes the
+upload, then reloads. The message waiting on the upload is sent if that session's tab is the
+active one; otherwise it stays in that tab's composer with the file attached, and a notice says
+so. A notice still on screen when the page reloads, that one or a failed save's, is shown again
+on the fresh page. If the upload has not finished within a minute, the page reloads anyway and
+reports the lost attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that
@@ -73,6 +82,10 @@ is made of ASCII letters, digits and `_ . ~ / -` only, so any other character en
 `(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
 link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
+An http or https address in the text or the detail is a link too, shown as typed and opened in a new tab;
+it runs to the next whitespace, quote, angle bracket or backtick, sentence punctuation after it stays
+outside the link, and so does a closing bracket the address itself did not open (`(see https://example.invalid/a)`
+links the address alone). A path-shaped run inside an address is part of the address, never a file link.
 A todo can also name the file it is about, through the tool's `file` argument. The kernel that holds the
 session makes the path absolute and stores it: `~` is expanded, a relative path is read against the
 session's working directory like one in the text, and a `file://` URI becomes its path. The todo shows the
@@ -85,7 +98,15 @@ still filed, and the tool's reply says why and asks for the absolute path. That 
 a session whose working directory the kernel does not know, a `file://` URI that does not carry an absolute
 path, a URL of another scheme, and a spelling no path can have (a NUL byte in it, or a length past the
 machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
-names one.
+names one. A todo can carry a web address of its own as well, through the tool's `link` argument: an http or
+https address, shown as a chip beside the file's on the session's card and in the pane alike, opening in a new
+tab. The chip's label keeps the part that tells two addresses apart: a GitHub `pull/N` or `issues/N` address
+reads `owner/repo#N`, any other address as its host and last two path segments; the whole address is on hover. Only
+such an address is taken: anything else (another scheme, a bare host, a value with whitespace or a character that does not print in it, one past
+2048 characters) is refused, the todo is not filed, and the tool's reply says why. The kernel does not fetch the
+address, so a mistyped host is stored as typed. The handed-back list shows the address after the path. A todo's
+text takes at most 300 characters and its detail 4000, a pinned note's bounds; a longer one is refused before
+anything is filed, and the tool's reply names the bound.
 
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
@@ -97,8 +118,8 @@ its whole text has no hint. Whether a row is cut is measured on the page, so the
 a desktop and offer the hint on a phone or in a narrow pane.
 Click the row or the hint to read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
 pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
-scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request
-number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
+scrolls past that, so the transcript and the composer stay on screen. A file path, a web address or a pull
+request number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
 twice; a tap elsewhere, or leaving the control, takes the first click back); a session unpins its
 own notes with `unpin_note`, and unpinning a note that is already down is a plain answer, not an
 error. A note's line takes at most 300 characters and its detail 4000; a terminal escape sequence
@@ -136,7 +157,7 @@ These are for scripting and for agents rather than daily use:
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
-| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
+| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop). The ONLY door to the quiet window: a deploy (a peer's `romp update`, a release self-update, an automatic converge) restarts immediately, by the user's 2026-09-08 decision |
 | `romp down --wait <s>`, `romp down --now` | How long `romp down` waits for turns in flight to finish (0 to 600 seconds; default 5), or no wait at all |
 | `romp up --foreground` | Run the manager in this terminal even with a login service installed (its log in front of you); the manager refuses to start beside a running one |
 
@@ -383,7 +404,7 @@ romp mail remote                 # legacy singleton scheme only (ROMP_POSTAL_PEE
 | `unpin_note(id)` | Take a pinned note down; one already down is a plain answer, not an error |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
-| `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about (User todos, above) |
+| `add_user_todo(text, detail?, file?, link?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about, `link` the http or https address it is about (User todos, above) |
 | `withdraw_user_todo(id)` | Take back a todo by the id `add_user_todo` returned |
 
 ### When a send is refused
@@ -536,18 +557,25 @@ The new-session picker's **Billing** row states the case whenever the backend
 toggle says SDK: segmented buttons when the selected host offers both choices,
 and with only one real choice, the same spot simply writes out which applies —
 `Login (name@example.com)` or `API key` — so what a session will bill is never
-a mystery. A live session additionally wears a statusline badge for
-*switching*, beside mode/model/effort, and that control keeps the stricter
-rule: it exists only when both choices are real (a one-option selector is
-noise). Switching reconnects the session to apply (the key rides the launch
-environment), with the same switching-dots the effort badge wears.
+a mystery. A live session's *switching* control is the Billing entry of the
+tab's right-click menu (it left the statusline on 2026-08-09), and that
+control keeps the stricter rule: it exists only when both choices are real (a
+one-option selector is noise). Switching reconnects the session to apply (the
+key rides the launch environment); until that reconnect lands, the menu entry's
+sub-line reads `applying…` and the tab hover's Billing row says the pick is
+applying, not confirmed yet.
 
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key` — no fragment of the key, not
 even a last-4 tail, ever reaches a browser or a screen. A new session
-defaults to the last pick made anywhere, and before any pick to the key when
+defaults to the last pick made anywhere (an API-key pick remembered from a
+box that held a key is set aside once it holds none: the picker cannot offer
+it, and such a session starts unpicked), and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
-existed. tmux sessions are not covered by the picker: their CLI lives in the
+existed; with neither, to the side `ROMP_EXPECTED_AUTH` declares (see below),
+so a box whose sessions bill a key through Claude Code's `apiKeyHelper`
+reads `API key` rather than the login, and the picker's Billing row writes
+that out even when the box has no Claude login to show beside it. tmux sessions are not covered by the picker: their CLI lives in the
 tmux server's environment, which the kernel does not control. What Romp does
 do there, when a key provider is configured, is keep the manager's
 startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
@@ -558,9 +586,14 @@ runtime](#api-keys-from-a-secret-manager-at-runtime).
 Each chat tab's hover tooltip carries the same fact as a `Billing` row —
 `API key`, or `Login (name@example.com)` — whenever the session's backend
 reports it, one-auth machines included; only tmux sessions, whose billing romp
-cannot know, show no row. When the CLI's own report disagrees with what the
-session was launched for — a key found through `apiKeyHelper`, say — the row
-carries both: `Login (CLI reports API key)`.
+cannot know, show no row. Once the session's CLI has reported which credential
+it found (its init names the source), the row shows that side; before any
+report it shows the intent the session was launched with. A pick you made that
+the CLI contradicted is worded as one: `⚠ Login picked, but the CLI reports
+the API key; this session bills that`. A default nobody picked is never
+worded that way: a session started unpicked on a box whose `apiKeyHelper`
+supplies the key reads `API key`. The tab menu's Billing item carries
+the same decision in fewer words.
 
 Failures are loud rather than silent: a session that lands on the other auth
 than it was launched for (say, a key found through `apiKeyHelper`) is flagged
@@ -577,10 +610,18 @@ Declaring the intent fixes it: set
 on the declared side is quiet while one landing on the other side is flagged,
 naming the declaration. The check inverts rather than disappearing; unset (or
 any other value), it compares against what the session was launched with, as
-before. One explicit gear **Billing** pick supersedes the declaration from then
-on: the remembered pick becomes the box's expectation and the env var goes
-inert (it described the unpicked design), so re-seeded spawns are judged
-against your pick, never against stale doctrine.
+before. The declaration also decides what an unpicked session is *taken* to
+bill when romp holds no key of its own: the Billing row's fallback before the
+CLI has reported, the picker's written-out choice, and the spend pause's
+reading of a session that reports nothing all read the declared side, where
+they read the login before. One explicit gear **Billing** pick supersedes the
+declaration from then on: the remembered pick becomes the box's expectation
+and the env var goes inert (it described the unpicked design), so re-seeded
+spawns are judged against your pick, never against stale doctrine. The one
+exception is an API-key pick remembered from a box that no longer holds a
+key: it is set aside at spawn, so it seeds nothing, and the declaration
+decides the unpicked default again (the per-init check still judges each
+landing against the pick).
 
 The declaration is also checked once, when the kernel starts, against the
 key source a launch would select. Under `ROMP_EXPECTED_AUTH=login`, a selected
@@ -1056,9 +1097,11 @@ configure no key source in Romp and point Claude Code's
 at the secret manager instead. Romp passes a key to a session only when it has
 one itself, so with no source configured every session and every API-key-billed
 judge call uses Claude Code's own authentication. Romp cannot see that key: the
-Billing picker offers no API-key choice, a session's Billing row reads
-`Login (CLI reports API key)`, and `romp keyswap --cycle` skips every session
-as billing the login.
+Billing picker offers no API-key buttons (under `ROMP_EXPECTED_AUTH=key` its
+Billing row writes out `API key` as the one applying choice), a session's
+Billing row reads `API key` once its CLI has reported the helper's key (before
+that report it shows the side `ROMP_EXPECTED_AUTH` declares, else `Login`), and
+`romp keyswap --cycle` skips every session as billing the login.
 
 1. Write a script that prints the key from your secret manager, and make it
    executable. With 1Password, for example:
@@ -2160,7 +2203,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   derived and not held); `evict` (entries dropped for lanes that left a full
   build's lane set or past the 256-entry bound), the gauge `entries`, and
   `segs_hit` and `segs_miss`, the segments served against derived, which
-  weight the hit rate by cost.
+  weight the hit rate by cost. Since the 2026-09-09 fold those counters read the live lanes alone: a dead lane is
+  the timeline's dead-lane memo's, and its outcomes ride the same block as `dead_serve`
+  (served from that memo), `dead_miss` (derived, and cached unless its store faulted or a
+  stage complained) and `dead_failed_serve` (served as the empty lane a failed parse was
+  cached as, until the transcript's stat moves).
   `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
   a parsed transcript (the uuids and user texts the transcript already holds,
   and the newest human turn's time), one entry per session keyed on the
@@ -2291,7 +2338,18 @@ frames it received is measured in the panes themselves, by
   bundle directly; the kernel page's inline boot through the `window.__rompPerf`
   that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
   `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
-  The Files pane installs nothing: no frames are pushed to it.
+  The Files pane receives no frames; its collector times the viewer's own paint
+  pass instead, as `fileview:paint` (a text body painted) and `fileview:reflow`
+  (the comments panel's re-place of its cards over reflowed text: the body's
+  width changed, or a text-size step), so the cost of a large reviewed file
+  shows per minute under app `files`; the pane's socket replies (`fileSaved`,
+  `fileGitLink`) count under `fed:<type>` as on every pane.
+  The dashboard shell (the top-level window that frames the panes) runs the
+  same collector under app `shell` with no frame types at all: Chromium reports
+  an iframe's long animation frames to the top-level window only, so a pane
+  script that blocked the main thread is attributed there (`files.js:paintAll@9000`)
+  and the shell's row is where it lands; the row goes over the shell's own
+  socket, and up to twenty rows are held while that socket is closed.
 - Per type and minute: count, summed and maximum handler time, the exact
   number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
   100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,
@@ -2339,7 +2397,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
   visible, hidden_pane, ua}}`. `app` is the pane (`chat`, `feed`, `fleet`,
-  `waiting`, `timeline`); `since` is the minute's start on the browser's clock
+  `waiting`, `timeline`, `files`) or `shell` for the top-level window; `since` is the minute's start on the browser's clock
   (epoch ms) and `span_ms` its length (shorter than a minute when the page was
   hidden or closed); `hist` is the 14 bucket counts; `free` is null when no
   sample was taken; `loaf.top` is the five largest keys by summed duration,

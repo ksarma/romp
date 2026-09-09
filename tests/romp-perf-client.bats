@@ -138,6 +138,69 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ ! -f "$CURL_LOG" ]                                 # no kernel round trip
 }
 
+@test "romp perf client: a Files pane row (the viewer's fileview:<why> passes) and a shell row (long frames only, no frame types) render as panes of their dashboard without special handling" {
+    # 2026-09-09: the Files pane got a collector (its viewer times its own paint pass, since nothing is pushed to it)
+    # and the shell page one with no brackets at all (Chromium reports an iframe's long animation frames to the
+    # top-level window only). Both rows have the minute row's shape, so the verb folds them like any pane's.
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+def row(t, wid, what, data): return json.dumps({"t": t, "wid": wid, "surface": "perf", "what": what, "data": data})
+def H(**at):
+    h = [0] * 14
+    for k, v in at.items(): h[int(k[1:])] = v
+    return h
+def st(n, ms_sum, ms_max, n16, n100, hist): return {"n": n, "ms_sum": ms_sum, "ms_max": ms_max, "n16": n16, "n100": n100, "hist": hist}
+NOSLOW = {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}
+files = {"app": "files", "since": (now - 70) * 1000, "span_ms": 60000,
+         "frames": {"fileview:paint": st(1, 180, 180, 1, 1, H(b8=1)), "fileview:reflow": st(12, 720, 90, 12, 0, H(b6=12))},
+         "free": {"n": 13, "p50": 40, "p90": 95, "max": 120},
+         "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "loaf"},
+         "slow": {"sent": 1, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 210.0, "dom": 40000, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
+shell = {"app": "shell", "since": (now - 70) * 1000, "span_ms": 60000,
+         "frames": {}, "free": None,
+         "loaf": {"n": 1, "blocking_ms": 19950, "worst_ms": 20000, "top": [{"k": "files.js:paintAll@9000", "ms": 19500, "n": 1, "inv": "Window.requestAnimationFrame"}, {"k": "page:onMove@120", "ms": 150, "n": 1, "inv": "DIV.onpointermove"}], "src": "loaf"},
+         "slow": NOSLOW, "heap_mb": 60.0, "dom": 900, "visible": True, "hidden_pane": False, "ua": "chrome-desktop"}
+slow = {"app": "files", "type": "fileview:paint", "ms": 180, "dom": 40000}
+with open(sys.argv[1], "a") as f:
+    f.write(row(now - 12, W1, "minute", files) + "\n" + row(now - 11, W1, "slowframe", slow) + "\n" + row(now - 10, W1, "minute", shell) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 dashboards, 5 panes, 7 minute rows, 2 slow frame rows"* ]]
+    # the Files pane: the viewer's two pass types, the reflow's twelve passes first by handler time
+    [[ "$output" == *"dashboard 11111111 · files   chrome-desktop   1 min reported   heap 210.0 MB   dom 40000   visible"* ]]
+    [[ "$output" == *"handler      900 ms/min total"* ]]
+    [[ "$output" == *"fileview:reflow   12.0/min    720 ms/min   p50 <64   p90 <64   p99 <64 ms   max 90   >16.7 ms 100%   >=100 ms 0%"* ]]
+    [[ "$output" == *"fileview:paint    1.0/min    180 ms/min   p50 <256   p90 <256   p99 <256 ms   max 180   >16.7 ms 100%   >=100 ms 100%"* ]]
+    [[ "$output" == *"free after a frame, worst minute's p90 95 ms"* ]]
+    [[ "$output" == *"fileview:paint 180 ms (dom 40000)"* ]]
+    # the shell: no frame types, the long frames it alone saw with the pane script the browser named
+    [[ "$output" == *"dashboard 11111111 · shell   chrome-desktop   1 min reported   heap 60.0 MB   dom 900   visible"* ]]
+    shell_block="$(echo "$output" | sed -n '/^dashboard 11111111 · shell/,/^dashboard 22222222/p')"
+    [[ "$shell_block" == *"handler      no frames"* ]]
+    [[ "$shell_block" == *"long frames 1.0/min   blocking 19950 ms/min   worst 20000 ms"* ]]
+    [[ "$shell_block" == *"files.js:paintAll@9000 19500 ms (Window.requestAnimationFrame)   page:onMove@120 150 ms (DIV.onpointermove)"* ]]
+    [[ "$shell_block" == *"no frames   long frames 1, blocking 19950 ms"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+panes = {(p["wid"], p["app"]): p for p in d["panes"]}
+assert ("11111111", "files") in panes and ("11111111", "shell") in panes, set(panes)
+f = panes[("11111111", "files")]
+assert set(f["frames"]) == {"fileview:paint", "fileview:reflow"} and f["frames"]["fileview:reflow"]["n"] == 12 and f["free_p90"] == 95
+assert f["slow"] == [{"t": f["slow"][0]["t"], "type": "fileview:paint", "ms": 180, "dom": 40000, "loaf": []}], f["slow"]
+s = panes[("11111111", "shell")]
+assert s["frames"] == {} and s["total_ms_per_min"] == 0 and s["free_p90"] is None
+assert s["loaf"] == {"per_min": 1.0, "blocking_ms_per_min": 19950.0, "worst_ms": 20000, "src": "loaf"}, s["loaf"]
+assert s["top"][0] == {"k": "files.js:paintAll@9000", "ms": 19500, "inv": "Window.requestAnimationFrame"}
+assert s["worst_minute"]["total_ms"] == 0 and s["worst_minute"]["loaf_n"] == 1
+'
+}
+
 @test "romp perf client --minutes: narrows the window, and a half-minute row is rated by its span" {
     run "$ROMP_SCRIPT" perf client --minutes 1
     [ "$status" -eq 0 ]

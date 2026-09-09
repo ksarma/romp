@@ -88,6 +88,17 @@ class WaitingOnYouNamesTheChip(unittest.TestCase):
         self.assertIn("const chip = todoFile ? fileChip(todoFile, sid) : null;", self.waiting)
         self.assertIn(".wt-file{", self.css)
 
+    def test_the_section_describes_the_web_address_and_the_link_chip(self):
+        # the 2026-09-09 review: the sentence had no pin. Held, like the file chip's, to the sources that make it
+        # true: the two hosts' link chips and the anchor the chip is (the whole address as its title)
+        self.assertIn("A web address in a todo's text or detail is a link that opens in a new tab, and a todo that "
+                      "carries its own address shows it as a second chip beside the file's, the whole address on hover.",
+                      self.section)
+        self.assertIn('if (t.link) txt.append(" ", todoLinkChip(t.link));', _read("ui", "webview", "render.ts"))
+        self.assertIn("if (w.todo.link) line.appendChild(linkChip(w.todo.link));", self.waiting)
+        urls = _read("ui", "webview", "url-links.ts")
+        self.assertIn('  a.target = "_blank";\n  a.rel = "noopener noreferrer";\n  a.title = href;\n  a.textContent = urlChipLabel(href);', urls)
+
     def test_the_chip_opens_the_file_the_way_a_path_does(self):
         # openPathLink's span: the same data-act the linkified paths carry, so the same delegate posts the same viewFile
         self.assertIn('const chip = framed ? openPathLink(base, file, false, sid) : el("span", "");', self.waiting)

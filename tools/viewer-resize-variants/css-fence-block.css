@@ -1,0 +1,2 @@
+.fileview-md pre code .cl { display: block; }
+.fileview-md pre code .cl::before, .fileview-md pre code .ct::before { content: none; }

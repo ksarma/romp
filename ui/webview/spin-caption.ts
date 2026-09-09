@@ -65,7 +65,7 @@ export interface Spin {
   tip: string;
   awaitingBg: boolean;
   still?: boolean;   // the at-rest floor: glyph present but NOT spinning — spin reads as in-flight, and quiet/unknown are states of rest
-  /** A caption that ENDS in a running duration, split for a live label (2026-09-06): `caption` is
+  /** A caption that ENDS in a running duration, split for a live label: `caption` is
    *  `text + workingFor(nowS - since)` exactly, and the renderer stamps the duration on its own element
    *  (feed-age.ts fmt "dur") so the 15 s live pass keeps it moving. The feed's per-card update gate
    *  repaints a card only when its inputs change, so a duration baked into one string would freeze on a

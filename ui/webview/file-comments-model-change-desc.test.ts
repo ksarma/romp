@@ -144,7 +144,9 @@ test("a truncated log: when the host's tail lacks the decision, a bound comment 
 // The kernel's decisions-only shape (kernel.py _file_comments_message, `if not comments:`), which
 // tests/test_kernel_file_comments_decisions_send.py pins on its side; file-comments.test.ts's cross-run feeds both
 // builders the same inputs. A send with no comments is reachable since Slice 2: a manual Accept or Reject is
-// unsent until a send carries it.
+// unsent until a send carries it. Since the Send confirm's note (2026-09-09; file-comments-model-message.test.ts
+// and tests/test_kernel_file_comments_note.py pin its placement) the line saying nothing needs a reply is its own
+// conditional statement in both builders, and the closing ask stands apart from it, unconditional.
 const ASK_AGAIN = "When you have made more changes, ask me for another look the same way you asked for this one,\nnaming the file.\n";
 
 test("the decisions-only message (no comments): the kernel's second shape byte for byte — the file, the decisions line, nothing needs a reply, the closing ask", () => {
@@ -188,11 +190,25 @@ test("the comments shape did not move, and both shapes end on the kernel's one c
   assert.ok(one.includes("Which cache? Say which.\n\nI accepted 3 of your changes and rejected 0.\n\nTo respond:\n"));
   assert.ok(one.endsWith("\nWhen you have addressed these, ask me for another look the same way you asked for this one,\nnaming the file.\n"));
   assert.ok(!one.includes("I went over") && !one.includes("nothing needs a reply"));
+  // the decisions shape with a note (a note alone still sends): the line saying nothing needs a reply stands down, the
+  // closing does not — it is the same closing whether or not that line went
+  const noted = buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 0, tracked: true, note: "Fine as is; I read it all." });
+  assert.equal(noted, "[obsidian-diff] I went over " + ABS + ".\n\nFine as is; I read it all.\n\n" + ASK_AGAIN);
+  assert.ok(!noted.includes("nothing needs a reply"));
+  assert.ok(buildSendMessage({ absPath: ABS, comments: [], accepted: 2, rejected: 0, tracked: true, note: "Fine as is." }).endsWith("\n\nI accepted 2 of your changes and rejected 0.\n\n" + ASK_AGAIN));
   const KERNEL = read("kernel", "kernel.py");
   assert.match(KERNEL, /_SEND_ASK_AGAIN = \("ask me for another look the same way you asked for this one,", "naming the file\."\)/);
   assert.match(KERNEL, /lines = \["\[obsidian-diff\] I went over %s\." % ap, ""\]/);
-  assert.match(KERNEL, /"No comments this time, so nothing needs a reply\.",\n\s*"When you have made more changes, " \+ _SEND_ASK_AGAIN\[0\], _SEND_ASK_AGAIN\[1\]\]/);
+  // the no-reply line under its own `if not nt:` and the closing ask as the next statement at the outer indent: the
+  // closing is unconditional, so a note-only send ends on it too (the joined two-element literal of before the note
+  // would have dropped the closing with the line)
+  assert.match(KERNEL,
+    /\n {8}if not nt:\n {12}lines\.append\("No comments this time, so nothing needs a reply\."\)\n {8}lines \+= \["When you have made more changes, " \+ _SEND_ASK_AGAIN\[0\], _SEND_ASK_AGAIN\[1\]\]\n/,
+    "the kernel's decisions tail: the conditional no-reply line, then the closing ask outside the condition");
   assert.match(KERNEL, /lines\.append\("When you have addressed these, " \+ _SEND_ASK_AGAIN\[0\]\)/);
   const MODEL = read("ui", "webview", "file-comments-model.ts");
   assert.match(MODEL, /const SEND_ASK_AGAIN = \["ask me for another look the same way you asked for this one,", "naming the file\."\] as const;/, "the same constant on this side");
+  assert.match(MODEL,
+    /\n {4}if \(!nt\) lines\.push\("No comments this time, so nothing needs a reply\."\);\n {4}lines\.push\("When you have made more changes, " \+ SEND_ASK_AGAIN\[0\], SEND_ASK_AGAIN\[1\]\);\n/,
+    "…and the same two statements, in the same order, on this side");
 });

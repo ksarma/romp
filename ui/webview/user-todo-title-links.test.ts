@@ -359,8 +359,9 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   // render.ts: the line through linkTodoLinePaths (no figure pass), the detail through linkTodoDetailPaths
   // (linkifyFileUris with the figure pass, delegated); both mark through path-links.ts and bind NOTHING:
   // the body delegate's openpath is the click (the tests above drive it)
-  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyPathTokens\(node, sid\);\n\}/);
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  // (the URL pass runs first in both, since 2026-09-08: url-links.test.ts pins it; a URL is dead text to the path walk)
+  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
   assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the body delegate opens a path link in the todo card, the Reply modal or the pinned-notes strip, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
   assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");

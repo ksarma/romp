@@ -31,10 +31,12 @@ test("the chat chip knows awaitingBg: its own await-green chip, label 'Awaiting'
 });
 
 test("the chat tab dot matches the chip: await-green for awaitingBg, yellow for working", () => {
-  // the strip speaks the fork's FULL four-state pip language (the user 2026-08-10; the two extra
-  // quarters are pinned in tests/test_tab_strip_pips.py) — working/awaitingBg keep their classes
-  assert.match(RENDER, /st === "working" \? \["", [\s\S]{0,80}?: st === "awaitingBg" \? \["await", /);
-  assert.match(RENDER, /el\("span", "tab-dot" \+ \(dot\[0\] \? " " \+ dot\[0\] : ""\)\)/);
+  // the per-state dot is one rule now (tabDotClass, T262g): the slot is laid out in every state; the fork's
+  // extra quarters (the gray unknown ring, the opening pulse) are its other branches, pinned in
+  // tests/test_tab_strip_pips.py — working/awaitingBg keep their classes
+  const TS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-state.ts"), "utf8");
+  assert.match(TS, /if \(st === "working"\) return "tab-dot";\s*\n\s*if \(st === "awaitingBg"\) return "tab-dot await";/);
+  assert.match(RENDER, /const dotCls = tabDotClass\(st\);\s*\n\s*if \(dotCls\) tab\.appendChild\(el\("span", dotCls\)\);/);
   assert.match(STYLES, /--st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;/);
   assert.match(STYLES, /\.chip-awaitingBg \{ background: var\(--st-awaitbg-bg\); color: var\(--st-awaitbg-fg\); \}/);
   assert.match(STYLES, /\.tab-dot\.await \{ background: var\(--st-awaitbg-bg\); \}/);

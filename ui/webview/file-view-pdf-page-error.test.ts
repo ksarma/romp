@@ -399,6 +399,6 @@ test("source: render() is handed onPageError under the same stale guard as onPag
   assert.match(call, /^\s*onPage: \(\) => \{ if \(my === pdfSeq && pdfHandle\) fireRendered\(\); \},/m, "onPage: a repaint, guarded by the sequence and the mount");
   assert.match(call, /^\s*onPageError: \(\) => \{ if \(my === pdfSeq && pdfHandle\) fireRendered\(\); \},/m,
     "onPageError: the same repaint under the same guard — a failed page's overlay leaves only on a paint pass, and a stale render's report is nothing");
-  const seamDoc = VIEW.split("onRendered(cb: () => void): void;")[0].split("renderedImages(): HTMLImageElement[];")[1];
+  const seamDoc = VIEW.split("onRendered(cb: (why?: FileViewRenderWhy) => void): void;")[0].split("renderedImages(): HTMLImageElement[];")[1];
   assert.match(seamDoc, /could not draw/, "the seam's onRendered doc tells the panel a failed page is a paint too");
 });

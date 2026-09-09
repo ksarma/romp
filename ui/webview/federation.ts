@@ -18,12 +18,16 @@ import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-wr
 import { hostOf, bareId } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
 
-/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on the pages the kernel pushes
- *  frames to; null on the Files pane, whose content is fetched on demand with no frames pushed to it, so there
- *  is nothing to time and a long frame there would only add an unexplained pane to `romp perf client`.
- *  start() installs through this; exported so the test can check the decision without start()'s timers. */
+/** The page's performance collector (ui/webview/perf-telemetry.ts), installed on every kernel page, the Files
+ *  pane included. That pane gets no frames pushed to it (its content is fetched on demand), so it used to get no
+ *  collector either; but its viewer's paint pass over a large reviewed file is the dashboard's costliest
+ *  main-thread work (a divider drag with a big note open blocked for about 20 s on 2026-09-09, and no pane
+ *  recorded a long frame), and the viewer times that pass through this collector as `fileview:<why>`
+ *  (file-view.ts perfTimed), so the row carries the pass cost, the free sample after it, the long frames
+ *  the pane's own observer sees, and the socket's op replies (`fed:<type>`) as on every pane. start() installs through this; exported so the test can check the decision
+ *  without start()'s timers. */
 export function perfCollectorFor(app: string): RompPerf | null {
-  return app === "files" ? null : installPerfTelemetry(app);
+  return installPerfTelemetry(app);
 }
 
 export const SEP = ":";
@@ -753,12 +757,12 @@ export class FederationManager {
    *  that reads event.data receives a STRUCTURED CLONE of it, made synchronously inside dispatchEvent. For a
    *  merged feed of several megabytes that is tens of milliseconds and as many megabytes of garbage per frame, in
    *  every feed-consuming pane, counted under this layer's fed:<type> bracket (its own work is under a
-   *  millisecond); the probe measured 35-46 ms per dispatch of a 7 MB frame and 0 ms for a direct call
-   *  (2026-09-06). Nothing outside romp's bundles receives a merged frame now, so nothing can clone it.
+   *  millisecond); a probe measured 35-46 ms per dispatch of a 7 MB frame and 0 ms for a direct call. Nothing
+   *  outside romp's bundles receives a merged frame now, so nothing can clone it.
    *
    *  A throwing handler is reported and the rest still run — the DOM's report-and-continue for event listeners.
    *  Without this a throw would propagate through inbound into the shim's socket callback and skip this layer's
-   *  remaining work (the passthrough after a caps re-emit, the bars emission after a detach's lanes emission). */
+   *  remaining work (the bars emission after a detach's lanes emission). */
   private emit(data: any): void {
     const ev = new MessageEvent("message", { data });
     const subs = this.frameSubs;

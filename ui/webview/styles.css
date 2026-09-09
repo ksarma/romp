@@ -478,6 +478,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-emoji { flex: 0 0 auto; line-height: 1; }
 .tab-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }   /* solid — dot oscillation was distracting (the user 2026-06-16) */
 .tab-dot.await { background: var(--st-awaitbg-bg); }   /* awaiting-bg: the dot matches the await-green chip (the user 2026-07-13) */
+/* the slot with no dot to show (idle, blocked, closed…): laid out, invisible — a tab's width must not change with its
+   state, or the strip's row count flaps at a wrap boundary and the transcript slides under the reader (T262g, 2026-09-08) */
+.tab-dot.none { visibility: hidden; }
 /* state UNKNOWN: the same language the feed's .fwork-dot and the sessions pane's .fl-workdot speak.
    A hollow ring in the "can't see it" gray the network strip paints a down host (the `#8a8a8a` in
    strip.ts's status-dot colour pick), so a bare tab can only mean a state with its own tab treatment
@@ -1226,6 +1229,21 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .staged-head .staged-go { margin-left: auto; background: none; border: 1px solid var(--accent); color: var(--accent);
   border-radius: 5px; font: inherit; padding: 1px 8px; cursor: pointer; }
 .staged-head .staged-go:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }   /* the feed word-button hover (2026-08-25) */
+/* the head's fold caret and label (the user 2026-09-08): a click folds the strip to the head line alone,
+   count and Send now still on it; the caret is a real button so the keyboard reaches it */
+.staged-head .staged-fold { flex: 0 0 auto; background: none; border: 0; padding: 0 2px; color: var(--dim); font: inherit; line-height: 1; cursor: pointer; }
+.staged-head .staged-lbl { cursor: pointer; }
+/* the items in their own scrolling list UNDER the head, about four items tall (the user 2026-09-08, whose
+   twelve staged comments filled the page below the strip and pushed the transcript out of view): a staged
+   item with one quote is 50px (the quote pill 22.8px = 12px text at the pill's 1.4 line height plus 2px
+   padding and 1px border top and bottom; the comment row 19.2px = 12px text at the page's 1.6 line height;
+   the 2px gap between them; the box's 2px padding and 1px border top and bottom), so four items and the
+   three 3px gaps between them are 209px. The head with the count and Send now sits outside the scroll;
+   an expanded item grows inside it. overflow-x hidden, as on every scroll container in the pane: a
+   scrolling list computes overflow-x to auto on its own, and an expanded item holding one unbroken token
+   (a digest, a query string) wider than the list gave the pane a sideways scroll (review round 1,
+   2026-09-09); the open labels below wrap such a token so it stays readable. */
+.staged-list { display: flex; flex-direction: column; gap: 3px; min-height: 0; max-height: 209px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 /* the chips strip's Stage button (the user 2026-08-23; moved 2026-08-24): it FOLLOWS the blue
    context chips in the strip's column — immediately after what it acts on, where its meaning reads;
    right-justified it floated detached. Exists exactly while context is held (the strip renders it,
@@ -1250,12 +1268,12 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    one-line-ellipsis-then-expand read as everything else here. min-width:0 + max-width guard the
    pane against sideways growth at every level. */
 .staged-cite { min-width: 0; max-width: 100%; cursor: pointer; }
-.staged-cite.open .composer-chip-label { white-space: pre-wrap; overflow: visible; }
+.staged-cite.open .composer-chip-label { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
 .staged-cite.open { align-items: flex-start; }
 /* min-width:0 lets the flex label actually SHRINK — without it the line ran off the pane edge with no
    ellipsis (the user 2026-08-15); expanded, the same label wraps to the full text */
 .staged-chip .composer-chip-label { flex: 1 1 auto; max-width: 100%; min-width: 0; }
-.staged-chip.open .staged-row .composer-chip-label { white-space: pre-wrap; overflow: visible; }
+.staged-chip.open .staged-row .composer-chip-label { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
 .staged-chip.open .staged-row { align-items: flex-start; }
 .staged-expand { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }   /* chrome, not message text */
 .composer-chip-x {
@@ -1573,6 +1591,12 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   color: var(--fg); position: relative; white-space: nowrap;
 }
 .meta-item:hover { background: var(--menu-hover); }   /* the themed row wash (T226) */
+/* the one row a Codex menu shows when it has no list to offer (2026-09-09): a statement, not a choice,
+   so no pointer, no hover wash; its sub-line carries the kernel's reason, which wraps: a reason names
+   the client's state in a sentence, and .meta-item's nowrap would run it past the panel's edge */
+.meta-item.meta-empty { cursor: default; white-space: normal; max-width: 280px; }
+.meta-item.meta-empty:hover { background: none; }
+.meta-item-sub .meta-dots { margin-left: 5px; vertical-align: middle; }   /* the wait's loader dots, beside the text */
 /* second line for a choice whose consequence its label doesn't carry (Bypass permissions). Same
    0.82em / 0.6 opacity as .ctx-item-sub — one sub-line size across every romp menu. */
 .meta-item-sub { font-size: 0.82em; opacity: 0.6; }
@@ -2491,14 +2515,19 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    quotes the line inside .confirm-detail (0.92em), where an em compounds (ui/CLAUDE.md). The ellipsis
    triple needs the block container inline-block gives (text-overflow never reaches text inside a flex
    container: waiting-pane.css). The 32% share is the row's, shared with the buttons. */
-.ut-file { display: inline-block; max-width: 32%; padding: 1px 8px; border-radius: var(--radius-pill);
+.ut-link, .ut-file { display: inline-block; max-width: 32%; padding: 1px 8px; border-radius: var(--radius-pill);
   font-size: 11px; line-height: 1.5; vertical-align: middle; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   background: var(--overlay-10); color: var(--accent); text-decoration: none; }
 .ut-file.file-uri-link:hover { filter: brightness(1.12); text-decoration: none; }
-/* in the Reply modal the chip trails the quoted line, whose width is the box's: the cap is the line, as the pane's
+/* the web address a todo CARRIES (render.ts todoLinkChip; the user 2026-09-08): the same pill, an anchor in the
+   accent rather than the prose link ink .url-link wears below (the chip dress stands for the underline); the
+   element selector outranks .url-link's class-only rules, whichever sheet order loads them */
+a.ut-link { color: var(--accent); text-decoration: none; }
+a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
+/* in the Reply modal the chips trail the quoted line, whose width is the box's: the cap is the line, as the pane's
    modal rule has it (waiting-pane.css #ut-reply-prompt .wt-file) — under the row's share a basename past ~13
    characters was cut on a phone with the line to spare */
-#ut-reply-prompt .ut-file { max-width: 100%; }
+#ut-reply-prompt .ut-link, #ut-reply-prompt .ut-file { max-width: 100%; }
 /* progressive disclosure: the one-line version by default; detail opens on click (keyed fold) */
 .ut-detail { display: none; color: var(--dim); font-size: 0.86em; line-height: 1.4; margin: 2px 0 4px; white-space: pre-wrap; }
 .ut-detail.open { display: block; }
@@ -2890,6 +2919,10 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    the rest, in the same hyperlink ink. */
 .pr-link { color: var(--link); text-decoration: none; }
 .pr-link:hover { text-decoration: underline; }
+/* http(s) addresses linked in the same plain-text surfaces (url-links.ts; the user 2026-09-08): user-todo rows and
+   their Reply modals, pinned notes, the Waiting-on-you pane (which loads this sheet); the same hyperlink ink */
+.url-link { color: var(--link); text-decoration: none; }
+.url-link:hover { text-decoration: underline; }
 .md blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); color: var(--dim); }
 .md hr { border: none; border-top: 1px solid var(--box-border); margin: 1em 0; }
 .md :not(pre) > code {
@@ -3952,15 +3985,20 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 .fileview-size-reset.fileview-size-default { visibility: hidden; }
 /* a link whose branch is not on origin yet: dashed, the caption carries the note */
 a.fileview-gh-note { border-style: dashed; }
-/* The body's content width reaches the sheet as --fv-body-w, written on the body by the viewer's ResizeObserver
-   (file-view.ts, the width observer: the observer's report is the layout's own event, one write per report), for the
-   pane-wide table's cap (.fileview-md > table, below). The body reserves no scrollbar gutter and is no size container: the
+/* The body's content width reaches the sheet as --fv-body-w, written by the viewer's ResizeObserver (file-view.ts, the width
+   observer: the observer's report is the layout's own event) on each top-level table, for the pane-wide table's cap
+   (.fileview-md > table, below). The property is registered NON-INHERITED: written on the body as an ordinary custom property
+   (until 2026-09-09) it reached every node under the body, and Chromium recomputed every node's style on each write, 27 ms a
+   step at 24k nodes and 259 ms at 134k, on every width change of the pane; on the table alone, with nothing inheriting it, a
+   write restyles the tables and nothing else. The universal syntax and no initial value keep the unset case as before: the
+   var() fallbacks below hold until the first report. The body reserves no scrollbar gutter and is no size container: the
    review's round 1 had `scrollbar-gutter: stable` here so a container unit (100cqi, resolved before an auto scrollbar takes
    its space) agreed with the root's 100% padding, and the gutter was then a blank strip on every body that never scrolls, a
    short note 5px off the card's centre, a picture too, a PDF frame and the editor 10px short of the body's edge (15 on the
    feed's platform scrollbar); the observer's width is the content box the column is measured in, scrollbar or none (review
    round 2). file-view-scrollbar-browser.test.ts launches Chromium with the scrollbar visible (the other legs run under
    playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
+@property --fv-body-w { syntax: "*"; inherits: false; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the raw-mode editor: height: 100% (not flex) — .fileview-body above is a plain overflow block,
    not a flex container, so a flex basis on its child is inert and the textarea sat at the UA's
@@ -4529,6 +4567,18 @@ body.filebrowse-open { overflow: hidden; }
 .fc-margin > .fc-composer, .fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2):not(.fc-filter)),
 .fc-margin > .fc-sec-send:has(> :not(.fc-foot, .fc-send), .fc-foot > :nth-child(n+2), .fc-send > :nth-child(n+2):not(.fc-note)),
 .fc-margin > .fc-sec-log:has(.fc-log > :nth-child(n+2)) { flex-shrink: 1000000; min-height: min(15%, 2.4em); }
+/* The arrivals line (.fc-arrivals; the arrivals follow-on, 2026-09-09) is the head's third control row, not growth: a head
+   whose only children past the toggles' row and the filter's are the line stays in the collapsed tier, by a rule after the
+   grown tier's at its specificity. Counted as growth, the line shrank its own section, and being the head's last row it
+   was the first thing out of the section's box: a 600px viewer with the Send confirm up cut it at the section's bottom
+   edge and a 500px one scrolled it out whole, while the confirm and the Log toggle stood at their full height below (the
+   arrivals review, 2026-09-09). When the head IS grown — a refusal row, the Track choice, the tooling warning — and the
+   line stands too, the section's floor is the control row and the line's row together, and the line sticks to the
+   section's bottom edge over the rows that scroll, as the Log toggle sticks to the top of its scroller below, so the
+   notice stays in view while the section scrolls. */
+.fc-margin > .fc-sec-head:not(:has(.fc-head > :nth-child(n+2):not(.fc-filter, .fc-arrivals))) { flex-shrink: 1; min-height: 0; }
+.fc-margin > .fc-sec-head:has(.fc-head > :nth-child(n+2):not(.fc-filter, .fc-arrivals)):has(.fc-arrivals) { min-height: min(15%, 4.4em); }
+.fc-margin .fc-head > .fc-arrivals { position: sticky; bottom: 0; background: var(--bg); }
 .fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }
 .fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
 .fc-margin .fc-log > .fc-sec { position: sticky; top: 0; background: var(--bg); }
@@ -4544,6 +4594,24 @@ body.filebrowse-open { overflow: hidden; }
 .fc-margin .fc-cards > .fc-group { display: none; }
 .fc-margin .fc-card[data-pushed]::before { content: ""; position: absolute; left: -7px; top: calc(-1 * var(--fc-push, 0px)); height: var(--fc-push, 0px);
   border-left: 1px dashed var(--text-faint); }
+/* A card the focus moved up past its mark (card-layout.ts; the focus follow-on, 2026-09-08: the card the person last acted
+   on sits level with its mark, and the cards above it move up by the least that clears it) draws its leader DOWN the
+   gutter from its end to the mark's height (--fc-pull, set per card), as a pushed card draws one up. */
+.fc-margin .fc-card[data-pulled]::after { content: ""; position: absolute; left: -7px; top: 100%; height: var(--fc-pull, 0px);
+  border-left: 1px dashed var(--text-faint); }
+/* The fold of a tall card (the same follow-on; file-comments.ts clipCards). In the margin layout a long part of a card — a
+   change's old and new text, a comment's body, a run of turns (.fc-clip) — is capped at eight of its own lines (lh: the
+   part's line height) and clipped, its last lines fading out where the pass found the cap cut the content (data-clipped;
+   a mask, so the fade is the same over a turn's wash as over the card), and the card's foot offers Show more; a card the
+   person opened whole (fc-more) has no cap. A run of turns (.fc-replies) is cut at its START instead (the follow-on's review,
+   2026-09-08): the turns stand oldest first, so a cap that kept the first lines hid the newest — the session's latest answer,
+   the turn a reply box under the run answers — behind Show more; the pass scrolls a cut run to its end (keepEnd), and its
+   fade goes to its first lines. The list layout shows every part whole, and the row stays hidden there. */
+.fc-margin .fc-card:not(.fc-more) .fc-clip { max-height: 8lh; overflow: hidden; }
+.fc-margin .fc-card:not(.fc-more) .fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent); mask-image: linear-gradient(to bottom, black 65%, transparent); }
+.fc-margin .fc-card:not(.fc-more) .fc-replies.fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to top, black 65%, transparent); mask-image: linear-gradient(to top, black 65%, transparent); }
+.fc-clip-row { display: flex; }
+.fc-clip-row[hidden] { display: none; }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
    wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts
@@ -4575,6 +4643,23 @@ body.filebrowse-open { overflow: hidden; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
   background: color-mix(in srgb, var(--err) 9%, transparent); }
+/* the arrivals notice (the arrivals follow-on, 2026-09-09; file-comments.ts renderHead, gesture, markNew): while a
+   session's changes, comments or replies stand unseen, one line under the header names them (.fc-arrivals: a text
+   button in the fold toggles' dress, in the accent with a dot before its words), and each arrival's card and marks wear
+   data-new until a gesture of the person's finds them on screen: a dot in the accent at the head's left, in the card's
+   padding beside its coloured edge, and one in the top right corner of each line box of a highlight, an insertion's tint
+   and a deletion's struck label — the marks paint every line box whole (box-decoration-break: clone, the ring around each
+   wrapped line), so a mark that wraps wears the dot on each of its lines, as the Raw view's row slices wear one each, and
+   they come off together. The card's dot is a positioned pseudo-element and the marks' a background layer over the mark's
+   own wash (the change marks' two pseudo-elements are the struck text and the author chip), so a dot coming off changes
+   no layout under a pointer (ui/CLAUDE.md, click-safe). */
+.fc-arrivals { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.fc-arrivals::before { content: ""; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.fc-card[data-new] > .fc-card-head { position: relative; }
+.fc-card[data-new] > .fc-card-head::before { content: ""; position: absolute; left: -9px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+  border-radius: 50%; background: var(--accent); }
+.fc-hl[data-new], .fc-ins[data-new], .fc-del[data-new]::before { background-image: radial-gradient(circle at 3px 3px, var(--accent) 2.5px, transparent 3px);
+  background-repeat: no-repeat; background-position: top right; background-size: 6px 6px; }
 /* the editor's marks over pending changes (Slice 5; ui/webview/track-decorations.ts, whose CLS names these classes): while a
    tracked file is edited, CodeMirror draws each change itself — an insertion as a mark over its new text (tc-diff-ins), a
    deletion as a widget holding the struck old text in place (tc-diff-del), a substitution as the struck text right before the

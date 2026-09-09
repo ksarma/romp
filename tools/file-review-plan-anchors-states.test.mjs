@@ -187,9 +187,10 @@ test('on the Raw fixture, the host places the moved offset on the selected copy 
   assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `\$\{what\} occurs more than once in \$\{ctx\.shown\}[^`]*\$\{moved\} no longer says which copy was meant — \$\{again\}`\);/.test(host), 'the refusal names the moved text, in the words of the gesture (a passage selected, a region drawn)');
   assert.ok(host.includes(`"the text moved after it was selected, so the selection's position"`) && host.includes(`'reload and select it again'`), 'a passage: the text moved after it was selected; select it again');
   assert.ok(host.includes(`"the text moved after the region was drawn, so the region's position"`) && host.includes(`'reload and draw the region again'`), 'a region on an embedded figure: drawn, so draw it again');
-  // the panel: the follow runs from a repaint and shifts a passage after the edit's span by the edit's length;
-  // Save sends the pair's start; a refusal keeps the note where it was typed
-  assert.ok(panel.includes('ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });'), 'the follow runs when the body is repainted');
+  // the panel: the follow runs from a repaint (a paint or a reflow alike; only the paint pass is skipped on a
+  // reflow) and shifts a passage after the edit's span by the edit's length; Save sends the pair's start; a
+  // refusal keeps the note where it was typed
+  assert.ok(panel.includes('ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") this.scheduleLayout(); else this.paintAll(); });'), 'the follow runs when the body is repainted, on a paint and on a reflow alike');
   assert.ok(/const f = followPassage\(c\.text, c\.range, src\);\s*\n\s*if \(f\.state === "moved"\) \{ c\.range = f\.range; c\.text = src; c\.tied = false; \}/.test(panel), 'retargetComposer moves the pair with its copy');
   const follow = fn(panel, 'followPassage');
   assert.ok(follow.includes('if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }'), 'a passage after the edit shifts by its length, exactly');

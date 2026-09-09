@@ -72,7 +72,7 @@
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
 import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";
-import { delegate, flash, type ActionHandler } from "./actions";
+import { delegate, flash, pressHold, type ActionHandler, type PressHold } from "./actions";   // pressHold: the arrivals line's change in place waits out a press (the arrivals follow-on, 2026-09-09)
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
@@ -83,11 +83,14 @@ import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map
 import { revealFragmentTarget } from "./md-sanitize";   // the HTML spec's ancestor revealing steps, run on a mark inside a closed <details> before any scroll to it (revealMarks)
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
-  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered, detachedChanges,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, unsentCount, cardCounts, filterOffered, detachedChanges,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
+  statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
+  resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
+  noteTooLong, trimNote,   // the Send confirm's note box (the user's ruling, 2026-09-09); trimNote: the note as the kernel reads it
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -630,6 +633,8 @@ const HOLD_WORDS = "The card stays open while its reply is written; Save or Canc
  *  may also drag the box's handle (resize: vertical), past the cap too, and a sheet clamp would take the drag with it. */
 export const COMPOSER_ROWS = 3;
 export const COMPOSER_MAX_ROWS = 12;
+/** The Send confirm's note box grows to this many rows, then scrolls (the user's ruling, 2026-09-09: about eight). */
+export const SEND_NOTE_ROWS = 8;
 /** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
  *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
  *  detected once. Only the HINT reads it: either modifier saves on every platform. */
@@ -674,27 +679,27 @@ export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): 
  *  the scroll back (with cards below the box the browser's anchoring over-corrects the other way instead). Every keystroke
  *  in a grown box jumped the panel toward its top, the Save row and the cards the person had scrolled to leaving the
  *  viewport. So the scrolled ancestors' positions are read first and written back last, on both paths. */
-export function autosizeComposer(ta: HTMLTextAreaElement): string | null {
+export function autosizeComposer(ta: HTMLTextAreaElement, maxRows = COMPOSER_MAX_ROWS): string | null {
   const prev = ta.style.height;
   const held = scrolledAncestors(ta);
   ta.style.height = "auto";
   const sh = ta.scrollHeight;
   if (!(sh > 0)) { ta.style.height = prev; restoreScroll(held); return null; }
   const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
-  ta.style.height = Math.min(sh, rowCap(ta)) + border + "px";
+  ta.style.height = Math.min(sh, rowCap(ta, maxRows)) + border + "px";
   restoreScroll(held);
   return ta.style.height;
 }
 /** The scroll height of a box at the cap: COMPOSER_MAX_ROWS rows of its computed line-height plus its vertical padding
  *  (scrollHeight counts the padding, not the border). Infinity — no cap — where the row height cannot be read: a document
  *  with no computed style (the panel tests' stand-in), or a box no sheet reaches, which has no floor either. */
-function rowCap(ta: HTMLTextAreaElement): number {
+function rowCap(ta: HTMLTextAreaElement, maxRows = COMPOSER_MAX_ROWS): number {
   const win = typeof window !== "undefined" ? window : null;
   if (!win || typeof win.getComputedStyle !== "function") return Infinity;
   const cs = win.getComputedStyle(ta);
   const lh = parseFloat(cs.lineHeight);
   if (!(lh > 0)) return Infinity;
-  return COMPOSER_MAX_ROWS * lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  return maxRows * lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
 }
 /** The ancestors scrolled down from their top, with how far: the only ones a shorter layout can clamp. */
 function scrolledAncestors(el: Element): Array<[Element, number]> {
@@ -866,9 +871,9 @@ function ensureListener(): void {
  *  The guard is for an import with no window at all (a node test of the pure helpers), where there is no keyboard. */
 function claimSaveChord(ev: KeyboardEvent): void {
   const p = live;
-  if (!p || ev.target !== p.input || composerKeyAction(ev) !== "save") return;
-  ev.stopImmediatePropagation();
-  p.boxKey(ev);
+  if (!p || composerKeyAction(ev) !== "save") return;
+  if (ev.target === p.input) { ev.stopImmediatePropagation(); p.boxKey(ev); }
+  else if (ev.target === p.noteBox) { ev.stopImmediatePropagation(); p.noteKey(ev); }   // the Send confirm's note box: the same chord sends (noteKey)
 }
 if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveChord, true);
 
@@ -1007,9 +1012,19 @@ class Panel {
   // review). An answer written to either puts the other back to its default (checked; null, the first offered).
   todoPick: string | null = null;
   openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
-  previewOpen = false;
+  // the Send confirm's note (the user's ruling, 2026-09-09: the grey preview of the message was a system message tied to the
+  // send and not worth showing, so a box for the person's own words took its place). `sendNote` is the words as typed, kept
+  // across every re-render while the confirm is open (a status landing, a poll) and cleared by a successful send or by
+  // closing the confirm on purpose (Cancel); a refused send keeps them. `noteBox` is one persistent textarea, moved into
+  // each fresh confirm the way the composer's box is (render restores its focus and scroll): a rebuilt box would drop the
+  // caret and the keyboard mid-word. The note goes in the request as `note`, trimmed, first in the message after its header
+  // (buildSendMessage is the kernel's twin); over SEND_NOTE_MAX characters the send is refused here, before any request.
+  sendNote = "";
+  noteRefusal: Err | null = null;             // the send slot's row that refused the note over the bound, while it stands (syncNoteRefusal)
+  noteBox = el("textarea", "fc-input fc-send-note") as HTMLTextAreaElement;
+  noteSizedTo: string | null = null;         // the inline height autosizeNote last set: any other was dragged there, and stands (the composer's sizedTo rule)
   colors: Map<string, FileViewIdentity> | null = null;
-  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
+  wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED or hidden, and where the keyboard went meanwhile (refocus): kept while it is in the list and the keyboard stays there
   located = new Map<string, Located & { painted: boolean }>();
   /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
    *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
@@ -1080,6 +1095,53 @@ class Panel {
   sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
   expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
+  // the focus (the focus follow-on, 2026-09-08): the card the person last acted on — a mark clicked, a card opened by its
+  // head, a reference followed, a Show more, a save, a Reveal — which the pass anchors the layout on (card-layout.ts): level with its
+  // mark whatever stands above it, the cards above moved up by the least that clears it. Before it, a tall change card above
+  // a comment pushed the comment's card a viewport below its highlight, and the click on the highlight scrolled the
+  // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
+  // (placeCards), by a pass in the list layout (the same: a mark or a head clicked there writes one, and the list has no
+  // pass to spend it on — the 2026-09-08 review), when the layout ends (layoutOff: the fold, edit mode, the panel's close)
+  // and with the panel (dispose). A LOOSE card written here — a whole-file comment's card opened by its head or by its Show
+  // more, the card a whole-file comment's save landed in — is spent by the pass as no change: it has no mark to be laid
+  // level with, and the rule takes a focus with no mark as none (card-layout.ts), so the pass would have laid the whole
+  // margin by the push-down rule again — the clicked card to the track's start, out of the box with nothing scrolling after
+  // it, and the card the person was reviewing pushed under the tall card again, off its mark (the verification review,
+  // 2026-09-09: the reach rule lays a loose card the chain cannot fit above the focus BELOW it, where a head click reaches
+  // it). The pass keeps the focus it laid the cards on last (laidOn) instead: a gesture on a card the rule cannot place
+  // moves nothing, as a head click on a loose card never did.
+  focusCard: string | null = null;
+  laidOn: string | null = null;               // the focus the last margin pass laid the cards on (placeCards): what a loose focus falls back to
+  // Show more (the same follow-on): the cards whose long parts — a change's old and new text, a long comment, a long run of
+  // turns — show whole in the margin layout, where the sheet otherwise folds each to about eight lines (clipCards); keyed
+  // like openCards, so the choice survives a re-render
+  openBodies = new Set<string>();
+  // ── the arrivals notice (the arrivals follow-on, 2026-09-09; file-comments-model.ts statusEntries, arrivalWords). The
+  // user sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing
+  // in the panel said so until the next Send accepted the changes by default. `seenKeys` is the set of entry keys the
+  // person has seen — a change, a comment, a reply (statusEntries) — null until the panel's first render with a status
+  // seeds it with everything then in the status. That status is the probe's, asked at mount with the panel closed, and
+  // the open's own re-ask (openPanel → refresh) lands after that render, so the first status to land while the panel is
+  // OPEN is all seen as well (`seenOpen`, noteArrivals): a file opened fresh has no arrivals — the person is looking at
+  // all of it — whatever the session added between the probe and the open (the review, 2026-09-09: a panel first opened
+  // minutes after the probe named everything since as arrivals). Every status landing after that (noteArrivals) adds
+  // the person's own writes to the set (YOU) and files every other author's entry not in the set as an ARRIVAL, kept in
+  // `arrivals` until seen. Seen is event-based (gesture): a
+  // gesture of the person's — a pointer press, a key, a wheel, a touch move in the body row, a save, a send — marks the
+  // arrivals whose cards are then in the track's box (entryShown) seen; the ones it scrolled into view are seen by the
+  // gesture that follows. Never a timer. While any arrival stands the head shows one line naming them (renderHead), a
+  // button whose click shows the first of them (goToArrival); the line's own press marks nothing seen, so the line stands
+  // through the click that asked to see the first arrival. The arrival cards and their marks wear data-new (renderCard, renderChangeCard,
+  // markNew) until seen; `newKeys` is the set of card keys the current render marks. The set lives with the panel, so a
+  // Raw/Rendered switch, a reload, a close and reopen of the aside keep it; a new file is a new panel.
+  seenKeys: Set<string> | null = null;
+  seenOpen = false;                           // whether a status has landed while the panel was open: until one has, the next to land is a newly opened panel's first, all seen (noteArrivals)
+  arrivals = new Map<string, Entry>();
+  newKeys = new Set<string>();
+  // the person's gestures, counted (gesture): the save samples the count when Save is pressed and its scroll to the saved
+  // card stands down when the count moved before the reply landed (scrollToSaved)
+  gestures = 0;
+  hold: PressHold | null = null;              // the body row's press: the arrivals line's change in place waits for the release (the constructor installs it)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -1141,6 +1203,13 @@ class Panel {
     if (act === "save") { e.preventDefault(); void this.saveComposer(); }
     else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
   };
+  /** A key in the Send confirm's note box: the composer's gesture (composerKeyAction), a plain Enter the textarea's own
+   *  newline, the chord the send. Escape stops at the box, as in the composer's (boxKey): the viewer's document-level
+   *  Escape would close the whole viewer over a note half typed; it closes nothing here, the words stay. */
+  noteKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") e.stopPropagation();
+    if (composerKeyAction(e) === "save") { e.preventDefault(); void this.doSend(); }
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
@@ -1150,6 +1219,10 @@ class Panel {
     this.input.setAttribute("aria-label", "Comment text");
     this.input.addEventListener("keydown", this.boxKey);   // Escape here; the save chord arrives through the window's claim (claimSaveChord); a plain Enter is left to the textarea
     this.input.addEventListener("input", () => this.autosize());
+    this.noteBox.rows = COMPOSER_ROWS;                 // the Send confirm's note: three rows, grown to about eight (SEND_NOTE_ROWS), then scrolling
+    this.noteBox.setAttribute("aria-label", "A note for the session");
+    this.noteBox.addEventListener("keydown", this.noteKey);
+    this.noteBox.addEventListener("input", () => { this.sendNote = this.noteBox.value; this.autosizeNote(); this.syncSendGo(); this.syncNoteRefusal(true); });
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
     this.float.title = "Comment on the selected passage";
@@ -1179,14 +1252,21 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
-    ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });
+    // a PAINT (new nodes): the whole pass over the body. A REFLOW (the same nodes at a new width or text size, a pane drag's
+    // every frame): the marks stand around the same characters, so only what was MEASURED from the text is redone, the
+    // cards' places (scheduleLayout, one pass per frame) and the float, which sat by a passage that has moved. Until
+    // 2026-09-09 a reflow ran paintAll too, unwrapping and re-wrapping every highlight and change mark and rebuilding the
+    // aside, once per frame of a drag: 1.1 s a frame at 3,000 lines with 200 comments and 200 changes (bench
+    // tools/viewer-resize-bench.ts), and the whole dashboard stalled for the drag on a bigger file.
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") this.scheduleLayout(); else this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
-    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved note is asked about before the viewer moves on
+    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved comment is asked about before the viewer moves on
+    ctx.guardClose(() => this.noteAsk());              // …and the words typed in the Send confirm's box, a note not yet sent
     ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
@@ -1229,6 +1309,15 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
+        // Show more / Show less on a card the margin layout folded (clipCards): more makes the card the focus and centers its
+        // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing. On a loose card the pass
+        // keeps the focus it had and centerOn has no mark to scroll to: the card shows its text whole where it stands
+        fcclip: (x) => {
+          const key = x.dataset.id!;
+          if (this.openBodies.has(key)) this.openBodies.delete(key);
+          else { this.openBodies.add(key); this.focusCard = key; this.expandIntent = { key, wasOpen: false }; }
+          this.render();
+        },
         // an inline change mark opens its card, and only that: like fcopen below, it cancels the click. A mark inside the
         // author's link (a deletion point placed at the start of a link's label, a substitution's point and tint over it,
         // an insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the card
@@ -1238,9 +1327,8 @@ class Panel {
         // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
         fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
-        fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
+        fcsendcancel: () => { this.sendConfirm = false; this.sendNote = ""; this.noteBox.value = ""; this.render(); },   // closed on purpose: the note goes with it
         fcsendgo: () => { void this.doSend(); },
-        fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
         fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
@@ -1248,6 +1336,7 @@ class Panel {
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
         fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
+        fcarrivals: () => this.goToArrival(),          // the arrivals line (the arrivals follow-on, 2026-09-09): the first arrival's card into view, as the focus
         // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
         // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
@@ -1307,6 +1396,19 @@ class Panel {
     });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
     this.installLayout(row);                           // the margin layout's scroll lock and its re-layout events
+    // the person's gestures (the arrivals follow-on, 2026-09-09; gesture): a pointer press or a key anywhere in the body
+    // row — the file's text, a mark, the aside and its composer — and the two events that begin a scroll of theirs, a wheel
+    // and a touch move. Not the scroll event: the lock's writes, a card's centering and the save's scroll fire it with no
+    // gesture behind them, and a wheel fires BEFORE the scroll it starts, so what a wheel marks seen is what was on screen
+    // before it, and what it scrolled in is seen by the gesture after. A scrollbar drag is a pointer press on the scroller;
+    // arrow and page keys are keys. In the capture phase, so a listener that stops the event lower down cannot hide it.
+    // The hold is installed FIRST: its own pointerdown listener is capture on the same row, and same-target same-phase
+    // listeners run in registration order, so a hold installed after the gesture would still read as not held when the
+    // gesture's pointerdown ran reflectSeen, and the line came off in the middle of the press it exists to wait out (the
+    // review, 2026-09-09: measured in Chromium and Firefox, the pressed card moved up by the line's height under the pointer).
+    this.hold = pressHold(row);                        // the arrivals line's change in place waits out a press on the row (reflectSeen)
+    for (const ev of ["pointerdown", "keydown"]) row.addEventListener(ev, (e) => this.gesture(e), true);
+    for (const ev of ["wheel", "touchmove"]) row.addEventListener(ev, (e) => this.gesture(e), { capture: true, passive: true });
   }
 
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
@@ -1418,6 +1520,7 @@ class Panel {
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
+    this.noteArrivals(s);                              // the entries this status brings that the person has not seen (the arrivals follow-on)
     this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
@@ -1559,10 +1662,23 @@ class Panel {
     const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
     return { question: "Discard the unsaved comment on " + name + "?", kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
   }
+  /** The second close ask: words typed in the Send confirm's box are a note the person has not sent, and a close or a
+   *  replace-open dropped them with the panel, silently — the one gap decision 40 recorded (the arrivals follow-on's review,
+   *  2026-09-09; closed in its consolidation). An ask of its own beside the composer's rather than that one widened: each
+   *  names the one thing it would drop, and the viewer runs every ask in turn (file-view.ts closeGuard), so a person holding
+   *  both is asked about both. The emptiness is the kernel's (trimNote): words its strip would take to nothing are not sent
+   *  (doSend) and not asked about. Cancel and a send that went clear the field, so neither leaves an ask; a send out or
+   *  refused keeps the words and the ask with them. */
+  noteAsk(): CloseAsk | null {
+    if (!trimNote(this.sendNote)) return null;
+    const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    return { question: "Discard the unsent note on " + name + "?", kept: "This file stays open: the note typed under Send on " + name + " is not sent. Send it, or Cancel it, then try again." };
+  }
   dispose(): void {
     this.clearLanding();
     this.stopPoll();
     if (this.margin) this.layoutOff();
+    this.focusCard = null;
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
@@ -2265,6 +2381,11 @@ class Panel {
     // building one card per store comment
     const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
     const before = new Set(this.cards().map((x) => x.id));   // the comments before the save, so the saved one can be told apart (noteHiddenSave)
+    // the save is a gesture of the person's (the arrivals follow-on), and the count as Save was pressed is what the scroll
+    // to the saved card is judged against once the reply lands (scrollToSaved): a scroll, a press or a key meanwhile means
+    // the person moved on, and the view is not pulled back
+    this.gesture();
+    const pressed = this.gestures;
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -2289,7 +2410,7 @@ class Panel {
       r = await this.mutate("comment", args, "composer");
     }
     const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
-    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is)
+    if (r) this.scrollToSaved(c, had, r, note, pressed === this.gestures);   // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is); nothing once the person moved on
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
     if (hid) this.render();                            // the cards were rendered with the reply before the saved comment was known: once more, with its line
   }
@@ -2317,14 +2438,176 @@ class Panel {
    *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
    *  (savedCommentId names the new one off the reply). A comment saved while the filter shows the changes alone has no
    *  card in the list and no mark in the text (renderCards, paintAll), so scrollCard finds nothing and nothing moves;
-   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is. */
-  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is.
+   *  The scroll stands down when the person has moved on (the arrivals follow-on, 2026-09-09: the user saved a reply,
+   *  scrolled on to the next passage while the host answered, and the reply's landing pulled the text back to the card).
+   *  `still`: no gesture of theirs — a scroll begun by a wheel or a touch, a pointer press, a key (gesture) — since Save
+   *  was pressed; the event is the person's own input, never a time window. The scroll runs only then, and only when the
+   *  saved card is not already whole in the track's box (cardWhole): a card in view needs no scroll; a whole-file comment's
+   *  card at the top of the track with the text scrolled down does. Standing down, the card still becomes the focus for
+   *  the layout (focusOn: the branch's focus rule), so it lands level with its mark wherever that is, and nothing scrolls. */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string, still: boolean): void {
     const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
-    if (saved !== null) this.scrollCard(this.cardKey(saved));
+    if (saved === null) return;
+    const key = this.cardKey(saved);
+    if (still && !this.cardWhole(key)) { this.scrollCard(key); return; }
+    if (this.margin) this.focusOn(key);
+  }
+  /** Whether a card stands whole in the box the person can see: in the margin layout, the placement's top and height
+   *  against the track's scroll and box (the pass has just placed the fresh cards: render runs it before this); in the
+   *  list layout, the card's box inside the aside's and the window's. False for a card not rendered or not placed. */
+  private cardWhole(key: string): boolean {
+    if (this.margin) {
+      const p = this.placed.get(key);
+      if (!p) return false;
+      const track = this.sections.cards, at = track.scrollTop;
+      return p.top >= at && p.top + p.height <= at + track.clientHeight;
+    }
+    const card = this.root?.querySelector('.fc-card[data-id="' + cssId(key) + '"]');
+    if (!card || !this.root) return false;
+    const r = card.getBoundingClientRect(), box = this.root.getBoundingClientRect();
+    return r.height > 0 && r.top >= box.top && r.bottom <= Math.min(box.bottom, window.innerHeight);
+  }
+
+  // ── the arrivals (the arrivals follow-on, 2026-09-09; the fields' comment says the rule) ───────────
+  /** A status landed: the entries in it that the person has not seen and did not write are arrivals (arrivalsAmong's
+   *  rule, kept here as a map so an arrival's order and its entry survive); the person's own writes join the seen set
+   *  outright; an arrival the status no longer holds (a change decided, a comment gone) is no arrival. An arrival still
+   *  standing takes the status's entry for it, in its place in the order: a change keeps its key when the sidecar's rebase
+   *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now, so the
+   *  accept option counts the arrived changes the accept will touch, not the ones it found pending at first sight (the
+   *  review, 2026-09-09). Nothing until the first render seeded the set (render), and the first status to land while the
+   *  panel is open is all seen too (seenOpen): a newly opened panel's first status is never an arrival. */
+  private noteArrivals(s: Status): void {
+    const seen = this.seenKeys;
+    if (seen === null) return;
+    const entries = statusEntries(s);
+    // the first status to land while the panel is open is the newly opened panel's first (the fields' comment): the render
+    // seeded the set from the probe's status, asked with the panel closed, and everything this one adds is seen as well. One
+    // landing while closed — the open's re-ask answered after a close — is nobody's first: the reopen's own is
+    if (!this.seenOpen) {
+      if (!this.open) return;
+      this.seenOpen = true;
+      for (const e of entries) seen.add(e.key);
+      return;
+    }
+    const now = new Set(entries.map((e) => e.key));
+    for (const k of Array.from(this.arrivals.keys())) if (!now.has(k)) this.arrivals.delete(k);
+    for (const e of entries) {
+      if (seen.has(e.key)) continue;
+      if (this.arrivals.has(e.key)) { this.arrivals.set(e.key, e); continue; }   // refreshed in place: a Map's set on a key it holds keeps the order
+      if (e.author === YOU) seen.add(e.key);
+      else this.arrivals.set(e.key, e);
+    }
+  }
+  /** The pending changes among the arrivals: what the Send confirm's accept option names (acceptOptionLabel). */
+  private arrivedPending(): number {
+    let n = 0;
+    for (const e of this.arrivals.values()) if (e.kind === "change" && e.pending) n++;
+    return n;
+  }
+  /** The card an entry shows on: a change's own; a comment's or a reply's the comment's card, which for a comment bound
+   *  to a pending change is the change's card (cardKey, as the list shows it). */
+  private arrivalCard(e: Entry): string {
+    return e.subject.startsWith("chg:") ? e.subject : this.cardKey(e.subject);
+  }
+  /** A gesture of the person's (the constructor's listeners; saveComposer; doSend): counted, and while arrivals stand,
+   *  every arrival whose card is on screen now is seen. A press or a key on the arrivals line itself marks nothing: its
+   *  click shows the first arrival, and the line must survive the click for the glance it was clicked for. */
+  gesture(ev?: Event): void {
+    this.gestures++;
+    if (!this.arrivals.size || !this.open) return;
+    const t = ev ? (ev.target as Element | null) : null;
+    if (t && typeof t.closest === "function" && t.closest('[data-act="fcarrivals"]')) return;
+    const seen: string[] = [];
+    for (const [k, e] of this.arrivals) if (this.entryShown(e)) seen.push(k);
+    if (!seen.length) return;
+    const keys = new Set<string>();
+    for (const k of seen) { keys.add(this.arrivalCard(this.arrivals.get(k) as Entry)); this.seenKeys?.add(k); this.arrivals.delete(k); }
+    this.reflectSeen(keys);
+  }
+  /** Whether an entry's card is on screen: in the margin layout, its placed top inside the track's box (the head, where
+   *  the dot is, is what the person sees of a card cut by the box's bottom); in the list layout, the card's top inside the
+   *  aside's box and the window's. A card not rendered — hidden by the filter, behind a fold — is not on screen. */
+  private entryShown(e: Entry): boolean {
+    const key = this.arrivalCard(e);
+    const card = this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]');
+    if (!card) return false;
+    if (this.margin) {
+      const p = this.placed.get(key);
+      if (!p) return false;
+      const track = this.sections.cards, at = track.scrollTop;
+      return p.top >= at && p.top < at + track.clientHeight;
+    }
+    if (!this.root) return false;
+    const r = card.getBoundingClientRect(), box = this.root.getBoundingClientRect();
+    return r.height > 0 && r.top >= box.top && r.top < Math.min(box.bottom, window.innerHeight);
+  }
+  /** Arrivals just seen, reflected without a render: the dots come off their cards and marks in place (an attribute
+   *  changes no layout, so a press under way keeps its target), and the line under the header is rewritten or removed —
+   *  through the row's press hold (pressHold): a line removed during a press moves the list under the pointer, and the
+   *  click would land on another card or none. The next render reads the same state. */
+  private reflectSeen(cards: Set<string>): void {
+    for (const key of cards) {
+      if (this.newKeys.has(key)) {
+        const still = Array.from(this.arrivals.values()).some((e) => this.arrivalCard(e) === key);   // another arrival on the same card keeps its dot
+        if (still) continue;
+        this.newKeys.delete(key);
+      }
+      const card = this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]') as HTMLElement | null;
+      if (card) delete card.dataset.new;
+      const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+      for (const m of this.ownMarks(act, id)) delete m.dataset.new;
+    }
+    const words = (): void => {
+      const b = this.root?.querySelector('[data-act="fcarrivals"]') as HTMLElement | null;
+      if (b) { if (!this.arrivals.size) b.remove(); else b.textContent = this.arrivalText(); }
+      // the Send confirm's accept option, when it is up, names the pending changes still unseen (renderSend's words)
+      const cb = this.root?.querySelector('input[data-opt="accept"]') as HTMLElement | null;
+      const label = cb && cb.parentElement ? cb.parentElement.querySelector("span") : null;
+      if (label && this.status) label.textContent = acceptOptionLabel(this.ctx.editing() ? 0 : (this.status.hunks || []).length, this.arrivedPending(), this.ctx.editing() ? 0 : resolvedByAccept(this.status.store, this.status.hunks || []));
+    };
+    if (this.hold) void this.hold.defer(words); else words();
+  }
+  /** The marks in the body of every card the render marks new (newKeys) wear the attribute too: after each paint pass the
+   *  marks are fresh (paintAll unwraps and repaints them), and render runs after every pass. */
+  private markNew(): void {
+    for (const key of this.newKeys) {
+      const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+      for (const m of this.ownMarks(act, id)) m.dataset.new = "1";
+    }
+  }
+  /** The arrivals line's click: the first arrival's card into view, opened, as the focus (showCard: the focus rule lays it
+   *  level with its mark and centers the mark). The first in the list's own order among the arrivals the list shows; when
+   *  the list shows none of them — the filter hides their kind — the filter goes to All, the way the All button takes it,
+   *  and the first arrival is shown; a resolved comment's fold opens for a reply on it. */
+  private goToArrival(): void {
+    const keys = new Set(Array.from(this.arrivals.values(), (e) => this.arrivalCard(e)));
+    if (!keys.size) return;
+    let first = this.cardsInOrder().map((c) => c.dataset.id || "").find((k) => keys.has(k)) || null;
+    if (first === null) {
+      if (this.activeFilter() !== "all") this.setFilter("all");
+      const e = this.arrivals.values().next().value as Entry;
+      first = this.arrivalCard(e);
+      const c = this.cards().find((x) => x.id === first);
+      if (c && c.resolved) this.resolvedOpen = true;
+    }
+    this.showCard(first);
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
-  cards(): Card[] { return this.status ? cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided) : []; }
+  // the card model of the status showing, built once per status: it is a pure function of the status, which applyStatus
+  // replaces whole and nothing mutates, so the status's identity is the key (cardsOf). Before the memo every reader rebuilt it
+  // over the whole store, and gesture() reads it once per arrival (arrivalCard → cardKey) on every press, key, wheel and touch
+  // move, so with hundreds of unseen replies one wheel tick held the page for tens of milliseconds rebuilding one model (the
+  // review, 2026-09-09; file-comments-arrivals-review2.test.ts counts the builds through the store)
+  private cardsOf: Status | null = null;
+  private cardsMemo: Card[] = [];
+  cards(): Card[] {
+    if (!this.status) return [];
+    if (this.cardsOf !== this.status) { this.cardsOf = this.status; this.cardsMemo = cardModel(this.status.store, this.status.hunks || [], this.status.log || [], this.status.decided); }
+    return this.cardsMemo;
+  }
   /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
@@ -2360,6 +2643,7 @@ class Panel {
       if (v.hidden.some((g) => g.changes.some((c) => c.key === key))) this.moreChangesOpen = true;
     }
     this.openCards.add(key);
+    this.focusCard = key;                               // the focus: the render's pass lays the card level with its mark (card-layout.ts); a loose card leaves the pass's focus as it was (laidOn), and scrollCard shows it where it stands
     this.render();
     this.scrollCard(key);
   }
@@ -2976,8 +3260,9 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
-    if (this.revealMarks(key) && this.margin) this.placeCards(false);   // a fold opened: the content below it moved, and centerOn reads the placement
-    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
+    const opened = this.revealMarks(key);              // a fold around the mark opens first, in either layout: the content below it moved
+    if (opened && this.margin) this.placeCards(false); // ...and centerOn reads the placement, so the pass runs over the opened fold (a focus change below runs one of its own)
+    if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
@@ -2985,15 +3270,19 @@ class Panel {
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
    *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
-   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
-   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
+   *  inline off), so the compact card never dead-ends. In the margin layout the card is made the focus first
+   *  (revealInRaw), so the switch's own pass lays it level with its Raw mark before the scroll centers the row, and the
+   *  card is then brought whole into the track's box where the row's centering left its end past it (settleRevealed).
+   *  Where Raw shows no mark of ours for the subject either, the row the scroll centred is cued (landOn), so the landing
+   *  is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
-      this.ctx.setMode("raw");
+      this.revealInRaw(key);
       this.ctx.scrollToOffset(c.curFrom);
       this.landOn(c.curFrom, "fcchange", c.id);
+      this.settleRevealed(key);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -3005,9 +3294,43 @@ class Panel {
     }
     const loc = this.located.get(key);
     if (!loc || !loc.range) return;
-    this.ctx.setMode("raw");
+    this.revealInRaw(key);
     this.ctx.scrollToOffset(loc.range.start);
     this.landOn(loc.range.start, "fcopen", key);
+    this.settleRevealed(key);
+  }
+  /** After a Reveal's switch and scroll: the revealed card whole in the track's box, where the pass laid it level with
+   *  its Raw mark (the review of the merge audit's fixes, 2026-09-09). scrollToOffset centers the ROW, and a card taller
+   *  than the room under the body's center — half the body's height less the footer's and the gap — landed level with its
+   *  head in the box but its end, its run of turns and its Reply and Resolve row, past the track's bottom, while the same
+   *  card reached by a click on its mark (showCard: focusOn, then centerOn) landed whole: centerOn's fallback scrolls the
+   *  least that shows the card's end, as far as keeps the mark's top in view, a card taller than the track having its head
+   *  cut by the excess (its docstring has the two regimes). So the row's centering is followed by that scroll, the landing
+   *  a mark click gives; the row's own centering stands where the pass did not lay the card on a mark (laidOn: Show
+   *  changes inline off, when Raw paints no mark and landOn cues the row), since centerOn has no mark to scroll to there. */
+  private settleRevealed(key: string): void {
+    if (this.margin && this.laidOn === key) this.centerOn(key);
+  }
+  /** A Reveal's switch to Raw, with the card made the focus FIRST when the margin layout is up (the merge audit,
+   *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (paintAll, render,
+   *  placeCards), so a focus written before the call has that pass lay the revealed card level with its Raw mark, and
+   *  scrollToOffset then centers a row whose card is already beside it. Before, reveal() set no focus: the pass laid the
+   *  margin on the focus it had — the tall change card the person had unfolded — and the card whose Reveal was clicked
+   *  was pushed under it, wholly outside the track's box while its passage sat mid-body; goTo and scrollCard make their
+   *  card the focus before they scroll, and Reveal did not. focusOn before the switch would not do: a card Reveal is
+   *  offered for is loose in the view where it is offered (no mark to be laid level with), and the pass spends a loose
+   *  focus (placeCards: laidOn). A switch that paints nothing (a file with no Rendered view is Raw already; the seam's
+   *  setMode returns) ran no pass, so one runs here where the switch ran none, and only there: every pass ends by writing
+   *  a new placement (placeCards: `placed`), so the placement of before still standing after the switch says no pass ran.
+   *  With Show changes inline off Raw paints no mark either, and the switch's pass falls to the focus it had; a pass after
+   *  it would measure the same body and cards and lay them where it did. The pass ran here whenever the last pass had not
+   *  laid the cards on this card, which after the switch is every change card's Reveal with the marks off — the whole
+   *  margin measured and written twice for one click (the review of the audit's fixes, round 2, 2026-09-09). */
+  private revealInRaw(key: string): void {
+    if (this.margin) this.focusCard = key;            // the focus: the switch's pass lays the card level with its Raw mark (card-layout.ts)
+    const placed = this.placed;                       // the last pass's placement: the switch's pass, where it runs, writes a new one
+    this.ctx.setMode("raw");
+    if (this.margin && this.placed === placed) this.placeCards(false);   // the switch ran no pass: this is the one
   }
   /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
    *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
@@ -3056,9 +3379,16 @@ class Panel {
     }
     return opened;
   }
+  /** The card into view: in the margin layout it is made the focus first, so the pass lays it level with its mark before
+   *  the scroll reads where it stands. The save is the caller that needs the focus set HERE (scrollToSaved): a reply saved
+   *  on an open card that is not the focus — the change mark above it clicked since the card was opened, the card pushed
+   *  under the tall change card — would otherwise be scrolled to where the push-down rule left it, its mark brought into
+   *  view with the card a viewport below, the defect the focus follow-on fixed (the verification review, 2026-09-09; a
+   *  reference link's card comes through goTo, which sets the focus the same way). A fold around the mark opens before
+   *  either pass (revealMarks). */
   scrollCard(id: string): void {
     if (this.margin && this.revealMarks(id)) this.placeCards(false);   // the margin layout scrolls to the mark: a fold around it opens first, and the pass reads the moved content
-    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
+    if (this.margin && this.focusOn(id) && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: the card the focus, level with its mark, its mark to the center; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
 
@@ -3067,9 +3397,9 @@ class Panel {
    *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
    *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
    *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
-   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
-   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
-   *  scroll changes. */
+   *  and so BEFORE the delegate toggles the card, so that the render's pass anchors the layout on the card that just
+   *  opened (focusCard) and afterRender knows to center its mark. Never on scroll: the lock is the scroll's whole
+   *  effect, and the pass moves nothing a scroll changes. */
   private installLayout(row: HTMLElement): void {
     const body = this.ctx.body(), track = this.sections.cards;
     body.addEventListener("scroll", () => this.mirrorScroll("body"));
@@ -3078,7 +3408,11 @@ class Panel {
     track.addEventListener("click", (ev) => {
       const t = ev.target as HTMLElement | null;
       const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
-      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+      if (x && x.dataset.act === "fccard" && x.dataset.id) {
+        const wasOpen = this.openCards.has(x.dataset.id);
+        this.expandIntent = { key: x.dataset.id, wasOpen };
+        if (!wasOpen) this.focusCard = x.dataset.id;    // a card opened by its head is the focus (focusCard); a fold is a dismissal and moves nothing; a loose card opened leaves the pass's focus as it was (laidOn)
+      }
     });
     window.addEventListener("resize", this.onWindowResize);
     if (typeof ResizeObserver !== "undefined") {
@@ -3136,7 +3470,15 @@ class Panel {
     const margin = this.marginMode();
     const flipped = margin !== this.margin;
     if (flipped) root.classList.toggle("fc-margin", margin);
-    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (!margin) {
+      // the list layout has no focus: a mark or a head clicked in it writes one (showCard, installLayout), and a pass here
+      // spends nothing on it — but the flip to the margin layout would have, laying the whole margin on a card no gesture
+      // named THERE and centering nothing (a resize is not a click), the cards above it moved from their marks (the
+      // 2026-09-08 review). The focus is a click's, made in the margin layout.
+      this.focusCard = null;
+      if (flipped) { this.layoutOff(); if (!fromRender) this.render(); }
+      return;
+    }
     if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
     const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
     const body = this.ctx.body(), track = this.sections.cards;
@@ -3145,6 +3487,7 @@ class Panel {
     this.watchContent(body);
     const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
     this.moveRows(kids());
+    this.clipCards(kids());                            // which parts the fold cut, and the Show more rows: before the heights are read
     const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
     const offset = trackRect.top - bodyRect.top;
     const scroll = body.scrollTop;
@@ -3162,12 +3505,23 @@ class Panel {
       nodes.set(key, child); laid.push(child);
       if (isCard && watch) this.cardSizer?.observe(child);
     }
-    const out = layoutCards(items, CARD_GAP);
+    if (this.focusCard !== null && !nodes.has(this.focusCard)) this.focusCard = null;   // the card is gone from the list (a status, the filter, a fold): no focus
+    // a loose card as the focus (a whole-file comment's card opened by its head or its Show more, a save landing in one): no
+    // mark to lay it level with, and given to the rule it would have unmade the layout — the rule takes a focus with no mark
+    // as none — so the pass keeps the focus it laid the cards on last, while the list holds that card (the focusCard field)
+    const fit = this.focusCard === null ? null : items.find((it) => it.key === this.focusCard) || null;
+    if (fit && fit.desired === null) this.focusCard = this.laidOn !== null && nodes.has(this.laidOn) ? this.laidOn : null;
+    this.laidOn = this.focusCard;
+    const out = layoutCards(items, CARD_GAP, this.focusCard);
     for (const p of out.placed) {
       const node = nodes.get(p.key)!;
       node.style.top = p.top + "px";
       if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
       else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+      // a card the focus moved up past its mark (card-layout.ts): a leader DOWN from its end to the mark's height
+      const pull = p.desired === null ? 0 : p.desired - (p.top + p.height);
+      if (pull >= 1) { node.dataset.pulled = "1"; node.style.setProperty("--fc-pull", pull + "px"); }
+      else { delete node.dataset.pulled; node.style.removeProperty("--fc-pull"); }
     }
     const order = out.placed.map((p) => nodes.get(p.key)!);
     if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
@@ -3195,13 +3549,29 @@ class Panel {
     this.syncTrack();
   }
   /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
-   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+   *  placement, the card observer, and what the pass wrote on the list and the cards go. The rows stand in the footer
+   *  until the render that follows rebuilds the list. The list's inline height and the cards' tops and leaders are
+   *  cleared HERE and not left to that render (the merge audit, 2026-09-09): the render rebuilds the list as a rule, but
+   *  while a reply's box stands in a card it grafts around the box and keeps the live list and that card (swapCards), so
+   *  the height the pass gave the list — the body's range, a screen and more past the cards — stayed on it in the list
+   *  layout, and the aside scrolled through empty space under the cards until the box left the card or the columns came
+   *  back; the kept card kept its top and its leader as well (no effect under the list's static positioning, but the
+   *  next margin pass is the one to write them). */
   private layoutOff(): void {
     this.margin = false;
     this.root?.classList.remove("fc-margin");
     this.padBody(this.ctx.body(), 0);
     this.placed = new Map(); this.cardsEnd = 0;
+    this.focusCard = null;                              // the focus is the margin layout's; the list has none
+    this.laidOn = null;                                 // and so is the pass's memory of it
     this.cardSizer?.disconnect();
+    const list = Array.from(this.sections.cards.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    list.style.height = "";
+    for (const node of Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[]) {
+      node.style.top = ""; delete node.dataset.pushed; delete node.dataset.pulled;
+      node.style.removeProperty("--fc-push"); node.style.removeProperty("--fc-pull");
+    }
   }
   /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
    *  next pass read a different content height and write again). The track's box ends a footer's height above the
@@ -3232,6 +3602,65 @@ class Panel {
       if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
       for (const r of rows) if (r !== foot) send.insertBefore(r, box);
     });
+  }
+  /** The fold of a tall card (the focus follow-on, 2026-09-08). In the margin layout each long part of a card — a change's
+   *  old and new text (`.fc-diff`), a comment's body, a run of turns — wears `fc-clip`, and the sheet caps it at about eight
+   *  of its lines with a fade (`.fc-margin .fc-card:not(.fc-more) .fc-clip`); this reads which parts the cap cut (a part whose
+   *  content is taller than its box), marks them for the fade (`data-clipped`) and shows the card's Show more row, rendered
+   *  hidden, so a card with nothing cut offers no toggle. A card in `openBodies` wears `fc-more`: no cap, no fade, and the
+   *  row reads Show less. Run before the cards' heights are measured, since the row is part of the height. The list layout
+   *  runs no pass and caps nothing: the rows stay hidden there. A run of turns is cut at its START, not its end (keepEnd).
+   *  The parts are every `.fc-clip` UNDER the card, not the card's own children alone: a change card's hosted comments
+   *  (renderHosted, `.fc-hosted`) carry a body and a run of turns of their own, capped by the same sheet rule, and the
+   *  card's one row lifts them with the change's text; a pass that skipped them would leave a hosted run capped with no
+   *  fade and, where the change's own text is short, no Show more at all — a compact view with no way in (the
+   *  verification review, 2026-09-09; file-comments-focus-verify.test.ts drives both). */
+  private clipCards(kids: HTMLElement[]): void {
+    for (const card of kids) {
+      if (!card.classList.contains("fc-card") || !card.dataset.id) continue;
+      const row = card.querySelector(".fc-clip-row") as HTMLElement | null;
+      if (!row) continue;                              // a closed card: no parts
+      const open = this.openBodies.has(card.dataset.id);
+      let cut = false;
+      for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {   // the card's own parts and its hosted comments'
+        const over = !open && part.scrollHeight > part.clientHeight + 1;
+        if (over) { part.dataset.clipped = "1"; cut = true; } else delete part.dataset.clipped;
+        if (part.classList.contains("fc-replies")) this.keepEnd(part, over);
+      }
+      row.hidden = !(open || cut);
+    }
+  }
+  /** A folded run of turns shows its END. The turns stand in `ts` order (renderTurns), so the newest — the session's latest
+   *  answer, the turn the person re-engages for, the one a reply box under the run answers — is the LAST row, and a cap that
+   *  kept the first eight lines showed the oldest turns and hid it behind Show more (the 2026-09-08 review). The cut part is
+   *  scrolled to its end (an `overflow: hidden` box scrolls by script, and a fresh render's box starts at 0, so every pass
+   *  writes it); the sheets put its fade at its FIRST lines, where the cut is (`.fc-replies.fc-clip[data-clipped]`, against
+   *  the last-lines fade of every other cut part). A part not cut stands at its start. */
+  private keepEnd(part: HTMLElement, cut: boolean): void {
+    if (cut) part.scrollTop = part.scrollHeight;
+    else if (part.scrollTop) part.scrollTop = 0;
+  }
+  /** The Show more / Show less row at an open card's foot (clipCards): a button through the delegate root (fcclip, with the
+   *  delegate's flash), hidden until the pass finds a part cut. */
+  private clipRow(key: string): HTMLElement {
+    const row = el("div", "fc-clip-row");
+    const open = this.openBodies.has(key);
+    const b = btn(open ? "Show less" : "Show more", "fcclip");
+    b.dataset.id = key;
+    b.title = open ? "Fold the long text back to a few lines" : "Show the whole text";
+    b.setAttribute("aria-expanded", open ? "true" : "false");
+    row.appendChild(b);
+    row.hidden = true;
+    return row;
+  }
+  /** Make `key` the focus (focusCard): the pass anchors the layout on it from now on, and runs at once when the focus
+   *  changed, so the scroll that follows (centerOn) reads the card where it now stands, level with its mark. False for a key
+   *  the list shows no card for (a fold hides it; a card not rendered), which changes nothing. True for a loose card, whose
+   *  pass keeps the focus it had (laidOn) and moves nothing: the caller's showLoose then scrolls to the card where it stands. */
+  private focusOn(key: string): boolean {
+    if (!this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]')) return false;
+    if (this.focusCard !== key) { this.focusCard = key; this.placeCards(false); }
+    return true;
   }
   /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
    *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
@@ -3318,12 +3747,21 @@ class Panel {
     if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
     this.writeScroll(track, want, "body");
   }
-  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
-   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
-   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
-   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
-   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
-   *  loose card moves nothing, afterRender).
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it. The
+   *  card IS level because every caller makes it the focus first (focusOn, showCard: the pass anchors the layout on it,
+   *  card-layout.ts). Before the focus follow-on (2026-09-08) a card pushed down by a tall card above it was brought in
+   *  only as far as kept the mark's top in view, which put the mark at the body's top edge with the card still a
+   *  viewport below (the defect the user hit). That fallback stays where the centered scroll would leave the focused
+   *  card's end past the track's box: the body scrolls the least that shows the card's end, as far as keeps the mark's
+   *  top in view. A card that fits the track lands whole, its head under the track's top; a card taller than the track
+   *  has its head cut by the excess; and one taller than the track by more than the header less the gap meets the cap —
+   *  the mark's top a gap under the body's top, the head cut by the header less the gap and the end still past the box,
+   *  since no scroll shows both ends of such a card (the verification review, 2026-09-09: Show more on a long text is the
+   *  usual way there, and the keyboard stays on its Show less at the foot, as the plan records; the plan's focus paragraph
+   *  and file-comments-margin-fixes.test.ts pin this cap). Where the body cannot scroll that far (its end, in a body the
+   *  padding could not lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there).
+   *  False for a card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head
+   *  click on a loose card moves nothing, afterRender).
    *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
    *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
    *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
@@ -3413,6 +3851,14 @@ class Panel {
   async doSend(): Promise<void> {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
+    // the note (the fields' comment): trimmed as the kernel reads it (trimNote: NEL or an ASCII separator alone is no note here
+    // as there, so the wire never carries words the kernel would strip to nothing and drop without a word), refused over the
+    // bound before any request goes; with nothing unsent it is the whole message, and without it there is nothing to send
+    // (renderSend keeps the confirm's Send off then)
+    const note = trimNote(this.sendNote);
+    const long = noteTooLong(note);
+    if (long) { this.errors.set("send", { text: long, reload: false }); this.render(); return; }
+    if (!unsentCount(s.unsent) && !note) return;
     const parts: SendParts = sendParts(s);
     // the changes the send may accept on the way: none while the editor is up, whose marks they are (DECIDES; renderSend
     // shows no box for them then), so acceptAll is false and the counts carry only the log's own decisions. Once the
@@ -3420,6 +3866,18 @@ class Panel {
     let pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
     const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
+    // the comments open before the send: the accept-all resolves the ones bound to the changes it accepts (the host's rule),
+    // and a comment that leaves the visible list must leave a visible word behind (the lost-update probe, 2026-09-09: seven
+    // comments the session had answered folded under a collapsed Resolved with nothing said). Counted off the reply below
+    const openBefore = new Set((s.store ? s.store.comments : []).filter((c) => !c.resolved).map((c) => c.id));
+    let moved = 0;
+    // the keyboard in the note box as the send begins: the render below takes the confirm down for the wait (renderSend), and
+    // the box with it, and a box out of the document drops the keyboard to the body. A refusal brings the box back with its
+    // words (the confirm stands: sendConfirm) and the keyboard goes back into it (the finally), so the chord sends again —
+    // before, the next Cmd/Ctrl+Enter reached the body and sent nothing (the review, 2026-09-09). A send that went closes the
+    // confirm, and there is no box to put it back in
+    const noting = document.activeElement === this.noteBox;
+    this.gesture();                                    // a send is a gesture of the person's (the arrivals follow-on)
     this.sending = true; this.errors.delete("send"); this.render();
     try {
       if (this.sendOpts.track && !s.trackedBy) {
@@ -3441,6 +3899,10 @@ class Panel {
           return;
         }
         pending = decided.length;
+        // the comments the accept resolved: unresolved before, resolved in the reply. The Resolved fold opens before the
+        // renders that follow, so the cards stay in view with the session's replies, and the acknowledgment line names them (sentNoteWords)
+        moved = (a.store ? a.store.comments : []).filter((c) => openBefore.has(c.id) && !!c.resolved).length;
+        if (moved) this.resolvedOpen = true;
       }
       const counts = sendCounts(parts, acceptAll, pending);
       // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
@@ -3451,6 +3913,7 @@ class Panel {
         accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
       if (todoId) msg.todoId = todoId;
+      if (note) msg.note = note;
       const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
@@ -3459,13 +3922,18 @@ class Panel {
       if (todoId && reply.todoStamped) answeredTodos.add(todoId);
       if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
-      this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
+      const base = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
+      this.sentNote = sentNoteWords(base, acceptAll ? pending : 0, moved);   // …and what the accept moved to Resolved, when it did
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
-      this.sendConfirm = false; this.previewOpen = false;
+      this.sendConfirm = false;
+      this.sendNote = ""; this.noteBox.value = "";     // sent: the words went with the message; a refusal (the catch) keeps them
       await this.refresh();
     } catch (err) {
       this.errors.set("send", { text: (err as { error: string }).error, reload: false });
-    } finally { this.sending = false; this.render(); }
+    } finally {
+      this.sending = false; this.render();
+      if (noting && this.sendConfirm && this.root && this.root.contains(this.noteBox)) this.noteBox.focus({ preventScroll: true });   // refused: the box is back, and the keyboard with it
+    }
   }
 
   /** The send itself, with the one retry every editing-off refusal gets (mutateOnce's branch): the kernel
@@ -3500,7 +3968,15 @@ class Panel {
     const home = this.composerBox.parentElement;
     const typing = document.activeElement === this.input;
     const scroll = this.input.scrollTop;
+    const noting = document.activeElement === this.noteBox;   // the Send confirm's note box, rebuilt around like the composer's
+    const noteScroll = this.noteBox.scrollTop;
     this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
+    // the arrivals (the arrivals follow-on): the first render with a status seeds the seen set with all of it — the person
+    // is looking at the whole file, and nothing in it arrived while they were; the renders after mark the arrival cards
+    // (newKeys → renderCard, renderChangeCard) and their marks in the body (markNew)
+    if (this.seenKeys === null && s) this.seenKeys = new Set(statusEntries(s).map((e) => e.key));
+    this.newKeys = new Set(Array.from(this.arrivals.values(), (e) => this.arrivalCard(e)));
+    this.markNew();
     head.replaceChildren(this.renderHead(s));
     this.swapCards(this.renderCards(s));               // around the reply's box, when it stands in a card the fresh list keeps
     this.renderComposer();                             // after the cards: the box stands in a card of the fresh list, or in the slot (placeComposer)
@@ -3508,6 +3984,8 @@ class Panel {
     log.replaceChildren(this.renderLog(s));
     if (typing && document.activeElement !== this.input) this.input.focus({ preventScroll: true });
     if (this.input.scrollTop !== scroll) this.input.scrollTop = scroll;
+    if (noting && document.activeElement !== this.noteBox) this.noteBox.focus({ preventScroll: true });
+    if (this.noteBox.scrollTop !== noteScroll) this.noteBox.scrollTop = noteScroll;
     // the box moved while the person was typing in it: its card left the list and it went to the slot, above the cards and
     // off-screen when the list is long; the card came back and it returned; or it went from one card to another, and the
     // other card may be off-screen as well — its comment bound to a change under the reply (the session's track-edit
@@ -3519,8 +3997,13 @@ class Panel {
     // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
     // card would not stand, and the track's scroll is the body's (showComposer)
     const moved = typing && this.composerBox.parentElement !== home;
-    if (keep) this.refocus(keep, want);
+    if (keep) this.refocus(keep, want, false);
     this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    // a control the pass SHOWS — the Show more row, rendered hidden and unhidden by clipCards — took no focus before it
+    // (focus() on an element not rendered is a no-op), so the keyboard is put back once more; a no-op when the first
+    // refocus landed it (the 2026-09-08 review: Enter on Show more left the keyboard on the body, and so did any re-render
+    // while the keyboard was on the toggle)
+    if (keep) this.refocus(keep, want, true);
     if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
@@ -3621,18 +4104,42 @@ class Panel {
     }
     return null;
   }
-  private refocus(k: FocusKey, want: FocusKey | null): void {
-    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+  /** `settled`: whether the margin pass has run on the fresh list. render calls this before the pass (so a place kept by
+   *  index, k.at, names the card it named before the rebuild: cardsInOrder) and again after it, for a control the pass
+   *  shows — the Show more row (clipRow renders it hidden; clipCards unhides it) — which focus() cannot land on until then.
+   *  A control found and enabled that takes no focus is therefore left for the second call before the pass, and treated
+   *  as gone after it (the list layout, where the row stays hidden: the keyboard goes to the nearest place, not the body).
+   *  A wanted control of the LIST — a card's Show less hidden by the fold to the list layout, a busy Accept or Reject — is
+   *  remembered again for as long as it is in the list and the keyboard stays where this put it, whether the keyboard went
+   *  to the nearest place or to k's own control: render drops the memory at its start, so a memory this re-armed only on
+   *  the way to focusNear lasted one render — the toggle was forgotten on the first status or repaint while the columns
+   *  stayed narrow, and the render after they came back left the keyboard on the card's head, where Enter folds the card,
+   *  not the text; a busy Reject was forgotten the same way when a repaint landed during its round trip, and the refusal
+   *  left the keyboard on the head (the verification review, 2026-09-09). The composer's controls keep the one render: its
+   *  Save comes back enabled either with a refusal, in the render after the busy one, or in the render before a save closes
+   *  the box (mutate's last render, then closeComposer), and a memory that reached that render took the keyboard into the
+   *  closing box, and out of it to Reply, where the head had it (file-comments-reply-review2.test.ts pins the head). */
+  private refocus(k: FocusKey, want: FocusKey | null, settled: boolean): void {
+    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input; the call before the pass landed it): nothing to mend
     const enabled = (n: HTMLElement | null): HTMLElement | null => (n && !(n as HTMLButtonElement).disabled ? n : null);
-    const w = want ? enabled(this.findControl(want)) : null;
-    if (w) { w.focus({ preventScroll: true }); return; }   // the button that was busy is back: the keyboard returns to it
+    // focus a control and say whether it took: an element not rendered (a hidden row's button) ignores focus()
+    const take = (n: HTMLElement): boolean => { n.focus({ preventScroll: true }); return document.activeElement === n; };
+    const wf = want ? this.findControl(want) : null;   // the wanted control as the list has it: disabled or hidden still, or back
+    const w = enabled(wf);
+    if (w && (take(w) || !settled)) return;             // the button that was busy is back: the keyboard returns to it — after the pass, if it is not shown yet
     const n = this.findControl(k);
-    if (enabled(n)) { n!.focus({ preventScroll: true }); return; }
-    // disabled, or gone. A control of the cards list (the change cards, the foot): the nearest place, remembering the
-    // control still to come back to — this one, or the wanted one. Elsewhere (the head row's confirms), a control the
-    // rebuild removed lets the focus fall to the body, quietly: there is no place of its own to stand in for it.
+    if (enabled(n) && (take(n!) || !settled)) {
+      // k's control took the keyboard while the wanted one, of the list, is still to come back: remembered at the place the
+      // keyboard now holds
+      if (wf && document.activeElement === n && !this.composerBox.contains(wf)) this.wanted = { key: want!, at: n! };
+      return;
+    }
+    // disabled, gone, or not shown once the pass has run. A control of the cards list (the change cards, the foot): the
+    // nearest place, remembering the control still to come back to — this one, or the wanted one. Elsewhere (the head row's
+    // confirms), a control the rebuild removed lets the focus fall to the body, quietly: there is no place of its own to
+    // stand in for it.
     if (typeof k.at !== "number") return;
-    const pending = n ? k : want && this.findControl(want) ? want : null;
+    const pending = n ? k : wf ? want : null;
     const at = this.focusNear(k);
     if (at && pending) this.wanted = { key: pending, at };
   }
@@ -3802,7 +4309,22 @@ class Panel {
     if (s && s.agentTooling === "absent") {
       head.appendChild(el("div", "fc-warn", "The session cannot reply to comments yet: the track-changents tooling is not linked into ~/.claude on the file's machine. Run romp's install.sh there."));
     }
+    // the arrivals line (the arrivals follow-on, 2026-09-09): one line under the header while a session's changes, comments
+    // or replies stand unseen, a button that shows the first of them (goToArrival); the words are the model's (arrivalWords)
+    if (this.arrivals.size) head.appendChild(this.arrivalLine());
     return head;
+  }
+  /** The arrivals line, built from the arrivals as they stand; reflectSeen rewrites it in place between renders. */
+  private arrivalLine(): HTMLElement {
+    const b = btn(this.arrivalText(), "fcarrivals", "fc-sec fc-arrivals");
+    b.title = "Show the first of them";
+    return b;
+  }
+  private arrivalText(): string {
+    return arrivalWords(Array.from(this.arrivals.values()), (author, authorId) => {
+      const c = authorId && this.colors ? this.colors.get(authorId) : null;
+      return c ? c.name : author || "unknown";   // the chip's own rule (chip): the session's current name, else the sidecar's label
+    });
   }
   /** The box follows its content (autosizeComposer) on every input — unless the person dragged the handle, when their
    *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
@@ -3818,6 +4340,17 @@ class Panel {
     if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;   // dragged since
     const h = autosizeComposer(ta);
     if (h !== null) this.sizedTo = h;
+  }
+  /** The Send confirm's note box follows its content the same way, to SEND_NOTE_ROWS (the user's ruling, 2026-09-09: about
+   *  eight rows, then scrolling), with the same two guards: the box wears .fc-input's resize handle, and a height the person
+   *  dragged stands until the confirm closes with nothing kept (renderSend clears it with noteSizedTo, as closeComposer does
+   *  the composer's). Before the guards, every keystroke snapped a dragged box back to its rows (the review, 2026-09-09). */
+  private autosizeNote(): void {
+    const ta = this.noteBox;
+    if (this.noteSizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
+    if (this.noteSizedTo !== null && ta.style.height !== this.noteSizedTo) return;   // dragged since
+    const h = autosizeComposer(ta, SEND_NOTE_ROWS);
+    if (h !== null) this.noteSizedTo = h;
   }
   private renderComposer(): void {
     const c = this.composer;
@@ -4070,9 +4603,10 @@ class Panel {
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
-    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.id;
     card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
+    if (this.newKeys.has(c.id)) card.dataset.new = "1";   // a comment or a reply of the session's the person has not seen (the arrivals follow-on): the head's dot
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
     // is text to select and copy (the sheet gives it cursor: text), and a click there must not fold the card
     // away from under the selection. The head is a Tab stop and takes Enter/Space (KEY_ACTS).
@@ -4174,7 +4708,7 @@ class Panel {
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
     else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
-    card.appendChild(el("div", "fc-body", c.body));
+    card.appendChild(el("div", "fc-body fc-clip", c.body));   // a long body folds in the margin layout (clipCards)
     // the open card says in words what the region tags say — why the staleness is unknown (unknownReason), that the image
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
@@ -4201,6 +4735,7 @@ class Panel {
         acts.appendChild(rv);
       }
     }
+    card.appendChild(this.clipRow(c.id));               // Show more, when the pass finds a part cut (clipCards)
     card.appendChild(acts);
     for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) card.appendChild(n);
     return card;
@@ -4208,7 +4743,7 @@ class Panel {
   /** The turns under a comment, in `ts` order: words as before; a revision (the session's answering
    *  track-edit, recorded as a reply with old and new text) as the same row with the texts instead of a body. */
   private renderTurns(turns: CardTurn[]): HTMLElement {
-    const rs = el("div", "fc-replies");
+    const rs = el("div", "fc-replies fc-clip");         // a long run of turns folds in the margin layout (clipCards)
     for (const r of turns) {
       const row = el("div", "fc-reply" + (r.author === "you" ? " fc-reply-you" : ""));
       const meta = el("div", "fc-meta");
@@ -4256,9 +4791,10 @@ class Panel {
     const s = this.status;
     const inFlux = !!s && !this.textCurrent(s);
     const slot = "change:" + c.id;
-    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : "") + (this.openBodies.has(c.key) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
     card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
+    if (this.newKeys.has(c.key)) card.dataset.new = "1";   // a change, or a reply on a comment it hosts, the person has not seen (the arrivals follow-on)
     if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
     head.dataset.id = c.key; head.dataset.act = "fccard";
@@ -4292,8 +4828,11 @@ class Panel {
     if (isOpen) {
       const held = c.comments.some((cm) => cm.id === this.replyTo()) ? this.heldNote() : null;   // the held head's words, for a hosted comment's reply
       if (held) card.appendChild(held);
-      card.appendChild(this.diffBody(c.oldText, c.newText));
+      const diff = this.diffBody(c.oldText, c.newText);
+      diff.classList.add("fc-clip");                   // a replaced paragraph's old and new text: the tall part the margin layout folds (clipCards)
+      card.appendChild(diff);
       for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
+      card.appendChild(this.clipRow(c.key));           // Show more, when the pass finds a part cut
     }
     if (!c.detached) {
       const acts = el("div", "fc-actions");
@@ -4337,7 +4876,7 @@ class Panel {
     if (c.resolved) meta.appendChild(el("span", "fc-tag", "resolved"));
     meta.appendChild(el("span", "fc-time", clock(c.ts)));
     row.appendChild(meta);
-    row.appendChild(el("div", "fc-body", c.body));
+    row.appendChild(el("div", "fc-body fc-clip", c.body));   // folds with the change card's other parts (clipCards)
     box.appendChild(row);
     if (c.replies.length) box.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
@@ -4380,6 +4919,7 @@ class Panel {
   }
   private renderSend(s: Status | null): HTMLElement {
     const box = el("div", "fc-send");
+    this.syncNoteRefusal();                            // the bound refusal's row goes with the words it named (Cancel, a send)
     const n = s ? unsentCount(s.unsent) : 0;
     const b = btn(this.sending ? "Sending…" : "Send to session" + (n ? " (" + n + ")" : ""), "fcsend");
     // a status refusal (refresh, requireStatus) leaves the LAST status showing so the cards stay readable, but
@@ -4388,17 +4928,29 @@ class Panel {
     // against a state that may no longer hold — the duplicate-send leg of the review's finding — so Send
     // stands down until a fresh status lands (applyStatus clears the refusal; Reload in the head asks).
     const stale = !!this.statusRefusal;
-    b.disabled = !s || !n || this.sending || !this.ctx.sid || stale;
+    // with nothing unsent the button still opens the confirm: a note of the person's own is a message by itself (the
+    // owner's ruling, 2026-09-09), and the confirm's Send stays off until one is typed
+    b.disabled = !s || this.sending || !this.ctx.sid || stale;
     b.title = !this.ctx.sid ? "No session owns this file; open it from a session's link or todo to send"
       : stale ? "The comments could not be re-read; Reload above, then send"
-      : !n ? "Nothing unsent: every comment, reply, and decision has gone" : "Hand everything unsent to the session as one message";
+      : !n ? "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes" : "Hand everything unsent to the session as one message";
     box.appendChild(b);
     // why Send is off, VISIBLE (the GitHub link's caption idiom): a tooltip never reaches touch, and a
-    // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent.
+    // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent, and not
+    // while the confirm is up: its own first line says the same thing, and the same words are shown once, never stacked
+    // (renderChangesFoot's rule; the review, 2026-09-09). Send stays ON with nothing unsent (the note), so the caption says
+    // a note still goes, as the button's title does: the title alone said it, and a title never reaches touch (the review's
+    // consolidation, 2026-09-09).
     if (!this.ctx.sid) box.appendChild(el("div", "fc-note", "No session owns this file; open it from a session's link or todo to send."));
     else if (stale && s && n) box.appendChild(el("div", "fc-note", "The comments could not be re-read, so nothing can be sent until Reload above succeeds."));
-    else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
-    if (this.sendConfirm && s && n && !this.sending) {
+    else if (s && !n && !this.sending && !this.sendConfirm && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes."));
+    // the box closed with nothing kept — Cancel, or a send that took the words — starts the next confirm at its three rows:
+    // the inline height autosizeNote wrote, or a drag did, goes with the words on the render that follows the clear, the way
+    // closeComposer clears the composer's; a refused send keeps the words and the height with them (the confirm stands
+    // through it: sendConfirm stays true while the send is out and after the refusal). The review, 2026-09-09: an empty
+    // box reopened at the eight rows the last note had grown it to.
+    if (!this.sendConfirm && !this.sendNote && (this.noteBox.style.height || this.noteSizedTo !== null)) { this.noteBox.style.height = ""; this.noteSizedTo = null; }
+    if (this.sendConfirm && s && !this.sending) {
       const parts = sendParts(s);
       // the changes the checkbox may accept on the way: none while the editor is up (doSend counts the same way) — the
       // changes are the editor's then, and a decision from here would strand its buffer (DECIDES); so no box, no count
@@ -4407,7 +4959,8 @@ class Panel {
       // checkbox accepts on the way — so the list and the preview show the sent text
       const counts = sendCounts(parts, this.sendOpts.accept, pending);
       const cf = el("div", "fc-confirm");
-      cf.appendChild(el("div", "fc-note", "This goes to " + this.sessionName() + ":"));
+      const who = this.sessionName();
+      cf.appendChild(el("div", "fc-note", (n ? "This goes to " : "Nothing is unsent; a note goes to ") + who + ":"));
       const ul = el("ul", "fc-list");
       for (const c of parts.comments) {
         const li = el("li");
@@ -4420,21 +4973,19 @@ class Panel {
       const opts = el("div", "fc-opts");
       this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
-      if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
+      // the pending changes that arrived since the person last looked are named on the option (the arrivals follow-on,
+      // 2026-09-09): the user's Send accepted eleven they had not seen. The words change; the default stays decision 8's
+      // ...and the comments the accept resolves along with their changes (the host's rule; the lost-update probe, 2026-09-09)
+      if (pending) opts.appendChild(this.opt("accept", acceptOptionLabel(pending, this.arrivedPending(), resolvedByAccept(s.store, s.hunks || []))));
       if (opts.childNodes.length) cf.appendChild(opts);
-      const pv = btn((this.previewOpen ? "▾ " : "▸ ") + "The message", "fcpreview", "fc-sec");
-      cf.appendChild(pv);
-      if (this.previewOpen) {
-        const media = this.ctx.media() === "image" || this.ctx.media() === "pdf";
-        const tracked = !!s.trackedBy || this.sendOpts.track;   // the post-toggle verdict the send will carry
-        // the path the kernel will name (filePath), never the spelling the viewer was opened with: a relative
-        // todo token or a `~/` link would preview a header and two --file arguments the session never receives
-        const abs = this.filePath();
-        if (abs === null) cf.appendChild(el("div", "fc-note", "The message names this file by its absolute path, which the kernel resolves from " + this.ctx.path + "; this panel cannot show it."));
-        else cf.appendChild(el("pre", "fc-msg", buildSendMessage({ absPath: abs, comments: parts.comments, accepted: counts.accepted, rejected: counts.rejected, tracked, media })));
-      }
+      // the note box (the fields' comment): the person's own words, the first paragraph of the message after its header;
+      // the placeholder names the session, or asks plainly when the panel cannot name one
+      this.noteBox.placeholder = who === "the session" ? "Anything to add?" : "Anything to add for " + who + "?";
+      if (this.noteBox.value !== this.sendNote) this.noteBox.value = this.sendNote;
+      cf.appendChild(this.noteBox);
       const acts = el("div", "fc-actions");
       acts.appendChild(btn("Send", "fcsendgo", "fileview-btn fc-primary"));
+      this.syncSendGo(acts.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement);   // off with nothing unsent and no note: nothing to send
       acts.appendChild(btn("Cancel", "fcsendcancel"));
       cf.appendChild(acts);
       box.appendChild(cf);
@@ -4442,6 +4993,34 @@ class Panel {
     if (this.sentNote) box.appendChild(el("div", "fc-note fc-sent", this.sentNote));
     for (const x of [this.loader("send"), this.errRow("send")]) if (x) box.appendChild(x);
     return box;
+  }
+  /** The confirm's Send: off with nothing unsent and no note (as the kernel reads it, trimNote: words its strip would take to
+   *  nothing are none), on as soon as either stands. `go` is the button renderSend just
+   *  built; without it, the one in the panel, followed in place as the person types (the box's input): a render would rebuild
+   *  the confirm around the box. */
+  private syncSendGo(go?: HTMLButtonElement): void {
+    const b = go || (this.root?.querySelector('[data-act="fcsendgo"]') as HTMLButtonElement | null);
+    if (!b) return;
+    const n = this.status ? unsentCount(this.status.unsent) : 0;
+    b.disabled = !n && !trimNote(this.sendNote);
+    b.title = b.disabled ? "Nothing is unsent; type a note to send one" : "Send";
+  }
+  /** The bound refusal's row (doSend: a note over SEND_NOTE_MAX is refused before any request, in the send slot) is about the
+   *  words in the box and lives with them: it stands while the note is over the bound (the count it names may lag the typing;
+   *  the next Send names it afresh), and goes once the note is not — shortened under the bound, or gone with Cancel or a send —
+   *  where it stood under the Send button after Cancel and under an EMPTY box on the next confirm until its ✕ (the review,
+   *  2026-09-09). The row is known by its words, the bound text for the note in the box when it was rendered (noteRefusal); a
+   *  kernel's refusal in the same slot is not it and stands as before. `inPlace`: from the box's input, where a render would
+   *  rebuild the confirm around the box (syncSendGo), the row's own node is removed. */
+  private syncNoteRefusal(inPlace = false): void {
+    const row = this.errors.get("send") || null, over = noteTooLong(this.sendNote);
+    if (row && over && row.text === over) { this.noteRefusal = row; return; }
+    if (!this.noteRefusal || over) return;
+    if (row === this.noteRefusal) {
+      this.errors.delete("send");
+      if (inPlace) (this.root?.querySelector('.fc-err[data-slot="send"]') as HTMLElement | null)?.remove();
+    }
+    this.noteRefusal = null;
   }
   private opt(key: "todo" | "track" | "accept", label: string): HTMLElement {
     const l = el("label", "fc-opt");
@@ -4583,17 +5162,19 @@ class Panel {
       box.appendChild(ul);
       return box;
     }
-    if (e.kind === "send" && Array.isArray(e.comments) && e.comments.length) {
+    const noted = e.kind === "send" && typeof e.note === "string" && e.note !== "";
+    if (e.kind === "send" && ((Array.isArray(e.comments) && e.comments.length) || noted)) {
       const box = el("div", "fc-log-detail");
+      if (noted) box.appendChild(el("div", "fc-body fc-log-note", e.note as string));   // the person's own words, as the message carried them first
       const ul = el("ul", "fc-list");
-      for (const c of e.comments as Array<Record<string, unknown>>) {
+      for (const c of (Array.isArray(e.comments) ? e.comments : []) as Array<Record<string, unknown>>) {
         if (!c || typeof c !== "object") continue;
         const li = el("li");
         li.appendChild(el("span", "fc-list-desc", String(c.desc ?? "on this file") + ": "));
         li.appendChild(el("span", undefined, String(c.body ?? "")));
         ul.appendChild(li);
       }
-      box.appendChild(ul);
+      if (ul.childNodes.length) box.appendChild(ul);
       return box;
     }
     if (e.kind === "edit") {

@@ -619,22 +619,26 @@ test("the direct delivery path records the same two levels as the window path: f
     fm.perf = p;
     const seen: string[] = [];
     fm.onFrame(p.wrapFrameHandler((e) => { seen.push(e.data.type); h.clock.t += 4; }));
-    // federation's own work costs 1 ms on the fake clock: a timed stand-in around inboundNow is not reachable, so the
+    // federation's own work costs nothing on the fake clock: a timed stand-in around inboundNow is not reachable, so the
     // layer's own time shows as the outer bracket's total minus the pane's; the clock only moves inside the pane here
     fm.inbound("", { type: "feed", asks: [], now: 1 });
-    fm.inbound("", { type: "feedDelta", asks: [], removeAsks: [] });
+    fm.inbound("", { type: "feed", asks: [], now: 2 });
     assert.deepEqual(seen, ["feed", "feed"], "both frames reached the handler directly");
     assert.deepEqual(emitted, [], "and none was dispatched on window");
     const frames = (p.snapshot() as any).frames;
     assert.equal(frames["feed"].n, 2);
     assert.equal(frames["feed"].ms_sum, 8, "the pane's bracket: its own 4 ms per frame");
-    assert.equal(frames["fed:feed"].n, 1);
+    assert.equal(frames["fed:feed"].n, 2);
     assert.equal(frames["fed:feed"].ms_sum, 0, "the layer's own time: the total minus the nested pane bracket");
-    assert.equal(frames["fed:feedDelta"].n, 1);
-    assert.equal(frames["fed:feedDelta"].ms_sum, 0);
+    // the feed delta wire (feedDelta, federation.ts): the layer's bracket is the WIRE type, the pane's the merged frame's
+    fm.inbound("", { type: "feedDelta", asks: [], removeAsks: [] });
+    assert.deepEqual(seen, ["feed", "feed", "feed"], "a delta reaches the handler as a merged feed frame");
+    const afterDelta = (p.snapshot() as any).frames;
+    assert.equal(afterDelta["fed:feedDelta"].n, 1, "the layer's bracket names the wire type");
+    assert.equal(afterDelta["fed:feedDelta"].ms_sum, 0);
     // a slow frame is attributed to the wire type at the outermost bracket, as on the window path
     fm.onFrame(() => { h.clock.t += 120; });
-    fm.inbound("", { type: "feed", asks: [], now: 2 });
+    fm.inbound("", { type: "feed", asks: [], now: 3 });
     const rows = h.posted.filter((m) => m.what === "slowframe");
     assert.equal(rows.length, 1);
     assert.equal(rows[0].data.type, "feed");
@@ -645,7 +649,10 @@ test("the direct delivery path records the same two levels as the window path: f
   }
 });
 
-test("federation installs no collector on the Files pane (no frames are pushed to it), and the page's collector elsewhere", () => {
+test("federation installs the page's collector on the Files pane too (app \"files\": the viewer's fileview:<why> brackets and the long frames it sees), as everywhere else", () => {
+  // Until 2026-09-09 the Files pane got none, since no frames are pushed to it; then a divider drag with a large
+  // reviewed note open blocked the main thread for about 20 s and no pane's row said so. The viewer's paint pass
+  // times itself through this collector (file-view.ts perfTimed), so the row has something to carry.
   const g: any = globalThis;
   const win: any = new EventTarget();
   win.performance = { now: () => 0 };
@@ -657,8 +664,13 @@ test("federation installs no collector on the Files pane (no frames are pushed t
   g.window = win;
   g.document = new EventTarget();
   try {
-    assert.equal(perfCollectorFor("files"), null);
-    assert.equal(win.__rompPerf, undefined, "nothing published on the Files page");
+    const f = perfCollectorFor("files");
+    assert.ok(f, "the Files pane gets the collector");
+    assert.equal(win.__rompPerf, f, "published on the Files page, where the viewer's perfTimed finds it");
+    assert.equal((f!.snapshot() as any).app, "files");
+    f!.timed("fileview:paint", () => {});
+    assert.deepEqual(Object.keys((f!.snapshot() as any).frames), ["fileview:paint"], "the viewer's bracket counts under its type");
+    delete win.__rompPerf;
     const c = perfCollectorFor("timeline");
     assert.ok(c, "a page the kernel pushes frames to gets the collector");
     assert.equal(win.__rompPerf, c);
@@ -666,6 +678,46 @@ test("federation installs no collector on the Files pane (no frames are pushed t
   } finally {
     if (hadWindow) g.window = prevWindow; else delete g.window;
     if (hadDoc) g.document = prevDoc; else delete g.document;
+  }
+});
+
+test("a Files pane minute row: fileview:paint and fileview:reflow with the pass cost, the free sample after the pass, the long frames the pane sees; no key carries a slash, a query or a session id", () => {
+  const SID = "11111111-2222-3333-4444-555555555555";
+  const h = harness({ pageUrl: "http://h:1/files" });
+  const p = createPerfTelemetry("files", h.deps);
+  p.timed("fileview:paint", () => { h.clock.t += 180; });   // a large reviewed note painted: the panel's pass included
+  h.runRafs(); h.clock.t += 40; h.runRafs();                // two animation frames later: the free sample
+  p.timed("fileview:reflow", () => { h.clock.t += 60; });   // the divider dragged: the panel re-paints over the new width
+  p.observeEntries([{ startTime: 1000, duration: 190, blockingDuration: 140, scripts: [
+    { sourceURL: "http://h:1/dist/files.js?v=1757100000&sid=" + SID, sourceFunctionName: "paintAll", sourceCharPosition: 9000, invoker: "Window.requestAnimationFrame", duration: 150 },
+    { sourceURL: "http://h:1/files?token=abc&sid=" + SID, sourceFunctionName: "", sourceCharPosition: 4000, invoker: "IMG[src=/file?path=/repo/notes-api/docs/plot.png&sid=" + SID + "].onload", duration: 30 },
+  ] }]);
+  h.clock.wall += 60_000;
+  p.tick();
+  const rows = minuteRows(h.posted);
+  assert.equal(rows.length, 1);
+  const d = rows[0].data;
+  assert.equal(d.app, "files");
+  assert.deepEqual(d.frames["fileview:paint"], stat(1, 180, 180, 1, 1, hist({ 8: 1 })));    // 128-256 ms
+  assert.deepEqual(d.frames["fileview:reflow"], stat(1, 60, 60, 1, 0, hist({ 6: 1 })));      // 32-64 ms
+  assert.deepEqual(d.free, { n: 1, p50: 40, p90: 40, max: 40 });
+  assert.equal(d.loaf.n, 1);
+  assert.deepEqual(d.loaf.top.map((t: any) => t.k), ["files.js:paintAll@9000", "page:(anonymous)@4000"]);
+  assert.deepEqual(d.loaf.top.map((t: any) => t.inv), ["Window.requestAnimationFrame", "IMG[src].onload"]);
+  assert.equal(d.dom, 1234);
+  assert.equal(d.heap_mb, 200);
+  // the privacy contract, over every string the row carries
+  const strings: string[] = [];
+  (function walk(v: unknown, at: string) {
+    if (typeof v === "string") strings.push(at + "=" + v);
+    else if (Array.isArray(v)) v.forEach((x, i) => walk(x, at + "[" + i + "]"));
+    else if (v && typeof v === "object") for (const k of Object.keys(v as object)) { strings.push(at + "." + k); walk((v as any)[k], at + "." + k); }
+  })(d, "data");
+  for (const s of strings) {
+    assert.ok(!s.includes("/"), "no slash: " + s);
+    assert.ok(!s.includes("?") && !s.includes("&"), "no query: " + s);
+    assert.ok(!s.includes(SID) && !s.includes("11111111"), "no session id: " + s);
+    assert.ok(!s.includes("notes-api") && !s.includes("plot.png"), "no path: " + s);
   }
 });
 
@@ -800,18 +852,19 @@ test("installPerfTelemetry: hidden_pane is the shim's union, the zero-viewport p
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const readUi = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 
-test("each pane bundle's one frame listener is installed through perfFrameHandler under its own app name, on both delivery paths", () => {
-  // the pane hands the wrapped handler to listenForFrames (frame-listener.ts), which puts the SAME function on
-  // window and in federation's direct-delivery registry: one install per pane, no bare window listener beside it
+test("each pane bundle's one frame listener is installed through listenForFrames, wrapped by perfFrameHandler under its own app name", () => {
+  // the pane hands ONE handler to frame-listener.ts, which puts it on window and in federation's registry; a bare
+  // window listener beside that call would be a second delivery path, and an unwrapped one a frame the collector
+  // never sees (the import line has no paren, so the call is the only match for the count)
   const panes: Array<[string, string]> = [["render.ts", "chat"], ["feed.ts", "feed"], ["fleet.ts", "fleet"], ["timeline-main.ts", "timeline"]];
   for (const [file, app] of panes) {
     const src = readUi(file);
     assert.match(src, /import \{ perfFrameHandler \} from "\.\/perf-telemetry";/, file + " imports the wrapper");
-    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the installer");
+    assert.match(src, /import \{ listenForFrames \} from "\.\/frame-listener";/, file + " imports the helper");
+    const installs = src.match(/listenForFrames\(/g) || [];
+    assert.equal(installs.length, 1, file + " installs its frame listener once");
     const bare = src.match(/window\.addEventListener\("message", /g) || [];
-    assert.equal(bare.length, 0, file + " installs no window message listener of its own");
-    const installs = src.match(/\blistenForFrames\(/g) || [];
-    assert.equal(installs.length, 1, file + " has one frame listener");
+    assert.equal(bare.length, 0, file + " has no bare window message listener");
     assert.ok(src.includes('listenForFrames(perfFrameHandler("' + app + '", '),
       file + " installs it through perfFrameHandler as app " + app);
   }
@@ -830,8 +883,10 @@ test("federation's start() installs the page collector first: before __rompFed, 
   const end = src.indexOf("\n  }\n", at);
   assert.ok(end > at, "start() closes");
   const body = src.slice(at, end);
-  // through perfCollectorFor: the page collector everywhere the kernel pushes frames, none on the Files pane
-  assert.match(src, /export function perfCollectorFor\(app: string\): RompPerf \| null \{\n\s*return app === "files" \? null : installPerfTelemetry\(app\);/);
+  // through perfCollectorFor: the page collector on every kernel page, the Files pane included (its viewer's
+  // fileview:<why> brackets and the long frames it sees; the pane got none until 2026-09-09)
+  assert.match(src, /export function perfCollectorFor\(app: string\): RompPerf \| null \{\n\s*return installPerfTelemetry\(app\);/);
+  assert.ok(!src.includes('app === "files" ? null'), "no pane is excluded any more");
   const install = body.indexOf("this.perf = perfCollectorFor(this.app);");
   assert.ok(install > 0, "start() installs the collector");
   const app = body.indexOf('this.app = w.__rompApp || "chat";');

@@ -6,6 +6,13 @@
 // window.__rompPerf that federation.js publishes before it runs); federation times its own merge and
 // dispatch of every frame as `fed:<type>`, nested outside the pane's handler, and the collector records
 // each level's OWN time (the outer minus what its inner brackets took), so the per-type figures add up.
+// Two pages get no frames and time something else (2026-09-09): the Files pane's viewer brackets its own
+// paint pass as `fileview:paint` (a text body painted) and `fileview:reflow` (the panel's re-place of its cards
+// over reflowed text: the body's width changed, or a text-size step), so the cost of a large reviewed file
+// shows per minute under app "files", beside the socket's op replies counted as `fed:<type>`; and the
+// dashboard SHELL (the top-level window, ui/webview/shell-perf.ts) runs a collector with no brackets at all,
+// app "shell", because Chromium reports an iframe's long animation frames to the top-level window, so a pane
+// script that blocked the main thread is attributed there and nowhere else.
 // Per frame type the module keeps a count, the summed and maximum handler time, exact counts over 16.7 ms
 // (one dropped frame at 60 Hz) and at or over 100 ms, and a fixed log2 histogram (one increment per frame),
 // which is additive across minutes so `romp perf client` computes true window percentiles. Two

@@ -33,8 +33,10 @@ name like `render.ts` is ambiguous to anyone reading outside your context.
 When you want me to look at a file, flag it with `add_user_todo` if you have
 that tool, and give the file's absolute path as its `file` argument (not only
 as an absolute path in the detail, which can still describe it); I open it from
-there, and my comments come back to you as a message with instructions. If you
-don't have the tool, ask for the look in your reply and name the file.
+there, and my comments come back to you as a message with instructions. When
+the look is at a web page (a pull request, an issue, a document online), give
+its address as the `link` argument the same way. If you don't have the tool,
+ask for the look in your reply and name the file or the address.
 
 # Housekeeping
 

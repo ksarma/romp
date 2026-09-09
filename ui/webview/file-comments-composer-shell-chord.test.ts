@@ -8,7 +8,9 @@
 // claims the chord at the WINDOW in the capture phase while the live panel's box is the key's target (claimSaveChord, one
 // listener the module adds when it loads, keyed on `live`): the DOM's phase order puts a window listener ahead of a document
 // one whoever registered first, so the chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind
-// that). Three legs: the shell's rule as its pure module states it, the claim driven through the panel tests' DOM stand-in
+// that). The Send confirm's note box (the arrivals follow-on, 2026-09-09) takes the same chord the same way: the one claim
+// branches on which of the panel's two boxes is the target, and hands the note box's to noteKey, which sends. Three legs:
+// the shell's rule as its pure module states it, the claim driven through the panel tests' DOM stand-in
 // (node's EventTarget stands in for the window), and the order itself in headless Chromium and Firefox — the shell's own
 // decision functions wired as its dispatcher is, ahead of the real panel — which skips LOUDLY without a playwright browser
 // (CI installs none). Synthetic fixtures only: the notes-api world, placeholder ids.
@@ -350,15 +352,18 @@ test("the shell lets a command take Ctrl+Enter or Meta+Enter, names no conflict 
 
 // ── pinned at source: the claim, its life, and the dispatcher it precedes ─────────────────────────
 
-test("source: the box's keys are one handler; the claim is the module's one window-capture listener, keyed on the live panel, and takes only its box's save chord; the shell's dispatcher is the document-capture listener it precedes", () => {
+test("source: the box's keys are one handler; the claim is the module's one window-capture listener, keyed on the live panel, and takes only the save chord in its comment box or its Send confirm's note box; the shell's dispatcher is the document-capture listener it precedes", () => {
   assert.match(SRC, /this\.input\.addEventListener\("keydown", this\.boxKey\);/, "the box's own listener is the named handler the claim hands the chord to");
+  assert.match(SRC, /this\.noteBox\.addEventListener\("keydown", this\.noteKey\);/, "…and the note box's is noteKey, the handler the claim hands its chord to");
   // One listener for the module, added when it loads and reading `live` — not one per panel: a per-panel claim added in the
   // constructor ran AFTER the chat pane's window-capture history keys (the 2026-09-07 review); the full shape of the
   // function, its stopImmediatePropagation and dispose's `live = null` are pinned where that finding lives,
   // file-comments-composer-chat-nav-chord.test.ts.
   assert.match(SRC, /^if \(typeof window !== "undefined"\) window\.addEventListener\("keydown", claimSaveChord, true\);$/m, "on the window, capture, added when the module loads");
-  assert.match(SRC, /\nfunction claimSaveChord\(ev: KeyboardEvent\): void \{\n\s*const p = live;\n\s*if \(!p \|\| ev\.target !== p\.input \|\| composerKeyAction\(ev\) !== "save"\) return;/,
-    "the live panel's box as target and the save verdict, or nothing");
+  // The save verdict first, then which of the live panel's two boxes is the target — the comment box to boxKey, the Send
+  // confirm's note box to noteKey (the arrivals follow-on, 2026-09-09) — or nothing: any other target passes on to the shell.
+  assert.match(SRC, /\nfunction claimSaveChord\(ev: KeyboardEvent\): void \{\n\s*const p = live;\n\s*if \(!p \|\| composerKeyAction\(ev\) !== "save"\) return;\n\s*if \(ev\.target === p\.input\) \{ ev\.stopImmediatePropagation\(\); p\.boxKey\(ev\); \}\n\s*else if \(ev\.target === p\.noteBox\) \{ ev\.stopImmediatePropagation\(\); p\.noteKey\(ev\); \}[^\n]*\n\}\n/,
+    "the live panel's comment box or note box as target and the save verdict, or nothing");
   assert.doesNotMatch(SRC, /this\.claimSaveChord/, "no per-panel copy: none added in the constructor, none removed in dispose");
   assert.match(SRC, /boxKey = \(e: KeyboardEvent\) => \{\n\s*if \(e\.key === "Escape"\) e\.stopPropagation\(\);\n\s*const act = composerKeyAction\(e\);\n\s*if \(act === "save"\) \{ e\.preventDefault\(\); void this\.saveComposer\(\); \}/);
   // the shell's side: a capture listener on each pane document, wired at pane load, that stops the event before the command
@@ -425,7 +430,7 @@ test("the claim takes nothing else: a plain or Shift+Enter, an IME's chord and a
   assert.equal(elsewhere.defaultPrevented, false);
   const other = doc.createElement("textarea"); doc.body.appendChild(other);
   const otherBox = atWindow(other, { key: "Enter", ctrlKey: true });
-  assert.equal(otherBox.cancelBubble, false, "…and so is another text field's Ctrl+Enter: the claim is the comment box's alone");
+  assert.equal(otherBox.cancelBubble, false, "…and so is another text field's Ctrl+Enter: the claim is for the panel's own boxes alone, the comment box and the Send confirm's note box");
   other.remove();
   await tick();
   assert.equal(h.posted.length, before, "nothing written");
@@ -447,6 +452,37 @@ test("the claim lives with the panel: once the viewer closes, a chord at the win
   assert.equal(ev.defaultPrevented, false);
   await tick();
   assert.equal(h.posted.length, before, "a disposed panel saves nothing");
+});
+
+// The Send confirm's note box (the arrivals follow-on, 2026-09-09): the same chord, claimed by the same window listener with
+// the note box as its target, sends. Driven here because this file is where the claim is driven; the note's own suite
+// (file-comments-send-note.test.ts) presses the chord at the box and pins the claim's branch at source only.
+test("at the window: the save chord with the Send confirm's note box as its target sends the note and stops the event there; a plain Enter passes on to the box; once the viewer closes the chord is no longer claimed", async () => {
+  const h = await harness();
+  await h.open();
+  h.click('[data-act="fcsend"]');                                         // Send to session: the confirm, with its note box
+  const note = h.q(".fc-confirm .fc-send-note");
+  assert.ok(note, "the confirm's note box stands");
+  note!.value = "  Keep the tone of the first draft.\nIt reads well.  ";
+  note!.dispatch("input");                                                 // as typing does: the words reach the panel's sendNote
+  const before = h.posted.length;
+  const plain = atWindow(note!, { key: "Enter" });
+  assert.equal(plain.cancelBubble, false, "a plain Enter is the box's newline: not claimed");
+  assert.equal(plain.defaultPrevented, false);
+  const ev = atWindow(note!, { key: "Enter", ctrlKey: true });
+  assert.equal(ev.cancelBubble, true, "propagation stopped at the window: the shell's document-capture dispatcher never meets it");
+  assert.equal(ev.defaultPrevented, true, "the chord is the box's: no newline goes in with the send");
+  await tick();
+  assert.equal(h.posted.length, before + 1, "one send, not one per listener");
+  assert.equal(h.last().type, "fileCommentsSend", "the chord in the note box sends (noteKey), as the chord in the comment box saves (boxKey)");
+  assert.equal(h.last().note, "Keep the tone of the first draft.\nIt reads well.", "the note as noteKey sends it: trimmed, the break inside kept");
+  assert.deepEqual((h.last().comments as Array<{ id: string }>).map((c) => c.id), [passage.id], "with the unsent comment");
+  h.dispose();
+  const late = atWindow(note!, { key: "Enter", metaKey: true });
+  assert.equal(late.cancelBubble, false, "the window listener went with the panel: the note box's chord is no longer claimed either");
+  assert.equal(late.defaultPrevented, false);
+  await tick();
+  assert.equal(h.posted.length, before + 1, "a disposed panel sends nothing");
 });
 
 // ── the order itself, in a real browser: the shell's dispatcher first on the document, the real panel after ─────

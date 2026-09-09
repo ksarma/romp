@@ -18,8 +18,8 @@ const BLOCK = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview",
 
 test("highlight() captures the raw source then adds a Copy button to each <pre>", () => {
   // raw is captured BEFORE innerHTML is rewritten, and hljs highlights that same captured string — through
-  // the (language, source) cache since 2026-09-06 (highlight-cache.ts), which still names a grammar for a
-  // labeled fence and auto-detects an unlabeled one
+  // the (language, source) cache (highlight-cache.ts), which still names a grammar for a labeled fence and
+  // auto-detects an unlabeled one
   assert.match(RENDER, /const raw = code\.textContent \|\| "";/);
   assert.match(RENDER, /code\.innerHTML = highlightHtml\(hljs, lang, raw\);/);
   assert.match(HL, /hl\.highlight\(raw, \{ language: lang as string \}\)/);

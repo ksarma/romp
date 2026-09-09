@@ -21,16 +21,21 @@ import * as path from "node:path";
 const ROOT = path.resolve(process.cwd(), "..");
 const RENDER = fs.readFileSync(path.join(ROOT, "ui", "webview", "render.ts"), "utf8");
 const INTENT = fs.readFileSync(path.join(ROOT, "vscode-extension", "src", "pipe-intent.ts"), "utf8");
+const BILLING = fs.readFileSync(path.join(ROOT, "ui", "webview", "billing-label.ts"), "utf8");
 
 test("the picker's Billing row shows for SDK whenever availability is known", () => {
-  // one known choice is enough to SHOW the row (the user 2026-08-09) — the both-test only decides
-  // buttons vs written-out text; the backend toggle still re-decides the row (tmux CLIs live in the
-  // tmux server's env, which the kernel doesn't control)
+  // one thing the host can name is enough to SHOW the row (the user 2026-08-09): a login, a key of romp's,
+  // or a declared key (review round 1, 2026-09-09: the apiKeyHelper box has neither credential of romp's).
+  // The decision is billing-label.ts's pickerBillingRow, executed in billing-label.test.ts; the both-test
+  // only decides buttons vs written-out text; the backend toggle still re-decides the row (tmux CLIs live
+  // in the tmux server's env, which the kernel doesn't control)
   // (pickerBackendChoice reads the Backend row's chip alone since tab groups, 2026-09-04 — the Tags
   // row wears the same chip grammar, and a selected tag must never read as the backend)
-  assert.match(RENDER, /const show = !pickMode && !!\(a && \(a\.login \|\| a\.key\)\) && pickerBackendChoice\(\) === "sdk";/);
+  assert.match(RENDER, /const row = pickerBillingRow\(a\);\s*\n\s*const show = !pickMode && row\.show && pickerBackendChoice\(\) === "sdk";/);
+  assert.match(BILLING, /const show = !!\(a && \(a\.login \|\| a\.key \|\| a\.default === "key"\)\);/);
   assert.match(RENDER, /function pickerBackendChoice\(\): string \{\s*\n\s*const beSel = document\.querySelector\("#picker \.picker-backend:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel"\) as HTMLElement \| null;\s*\n\s*return beSel\?\.dataset\.be \|\| loadSettings\(\)\.backend;/);
-  assert.match(RENDER, /const both = !!\(a!\.login && a!\.key\);/);
+  assert.match(RENDER, /const both = row\.both;/);
+  assert.match(BILLING, /const both = !!\(a && a\.login && a\.key\);/);
   assert.match(RENDER, /auWrap\.style\.display = "none";\s*\/\/ hidden until a sessionList reply carries authAvail/);
   assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/);   // the Tags row follows the backend pick too (tab groups)
   // a host switch clears the availability — the choices on screen belong to the OLD host
@@ -44,7 +49,14 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
   // 2026-08-09: informative, never a one-option selector) — Login named by its account when known
   assert.match(RENDER, /wrap\.querySelectorAll\("\.picker-be-opt"\)\.forEach\(\(x\) => \(\(x as HTMLElement\)\.style\.display = both \? "" : "none"\)\);/);
   assert.match(RENDER, /fixed\.style\.display = both \? "none" : "";/);
-  assert.match(RENDER, /fixed\.textContent = both \? "" : \(a!\.key \? "API key" : \(a!\.acct \? `Login \(\$\{a!\.acct\}\)` : "Login"\)\);/);
+  // the written-out choice is the key when romp holds one OR when the host declares its sessions bill one
+  // (a.default reads "key" under ROMP_EXPECTED_AUTH=key on an apiKeyHelper box, which holds no key of romp's),
+  // else the login named by its account: pickerBillingRow's `fixed`, executed in billing-label.test.ts
+  assert.match(RENDER, /fixed\.textContent = row\.fixed;/);
+  // the written-out choice follows the kernel's default (what a spawn without a pick bills), the key arm
+  // only for a reply carrying no default (verification round 2, 2026-09-09)
+  assert.match(BILLING, /const keyed = !!a && \(a\.default \? a\.default === "key" : !!a\.key\);\s*\n\s*const fixed = !show \|\| both \? "" : \(keyed \? "API key" : billingSide\("login", a!\.acct\)\);/);
+  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow \} from "\.\/billing-label";/);
   assert.match(RENDER, /const auFixed = el\("span", "picker-auth-fixed"\);/);
   // in button mode, the Login button's hover names WHICH account
   assert.match(RENDER, /if \(loginBtn && a!\.acct\) loginBtn\.title = `Bill this session to the machine's Claude login \(\$\{a!\.acct\}\)\.`;/);
@@ -79,8 +91,8 @@ test("the switching CONTROL is the tab menu's Billing submenu, gated on both", (
   assert.match(RENDER, /el\("div", "ctx-item" \+ \(st\.auth === c\.value \? " current" : ""\)\)/);
   // a pick posts the same setAuth the badge used, and only a CHANGE posts (current = dismiss)
   assert.match(RENDER, /if \(st\.auth !== c\.value && vscodeApi\) vscodeApi\.postMessage\(\{ type: "setAuth", id, value: c\.value \}\);/);
-  // the item's sub-line names the current billing, or the applying reconnect
-  assert.match(RENDER, /st\.authPending \? "applying…"/);
+  // the item's sub-line names the current billing, or the applying reconnect (billing-label.ts's words)
+  assert.match(BILLING, /if \(f\.authPending\) return "applying…";/);
   assert.match(RENDER, /auth\?: string; authLive\?: string; authPending\?: boolean; authBoth\?: boolean; authAcct\?: string;/);
 });
 
@@ -92,24 +104,21 @@ test("no key material reaches the webview — no tail plumbing survives anywhere
   assert.doesNotMatch(RENDER, /a!\.tail/);
 });
 
-test("the chat tab hover says Billing whenever the backend reports it, naming the login", () => {
+test("the chat tab hover says Billing whenever the backend reports it, through billing-label's words", () => {
   // ungated on machine shape (the user 2026-08-09: one-auth machines included; only a tmux session,
-  // whose CLI env romp does not control, reports nothing) — and 'Login (account)' when known
-  assert.match(RENDER, /s\.status\.auth === "key" \? "API key"\s*\n\s*: \(s\.status\.authAcct \? `Login \(\$\{s\.status\.authAcct\}\)` : "Login"\)\]\);/);
-  // …and the row tells the TRUTH in every landing shape (T124, superseding the quiet-parenthetical
-  // form: after a switch the row showed the pick as applied fact through the whole reconnect
-  // window, and a wrong-side landing read as an aside). A PENDING pick says "applying — not
-  // confirmed yet"; a CONFIRMED contradiction (authLive on the other side — a key found via
-  // apiKeyHelper on a login launch) LEADS with the warning and names what is actually billed.
-  // Anchored at the gate + label: a no-auth session (tmux — the exclusion above) must never grow a
-  // fabricated Billing row, so the `if (s.status.auth)` guard is part of the pinned behavior.
-  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*s\.status\.authPending\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\) \+ " \(applying — not confirmed yet\)"/,
-    "the reconnect window renders as pending intent, never as applied fact");
-  assert.match(RENDER, /⚠ \$\{s\.status\.auth === "key" \? "API key" : "Login"\} picked, but the CLI reports `\s*\n\s*\+ `\$\{s\.status\.authLive === "key" \? "the API key" : "the login"\} — this session bills that`/,
-    "a confirmed contradiction leads with the warning");
-  // the SWITCH CONTROL (the Billing submenu) carries the same truth where the pick lives
-  assert.match(RENDER, /sb\.textContent = st\.authPending \? "applying…"\s*\n\s*: st\.authLive && st\.authLive !== st\.auth\s*\n\s*\? `⚠ CLI reports \$\{st\.authLive === "key" \? "API key" : "login"\}`/,
-    "the submenu sub-line shows the contradiction, not the unapplied pick");
+  // whose CLI env romp does not control, reports nothing). Anchored at the gate + label: a no-auth
+  // session (tmux, the exclusion above) must never grow a fabricated Billing row, so the
+  // `if (s.status.auth)` guard is part of the pinned behavior. The WORDS are billing-label.ts's and
+  // run as executed cases in billing-label.test.ts (the CLI's report leads, a pending pick reads as
+  // pending, an explicit pick the CLI contradicted leads with the warning, a seeded default never does).
+  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing", billingRowText\(s\.status\)\]\);/,
+    "the hover row's text is the shared decision");
+  // the SWITCH CONTROL (the Billing submenu) carries the same decision where the pick lives (T124)
+  assert.match(RENDER, /sb\.textContent = billingSubText\(st\);/,
+    "the submenu sub-line is the same decision, shorter");
+  assert.match(RENDER, /import \{ billingRowText, billingSubText, pickerBillingRow \} from "\.\/billing-label";/);
+  // the field that tells a pick from a seeded default rides the status type
+  assert.match(RENDER, /authBoth\?: boolean; authAcct\?: string; authPicked\?: boolean;/);
 });
 
 test("set_auth refuses a login pick on a box with no login — the same bar the key side always had (T124)", () => {

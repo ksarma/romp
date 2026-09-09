@@ -344,9 +344,10 @@ test("seatPlace: scrolls the body by the difference between where the kept block
 test("file-view.ts: the place is read before the text swap and seated after the hooks (the selection keeper's order); the width reflow seats the place read at scroll time; a text-size step reads and seats around its reflow; the URL viewer's switch seats too", () => {
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
   // the folds' state is restored right after the swap (foldKeeper; the Slice 4 review: every fold reverted to its authored state
-  // on each paint), before the hooks measure and before the seat, so the heights the seat reads are the ones the place was read at
-  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
-    "read, swap, folds, hooks, then seat over the new text");
+  // on each paint), before the hooks measure and before the seat, so the heights the seat reads are the ones the place was read at;
+  // the tables' width stamp follows it (no geometry read), then the hooks
+  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+    "read, swap, folds, the tables' width stamp, hooks, then seat over the new text");
   assert.match(local, /folds\.note\(\);\n\s*if \(text === null \|\| editing\) return;/, "the folds are read before the editor's early return: Edit paints nothing and then takes the body itself");
   // a seat reads the place anew after it, unless the browser clamped the write (reader-place.ts seatPlaceOutcome): then the
   // place it was given stands, held while the body stands where the clamp left it, so the swap back seats the reader's own

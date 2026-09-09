@@ -182,3 +182,30 @@ export function sectionTodoPhrase(flag: SectionTodoFlag): string {
 export function sectionTodoTitle(flag: SectionTodoFlag, door = false, shown = false): string {
   return `${sectionTodoPhrase(flag)}; ${door ? doorClick(shown) : "click to open this group"}`;
 }
+
+/** The state dot every tab carries (T262g, the user 2026-09-08: the strip's row count flapped with a tab's state).
+ *  A tab's width must not depend on its state: the dot's slot is laid out in EVERY state and merely hidden when the
+ *  state has no dot ("tab-dot none"), so a session starting or finishing work cannot add or remove a row of the strip
+ *  and slide the transcript under the reader by a row's height. working → the solid dot; awaitingBg → the await-green
+ *  dot; a missing state → the gray ring; opening → the accent loader dot; compacting → null (its animated bar takes
+ *  the slot); everything else → the hidden slot. */
+export function tabDotClass(st: string | undefined | null): string | null {
+  if (st === "compacting") return null;
+  if (st === "working") return "tab-dot";
+  if (st === "awaitingBg") return "tab-dot await";
+  if (!st) return "tab-dot unknown";
+  if (st === "opening") return "tab-dot opening";
+  return "tab-dot none";
+}
+
+/** What a tab's dot says on hover (the user 2026-07-22: each pip explains itself, the same titles the feed's
+ *  DOT_TIP speaks), beside the class rule above so the two can never disagree on what a dot means: working,
+ *  awaitingBg, a missing state and opening have a title; the hidden slot ("tab-dot none") and the compacting
+ *  bar (no dot) say nothing. render.ts sets it on the slot tabDotClass classed. */
+export function tabDotTitle(st: string | undefined | null): string | null {
+  if (st === "working") return "working — a turn is running right now";
+  if (st === "awaitingBg") return "awaiting — idle, but background work it dispatched is still running";
+  if (!st) return "state unknown — romp couldn't read this session's live state";
+  if (st === "opening") return "opening — this session is still starting up";
+  return null;
+}

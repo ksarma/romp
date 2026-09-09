@@ -819,7 +819,7 @@ test("a reply's box stands inside its card in the track: the pass leaves it ther
 });
 
 test("at source: the box's scroll runs after the margin pass and through showComposer; outside the margin layout showComposer is scrollIntoView's nearest", () => {
-  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n\s*if \(moved\) this\.showComposer\(\);/, "render: after the pass");
+  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);\n\s*if \(moved\) this\.showComposer\(\);/, "render: after the pass");
   assert.match(SRC, /this\.render\(\);\n\s*this\.showComposer\(\);/, "startReply");
   assert.doesNotMatch(SRC, /this\.composerBox\.scrollIntoView/, "never the track alone");
   assert.match(SRC, /private showComposer\(\): void \{\n\s*const box = this\.composerBox, track = this\.sections\.cards;\n\s*if \(!this\.margin \|\| !track\.contains\(box\)\) \{ box\.scrollIntoView\(\{ block: "nearest" \}\); return; \}/, "the list layout, and the slot above the track, as before");

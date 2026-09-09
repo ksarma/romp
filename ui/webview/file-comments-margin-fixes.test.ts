@@ -716,8 +716,8 @@ test("the saved comment is read off the reply's store: the one comment the statu
 test("at source: the scroll that shows a card's end is track content (no header term); the save scrolls to its card BEFORE the composer closes, so the pass's header and centerOn's agree", () => {
   assert.match(SRC, /const showCard = p\.top \+ p\.height \+ CARD_GAP - track\.clientHeight;/, "the least scroll that shows the card's bottom, in the track's content");
   assert.doesNotMatch(SRC, /const showCard = [^;\n]*offset[^;\n]*;/, "no header term in it");
-  assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "scroll, then close");
-  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved !== null\) this\.scrollCard\(this\.cardKey\(saved\)\);/, "a reply's card by its comment, a new comment's off the reply's store");
-  assert.match(SRC, /if \(this\.margin && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone");
+  assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "scroll, then close");
+  assert.match(SRC, /const saved = c\.kind === "reply" \? c\.commentId : savedCommentId\(had, r, note\);\n\s*if \(saved === null\) return;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}/, "a reply's card by its comment, a new comment's off the reply's store; scrolled to while the person has not moved on and it is not whole in view (the arrivals follow-on, 2026-09-09)");
+  assert.match(SRC, /if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/, "a loose card is scrolled to by both scrollers at once, never by scrollIntoView alone (the card the focus first: the focus follow-on, 2026-09-08)");
   assert.match(SRC, /const had = new Set\(\(this\.status && this\.status\.store \? this\.status\.store\.comments : \[\]\)\.map\(\(x\) => x\.id\)\);/, "the baseline is the status the write is fenced on");
 });

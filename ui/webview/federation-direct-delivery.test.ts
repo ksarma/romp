@@ -2,14 +2,14 @@
 // pane registers it (onFrame, published as window.__rompFed.onFrame; frame-listener.ts is how a pane registers),
 // and dispatches them on window only when nothing registered (emit).
 //
-// Why: the live `fed:feedDelta` bracket ran 15-25 ms per delta in every feed-consuming pane (75-110 ms in slow
+// Why: the live `fed:feed` bracket ran 15-25 ms per feed push in every feed-consuming pane (75-110 ms in slow
 // minutes) while federation's own compute is under a millisecond. Blink hands a same-world "message" listener the
 // event's data object itself, but a listener in ANOTHER JavaScript world (a browser extension's content script)
 // that reads event.data receives a structured clone of the whole frame, made synchronously inside dispatchEvent:
-// 35-46 ms and about 7 MB of garbage per dispatch of a 7 MB frame in the probe, 0 ms for a direct call
-// (2026-09-06). The pane receives the same merged object, in the same order, once per frame; only the delivery
-// changes. Executed against the real manager on the bare stand-in federation-closed-store.test.ts uses, extended
-// with a dispatch counter. Synthetic only (host TESTHOST, placeholder ids).
+// 35-46 ms and about 7 MB of garbage per dispatch of a 7 MB frame in the probe, 0 ms for a direct call. The pane
+// receives the same merged object, in the same order, once per frame; only the delivery changes. Executed against
+// the real manager on the bare stand-in federation-closed-store.test.ts uses, extended with a dispatch counter.
+// Synthetic only (host TESTHOST, placeholder ids).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -54,28 +54,53 @@ test("a registered handler receives the merged frame by direct call: the same ob
     const a = ask("a1", U), b = ask("b1", U);
     fm.inbound("", feedFrame([a, b], 1));
     const b2 = ask("b1", U, { text: "which port, again?" });
-    fm.inbound("", { type: "feedDelta", buildId: 2, now: 1_700_000_001, asks: [b2], removeAsks: [] });
-    assert.deepEqual(types(got.map((e) => e.data)), ["feed", "feed"], "the delta is applied and re-emitted as a whole feed frame, as before");
+    fm.inbound("", feedFrame([a, b2], 2));
+    assert.deepEqual(types(got.map((e) => e.data)), ["feed", "feed"], "each push is re-emitted as a merged feed frame, as before");
     assert.ok(got[0] instanceof MessageEvent, "the handler sees a MessageEvent, the window listener's own shape");
     // by identity: what the merge built is what the pane holds — no copy, no clone on the way
-    assert.equal(got[0].data.asks[0], a, "the first frame's unchanged card is the wire object itself");
-    assert.equal(got[1].data.asks[0], a, "…and after the delta the unchanged card is STILL the same object (the card gate's identity check)");
+    assert.equal(got[0].data.asks[0], a, "the first frame's card is the wire object itself");
+    assert.equal(got[1].data.asks[0], a, "…and so is the second frame's");
+    assert.equal(got[1].data.asks[1], b2, "the changed card is the second push's object");
+    assert.notEqual(got[1].data.asks[1], b);
+    assert.deepEqual(types(windowed), [], "no merged frame was dispatched on window");
+  });
+});
+
+test("a feed delta (feedDelta, this federation's wire) is applied and handed over as a whole merged feed frame: the unchanged card is STILL the same object", () => {
+  // the card gate (feed-card-gate.ts) skips a card whose wire object is the one it painted, so identity has to
+  // survive the delta's apply as it survives a whole frame's merge
+  withManager((fm, windowed) => {
+    const got: MessageEvent[] = [];
+    fm.onFrame((e: MessageEvent) => got.push(e));
+    const a = ask("a1", U), b = ask("b1", U);
+    fm.inbound("", feedFrame([a, b], 1));
+    const b2 = ask("b1", U, { text: "which port, again?" });
+    fm.inbound("", { type: "feedDelta", buildId: 2, now: 1_700_000_001, asks: [b2], removeAsks: [] });
+    assert.deepEqual(types(got.map((e) => e.data)), ["feed", "feed"], "the delta is applied and re-emitted as a whole feed frame");
+    assert.equal(got[1].data.asks[0], a, "after the delta the unchanged card is the same object");
     assert.equal(got[1].data.asks[1], b2, "the changed card is the delta's object");
     assert.notEqual(got[1].data.asks[1], b);
     assert.equal(got[1].data.buildId, 2);
     assert.deepEqual(types(windowed), [], "no merged frame was dispatched on window");
+  });
+  // and on the window path, with no handler registered
+  withManager((fm, windowed) => {
+    fm.inbound("", feedFrame([ask("a1", U)], 1));
+    fm.inbound("", { type: "feedDelta", buildId: 2, asks: [], removeAsks: ["a1"] });
+    assert.deepEqual(types(windowed), ["feed", "feed"]);
+    assert.deepEqual(windowed[1].asks, [], "the delta was applied on this path too");
   });
 });
 
 test("with no handler registered every frame still goes to window.dispatchEvent — a pane bundle from before the registry keeps working", () => {
   withManager((fm, windowed) => {
     fm.inbound("", feedFrame([ask("a1", U)], 1));
-    fm.inbound("", { type: "feedDelta", buildId: 2, asks: [], removeAsks: ["a1"] });
+    fm.inbound("", feedFrame([], 2));
     fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }] });
     fm.inbound("", laneData([U]));
     fm.inbound("", { type: "bars", turns: [] });
     assert.deepEqual(types(windowed), ["feed", "feed", "tabOrder", "data", "bars"]);
-    assert.deepEqual(windowed[1].asks, [], "the delta was applied on this path too");
+    assert.deepEqual(windowed[1].asks, [], "the second push replaced the first on this path too");
   });
 });
 
@@ -111,6 +136,25 @@ test("the frames that stay on window keep going there with a handler registered:
   });
 });
 
+test("a detach's hostDrop `closed` frames and an undeliverable send's `warn` stay on window with a handler registered, and never reach the handler", () => {
+  withManager((fm, windowed) => {
+    const got: any[] = [];
+    fm.onFrame((e: MessageEvent) => got.push(e.data));
+    // an attached host whose socket is not open: its sessions are on screen, its tunnel is down
+    fm.conns.set("TESTHOST", { host: "TESTHOST", ws: null, url: "", closed: false, live: false, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() });
+    fm.hostSeq.push("TESTHOST");
+    fm.perHostSids["TESTHOST"] = new Set(["TESTHOST:" + V]);
+    fm.sendRemote("TESTHOST", { type: "reply", id: "TESTHOST:" + V, text: "which port?" });   // not a queued setting: dropped, with a warn
+    assert.deepEqual(types(windowed), ["warn"], "the drop is said on window (render.ts toasts it there)");
+    assert.match(windowed[0].text, /TESTHOST is unreachable/);
+    fm.closeRemote("TESTHOST");   // /tunnels no longer lists it: its sessions close with hostDrop, then the merged re-emits
+    assert.deepEqual(types(windowed), ["warn", "closed"]);
+    assert.deepEqual(windowed[1], { type: "closed", id: "TESTHOST:" + V, hostDrop: true });
+    assert.deepEqual(types(got), ["tabOrder", "feed"], "the detach's merged re-emits reached the handler directly (no lanes were held for the host)");
+    assert.ok(!got.some((m) => m.type === "closed" || m.type === "warn"), "neither window-path frame reached the handler");
+  });
+});
+
 test("the registration returns an unsubscribe; after it the window path carries the frames again", () => {
   withManager((fm, windowed) => {
     const got: any[] = [];
@@ -141,16 +185,24 @@ test("two handlers both receive the ONE event object, in registration order; a h
 
 // ── report-and-continue: a throwing handler behaves as a throwing window listener does ──
 
-test("a throwing handler is reported through reportError, the next handler still runs, and inbound returns normally", () => {
+test("a throwing handler is reported through reportError alone (not the console as well), the next handler still runs, and inbound returns normally", () => {
   withManager((fm, windowed, reported) => {
-    const got: string[] = [];
-    fm.onFrame(() => { throw new Error("pane bug"); });
-    fm.onFrame((e: MessageEvent) => got.push(e.data.type));
-    assert.doesNotThrow(() => fm.inbound("", { type: "tabOrder", order: [], tabs: [] }));
-    assert.deepEqual(got, ["tabOrder"]);
-    assert.equal(reported.length, 1);
-    assert.match(String((reported[0] as Error).message), /pane bug/);
-    assert.deepEqual(types(windowed), []);
+    const realError = console.error;
+    const logged: unknown[] = [];
+    console.error = (...args: unknown[]) => { logged.push(args[0]); };
+    try {
+      const got: string[] = [];
+      fm.onFrame(() => { throw new Error("pane bug"); });
+      fm.onFrame((e: MessageEvent) => got.push(e.data.type));
+      assert.doesNotThrow(() => fm.inbound("", { type: "tabOrder", order: [], tabs: [] }));
+      assert.deepEqual(got, ["tabOrder"]);
+      assert.equal(reported.length, 1);
+      assert.match(String((reported[0] as Error).message), /pane bug/);
+      assert.deepEqual(logged, [], "with reportError on the page the console is not written too: one report per throw");
+      assert.deepEqual(types(windowed), []);
+    } finally {
+      console.error = realError;
+    }
   });
 });
 
@@ -284,7 +336,9 @@ test("listenForFrames installs the one handler on window and in the registry; wi
   }
 });
 
-// ── source pins: every pane installs through the helper; the kernel's inline boot registers the same way ──
+// ── source pins: every pane installs through the helper. (The kernel's inline timeline boot registers the same way;
+// that is the Python lane's to hold (tests/test_kernel_timeline_split.py pins the registration and RUNS the boot
+// under node), so a kernel edit cannot break this lane. Review find, 2026-09-08.) ──
 
 test("feed, Outline, Waiting, chat and the VS Code timeline install their frame handler through listenForFrames, none through a bare window listener", () => {
   for (const [file, app] of [["feed.ts", "feed"], ["fleet.ts", "fleet"], ["waiting.ts", "waiting"], ["render.ts", "chat"], ["timeline-main.ts", "timeline"]]) {
@@ -296,15 +350,6 @@ test("feed, Outline, Waiting, chat and the VS Code timeline install their frame 
   const helper = fs.readFileSync(path.join(UI, "frame-listener.ts"), "utf8");
   assert.doesNotMatch(helper, /^import /m, "the helper stays import-free: importing federation.ts would boot a second manager in the pane bundle");
   assert.ok(helper.indexOf('window.addEventListener("message", handler)') < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after");
-});
-
-test("the kernel's inline timeline boot registers its wrapped listener with the registry when federation.js published one", () => {
-  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  const bootStart = KERNEL.indexOf("_TIMELINE_BOOT = ");
-  const boot = KERNEL.slice(bootStart, KERNEL.indexOf('"""', bootStart + 60));
-  assert.match(boot, /var frameListener=\(window\.__rompPerf&&window\.__rompPerf\.wrapFrameHandler\)\?window\.__rompPerf\.wrapFrameHandler\(onFrame\):onFrame;\nwindow\.addEventListener\("message",frameListener\);/);
-  assert.ok(boot.includes("if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);"), "the same listener, registered");
-  assert.equal((boot.match(/addEventListener\("message"/g) || []).length, 1, "one window listener");
 });
 
 test("the three merged emissions go through emit and no other dispatch does", () => {

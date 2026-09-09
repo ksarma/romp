@@ -21,7 +21,7 @@ const list = (rev: number | undefined, def: string) =>
 // A fetch whose responses the test resolves by hand, in any order.
 function deferredFetch() {
   const pending: Array<(d: any) => void> = [];
-  const fetch = () => new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
+  const fetch = () => new Promise<any>((res) => pending.push((d: any) => res({ ok: true, status: 200, json: async () => d })));   // a 200: the chat's loader now names a non-2xx
   return { fetch, pending };
 }
 

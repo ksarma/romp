@@ -56,22 +56,35 @@ test("the fly reads every rect before it writes any transform", () => {
   assert.match(body, /const moves: \{ c: HTMLElement; dx: number; dy: number; crossed: boolean \}\[\] = \[\];/);
 });
 
-test("a card whose data and display state did not change is not repainted", () => {
-  // the fold kept the fork's gate (feed-card-gate.ts, at the reconcile call site) over this module's
-  // cardPaintKey/paintEpoch (uirender flags, 2026-09-07): a kept card repaints only when the kernel re-sent it
-  // (a new object; the delta path keeps an unchanged card's object by reference) or a board-level input it
-  // reads changed (the key). Placement stays unconditional, so a column or sort change still moves it.
-  // feed-render-incremental.test.ts drives the contract (frames C and D, the Retry latch); this pins the seam.
+test("a card repaints only when its object or a board-level input it reads changed (feed-card-gate.ts)", () => {
+  // the paint key that gated here before serialised every card per render and carried two whole-board terms
+  // (a 15 s clock, an epoch bumped by every status-set and settings change); none of it remains
+  assert.doesNotMatch(SRC, /cardPaintKey|paintEpoch|noteStatusInputs|_paintKey|button\[disabled\]/);
+  // the import also carries sameKeySeq: the fork's per-column FLIP gate (pinned above) reads it
+  assert.match(SRC, /import \{ cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv \} from "\.\/feed-card-gate";/);
+  // reconcileCol gates the ask branch: a new object OR a new key repaints; the key is stored after the paint
+  assert.match(SRC, /function reconcileCol\(listEl: HTMLElement, entries: Entry\[\], globalDesired: Set<string>, gate: GateEnv\)/);
   assert.match(SRC, /const ik = cardInputsKey\(e\.ask, gate\);\n\s*if \(cardNeedsUpdate\(card as any, e\.ask, ik\)\) \{ updateAskCard\(card, e\.ask\); \(card as any\)\._ik = ik; \}/);
-  // the inputs every card reads that live outside its item, resolved once per render: the status sets and
-  // self host, the hover/pin, the bell, the prefs, the host-down mark, the user-todo count. The clock is
-  // NOT among them: the 15 s live pass moves the stamped ages in place instead of repainting cards.
-  assert.match(SRC, /const gate: GateEnv = \{\n\s*dot: dotFor, working: \(n\) => workingSet\.has\(n\), userTodos: userTodosMap,\n\s*focusId: hoverAskId \?\? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,\n\s*prefs: \{ grouped: gprefs\.grouped, collapsed: gprefs\.collapsed, colormap: gprefs\.colormap \},\n\s*hostDown: hostIsDown, selfHost: feedSelfHost, seq: \+\+renderSeq,/);
+  assert.match(SRC, /function updateAskCard\(card: HTMLElement, it: AskItem\) \{\n\s*const a = card as any;\n\s*a\._it = it;/,
+    "updateAskCard stashes the object the gate compares, first thing");
+  // the env, built once per render from everything a card's paint reads outside its object: the status sets and
+  // self host, the hover/pin, the bell, the prefs, the host-down mark, the session's repository, and the fork's
+  // user-todo count (the ⚑ marker). The clock is NOT among them: the 15 s live pass moves the stamped ages in
+  // place instead of repainting cards.
+  assert.match(SRC, /const gate: GateEnv = \{\n\s*dot: dotFor, working: \(n\) => workingSet\.has\(n\), userTodos: userTodosMap,\n\s*focusId: hoverAskId \?\? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,\n\s*prefs: \{ grouped: gprefs\.grouped, collapsed: gprefs\.collapsed, colormap: gprefs\.colormap \},\n\s*hostDown: hostIsDown, selfHost: feedSelfHost, repo: prRepoOf, seq: \+\+renderSeq,\n\s*\};/);
+  assert.match(SRC, /reconcileCol\(cols\.asks, buckets\.asks, desired, gate\);\n\s*reconcileCol\(cols\.needsInput, buckets\.needsInput, desired, gate\);\n\s*reconcileCol\(cols\.completed, buckets\.completed, desired, gate\);/);
+  // the latches: the card's Retry is a manual retry, and each latch re-arms on the kernel's reply for ITS request
+  // (review find, 2026-09-08): a refused apiRetry names the session, reviveFailed names the revived id
+  assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "apiRetry", id: it\.sid, manual: true \}\);/);
+  assert.match(SRC, /showErrDialog\(title, m\.text, copy\);[\s\S]*?if \(op === "apiRetry" && sid\) rearmLatches\(\{ kind: "retry", sid \}\);/);
+  assert.match(SRC, /m\.type === "reviveFailed" && typeof m\.id === "string" && m\.id\) \{[\s\S]*?rearmLatches\(\{ kind: "revive", id: m\.id \}\)/);
+  assert.match(SRC, /\(a\._revive as any\)\._idle = a\._revive\.textContent;/);
+  // Undo takes .dismissing off a card restored inside its collapse window (the class rewrite no longer does)
+  assert.match(SRC, /askEls\.get\(it\.itemId\)\?\.classList\.remove\("dismissing"\);/);
   // executed: the same object under the same key is skipped; a re-sent object or a moved input repaints
   const it = { itemId: "a:1" };
   const card = { _it: it, _ik: "k" };
   assert.equal(cardNeedsUpdate(card, it, "k"), false);
   assert.equal(cardNeedsUpdate(card, { ...it }, "k"), true, "a new object is the kernel re-sending the card");
   assert.equal(cardNeedsUpdate(card, it, "k2"), true, "a board-level input moved");
-  assert.ok(!/cardPaintKey|paintEpoch|noteStatusInputs/.test(SRC), "the JSON-plus-clock gate is not the shipped one");
 });
