@@ -6671,7 +6671,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
   // and no other (round 4: a resolution at the click that names a copy the row did not, which the hook leaves
   // only to a change between the last arrival and the click, re-dresses the row and writes nothing rather than
-  // hide a copy the user never touched; the same tag under a new name is the same copy, by its id): a copy already in that
+  // hide a copy the user never touched; the same tag under a new name is the same copy, by its id; round 5: the
+  // refused click leaves the menu OPEN with the row re-dressed, so the user sees the new words and clicks again,
+  // while a click that writes dismisses the menu first, as every other row does): a copy already in that
   // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
   // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
   // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
@@ -6695,14 +6697,17 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       reseat();
     };
     row.addEventListener("click", (ev) => {
-      ev.stopPropagation(); dismissTabMenu();
+      ev.stopPropagation();
       const now = homeNow();
-      if (!now) return;
+      if (!now) { dismissTabMenu(); return; }
       const sec = sectionRef(now), st = tabGroups();
       // the copy the row named, or nothing (round 4): a views arrival re-dresses the row (tabMenuViewsHook), so the resolution at the
       // click names the row's copy unless something moved it since the last arrival; a hide of any other copy would be of one the
-      // user never touched. The same tag under a new name matches by its id
+      // user never touched. The same tag under a new name matches by its id. The guard runs BEFORE the dismissal (round 5): a refused
+      // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
+      // the menu was already off the page, and the re-dress reached no one)
       if (!shown || (sec.localId !== shown.localId && sec.name !== shown.name)) { refreshHideRow(); return; }
+      dismissTabMenu();
       if (isHidden(st, sec, id) === !hidden) return;
       writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
     });

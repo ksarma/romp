@@ -185,7 +185,9 @@ exactly one other tag, whose group the line then names: under two or more, the m
 which copy you mean. While the row is away, adding a tag brings it back for that group, unless
 the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
 row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
-Removing one of the session's other tags leaves the line alone. The menu has **Hide tab** only while
+Removing one of the session's other tags leaves the line alone. If the group changes under the menu
+just before you click, the click hides nothing: the line redraws for the group the tab is in now, the
+menu stays open, and a second click acts on what it says. The menu has **Hide tab** only while
 the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
 on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
 row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
