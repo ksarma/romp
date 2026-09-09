@@ -1,13 +1,15 @@
 // The arrivals follow-on (plans/file-review.md, "The arrivals follow-on (2026-09-09)" under Slice 2), driven over the review
-// stand-in file-comments-focus.test.ts drives (copied here, as the sibling focus modules copy it). The NOTICE, from the
-// user's report of 2026-09-09: the user sent comments, the session answered with eleven changes and seven
+// stand-in file-comments-focus.test.ts drives (copied here, as the sibling focus modules copy it). Two rules, both from the
+// user's reports of 2026-09-09. The NOTICE: the user sent comments, the session answered with eleven changes and seven
 // replies while he kept commenting, and nothing said so until the next Send accepted the changes by default. The panel now
 // keeps the set of entries the person has seen (a change, a comment, a reply), files a status's entries by another author
 // that are not in it as arrivals, and while any stand shows one line under the header naming them — a button that shows the
 // first of them — with a dot on each arrival's card and marks; seen is a gesture of the person's (a pointer press, a key, a
 // wheel, a touch move, a save, a send) finding the card on screen, never a timer; the person's own writes and the panel's
-// first status are never arrivals; the Send confirm's accept option names the pending changes that arrived. The numbers a
-// real engine measures are file-comments-arrivals-browser.test.ts.
+// first status are never arrivals; the Send confirm's accept option names the pending changes that arrived. The SAVE'S
+// SCROLL: the save used to scroll the text to the saved card whatever the person had done meanwhile; it now stands down
+// when a gesture of theirs came between Save and the reply, or when the card is already whole in view, and the saved card
+// is the focus for the layout either way. The numbers a real engine measures are file-comments-arrivals-browser.test.ts.
 // Synthetic fixtures only: the notes-api world, placeholder ids, the session names "api" and "web".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -648,14 +650,89 @@ test("the seen set lives with the panel: closed and reopened on the same file, t
   w.close();
 });
 
+// ── the save's scroll stands down ─────────────────────────────────────────────────────────────────
+/** The focus-verify module's scene: the change card open as the focus with the passage's card pushed under it, a reply
+ *  typed in the passage's card, the text at its top; `during` runs between Save and the reply. */
+async function saveReply(t: Ctx, during: (w: World) => void): Promise<{ w: World; body: El; track: El }> {
+  const { w, ok, last } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  markOf(w, CHG).click(); await tick();
+  headOf(w, passage.id).click(); await tick();
+  markOf(w, CHG).click(); await tick();
+  assert.equal(w.top(passage.id), PUSHED, "the fixture: the passage's card is open, not the focus, pushed under the tall card");
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  scrollBody(w, 0);
+  const input = w.aside().querySelector(".fc-composer .fc-input")!;
+  input.value = "The write-through one.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true }));   // the save chord: a gesture, then the save
+  await tick();
+  assert.equal(last().verb, "reply");
+  during(w);
+  const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
+  await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
+  return { w, body, track };
+}
+const SHOW_CARD = desired(5) + OPEN + 8 - TRACK;        // 208: the least scroll that shows the saved card's end (centerOn's choice here)
+
+test("nothing happened between Save and the reply, and the saved card is out of view: the save scrolls to it as before, the card the focus", async (t) => {
+  const { w, body, track } = await saveReply(t, () => { /* the person waited */ });
+  assert.equal(w.top(passage.id), desired(5), "the saved card is the focus: level");
+  assert.equal(w.top(CHG), LIFTED);
+  assert.equal(body.scrollTop, SHOW_CARD, "the text brought to the card");
+  assert.equal(track.scrollTop, SHOW_CARD);
+  assert.deepEqual(scrolledInto, []);
+  w.close();
+});
+
+for (const [kind, on] of [["wheel", "body"], ["pointerdown", "body"], ["keydown", "input"], ["touchmove", "body"]] as Array<[string, "body" | "input"]>) {
+  test(`a ${kind} ${on === "body" ? "in the text" : "in the composer"} between Save and the reply: the save scrolls nothing, and the saved card is still the focus for the layout — level with its mark where it is`, async (t) => {
+    const { w, body, track } = await saveReply(t, (w) => { gesture(on === "body" ? w.body : w.aside().querySelector(".fc-composer .fc-input")!, kind); });
+    assert.equal(body.scrollTop, 0, "the text stayed where the person had it (before: " + SHOW_CARD + ")");
+    assert.equal(track.scrollTop, 0);
+    assert.equal(w.top(passage.id), desired(5), "the saved card is the focus all the same: level with its mark");
+    assert.equal(w.card(passage.id)!.dataset.pushed, undefined);
+    assert.equal(w.top(CHG), LIFTED, "the change card moved up out of its way");
+    assert.deepEqual(scrolledInto, []);
+    assert.equal(w.aside().querySelector(".fc-composer")!.hidden, true, "the composer closed as before");
+    w.close();
+  });
+}
+
+test("a scroll event with no gesture behind it (the lock's write, a centering) does not stand the save down; a gesture before Save does not either", async (t) => {
+  const { w, body } = await saveReply(t, (w) => { w.track().scrollTop = 0; w.track().dispatchEvent(new Ev("scroll")); });
+  assert.equal(body.scrollTop, SHOW_CARD, "a scroll event alone is not the person's");
+  w.close();
+});
+
+test("the saved card already whole in the track's box: no scroll even with nothing happened; the card is the focus", async (t) => {
+  const { w, ok, last } = await open(t, textWorld());
+  const body = w.body;
+  headOf(w, passage.id).click(); await tick();          // the passage's card open, the focus, level at 240
+  actIn(w.card(passage.id)!, "fcreply")!.click(); await tick();
+  scrollBody(w, 220);                                   // the person's text: the box [220, 380) holds the open card, 240..360
+  assert.equal(w.top(passage.id), desired(5));
+  const input = w.aside().querySelector(".fc-composer .fc-input")!;
+  input.value = "The write-through one.";
+  input.dispatchEvent(new Ev("keydown", { key: "Enter", ctrlKey: true })); await tick();
+  assert.equal(last().verb, "reply");
+  const replied: StoreComment = { ...passage, replies: [{ author: "you", ts: T0 + 6000, body: "The write-through one." }] };
+  await ok(status({ verb: "reply", store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, replied, closing] }, storeMtimeNs: "1757145600000000005" }));
+  assert.equal(body.scrollTop, 220, "a card whole in view needs no scroll (before: " + SHOW_CARD + ", the centering's choice)");
+  assert.equal(w.top(passage.id), desired(5), "still the focus, level");
+  w.close();
+});
+
 // ── at source ─────────────────────────────────────────────────────────────────────────────────────
-test("at source: the gestures are the constructor's capture listeners on the body row (pointerdown, keydown, wheel, touchmove) and the send; the seen set and the arrivals are the panel's, read in applyStatus and seeded in render", () => {
+test("at source: the gestures are the constructor's capture listeners on the body row (pointerdown, keydown, wheel, touchmove), the save and the send; the seen set and the arrivals are read in applyStatus and seeded in render; scrollToSaved takes whether the count stood and scrolls only then and only for a card not whole in the box", () => {
   assert.match(SRC, /for \(const ev of \["pointerdown", "keydown"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), true\);/);
   assert.match(SRC, /for \(const ev of \["wheel", "touchmove"\]\) row\.addEventListener\(ev, \(e\) => this\.gesture\(e\), \{ capture: true, passive: true \}\);/);
   assert.match(SRC, /this\.gesture\(\);\s*\/\/ a send is a gesture/);
   assert.match(SRC, /this\.status = s;\n\s*this\.noteArrivals\(s\);/, "every status lands through applyStatus, and the arrivals are read there");
   assert.match(SRC, /if \(this\.seenKeys === null && s\) this\.seenKeys = new Set\(statusEntries\(s\)\.map\(\(e\) => e\.key\)\);/, "the first render with a status seeds the set");
   assert.doesNotMatch(SRC.slice(SRC.indexOf("gesture(ev?: Event): void {"), SRC.indexOf("private entryShown(")), /setTimeout|setInterval|Date\.now/, "no timer in the gesture");
+  assert.match(SRC, /this\.gesture\(\);\n\s*const pressed = this\.gestures;/, "the save samples the count after its own gesture");
+  assert.match(SRC, /if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/, "judged when the reply lands, before the composer closes");
+  assert.match(SRC, /private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string, still: boolean\): void \{\n\s*const saved = [^\n]*\n\s*if \(saved === null\) return;\n\s*const key = this\.cardKey\(saved\);\n\s*if \(still && !this\.cardWhole\(key\)\) \{ this\.scrollCard\(key\); return; \}\n\s*if \(this\.margin\) this\.focusOn\(key\);/);
 });
 
 test("vocabulary: this module's own prose says a change's old and new text, file comment and run of turns; the words CONTEXT.md sets aside appear nowhere in it, nor the banned sessions-pane word, nor a home path", () => {

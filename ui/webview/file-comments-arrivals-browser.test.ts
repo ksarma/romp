@@ -1,10 +1,12 @@
 // The arrivals follow-on (plans/file-review.md, "The arrivals follow-on (2026-09-09)" under Slice 2) in a REAL engine: the
 // worktree's file-comments.ts, bundled the way the webview is built, mounted over a rendered markdown body laid out under
-// feed.css's own rules, in Chromium and Firefox. THE NOTICE: a status landing with a reply and a change of the
+// feed.css's own rules, in Chromium and Firefox. Two scenes. THE NOTICE: a status landing with a reply and a change of the
 // session's shows one line under the header in the accent with a dot before it, and a dot on the arrival cards' heads and
 // on their marks in the text; a real wheel over the body marks the arrival whose card is in the track's box seen — its dot
-// off, the line's count down — and leaves the one below the box. Skips LOUDLY without a playwright browser (CI installs
-// none), as the other browser legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
+// off, the line's count down — and leaves the one below the box. THE SAVE'S SCROLL: a whole-file comment saved while the
+// text is scrolled down brings the text to its card (the 2026-09-07 rule, kept) unless a wheel came between Save and the
+// reply, when the text stays where the wheel left it. Skips LOUDLY without a playwright browser (CI installs none), as the
+// other browser legs do. Synthetic values only: invented prose, placeholder ids, the session name "api".
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -69,6 +71,8 @@ const base = {
   unsent: { comments: [COMMENT.id], replies: [], accepted: 0, rejected: 0, watermark: null },
 };
 const ARRIVED = { ...base, store: { v: 3, path: "docs/report.md", suggestions: [{ id: "h2", authorId: SID }], comments: [REPLIED] }, hunks: [HUNK2], storeMtimeNs: "1757145600000000004" };
+const NOTE = "Add a summary at the top.";
+const withSaved = (id: string, storeMtimeNs: string): Record<string, unknown> => ({ ...base, verb: "comment", storeMtimeNs, store: { v: 3, path: "docs/report.md", suggestions: [], comments: [COMMENT, { id, author: "you", ts: T0 + 50000, body: NOTE, replies: [], resolved: false }] } });
 
 /** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. The
  *  viewer's onSaved hooks are kept (w.__saved) so a test can make the panel re-ask status the way the viewer's save does. */
@@ -219,6 +223,55 @@ for (const name of ["chromium", "firefox"]) {
       assert.doesNotMatch(s.marks.c!.image, /radial-gradient/, "the highlight's layer is gone");
       assert.equal(s.cards.chg!.isNew, true, "the change below the box keeps its dot");
       assert.match(s.marks.chg!.image, /radial-gradient/);
+    });
+  });
+
+  test(`in ${name}: a whole-file comment saved while the text is scrolled down brings the text to its card; saved again with a wheel between Save and the reply, the text stays where the wheel left it`, async (t) => {
+    await inBrowser(t, name, async (page) => {
+      await mount(page);
+      // scrolled down: the loose card at the top of the track is out of view, the 2026-09-07 case
+      await wheel(page, 1200);
+      let s = await scene(page, KEYS);
+      const down = s.bodyScroll;
+      assert.ok(down > 400, "the fixture: the text is scrolled well down: " + down);
+      await click(page, '[data-act="fcfile"]');
+      await frames(page);
+      await page.focus(".fileview-aside .fc-composer .fc-input");
+      await page.keyboard.type(NOTE);
+      await click(page, '[data-act="fcsave"]');
+      await frames(page);
+      s = await scene(page, KEYS);
+      assert.equal(s.lastVerb, "comment", "the save's request went");
+      const id1 = (T0 + 50000) + "-1";
+      await answer(page, withSaved(id1, "1757145600000000005"));
+      s = await scene(page, { saved: id1 });
+      assert.ok(s.cards.saved, "the saved card is in the list");
+      assert.ok(s.bodyScroll < down - 300, "nothing happened meanwhile: the save brought the text to the card (" + down + " → " + s.bodyScroll + ")");
+      assert.equal(s.composerHidden, true, "the composer closed");
+      // again, with a wheel during the wait
+      await wheel(page, 1200);
+      s = await scene(page, KEYS);
+      const down2 = s.bodyScroll;
+      assert.ok(down2 > 400, "scrolled down again: " + down2);
+      await click(page, '[data-act="fcfile"]');
+      await frames(page);
+      await page.focus(".fileview-aside .fc-composer .fc-input");
+      await page.keyboard.type(NOTE + " Twice.");
+      await click(page, '[data-act="fcsave"]');
+      await frames(page);
+      await wheel(page, -60);                                       // the person moves on while the host answers
+      s = await scene(page, KEYS);
+      const moved = s.bodyScroll;
+      assert.ok(moved < down2 && moved > 300, "the wheel moved the text a little: " + down2 + " → " + moved);
+      const id2 = (T0 + 60000) + "-2";
+      const twice = withSaved(id2, "1757145600000000006") as any;
+      twice.store.comments[twice.store.comments.length - 1].body = NOTE + " Twice.";
+      await answer(page, twice);
+      s = await scene(page, { saved: id2 });
+      assert.ok(s.cards.saved, "the second saved card is in the list");
+      assert.equal(s.bodyScroll, moved, "the save scrolled nothing: the text stays where the wheel left it (before: back to the card)");
+      assert.equal(s.trackScroll, moved, "the track with it");
+      assert.equal(s.composerHidden, true, "the composer closed as before");
     });
   });
 }

@@ -1102,6 +1102,9 @@ class Panel {
   seenKeys: Set<string> | null = null;
   arrivals = new Map<string, Entry>();
   newKeys = new Set<string>();
+  // the person's gestures, counted (gesture): the save samples the count when Save is pressed and its scroll to the saved
+  // card stands down when the count moved before the reply landed (scrollToSaved)
+  gestures = 0;
   hold: PressHold | null = null;              // the body row's press: the arrivals line's change in place waits for the release (the constructor installs it)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
@@ -2315,6 +2318,11 @@ class Panel {
     // building one card per store comment
     const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
     const before = new Set(this.cards().map((x) => x.id));   // the comments before the save, so the saved one can be told apart (noteHiddenSave)
+    // the save is a gesture of the person's (the arrivals follow-on), and the count as Save was pressed is what the scroll
+    // to the saved card is judged against once the reply lands (scrollToSaved): a scroll, a press or a key meanwhile means
+    // the person moved on, and the view is not pulled back
+    this.gesture();
+    const pressed = this.gestures;
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -2339,7 +2347,7 @@ class Panel {
       r = await this.mutate("comment", args, "composer");
     }
     const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
-    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is)
+    if (r) this.scrollToSaved(c, had, r, note, pressed === this.gestures);   // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is); nothing once the person moved on
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
     if (hid) this.render();                            // the cards were rendered with the reply before the saved comment was known: once more, with its line
   }
@@ -2367,10 +2375,35 @@ class Panel {
    *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
    *  (savedCommentId names the new one off the reply). A comment saved while the filter shows the changes alone has no
    *  card in the list and no mark in the text (renderCards, paintAll), so scrollCard finds nothing and nothing moves;
-   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is. */
-  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is.
+   *  The scroll stands down when the person has moved on (the arrivals follow-on, 2026-09-09: the user saved a reply,
+   *  scrolled on to the next passage while the host answered, and the reply's landing pulled the text back to the card).
+   *  `still`: no gesture of theirs — a scroll begun by a wheel or a touch, a pointer press, a key (gesture) — since Save
+   *  was pressed; the event is the person's own input, never a time window. The scroll runs only then, and only when the
+   *  saved card is not already whole in the track's box (cardWhole): a card in view needs no scroll; a whole-file comment's
+   *  card at the top of the track with the text scrolled down does. Standing down, the card still becomes the focus for
+   *  the layout (focusOn: the branch's focus rule), so it lands level with its mark wherever that is, and nothing scrolls. */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string, still: boolean): void {
     const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
-    if (saved !== null) this.scrollCard(this.cardKey(saved));
+    if (saved === null) return;
+    const key = this.cardKey(saved);
+    if (still && !this.cardWhole(key)) { this.scrollCard(key); return; }
+    if (this.margin) this.focusOn(key);
+  }
+  /** Whether a card stands whole in the box the person can see: in the margin layout, the placement's top and height
+   *  against the track's scroll and box (the pass has just placed the fresh cards: render runs it before this); in the
+   *  list layout, the card's box inside the aside's and the window's. False for a card not rendered or not placed. */
+  private cardWhole(key: string): boolean {
+    if (this.margin) {
+      const p = this.placed.get(key);
+      if (!p) return false;
+      const track = this.sections.cards, at = track.scrollTop;
+      return p.top >= at && p.top + p.height <= at + track.clientHeight;
+    }
+    const card = this.root?.querySelector('.fc-card[data-id="' + cssId(key) + '"]');
+    if (!card || !this.root) return false;
+    const r = card.getBoundingClientRect(), box = this.root.getBoundingClientRect();
+    return r.height > 0 && r.top >= box.top && r.bottom <= Math.min(box.bottom, window.innerHeight);
   }
 
   // ── the arrivals (the arrivals follow-on, 2026-09-09; the fields' comment says the rule) ───────────
@@ -2401,10 +2434,11 @@ class Panel {
   private arrivalCard(e: Entry): string {
     return e.subject.startsWith("chg:") ? e.subject : this.cardKey(e.subject);
   }
-  /** A gesture of the person's (the constructor's listeners; doSend): while arrivals stand, every arrival whose card is
-   *  on screen now is seen. A press or a key on the arrivals line itself marks nothing: its
+  /** A gesture of the person's (the constructor's listeners; saveComposer; doSend): counted, and while arrivals stand,
+   *  every arrival whose card is on screen now is seen. A press or a key on the arrivals line itself marks nothing: its
    *  click shows the first arrival, and the line must survive the click for the glance it was clicked for. */
   gesture(ev?: Event): void {
+    this.gestures++;
     if (!this.arrivals.size || !this.open) return;
     const t = ev ? (ev.target as Element | null) : null;
     if (t && typeof t.closest === "function" && t.closest('[data-act="fcarrivals"]')) return;
