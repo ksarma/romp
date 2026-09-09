@@ -26447,34 +26447,55 @@ def _parse_send_body(raw):
     return {"who": who, "text": text}
 
 
+def _resolve_sid(who):
+    """_sid_of with the live map it read handed back: (sid, live), where live is the Sessions.live() the
+    resolution scanned, or None when the names registry answered first and nothing was scanned. The
+    routes that ask _unknown_session_refusal right after pass the map on, so a request for a name no
+    session answers to costs one live scan (a tmux fork plus a walk of the SDK regs), not two (review
+    find, 2026-09-09). Every other caller reads _sid_of, which drops the map."""
+    who = str(who)
+    if _name_of(who):
+        return who, None
+    live = Sessions.live()
+    if who in live:
+        return who, live
+    hit = _live_names(live).get(who)
+    if hit:
+        return hit, live
+    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
+    return (th[0] if th else who), live       # the THREAD (T223), not a phantom sid spelled like a name
+
+
 def _sid_of(who):
     """Resolve an id-or-name to a sid: a sid as-is (the names registry is sid-keyed, so _name_of resolves it
     even when dead), else a LIVE session name → its sid, falling back to the input unchanged. Lets the
     name-keyed entry points (POST /send, the timeline compact-by-name) route through the sid-keyed backend."""
-    who = str(who)
-    if _name_of(who):
-        return who
-    live = Sessions.live()
-    if who in live:
-        return who
-    hit = _live_names(live).get(who)
-    if hit:
-        return hit
-    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
-    return th[0] if th else who               # the THREAD (T223) — not a phantom sid spelled like a name
+    return _resolve_sid(who)[0]
 
 
-def _unknown_session_refusal(sid, who):
+def _unknown_session_refusal(sid, who, live=None):
     """The 404 for a name (or id) that resolves to no session, or None when the kernel knows it. _sid_of
     hands back its input unchanged when nothing matches, so a typo reaches the backends as a phantom sid:
     /end "killed" it and _confirmed_ended, finding nothing listed, certified the death; /send handed it to
     the tmux backend and folded the refusal into ok:true. `romp end <typo>` printed a bare ok while the
-    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). The gate is
-    the fork-comment door's: known to the names registry (a registered sid, live or between turns) or in
-    the live map (a session up before its registry entry lands). Ask this AFTER the remote forward, since
-    a session on an attached host is in neither local map. `who` is the caller's spelling, so the reason
-    names what they typed."""
-    if _name_of(sid) or str(sid) in Sessions.live():
+    real session ran on, and a caller that trusted it had to re-check the roster (2026-09-09). Three doors
+    admit a sid, each a record the kernel itself wrote for a session it registered: the names registry (a
+    registered sid, live or between turns), the live map (a session up before its registry entry lands),
+    and the SDK registry's threadOf (a comment thread). The third is not the fork-comment door's check,
+    which reads the registered PARENT: a thread has no names/ entry (sdk_backend.fork withholds it) and
+    live_sessions skips threadOf regs, while _sid_of resolves a thread's name to its tsid on purpose
+    (T223), so the first two doors alone refused every thread, by name and by id, and `romp end self`
+    from inside one (review find, 2026-09-09). _thread_reg answers {} for a sid with no reg, so a typo
+    still falls through. `live` is the map _resolve_sid already read, when it read one, so the refusal
+    path scans once; a caller without one leaves it None and the map is read here. Ask this AFTER the
+    remote forward, since a session on an attached host is in neither local map. `who` is the caller's
+    spelling, so the reason names what they typed."""
+    sid = str(sid)
+    if _name_of(sid):
+        return None
+    if live is None:
+        live = Sessions.live()
+    if sid in live or _thread_reg(sid).get("threadOf"):
         return None
     return {"ok": False, "error": "no live session named '%s'" % who, "_status": 404}
 
@@ -57588,7 +57609,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not body:
                     return self._send(400, json.dumps({"ok": False, "error":
                         "id and text required (optional tag: one word, letters/digits/dashes, <=24 chars)"}), "application/json")
-                sid = _sid_of(body["who"])
+                sid, live = _resolve_sid(body["who"])
                 # POSTAL ISOLATION holds on every sanctioned route (the user 2026-07-10): postal-SHAPED
                 # content to a mailbox-off session is agent mail arriving by the wrong door — refuse it
                 # here exactly like the bus does. Plain text still passes: /send is the HUMAN channel,
@@ -57601,9 +57622,21 @@ class Handler(BaseHTTPRequestHandler):
                         "route; the refusal is final (the user can toggle its mailbox back on)"}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    res = _remote_forward(r, "/send", {"id": sid, "text": body["text"]})
+                    st, res = _remote_forward_status(r, "/send", {"id": sid, "text": body["text"]})
+                    if st == 404:
+                        # the far kernel's own gate (below) lists no such session: relayed as the 404 it
+                        # is, with a reason, never as the tunnel fault under it. _remote_forward_status
+                        # keeps a 200's body only, so the reason is composed here, the way the /emoji arm
+                        # reads its status (review find, 2026-09-09)
+                        return self._send(404, json.dumps({"ok": False, "error":
+                            "no live session named '%s' on %s" % (body["who"], r.get("host", "?"))}),
+                            "application/json")
                     if res is None:                                 # the far kernel didn't answer — say so, never
-                        return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
+                        if st and st != 200:                        # pretend it was delivered
+                            return self._send(200, json.dumps({"ok": False, "error":
+                                "the remote kernel for this session (%s) answered HTTP %s; the message was not delivered"
+                                % (r.get("host", "?"), st)}), "application/json")
+                        return self._send(200, json.dumps({"ok": False, "error":
                             "the remote kernel for this session (%s) isn't answering — message not delivered"
                             % r.get("host", "?")}), "application/json")
                     if isinstance(res, dict) and res.get("ok") is False:
@@ -57612,7 +57645,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
                                                                                   and res.get("queued"))}),
                                       "application/json")
-                unknown = _unknown_session_refusal(sid, body["who"])   # a phantom sid delivers nowhere: say so
+                unknown = _unknown_session_refusal(sid, body["who"], live)   # a phantom sid delivers nowhere: say so
                 if unknown:
                     return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
                 # PARKS like a composer send (the user 2026-07-24), through the same FIFO: a message handed
@@ -57670,7 +57703,7 @@ class Handler(BaseHTTPRequestHandler):
                     who = ""
                 if not who:
                     return self._send(400, json.dumps({"ok": False, "error": "id or name required"}), "application/json")
-                sid = _sid_of(who)
+                sid, live = _resolve_sid(who)
                 r = _host_for_sid(sid)
                 if r is not None:                               # remote session → forward over its -L tunnel
                     # …and RELAY the remote's answer, like the /send twin (2026-08-18): the remote
@@ -57678,15 +57711,25 @@ class Handler(BaseHTTPRequestHandler):
                     # discarding that here answered ok:true for a kill that never landed — a headless
                     # caller (`romp end web` against an attached host) walked away from a runaway
                     # session believing it dead. A dead far kernel is its own honest failure too.
-                    res = _remote_forward(r, u.path, {"id": sid})
+                    st, res = _remote_forward_status(r, u.path, {"id": sid})
+                    if st == 404:
+                        # the far kernel's gate (below) lists no such session: the 404 it answered, with
+                        # a reason composed here since the helper keeps a 200's body only, not the
+                        # tunnel fault under it (review find, 2026-09-09; the /send twin does the same)
+                        return self._send(404, json.dumps({"ok": False, "error":
+                            "no live session named '%s' on %s" % (who, r.get("host", "?"))}), "application/json")
                     if res is None:
+                        if st and st != 200:
+                            return self._send(200, json.dumps({"ok": False, "error":
+                                "the remote kernel for this session (%s) answered HTTP %s"
+                                % (r.get("host", "?"), st)}), "application/json")
                         return self._send(200, json.dumps({"ok": False, "error":
                             "the remote kernel for this session (%s) isn't answering"
                             % r.get("host", "?")}), "application/json")
                     return self._send(200, json.dumps(res), "application/json")
                 # a name nothing answers to is a 404, never a kill of a phantom sid that _confirmed_ended
                 # then certifies as a death: `romp end <typo>` read ok:true and nothing had happened
-                unknown = _unknown_session_refusal(sid, who)
+                unknown = _unknown_session_refusal(sid, who, live)
                 if unknown:
                     return self._send(unknown.pop("_status"), json.dumps(unknown), "application/json")
                 be = Sessions.backend_for(sid)
