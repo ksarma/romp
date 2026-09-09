@@ -132,6 +132,7 @@ const HEAD = CARD + " > div.fc-card-head";
 const REPLY = CARD + " > div.fc-replies > div.fc-reply";
 const LOG = "div.fc-panel > div.fc-sec-log > div.fc-log";
 const CONFIRM = "div.fc-panel > div.fc-sec-send > div.fc-send > div.fc-confirm";
+const DETAIL = LOG + " > div.fc-log-detail";   // what a Log row opens (logDetail), the log's child beside its row
 const TIMES: Record<string, string> = {
   "card head time": HEAD + " > span.fc-time",
   "reply time": REPLY + " > div.fc-meta > span.fc-time",
@@ -152,22 +153,41 @@ const LEAVES: Record<string, string> = {
   "log empty": LOG + " > div.fc-empty",
   "log note": LOG + " > div.fc-note",
   "log fold": LOG + " > button.fc-sec",
+  // a Log row opened: a send entry holds the note it carried in .fc-body's dress and its comments in the confirm's own
+  // list dress; an edit entry holds the diff in the pre.fc-msg that was the Send confirm's preview until the arrivals
+  // follow-on (2026-09-09; plans/file-review.md decision 40) replaced the preview with the note box — the only pre left
+  "log send note": DETAIL + " > div.fc-body.fc-log-note",
+  "log send list item": DETAIL + " > ul.fc-list > li > span",
+  "log send list desc": DETAIL + " > ul.fc-list > li > span.fc-list-desc",
+  "log edit diff": DETAIL + " > pre.fc-msg",
   "send list item": CONFIRM + " > ul.fc-list > li > span",
   "send list desc": CONFIRM + " > ul.fc-list > li > span.fc-list-desc",
   "send option": CONFIRM + " > div.fc-opts > label.fc-opt > span",
-  "send message": CONFIRM + " > pre.fc-msg",
+  "send note box": CONFIRM + " > textarea.fc-input.fc-send-note",   // in the preview's place: .fc-input's size, the composer's own
 };
 
 test("the chains above are the panel's real DOM: the builders in file-comments.ts", () => {
   assert.match(SRC, /sections = \{ head: el\("div", "fc-sec-head"\), cards: el\("div", "fc-sec-cards"\), send: el\("div", "fc-sec-send"\), log: el\("div", "fc-sec-log"\) \};/);
   for (const [tag, cls] of [["div", "fc-panel"], ["div", "fc-cards"], ["div", "fc-card"], ["div", "fc-card-head"], ["div", "fc-replies"],
     ["div", "fc-reply"], ["div", "fc-meta"], ["div", "fc-preview"], ["div", "fc-body"], ["span", "fc-ref"], ["span", "fc-tag"], ["span", "fc-kind"],
-    ["div", "fc-log"], ["div", "fc-log-row"], ["div", "fc-empty"], ["div", "fc-note"], ["div", "fc-send"], ["div", "fc-confirm"],
-    ["ul", "fc-list"], ["li"], ["span", "fc-list-desc"], ["div", "fc-opts"], ["label", "fc-opt"], ["pre", "fc-msg"]]) {
+    ["div", "fc-log"], ["div", "fc-log-row"], ["div", "fc-log-detail"], ["div", "fc-empty"], ["div", "fc-note"], ["div", "fc-send"],
+    ["div", "fc-confirm"], ["ul", "fc-list"], ["li"], ["span", "fc-list-desc"], ["div", "fc-opts"], ["label", "fc-opt"],
+    ["textarea", "fc-input fc-send-note"], ["div", "fc-body fc-log-note"], ["pre", "fc-msg"]]) {
     assert.match(SRC, new RegExp('el\\("' + tag + '"' + (cls ? ', "' + cls + '[" ]' : "\\)")), tag + (cls ? "." + cls : ""));
   }
   assert.match(SRC, /el\("span", "fc-chip( fc-chip-you)?"/, "chips are spans");
   assert.match(SRC, /"fclog", "fc-sec"\)/, "the Log fold is a .fc-sec button");
+  // the confirm ends in the note box (the arrivals follow-on, 2026-09-09), a textarea in the composer's .fc-input dress
+  // where the preview pre stood; the block's one pre.fc-msg is built under a log detail now, for an edit entry's diff,
+  // beside the .fc-body a send entry's note wears — so a chain here names a node the panel builds, at the place it builds it
+  assert.match(SRC, /noteBox = el\("textarea", "fc-input fc-send-note"\) as HTMLTextAreaElement;/, "the note box is a textarea in .fc-input's dress");
+  assert.match(SRC, /cf\.appendChild\(this\.noteBox\);/, "the confirm appends the note box");
+  assert.doesNotMatch(SRC, /cf\.appendChild\(el\("pre"/, "the confirm builds no pre: the preview is gone");
+  assert.equal((SRC.match(/el\("pre", "fc-msg"/g) || []).length, 1, "one pre.fc-msg in the panel, the edit entry's diff");
+  assert.match(SRC, /const box = el\("div", "fc-log-detail"\);\n\s*box\.appendChild\(el\("pre", "fc-msg", f\.diff\)\);/, "the diff pre is a log detail's child");
+  assert.match(SRC, /const box = el\("div", "fc-log-detail"\);\n\s*if \(noted\) box\.appendChild\(el\("div", "fc-body fc-log-note", e\.note as string\)\);[^\n]*\n\s*const ul = el\("ul", "fc-list"\);/,
+    "a send entry opens to its note in .fc-body's dress, then the comments in the confirm's list dress");
+  assert.match(SRC, /const box = el\("div", "fc-log"\);[\s\S]*?box\.appendChild\(row\);\n\s*if \(detail && isOpen\) box\.appendChild\(detail\);/, "the detail is the log's child, beside its row");
   // the three times come from the ONE clock() helper: the same kind of information, so the same size
   assert.match(SRC, /head\.appendChild\(el\("span", "fc-time", clock\(c\.ts\)\)\);/);
   assert.match(SRC, /meta\.appendChild\(el\("span", "fc-time", clock\(r\.ts\)\)\);/);

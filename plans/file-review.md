@@ -2318,7 +2318,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   in the box seen; a whole-file comment's save bringing the text to its card, and not after a
   wheel); `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
   `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
-  modules it names.
+  modules it names; `tools/file-review-plan-send-note-close.test.mjs` holds decision 40's sentences on
+  the viewer's close guard (the composer's comment asked about, the note not yet) to the panel's close
+  asks and the viewer's close and replace-open paths.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2550,7 +2552,14 @@ document stands on its own, each with the reasoning it was given.
     text in the confirm is a system message tied to the send and not worth showing; a text box for anything he wants
     to add takes its place. The box is optional and empty by default (three rows, growing to about eight, then
     scrolling; Enter adds a line, the composer's chord or the Send button sends); its text survives every re-render
-    while the confirm is open and is cleared only by a successful send or by Cancel. The note travels as `note` in the
+    while the confirm is open and is cleared only by a successful send or by Cancel. The arrivals follow-on's review
+    (2026-09-09) found one gap, still owed: the viewer's close guard (`ctx.guardClose`) asks about the composer's typed
+    comment and not about the note, so a close of the viewer or a replace-open (a link followed inside the file, a
+    Files-pane row) while the box holds words drops them with the panel, and neither a dialog nor the notice bar says
+    so; Escape typed in the box stops at the box and closes nothing. The fix is the composer's ask extended to the
+    note: the close guard names what it would drop, and a refused ask keeps the viewer, the panel and the words.
+    `tools/file-review-plan-send-note-close.test.mjs` holds these sentences to the panel's close asks and fails once a
+    close ask reads the note, so this record is rewritten with the fix. The note travels as `note` in the
     fileCommentsSend request, trimmed, at most 4000 characters (refused before any request with a line naming the
     bound; the kernel refuses the same bound), and both builders place it as the first paragraph after the header
     line, unlabeled, before the comments, marker-neutralized like every other request-supplied string; a note with

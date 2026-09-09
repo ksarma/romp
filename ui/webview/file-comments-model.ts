@@ -478,10 +478,19 @@ export function buildSendMessage(o: MessageOpts): string {
 /** The most characters the Send confirm's note may carry: the kernel's _SEND_NOTE_MAX, refused there too. The panel refuses
  *  before any request goes (noteTooLong), so a kernel refusal means a client that skipped its own check. */
 export const SEND_NOTE_MAX = 4000;
-/** The panel's refusal for a note over the bound, or null when the note fits: one plain line naming the bound. */
+/** The panel's refusal for a note over the bound, or null when the note fits: one plain line naming the bound. The count is
+ *  in code points, the kernel's unit (Python's `len` over the decoded string), not UTF-16 code units (`note.length`, which
+ *  counts an emoji or another astral character twice): the two sides refuse the same notes and name the same number. */
 export function noteTooLong(note: string): string | null {
-  if (note.length <= SEND_NOTE_MAX) return null;
-  return "Nothing sent: the note is " + note.length + " characters, and a send carries at most " + SEND_NOTE_MAX + ". Shorten it.";
+  const n = noteLength(note);
+  if (n <= SEND_NOTE_MAX) return null;
+  return "Nothing sent: the note is " + n + " characters, and a send carries at most " + SEND_NOTE_MAX + ". Shorten it.";
+}
+/** A note's length as the kernel measures it: code points (a surrogate pair is one). */
+export function noteLength(note: string): number {
+  let n = 0;
+  for (const _ of note) n++;
+  return n;
 }
 
 // ── region comments (Slice 3) ──────────────────────────────────────────────────────────────────────
@@ -994,8 +1003,12 @@ export type Entry = {
   pending: boolean;
 };
 
-/** Every entry a status holds: the pending changes (the hunks), the detached changes, the comments and their replies, in
- *  that order. A reply with no ts keys on 0 with its comment: the sidecar stamps every reply, so this is a guard. */
+/** Every entry a status holds: the pending changes (the hunks), the detached changes, the comments and their replies in
+ *  words, in that order. A reply is a record with a `body`; a record with `kind: "edit"` is the change's turn on the comment
+ *  (`track-edit --thread` writes it beside the op it records, so the change is already an entry, a hunk or a detached op)
+ *  and is not a reply — counting it as one read one edit answering a comment as "1 change and 1 reply", and the incident's
+ *  eleven edits and seven replies as 18 replies; a record with neither shows nothing (cardModel) and is no entry. A reply
+ *  with no ts keys on 0 with its comment: the sidecar stamps every reply, so this is a guard. */
 export function statusEntries(s: Pick<Status, "store" | "hunks"> | null | undefined): Entry[] {
   if (!s) return [];
   const out: Entry[] = [];
@@ -1010,7 +1023,7 @@ export function statusEntries(s: Pick<Status, "store" | "hunks"> | null | undefi
     if (!c || typeof c.id !== "string") continue;
     out.push({ key: c.id, kind: "comment", author: c.author, authorId: c.authorId || null, subject: c.id, pending: false });
     for (const r of c.replies || []) {
-      if (!r) continue;
+      if (!r || typeof r.body !== "string") continue;      // an edit turn is its change's; a record with no words shows nothing
       out.push({ key: c.id + "|" + String(r.ts || 0), kind: "reply", author: r.author, authorId: r.authorId || null, subject: c.id, pending: false });
     }
   }

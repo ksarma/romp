@@ -406,7 +406,7 @@ passage in either view, Rendered or Raw, and press the **Comment** button that a
 hides when you scroll and appears again when you select); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
-Saving brings the new card into view, unless you scrolled on while the save was under way; then the text stays where you left it.
+Saving brings the new card into view, unless you scrolled, clicked, tapped, or pressed a key while the save was under way; then the text stays where you left it.
 **Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the

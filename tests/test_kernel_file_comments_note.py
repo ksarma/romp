@@ -12,7 +12,9 @@ there is no note. The op trims the note, refuses one that is not text, refuses o
 _SEND_NOTE_MAX before anything else is asked or sent, neutralizes it like a comment body, and records it
 on the log's send entry as `note` when it is non-empty. The webview's builder (ui/webview/file-comments-
 model.ts, buildSendMessage) ports the text byte for byte and its parity test runs the kernel's builder, so
-the two change together.
+the two change together. The note's own refusals come after the consent gate (plans/file-review.md,
+Security posture: every disk-writing verb checks the consent before any content check), so with dashboard
+file editing off a note the op would refuse on its own account is refused as `editing-off` instead.
 
 Synthetic only: the notes-api demo world, a placeholder sid, invented note text, temp dirs
 (tests/test_kernel_file_comments_decisions_send.py's hermetic pattern).
@@ -328,6 +330,66 @@ class TheNoteInTheSend(_SendWorld):
             self.assertTrue(t.startswith("nothing was sent: "), t)
             for word in ("card", "board", "goal", "column", "nudge", "romp"):
                 self.assertNotIn(word, t.lower(), (word, t))
+
+
+@unittest.skipUnless(NODE, "node not installed on this machine")
+class TheNoteStandsBehindTheConsent(_SendWorld):
+    """The consent gate is checked before the note is looked at. With dashboard file editing off, a note the
+    op would otherwise refuse on its own account (past the bound, or not text) is refused as `editing-off`
+    instead: the reply carries the phrase the viewer's regex matches, so the panel can offer the consent and
+    retry, and the person hears about the consent, not about their words. The other consent-off pins
+    (tests/test_kernel_file_comments_gates.py, tests/test_file_comments.py) send no note, so a note check
+    hoisted above the gate, say to answer the client faster, would pass them all; this class holds the order
+    the Security posture states (plans/file-review.md: checked before any content check)."""
+
+    def test_a_note_past_the_bound_is_refused_as_editing_off_while_the_consent_is_off(self):
+        km._set_file_editing(False)
+        r = self.send(note="x" * (km._SEND_NOTE_MAX + 1))
+        self.assertEqual(r["type"], "fileCommentsSendFailed")
+        self.assertEqual(r["code"], "editing-off")
+        self.assertIn("file editing is off", r["error"], "the phrase the viewer's regex matches")
+        self.assertIn("nothing was sent", r["error"])
+        self.assertNotIn("characters", r["error"], "the bound is not what the person hears about")
+        self.assertEqual(self.injected, [], "nothing reached the session")
+        self.assertIsNone(self.logged(), "no host call without consent")
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the todo stays open")
+
+    def test_a_note_that_is_not_text_is_refused_as_editing_off_while_the_consent_is_off(self):
+        km._set_file_editing(False)
+        for bad in (7, True, ["a note"], {"text": "a note"}):
+            r = self.send(comments=ONE, watermark=1781100000000, note=bad)
+            self.assertEqual(r["type"], "fileCommentsSendFailed", bad)
+            self.assertEqual(r["code"], "editing-off", bad)
+            self.assertIn("file editing is off", r["error"], bad)
+            self.assertNotIn("not text", r["error"], bad)
+        self.assertEqual(self.injected, [])
+        self.assertIsNone(self.logged())
+
+    def test_a_good_note_alone_is_refused_as_editing_off_too(self):
+        # the note-only shape stands down the nothing-to-send gate, never the consent
+        km._set_file_editing(False)
+        r = self.send(note=NOTE)
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsSendFailed", "editing-off"))
+        self.assertNotIn("no unsent comments", r["error"])
+        self.assertEqual(self.injected, [])
+        self.assertIsNone(self.logged())
+
+    def test_with_consent_restored_the_note_refusals_and_the_send_come_back(self):
+        km._set_file_editing(False)
+        self.assertEqual(self.send(note="x" * (km._SEND_NOTE_MAX + 1))["code"], "editing-off")
+        km._set_file_editing(True)
+        r = self.send(note="x" * (km._SEND_NOTE_MAX + 1))
+        self.assertEqual(r["type"], "fileCommentsSendFailed")
+        self.assertIn("the note is 4001 characters", r["error"], "the note's own refusal, once the consent is on")
+        self.assertNotIn("code", r)
+        r = self.send(note=7)
+        self.assertEqual(r["error"], "nothing was sent: the note was not text")
+        self.assertNotIn("code", r)
+        self.assertEqual(self.injected, [], "the refusals sent nothing")
+        r = self.send(note=NOTE)
+        self.assertEqual(r, {"type": "fileCommentsSent", "reqId": 9, "queued": False})
+        self.assertEqual(len(self.injected), 1, "exactly one message, from the send that was allowed")
+        self.assertEqual(self.logged()["args"]["note"], NOTE)
 
 
 @unittest.skipUnless(NODE, "node not installed on this machine")

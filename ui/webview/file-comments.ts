@@ -1004,6 +1004,7 @@ class Panel {
   // (buildSendMessage is the kernel's twin); over SEND_NOTE_MAX characters the send is refused here, before any request.
   sendNote = "";
   noteBox = el("textarea", "fc-input fc-send-note") as HTMLTextAreaElement;
+  noteSizedTo: string | null = null;         // the inline height autosizeNote last set: any other was dragged there, and stands (the composer's sizedTo rule)
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED or hidden, and where the keyboard went meanwhile (refocus): kept while it is in the list and the keyboard stays there
   located = new Map<string, Located & { painted: boolean }>();
@@ -1198,7 +1199,7 @@ class Panel {
     this.noteBox.rows = COMPOSER_ROWS;                 // the Send confirm's note: three rows, grown to about eight (SEND_NOTE_ROWS), then scrolling
     this.noteBox.setAttribute("aria-label", "A note for the session");
     this.noteBox.addEventListener("keydown", this.noteKey);
-    this.noteBox.addEventListener("input", () => { this.sendNote = this.noteBox.value; autosizeComposer(this.noteBox, SEND_NOTE_ROWS); this.syncSendGo(); });
+    this.noteBox.addEventListener("input", () => { this.sendNote = this.noteBox.value; this.autosizeNote(); this.syncSendGo(); });
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
     this.float.title = "Comment on the selected passage";
@@ -1377,9 +1378,13 @@ class Panel {
     // gesture behind them, and a wheel fires BEFORE the scroll it starts, so what a wheel marks seen is what was on screen
     // before it, and what it scrolled in is seen by the gesture after. A scrollbar drag is a pointer press on the scroller;
     // arrow and page keys are keys. In the capture phase, so a listener that stops the event lower down cannot hide it.
+    // The hold is installed FIRST: its own pointerdown listener is capture on the same row, and same-target same-phase
+    // listeners run in registration order, so a hold installed after the gesture would still read as not held when the
+    // gesture's pointerdown ran reflectSeen, and the line came off in the middle of the press it exists to wait out (the
+    // review, 2026-09-09: measured in Chromium and Firefox, the pressed card moved up by the line's height under the pointer).
+    this.hold = pressHold(row);                        // the arrivals line's change in place waits out a press on the row (reflectSeen)
     for (const ev of ["pointerdown", "keydown"]) row.addEventListener(ev, (e) => this.gesture(e), true);
     for (const ev of ["wheel", "touchmove"]) row.addEventListener(ev, (e) => this.gesture(e), { capture: true, passive: true });
-    this.hold = pressHold(row);                        // the arrivals line's change in place waits out a press on the row (reflectSeen)
   }
 
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
@@ -2431,8 +2436,11 @@ class Panel {
   // ── the arrivals (the arrivals follow-on, 2026-09-09; the fields' comment says the rule) ───────────
   /** A status landed: the entries in it that the person has not seen and did not write are arrivals (arrivalsAmong's
    *  rule, kept here as a map so an arrival's order and its entry survive); the person's own writes join the seen set
-   *  outright; an arrival the status no longer holds (a change decided, a comment gone) is no arrival. Nothing until the
-   *  first render seeded the set (render): the panel's first status is all seen. */
+   *  outright; an arrival the status no longer holds (a change decided, a comment gone) is no arrival. An arrival still
+   *  standing takes the status's entry for it, in its place in the order: a change keeps its key when the sidecar's rebase
+   *  detaches it (store.detached) or re-attaches it as a hunk, and the entry's `pending` says which it is now, so the
+   *  accept option counts the arrived changes the accept will touch, not the ones it found pending at first sight (the
+   *  review, 2026-09-09). Nothing until the first render seeded the set (render): the panel's first status is all seen. */
   private noteArrivals(s: Status): void {
     const seen = this.seenKeys;
     if (seen === null) return;
@@ -2440,7 +2448,8 @@ class Panel {
     const now = new Set(entries.map((e) => e.key));
     for (const k of Array.from(this.arrivals.keys())) if (!now.has(k)) this.arrivals.delete(k);
     for (const e of entries) {
-      if (seen.has(e.key) || this.arrivals.has(e.key)) continue;
+      if (seen.has(e.key)) continue;
+      if (this.arrivals.has(e.key)) { this.arrivals.set(e.key, e); continue; }   // refreshed in place: a Map's set on a key it holds keeps the order
       if (e.author === YOU) seen.add(e.key);
       else this.arrivals.set(e.key, e);
     }
@@ -4236,6 +4245,17 @@ class Panel {
     const h = autosizeComposer(ta);
     if (h !== null) this.sizedTo = h;
   }
+  /** The Send confirm's note box follows its content the same way, to SEND_NOTE_ROWS (the owner's ruling, 2026-09-09: about
+   *  eight rows, then scrolling), with the same two guards: the box wears .fc-input's resize handle, and a height the person
+   *  dragged stands until the confirm closes with nothing kept (renderSend clears it with noteSizedTo, as closeComposer does
+   *  the composer's). Before the guards, every keystroke snapped a dragged box back to its rows (the review, 2026-09-09). */
+  private autosizeNote(): void {
+    const ta = this.noteBox;
+    if (this.noteSizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
+    if (this.noteSizedTo !== null && ta.style.height !== this.noteSizedTo) return;   // dragged since
+    const h = autosizeComposer(ta, SEND_NOTE_ROWS);
+    if (h !== null) this.noteSizedTo = h;
+  }
   private renderComposer(): void {
     const c = this.composer;
     const box = this.composerBox;
@@ -4819,10 +4839,18 @@ class Panel {
       : !n ? "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes" : "Hand everything unsent to the session as one message";
     box.appendChild(b);
     // why Send is off, VISIBLE (the GitHub link's caption idiom): a tooltip never reaches touch, and a
-    // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent.
+    // disabled button takes no focus. Nothing-unsent is captioned only once there are comments to have sent, and not
+    // while the confirm is up: its own first line says the same thing, and the same words are shown once, never stacked
+    // (renderChangesFoot's rule; the review, 2026-09-09).
     if (!this.ctx.sid) box.appendChild(el("div", "fc-note", "No session owns this file; open it from a session's link or todo to send."));
     else if (stale && s && n) box.appendChild(el("div", "fc-note", "The comments could not be re-read, so nothing can be sent until Reload above succeeds."));
-    else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
+    else if (s && !n && !this.sending && !this.sendConfirm && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
+    // the box closed with nothing kept — Cancel, or a send that took the words — starts the next confirm at its three rows:
+    // the inline height autosizeNote wrote, or a drag did, goes with the words on the render that follows the clear, the way
+    // closeComposer clears the composer's; a refused send keeps the words and the height with them (the confirm stands
+    // through it: sendConfirm stays true while the send is out and after the refusal). The review, 2026-09-09: an empty
+    // box reopened at the eight rows the last note had grown it to.
+    if (!this.sendConfirm && !this.sendNote && (this.noteBox.style.height || this.noteSizedTo !== null)) { this.noteBox.style.height = ""; this.noteSizedTo = null; }
     if (this.sendConfirm && s && !this.sending) {
       const parts = sendParts(s);
       // the changes the checkbox may accept on the way: none while the editor is up (doSend counts the same way) — the
