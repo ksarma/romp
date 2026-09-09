@@ -11,7 +11,7 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { FileViewActionCtx } from "./file-view";
+import type { FileViewActionCtx, CloseAsk } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
 import { SEND_NOTE_MAX } from "./file-comments-model";
 
@@ -245,6 +245,8 @@ function withComments(storeMtimeNs: string, comments: StoreComment[], over: Part
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
   hooks: { rendered: Array<() => void>; saved: Array<(i: { mtimeNs: string; logged: boolean }) => void>; close: Array<() => void> };
+  /** the close asks the panel registered (ctx.guardClose): the viewer runs each on a close and a replace-open */
+  asks: Array<() => CloseAsk | null>;
   disk: string; reloads: number;
   /** the view's mtime (ctx.mtimeNs): the file's at open, then the saved mtime on a save, then the disk's on a reload */
   viewMtime: string;
@@ -286,6 +288,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
   const w = {
     posted: [] as any[], main, body, code,
     hooks: { rendered: [] as Array<() => void>, saved: [] as Array<(i: { mtimeNs: string; logged: boolean }) => void>, close: [] as Array<() => void> },
+    asks: [] as Array<() => CloseAsk | null>,
     disk: text, reloads: 0, viewMtime: F1, mtimes: {} as Record<string, string>, codes: {} as Record<string, number>, heads: [] as string[],
   } as World;
   rows(code, text);
@@ -296,7 +299,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: (ask) => { w.asks.push(ask); },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ },
     // fetchFile: the bytes and the mtime now on disk (the HEAD table's, when the test set one)
@@ -520,6 +523,42 @@ test("a note the kernel would strip to nothing is none here too: NEL or an ASCII
   const msg = lastOf(w2, "fileCommentsSend");
   assert.ok(msg && msg.comments.length > 0, "the comments went");
   assert.equal("note" in msg, false, "no note field: the kernel would have stripped it to nothing");
+});
+
+test("the viewer's close guard asks about the note: words in the box make a close ask naming what it would drop; an empty box, words the kernel would strip away, Cancel, or a send that went leave none; a send out or refused keeps it", async (t: TestContext) => {
+  // decision 40's one recorded gap (the arrivals follow-on's review, 2026-09-09): a close of the viewer or a replace-open with
+  // words in the box dropped them with the panel and nothing said so. The panel registers a second ask beside the
+  // composer's; the viewer puts it (file-view.ts closeGuard, pinned in tools/file-review-plan-send-note-close.test.mjs).
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  const asks = () => w.asks.map((a) => a()).filter((q) => q !== null);
+  assert.equal(w.asks.length, 2, "the composer's ask and the note's");
+  assert.deepEqual(asks(), [], "nothing typed anywhere: the close goes");
+  openConfirm(aside);
+  assert.deepEqual(asks(), [], "an empty box has nothing to lose");
+  typeNote(aside, "Say which cache in the abstract too.");
+  assert.deepEqual(asks(), [{ question: "Discard the unsent note on report.md?", kept: "This file stays open: the note typed under Send on report.md is not sent. Send it, or Cancel it, then try again." }]);
+  typeNote(aside, String.fromCharCode(0x85) + " ");
+  assert.deepEqual(asks(), [], "words the kernel would strip to nothing are not sent, so not asked about");
+  typeNote(aside, "Say which cache in the abstract too.");
+  aside.querySelector('[data-act="fcsendcancel"]')!.click();
+  assert.deepEqual(asks(), [], "Cancel is a close on purpose: the words went, and the ask with them");
+  openConfirm(aside);
+  typeNote(aside, "Say which cache in the abstract too.");
+  aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  assert.equal(asks().length, 1, "a send out: the words are still the person's to lose until the session takes them");
+  refuseSend(w, "Couldn't deliver the message — the session didn't take it."); await flush();
+  assert.equal(asks().length, 1, "a refusal keeps the words, and the ask with them");
+  aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
+  sent(w); await flush();
+  assert.deepEqual(asks(), [], "sent: the words went with the message");
+  answer(w, status()); await flush();                // the send's refresh, answered: the confirm can open again
+  // the composer's ask stands beside it, unchanged: a typed comment is asked about too, each ask naming its own thing
+  aside.querySelector('[data-act="fcfile"]')!.click();
+  input(aside).value = "A comment half typed.";
+  openConfirm(aside);
+  typeNote(aside, "And a note.");
+  assert.deepEqual(asks().map((q) => q.question), ["Discard the unsaved comment on report.md?", "Discard the unsent note on report.md?"]);
 });
 
 test("the Log: a send's row names the note with the comments, or alone, and the row's detail shows the words first", async (t: TestContext) => {

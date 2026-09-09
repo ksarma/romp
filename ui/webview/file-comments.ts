@@ -1248,7 +1248,8 @@ class Panel {
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
-    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved note is asked about before the viewer moves on
+    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved comment is asked about before the viewer moves on
+    ctx.guardClose(() => this.noteAsk());              // …and the words typed in the Send confirm's box, a note not yet sent
     ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
@@ -1643,6 +1644,18 @@ class Panel {
     if (!c || c.kind === "replace" || !this.input.value.trim()) return null;
     const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
     return { question: "Discard the unsaved comment on " + name + "?", kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
+  }
+  /** The second close ask: words typed in the Send confirm's box are a note the person has not sent, and a close or a
+   *  replace-open dropped them with the panel, silently — the one gap decision 40 recorded (the arrivals follow-on's review,
+   *  2026-09-09; closed in its consolidation). An ask of its own beside the composer's rather than that one widened: each
+   *  names the one thing it would drop, and the viewer runs every ask in turn (file-view.ts closeGuard), so a person holding
+   *  both is asked about both. The emptiness is the kernel's (trimNote): words its strip would take to nothing are not sent
+   *  (doSend) and not asked about. Cancel and a send that went clear the field, so neither leaves an ask; a send out or
+   *  refused keeps the words and the ask with them. */
+  noteAsk(): CloseAsk | null {
+    if (!trimNote(this.sendNote)) return null;
+    const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    return { question: "Discard the unsent note on " + name + "?", kept: "This file stays open: the note typed under Send on " + name + " is not sent. Send it, or Cancel it, then try again." };
   }
   dispose(): void {
     this.clearLanding();
