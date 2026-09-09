@@ -3049,12 +3049,17 @@ class Panel {
    *  card the focus before they scroll, and Reveal did not. focusOn before the switch would not do: a card Reveal is
    *  offered for is loose in the view where it is offered (no mark to be laid level with), and the pass spends a loose
    *  focus (placeCards: laidOn). A switch that paints nothing (a file with no Rendered view is Raw already; the seam's
-   *  setMode returns) ran no pass, so one runs here where the last pass did not lay the cards on this card; where it did,
-   *  nothing runs twice. With Show changes inline off Raw paints no mark either, and the pass falls to the focus it had. */
+   *  setMode returns) ran no pass, so one runs here where the switch ran none, and only there: every pass ends by writing
+   *  a new placement (placeCards: `placed`), so the placement of before still standing after the switch says no pass ran.
+   *  With Show changes inline off Raw paints no mark either, and the switch's pass falls to the focus it had; a pass after
+   *  it would measure the same body and cards and lay them where it did. The pass ran here whenever the last pass had not
+   *  laid the cards on this card, which after the switch is every change card's Reveal with the marks off — the whole
+   *  margin measured and written twice for one click (the review of the audit's fixes, round 2, 2026-09-09). */
   private revealInRaw(key: string): void {
     if (this.margin) this.focusCard = key;            // the focus: the switch's pass lays the card level with its Raw mark (card-layout.ts)
+    const placed = this.placed;                       // the last pass's placement: the switch's pass, where it runs, writes a new one
     this.ctx.setMode("raw");
-    if (this.margin && this.laidOn !== key) this.placeCards(false);
+    if (this.margin && this.placed === placed) this.placeCards(false);   // the switch ran no pass: this is the one
   }
   /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
    *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the

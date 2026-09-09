@@ -1351,11 +1351,22 @@ the track (the verification review, 2026-09-09: this record had narrowed it to t
 `file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it).
 Reveal arms the focus as well (`revealInRaw`; the merge audit, 2026-09-09): the card is made the focus before the
 switch to Raw, so the pass the viewer's `setMode` runs synchronously lays it level with its Raw mark before
-`scrollToOffset` centers the row, and a pass runs after the switch where the switch painted nothing (a file with no
-Rendered view is Raw already). Before, Reveal set no focus, and the switch's pass laid the margin on the tall change card
-the person had unfolded: the revealed card was pushed under it, wholly outside the track's box, while its passage sat
-mid-body; `focusOn` before the switch would not serve, since the card is loose in the view where Reveal is offered and
-the pass spends a loose focus.
+`scrollToOffset` centers the row, and a pass runs after the switch where the switch ran none, and only there (a file
+with no Rendered view is Raw already, so the switch paints nothing; every pass ends by writing a new placement,
+`placed`, so the placement of before still standing after the switch says no pass ran — the review of the merge audit's
+fixes, round 2, 2026-09-09: the pass ran wherever the last pass had not laid the cards on the card, which with Show
+changes inline off, where Raw paints no mark and the switch's pass keeps the focus it had, was every change card's
+Reveal, the margin measured and written twice for one click). The row's centering is then settled (`settleRevealed`;
+the review of the merge audit's fixes, 2026-09-09): where the switch's pass laid the card on its Raw mark, `centerOn`
+follows the row's centering with the landing a click on the mark gives — the mark centered, or the least scroll that
+shows the card's end, the fallback above — since the row's centering alone left a card taller than the room under the
+body's center level with its head in the track's box and its end, its run of turns and its Reply and Resolve row, past
+the track's bottom, so the body ends where `centerOn` puts it, not where the row's centering did; where the pass laid
+the card on no mark (Show changes inline off: Raw paints none, and `landOn` cues the row) the row's centering stands,
+since `centerOn` has no mark to scroll to. Before, Reveal set no focus, and the switch's pass laid the margin on the
+tall change card the person had unfolded: the revealed card was pushed under it, wholly outside the track's box, while
+its passage sat mid-body; `focusOn` before the switch would not serve, since the card is loose in the view where Reveal
+is offered and the pass spends a loose focus.
 A focused card taller than the track has its head cut by the excess (its end and the gap over the track's box) with
 its end in the box and the mark's top in the body's; one taller than the track by more than the header less the gap
 meets the cap — the scroll stops where the mark's top would leave the body's box, a gap under its top, so the head is
@@ -1443,7 +1454,10 @@ condition — the card's end against the centered scroll, not its height against
 geometry, whose open card fits the track and takes the fallback) and `tools/file-review-plan-focus-verify.test.mjs` (the
 re-lay, the save's focus and the hosted fold as recorded here held to the layout, the panel and the modules this round
 names, and every focus module in the tree — the layout's, the panel's, the guide's and the plan's — named here and in the
-Tests section's bullet, so a round's module fails by name, not in a later consolidation);
+Tests section's bullet, so a round's module fails by name, not in a later consolidation — a scan of the names,
+`card-layout` and `file-comments-focus`, which a focus module named otherwise passed unnamed: the module of the review
+of the merge audit's fixes, named for Reveal, until `tools/file-review-plan-focus-audit.test.mjs` below read the
+headers);
 and from its second round, `file-comments-focus-verify-2.test.ts` (the panel over the review stand-in: a head click, a
 Show more and a whole-file comment's save on a loose card the reach rule laid below the focused card leave the layout
 and the scroll as they were, the focus kept on the card the person was reviewing; the keyboard's memory of a control a
@@ -1459,7 +1473,28 @@ landing through the poll and a reload run under a held press, whole in the track
 round trip; then the Reveal step, a deletion's card and a loose comment's under the unfolded change card laid level with
 their Raw marks, whole in the track's box, not pushed) and, in `file-comments-focus-browser.test.ts`, the fold with a
 reply's box standing in a card (the list's box its children's span, the aside's scroll range its content, the box and
-the words kept in the card, in Chromium and Firefox).
+the words kept in the card, in Chromium and Firefox); and from the review of the merge audit's fixes (2026-09-09),
+`file-comments-reveal-arms-focus.test.ts` (the panel over the review stand-in with a seam that does what the viewer's
+does — `setMode` returning without a paint on a file with no Rendered view and re-rendering the body synchronously on a
+markdown file, `scrollToOffset` centering the Raw row holding the offset — where the audit's stand-in stubs the switch
+and drives the change branch alone: the pass `revealInRaw` runs itself where the switch painted nothing laying the
+deletion's card level with its point, not pushed, then the scroll bringing it whole into the track's box; the comment's
+branch writing the focus before the switch and scrolling after it, over the Raw rows, the card level with its Raw
+highlight; a revealed card taller than the room under the body's center settled by the least scroll that shows its end,
+past the row's centering; and with Show changes inline off the pass keeping the focus it had, the row's centering
+standing with no settling after it and the row wearing the landing cue) and
+`tools/file-review-plan-focus-audit.test.mjs` (the Reveal statements here — the focus before the switch, the pass after
+it where the switch ran none, the settling where the switch's pass laid the card on its mark — held to the panel and to
+the module, which is named here and in the Tests section's bullet and holds what this record credits it with; and every
+module whose header cites this paragraph named in both places, read from the headers and not the names, since the name
+scan above reaches `card-layout` and `file-comments-focus` and this round's module, named for Reveal, passed it
+unnamed); and from its second round, `file-comments-reveal-one-pass.test.ts` (the same stand-in with the passes counted
+through the global `getComputedStyle`, the pass's first read: with Show changes inline off, Reveal on the change card
+from Raw and from Rendered, and on the deletion's card, runs one pass, the switch's own, which finds the card loose and
+keeps the focus it had, with none after it — before, the whole margin was measured and written a second time, to the
+same values — the row centered and wearing the landing cue; on a file with no Rendered view the pass `revealInRaw` runs
+itself is the click's only pass, laying the card level with its point; and on the comment's branch in Rendered the
+switch's own pass, laying the card level with its Raw highlight, is the only one).
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -2210,7 +2245,19 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   card level with its mark and the track locked to the body across Raw and Rendered, one A+, the poll's reload and a
   reload under a held press, then the Reveal step, a deletion's card and a loose comment's laid level with their Raw
   marks in the track's box); `file-comments-focus-browser.test.ts` gains the fold with a reply's box standing in a card
-  (the list's box its children's span, the aside's scroll range its content, in Chromium and Firefox).
+  (the list's box its children's span, the aside's scroll range its content, in Chromium and Firefox). From the review
+  of the merge audit's fixes (2026-09-09): `file-comments-reveal-arms-focus.test.ts` (the stand-in with a seam that does
+  what the viewer's does: the pass `revealInRaw` runs itself where the switch painted nothing, the comment's branch of
+  Reveal writing the focus before the switch and scrolling after it, a revealed card taller than the room under the
+  body's center settled whole in the track's box past the row's centering, and Show changes inline off leaving the row's
+  centering and cueing the row); `tools/file-review-plan-focus-audit.test.mjs` holds the paragraph's Reveal statements —
+  the focus before the switch, the pass after it where the switch ran none, the settling — to the panel and the module,
+  and every module whose header cites the paragraph to the paragraph and this bullet (the scan above reads the names,
+  and the round's module, named for Reveal, passed it unnamed; found in the round's review, 2026-09-09). From its second
+  round: `file-comments-reveal-one-pass.test.ts` (the stand-in with the passes counted: one pass per Reveal — the
+  switch's own with Show changes inline off, from Raw and from Rendered, on a change card and on the deletion's; the
+  pass `revealInRaw` runs itself on a file with no Rendered view; the switch's own on the comment's branch, level with
+  its Raw highlight).
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);

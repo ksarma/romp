@@ -30,6 +30,7 @@ refs="$(cat)"
 zero=0000000000000000000000000000000000000000
 blocked_ids=0
 blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
+blocked_messages=0      # likewise: a subset of blocked_ids, with a remedy of its own
 blocked_creds=0
 
 # The commits THIS push publishes for one ref: what no remote already has.
@@ -56,7 +57,7 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
-# Three checks per pushed ref, all about what THIS push changes on the remote:
+# Four checks per pushed ref, all about what THIS push changes on the remote:
 #
 #   the tip's tree    the content the push exposes. A banned string anywhere in
 #                     it — a regular file, or a symlink's target — refuses the
@@ -90,6 +91,20 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 #                     says, and its domain may well be their own name. An unset
 #                     user.email chooses nothing, which is the case the scan is
 #                     for.
+#   each new commit   the MESSAGE it carries: subject and body, grepped like
+#                     lines of content. Metadata too, and the place a commit
+#                     describing a fix names the path that failed or the box it
+#                     failed on. A string a FILE carries has a forward remedy
+#                     once it is out (redact it in a later commit, push); a
+#                     string a message carries has none — only a rewrite of the
+#                     commit takes it back — so the push is the last check
+#                     before it is out for good. The whole denylist, the
+#                     author's own name included: the message is text they
+#                     typed, and a file naming them is refused on the same
+#                     ground. Only what THIS push publishes, like the two
+#                     per-commit checks above: a message a remote already holds
+#                     is refused to no purpose. The author and committer NAMES
+#                     on the commit are not read (above).
 
 # The lines a commit adds, one per line as "<path>\t<text>". A commit with one
 # parent: its diff against that parent (a root commit, against the empty tree).
@@ -141,7 +156,7 @@ stamped_addresses() {   # <rev>
 }
 
 scan_identifiers() {
-    local strings_file line rev revs hits local_ref local_sha remote_sha role email
+    local strings_file line lines rev revs hits local_ref local_sha remote_sha role email
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
@@ -205,6 +220,14 @@ scan_identifiers() {
                     blocked_addresses=1
                 fi
             done < <(stamped_addresses "$rev")
+            # Its message, subject and body, like lines of content. -n so the report
+            # can point at the line (1 is the subject) without echoing the string.
+            if hits=$(git log -1 --format=%B "$rev" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
+                lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
+                echo "romp pre-push: the MESSAGE of commit ${rev:0:10} carries a personal identifier on line $lines (line 1 is the subject)" >&2
+                blocked_ids=1
+                blocked_messages=1
+            fi
         done
     done <<< "$refs"
 
@@ -220,6 +243,9 @@ scan_identifiers() {
             echo "    if it is yours, say so (git config --global user.email <address>) and push again;" >&2
             echo "    if git filled it from the hostname (an unset user.email gets <login>@<hostname>), set yours, add user.useConfigOnly true" >&2
             echo "    so git never fills it again, and rewrite the named commits, e.g. git rebase <base> --exec 'git commit --amend --no-edit --reset-author'." >&2
+        fi
+        if [ "$blocked_messages" -ne 0 ]; then
+            echo "  A commit MESSAGE is never redacted forward: rewrite the named commit — git commit --amend for the tip, a reword rebase (git rebase -i <base>) for an older one — and push again." >&2
         fi
     fi
 }
