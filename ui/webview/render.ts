@@ -12577,6 +12577,11 @@ function renderLedger() {
 // re-render (keyed by session id / row id — renderBgTasks never writes them, so the idle↔working flip
 // cannot close an open box); every toggle is DELEGATED to the stable #bg-tasks container so a rebuild
 // mid-click never drops it. textContent only (command/output are untrusted).
+// The fold is the user's alone: bgFoldOpen starts EMPTY, so a box appears as its header line, and only the
+// header click and the Awaiting chip open it; a reload starts it closed again. Open, the LIST shows about six
+// rows and scrolls beyond (styles.css, the .bg-list cap): seven agents in flight fit under the box's 340px
+// cap without scrolling, so an open box covered a phone's transcript (the user 2026-09-08, who folds it by
+// hand and wanted it smaller when open); the header keeps the counts.
 const bgExpanded = new Set<string>();   // row ids whose details are open
 const bgFoldOpen = new Set<string>();   // session ids whose list is expanded
 const BG_RANK: Record<string, number> = { failed: 3, running: 2, completed: 1 };
