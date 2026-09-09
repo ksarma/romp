@@ -49505,10 +49505,27 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # 'upload' while a ship awaits its ack and 'held-send' while the ship gate holds a send, and the pane calls
 # __rompReload.ended() when the last ack lands or the gate clears, so the hold ends on its own event like every
 # gesture hold. The fork's own fold-4 route to the same end (window.__rompReloadHold read here as a 'ships' hold,
-# re-checked on a 500 ms timer, a 60 s deadline) was superseded by this one at the 2026-09-09 fold; the fork
-# keeps its toast replay across the reload (render.ts persistNoticesForReload, reload-hold.ts liveNotices).
+# re-checked on a 500 ms timer) was superseded by this one at the 2026-09-09 fold; the fork keeps its toast
+# replay across the reload (render.ts persistNoticesForReload, reload-hold.ts liveNotices) and its DEADLINE, as
+# the backstop the fold's ruling asked for (romp-general, 2026-09-09): a pane-reported word ('upload',
+# 'held-send', the shim's 'sends', any word busyHere returns that is not one of the core's own five gesture
+# words) ends only when its owner delivers the event, and an upload that never acks or nacks would pin the page
+# on the old build for good. `clock` starts a clock the first time tryFire sees a pane word block an owed
+# reload, keeps it while the same word keeps blocking, and zeroes it whenever tryFire sees anything else
+# (another word, a gesture, nothing), so a hold released and re-raised gets its own 60 s (the fold-4 review's
+# F1) and a user who keeps interacting during a stuck upload defers the reload, as the gesture holds already do.
+# One timer, armed for the time left, reaches the deadline without an event (a standalone pane has no poll);
+# a gesture word arms none, since a reload mid-drag or mid-draft is what this core exists to prevent. Past the
+# deadline the word is released: one console line names it and the seconds, and the reload fires with a note
+# the pane's pre-reload hook reads through `released()` and appends to the toasts it persists (render.ts
+# persistNoticesForReload, reload-hold.ts releasedNotices), so the fresh page says why it reloaded over the
+# wait; the loss toast still names what was lost. busy() ranks a gesture anywhere above a pane word (the
+# fold-4 review's K1: with a deadline on the word, upstream's first-match walk released the chat pane's word
+# over a later pane's drag; a gesture has an ending event and no deadline, so it is the word to report and the
+# one to wait for). tests/test_dashboard_auto_reload.py UploadHoldExecuted runs the hold and the backstop.
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,ptr=0,pan=false,drag=false,owed=null,fired=false,refusedFor=null;
+var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',GESTURE={pointer:1,pan:1,drag:1,selection:1,typing:1};/*fork: the pane hold's backstop (the comment above)*/
 function shell(){try{var p=window.parent;if(p&&p!==window&&p.__rompReload)return p.__rompReload;}catch(e){}return null;}
 function editing(){try{var a=document.activeElement;if(!a)return false;var tag=(a.tagName||'').toUpperCase();
 var textual=tag==='TEXTAREA'||(tag==='INPUT'&&/^(text|search|url|email|number|password|tel)$/i.test(a.type||'text'))||!!a.isContentEditable;
@@ -49521,15 +49538,23 @@ try{if(window.__rompPaneBusy){var b=window.__rompPaneBusy();if(b)return String(b
 return '';}
 function panes(){var out=[],fs=document.querySelectorAll?document.querySelectorAll('iframe'):[];
 for(var i=0;i<fs.length;i++){try{var w=fs[i].contentWindow;if(w&&w.__rompReload)out.push(w);}catch(e){}}return out;}
-function busy(){var b=busyHere();if(b)return b;var ps=panes();for(var i=0;i<ps.length;i++){b=ps[i].__rompReload.busyHere();if(b)return b;}return '';}
+function busy(){var b=busyHere();if(b&&GESTURE[b])return b;var held=b;var ps=panes();for(var i=0;i<ps.length;i++){b=ps[i].__rompReload.busyHere();if(b&&GESTURE[b])return b;if(b&&!held)held=b;}return held;}/*fork: a gesture anywhere outranks a pane word, which has a deadline (K1)*/
 function persist(){try{if(window.__rompPersistForReload)window.__rompPersistForReload();}catch(e){}
 var ps=panes();for(var i=0;i<ps.length;i++){try{if(ps[i].__rompPersistForReload)ps[i].__rompPersistForReload();}catch(e){}}}
 function key(o){return o?o.reason+':'+(o.detail||''):'';}
 function fire(){if(fired)return;fired=true;persist();
-try{location.reload();}catch(e){fired=false;refusedFor=key(owed);R.waiting='refused';if(R.refused)R.refused(owed);return;}
+try{location.reload();}catch(e){fired=false;refusedFor=key(owed);overdueNote='';unclock();R.waiting='refused';if(R.refused)R.refused(owed);return;}
 try{sessionStorage.setItem('romp:reloaded',JSON.stringify({reason:owed.reason,detail:owed.detail||'',from:LOADED,path:location.pathname,t:Date.now()}));}catch(e){}
 try{document.body.classList.remove('settings-open','picker-open');}catch(e){}}
-function tryFire(){if(!owed||fired)return;if(refusedFor!==null&&refusedFor===key(owed))return;var b=busy();if(b){R.waiting=b;return;}R.waiting='';fire();}
+function what(k){return k==='upload'?'An upload':k==='held-send'?'A message held behind an upload':k==='sends'?'A message queued while the connection was down':"A '"+k+"' hold";}
+function unclock(){heldKind='';heldT=0;if(heldTimer){clearTimeout(heldTimer);heldTimer=null;}}
+function clock(b){var kind=(b&&!GESTURE[b])?b:'';if(kind!==heldKind){unclock();heldKind=kind;heldT=kind?Date.now():0;}
+if(!kind)return b;var age=Date.now()-heldT;
+if(age<DEADLINE){if(!heldTimer)heldTimer=setTimeout(function(){heldTimer=null;tryFire();},DEADLINE-age);return b;}
+var secs=Math.round(age/1000);overdueNote=what(kind)+' had not finished after '+secs+' s, so the page reloaded without waiting longer.';
+try{console.warn("romp: the '"+kind+"' hold did not end within "+secs+" s; reloading anyway");}catch(e){}
+unclock();return '';}/*fork: the backstop; the word it releases is named in the console and in the note released() hands the pane*/
+function tryFire(){if(!owed||fired)return;if(refusedFor!==null&&refusedFor===key(owed))return;var b=clock(busy());if(b){R.waiting=b;return;}R.waiting='';fire();}
 function request(reason,detail){var s=shell();if(s){s.request(reason,detail);return;}if(fired)return;
 var next={reason:reason,detail:detail||''};if(refusedFor!==null&&key(next)!==refusedFor){refusedFor=null;owed=next;}
 if(!owed)owed=next;tryFire();}
@@ -49556,7 +49581,8 @@ function ended(){setTimeout(function(){var s=shell();if(s)s.tryFire();else tryFi
 for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);
 window.addEventListener('blur',function(){ptr=0;pan=false;drag=false;ended();});
 var R={request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,busy:busy,noteDv:noteDv,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,
-inShell:function(){return !!shell();},owed:function(){return owed;},fired:function(){return fired;},refusedFor:function(){return refusedFor;},refused:null,waiting:'',loaded:LOADED,boot:BOOT};
+inShell:function(){return !!shell();},owed:function(){return owed;},fired:function(){return fired;},refusedFor:function(){return refusedFor;},
+released:function(){var s=shell();return (s&&s.released)?s.released():overdueNote;},refused:null,waiting:'',loaded:LOADED,boot:BOOT};
 window.__rompReload=R;})();/*end-reload-core*/"""
 
 

@@ -5,9 +5,12 @@
 // gate. The page's HOLD on that reload is upstream's (T272): render.ts wraps the shim's window.__rompPaneBusy and answers
 // 'upload' while any ship awaits its ack and 'held-send' while the ship gate holds a send, and tells the core the
 // ending event through window.__rompReload.ended() (render.ts endReloadHoldIfIdle). This module once published the
-// fork's own word for the same hold (window.__rompReloadHold, read by the core as a 'ships' hold with a 60 s deadline);
-// the 2026-09-09 fold converged the core on upstream's shape and the publisher retired (reload-hold.test.ts names the
-// ruling). What stays is the other half of that fold: the restart reload FOLLOWS the last pending ship's retirement, and
+// fork's own word for the same hold (window.__rompReloadHold, read by the core as a 'ships' hold); the 2026-09-09 fold
+// converged the core on upstream's shape and the publisher retired (reload-hold.test.ts names the ruling). The fork's
+// 60 s DEADLINE on that hold stays in the core as the backstop (the fold's ruling): a pane word that has blocked an owed
+// reload for 60 s is released, the console names it, and the core hands the pane a note through
+// window.__rompReload.released() for the fresh page (releasedNotices below reads it into the persisted toasts). What
+// else stays is the other half of that fold: the restart reload FOLLOWS the last pending ship's retirement, and
 // the two user notices raised at that same moment (a dropSaveFailed nack: the attachment was not saved, the held
 // message not sent; the other-tab ack: the held message was not sent) are DOM-only toasts that die with the page, and
 // the fresh page's loss toast reads shipsInFlight, which that retirement already emptied. So render.ts snapshots the
@@ -26,6 +29,20 @@ export interface NoticeBox { querySelectorAll(selectors: string): ArrayLike<{ te
 export function liveNotices(box: NoticeBox | null | undefined): string[] {
   if (!box) return [];
   return Array.from(box.querySelectorAll(".warn-toast:not([data-ephemeral]) .warn-toast-msg"), (n) => (n.textContent || "").trim()).filter((t) => !!t);
+}
+/** The reload core's own notice for the reload it is firing, as the list persistNoticesForReload appends to the live
+ *  toasts: the core's 60 s backstop (kernel.py _RELOAD_CORE_JS `clock`) released a pane word that never ended (an upload
+ *  with no ack or nack, a send held behind it, a prompt queued for a socket that never reopened), and the note says what
+ *  the page waited for and that it stopped waiting; a reload that fired on the hold's own event has none. Reads the core
+ *  handed in (window.__rompReload on a kernel-served page; a pane's answers with its shell's, since the shell decided),
+ *  so a page without the core (the VS Code webview), an older core without the accessor, or a throwing one reads as
+ *  none. */
+export function releasedNotices(core: unknown): string[] {
+  try {
+    const fn = (core as { released?: unknown } | null | undefined)?.released;
+    const text = typeof fn === "function" ? fn.call(core) : "";
+    return typeof text === "string" && text ? [text] : [];
+  } catch { return []; }
 }
 /** Take the persisted notices out of a state object: the non-empty strings among `pendingNotices` (anything else
  *  reads as none), and the state without the key, for the one-shot write-back. */

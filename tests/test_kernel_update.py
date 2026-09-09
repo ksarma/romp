@@ -11,6 +11,7 @@ import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -909,6 +910,20 @@ class Wiring(unittest.TestCase):
         # honest marked-option injection when a stored value is off this page's list
         self.assertIn("setShow(upm, v.updateMode)", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
+
+    def test_the_copy_says_an_automatic_update_restarts_at_once(self):
+        # T269 (folded 2026-09-09): every deploy restart is immediate, and `romp refresh --quiet` is the
+        # quiet window's one door (test_kernel_remote_update pins the code). The gear's help line and
+        # the reference's Update-notices paragraph still said the automatic mode restarted "at the next
+        # quiet moment", which no caller has done since T160; both texts now say the restart is at once.
+        ref = (Path(BIN).parent / "docs" / "reference.md").read_text()
+        para = next(p for p in re.split(r"\n\s*\n", ref) if p.lstrip().startswith("**Update notices.**"))
+        para = re.sub(r"\s+", " ", para)
+        for text, where in ((self.gear, "gear.js"), (para, "reference.md")):
+            self.assertFalse("quiet moment" in text, "%s: the automatic mode does not wait for a quiet window" % where)
+        self.assertIn("Install automatically converges by itself and restarts at once", self.gear)
+        self.assertIn("*Install automatically* converges on its own and restarts Romp at once", para)
+        self.assertIn("`romp refresh --quiet`", para, "the paragraph names the quiet window's one door")
 
     def test_the_banner_names_the_restart_the_user_must_run_when_the_update_landed_on_disk(self):
         # `updated` from /update-check means ON DISK, not running: the banner carries the reason

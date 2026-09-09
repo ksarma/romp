@@ -1,15 +1,17 @@
 // The chat page's hold on the reload core and the notices that ride the reload (reload-hold.ts). The hold is
 // upstream's T272 shape since the 2026-09-09 fold: render.ts answers the core's window.__rompPaneBusy ('upload' while a
 // ship awaits its ack, 'held-send' while the ship gate holds a send) and tells it the ending event through
-// window.__rompReload.ended(); the wiring is pinned at the source level the way the other webview tests pin render.ts
-// (no jsdom harness), in render.ts and in the core's busyHere. The core's own deferral runs in node in
-// tests/test_dashboard_auto_reload.py; the served order (the heal, then the reload) is tests/test_ship_reship.py
-// ServedWedge. The notices half is pure here and runs executably. Synthetic only.
+// window.__rompReload.ended(); the fork's 60 s deadline stays in the core as the backstop behind that event (the fold's
+// ruling; the last test here pins its shape, tests/test_dashboard_auto_reload.py UploadHoldExecuted runs it). The wiring
+// is pinned at the source level the way the other webview tests pin render.ts (no jsdom harness), in render.ts and in
+// the core's busyHere. The core's own deferral runs in node in tests/test_dashboard_auto_reload.py; the served order
+// (the heal, then the reload) is tests/test_ship_reship.py ServedWedge. The notices half is pure here and runs
+// executably. Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { liveNotices, takePendingNotices } from "./reload-hold";
+import { liveNotices, releasedNotices, takePendingNotices } from "./reload-hold";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -103,16 +105,42 @@ test("render.ts snapshots the toasts on the CORE's pre-reload hook only (not on 
   assert.equal((RENDER.match(/takePendingNotices\(/g) || []).length, 1, "consumed once, at load");
 });
 
-test("the reload core asks the pane's word after the gesture holds, defers while it answers, and re-tries on the pane's ended()", () => {
-  // re-aimed at the 2026-09-09 fold (kernel-code H20-H22): the core's busyHere ends on the pane's __rompPaneBusy, after
-  // its own reasons (pointer, pan, drag, selection, typing); the fork's 'ships' read, its re-check timer and its 60 s
-  // deadline are gone (upstream's hold has no deadline: a hold ends on the pane's event, the review's stated gap)
+test("the core's release note reads as one notice, and as none from no core, an older core, a silent one or a throwing one", () => {
+  // the fold's deadline backstop: the core hands the pane the reason it reloaded over a hold that never ended, through
+  // window.__rompReload.released(); persistNoticesForReload appends this reading to the live toasts (the pinned wiring below)
+  assert.deepEqual(releasedNotices(null), [], "a page without the core (the VS Code webview)");
+  assert.deepEqual(releasedNotices(undefined), []);
+  assert.deepEqual(releasedNotices({ request() { /* no released() */ } }), [], "an older core without the accessor");
+  assert.deepEqual(releasedNotices({ released: () => "" }), [], "a reload that fired on the hold's own event");
+  assert.deepEqual(releasedNotices({ released: () => null }), []);
+  assert.deepEqual(releasedNotices({ released: "not a function" }), []);
+  assert.deepEqual(releasedNotices({ released: () => { throw new Error("cross-origin"); } }), [], "a foreign parent's refusal is none, not a throw");
+  const core = { note: "An upload had not finished after 60 s, so the page reloaded without waiting longer.", released() { return this.note; } };
+  assert.deepEqual(releasedNotices(core), [core.note], "read on the core itself (the accessor reaches its shell through the core's own closure)");
+});
+
+test("the reload core asks the pane's word after the gesture holds, defers while it answers, re-tries on the pane's ended(), and releases the word at its deadline", () => {
+  // re-aimed at the 2026-09-09 fold (kernel-code H20-H22, then the fold's ruling on the fork's deadline): the core's busyHere
+  // ends on the pane's __rompPaneBusy, after its own reasons (pointer, pan, drag, selection, typing); the fork's 'ships' read
+  // and its 500 ms re-check are gone, and its 60 s deadline is the BACKSTOP inside upstream's shape: tryFire runs the word
+  // through clock(), which arms one timer for the time left and releases the word past DEADLINE with a console line and the
+  // note released() hands the pane; a gesture word (the GESTURE set) has no clock, and busy() ranks a gesture anywhere above
+  // a pane word (the fold-4 review's K1)
   const core = KERNEL.slice(KERNEL.indexOf("/*reload-core*/"), KERNEL.indexOf("/*end-reload-core*/"));
   assert.ok(core.length > 0, "the core's anchors exist");
   assert.match(core, /if\(editing\(\)\)return 'typing';\ntry\{if\(window\.__rompPaneBusy\)\{var b=window\.__rompPaneBusy\(\);if\(b\)return String\(b\);\}\}catch\(e\)\{\}\nreturn '';\}/,
     "the pane's word is the last reason busyHere gives");
-  assert.match(core, /function tryFire\(\)\{[^\n]*var b=busy\(\);if\(b\)\{R\.waiting=b;return;\}R\.waiting='';fire\(\);\}/, "tryFire defers on any busy word instead of reloading now, and says which");
+  assert.match(core, /function tryFire\(\)\{[^\n]*var b=clock\(busy\(\)\);if\(b\)\{R\.waiting=b;return;\}R\.waiting='';fire\(\);\}/, "tryFire defers on the word clock() hands back, and says which; an empty answer (nothing holds, or the word was released) fires");
   assert.match(core, /function ended\(\)\{setTimeout\(function\(\)\{var s=shell\(\);if\(s\)s\.tryFire\(\);else tryFire\(\);\},0\);\}/, "the ending event re-tries, in the shell when there is one");
   assert.match(core, /var R=\{request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,/, "ended() is the pane's door (render.ts endReloadHoldIfIdle calls it)");
-  assert.ok(!core.includes("__rompReloadHold") && !core.includes("shipsHold") && !core.includes("HOLD_MAX"), "the fork's 'ships' route is gone from the core");
+  // the backstop's shape
+  assert.match(core, /^var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',GESTURE=\{pointer:1,pan:1,drag:1,selection:1,typing:1\};/m, "one deadline, one clock, the core's five gesture words exempt");
+  assert.match(core, /^function clock\(b\)\{var kind=\(b&&!GESTURE\[b\]\)\?b:'';if\(kind!==heldKind\)\{unclock\(\);heldKind=kind;heldT=kind\?Date\.now\(\):0;\}\n/m, "a change of word (or nothing) resets the clock; a pane word starts its own");
+  assert.match(core, /if\(age<DEADLINE\)\{if\(!heldTimer\)heldTimer=setTimeout\(function\(\)\{heldTimer=null;tryFire\(\);\},DEADLINE-age\);return b;\}/, "one timer for the time left, never a re-check");
+  assert.match(core, /console\.warn\("romp: the '"\+kind\+"' hold did not end within "\+secs\+" s; reloading anyway"\)/, "the console line names the word");
+  assert.match(core, /overdueNote=what\(kind\)\+' had not finished after '\+secs\+' s, so the page reloaded without waiting longer\.';/, "the note the pane persists");
+  assert.match(core, /^released:function\(\)\{var s=shell\(\);return \(s&&s\.released\)\?s\.released\(\):overdueNote;\},/m, "released() answers with the shell's note when a shell decided");
+  assert.match(core, /^function busy\(\)\{var b=busyHere\(\);if\(b&&GESTURE\[b\]\)return b;var held=b;/m, "a gesture anywhere outranks a pane word");
+  assert.doesNotMatch(core, /,500\)/, "no 500 ms re-check");
+  assert.ok(!core.includes("__rompReloadHold") && !core.includes("shipsHold") && !core.includes("HOLD_MAX"), "the fork's 'ships' route is gone from the core; the backstop has its own names");
 });

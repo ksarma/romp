@@ -32,20 +32,24 @@ update` starts a session called "update".
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
 `main`, for new commits, and offers each one once as a banner with an Update button. The gear's
 **Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
-ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
+ask* shows the banner, *Install automatically* converges on its own and restarts Romp at once, and
 *Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
-hears nothing about it and keeps running what it has until they restart Romp themselves. Reloads
-are separate from that control and happen in every mode: a page the kernel serves reloads itself
-when the kernel serving it restarts or serves a newer build than the page runs, once any gesture
-in progress has ended and any file still shipping has settled, and the notification center's one
-line says which happened. The banner that reads "A newer romp build is available" appears only
-where the page cannot reload itself, such as a host that forbids it; the VS Code panes keep their
-own prompt, because their bundle comes from the installed extension. A chat page with an
-attachment still uploading first finishes the upload, then reloads. The message waiting on the
-upload is sent if that session's tab is the active one; otherwise it stays in that tab's composer
-with the file attached, and a notice says so. A notice still on screen when the page reloads,
-that one or a failed save's, is shown again on the fresh page. If the upload has not finished
-within a minute, the page reloads anyway and reports the lost attachment on the next load.
+hears nothing about it and keeps running what it has until they restart Romp themselves. An
+automatic restart cuts the turns in flight, which resume with their history on the new code. A
+converge to `main` in this mode comes no sooner than 25 minutes after the last deploy restart, so
+a busy `main` costs one restart per batch of merges. The one command that waits for a quiet
+window is `romp refresh --quiet`. Reloads are separate from that control and happen in every
+mode: a page the kernel serves reloads itself when the kernel serving it restarts or serves a
+newer build than the page runs, once any gesture in progress has ended and any file still
+shipping has settled, and the notification center's one line says which happened. The banner that
+reads "A newer romp build is available" appears only where the page cannot reload itself, such as
+a host that forbids it; the VS Code panes keep their own prompt, because their bundle comes from
+the installed extension. A chat page with an attachment still uploading first finishes the
+upload, then reloads. The message waiting on the upload is sent if that session's tab is the
+active one; otherwise it stays in that tab's composer with the file attached, and a notice says
+so. A notice still on screen when the page reloads, that one or a failed save's, is shown again
+on the fresh page. If the upload has not finished within a minute, the page reloads anyway and
+reports the lost attachment on the next load.
 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open todo is listed under *Waiting on you* on the card at the bottom of that

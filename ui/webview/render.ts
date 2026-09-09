@@ -486,13 +486,8 @@ function noteCancelledQueued(sid: string, md: string, sendId?: string): void {
   list.push({ sendId, md });
   cancelledQueued.set(sid, list);
 }
-// queued-held.ts is upstream's pure module and names a copy's identity `qid` (a queued entry's) and `qids` (a landed
-// record's). On this wire the ONE identity of a send is the press-minted sendId — a queued entry's `sendId`, a user
-// event's `sendIds` (send-pending.ts) — so the ids cross into the module under its names and a held copy comes back
-// under ours: the module and its tests stay upstream's text, and no second id name reaches the wire or the DOM.
-const toHeldQueued = (t: { sendId?: string }): HeldQueued => ({ ...(t as HeldQueued), qid: t.sendId });
-const toHeldEvent = (e: ChatEvent): unknown => e.kind === "user" && e.sendIds ? { ...e, qids: e.sendIds } : e;
-const fromHeldQueued = ({ qid, ...t }: HeldQueued) => ({ ...t, sendId: qid });
+// queued-held.ts speaks the wire's names — a queued entry's `sendId`, a user event's `sendIds` (send-pending.ts): upstream's
+// qid/qids were renamed at the 2026-09-09 fold (one vocabulary), so the records go in and come back as they are.
 function reconcileHeldCopies(s: Session): void {
   // idempotent: a frame that kept the resident events (an empty full frame) still carries the previous pass's held
   // marks and group — cleared first, so the pass recomputes from the kernel's copies alone
@@ -503,25 +498,25 @@ function reconcileHeldCopies(s: Session): void {
   }
   const mem = heldQueued.get(s.id) || { prev: [], anchor: null, held: [] };
   const qi = tailQueuedIdx(s.events);
-  const cur = qi >= 0 ? (s.events[qi] as Extract<ChatEvent, { kind: "queued" }>).texts.map(toHeldQueued) : [];
+  const cur = qi >= 0 ? ((s.events[qi] as Extract<ChatEvent, { kind: "queued" }>).texts as HeldQueued[]) : [];
   const cancelled = cancelledQueued.get(s.id) || [];
   const settled = !(s.status.state === "working" || s.status.state === "compacting");
-  const r = reconcileHeld(mem, s.events.map(toHeldEvent) as any, cur, {
+  const r = reconcileHeld(mem, s.events as any, cur, {   // as any: a teammate event's blocks are objects, HeldEvent's strings; the pass reads user events
     settled,
-    cancelled: (c) => cancelled.some((x) => x.sendId && c.qid ? x.sendId === c.qid : x.md.trim() === c.md.trim()),
+    cancelled: (c) => cancelled.some((x) => x.sendId && c.sendId ? x.sendId === c.sendId : x.md.trim() === c.md.trim()),
   });
   // a cancel has taken effect once the kernel's queue no longer lists the copy: forget it
   if (cancelled.length) {
-    const still = cancelled.filter((x) => cur.some((t) => x.sendId && t.qid ? t.qid === x.sendId : (typeof t.md === "string" && t.md.trim() === x.md.trim())));
+    const still = cancelled.filter((x) => cur.some((t) => x.sendId && t.sendId ? t.sendId === x.sendId : (typeof t.md === "string" && t.md.trim() === x.md.trim())));
     if (still.length) cancelledQueued.set(s.id, still); else cancelledQueued.delete(s.id);
   }
   heldQueued.set(s.id, r);
   // the held set changed (a copy taken, a copy landed): the frame may keep its LENGTH while a held card gives way to
   // the landed atom, and the repaint's no-op fast path reads length alone — so the view is marked stale here
-  const key = (h: HeldCopy[]) => h.map((c) => c.qid || c.md).join("\u0000");
+  const key = (h: HeldCopy[]) => h.map((c) => c.sendId || c.md).join("\u0000");
   if (key(mem.held) !== key(r.held)) { const v = views.get(s.id); if (v) v.stale = true; }
   if (!r.held.length) return;
-  const add = r.held.map(heldAsQueued).map(fromHeldQueued);   // back under the wire's name (sendId)
+  const add = r.held.map(heldAsQueued);
   if (qi >= 0) {
     const q = s.events[qi] as Extract<ChatEvent, { kind: "queued" }>;
     s.events[qi] = { ...q, texts: [...q.texts, ...(add as any)] };
