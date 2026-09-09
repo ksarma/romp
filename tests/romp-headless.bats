@@ -232,6 +232,20 @@ SHIM
     grep -q '"name": "-oddname"' "$TEST_DIR/req"
 }
 
+@test "the bare verb prints the usage line --help prints, exit 2, without a kernel" {
+    # `romp end` with no session printed a bare `usage: romp end <session> ` (a trailing space from an
+    # empty substitution) while --help spelled the full form; one usage string per verb now (review round 2)
+    for verb in send interrupt end; do
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb" --help
+        [ "$status" -eq 0 ]
+        _first="${lines[0]}"
+        [[ "$_first" == "usage: romp $verb "* ]]
+        ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" "$verb"
+        [ "$status" -eq 2 ]
+        [ "$output" == "$_first" ]
+    done
+}
+
 @test "romp send, interrupt and end each answer --help without a kernel" {
     # `romp end --help` used to POST a session named --help (the phantom-sid bug from the other side)
     for verb in send interrupt end; do

@@ -22493,7 +22493,23 @@ def _remote_forward_status(r, path, body, method="POST"):
     route is an ANSWER — version skew, not a tunnel fault — and folding it to None sent the user to check
     the tunnel instead of updating the remote (the /emoji review, 2026-09-06). `method="GET"` forwards a
     READ (GET /emoji?target=…, review round 3): `path` carries its own query, `body` is ignored, and the
-    token joins the query with & — the same tunnel, the same status contract."""
+    token joins the query with & (the same tunnel, the same status contract). A caller that needs the far
+    kernel's body on a non-200 reads _remote_forward_answer, which this wraps."""
+    st, res, _text = _remote_forward_answer(r, path, body, method)
+    return st, (res if st == 200 else None)
+
+
+def _remote_forward_answer(r, path, body, method="POST"):
+    """_remote_forward_status with the far kernel's body kept on EVERY status: (status, parsed JSON or
+    None, body text). The session-control arms (/send, /interrupt, /end) relay a far kernel's refusal in
+    its own words through _remote_refusal: a non-200 whose body is JSON with an `error` is the far gate's
+    answer (its 404 for a name no session there answers to), relayed with the far host named and the same
+    status; a non-200 with any other body (the far do_POST's text/plain "not found" for a route that kernel
+    predates) is the status and the body's first line, never dressed as an unknown session (review round
+    2, 2026-09-09: every far 404 was composed locally as the unknown-name text, the status the other
+    remote arms read the opposite way, as version skew). Status 0 (never landed) keeps the redial demand.
+    The 2-tuple wrapper above keeps its contract for every other arm, whose non-None test means
+    "delivered"."""
     import urllib.parse
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(r["local_port"]), timeout=8)
@@ -22509,13 +22525,25 @@ def _remote_forward_status(r, path, body, method="POST"):
     except Exception as e:
         # a forwarded op hitting a dead tunnel is USER DEMAND — re-send the connect signal
         _demand_redial(r.get("host") or "", "refused" if isinstance(e, ConnectionRefusedError) else "timeout")
-        return 0, None
-    if resp.status != 200:
-        return resp.status, None
+        return 0, None, ""
+    text = data.decode("utf-8", "replace")
     try:
-        return 200, json.loads(data.decode("utf-8") or "{}")
-    except (ValueError, UnicodeDecodeError):
-        return 200, None   # answered, with something that is not JSON: not a tunnel fault, no redial
+        parsed = json.loads(text or "{}")
+    except ValueError:
+        parsed = None      # answered, with something that is not JSON: not a tunnel fault, no redial
+    return resp.status, parsed, text
+
+
+def _remote_refusal(r, st, res, text, tail=""):
+    """The body the session-control arms answer for a far kernel's non-200 (see _remote_forward_answer):
+    the far JSON `error` with the far host named, else the status and the body's first non-empty line.
+    `tail` is the arm's own coda (/send: that the message was not delivered)."""
+    host = r.get("host", "?")
+    if isinstance(res, dict) and res.get("error"):
+        return {"ok": False, "error": "%s (the kernel on %s)%s" % (res["error"], host, tail)}
+    first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return {"ok": False, "error": "the remote kernel for %s answered HTTP %s%s%s"
+            % (host, st, (": " + first) if first else "", tail)}
 
 
 def _poll_remote_version(r):
@@ -25953,7 +25981,8 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     durable gone marker, killed live comment threads and broadcast the exact `closed` lie the gates
     exist to prevent, precisely when it mattered. Tri-state:
       True  — ended, corroborated: absent from the merged map AND the owner answered (the SDK reg
-              partition / the headless zero / an answering alive_sids probe without it).
+              partition, which reads a comment thread's alive flag since the merge hides threads / the
+              headless zero / an answering alive_sids probe without it).
       False — still running: the merged map lists it, or the probe answered WITH it.
       None  — CANNOT CONFIRM (a real probe failure): the writer stands down — warn/ok:false, no
               death record, no comment-thread teardown, no `closed`; a retry after the probe
@@ -25974,8 +26003,14 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     if sid in (Sessions.live() if fresh else _tmux_sessions()):
         return False                             # still listed → nothing ended
     if (jd.SDKDIR / (sid + ".json")).exists():
-        return True                              # SDK-owned: absence from the in-process merge IS the
-    #                                              owner's answer (the death sweep's partition, above)
+        # SDK-owned: absence from the in-process merge IS the owner's answer (the death sweep's partition,
+        # above), except for a comment thread, which the merge hides by design (live_sessions skips threadOf
+        # regs): there the reg's alive flag is the owner's answer, the record thread_sessions reads and the
+        # SDK kill flips first. So a kill that landed still reads True, while a thread the merge never
+        # listed is not certified dead by the existence of its reg (review round 2, 2026-09-09: the
+        # end-on-idle sweep spent a thread's wish with no kill)
+        reg = _thread_reg(sid)
+        return not (reg.get("alive") and reg.get("threadOf"))
     if not _TMUX.available():
         return True                              # headless: no server IS zero-alive (the boot pass's rule)
     scan = scan() if scan is not None else _TMUX.alive_sids()
@@ -26051,7 +26086,11 @@ def _end_on_idle_sweep(now, tmux):
     one wedged server would otherwise spend the request against a LIVE session — a false gone
     marker, comment threads torn down, every client dismissing the tab. Unconfirmed → nothing is
     written and the request stays armed; the sweep rides every pusher cycle, so a standing wedge
-    retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently."""
+    retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently. A comment
+    thread's wish (`romp end self` from inside one) is served here too: a thread is in no snapshot by
+    design, so its reg's alive flag stands for the owner's answer, its own transcript (through the reg)
+    for the settle, and its kill ends with no death record and no closed frame, the thread-end paths'
+    rule (review round 2, 2026-09-09)."""
     reqs = _end_on_idle_load()
     if not reqs:
         return
@@ -26070,7 +26109,14 @@ def _end_on_idle_sweep(now, tmux):
         return scan_memo[0]
 
     for sid in sorted(reqs):
-        if tmux.get(sid) is None:                    # absent from the RAW snapshot — corroborate before
+        reg = _thread_reg(sid)
+        thread = bool(reg.get("alive") and reg.get("threadOf"))
+        # a comment thread is in NO liveness snapshot (live_sessions hides threadOf regs by design), so
+        # absence from it says nothing about one: its reg's alive flag is the owner's answer, the record
+        # thread_sessions reads and the SDK kill flips. Read here so an alive thread takes the settle and
+        # kill path below instead of the absent branch, which spent its wish with no kill while the caller
+        # had been told it was closing (review round 2, 2026-09-09)
+        if tmux.get(sid) is None and not thread:     # absent from the RAW snapshot: corroborate before
             ended = _confirmed_ended(sid, scan=_pass_scan)   # spending: one flaky read here would
             if ended is True:                        # discard the user's gesture, no kill ever attempted
                 reqs.discard(sid); changed = True    # genuinely dead by some other path → spent
@@ -26080,12 +26126,16 @@ def _end_on_idle_sweep(now, tmux):
             # None: _confirmed_ended already reported the failed probe; the request stands
             continue
         try:
-            ps = _parse(_path_of(sid) or "", sid, now)
+            # a thread's transcript is reached through its reg: discovery lists no threads, so _path_of
+            # answers None for one, and an empty path parses as "not working", a kill on the first cycle
+            # even mid-turn. The settle signal itself is the one sessions get: the transcript's open turn
+            path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
+            ps = _parse(path, sid, now)
             if _session_working(ps.get("turns") or []):
                 continue                             # the turn it asked from is still open — its end is the event
         except Exception:
             continue
-        sys.stderr.write("kill: %s via end-on-idle (self-close)\n" % sid)
+        sys.stderr.write("kill: %s via end-on-idle (self-close%s)\n" % (sid, ", a comment thread" if thread else ""))
         be = Sessions.backend_for(sid)
         be.kill(sid)
         # fresh, own-scan corroboration — never the cycle snapshot, never _pass_scan's memo: this
@@ -26102,9 +26152,13 @@ def _end_on_idle_sweep(now, tmux):
                              "kept for the next cycle\n"
                              % (sid, "still running" if ended is False else "probe failed"))
             continue                                 # the armed request IS the retry
-        _record_death(sid, int(now), "kill")
-        _comment_kill_all(sid, be)
-        _send_to_app("chat", {"type": "closed", "id": sid})
+        if not thread:
+            _record_death(sid, int(now), "kill")
+            _comment_kill_all(sid, be)
+            _send_to_app("chat", {"type": "closed", "id": sid})
+        # a thread's end is its CLI stopping, the way commentResolve and _comment_kill_all end one: no
+        # session death record and no closed frame (a thread has no tab); its comment row stays as it is,
+        # a dormant thread a reply revives. The push the spent wish triggers below re-reads the reg's flip
         reqs.discard(sid); changed = True
     if changed:
         _end_on_idle_save(reqs)
@@ -57622,21 +57676,17 @@ class Handler(BaseHTTPRequestHandler):
                         "route; the refusal is final (the user can toggle its mailbox back on)"}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    st, res = _remote_forward_status(r, "/send", {"id": sid, "text": body["text"]})
-                    if st == 404:
-                        # the far kernel's own gate (below) lists no such session: relayed as the 404 it
-                        # is, with a reason, never as the tunnel fault under it. _remote_forward_status
-                        # keeps a 200's body only, so the reason is composed here, the way the /emoji arm
-                        # reads its status (review find, 2026-09-09)
-                        return self._send(404, json.dumps({"ok": False, "error":
-                            "no live session named '%s' on %s" % (body["who"], r.get("host", "?"))}),
-                            "application/json")
+                    st, res, text = _remote_forward_answer(r, "/send", {"id": sid, "text": body["text"]})
+                    if st and st != 200:
+                        # the far kernel answered no: relayed with its status and in its words, the far host
+                        # named (_remote_refusal). Its gate's JSON 404 carries the reason; a text/plain 404
+                        # is a route that kernel predates, the reading the other remote arms give the
+                        # status, never an unknown session (review round 2, 2026-09-09)
+                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text,
+                                                                         "; the message was not delivered")),
+                                          "application/json")
                     if res is None:                                 # the far kernel didn't answer — say so, never
-                        if st and st != 200:                        # pretend it was delivered
-                            return self._send(200, json.dumps({"ok": False, "error":
-                                "the remote kernel for this session (%s) answered HTTP %s; the message was not delivered"
-                                % (r.get("host", "?"), st)}), "application/json")
-                        return self._send(200, json.dumps({"ok": False, "error":
+                        return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
                             "the remote kernel for this session (%s) isn't answering — message not delivered"
                             % r.get("host", "?")}), "application/json")
                     if isinstance(res, dict) and res.get("ok") is False:
@@ -57711,18 +57761,14 @@ class Handler(BaseHTTPRequestHandler):
                     # discarding that here answered ok:true for a kill that never landed — a headless
                     # caller (`romp end web` against an attached host) walked away from a runaway
                     # session believing it dead. A dead far kernel is its own honest failure too.
-                    st, res = _remote_forward_status(r, u.path, {"id": sid})
-                    if st == 404:
-                        # the far kernel's gate (below) lists no such session: the 404 it answered, with
-                        # a reason composed here since the helper keeps a 200's body only, not the
-                        # tunnel fault under it (review find, 2026-09-09; the /send twin does the same)
-                        return self._send(404, json.dumps({"ok": False, "error":
-                            "no live session named '%s' on %s" % (who, r.get("host", "?"))}), "application/json")
+                    st, res, text = _remote_forward_answer(r, u.path, {"id": sid})
+                    if st and st != 200:
+                        # the far kernel answered no: relayed with its status and in its words, the far
+                        # host named (_remote_refusal): its gate's JSON 404 with the reason, a text/plain
+                        # 404 (a route that kernel predates) as the status and line, never an unknown
+                        # session (review round 2, 2026-09-09; the /send twin does the same)
+                        return self._send(st, json.dumps(_remote_refusal(r, st, res, text)), "application/json")
                     if res is None:
-                        if st and st != 200:
-                            return self._send(200, json.dumps({"ok": False, "error":
-                                "the remote kernel for this session (%s) answered HTTP %s"
-                                % (r.get("host", "?"), st)}), "application/json")
                         return self._send(200, json.dumps({"ok": False, "error":
                             "the remote kernel for this session (%s) isn't answering"
                             % r.get("host", "?")}), "application/json")

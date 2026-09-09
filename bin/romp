@@ -2359,6 +2359,15 @@ print(e if e else "the kernel answered HTTP %s: %s" % (sys.argv[2], sys.argv[1])
 # unknown session fails LOUDLY, never silently.
 if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     _verb="${1#--}"; shift
+    # one usage string per verb, set once (compact's _c_usage convention): every misuse arm below echoes
+    # it to stderr with exit 2, and -h|--help prints it as its first line, so the bare `romp end`, the
+    # misplaced-flag arm and --help cannot disagree (review round 2, 2026-09-09: the bare line kept a
+    # bare form with a trailing space while --help spelled the full one)
+    case "$_verb" in
+        send)      _usage="usage: romp send <session> [--tag <label>] <text>" ;;
+        interrupt) _usage="usage: romp interrupt <session>" ;;
+        end)       _usage="usage: romp end <session>|self [--now|--when-idle]" ;;
+    esac
     _who="${1:-}"
     # -h|--help is the verb's own (the up/down arms' convention), so it never reaches the kernel as a
     # session name, and so is one of the verb's own flags in the session's slot (`romp end --now web`,
@@ -2367,22 +2376,20 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     # session name and goes to the kernel, which is what compact allows too.
     case "$_who" in
         --now|--when-idle)
-            if [[ "$_verb" == end ]]; then echo "usage: romp end <session>|self [--now|--when-idle]" >&2; exit 2; fi ;;
+            if [[ "$_verb" == end ]]; then echo "$_usage" >&2; exit 2; fi ;;
         --tag)
-            if [[ "$_verb" == send ]]; then echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; fi ;;
+            if [[ "$_verb" == send ]]; then echo "$_usage" >&2; exit 2; fi ;;
         -h|--help)
+            echo "$_usage"
             case "$_verb" in
                 send)
-                    echo "usage: romp send <session> [--tag <label>] <text>"
                     echo "  hand a session a message through the kernel. While the session is busy the message"
                     echo "  queues and delivers when the session is quiet. --tag <label> (one word) shows the text"
                     echo "  as machine-sent under that label instead of as your typed words; pass one from scripts"
                     echo "  and cron." ;;
                 interrupt)
-                    echo "usage: romp interrupt <session>"
                     echo "  stop the session's current turn (Esc) through the kernel; the session stays open." ;;
                 end)
-                    echo "usage: romp end <session>|self [--now|--when-idle]"
                     echo "  end a session through the kernel, at once by default. --when-idle ends it once its"
                     echo "  current turn settles, so the closing reply lands first. \`self\` names the calling"
                     echo "  session (from inside a session) and defaults to --when-idle; --now overrides that." ;;
@@ -2390,7 +2397,7 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
             echo "  An unknown session name exits 1 with the kernel's reason."
             exit 0 ;;
     esac
-    if [[ -z "$_who" ]]; then echo "usage: romp $_verb <session> $([[ "$_verb" == send ]] && echo '<text>')" >&2; exit 2; fi
+    if [[ -z "$_who" ]]; then echo "$_usage" >&2; exit 2; fi
     shift
     # `romp end self [--now]` — a session closing ITSELF after finishing its work (the user
     # 2026-08-15: telling a session "close yourself when done" never worked; an agent could only
@@ -2415,10 +2422,10 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
         _tag=""
         if [[ "${1:-}" == "--tag" ]]; then
             _tag="${2:-}"
-            shift 2 || { echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; }
+            shift 2 || { echo "$_usage" >&2; exit 2; }
         fi
         _text="$*"
-        if [[ -z "$_text" ]]; then echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; fi
+        if [[ -z "$_text" ]]; then echo "$_usage" >&2; exit 2; fi
         if [[ -n "$_tag" ]]; then
             [[ "$_tag" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,23}$ ]] \
                 || { echo "romp send: --tag must be one word (letters/digits/dashes, <=24 chars)" >&2; exit 2; }

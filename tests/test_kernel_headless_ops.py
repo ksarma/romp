@@ -229,19 +229,19 @@ class HeadlessRoutes(_RouteServer):
     def test_send_route_passes_a_remote_kernels_queued_through(self):
         # a session living on another kernel: its answer's `queued` rides back to the caller; an older
         # remote without the field reads as not queued (today's behaviour)
-        # the arm reads the status beside the body (_remote_forward_status), so that is the seam patched
+        # the arm reads the status beside the body (_remote_forward_answer), so that is the seam patched
         with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
-             mock.patch.object(km, "_remote_forward_status", lambda r, path, body, method="POST": (200, {"ok": True, "queued": True})):
+             mock.patch.object(km, "_remote_forward_answer", lambda r, path, body, method="POST": (200, {"ok": True, "queued": True}, "")):
             code, resp = self._post("/send", {"id": "sid-r", "text": "/frobnicate now"})
         self.assertEqual((code, resp), (200, {"ok": True, "queued": True}))
         with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
-             mock.patch.object(km, "_remote_forward_status", lambda r, path, body, method="POST": (200, {"ok": True})):
+             mock.patch.object(km, "_remote_forward_answer", lambda r, path, body, method="POST": (200, {"ok": True}, "")):
             code, resp = self._post("/send", {"id": "sid-r", "text": "hello"})
         self.assertEqual((code, resp), (200, {"ok": True, "queued": False}))
         # …and a far kernel's REFUSAL rides back as itself, never rewritten into an ok (review find, #904)
         refusal = {"ok": False, "error": "isolation: the target session's mailbox is OFF"}
         with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
-             mock.patch.object(km, "_remote_forward_status", lambda r, path, body, method="POST": (200, dict(refusal))):
+             mock.patch.object(km, "_remote_forward_answer", lambda r, path, body, method="POST": (200, dict(refusal), "")):
             code, resp = self._post("/send", {"id": "sid-r", "text": "hello"})
         self.assertEqual((code, resp), (200, refusal))
 
@@ -275,6 +275,29 @@ def _rm_thread(parent, tsid):
             f.unlink()
         except OSError:
             pass
+
+
+def _far_kernel(status, body, ctype="application/json"):
+    """A far kernel on loopback answering every POST with one status and body, for the relay tests: the
+    real _remote_forward_answer connects to it, so what the tests stub is the tunnel row, not the helper."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    data = body.encode()
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
 
 
 class UnknownSessionRefused(_RouteServer):
@@ -396,6 +419,7 @@ class UnknownSessionRefused(_RouteServer):
                 code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
                 self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
                 self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish is recorded for the tsid")
+                # the pusher's sweep serves that wish at the thread's settle: the sibling test below
                 code, resp = self._post("/end", {"name": THREAD_NAME, "when": "idle"})
                 self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
                 # an immediate /end reaches the backend's kill on the tsid
@@ -412,6 +436,64 @@ class UnknownSessionRefused(_RouteServer):
                 self._assert_404(code, resp)
         finally:
             km._pending_ops.clear()
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_threads_deferred_end_is_served_by_the_sweep_at_its_settle(self):
+        # the deferred arm's other half: `romp end self` from a thread records the wish, and the pusher's
+        # sweep must serve it. A thread is in no liveness snapshot (live_sessions hides threadOf regs by
+        # design), so the sweep took its absent branch, where _confirmed_ended certified the thread dead
+        # by the bare existence of its reg, and the wish was spent with no kill: the caller was told the
+        # thread was closing while it kept running (review round 2, 2026-09-09). The sweep now reads the
+        # reg's alive+threadOf as the owner's answer, waits on the thread's own transcript through its
+        # reg (discovery lists no threads, so _path_of is None for one), and kills at the settle. A
+        # thread's end is its CLI stopping, the way the thread-end paths end one: no session death
+        # record and no closed frame (it has no tab); the comment row stays, dormant, a reply revives it.
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+
+        def kill(sid):                      # the SDK backend's kill flips the reg's alive flag first
+            reg = json.loads(reg_path.read_text())
+            reg["alive"] = False
+            tmp = reg_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(reg))
+            os.replace(tmp, reg_path)
+            return True
+        fake.kill.side_effect = kill
+        working, parsed, deaths, sent = [True], [], [], []
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: parsed.append(path) or {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: working[0]), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append((app, m))), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                self.assertIn(THREAD_TSID, km._end_on_idle_load())
+                self.assertIs(km._confirmed_ended(THREAD_TSID), False,
+                              "an alive thread is not certified dead by the existence of its reg")
+                # its turn is open: the sweep waits, reading the thread's own transcript
+                km._end_on_idle_sweep(1000, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish stays armed while the turn is open")
+                self.assertEqual(parsed, [km._thread_transcript_path(km._thread_reg(THREAD_TSID), THREAD_TSID)])
+                # the turn settles: the sweep kills the tsid and spends the wish on that kill
+                working[0] = False
+                km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "spent by the kill, not by inference")
+                self.assertFalse(json.loads(reg_path.read_text()).get("alive"))
+                self.assertIs(km._confirmed_ended(THREAD_TSID), True, "the flipped reg is the owner's answer")
+                self.assertEqual(deaths, [], "no session death record for a thread")
+                self.assertEqual(sent, [], "no closed frame: a thread has no tab")
+        finally:
             km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
             _rm_thread(THREAD_PARENT, THREAD_TSID)
             _unregister(THREAD_PARENT)
@@ -434,20 +516,65 @@ class UnknownSessionRefused(_RouteServer):
         # a session living on another kernel is in neither the local registry nor the local live map;
         # the remote map owns it and the request must forward, never 404 here
         with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
-             mock.patch.object(km, "_remote_forward_status", lambda r, path, body, method="POST": (200, {"ok": True})):
+             mock.patch.object(km, "_remote_forward_answer", lambda r, path, body, method="POST": (200, {"ok": True}, "")):
             code, resp = self._post("/end", {"id": self.GHOST})
         self.assertEqual((code, resp), (200, {"ok": True}))
 
-    def test_a_remote_kernels_404_is_relayed_as_a_404_with_its_reason(self):
-        # the far kernel's own gate answers 404; _remote_forward_status keeps a 200's body only, so the
-        # arms used to read (404, None) as None and say "isn't answering" (the tunnel fault). The 404 is
-        # relayed as a 404 naming the session and the host; a dead tunnel (status 0) keeps the tunnel
-        # text; any other answered non-200 names the host and the status (review find, 2026-09-09)
+    def test_a_far_kernels_answer_is_relayed_in_its_own_words(self):
+        # against a REAL far kernel on loopback, so the helper's body read is under test, not a stub of
+        # it. The far gate's JSON 404 carries the reason: relayed with the far host named and the same
+        # status. A text/plain 404 is the far do_POST's answer for a route that kernel predates (the other
+        # remote arms read that status as version skew): relayed as the status and the body's first line,
+        # never dressed as an unknown session; any other non-200 the same way. Before round 2 every far
+        # 404 was composed locally as the unknown-name text (review round 2, 2026-09-09).
+        gate = json.dumps({"ok": False, "error": "no live session named '%s'" % self.GHOST})
+        cases = ((404, gate, "application/json",
+                  ("no live session named '%s'" % self.GHOST, "TESTHOST"), ("HTTP 404",)),
+                 (404, "not found", "text/plain",
+                  ("HTTP 404", "not found", "TESTHOST"), (self.GHOST,)),
+                 (503, "gateway down\nsecond line", "text/plain",
+                  ("HTTP 503", "gateway down", "TESTHOST"), ("second line", self.GHOST)))
+        for path, body in (("/end", {"id": self.GHOST}), ("/interrupt", {"id": self.GHOST}),
+                           ("/send", {"id": self.GHOST, "text": "hello"})):
+            for status, far_body, ctype, expect, absent in cases:
+                srv = _far_kernel(status, far_body, ctype)
+                remote = {"host": "TESTHOST", "local_port": srv.server_address[1], "token": "far-token"}
+                try:
+                    with mock.patch.object(km, "_host_for_sid", lambda sid: remote):
+                        code, resp = self._post(path, body)
+                finally:
+                    srv.shutdown()
+                self.assertEqual(code, status, (path, far_body))
+                self.assertFalse(resp.get("ok"))
+                for s in expect:
+                    self.assertIn(s, resp.get("error", ""), (path, far_body))
+                for s in absent:
+                    self.assertNotIn(s, resp.get("error", ""), (path, far_body))
+            # a dead tunnel: nothing listens on the port, so the call never lands (status 0)
+            import socket
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            dead_port = s.getsockname()[1]
+            s.close()
+            remote = {"host": "TESTHOST", "local_port": dead_port, "token": ""}
+            with mock.patch.object(km, "_host_for_sid", lambda sid: remote), \
+                 mock.patch.object(km, "_demand_redial", lambda host, kind: None):
+                code, resp = self._post(path, body)
+            self.assertEqual(code, 200, path)
+            self.assertIn("isn't answering", resp.get("error", ""), path)
+            self.assertIn("TESTHOST", resp.get("error", ""), path)
+
+    def test_the_relay_arms_read_the_far_answer_seam(self):
+        # the three arms read _remote_forward_answer (status, parsed JSON, body text), never the
+        # 200-only _remote_forward_status the other remote arms keep: a far gate's 404 relays its JSON
+        # error, a text 503 relays the status and line, and status 0 stays the tunnel text
         remote = {"host": "TESTHOST"}
+        gate = {"ok": False, "error": "no live session named '%s'" % self.GHOST}
         for path, body in (("/end", {"id": self.GHOST}), ("/interrupt", {"id": self.GHOST}),
                            ("/send", {"id": self.GHOST, "text": "hello"})):
             with mock.patch.object(km, "_host_for_sid", lambda sid: remote), \
-                 mock.patch.object(km, "_remote_forward_status", lambda r, p, b, method="POST": (404, None)):
+                 mock.patch.object(km, "_remote_forward_answer",
+                                   lambda r, p, b, method="POST": (404, dict(gate), json.dumps(gate))):
                 code, resp = self._post(path, body)
             self.assertEqual(code, 404, path)
             self.assertFalse(resp.get("ok"))
@@ -455,16 +582,18 @@ class UnknownSessionRefused(_RouteServer):
             self.assertIn("TESTHOST", resp.get("error", ""), path)
             self.assertNotIn("isn't answering", resp.get("error", ""), path)
             with mock.patch.object(km, "_host_for_sid", lambda sid: remote), \
-                 mock.patch.object(km, "_remote_forward_status", lambda r, p, b, method="POST": (0, None)):
+                 mock.patch.object(km, "_remote_forward_answer", lambda r, p, b, method="POST": (0, None, "")):
                 code, resp = self._post(path, body)
             self.assertEqual(code, 200, path)
             self.assertIn("isn't answering", resp.get("error", ""), path)
             with mock.patch.object(km, "_host_for_sid", lambda sid: remote), \
-                 mock.patch.object(km, "_remote_forward_status", lambda r, p, b, method="POST": (503, None)):
+                 mock.patch.object(km, "_remote_forward_answer",
+                                   lambda r, p, b, method="POST": (503, None, "gateway down")):
                 code, resp = self._post(path, body)
-            self.assertEqual(code, 200, path)
+            self.assertEqual(code, 503, path)
             self.assertFalse(resp.get("ok"))
             self.assertIn("HTTP 503", resp.get("error", ""), path)
+            self.assertIn("gateway down", resp.get("error", ""), path)
             self.assertIn("TESTHOST", resp.get("error", ""), path)
 
 
