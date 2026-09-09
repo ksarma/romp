@@ -86,9 +86,9 @@ test("the persisted notices come out once: strings only, and the state handed ba
 });
 
 test("render.ts snapshots the toasts on the CORE's pre-reload hook only (not on pagehide: a navigation of the user's own says nothing twice) and shows them again once at load, after the loss toast", () => {
-  assert.match(RENDER, /import \{ liveNotices, takePendingNotices \} from "\.\/reload-hold";/, "the module's two readings; the hold is __rompPaneBusy (the test above)");
-  assert.match(RENDER, /^function persistNoticesForReload\(\): void \{\n\s*try \{ if \(vscodeApi\?\.setState\) vscodeApi\.setState\(\{ \.\.\.\(vscodeApi\.getState\(\) \|\| \{\}\), pendingNotices: liveNotices\(document\.getElementById\("warn-toasts"\)\) \}\); \} catch \{ \/\* ignore \*\/ \}\n\}/m,
-    "the texts of the live toasts, into the same state the drafts and shipsInFlight ride");
+  assert.match(RENDER, /import \{ liveNotices, releasedNotices, takePendingNotices \} from "\.\/reload-hold";/, "the module's three readings; the hold is __rompPaneBusy (the test above)");
+  assert.match(RENDER, /^function persistNoticesForReload\(\): void \{\n\s*try \{ if \(vscodeApi\?\.setState\) vscodeApi\.setState\(\{ \.\.\.\(vscodeApi\.getState\(\) \|\| \{\}\), pendingNotices: liveNotices\(document\.getElementById\("warn-toasts"\)\)\.concat\(releasedNotices\(\(window as any\)\.__rompReload\)\) \}\); \} catch \{ \/\* ignore \*\/ \}\n\}/m,
+    "the texts of the live toasts, then the core's release note if a hold ran past its deadline, into the same state the drafts and shipsInFlight ride");
   // the core's hook writes both records; pagehide writes the scroll record alone (reload-restore.test.ts pins those two lines
   // too), so a reload the user asks for does not replay a toast they were already looking at: ReloadLossToast's one warning
   assert.match(RENDER, /function persistForReload\(\): void \{ persistScrollForReload\(\); persistNoticesForReload\(\); \}[^\n]*\n\(window as any\)\.__rompPersistForReload = persistForReload;\nwindow\.addEventListener\("pagehide", persistScrollForReload\);/);

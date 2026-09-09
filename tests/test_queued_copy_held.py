@@ -101,9 +101,9 @@ const measure = () => page.evaluate(() => {
 });
 // frames: the queue with the mail card; the queue without it (taken, not landed); the transcript landing it
 const inject = (frame) => page.evaluate((f) => { window.postMessage(f, "*"); }, frame);
-const withCard = (b, qid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "queued", texts: [{ md: cfg.mail, romp: true, cancelable: true, idx: 0, ...(qid ? { qid, qts: Date.now() } : {}) }] }] });
+const withCard = (b, qid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "queued", texts: [{ md: cfg.mail, romp: true, cancelable: true, idx: 0, ...(qid ? { sendId: qid, qts: Date.now() } : {}) }] }] });
 const without = (b) => ({ ...b, type: "update", events: b.events.filter((e) => e.kind !== "queued") });
-const landed = (b, qid, uuid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid, ts: new Date().toISOString(), romp: true, absorbed: true, sentAt: Math.floor(Date.now() / 1000) - 5, ...(qid ? { qid } : {}) }] });
+const landed = (b, qid, uuid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid, ts: new Date().toISOString(), romp: true, absorbed: true, sentAt: Math.floor(Date.now() / 1000) - 5, ...(qid ? { sendIds: [qid] } : {}) }] });
 const run = async (label, qid, uuid) => {
   const out = { label };
   await inject(withCard(base, qid)); await page.waitForTimeout(400); out.card = await measure();
@@ -118,7 +118,7 @@ await page.waitForTimeout(300);
 const start = await measure();
 const idPath = await run("id", "echo:m1", "am1");
 // the landed atom stays in the base for the next rounds
-base.events = [...base.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid: "am1", ts: new Date().toISOString(), romp: true, absorbed: true, qid: "echo:m1" }];
+base.events = [...base.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid: "am1", ts: new Date().toISOString(), romp: true, absorbed: true, sendIds: ["echo:m1"] }];
 await page.evaluate(() => { const c = document.getElementById("content"); c.scrollTop = c.scrollHeight; });
 await page.waitForTimeout(300);
 const textPath = await run("text", null, "am2");
@@ -263,6 +263,10 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         self.assertEqual(idp["taken"]["queuedCards"] + idp["taken"]["landedMail"], 1,
                          "between the queue frame and the transcript frame the card's slot is continuous: %r" % idp["taken"])
         self.assertEqual(idp["taken"]["landing"], 1, "…the held card is marked landing: %r" % idp["taken"])
+        # the identified copy is held until its atom lands, not for one push: a second queue frame without it keeps the
+        # held card (the text path drops it there, below). Red with a driver that stamps upstream's qid instead of the
+        # fork's sendId / sendIds: the module then finds no identity and treats the copy as id-less (the 2026-09-09 fold, T252)
+        self.assertEqual(idp["taken2"]["landing"], 1, "the identified copy stays held across a second queue frame: %r" % idp["taken2"])
         self.assertEqual(idp["landed"]["landedMail"], 1, "the landed atom took the slot: %r" % idp["landed"])
         self.assertEqual(idp["landed"]["queuedCards"], 0, "…and the held copy is gone with it: %r" % idp["landed"])
         self.assertEqual(idp["landed"]["gestures"], 0, "no unwritten move through the identified sequence: %r" % r["rows"][-12:])

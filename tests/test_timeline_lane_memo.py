@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """The timeline's two lane memos: the DEAD-LANE memo (2026-09-08, upstream) and the fork's per-lane segment memo.
 
-Both exist in the kernel since the 2026-09-09 fold: for a DEAD lane with a readable store the dead-lane memo
-(stat-keyed on every input file, the parse dropped once cached) is consulted first; the fork's _lane_memo
-(object-identity keyed on the parse, the FrozenStore and the _Caps object; every lane) serves where it does
-not: live lanes, and a dead lane whose key moved. A dead lane the dead-lane memo takes leaves the fork's memo
-(its entry would keep the parse resident). Upstream's cases come first (DeadLaneMemo, HorizonFilterIsExact,
-EntryEncodeMemo, its sid DEAD_SID); the fork's follow under LaneMemoBase, whose fixtures build LIVE lanes.
+Both exist in the kernel since the 2026-09-09 fold, split by liveness (the fork's timeline owner's ruling on
+#1131): a DEAD lane with a readable store is the dead-lane memo's (stat-keyed on every file it reads plus the
+host's suspensions, the parse dropped once cached), and a dead MISS is derived by _lane_segments directly, so the
+fork's _lane_memo (object-identity keyed on the parse, the FrozenStore and the _Caps object) is LIVE-ONLY: its
+counters read the live lanes alone, and the dead lanes' outcomes ride the same /perf block as dead_serve,
+dead_miss and dead_failed_serve. A dead lane whose PARSE failed is cached as the empty lane it drew (a dead
+transcript has no writer; the key's ctime component re-attempts it on a chmod); a seams or marks complaint is
+not. Upstream's cases come first (DeadLaneMemo, HorizonFilterIsExact, EntryEncodeMemo, its sid DEAD_SID); the
+fork's follow under LaneMemoBase, whose fixtures build LIVE lanes, with the dead cases under DeadLanes.
 
 --- the dead-lane memo ---
 The full timeline build ran every pusher cycle (the fleet signature's 5 s bucket turns over faster than a 6 s
@@ -299,6 +302,22 @@ def _reset(stats):
         stats[k] = 0
 
 
+def move_ctime(path):
+    """Move a file's ctime and nothing else: flip its mode until the stat's ctime differs (the clock's
+    coarse tick can hand two chmods one timestamp). mtime, size and inode stand."""
+    before = os.stat(path)
+    deadline = time.monotonic() + 5
+    while True:
+        mode = before.st_mode & 0o777
+        os.chmod(path, 0o600 if mode != 0o600 else 0o644)
+        after = os.stat(path)
+        if after.st_ctime_ns != before.st_ctime_ns:
+            return after
+        if time.monotonic() > deadline:
+            raise AssertionError("ctime did not move under chmod")
+        time.sleep(0.005)
+
+
 # ── _derive_judging as it stood before the split (perf4-readers at 3781e0f8), the equality oracle ──
 def ref_derive_judging(sid, caps, goals, t0, out, seg_ends=None):
     endt = (lambda tt: seg_ends.get(tt, tt)) if seg_ends else (lambda tt: tt)
@@ -434,6 +453,14 @@ class LaneMemoBase(unittest.TestCase):
     def outcomes(self):
         st = self.stats()
         return {k: st[k] for k in ("hit", "miss", "live_tail", "complain_skip", "unshared_skip")}
+
+    def dead(self):
+        """The dead lanes' counters of the same block (build_timeline's, since the fold made this memo live-only)."""
+        st = self.stats()
+        return {k: st[k] for k in ("dead_serve", "dead_miss", "dead_failed_serve")}
+
+    def parse_cache_holds(self, sid=SID):
+        return any(p.endswith("/" + sid + ".jsonl") for p in km._parse_cache)
 
     def lane(self, tl, sid=SID):
         return next(l for l in tl["sessions"] if l["id"] == sid)
@@ -639,19 +666,22 @@ class EveryInputBusts(LaneMemoBase):
     def test_liveness_is_in_the_key(self):
         self.build(tmux=self.tmux(SID))
         tl = self.build(tmux={})                                         # the process ended: a dead lane (12 h window)
-        self.assertEqual(self.outcomes()["miss"], 2, "the same parse, another liveness: no hit")
         self.assertFalse(self.lane(tl)["live"])
-        # From here the lane is a DEAD lane with a readable store, and since the 2026-09-09 fold upstream's dead-lane
-        # memo (#1131) takes it: the miss above populated that memo and dropped this memo's entry (the entry keys on
-        # the parse object, which the dead-lane memo lets go of), so the next build is a dead-lane SERVE, counted under
-        # _VIEW_STATS["laneServe"], and this memo is not consulted (before the fold: one more hit here).
+        # Re-aimed at the 2026-09-09 fold (the fork's timeline owner's ruling on upstream's #1131): this memo is
+        # LIVE-ONLY, so the dead build never consults it and the live entry cannot serve the dead lane (before the
+        # fold the key's `live` component made that build a second miss here). The dead lane is derived once by
+        # _lane_segments directly (dead_miss) and handed to the dead-lane memo, whose populate drops the entry this
+        # memo held from the lane's live days (it keys on the parse object the dead-lane memo lets go of).
+        self.assertEqual(self.outcomes()["miss"], 1, "one miss, the live build's: a dead lane is not this memo's")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 1, "dead_failed_serve": 0})
         self.assertIn(SID, km._dead_lane_memo, "the dead build handed the lane to the dead-lane memo")
-        self.assertNotIn(SID, km._lanes_memo, "…and this memo dropped its entry for it, so the parse can go")
+        self.assertNotIn(SID, km._lanes_memo, "and this memo dropped the entry from the lane's live days, so the parse can go")
         served = km._VIEW_STATS.get("laneServe", 0)
         self.build(tmux={})
         self.assertEqual(km._VIEW_STATS.get("laneServe", 0), served + 1, "the third build is a dead-lane serve")
-        self.assertEqual(self.outcomes()["hit"], 0, "…not a hit here: a dead lane the dead-lane memo holds skips this memo")
-        self.assertEqual(self.outcomes()["miss"], 2)
+        self.assertEqual(self.dead()["dead_serve"], 1)
+        self.assertEqual(self.outcomes(), {"hit": 0, "miss": 1, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0},
+                         "a dead lane is served without this memo")
 
     def test_an_open_turn_reads_open_only_on_a_live_lane(self):
         self.append_records([uline(self.t0 + 100, "keep going", "u2", "a1"),
@@ -660,11 +690,14 @@ class EveryInputBusts(LaneMemoBase):
                                           "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}])
         tl_live = self.build(tmux=self.tmux(SID))
         tl_dead = self.build(tmux={})
-        self.assertEqual(self.outcomes()["miss"], 2)
+        self.assertEqual(self.outcomes()["miss"], 1, "the live build's; the dead build is derived outside this memo")
+        self.assertEqual(self.dead()["dead_miss"], 1)
         self.assertEqual([b["open"] for b in tl_live["turns"][SID]][-1], True)
         self.assertEqual([b["open"] for b in tl_dead["turns"][SID]][-1], False)
 
-    def test_a_parent_lane_leaving_the_build_moves_the_branch_clip(self):
+    def fork_fixture(self):
+        """A parent lane and a child forked from it at fork_t: the child's transcript carries the parent's
+        history verbatim, and the backend reports the fork. Returns fork_t."""
         fork_t = self.now - 300
         shared = [uline(self.now - 600, "how should the retry loop back off?", "u1"),
                   aline(self.now - 580, "Use exponential backoff.", "a1", "u1")]
@@ -687,8 +720,33 @@ class EveryInputBusts(LaneMemoBase):
             def __getattr__(self, name):
                 return lambda *a, **k: None
         km._sdk = lambda: FakeBe()
-        # LIVE lanes (since the 2026-09-09 fold a dead lane is served by upstream's dead-lane memo first, whose key
-        # carries the branch clip itself; this memo's clip key is exercised where the memo serves: live lanes)
+        return fork_t
+
+    def test_a_parent_lane_leaving_the_build_moves_the_branch_clip(self):
+        # The ORIGINAL aim, dead lanes, restored at the 2026-09-09 fold by the fork's timeline owner's ruling: a
+        # dead lane is the dead-lane memo's, whose key carries the branch clip (fromId, t, cut), so the parent
+        # leaving the build moves the child's key, the child is derived again without the clip and its bars
+        # show the pre-fork segments. The memo counters are the dead lanes' (this memo never sees a dead lane).
+        fork_t = self.fork_fixture()
+        tl1 = self.build(tmux={})
+        self.assertTrue(all(b["start"] > fork_t for b in tl1["turns"][CHILD]), "clipped while the parent is a lane")
+        key1 = km._dead_lane_memo[CHILD][0]
+        self.build(tmux={})
+        (jd.NAMES / PARENT).unlink()                                     # the parent leaves the build: no name, no row
+        jd._discover_cache.clear()
+        tl3 = self.build(tmux={})
+        self.assertNotIn(PARENT, {l["id"] for l in tl3["sessions"]})
+        self.assertTrue(any(b["start"] < fork_t for b in tl3["turns"][CHILD]), "the whole story, the parent gone")
+        self.assertNotEqual(km._dead_lane_memo[CHILD][0], key1, "the child's key moved with its clip")
+        self.assertEqual(self.dead(), {"dead_serve": 4, "dead_miss": 4, "dead_failed_serve": 0},
+                         "three dead misses, three serves, then the child's clip moved (one more miss) beside SID's serve")
+        self.assertEqual(self.outcomes(), {"hit": 0, "miss": 0, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0},
+                         "dead lanes never touch this memo")
+        self.assertEqual(self.stats()["entries"], 0)
+
+    def test_a_parent_lane_leaving_the_build_moves_a_live_childs_branch_clip(self):
+        # The same story on LIVE lanes, this memo's domain since the fold: the clip is in its key
+        fork_t = self.fork_fixture()
         tl1 = self.build(tmux=self.tmux(SID, PARENT, CHILD))
         self.assertTrue(all(b["start"] > fork_t for b in tl1["turns"][CHILD]), "clipped while the parent is a lane")
         self.assertEqual(self.outcomes()["miss"], 3)
@@ -710,6 +768,125 @@ class EveryInputBusts(LaneMemoBase):
         tl2 = self.build()
         self.assertEqual(self.outcomes()["hit"], 1, "a flag is a badge-row input, not a segment input")
         self.assertTrue(self.lane(tl2)["postalServiceOff"], "and the row carries it at once")
+
+
+class DeadLanes(LaneMemoBase):
+    """The fork's timeline owner's ruling at the 2026-09-09 fold: a dead lane bypasses this memo (its segment
+    part is derived by _lane_segments directly and cached in the dead-lane memo), a failed dead parse is cached
+    as an empty lane under a key that carries ctime, and the host's suspensions are in the dead-lane key."""
+
+    def dead_build(self):
+        return self.build(tmux={})                                       # nobody live: SID is a dead lane in the window
+
+    def test_a_dead_miss_leaves_this_memo_and_the_parse_cache_empty_and_is_not_a_miss_here(self):
+        tl = self.dead_build()
+        self.assertEqual(len(tl["turns"][SID]), 1, "derived: the bar is drawn")
+        self.assertEqual(self.outcomes(), {"hit": 0, "miss": 0, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0},
+                         "a dead lane is derived outside this memo: no miss, no store-then-pop")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 1, "dead_failed_serve": 0})
+        self.assertEqual(self.stats()["entries"], 0)
+        self.assertNotIn(SID, km._lanes_memo)
+        self.assertFalse(self.parse_cache_holds(), "the parse went with the populate (the resident-memory lever)")
+        self.assertIn(SID, km._dead_lane_memo)
+        self.assertEqual((self.stats()["segs_hit"], self.stats()["segs_miss"]), (0, 0), "the segment counters are the live lanes' too")
+        tl2 = self.dead_build()
+        self.assertEqual(self.dead(), {"dead_serve": 1, "dead_miss": 1, "dead_failed_serve": 0})
+        self.assertEqual(tl2["turns"][SID], tl["turns"][SID])
+
+    def test_a_failed_dead_parse_is_parsed_once_served_empty_and_re_attempted_when_the_stat_moves(self):
+        parses, mode = [], ["fail"]
+        real = self._saved["_parse"]
+
+        def parse(path, sid, now):
+            parses.append(path)
+            if mode[0] == "fail":
+                raise OSError("unreadable")
+            return real(path, sid, now)
+        km._parse = parse
+        err = io.StringIO()
+        with redirect_stderr(err):
+            tl1 = self.dead_build()
+            tl2 = self.dead_build()
+        self.assertEqual(len(parses), 1, "parsed once: a dead transcript has no writer, so the failed parse is cached")
+        self.assertEqual(tl1["turns"][SID], [])
+        self.assertEqual(tl2["turns"][SID], [], "served as the empty lane it drew")
+        self.assertEqual(self.lane(tl2), self.lane(tl1))
+        self.assertTrue(km._dead_lane_memo[SID][1]["failed"], "the entry says its parse failed")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 1, "dead_failed_serve": 1})
+        self.assertEqual(err.getvalue().count("parse failed"), 1, "_bars_complain said so once")
+        self.assertEqual(self.outcomes()["complain_skip"], 0, "not this memo's outcome: a dead lane")
+        # a chmod moves the transcript's ctime alone (mtime and size stand): the key moves and the parse is
+        # attempted again, and a readable file draws its bar
+        mode[0] = "ok"
+        move_ctime(self.tpath())
+        with redirect_stderr(err):
+            tl3 = self.dead_build()
+        self.assertEqual(len(parses), 2, "re-attempted once the stat moved")
+        self.assertEqual(len(tl3["turns"][SID]), 1, "readable again: the bar is drawn")
+        self.assertFalse(km._dead_lane_memo[SID][1]["failed"])
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 2, "dead_failed_serve": 1})
+        with redirect_stderr(err):
+            self.dead_build()
+        self.assertEqual(len(parses), 2)
+        self.assertEqual(self.dead()["dead_serve"], 1)
+
+    def test_a_chmod_alone_moves_the_stat_key(self):
+        p = str(self.tpath())
+        k0 = km._stat_key(p)
+        move_ctime(p)
+        k1 = km._stat_key(p)
+        self.assertNotEqual(k0, k1, "ctime is in the key: a chmod or a rename moves it")
+        self.assertEqual(k0[:3], k1[:3], "mtime, size and inode stood")
+        self.assertIsNone(km._stat_key(p + ".absent"))
+
+    def test_a_seams_or_marks_complaint_on_a_dead_lane_is_derived_every_build_not_cached(self):
+        # the narrowing of upstream's cache-a-failure rule to the PARSE stage: a complaint the lane says every
+        # build (seams, judging marks) is never served from the dead-lane memo
+        km._segs_seam = lambda turn, store: (_ for _ in ()).throw(ValueError("malformed seam"))
+        with redirect_stderr(io.StringIO()):
+            tl = self.dead_build(); self.dead_build()
+        self.assertNotIn(SID, km._dead_lane_memo, "a seams complaint is not cached")
+        self.assertEqual(len(tl["turns"][SID]), 1, "the seams fell back to em.segments; the bar still draws")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 2, "dead_failed_serve": 0})
+        km._segs_seam = self._saved["_segs_seam"]
+        km._derive_judging_marks = lambda *a, **k: (_ for _ in ()).throw(KeyError("t"))
+        with redirect_stderr(io.StringIO()):
+            tl = self.dead_build(); self.dead_build()
+        self.assertNotIn(SID, km._dead_lane_memo, "a marks complaint is not cached")
+        self.assertEqual(tl["judging"], [], "this lane lost its marks; the frame shipped")
+        self.assertEqual(self.dead()["dead_miss"], 4)
+        self.assertEqual(self.outcomes()["complain_skip"], 0, "dead lanes are not this memo's")
+
+    def test_a_host_suspension_re_derives_a_cached_dead_lane(self):
+        # without tuple(_downtime) in the dead-lane key a suspension recorded after the lane was cached left its
+        # un-excised bar served until a keyed file moved, and a dead transcript never moves
+        self.dead_build()
+        key0 = km._dead_lane_memo[SID][0]
+        km._downtime[:] = [(self.t0 + 5, self.t0 + 10)]                  # a nap inside the segment
+        tl = self.dead_build()
+        self.assertEqual(len(tl["turns"][SID]), 2, "the bar is cut at the nap on the very next build")
+        self.assertNotEqual(km._dead_lane_memo[SID][0], key0, "the suspensions are in the key")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 2, "dead_failed_serve": 0})
+        km._downtime.append((self.now - 20000, self.now - 19000))        # a sleep outside every segment: same bars,
+        tl3 = self.dead_build()                                          # a different key
+        self.assertEqual(self.dead()["dead_miss"], 3)
+        self.assertEqual(json.dumps(tl3["turns"][SID]), json.dumps(tl["turns"][SID]))
+        km._downtime[:] = [(self.t0 + 5, self.t0 + 10), (self.now - 20000, self.now - 19000)]   # the same content, rebound
+        self.dead_build()
+        self.assertEqual(self.dead(), {"dead_serve": 1, "dead_miss": 3, "dead_failed_serve": 0}, "the same suspensions: served")
+
+    def test_a_dead_lane_with_a_faulted_store_is_derived_every_build(self):
+        # upstream's rule stands beside the fork's routing: no store, no cache, and the derivation is a dead miss
+        real = jd.load_goals_shared_or_fault
+        jd.load_goals_shared_or_fault = lambda sid: (None, OSError("store unreadable"))
+        try:
+            with redirect_stderr(io.StringIO()):
+                tl = self.dead_build(); self.dead_build()
+        finally:
+            jd.load_goals_shared_or_fault = real
+        self.assertNotIn(SID, km._dead_lane_memo)
+        self.assertEqual(len(tl["turns"][SID]), 1, "drawn without goal-derived data")
+        self.assertEqual(self.dead(), {"dead_serve": 0, "dead_miss": 2, "dead_failed_serve": 0})
 
 
 class NotHeld(LaneMemoBase):
@@ -1020,8 +1197,13 @@ class PerfWiring(LaneMemoBase):
         self.build(); self.build()
         blk = km._PERF_STATS.snapshot()["memos"]["lanes"]
         self.assertEqual(set(blk), {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
-                                    "segs_hit", "segs_miss"})
+                                    "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"})
         self.assertEqual((blk["hit"], blk["miss"], blk["entries"], blk["segs_hit"], blk["segs_miss"]), (1, 1, 1, 1, 1))
+        self.assertEqual((blk["dead_serve"], blk["dead_miss"], blk["dead_failed_serve"]), (0, 0, 0), "live lanes only so far")
+        self.build(tmux={}); self.build(tmux={})
+        blk = km._PERF_STATS.snapshot()["memos"]["lanes"]
+        self.assertEqual((blk["dead_serve"], blk["dead_miss"], blk["dead_failed_serve"]), (1, 1, 0), "the dead lanes ride the same block")
+        self.assertEqual((blk["hit"], blk["miss"]), (1, 1), "and leave the live counters alone")
         self.assertIn('("lanes", _lanes_memo_report)', inspect.getsource(km._PerfStats.snapshot))
 
 

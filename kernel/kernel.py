@@ -483,11 +483,16 @@ class _PerfStats:
                                    per-lane segment memo in build_timeline, item A: the bars,
                                    seg_ends, last_t, compactions and judging marks of a lane, keyed
                                    on the parse, store and captions objects and the other inputs
-                                   _lanes_memo's comment names) -> hit / miss / live_tail (a live
-                                   tail was merged: derived, not held) / complain_skip (the parse
-                                   or a stage complained) / unshared_skip (a non-frozen store with
-                                   content) / evict, the gauge entries, and segs_hit / segs_miss
-                                   (segments served against derived: the cost-weighted hit rate);
+                                   _lanes_memo's comment names; live lanes only) -> hit / miss /
+                                   live_tail (a live tail was merged: derived, not held) /
+                                   complain_skip (the parse or a stage complained) / unshared_skip
+                                   (a non-frozen store with content) / evict, the gauge entries,
+                                   segs_hit / segs_miss (segments served against derived: the
+                                   cost-weighted hit rate), and the DEAD lanes' dead_serve (served
+                                   from the dead-lane memo) / dead_miss (derived directly, cached
+                                   after unless the store faulted or a stage complained) /
+                                   dead_failed_serve (served as the empty lane a failed parse was
+                                   cached as);
                                    chat_merge_sets (the live-merge's transcript-side sets, one entry
                                    per sid on the parsed session's identity, see _merge_tx_sets)
                                    -> hit / miss (merges served from the memo vs derived) and the
@@ -40801,14 +40806,22 @@ def _judging_assemble(cap_marks, other_marks, t0, out, stamp=False):
 # derived per build as before, so a cached lane's frame is byte-identical to a rebuilt one. Once a dead
 # lane is cached, its PARSE is dropped from _parse_cache: nothing else reads a dead session's parse per
 # cycle, and those parses were the bulk of a multi-GB resident set (a 166 MB transcript parses to ~220 MB).
-_dead_lane_memo = {}      # sid -> (key, {"bars", "compactions", "last_t", "marks"})
+# A dead lane whose PARSE failed is cached too, as the empty lane it drew with `failed` set (the 2026-09-09
+# fold): a dead transcript has no writer, so re-attempting the parse every cycle yields nothing and re-reads
+# a corrupt large file every ~6 s for the 48 h window; the key's ctime component (_stat_key) re-attempts it
+# on a chmod. A seams or judging-marks complaint is NOT cached: the lane says so every build. The fork's
+# per-lane memo (_lanes_memo, below) holds LIVE lanes only; a dead miss is derived by _lane_segments directly.
+_dead_lane_memo = {}      # sid -> (key, {"bars", "compactions", "last_t", "marks", "failed"})
 _DEAD_LANE_MEMO_MAX = 512
 
 
 def _stat_key(p):
+    """A file's identity for the dead-lane key: mtime, size, inode, and ctime (the 2026-09-09 fold), which a
+    chmod or a rename moves while mtime and size stand. A dead lane whose parse failed is cached as an empty
+    lane under this key (the populate in build_timeline), so a permission fix must move it."""
     try:
         st = os.stat(p)
-        return (st.st_mtime_ns, st.st_size, st.st_ino)
+        return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
     except OSError:
         return None
 
@@ -40816,7 +40829,11 @@ def _stat_key(p):
 def _dead_lane_key(sid, path, branch):
     """Every input the parse-derived parts of a dead lane read: the transcript and its states file (the
     parse), the goals store (seams, judging), the captions and the archive (judging), the session flags
-    (the blocked state), and the branch clip. None when the transcript cannot be stat'd (never cache)."""
+    (the blocked state), the branch clip, and the host's suspensions (tuple(_downtime), the 2026-09-09
+    fold: _awake_spans excises them from every bar and _suspended_after closes a turn stranded before
+    one; a suspension recorded after the lane was cached would otherwise leave its un-excised bar served
+    until a keyed file moved, and a dead transcript never moves). None when the transcript cannot be
+    stat'd (never cache)."""
     tk = _stat_key(path)
     if tk is None:
         return None
@@ -40825,7 +40842,8 @@ def _dead_lane_key(sid, path, branch):
             _stat_key(jd.CAPDIR / (sid + ".jsonl")),                # the file _captions(sid) reads
             _stat_key(jd.STATE / "archive" / (sid + ".json")),
             _stat_key(jd.STATE / "session-flags.json"),
-            (branch or {}).get("fromId"), (branch or {}).get("t"), (branch or {}).get("cut"))
+            (branch or {}).get("fromId"), (branch or {}).get("t"), (branch or {}).get("cut"),
+            tuple(_downtime))
 
 
 def _dead_lane_marks(marks, t0):
@@ -41888,9 +41906,15 @@ def _bars_complain(who, stage, e):
 # same session object while the transcript is unchanged, load_goals_shared the same FrozenStore while
 # the store, its journal and its archive are unchanged, _captions the same _Caps while the captions
 # file is unchanged. The memo holds one entry per lane and serves it while every input is the same
-# object or value. Everything else on the lane (the chip, the awaiting overlay, the intervals, the
-# flags, comments, episodes, the branch endpoint) is derived per build as before: PLAN-2's P11 memoized
-# the whole lane and was refuted on those inputs. The inputs, each in the key:
+# object or value. LIVE lanes only since the 2026-09-09 fold: a dead lane's segment part is the
+# dead-lane memo's (_dead_lane_memo above: stat-keyed on every file it reads, the parse dropped once
+# cached), and build_timeline derives a dead MISS through _lane_segments directly, so this memo never
+# stores an entry the dead-lane populate would pop at once and its counters read the live lanes alone
+# (the dead lanes' outcomes ride the same /perf block: dead_serve, dead_miss, dead_failed_serve). An
+# entry from a lane's live days goes when the dead-lane memo takes the lane (the populate pops it: it
+# holds the parse the populate releases). Everything else on the lane (the chip, the awaiting overlay,
+# the intervals, the flags, comments, episodes, the branch endpoint) is derived per build as before:
+# PLAN-2's P11 memoized the whole lane and was refuted on those inputs. The inputs, each in the key:
 #   session   the object after _parse and _merge_live_atoms, by IDENTITY, held in the entry so the
 #             identity cannot be recycled. The loop reads its turns (t, end, ended, trigger, atoms).
 #             A live tail (the merge returned a new object) is derived and not held, since it is a new
@@ -41903,7 +41927,8 @@ def _bars_complain(who, stage, e):
 #             appended between the two lands under the OLD identity and the next build's new object
 #             misses; a stat of the captions file taken here would follow the read and admit a stale
 #             entry, so none is taken. An empty caps as ("empty",), as for the store.
-#   live      an open bar needs a live lane (turn_open).
+#   live      an open bar needs a live lane (turn_open). True on every call since the fold (dead lanes
+#             never reach this memo); kept in the key as the derivation's input.
 #   bft       the branch clip, the fork time while the parent's lane is in the build and None otherwise
 #             (build_timeline's branch_of); it drops the copied pre-branch segments and boundaries.
 #   downtime  tuple(_downtime): _awake_spans excises the host's suspensions and _suspended_after closes
@@ -41927,12 +41952,21 @@ def _bars_complain(who, stage, e):
 _lanes_memo = {}          # sid -> (session, goals_obj, caps_obj, key, value); value = _lane_segments' tuple
 _LANES_MEMO_MAX = 256
 _lanes_stats = {"hit": 0, "miss": 0, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0, "evict": 0,
-                "segs_hit": 0, "segs_miss": 0}
+                "segs_hit": 0, "segs_miss": 0,
+                # the DEAD lanes of a bars build, counted by build_timeline (this memo never sees one): served
+                # from _dead_lane_memo (dead_serve), derived through _lane_segments (dead_miss: cached after
+                # unless the store faulted, the transcript could not be stat'ed or a stage complained), or
+                # served as the empty lane a failed parse was cached as (dead_failed_serve). Disjoint: their
+                # sum is the dead lanes of every bars build.
+                "dead_serve": 0, "dead_miss": 0, "dead_failed_serve": 0}
 _LANES_LOCK = threading.Lock()
 
 
 def _lanes_memo_report():
-    """The memo's counters plus its occupancy, for /perf (memos.lanes)."""
+    """The memo's counters plus its occupancy, for /perf (memos.lanes). hit, miss, live_tail, complain_skip,
+    unshared_skip, evict, entries, segs_hit and segs_miss are the LIVE lanes' since the 2026-09-09 fold;
+    dead_serve, dead_miss and dead_failed_serve are the dead lanes' (build_timeline counts them here, so one
+    block carries every lane's outcome)."""
     with _LANES_LOCK:
         out = dict(_lanes_stats)
         out["entries"] = len(_lanes_memo)
@@ -42039,9 +42073,9 @@ def _lane_segments(sid, session, goals, caps, live, bft):
 def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
     """_lane_segments through the per-lane memo (the comment above _lanes_memo names every input): the
     six pieces build_timeline reads, bars, seg_ends, last_t, compactions, cap_marks and other_marks,
-    served from the lane's entry when its inputs are the previous build's and derived otherwise, plus
-    `complained` (_lane_segments' flag; False on a hit, since a complaining lane is never held), which
-    the dead-lane memo reads: a lane this memo would not hold is not cached there either.
+    served from the lane's entry when its inputs are the previous build's and derived otherwise.
+    LIVE lanes only (the 2026-09-09 fold): build_timeline serves a dead lane from the dead-lane memo
+    and derives a dead miss with _lane_segments directly, so `live` is True on every call here.
     `parsed` is the _parse object and `session` the one after _merge_live_atoms, the same object
     unless a live tail was merged; `parse_ok` is False when the parse failed and `session` is the
     empty stand-in."""
@@ -42070,7 +42104,7 @@ def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
                 _lanes_memo[sid] = ent
                 _lanes_stats["hit"] += 1
                 _lanes_stats["segs_hit"] += ent[4][6]
-                return ent[4][:6] + (False,)
+                return ent[4][:6]
             if ent[0] is not parsed:
                 _lanes_memo.pop(sid, None)                    # its parse object left the cache: it cannot hit again
     value = _lane_segments(sid, session, goals, caps, live, bft)
@@ -42084,7 +42118,7 @@ def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
                 _lanes_memo.pop(next(iter(_lanes_memo)))      # the least recently served goes first, never the whole memo
                 _lanes_stats["evict"] += 1
             _lanes_memo[sid] = (session, gobj, cobj, key, value)
-    return value[:6] + (value[7],)
+    return value[:6]
 
 
 _JUDGING_ROW_CAP = 20000     # judging marks per bars frame — far above any legible band density,
@@ -42280,6 +42314,8 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             cached = lane_hit[1]
             session = None; caps = {}; st_turns = []; open_now = False
             _VIEW_STATS["laneServe"] = _VIEW_STATS.get("laneServe", 0) + 1
+            with _LANES_LOCK:                             # the dead lanes' outcomes ride memos.lanes (_lanes_stats' comment)
+                _lanes_stats["dead_failed_serve" if cached.get("failed") else "dead_serve"] += 1
         elif with_bars:
             try:
                 session = _parse(s["path"], sid, now)
@@ -42370,15 +42406,29 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
                 last_t = None
         else:
             # The SEGMENT part of the lane — the turn loop that makes the bars, seg_ends, last_t and the
-            # compaction markers, plus this lane's judging marks — comes through the per-lane memo (perf
-            # round 4, item A): a lane whose inputs are the previous build's objects costs a lookup, and
-            # _lanes_memo's comment names every input in the key. The badge row below is per build.
+            # compaction markers, plus this lane's judging marks. A LIVE lane's comes through the per-lane
+            # memo (perf round 4, item A): a lane whose inputs are the previous build's objects costs a
+            # lookup, and _lanes_memo's comment names every input in the key. A DEAD lane's is derived here
+            # directly (a dead MISS: the dead-lane memo above did not serve it) and cached there under its
+            # stat key below, so the per-lane memo never stores an entry the populate would pop at once and
+            # never counts a dead lane as its miss (the 2026-09-09 fold). The badge row below is per build.
             _bft = (branch_of.get(sid) or {}).get("t")
-            bars, seg_ends, last_t, compactions, cap_marks, other_marks, complained = _lane_memo(
-                sid, parsed, session, goals, caps, live, _bft, parse_ok)
+            if live:
+                bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo(
+                    sid, parsed, session, goals, caps, live, _bft, parse_ok)
+            else:
+                value = _lane_segments(sid, session, goals, caps, live, _bft)
+                bars, seg_ends, last_t, compactions, cap_marks, other_marks = value[:6]
+                complained = value[7]
+                with _LANES_LOCK:
+                    _lanes_stats["dead_miss"] += 1
+                if complained:
+                    lane_key = None                        # a seams or marks complaint is said every build, never cached
+                # a FAILED PARSE is cached all the same, as the empty lane it drew (bars [], `failed` set in the
+                # entry): a dead transcript has no writer, so re-attempting every cycle yields nothing and re-reads
+                # a corrupt large file every cycle for the 48 h window; the key's ctime component re-attempts it on
+                # a chmod, and _bars_complain said so once (the 2026-09-09 fold)
             turns[sid] = bars
-            if not parse_ok or complained:
-                lane_key = None                            # a lane whose parse or a stage failed is derived, not held
             marks = []
             try:
                 if lane_key is not None:
@@ -42394,11 +42444,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             if lane_key is not None:
                 if len(_dead_lane_memo) > _DEAD_LANE_MEMO_MAX:      # bounded by the lane window; evict oldest-inserted
                     _dead_lane_memo.pop(next(iter(_dead_lane_memo)))
-                _dead_lane_memo[sid] = (lane_key, {"bars": bars, "compactions": compactions, "last_t": last_t, "marks": marks})
+                _dead_lane_memo[sid] = (lane_key, {"bars": bars, "compactions": compactions, "last_t": last_t, "marks": marks,
+                                                   "failed": not parse_ok})
                 # the parse has done its work for this dead lane: drop it (the RSS lever); a lane that moves
                 # re-parses once, and a session that revives is parsed by its chat build as before. The
-                # per-lane memo's entry goes with it: its key is that parse object, so it cannot hit again and
-                # would hold the parse the pop just released (the rule _lane_memo applies when it sees one)
+                # per-lane memo's entry from the lane's LIVE days goes with it: its key is that parse object, so
+                # it cannot hit again and would hold the parse the pop just released (the rule _lane_memo
+                # applies when it sees one)
                 _parse_cache.pop(s["path"], None)
                 with _LANES_LOCK:
                     _lanes_memo.pop(sid, None)

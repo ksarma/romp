@@ -116,7 +116,7 @@ class SourcePins(unittest.TestCase):
         self.assertIn("function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }", RENDER)
         self.assertIn("(window as any).__rompPersistForReload = persistForReload;", RENDER)
         self.assertIn('window.addEventListener("pagehide", persistScrollForReload);', RENDER)
-        self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts"))', RENDER)
+        self.assertIn('pendingNotices: liveNotices(document.getElementById("warn-toasts")).concat(releasedNotices((window as any).__rompReload))', RENDER)
         self.assertIn("const taken = takePendingNotices(st);", RENDER)
         self.assertIn('if (st && typeof st === "object" && "pendingNotices" in st) vscodeApi?.setState?.(taken.rest);', RENDER)
         self.assertIn("for (const text of taken.notices) warnToast(text);", RENDER)

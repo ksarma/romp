@@ -2148,7 +2148,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   derived and not held); `evict` (entries dropped for lanes that left a full
   build's lane set or past the 256-entry bound), the gauge `entries`, and
   `segs_hit` and `segs_miss`, the segments served against derived, which
-  weight the hit rate by cost.
+  weight the hit rate by cost. Since the 2026-09-09 fold those counters read the live lanes alone: a dead lane is
+  the timeline's dead-lane memo's, and its outcomes ride the same block as `dead_serve`
+  (served from that memo), `dead_miss` (derived, and cached unless its store faulted or a
+  stage complained) and `dead_failed_serve` (served as the empty lane a failed parse was
+  cached as, until the transcript's stat moves).
   `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
   a parsed transcript (the uuids and user texts the transcript already holds,
   and the newest human turn's time), one entry per session keyed on the

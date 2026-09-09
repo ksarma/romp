@@ -74,7 +74,7 @@ import { retainLiveOmitted } from "./tab-order";
 import { userTurnShows } from "./user-turn-content";
 import { ScrollDiagBudget, classifyScroll, scrollWriteRow, tailChangeRow, tailLabel, spacerRow, readScrollDiagCap, summarizeTailMutations, tailMutRow } from "./scroll-write";
 import { reloadScrollRecord, takeReloadScroll, type ReloadScroll } from "./reload-restore";
-import { liveNotices, takePendingNotices } from "./reload-hold";   // the notices a reload would wipe, replayed on the fresh page (T215 meets T265); the hold itself is __rompPaneBusy below (T272)
+import { liveNotices, releasedNotices, takePendingNotices } from "./reload-hold";   // the notices a reload would wipe, replayed on the fresh page (T215 meets T265); the hold itself is __rompPaneBusy below (T272)
 import { keepResidentEvents } from "./frame-merge";
 import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -12056,7 +12056,7 @@ function persistScrollForReload(): void {
 // writes them: a reload of the user's own (pagehide) says nothing twice, the way the loss toast fires once and not on
 // every load (tests/test_ship_reship.py ReloadLossToast), while the scroll record rides both, as upstream wrote it.
 function persistNoticesForReload(): void {
-  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), pendingNotices: liveNotices(document.getElementById("warn-toasts")) }); } catch { /* ignore */ }
+  try { if (vscodeApi?.setState) vscodeApi.setState({ ...(vscodeApi.getState() || {}), pendingNotices: liveNotices(document.getElementById("warn-toasts")).concat(releasedNotices((window as any).__rompReload)) }); } catch { /* ignore */ }
 }
 function persistForReload(): void { persistScrollForReload(); persistNoticesForReload(); }   // the core's hook: both records
 (window as any).__rompPersistForReload = persistForReload;
