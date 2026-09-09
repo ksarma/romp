@@ -242,7 +242,7 @@ test("the width watch is wired: each viewer opens one on the body it builds, eac
   const opens = VIEW.match(/const body = el\("div", "fileview-body"\);\n\s*const stampBodyWidth = watchBodyWidth\(body\);/g) || [];
   assert.equal(opens.length, 2, "openFileView and openUrlView each watch their body as they build it");
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);\n\s*if \(rendered\) stampBodyWidth\(\);/, "openFileView: a rendered paint stamps its fresh tables (mdBlock rebuilt the root; no report follows a paint)");
-  assert.match(VIEW, /landFragment\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);/, "openUrlView: the same, after the fragment lands");
+  assert.match(VIEW, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);/, "openUrlView: the same, right after the paint (the reader's seat that follows measures the tables at their width; the fragment lands after both)");
   const closeAt = VIEW.indexOf("export function closeFileView(): void {");
   const close = VIEW.slice(closeAt, VIEW.indexOf("\n}\n", closeAt));
   assert.match(close, /\n\s*dropWidthWatch\(\);/, "closeFileView drops the watch with the viewer");

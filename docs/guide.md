@@ -56,10 +56,11 @@ file served from the dashboard's own address (a published report, an evidence do
 and links inside the document resolve relative to the document, so a `![fig](fig.png)`
 beside it shows, and a link to a sibling document opens in the same viewer. Links to files
 on other sites open in a new tab, as before — and a ctrl- or ⌘-click still opens the file in
-a tab. The document is set for reading: a sans face at a slightly larger size, headings in
-proportion, a centred column about 80 characters wide, and task lists, keyboard keys and
-aligned table columns as GitHub shows them. Every code block is numbered by line and carries a
-**Copy** button that copies the block as the file holds it, tabs included; fences labelled
+a tab. Switching between Rendered and Raw keeps the passage you were reading at the top of
+the viewer. The document is set for reading: a sans face at a slightly larger size, headings
+in proportion, a centred column about 80 characters wide, and task lists, keyboard keys and
+aligned table columns as GitHub shows them. Every code block is numbered by line and carries
+a **Copy** button that copies the block as the file holds it, tabs included; fences labelled
 `rust`, `go`, `c`, `java`, `sql` or `toml` are highlighted, in addition to the languages the
 chat already knows. Printing the page while a rendered file is open prints the file alone,
 black on white, across as many pages as it needs.
@@ -84,13 +85,13 @@ text of any text file smaller or larger in fixed steps from 70% to 200%: a markd
 Rendered and Raw views, the code view of every other text file, and a document opened from
 a link on the dashboard's own address. They appear wherever the viewer opens (over the chat
 or the feed), and not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and
-the mouse wheel over the text do the same. Once the size is off 100%, the percentage appears
-between the buttons; click it to go back. The choice is kept in this browser and applies to
-every file you open here. Prose keeps a readable line length that grows with the text size,
-and code blocks keep that width and wrap long lines. A table is as wide as its columns need,
-up to the width of the viewer, and scrolls sideways on its own beyond that; a table inside a
-quote or a list item stays within the prose width. Pictures shrink to fit, so the page is
-never wider than the viewer.
+the mouse wheel over the text do the same, and a step keeps the passage you were reading
+where it was. Once the size is off 100%, the percentage appears between the buttons; click it
+to go back. The choice is kept in this browser and applies to every file you open here. Prose
+keeps a readable line length that grows with the text size, and code blocks keep that width
+and wrap long lines. A table is as wide as its columns need, up to the width of the viewer,
+and scrolls sideways on its own beyond that; a table inside a quote or a list item stays
+within the prose width. Pictures shrink to fit, so the page is never wider than the viewer.
 
 **Opening a PDF.** A PDF the session mentions, or one you click in the file browser, opens
 inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a

@@ -30,6 +30,7 @@ import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlug
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own
 import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the file holds it, tabs and all
+import { readPlace, seatPlace, type Place } from "./reader-place";   // the reader's place across a paint: the same block at the same height after a view switch or a size step
 import "./viewer-grammars";   // six more grammars for a viewed file, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
 
 // hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
@@ -182,8 +183,10 @@ export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number)
 // before the fetch, so the loader, a picture, a PDF and the editor never show them. Direct listeners are
 // click-safe here: the buttons are built once and never rebuilt by a paint (the format toggles' idiom), and
 // every press acknowledges in the same tick (the attribute, the readout, the dimmed end; the sheets reflow
-// from the attribute alone).
-function textSizeControl(root: HTMLElement, textShowing: () => boolean): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
+// from the attribute alone). `around` keeps the reader's place through a step (reader-place.ts): before() reads
+// where they are under the size in force, after() seats them there again over the reflowed text, so the block
+// under the eye stays under it at the same depth into it, instead of the text sliding under a numeric scrollTop.
+function textSizeControl(root: HTMLElement, textShowing: () => boolean, around?: { before: () => Place | null; after: (kept: Place | null) => void }): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
   let pct = loadTextSize();
   const down = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
   down.type = "button"; down.textContent = "A−"; down.title = "Smaller text (Ctrl/Cmd + wheel)";
@@ -205,8 +208,15 @@ function textSizeControl(root: HTMLElement, textShowing: () => boolean): { butto
     atEnd(up, pct === TEXT_SIZES[TEXT_SIZES.length - 1]);
   };
   apply();                                                    // on the root before the bytes land: the first paint is at size
-  // one step: store it and apply it; a step that changes nothing (an end of the table, a reset at the default) does nothing
-  const set = (n: number) => { if (n === pct) return; pct = n; saveTextSize(n); apply(); };
+  // one step: store it, read where the reader is, apply it, seat them there again (the seat's box reads lay the new
+  // size out); a step that changes nothing (an end of the table, a reset at the default) does nothing
+  const set = (n: number) => {
+    if (n === pct) return;
+    pct = n; saveTextSize(n);
+    const kept = around ? around.before() : null;
+    apply();
+    if (around) around.after(kept);
+  };
   down.addEventListener("click", () => set(stepTextSize(pct, -1)));
   up.addEventListener("click", () => set(stepTextSize(pct, 1)));
   reset.addEventListener("click", () => set(TEXT_SIZE_DEFAULT));
@@ -603,7 +613,17 @@ export function openFileView(path: string, sid?: string | null, frag?: string | 
   // the kernel's Content-Type verdict, so a picture opened over a slow link never shows the control
   // beside the loader and then takes it away.
   const textShowing = (): boolean => !editing && viewText() !== null;
-  const textSize = textSizeControl(box, textShowing);
+  // ── the reader's place (reader-place.ts) ── the top-visible block of the text view, read before every paint that
+  // replaces the body's children and seated after it, so the Rendered/Raw switch keeps the passage under the reader's
+  // eye where the numeric scrollTop, left standing over the other view's layout, moved it by a screen; a text-size
+  // step (textSizeControl's `around`) does the same over the reflowed text. `shownText` is the text the body's view
+  // was PAINTED from, what readPlace reads the view against: the fetch pipeline's text, the decoded XML under the SVG
+  // Source view, null while the loader, a picture or a PDF frame holds the body. The editor leaves it as it was, and a
+  // read over the editor's body finds no text view and keeps nothing, so the exit's paint lands at the numeric
+  // scrollTop as before. `body` is built below; both closures run on gestures, after it is.
+  let shownText: string | null = null;
+  const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
+  const textSize = textSizeControl(box, textShowing, { before: keptPlace, after: (kept) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); } });
   for (const b of textSize.buttons) acts.appendChild(b);
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
@@ -809,14 +829,19 @@ export function openFileView(path: string, sid?: string | null, frag?: string | 
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       if (svgSource && svgText !== null) {
         body.replaceChildren(codeBlock(svgText, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        shownText = svgText;                  // a text view: a size step reads the reader's place against the XML
         return;
       }
+      shownText = null;                       // a picture or a PDF frame: no text the body was painted from
       body.replaceChildren(isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed));
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    const kept = keptPlace();                 // the reader's place under the view about to go (null: the loader or the editor held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));
     if (rendered) stampBodyWidth();           // a fresh root's tables take the width last reported (the property sits on the tables)
+    shownText = text;
+    if (kept) seatPlace(body, text, kept);    // the same block at the same height, the tables at their width; a fragment landing below still wins
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
@@ -1136,9 +1161,12 @@ export function openUrlView(href: string): void {
     segBtns.push([mode, b]);
     acts.appendChild(b);
   }
+  // the reader's place across the Rendered/Raw switch and a size step: the local viewer's mechanism (openFileView says how)
+  let shownText: string | null = null;
+  const keptPlace = (): Place | null => (shownText === null ? null : readPlace(body, shownText));
   // the text-size control the local viewer has (textSizeControl): a document opened from a link honours
   // the same stored size as a file on disk, and a step here is kept for both
-  const textSize = textSizeControl(box, () => text !== null);
+  const textSize = textSizeControl(box, () => text !== null, { before: keptPlace, after: (kept) => { if (kept && shownText !== null) seatPlace(body, shownText, kept); } });
   for (const b of textSize.buttons) acts.appendChild(b);
   // The way OUT to the URL itself, in a new tab — an anchor wearing the button treatment, the
   // GitHub link's dress: the browser owns the tab. It is also every failure pane's exit below.
@@ -1202,11 +1230,14 @@ export function openUrlView(href: string): void {
     }
     textSize.sync();                                   // shown once the document's text is up
     if (text === null) return;                         // the loader holds the body until the bytes land
+    const kept = keptPlace();                          // the reader's place under the view about to go
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
-    landFragment();                                    // after the paint, and only a rendered one lands
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported
+    shownText = text;
+    if (kept) seatPlace(body, text, kept);             // the same block at the same height, as in the local viewer
+    landFragment();                                    // after the paint and the seat, and only a rendered one lands
   };
   renderBody();
 

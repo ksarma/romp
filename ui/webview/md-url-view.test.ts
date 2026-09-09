@@ -355,7 +355,8 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*landFragment\(\);/, "after the paint, inside renderBody — so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;[^\n]*\n\s*if \(kept\) seatPlace\(body, text, kept\);[^\n]*\n\s*landFragment\(\);/,
+    "after the paint and the reader's seat (reader-place.ts), inside renderBody, so a later Rendered toggle lands too and the landing has the last word");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 
