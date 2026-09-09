@@ -328,6 +328,29 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("no apiKeyHelper in Claude Code's settings for the kernel to run", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
 
+    def test_the_claimed_bearer_is_the_last_rung_and_the_helper_outranks_it(self):
+        # The one assertion of the fork's retired CredentialPolicy class (upstream #1128 took the LP-key rung and
+        # the manager-env claimer it pinned) whose mechanism survives: a login token the kernel claimed at boot is
+        # the catalog's last credential, riding as an OAuth bearer, and Claude Code's apiKeyHelper outranks it.
+        os.unlink(Path(self.cfg) / "settings.json")
+        km.jd._cred.forget_helper_key()
+        self.assertIsNone(km._models_api_credential(), "no helper and no bearer: nothing to borrow")
+        jd._LOGIN_AUTH_ENV_FN = lambda: {"ANTHROPIC_AUTH_TOKEN": "synthetic-claimed-token"}
+        self.assertEqual(km._models_api_credential(), ("Authorization", "Bearer synthetic-claimed-token"),
+                         "the bearer the kernel claimed at boot is the last rung")
+        creds = []
+        with patch.object(km, "_fetch_models_api", side_effect=lambda cred, timeout=8:
+                          creds.append(cred) or list(FAKE_ROWS)):
+            started, log = self._refresh()
+        self.assertTrue(started)
+        self.assertEqual(creds, [("Authorization", "Bearer synthetic-claimed-token")],
+                         "the catalog request rides the bearer header")
+        self.assertEqual(km._catalog_status["source"], "api")
+        self.assertNotIn("synthetic-claimed-token", log, "the token never reaches the log")
+        self._helper("#!/bin/sh\necho synthetic-test-credential\n")
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-test-credential"),
+                         "a configured helper outranks the bearer")
+
     def test_a_failing_helper_never_falls_back_to_an_ambient_token_and_says_only_static_words(self):
         os.environ["ANTHROPIC_AUTH_TOKEN"] = "synthetic-ambient-token"
         self._helper("#!/bin/sh\necho 'this line would be a secret' >&2\nexit 1\n")
