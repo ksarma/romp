@@ -91,8 +91,10 @@ test('the room the paragraph names is the condition\'s, in the fixtures\' geomet
   assert.ok(fixesTest.includes('assert.equal(body.scrollTop, showCard, "the least scroll that shows the card\'s end");'));
 });
 
-test('the card taller than the track is recorded as the cap\'s case alone: the head cut by the excess, the scroll capped where the mark\'s top would leave the body\'s box', () => {
-  assert.ok(note.includes('A focused card taller than the track has its head cut by the excess alone, the scroll capped where the mark\'s top would leave the body\'s box'));
+test('the card taller than the track is recorded in its two regimes, as centerOn and the margin-fixes stand-in have it: the head cut by the excess with the end in the box, or the cap where the mark\'s top would leave the body\'s box, the head cut by the header less the gap and the end past the box', () => {
+  assert.ok(note.includes('A focused card taller than the track has its head cut by the excess (its end and the gap over the track\'s box) with its end in the box and the mark\'s top in the body\'s; one taller than the track by more than the header less the gap meets the cap — the scroll stops where the mark\'s top would leave the body\'s box, a gap under its top, so the head is cut by the header less the gap and the end stays past the box'));
+  assert.ok(!note.includes('head cut by the excess alone'), 'the earlier record, the excess alone cutting the head in both regimes, is gone (the consolidation, 2026-09-09: the cap cuts the head by the header less the gap)');
+  assert.ok(panel.includes('a card taller than the track\n   *  has its head cut by the excess; and one taller than the track by more than the header less the gap meets the cap —\n   *  the mark\'s top a gap under the body\'s top, the head cut by the header less the gap and the end still past the box'), 'centerOn\'s docstring states the same two regimes');
   assert.ok(centerOn.includes('Math.min(showCard, markY - CARD_GAP)'), 'the cap: the mark\'s top a gap under the body\'s top');
   assert.ok(fixesTest.includes('assert.equal(TRACK_BOX.top - box.top, Math.min(excess, OFFSET - 8), "clipped at the head by the excess alone: "'), 'the margin-fixes test measures the cut');
 });

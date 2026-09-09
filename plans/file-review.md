@@ -1341,9 +1341,14 @@ least that shows the card's end, and the mark lands above the center with the ca
 room is half the body's height less the footer's and the gap (in the focus fixtures' geometry 82px, against a 160px
 track), so the fallback fires for an open card that fits the track with room to spare, not only for a card taller than
 the track (the verification review, 2026-09-09: this record had narrowed it to the latter, while
-`file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it). A focused
-card taller than the track has its head cut by the excess alone, the scroll capped where the mark's top would leave the
-body's box.
+`file-comments-focus.test.ts` and `file-comments-margin-fixes.test.ts` both drive a fitting card through it).
+A focused card taller than the track has its head cut by the excess (its end and the gap over the track's box) with
+its end in the box and the mark's top in the body's; one taller than the track by more than the header less the gap
+meets the cap — the scroll stops where the mark's top would leave the body's box, a gap under its top, so the head is
+cut by the header less the gap and the end stays past the box, since no scroll shows both ends of such a card (the
+verification review, 2026-09-09: this record had the excess alone cut the head in both cases, while `centerOn` and
+`file-comments-margin-fixes.test.ts` cap the scroll; Show more on a long text is the usual way there, its Show less at
+the foot keeping the keyboard as below).
 The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
 ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`); and a pass in the
 list layout clears one too (the review, 2026-09-08: a mark or a head clicked in the list wrote a focus the list had no
