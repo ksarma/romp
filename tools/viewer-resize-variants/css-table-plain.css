@@ -1,0 +1,2 @@
+.fileview-md table { display: table; width: auto; max-width: none; overflow-x: visible; }
+.fileview-md > table { max-width: none; translate: none; }
