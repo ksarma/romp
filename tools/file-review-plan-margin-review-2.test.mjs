@@ -121,8 +121,8 @@ test('the save\'s scroll is stated and is the panel\'s: scrollToSaved before the
   assert.ok(built.includes('since a track-only `scrollIntoView` moved the track alone and the frame\'s `followBody` pass pulled it back to the body'), 'why scrollIntoView could not do it');
   assert.ok(built.includes('before that the composer closed and no card appeared, and the save read as having done nothing'), 'what stood before');
   assert.ok(/function savedCommentId\(had: Set<string>, r: Status, note: string\): string \| null \{/.test(panel));
-  assert.ok(/private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string\): void \{/.test(panel));
-  assert.ok(/if \(r\) this\.scrollToSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/.test(panel), 'the scroll runs before the composer closes');
+  assert.ok(/private scrollToSaved\(c: Composer, had: Set<string>, r: Status, note: string, still: boolean\): void \{/.test(panel));
+  assert.ok(/if \(r\) this\.scrollToSaved\(c, had, r, note, pressed === this\.gestures\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/.test(panel), 'the scroll runs before the composer closes');
   assert.ok(/private showLoose\(key: string\): boolean \{/.test(panel));
   assert.ok(/private scrollBoth\(want: number\): void \{/.test(panel));
   assert.ok(/if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel), 'scrollCard tries the mark first, then the loose group');

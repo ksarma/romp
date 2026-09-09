@@ -9,6 +9,10 @@
 // remote session's file), and its WS ops answer this socket — so no frame is parsed here; the shim
 // opens app=files with the ready hold alone, and federation.js (loaded by the page, never imported)
 // routes a host:sid op to the kernel that owns the session through the fake acquireVsCodeApi.
+// federation also installs the page's performance collector (perf-telemetry.ts, window.__rompPerf) as
+// on every kernel page; with no frames to time, the viewer brackets its own paint pass through it
+// (file-view.ts perfTimed: fileview:paint, fileview:reflow), so a large reviewed file's cost reaches
+// `romp perf client` under app "files" (2026-09-09).
 //
 // Two things the pane supplies itself, because it has NO session list of its own:
 //   • the shell's relay ({romp:"viewFile", path, sid, identity}) carries the session's name and colour,

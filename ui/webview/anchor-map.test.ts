@@ -849,6 +849,44 @@ test("Rendered paint: a range over several blocks wraps each block's text and no
   assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("Key points: Cache the rendered notes for five minutes."));
 });
 
+test("Rendered paint reads the top-level blocks a range touches and no other: a mark costs its own blocks, not the document", () => {
+  // The Comments panel re-paints every mark on every paint pass, so a walk of the whole rendered root per mark
+  // (textNodes(root) in wrapBetween) cost marks x nodes: 466 marks over a 24k-node document were 1.1 s of a 1.4 s
+  // frame on every width change (2026-09-09). The bound: childNodes is read only under the blocks the range overlaps.
+  const source = fixture("report.md");
+  const { box } = buildRendered(source);
+  const blocks = box.childNodes.filter((n) => n.nodeType === 1) as FakeElement[];
+  assert.ok(blocks.length >= 8, "a document of several blocks: " + blocks.length);
+  // the index is built once per root and source (it walks everything then); the first paint pays it
+  const warm = source.indexOf("Key points");
+  assert.ok((paintRendered(El(box), source, { start: warm, end: warm + 3 }, "fc-hl") || []).length >= 1);
+  const reads = new Map<FakeElement, number>();
+  for (const b of blocks) {
+    const kids = b.childNodes;
+    Object.defineProperty(b, "childNodes", { configurable: true, get() { reads.set(b, (reads.get(b) || 0) + 1); return kids; } });
+  }
+  const holder = (n: FakeNode): FakeElement => { let c: FakeNode = n; while (c.parentNode && c.parentNode !== box) c = c.parentNode; return c as FakeElement; };
+  // one block
+  const q = "Second ordered item, loose.";
+  const s1 = source.indexOf(q);
+  assert.ok(s1 > 0);
+  const one = paintRendered(El(box), source, { start: s1, end: s1 + q.length }, "fc-hl") as unknown as FakeElement[];
+  assert.equal(one.map((m) => m.textContent).join(""), q);
+  const oneTouched = blocks.filter((b) => reads.has(b));
+  assert.deepEqual(oneTouched, [holder(one[0])], "only the block holding the passage was read; read: " + oneTouched.length + " of " + blocks.length);
+  // several blocks: the run from the first mark's block to the last mark's block, none before or after
+  reads.clear();
+  const start = source.indexOf("Key points"), end = source.indexOf("minutes.") + "minutes.".length;
+  const many = paintRendered(El(box), source, { start, end }, "fc-hl") as unknown as FakeElement[];
+  assert.ok(many.length >= 3);
+  const i0 = blocks.indexOf(holder(many[0])), i1 = blocks.indexOf(holder(many[many.length - 1]));
+  assert.ok(i0 >= 0 && i1 > i0, "the range spans blocks");
+  const run = blocks.slice(i0, i1 + 1);
+  assert.ok(run.length < blocks.length, "blocks outside the range exist");
+  const manyTouched = blocks.filter((b) => reads.has(b));
+  assert.deepEqual(manyTouched, run, "the blocks between the two ends were read and no other; read: " + manyTouched.length + " of " + blocks.length);
+});
+
 // ── Rendered: holes, html resync, inline html, autolinks, cache validity ───────────────────────────
 const firstEl = (root: FakeNode, tag: string, n = 0): FakeElement => {
   const found: FakeElement[] = [];

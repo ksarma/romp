@@ -242,7 +242,7 @@ type World = {
   disk: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>; heads: string[];
   editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes (Slice 5)
-  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, as it registered it through guardClose
+  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, the FIRST it registered through guardClose (the Send box's note ask comes second; file-comments-send-note.test.ts drives it)
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -291,7 +291,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { w.closeAsk = ask; },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { if (!w.closeAsk) w.closeAsk = ask; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
@@ -740,8 +740,10 @@ test("a disabled Send says why in a visible caption, not only a tooltip: no owni
   const w2 = world(); t.after(() => w2.close());
   const sent = status({ unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: T0 } });
   const p2 = await openPanel(w2, sent);
-  assert.equal(p2.aside.querySelector('[data-act="fcsend"]')!.disabled, true);
-  assert.equal(p2.aside.querySelector(".fc-send .fc-note")!.textContent, "Nothing unsent: every comment, reply, and decision has gone.");
+  // Send stays on with nothing unsent since the note box (2026-09-09): a note of the person's own is a message by itself,
+  // and the confirm's own Send is off until one is typed; the caption says nothing is unsent and that a note still goes
+  assert.equal(p2.aside.querySelector('[data-act="fcsend"]')!.disabled, false);
+  assert.equal(p2.aside.querySelector(".fc-send .fc-note")!.textContent, "Nothing unsent: every comment, reply, and decision has gone; a note of your own still goes.");
   w2.close();
   const w3 = world(); t.after(() => w3.close());
   const p3 = await openPanel(w3, status({ store: null, unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } }));
@@ -767,7 +769,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");
   assert.match(SRC, /if \(!c \|\| c\.kind !== "comment" \|\| !c\.range \|\| c\.text !== src\) return;/, "the presel paints only over the text its range indexes");
-  assert.match(SRC, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); this\.paintAll\(\); \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at)");
+  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) this\.scheduleLayout\(\); else this\.paintAll\(\); \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-places the cards, a paint runs the pass");
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
 });

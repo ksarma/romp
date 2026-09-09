@@ -749,7 +749,8 @@ test("Send to session is not filtered: under Comments and under Changes the butt
   assert.equal(all.button, "Send to session (4)");
   assert.equal(all.items.length, 5, "the four comments and the decisions line");
   assert.equal(all.items[4], "5 accepted, 0 rejected", "the accept checkbox folds the pending changes in");
-  assert.ok(all.opts.some((o) => o === "accept the 5 pending changes"));
+  // the option names the pending changes, and since 2026-09-09 what accepting them resolves (the comments bound to them: acceptOptionLabel)
+  assert.ok(all.opts.some((o) => o.startsWith("accept the 5 pending changes")), "the accept option, with the pending count: " + JSON.stringify(all.opts));
   await pick(aside, "comments");
   assert.deepEqual(read(), all, "Comments: the same send");
   await pick(aside, "changes");

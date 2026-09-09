@@ -2288,29 +2288,40 @@ frames it received is measured in the panes themselves, by
   `tabOrder`, `bars`, or any other type that is a short identifier: letters,
   digits, `_ . : -`, at most 32 characters), a raw delta as `delta:<slot>`
   (`delta:other` when the slot is not such an identifier), a shell message (a
-  `romp` field and no `type`) as `shell`, and `other` for a frame with
-  neither, a `type` that is not a short identifier, or any type past the 32
-  distinct types a minute the pane tracks; frames the handler ignores count
-  too. The federation layer, which every kernel page loads, times its
-  own prefixing, delta application and merge of each frame as `fed:<type>`,
-  nested outside the pane's handler; each level records its own time, so
-  `fed:feed` and `feed` add up to the frame's cost. The federation layer hands
-  its merged frames (`feed`, `tabOrder`, `data`, `bars`) to the pane's handler
-  by direct call once the pane has registered it (`window.__rompFed.onFrame`,
-  through `ui/webview/frame-listener.ts`), so `fed:<type>` is that layer's own
-  compute; it dispatches them on `window` only when nothing registered, and
-  every other frame still arrives as a `window` `message` event. A `message`
-  listener from another JavaScript world (a browser extension's content
-  script) that reads `event.data` receives a structured clone of every frame
-  dispatched on `window`, tens of milliseconds for a multi-megabyte board; the
-  direct call keeps the merged frames out of its reach. See "A message
-  listener from another world" in `CONTRIBUTING.md` for the check that finds
-  such a listener. The timeline's listener is wrapped the same way on both
-  hosts (the VS Code bundle directly; the kernel page's inline boot through
-  the `window.__rompPerf` that `federation.js` publishes before it runs), so
-  `data`, `bars`, `hover`, `activeChat`, `revealEvent` and `models` are timed
-  like any pane's frames. The Files pane installs nothing: no frames are
-  pushed to it.
+  `romp` field and no `type`) as `shell`, and `other` for a frame with neither,
+  a `type` that is not a short identifier, or any type past the 32 distinct
+  types a minute the pane tracks; frames the handler ignores count too. The
+  federation layer, which every kernel page loads, times its own prefixing,
+  delta application and merge of each frame as `fed:<type>`, nested outside the
+  pane's handler; each level records its own time, so `fed:feed` and `feed` add
+  up to the frame's cost.
+  The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
+  `bars`) to the pane's handler by direct call once the pane has registered it
+  (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
+  `fed:<type>` is that layer's own compute; it dispatches them on `window` only
+  when nothing registered, and every other frame still arrives as a `window`
+  `message` event. A `message` listener from another JavaScript world (a
+  browser extension's content script) that reads `event.data` receives a
+  structured clone of every frame dispatched on `window`, tens of milliseconds
+  for a multi-megabyte board; the direct call keeps the merged frames out of
+  its reach. See "A message listener from another world" in `CONTRIBUTING.md`
+  for the check that finds such a listener.
+  The timeline's listener is wrapped the same way on both hosts (the VS Code
+  bundle directly; the kernel page's inline boot through the `window.__rompPerf`
+  that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,
+  `activeChat`, `revealEvent` and `models` are timed like any pane's frames.
+  The Files pane receives no frames; its collector times the viewer's own paint
+  pass instead, as `fileview:paint` (a text body painted) and `fileview:reflow`
+  (the comments panel's re-place of its cards over reflowed text: the body's
+  width changed, or a text-size step), so the cost of a large reviewed file
+  shows per minute under app `files`; the pane's socket replies (`fileSaved`,
+  `fileGitLink`) count under `fed:<type>` as on every pane.
+  The dashboard shell (the top-level window that frames the panes) runs the
+  same collector under app `shell` with no frame types at all: Chromium reports
+  an iframe's long animation frames to the top-level window only, so a pane
+  script that blocked the main thread is attributed there (`files.js:paintAll@9000`)
+  and the shell's row is where it lands; the row goes over the shell's own
+  socket, and up to twenty rows are held while that socket is closed.
 - Per type and minute: count, summed and maximum handler time, the exact
   number of frames over 16.7 ms (one dropped frame at 60 Hz) and at or over
   100 ms, and a 14-bucket log2 histogram (under 1 ms, 1-2, 2-4, ..., 2048-4096,
@@ -2358,7 +2369,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
   visible, hidden_pane, ua}}`. `app` is the pane (`chat`, `feed`, `fleet`,
-  `waiting`, `timeline`); `since` is the minute's start on the browser's clock
+  `waiting`, `timeline`, `files`) or `shell` for the top-level window; `since` is the minute's start on the browser's clock
   (epoch ms) and `span_ms` its length (shorter than a minute when the page was
   hidden or closed); `hist` is the 14 bucket counts; `free` is null when no
   sample was taken; `loaf.top` is the five largest keys by summed duration,

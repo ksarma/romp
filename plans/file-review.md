@@ -458,7 +458,7 @@ the comment ids in a sent message stay addressable by `track-reply`.
 
 ```
 request  {type:"fileCommentsSend", reqId, sid, path, tracked, comments:[{id, desc, body}],
-          accepted, rejected, watermark, todoId?}
+          accepted, rejected, watermark, todoId?, note?}
 reply    {type:"fileCommentsSent", reqId, queued}
 refusal  {type:"fileCommentsSendFailed", reqId, error}
 ```
@@ -477,8 +477,13 @@ new text for a comment bound by `suggestionId`, "this file" for a whole-file com
 region at x, y, w, h" (with the page for a PDF) for a region comment. `body` is the comment's
 unsent `you` turns joined with a blank line, oldest first; a comment whose opening was already
 sent lists only its new replies. `watermark` is the largest `ts` among the `you` comments and
-replies the client included, taken from the `status` reply it built the message from. The kernel builds the message below and marker-neutralizes the
-path and every body (`_neutralize_romp_markers`, `kernel.py:30786-30798`). Delivery follows the
+replies the client included, taken from the `status` reply it built the message from. `note` (the arrivals
+follow-on, 2026-09-09) is the Send confirm's box, trimmed and left out when empty; the kernel refuses a `note` that is
+not text, trims one that is, and refuses a trimmed note longer than 4000 characters (`_SEND_NOTE_MAX`), both refusals
+before the nothing-to-send gate (a note alone is something to send) and before the watermark is read; the panel refuses
+the same bound (`SEND_NOTE_MAX`, `file-comments-model.ts`) before any request goes; the message places it as decision
+40 says. The kernel builds the message below and marker-neutralizes the
+path, every body and the note (`_neutralize_romp_markers`, `kernel.py:30786-30798`). Delivery follows the
 `userTodoAnswer` handler (`kernel.py:12198-12250`) in its order and its ended-session refusal,
 factored into one helper both ops call with a flag, and deviates on purpose where the message is
 worth sending without a stamp: with the user-todos switch off, the message is sent, nothing is
@@ -522,6 +527,9 @@ When you have addressed these, ask me for another look the same way you asked fo
 naming the file.
 ```
 
+With a note from the Send confirm's box (decision 40, 2026-09-09) the note is the first paragraph after the header line
+in both shapes, in the person's own words with no label, before the comments; a note with nothing else unsent is the
+header, the note and the closing ask, without the line saying nothing needs a reply.
 The parenthetical for a comment bound to a change follows the change's kind: a substitution reads
 `on your change "<old>" to "<new>"` as above, an insertion `on the text you added "<new>"`, a
 deletion `on the text you removed "<old>"` — never an empty quoted string in the person's voice. A
@@ -1650,6 +1658,54 @@ any); `tools/file-review-plan.test.mjs`,
 `tools/file-review-plan-filter-fixes.test.mjs` and `tests/test_guide_files_filter.py` hold this note and
 the guide's paragraph to the source.
 
+The arrivals follow-on (2026-09-09): two rules, both from the user's reports of the day. The first report: the user
+sent comments, the session answered with eleven changes and seven replies while they kept commenting, and nothing in
+the panel said so; the first they knew of them was the next Send accepting the changes by default. Built: the panel keeps
+the set of ENTRIES the person has seen (a pending or detached change, a comment, a reply, each by a key:
+`statusEntries` in `file-comments-model.ts`), seeded at its first render with a status from everything in it and again
+from the first status to land with the panel open (`seenOpen`: the render's status is the mount's probe, asked with the
+panel closed, and the open's own re-ask lands after it, so a file opened fresh has no arrivals, whatever the session
+added between the probe and the open — the review, 2026-09-09), and every status after that files an entry by another
+author that is not in the set as an ARRIVAL (`noteArrivals`); the person's own writes, `you` by decision 6, join the set
+outright and are never arrivals. The rule reads the sidecar's author label as the cards' chips do: a record labelled
+`you` is the person's whoever wrote it, and one under any other label is not, whatever its `authorId`. While any arrival
+stands, one line under the header names them in the model's words (`arrivalWords`: "api
+made 11 changes and 7 replies since you last looked", singulars handled, "and N comments" when the session added
+comments of its own, the authors named as the chips name them and several joined with "and"), a button through the
+delegate table (`fcarrivals`) whose click shows the first arrival in the list's order as the focus (`goToArrival`,
+`showCard`; when the list shows none of them the filter goes to All first); the arrival cards and their marks in the
+text wear `data-new`, a dot in the accent at the head's left and in a mark's corner, in both sheets' file-comments
+block. Seen is event-based (`gesture`): a gesture of the person's marks every arrival whose card is then in the
+track's box seen (`entryShown`: the placed top inside the box; the list layout reads the card's box against the
+aside's and the window's), and the ones it scrolled into view are seen by the gesture that follows; a card not
+rendered, behind a fold or the filter, is not on screen and stays an arrival. A gesture is a pointer press or a key
+anywhere in the body row, a wheel or a touch move (the two events that begin a scroll of the person's: the scroll
+event itself is not one, since the lock's writes, a centering and the save's scroll fire it with no gesture behind
+them, and a wheel fires before the scroll it starts), a save, a send; never a timer. The line's own press marks
+nothing, so the click that shows an arrival does not mark it seen; the dots and the line change in place rather than by a
+render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
+the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
+when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
+day (decision 40), which travel first in the message as `note`. From the lost-update probe of the same day: the accept
+resolves the comments bound to the changes it accepts (the host's rule), and in the incident seven comments the session's
+edits had answered folded under a collapsed Resolved with nothing said; the option now reads "(resolves M comments; K
+arrived since you last looked)" in one parenthesis (`resolvedByAccept`), and after a send whose accept-all resolved
+comments the Resolved fold opens before the renders that follow and the acknowledgment line after the send reads "Sent to <session> at <time> ·
+accepted N changes; M comments with the session's replies moved to Resolved" (`sentNoteWords`): nothing leaves the
+visible list without a visible word. The set lives with the
+panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
+second report: they saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
+the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
+save as a gesture and samples the count (`gestures`) when Save is pressed; when the reply lands, `scrollToSaved`
+scrolls only if the count stood (no gesture of theirs in between; the event is the person's own input, never a time
+window) AND the saved card is not already whole in the track's box (`cardWhole`: a card in view needs no scroll; a
+whole-file comment's card at the top of the track with the text scrolled down does); standing down, the card still
+becomes the focus for the layout (`focusOn`), so it lands level with its mark wherever that is, and nothing scrolls;
+the composer's acknowledgment is unchanged. Tests: `file-comments-model-arrivals.test.ts` (the pure half),
+`file-comments-arrivals.test.ts` (the stand-in: both rules driven), `file-comments-arrivals-browser.test.ts` (Chromium
+and Firefox), `tests/test_guide_files_arrivals.py` (the guide's two sentences held to the panel) and
+`tools/file-review-plan-arrivals.test.mjs` (this note held to the code and the modules it names).
+
 ### Slice 3: region comments on images
 
 User-visible: on a standalone image, or on a figure embedded in a rendered markdown file, the
@@ -2258,6 +2314,24 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   switch's own with Show changes inline off, from Raw and from Rendered, on a change card and on the deletion's; the
   pass `revealInRaw` runs itself on a file with no Rendered view; the switch's own on the comment's branch, level with
   its Raw highlight).
+- The arrivals follow-on (2026-09-09): `file-comments-model-arrivals.test.ts` (a status's entries,
+  the arrivals against a seen set, the line's words, the accept option's);
+  `file-comments-arrivals.test.ts` drives the panel over the review stand-in (the line and the dots
+  on a status landing, none for the person's own writes or the first status; seen by a wheel, a key,
+  a press and a touch move, in the track's box only, never by time; the line's click and its own
+  press; the accept option's words; the set across a repaint, a status and a close and reopen; the
+  save's scroll standing down on each gesture kind, still scrolling when nothing happened and the
+  card is out of view, and not for a card whole in the box);
+  `file-comments-arrivals-browser.test.ts` measures both in Chromium and Firefox (the line in the
+  accent with its dot, the dots on the cards' heads and the marks, a real wheel marking the arrival
+  in the box seen; a whole-file comment's save bringing the text to its card, and not after a
+  wheel); `tests/test_guide_files_arrivals.py` holds the guide's two sentences to the panel;
+  `tools/file-review-plan-arrivals.test.mjs` holds the follow-on's paragraph to the code and the
+  modules it names; `tools/file-review-plan-send-note-close.test.mjs` holds decision 40's sentences on
+  the viewer's close guard (the composer's comment and the Send box's note each asked about) to the panel's
+  close asks and the viewer's close and replace-open paths. `tools/file-review-plan-arrivals-review.test.mjs`
+  holds the review's three plan fixes (the request block's `note?` and the op prose to the kernel and
+  the panel, the user ungendered, the Docs sentence's gestures to the guide).
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2341,6 +2415,10 @@ narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds t
 panel and both sheets); with the focus follow-on (2026-09-08), that the card you click sits level with its
 passage whatever stands above it and that a long card folds to a few lines with Show more at its foot
 (`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
+With the arrivals follow-on (2026-09-09), that a line under the panel's header counts what the session added since you
+last looked, with a dot on each until you scroll or click with it in view, and that a save brings the new card into
+view unless you scrolled, clicked, tapped, or pressed a key meanwhile (`tests/test_guide_files_arrivals.py` holds both
+sentences to the panel).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -2482,6 +2560,27 @@ document stands on its own, each with the reasoning it was given.
     `config.json`, and the commented file. An installer run writes `~/.claude` and `settings.json`
     and is outside that list, so the button adds a server-side surface the posture does not name.
     It awaits the user's ruling; until then the row's sentence is the offer.
+40. **The Send confirm's message preview gives way to a note box** (2026-09-09). The user's ruling: the grey preview
+    text in the confirm is a system message tied to the send and not worth showing; a text box for anything they want
+    to add takes its place. The box is optional and empty by default (three rows, growing to about eight, then
+    scrolling; Enter adds a line, the composer's chord or the Send button sends); its text survives every re-render
+    while the confirm is open and is cleared only by a successful send or by Cancel. The arrivals follow-on's review
+    (2026-09-09) found one gap: the viewer's close guard (`ctx.guardClose`) asked about the composer's typed comment
+    and not about the note, so a close of the viewer or a replace-open (a link followed inside the file, a Files-pane
+    row) while the box held words dropped them with the panel, and neither a dialog nor the notice bar said so. The
+    review's consolidation closed it with a second ask beside the composer's (`noteAsk`): words in the box, as the
+    kernel reads them (`trimNote`), make a close ask naming what it would drop, put by the viewer the way it puts the
+    editor's own, and a refused ask keeps the viewer, the panel and the words; Cancel and a send that went leave no
+    ask, a send out or refused keeps it, and Escape typed in the box stops at the box and closes nothing.
+    `tools/file-review-plan-send-note-close.test.mjs` holds these sentences to the panel's two close asks and the
+    viewer's close paths; `file-comments-send-note.test.ts` drives the ask. The note travels as `note` in the
+    fileCommentsSend request, trimmed, at most 4000 characters (refused before any request with a line naming the
+    bound; the kernel refuses the same bound), and both builders place it as the first paragraph after the header
+    line, unlabeled, before the comments, marker-neutralized like every other request-supplied string; a note with
+    nothing else unsent still sends, as the header, the note and the closing ask, so Send opens the confirm with
+    nothing unsent and the confirm's own Send waits for words. The comments log's send entry gains `note`, and the
+    panel's Log shows it. The acknowledgment line after a send (Sent to <session> at <time>) is unchanged. A kernel change: the panel and the kernel land together,
+    and the kernel restarts to go live.
 
 ## Open questions for the user
 

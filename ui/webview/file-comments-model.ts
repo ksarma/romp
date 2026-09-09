@@ -416,6 +416,10 @@ export function isTextPath(fp: string): boolean {
 export type MessageOpts = {
   absPath: string; comments: SendComment[]; accepted: number; rejected: number;
   tracked: boolean;   // the post-toggle verdict: picks the second bullet on a text file
+  /** the person's own words from the Send confirm's box (the user's ruling, 2026-09-09: the box replaced the message
+   *  preview), already trimmed by the caller; empty or absent means none. The first paragraph after the header line in
+   *  both shapes, unlabeled, marker-neutralized like every other request-supplied string. */
+  note?: string;
   /** The viewer's image-or-PDF verdict. NOT consulted: the kernel picks the second bullet by its text
    *  allowlist, not a client flag (C2), so the builder reads the path through isTextPath the same way —
    *  the two verdicts differ on a file the viewer calls neither image nor PDF and the kernel calls not
@@ -428,23 +432,30 @@ export type MessageOpts = {
 const SEND_ASK_AGAIN = ["ask me for another look the same way you asked for this one,", "naming the file."] as const;
 
 export function buildSendMessage(o: MessageOpts): string {
-  // The same fields the kernel neutralizes, so the preview is the sent text byte for byte: the path (it
-  // rides the header plain and both command lines as one shell word) and each comment's id, desc and
-  // body. The counts are numbers. Text or not is the RAW path's verdict, as the kernel's _is_text_path(p).
+  // The same fields the kernel neutralizes, so the two builders produce the sent text byte for byte (the panel
+  // shows no preview since 2026-09-09; this builder stands as the kernel's twin for the parity tests): the path
+  // (it rides the header plain and both command lines as one shell word), the note and each comment's id, desc
+  // and body. The counts are numbers. Text or not is the RAW path's verdict, as the kernel's _is_text_path(p).
   const ap = neutralizeRompMarkers(o.absPath);
+  const nt = neutralizeRompMarkers(o.note || "");
   if (!o.comments.length) {
     // Decisions only (Slice 2: a manual Accept or Reject is unsent until a send carries it): the kernel's
     // second shape. The comments shape would say "I left 0 comments", print two `--thread <id>` command lines
     // with no id to put in them, and ask the session to address a list that is not there. No shell word: the
     // shape has no command line, so the path reads as written.
     const lines: string[] = ["[obsidian-diff] I went over " + ap + ".", ""];
+    if (nt) lines.push(nt, "");
     if (o.accepted + o.rejected > 0) lines.push("I accepted " + o.accepted + " of your changes and rejected " + o.rejected + ".", "");
-    lines.push("No comments this time, so nothing needs a reply.", "When you have made more changes, " + SEND_ASK_AGAIN[0], SEND_ASK_AGAIN[1]);
+    // the line saying nothing needs a reply goes only when there is no note: with one, whether something needs a reply
+    // is the person's to say (a note alone is the header, the note and the closing ask)
+    if (!nt) lines.push("No comments this time, so nothing needs a reply.");
+    lines.push("When you have made more changes, " + SEND_ASK_AGAIN[0], SEND_ASK_AGAIN[1]);
     return lines.join("\n") + "\n";
   }
   const word = shWord(ap);
   const n = o.comments.length;
   const lines: string[] = ["[obsidian-diff] I left " + n + " comment" + (n === 1 ? "" : "s") + " on " + ap + ".", ""];
+  if (nt) lines.push(nt, "");
   for (const c of o.comments) {
     lines.push("Comment " + neutralizeRompMarkers(c.id) + " (" + neutralizeRompMarkers(c.desc) + "):", neutralizeRompMarkers(c.body), "");
   }
@@ -462,6 +473,49 @@ export function buildSendMessage(o: MessageOpts): string {
     SEND_ASK_AGAIN[1],
   );
   return lines.join("\n") + "\n";
+}
+
+/** The most characters the Send confirm's note may carry: the kernel's _SEND_NOTE_MAX, refused there too. The panel refuses
+ *  before any request goes (noteTooLong), so a kernel refusal means a client that skipped its own check. */
+export const SEND_NOTE_MAX = 4000;
+/** The characters Python's `str.strip()` removes, as a regex class: everything `str.isspace()` admits (general category Zs,
+ *  or bidirectional class WS, B or S) — the five ASCII controls TAB to CR, the four information separators U+001C–U+001F,
+ *  the space, NEL (U+0085), no-break space, the Ogham space mark, the Zs spaces U+2000–U+200A, the line and paragraph
+ *  separators, the narrow no-break and medium mathematical spaces and the ideographic space. JavaScript's `trim()` strips
+ *  the same set less the separators and NEL, plus the byte-order mark (U+FEFF). Pinned exhaustively against a Python
+ *  interpreter in file-comments-model-note-trim.test.ts. */
+const PY_SPACE = "\\t\\n\\v\\f\\r\\x1C-\\x1F \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
+const PY_STRIP_ENDS = new RegExp("^[" + PY_SPACE + "]+|[" + PY_SPACE + "]+$", "g");
+/** The note as the kernel reads it. The kernel strips what arrives with `str.strip()` before it measures, places or logs
+ *  it, and the panel put the note on the wire through `trim()` (doSend), so the note the kernel saw was strip(trim(text)):
+ *  this is that composition, in that order, and since the review's consolidation (2026-09-09) the panel puts THIS on the
+ *  wire and reads its emptiness off it (doSend, syncSendGo), so a note the kernel would strip to nothing is no note in the
+ *  panel either — before, one NEL beside comments went as `note` and the kernel dropped it without a word, and alone it
+ *  turned the confirm's Send on for a send the kernel refused. The two trims differ only at the ends of the text and only
+ *  on characters nobody can see — JS drops a pasted byte-order mark that Python keeps; Python drops NEL and the ASCII
+ *  separators that JS keeps — so the panel measured "\u0085" + 4000 letters as 4001 and refused a note the kernel would
+ *  have taken, and read a note of one NEL as words to send that the kernel read as none. Idempotent under the kernel's
+ *  strip (its ends carry nothing Python removes), so the wire may carry `text.trim()` or this and the kernel counts the
+ *  same. Not applied inside buildSendMessage: the kernel's builder does not trim either (the send op did), and the two
+ *  builders take the same input to the same text. */
+export function trimNote(note: string): string {
+  return note.trim().replace(PY_STRIP_ENDS, "");
+}
+/** The panel's refusal for a note over the bound, or null when the note fits: one plain line naming the bound. The count is
+ *  the kernel's: over the note as it reads it (trimNote), in code points, its unit (Python's `len` over the decoded string),
+ *  not UTF-16 code units (`note.length`, which counts an emoji or another astral character twice). So the two sides refuse
+ *  the same notes and name the same number, whatever whitespace edges the text. */
+export function noteTooLong(note: string): string | null {
+  const n = noteLength(trimNote(note));
+  if (n <= SEND_NOTE_MAX) return null;
+  return "Nothing sent: the note is " + n + " characters, and a send carries at most " + SEND_NOTE_MAX + ". Shorten it.";
+}
+/** A text's length as the kernel measures it: code points (a surrogate pair is one). Counts the text given; noteTooLong
+ *  hands it the trimmed note. */
+export function noteLength(note: string): number {
+  let n = 0;
+  for (const _ of note) n++;
+  return n;
 }
 
 // ── region comments (Slice 3) ──────────────────────────────────────────────────────────────────────
@@ -723,7 +777,10 @@ export function logRowText(e: LogEntry, nameOf: (sid: string) => string | null =
     const ids = Array.isArray(e.comments) ? (e.comments as unknown[]).length : 0;
     const sid = typeof e.sid === "string" ? e.sid : "";
     const who = (typeof e.sessionName === "string" && e.sessionName) || (sid && nameOf(sid)) || (sid ? sid.slice(0, 8) : "the session");
-    let t = "Sent " + plural(ids, "comment", "comments") + " to " + who;
+    // a note of the person's own (the Send confirm's box, 2026-09-09) rides the entry as `note`: named with the comments,
+    // or alone when the send carried nothing else
+    const noted = typeof e.note === "string" && e.note.trim() !== "";
+    let t = "Sent " + (noted && !ids ? "a note" : plural(ids, "comment", "comments") + (noted ? " and a note" : "")) + " to " + who;
     const acc = typeof e.accepted === "number" ? e.accepted : 0;
     const rej = typeof e.rejected === "number" ? e.rejected : 0;
     if (acc || rej) t += " with " + plural(acc, "accept", "accepts") + " and " + plural(rej, "reject", "rejects");
@@ -946,4 +1003,115 @@ export function lineStartOffset(source: string, line: number): number {
 export function folderOf(path: string): string {
   const cut = path.lastIndexOf("/");
   return cut > 0 ? path.slice(0, cut + 1) : "/";
+}
+
+// ── arrivals (the arrivals follow-on, 2026-09-09) ──────────────────────────────────────────────────
+// A session's changes and replies land in the status while the panel is open, and until this follow-on nothing
+// said so: the user sent comments, the session answered with eleven changes and seven replies while they kept
+// commenting, and the first they knew of them was the next Send accepting the changes by default. The panel keeps
+// the set of ENTRIES the person has seen (a change, a comment, a reply, each by a key), and an entry by another
+// author that is not in that set is an arrival. Nothing here reads the DOM: the panel decides what is on screen.
+
+/** The person's author label (decision 6: `you`, one person across hosts, no authorId), so the person's own writes
+ *  returning in the status are never arrivals. */
+export const YOU = "you";
+export type EntryKind = "change" | "comment" | "reply";
+export type Entry = {
+  /** "chg:" + the change id; the comment id; the comment id + "|" + the reply's ts */
+  key: string;
+  kind: EntryKind;
+  author: string; authorId: string | null;
+  /** what the panel shows it on: a change's card key, or the comment's id (the panel maps a comment bound to a change onto
+   *  the change's card, as its list does) */
+  subject: string;
+  /** a change the sidecar still holds pending (a hunk); false for a detached change, a comment, a reply */
+  pending: boolean;
+};
+
+/** Every entry a status holds: the pending changes (the hunks), the detached changes, the comments and their replies in
+ *  words, in that order. A reply is a record with a `body`; a record with `kind: "edit"` is the change's turn on the comment
+ *  (`track-edit --thread` writes it beside the op it records, so the change is already an entry, a hunk or a detached op)
+ *  and is not a reply — counting it as one read one edit answering a comment as "1 change and 1 reply", and the incident's
+ *  eleven edits and seven replies as 18 replies; a record with neither shows nothing (cardModel) and is no entry. A reply
+ *  with no ts keys on 0 with its comment: the sidecar stamps every reply, so this is a guard. */
+export function statusEntries(s: Pick<Status, "store" | "hunks"> | null | undefined): Entry[] {
+  if (!s) return [];
+  const out: Entry[] = [];
+  const store = s.store;
+  for (const h of s.hunks || []) {
+    out.push({ key: "chg:" + h.id, kind: "change", author: h.author, authorId: authorIdOf(store, h.id), subject: "chg:" + h.id, pending: true });
+  }
+  for (const d of detachedChanges(store)) {
+    out.push({ key: "chg:" + d.id, kind: "change", author: d.author, authorId: d.authorId, subject: "chg:" + d.id, pending: false });
+  }
+  for (const c of store ? store.comments : []) {
+    if (!c || typeof c.id !== "string") continue;
+    out.push({ key: c.id, kind: "comment", author: c.author, authorId: c.authorId || null, subject: c.id, pending: false });
+    for (const r of c.replies || []) {
+      if (!r || typeof r.body !== "string") continue;      // an edit turn is its change's; a record with no words shows nothing
+      out.push({ key: c.id + "|" + String(r.ts || 0), kind: "reply", author: r.author, authorId: r.authorId || null, subject: c.id, pending: false });
+    }
+  }
+  return out;
+}
+
+/** The arrivals among `entries`: those by an author other than the person (YOU) whose key is not in `seen`. */
+export function arrivalsAmong(entries: Entry[], seen: ReadonlySet<string>): Entry[] {
+  return entries.filter((e) => e.author !== YOU && !seen.has(e.key));
+}
+
+/** Words joined as a list: "a", "a and b", "a, b and c". */
+function listWords(words: string[]): string {
+  if (words.length <= 1) return words.join("");
+  return words.slice(0, -1).join(", ") + " and " + words[words.length - 1];
+}
+
+/** The notice under the panel's header: "<name> made 11 changes and 7 replies since you last looked". The counts are by
+ *  kind, changes then comments then replies, each singular when one; the names are the authors' as the cards' chips show
+ *  them (`nameOf`: the session's current name from the colour map, else the entry's label), distinct, in the order the
+ *  arrivals hold them, joined with "and". Empty with no arrivals. */
+export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorId: string | null) => string): string {
+  if (!arrivals.length) return "";
+  const names: string[] = [];
+  const counts: Record<EntryKind, number> = { change: 0, comment: 0, reply: 0 };
+  for (const e of arrivals) {
+    counts[e.kind]++;
+    const n = nameOf(e.author, e.authorId);
+    if (!names.includes(n)) names.push(n);
+  }
+  const parts: string[] = [];
+  if (counts.change) parts.push(plural(counts.change, "change", "changes"));
+  if (counts.comment) parts.push(plural(counts.comment, "comment", "comments"));
+  if (counts.reply) parts.push(plural(counts.reply, "reply", "replies"));
+  return listWords(names) + " made " + listWords(parts) + " since you last looked";
+}
+
+/** The unresolved comments bound to a pending change: what a Send's accept-all resolves along with the changes (the host
+ *  resolves a comment when its change is accepted). The confirm says so before the send and the acknowledgment line after it (sentNoteWords; the
+ *  lost-update probe, 2026-09-09: seven comments the session's edits had answered folded under a collapsed Resolved with
+ *  nothing said). */
+export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
+  if (!store) return 0;
+  const pending = new Set(hunks.map((h) => h.id));
+  return store.comments.filter((c) => !c.resolved && typeof c.suggestionId === "string" && pending.has(c.suggestionId)).length;
+}
+
+/** The Send confirm's accept option: "accept the N pending changes", and in one parenthesis after it what else the accept
+ *  does: "resolves M comments" when `resolves` unresolved comments are bound to those changes, and "K arrived since you
+ *  last looked" when `arrived` of the changes landed since the person last looked, joined with "; ". The default is
+ *  decision 8's and is not this function's. */
+export function acceptOptionLabel(pending: number, arrived: number, resolves = 0): string {
+  const base = "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes");
+  const parts: string[] = [];
+  if (resolves > 0) parts.push("resolves " + plural(resolves, "comment", "comments"));
+  if (arrived > 0) parts.push(arrived + " arrived since you last looked");
+  return parts.length ? base + " (" + parts.join("; ") + ")" : base;
+}
+
+/** The acknowledgment line after a send whose accept-all resolved comments (the panel's `sentNote`; the words under Send, not a
+ *  note in CONTEXT.md's sense, which is the Send box's): the base ("Sent to api at 10:32", "Queued for api") and
+ *  what moved to Resolved, so nothing leaves the visible list without a visible word; the base alone when nothing moved. */
+export function sentNoteWords(base: string, accepted: number, moved: number): string {
+  if (moved <= 0) return base;
+  return base + " · accepted " + plural(accepted, "change", "changes") + "; " + plural(moved, "comment", "comments") + " with the session's replies moved to Resolved";
 }

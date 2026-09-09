@@ -1,8 +1,9 @@
 // The Comments panel's third round of review fixes (2026-09-06), driven AS A PANEL over a DOM stand-in: the real
 // module mounted over a body row, its delegate root receiving clicks and keys, the kernel's replies arriving as
 // window messages. Covered: markup the FILE's author wrote never reaches the panel's handlers (the sanitizer keeps
-// data-* attributes, so a rendered markdown span can carry `data-act="fcsendgo"`); the send preview and the folder
-// label name the path the kernel acts on, not the spelling the viewer was opened with; a status asked after a write
+// data-* attributes, so a rendered markdown span can carry `data-act="fcsendgo"`); the folder label names the path the
+// kernel acts on, not the spelling the viewer was opened with (the message preview named it too until the note box
+// replaced it, 2026-09-09); a status asked after a write
 // but answered from a read before it is not applied over the write's reply; Send's turn-on-tracking step as
 // behavior; the consent decline and the editing-off re-consent; the poll's stop row's wording; the Track changes
 // toggle re-asking when no status stands behind it; Reload's loader. Synthetic fixtures only: the notes-api world,
@@ -13,7 +14,6 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
-import { buildSendMessage, sendParts } from "./file-comments-model";
 
 // ── a DOM stand-in: ancestry, attributes, events with capture and bubbling, a small selector engine ──
 class Ev {
@@ -441,19 +441,16 @@ test("a checkbox the file's markup carries flips no send option; the confirm's o
 
 // ── the preview and the folder label name the path the kernel acts on ─────────────────────────────
 
-test("the send preview is the sent text whatever spelling the viewer was opened with: a relative token, a ~ path, a symlinked spelling all preview the store's file", async (t: TestContext) => {
-  const want = buildSendMessage({ absPath: ABS, comments: sendParts(status()).comments, accepted: 0, rejected: 0, tracked: true });
+test("the folder label names the path the kernel acts on whatever spelling the viewer was opened with: a relative token, a ~ path, a symlinked spelling all name the store's file (the confirm showed the message with that path too until the note box replaced the preview, 2026-09-09; the request still carries the viewer's spelling, which the kernel resolves)", async (t: TestContext) => {
   for (const spelling of ["docs/report.md", "~/notes-api/docs/report.md", "/vault/proj/report.md", ABS]) {
     const w = world({ path: spelling }); t.after(() => w.close());
     const { aside } = await openPanel(w, status({ trackedBy: null }));
     assert.equal(lastOf(w, "fileComments", "status").path, spelling, "the asks carry the viewer's spelling: the kernel resolves it");
     aside.querySelector('[data-act="fcsend"]')!.click();
-    aside.querySelector('[data-act="fcpreview"]')!.click();
-    const text = aside.querySelector(".fc-msg")!.textContent;
-    assert.equal(text, want, "opened as " + spelling + ": the preview names the kernel's path, byte for byte");
-    assert.match(text, /^\[obsidian-diff\] I left 1 comment on \/repo\/notes-api\/docs\/report\.md\.\n/);
-    assert.match(text, /--file \/repo\/notes-api\/docs\/report\.md --thread/);
-    // the Track choice names the same file's folder
+    assert.equal(aside.querySelector('[data-act="fcpreview"]'), null, "no preview in the confirm");
+    assert.equal(aside.querySelector(".fc-msg"), null);
+    assert.ok(aside.querySelector(".fc-confirm .fc-send-note"), "the note box in its place");
+    // the Track choice names the file's folder as the kernel resolves it
     aside.querySelector('[data-act="fcsendcancel"]')!.click();
     aside.querySelector('[data-act="fctrack"]')!.click();
     assert.equal(aside.querySelector('.fc-choice [data-act="fctrackfolder"]')!.textContent, "Its folder /repo/notes-api/docs/", "opened as " + spelling);
@@ -528,8 +525,6 @@ test("Send with 'turn on tracking' checked: set-tracked goes first and the send 
   aside.querySelector('[data-act="fcsend"]')!.click();
   const cb = aside.querySelector('input[data-opt="track"]')!;
   assert.ok(cb, "the file is untracked: the checkbox is offered"); assert.equal(cb.checked, true, "…checked by default");
-  aside.querySelector('[data-act="fcpreview"]')!.click();
-  assert.match(aside.querySelector(".fc-msg")!.textContent, /to revise the text: node ~\/\.claude\/hooks\/track-edit\.mjs --file/, "the preview shows the tracked bullet the send will carry");
   aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
   const tog = lastOf(w, "fileComments", "set-tracked");
   assert.ok(tog, "the toggle goes first");
@@ -562,8 +557,6 @@ test("Send with 'turn on tracking' unchecked: no toggle, the message goes with t
   aside.querySelector('[data-act="fcsend"]')!.click();
   const cb = aside.querySelector('input[data-opt="track"]')!;
   cb.checked = false; dispatch(cb, new Ev("change"));
-  aside.querySelector('[data-act="fcpreview"]')!.click();
-  assert.match(aside.querySelector(".fc-msg")!.textContent, /to revise the text: edit the file normally/);
   aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
   assert.equal(lastOf(w, "fileComments", "set-tracked"), undefined, "nothing toggled");
   const msg = lastOf(w, "fileCommentsSend");

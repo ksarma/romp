@@ -45810,7 +45810,7 @@ def _file_comments_file_id(p):
 
 def _sh_word(s):
     """`s` as ONE word on a POSIX command line — shlex.quote, restated here because the webview's
-    preview builder (ui/webview/file-comments-model.ts, buildSendMessage) must port it byte for byte:
+    builder (ui/webview/file-comments-model.ts, buildSendMessage) must port it byte for byte:
     an empty string is ''; a word made only of [A-Za-z0-9_@%+=:,./-] passes through unchanged, so an
     ordinary path reads as the plan's own `--file <absPath>`; anything else is wrapped in single
     quotes, each single quote inside it written as '"'"'. Single quotes keep a space from splitting
@@ -45826,8 +45826,14 @@ def _sh_word(s):
 # shapes cannot drift apart. The line break before "naming the file." is the plan's own.
 _SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
 
+# The most characters the note from the Send confirm's text box may carry (the user 2026-09-09:
+# the confirm shows a box for the person's own words instead of the message preview). The send op refuses a
+# longer note before anything else is asked or sent, naming this bound; the webview refuses at the same
+# number before the request goes, so a refusal here means a client that skipped its own check.
+_SEND_NOTE_MAX = 4000
 
-def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
+
+def _file_comments_message(path, comments, accepted, rejected, tracked, is_text, note=""):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
     {id, desc, body}: `desc` is the client's complete parenthetical phrase without parentheses
@@ -45841,7 +45847,16 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
-    The webview's preview builder produces this text byte for byte, so change both or neither.
+    The webview's builder (ui/webview/file-comments-model.ts, buildSendMessage) produces this text
+    byte for byte, so change both or neither.
+
+    `note` is what the person typed in the Send confirm's text box (the user 2026-09-09:
+    the box replaced the message preview), in their own words. Non-empty, it is the first paragraph
+    after the header line in BOTH shapes, with no label: before the comments here, before the
+    accepted/rejected line below. It is marker-neutralized like every request-supplied string. The
+    send op trims it before this call and the builder does not trim again, so the two builders do the
+    same thing to the same input. A note with no comments and no decisions still makes a message: the
+    header, the note and the closing ask.
 
     With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
     all, is unsent until a send carries it, and the send op admits an empty list when a decision
@@ -45851,18 +45866,26 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
     file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
     the loop still comes back. The prefix stays: to the vendored skill it means "you are the
-    editor for the file named here", which is as true of a decision as of a comment."""
+    editor for the file named here", which is as true of a decision as of a comment. The line saying
+    nothing needs a reply is emitted only when there is no note: with one, whether something needs
+    a reply is the person's to say."""
     ap = _neutralize_romp_markers(str(path or ""))
+    nt = _neutralize_romp_markers(str(note or ""))
     if not comments:
         lines = ["[obsidian-diff] I went over %s." % ap, ""]
+        if nt:
+            lines += [nt, ""]
         if (accepted or 0) + (rejected or 0) > 0:
             lines += ["I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0), ""]
-        lines += ["No comments this time, so nothing needs a reply.",
-                  "When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
+        if not nt:
+            lines.append("No comments this time, so nothing needs a reply.")
+        lines += ["When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
         return "\n".join(lines) + "\n"
     word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
+    if nt:
+        lines += [nt, ""]
     for c in comments:
         lines.append("Comment %s (%s):" % (_neutralize_romp_markers(str(c.get("id") or "")),
                                            _neutralize_romp_markers(str(c.get("desc") or ""))))
@@ -45939,6 +45962,14 @@ def _file_comments_send_op(msg):
     `sid`, not `id`), so the op checks _kernel_knows itself. The comments are on disk before any
     send, so a refusal loses nothing.
 
+    `note` (optional; the text box on the Send confirm, the user 2026-09-09) is the
+    person's own words for the session: absent or null reads as none, anything that is not text
+    refuses, text is trimmed, and a trimmed note longer than _SEND_NOTE_MAX refuses right after the
+    counts are read, before the watermark is checked or anything is sent. A note alone, with no
+    comments and no decisions, is a message worth sending, so the nothing-to-send refusal stands down
+    for it. The builder places the note (see _file_comments_message) and the log's send entry records
+    it as `note`, neutralized, when it is non-empty; an entry without a note keeps its earlier shape.
+
     Why the consent gates the SEND and not just the append: a send is a disk write — its `send`
     entry is the comments log's only record of what went, and the panel's unsent list is derived
     from that log (plans/file-review.md, The comments log) — so a send the log cannot record must
@@ -45979,12 +46010,25 @@ def _file_comments_send_op(msg):
         accepted, rejected = int(msg.get("accepted") or 0), int(msg.get("rejected") or 0)
     except (TypeError, ValueError):
         return fail("nothing was sent: the accepted/rejected counts were not numbers")
-    if not comments and accepted + rejected == 0:
+    note = msg.get("note")
+    if note is None:
+        note = ""
+    elif not isinstance(note, str):
+        return fail("nothing was sent: the note was not text")
+    else:
+        note = note.strip()
+    if len(note) > _SEND_NOTE_MAX:
+        # before the nothing-to-send gate and the watermark: the person's words are refused on their own
+        # account, with the bound named, whatever else the send carries
+        return fail("nothing was sent: the note is %d characters and a send carries at most %d; shorten it"
+                    % (len(note), _SEND_NOTE_MAX))
+    if not comments and accepted + rejected == 0 and not note:
         return fail("nothing to send: %s has no unsent comments or decisions" % _tilde(p))
     watermark, bad = _send_watermark(msg.get("watermark"))
     if bad:
         return fail(bad)
-    body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p))
+    body = _file_comments_message(p, comments, accepted, rejected, bool(msg.get("tracked")), _is_text_path(p),
+                                  note=note)
     tid = str(msg["todoId"]) if msg.get("todoId") else None
     got, warning = _deliver_todo_reply(Sessions.backend_for(sid), sid, body, tid, must_stamp=False)
     if got is None:
@@ -46009,6 +46053,11 @@ def _file_comments_send_op(msg):
         # reaches .trackchanges/ as the author label of every reply the session writes (ROMP_SESSION_NAME
         # in the vendored CLIs), so a committed log widens nothing the sidecar does not.
         entry["sessionName"] = name
+    if note:
+        # the person's words as the message carried them (neutralized, like the comment bodies above), so the
+        # panel's log shows what was said; absent when nothing was typed, so an entry without a note keeps
+        # the shape every earlier entry has
+        entry["note"] = _neutralize_romp_markers(note)
     # the append rides the consent checked at the top of this op, the way _save_file checks once and
     # then writes: one gate per op, ahead of everything the op does
     out, err = _file_comments_call(p, "log-send", entry)
@@ -50799,15 +50848,24 @@ function shown(id){var p=document.getElementById(id);return p&&getComputedStyle(
 window.__rompGrowFair=function(k){if(k==='timeline')return;var v=PANES.filter(shown).map(function(id){return grow[key(id)];});
 var avg=v.length?v.reduce(function(a,b){return a+b;},0)/v.length:50;setGrow(k,avg);
 try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}};
+// A drag moves a GHOST line and writes the pair's grows ONCE, on release (2026-09-09). A grow write re-lays out every
+// same-origin pane document in that frame: with a big reviewed file open in the Files pane one width step cost seconds
+// (about 4 s at 15,000 lines with 466 comment and change marks on the bench), and a drag's steps back to back were that
+// day's 20 s main-thread block. So mousemove only positions #gv-ghost (a fixed line over the row, where the divider
+// will land) and mouseup gives the two panes their new widths.
+var ghost=document.getElementById('gv-ghost');
 function gutter(gid,leftPick,rightId){var h=document.getElementById(gid);if(!h)return;
-h.addEventListener('mousedown',function(e){e.preventDefault();document.body.classList.add('drag','dragv');
+h.addEventListener('mousedown',function(e){e.preventDefault();
+var L=document.getElementById(leftPick()),R=document.getElementById(rightId);if(!L||!R)return;
+document.body.classList.add('drag','dragv');
 PANES.forEach(function(id){if(shown(id))setGrow(key(id),document.getElementById(id).offsetWidth);});
-var L=document.getElementById(leftPick()),R=document.getElementById(rightId);
-if(!L||!R)return;var wL=L.offsetWidth,wR=R.offsetWidth,sum=wL+wR,sx=e.clientX,mn=Math.min(120,sum*0.25);
-function mv(ev){var nL=Math.max(mn,Math.min(sum-mn,wL+(ev.clientX-sx)));setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);}
-function up(){document.body.classList.remove('drag','dragv');try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}
+var wL=L.offsetWidth,wR=R.offsetWidth,sum=wL+wR,sx=e.clientX,mn=Math.min(120,sum*0.25),nL=wL,lx=L.getBoundingClientRect().left,rr=row.getBoundingClientRect();
+function show(){if(!ghost)return;ghost.style.top=rr.top+'px';ghost.style.height=rr.height+'px';ghost.style.left=(lx+nL)+'px';ghost.style.display='block';}
+function mv(ev){nL=Math.max(mn,Math.min(sum-mn,wL+(ev.clientX-sx)));show();}
+function up(){document.body.classList.remove('drag','dragv');if(ghost)ghost.style.display='none';
+setGrow(key(L.id),nL);setGrow(key(R.id),sum-nL);try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}
 window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);}
-window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});}
+show();window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});}
 gutter('gv-a',function(){return 'chat-pane';},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane';},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');
@@ -54234,6 +54292,10 @@ def _landing():
             ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
             ".gv:hover::after{background:var(--accent,#9cd2ff);height:52px}.gh:hover::after{background:var(--accent,#9cd2ff);width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
+            # the divider drag's ghost: a fixed line over the row where the divider will land, shown by the gutter's
+            # mousedown and hidden at mouseup, when the panes take their widths (the pointer moves only this line)
+            "#gv-ghost{display:none;position:fixed;width:7px;pointer-events:none;z-index:40;"
+            "background:linear-gradient(90deg,transparent 3px,var(--accent,#9cd2ff) 3px,var(--accent,#9cd2ff) 4px,transparent 4px)}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"
             # FOCUS cue (the user 2026-06-23): NO dimming — the active section is shown by a RING around it.
@@ -54555,6 +54617,7 @@ def _landing():
             "<div class=gv id=gv-d></div>"
             "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
             "</div>"
+            "<div id=gv-ghost></div>"   # the divider drag's ghost line (positioned fixed; see _LANDING_JS gutter)
             # the timeline BOTTOM BAND: full-width below the pane row, with a row-resize gutter above it. Both
             # are hidden (CSS) unless po-timeline (the rail's Timeline toggle).
             "<div class=gh id=gh></div>"
@@ -54746,6 +54809,12 @@ def _landing():
             # bell panel's timestamps wear the same recency colours as every other "(Xm ago)" (the user
             # 2026-07-28). Loaded BEFORE the errs script, which reads it (with a dim fallback if absent).
             + ("<script src=/dist/age-color-global.js?v=%d></script>" % v) +
+            # the shell's performance collector (ui/webview/shell-perf.ts): Chromium reports an iframe's long
+            # animation frames to the top-level window only, so this page observes them and posts a minute
+            # row (app "shell") on its own socket (shellWS, window.__rompShellSend) for `romp perf client`.
+            # Early, so a long frame during the boot's own work is seen; the boot script runs first so the
+            # splash is not held behind a bundle fetch.
+            ("<script src=/dist/shell-perf.js?v=%d></script>" % v) +
             "<script>" + _LANDING_ERRS_JS + "</script>"
             "<script>" + _LANDING_USAGE_JS.replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_APIH_JS + "</script>"

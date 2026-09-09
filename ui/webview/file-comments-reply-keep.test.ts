@@ -640,7 +640,9 @@ test("a comment whose id holds a quote: Reply opens the box in its card, the re-
 // ── pinned at source ──────────────────────────────────────────────────────────────────────────────
 
 test("source: render latches the reply's key and swaps the cards around the box; a box moved while the person types in it scrolls into view; the ids go through cssId; the held head", () => {
-  assert.match(SRC, /this\.latchReplyCard\(\);[^\n]*\n\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/, "the key first, then the cards around the box, then the composer");
+  // between the latch and the head's rebuild stand the arrivals' seed and marks (the seen set, newKeys, markNew — pinned in
+  // file-comments-arrivals.test.ts), which read the status and the body only; no section is rebuilt or swapped before the head
+  assert.match(SRC, /this\.latchReplyCard\(\);[^\n]*\n(?:(?![^\n]*(?:replaceChildren|swapCards|renderComposer)\()[^\n]*\n)*?\s*head\.replaceChildren\(this\.renderHead\(s\)\);\n\s*this\.swapCards\(this\.renderCards\(s\)\);[^\n]*\n\s*this\.renderComposer\(\);/, "the key first, then the cards around the box, then the composer");
   assert.match(SRC, /if \(!cards\.contains\(box\) \|\| !this\.graft\(cards, \[fresh\], box\)\) cards\.replaceChildren\(fresh\);/, "a wholesale swap only when the box is not in a card the fresh list keeps");
   assert.match(SRC, /if \(this\.input\.scrollTop !== scroll\) this\.input\.scrollTop = scroll;/, "a moved textarea keeps its scroll offset");
   assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);\n\s*if \(moved\) this\.showComposer\(\);/, "a box moved while the person was typing in it is brought into view: a parent other than the one it stood in");

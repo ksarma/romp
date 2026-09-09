@@ -646,9 +646,9 @@ test("source: the box is a textarea of COMPOSER_ROWS rows; keydown goes through 
     "the chord saves, Escape cancels and stops there, a plain Enter is left to the textarea");
   assert.match(SRC, /this\.input\.addEventListener\("input", \(\) => this\.autosize\(\)\);/);
   assert.match(SRC, /if \(this\.sizedTo !== null && ta\.style\.height !== this\.sizedTo\) return;/, "a dragged height stands");
-  assert.match(SRC, /ta\.style\.height = Math\.min\(sh, rowCap\(ta\)\) \+ border \+ "px";\n\s*restoreScroll\(held\);\n\s*return ta\.style\.height;/,
+  assert.match(SRC, /ta\.style\.height = Math\.min\(sh, rowCap\(ta, maxRows\)\) \+ border \+ "px";\n\s*restoreScroll\(held\);\n\s*return ta\.style\.height;/,
     "the cap is the autosize's own (rowCap), and the return is the inline height read back — the string the box holds, which sizedTo is compared to");
-  assert.match(SRC, /return COMPOSER_MAX_ROWS \* lh \+ \(parseFloat\(cs\.paddingTop\) \|\| 0\) \+ \(parseFloat\(cs\.paddingBottom\) \|\| 0\);/, "COMPOSER_MAX_ROWS rows of the computed line-height plus the padding");
+  assert.match(SRC, /return maxRows \* lh \+ \(parseFloat\(cs\.paddingTop\) \|\| 0\) \+ \(parseFloat\(cs\.paddingBottom\) \|\| 0\);/, "COMPOSER_MAX_ROWS rows of the computed line-height plus the padding");
   assert.match(SRC, /this\.input\.style\.height = ""; this\.sizedTo = null;/, "closeComposer resets the height with the words");
   assert.match(SRC, /fcsave: \(\) => \{ void this\.saveComposer\(\); \},/, "Save is a delegated action on the panel's one root (click-safe, flash())");
   assert.match(SRC, /const hint = el\("span", "fc-note fc-hint", composerHint\(IS_MAC\)\);\n\s*acts\.replaceChildren\(\.\.\.\(noSave \? \[\] : \[hint, save\]\), btn\("Cancel", "fccancel"\)\);/);
