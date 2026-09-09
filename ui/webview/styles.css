@@ -1671,8 +1671,14 @@ button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1p
 .meta-pending .meta-label:has(.meta-dots) { opacity: 1; animation: none; }
 /* a pick HELD for the session's live work (2026-09-09): the label is the value the session RUNS, and this
    small accent mark beside it says a change waits; neither the dim pulse nor the loader dots, which both
-   claimed a change in progress. The tip names the pick and what it waits on. */
-.meta-held-mark { font-size: 0.66em; color: var(--accent); vertical-align: super; margin-left: 2px; line-height: 1; }
+   claimed a change in progress. The tip names the pick and what it waits on. The mark is RAISED like a
+   superscript: it is a flex item of .meta-btn, so vertical-align is dead on it (review round 3, measured in
+   headless Chromium: the old `super` drew the dot on the label's centre line, reading as punctuation);
+   align-self parks its one-line box at the badge's top and the small translate lifts the glyph clear of the
+   label's centre without changing the badge's height. No font-size of its own: it inherits .spinner-meta's
+   0.92em, so it wears one computed size in every host (a size here compounded under that 0.92em to 7.9px,
+   below the caret; ui/CLAUDE.md, font sizes). */
+.meta-held-mark { color: var(--accent); align-self: flex-start; transform: translateY(-0.1em); margin-left: 2px; line-height: 1; }
 .meta-dots { display: inline-flex; align-items: center; gap: 3px; }
 .meta-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: inline-block; animation: meta-dots 1s ease-in-out infinite; }
 .meta-dots i:nth-child(2) { animation-delay: 0.16s; }

@@ -66,8 +66,21 @@ test("a held kind's badge shows the running value with a pending mark: no loader
   assert.match(RENDER, /const pending = !held && \(\(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)/);
   assert.match(RENDER, /b\.classList\.toggle\("meta-held", held\);/);
   assert.match(RENDER, /const m = el\("span", "meta-held-mark"\);/);
+  // the glyph is decoration: hidden from assistive tech, so the badge's name reads "high" and not "high•"
+  // (review round 3; the browser leg meta-held-mark-browser.test.ts measures it)
+  assert.match(RENDER, /m\.textContent = "•";\s*\n\s*m\.setAttribute\("aria-hidden", "true"\);/);
   assert.match(RENDER, /setTip\(b, held && st\.pickHeld \? badgeHeldTip\(kind, st\.pickHeld\) : metaTip\(kind\)\);/);
   assert.match(CSS, /\.meta-held-mark \{[^}]*color: var\(--accent\)/);
+  // the mark's dress (review round 3): it inherits .spinner-meta's size (no font-size of its own, which
+  // compounded under the 0.92em to 7.9px), and its raise is flex-compatible: align-self plus a small
+  // translate, never vertical-align, which is dead on a flex item and drew the dot on the label's centre
+  const rule = (CSS.match(/\.meta-held-mark \{([^}]*)\}/) || [])[1] || "";
+  assert.ok(rule, "the mark has a rule");
+  assert.doesNotMatch(rule, /font-size/, "no size of its own: it inherits the badge's");
+  assert.doesNotMatch(rule, /vertical-align/, "dead on a flex item");
+  assert.match(rule, /align-self: flex-start/);
+  assert.match(rule, /transform: translateY\(-0\.1em\)/);
+  assert.match(rule, /line-height: 1/);
   // the same sync serves mode, model, effort and fast badges (the kinds the statusline draws)
   assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
 });

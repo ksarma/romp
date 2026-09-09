@@ -14741,6 +14741,7 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     if (held && !mark) {
       const m = el("span", "meta-held-mark");
       m.textContent = "•";
+      m.setAttribute("aria-hidden", "true");   // decoration: the pick's words are in the chat's held line and the tip
       b.insertBefore(m, b.querySelector(".meta-caret"));
     } else if (!held && mark) {
       mark.remove();
