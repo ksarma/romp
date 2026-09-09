@@ -31,6 +31,10 @@ _STATE_TMP = tempfile.mkdtemp()
 os.environ["XDG_STATE_HOME"] = _STATE_TMP
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+# No tmux for this module: the routes' 404 path asks the tmux probe whether the live scan answered, which on
+# a box with tmux forks the real server and reads its session list; the tests that need the probe patch
+# _TMUX.available and _TMUX._run explicitly (review round 5, 2026-09-09).
+os.environ["ROMP_TMUX_AVAILABLE"] = "0"
 km = load_source("romp_kernel_headless", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
@@ -1065,6 +1069,78 @@ class UnknownSessionRefused(_RouteServer):
         self.assertEqual(srv.received, [("/interrupt", {"id": b}), ("/interrupt", {"id": b}),
                                         ("/interrupt", {"id": FAR_SID_B})],
                          "only an unambiguous target forwards, and by its own far sid")
+
+    def test_a_failed_live_scan_is_a_503_not_a_session_that_does_not_exist(self):
+        # when the tmux probe fails (an exec error, a timeout, an unrecognised nonzero exit) Sessions.live()
+        # inherits list_lines' error->[] collapse, _resolve_sid cannot map a name to its sid, and the routes
+        # answered 404 "no live session named" for a session the kernel knows while the same request by id
+        # said tmux isn't answering: a failed read reported as a session that does not exist, against
+        # _control_target's own rule. On the 404 path, when a live scan was performed and alive_sids (the
+        # failure-aware primitive) answers None, the routes answer 503 naming the list; a set (the no-server
+        # exit is the authoritative zero) and a tmux-less box keep the 404 (review round 5, 2026-09-09).
+        import subprocess
+        fake = mock.Mock()
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+             mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+             mock.patch.object(km._TMUX, "available", lambda: True), \
+             mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+            self.assertIsNone(km._TMUX.alive_sids())
+            for path, body in (("/end", {"name": "web"}), ("/end", {"name": "web", "when": "idle"}),
+                               ("/interrupt", {"name": "web"}), ("/send", {"name": "web", "text": "hello"})):
+                code, resp = self._post(path, body)
+                self.assertEqual(code, 503, (path, body, resp))
+                self.assertIn("could not read the live session list", resp.get("error", ""), path)
+                self.assertIn("'web'", resp.get("error", ""), path)
+                self.assertIn("try again", resp.get("error", ""), "tmux answers again: this retry has a writer")
+                self.assertNotIn("no live session", resp.get("error", ""), path)
+            self.assertNotIn("sid-x", km._end_on_idle_load(), "a refused deferred end records no wish")
+            fake.kill.assert_not_called()
+            fake.send.assert_not_called()
+            fake.interrupt.assert_not_called()
+            # the same request by id reaches the end routine, whose corroboration says the same thing
+            code, resp = self._post("/end", {"id": "sid-x"})
+            self.assertEqual(code, 200)
+            self.assertIn("tmux isn't answering", resp.get("error", ""))
+            # a nonzero exit naming a missing server is the authoritative zero: an unregistered name, and a
+            # registered name no session runs, stay 404 (a dormant session is addressed by id)
+            gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                               stderr="no server running on /tmp/tmux-1000/default")
+            with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                self.assertEqual(km._TMUX.alive_sids(), set())
+                for who in (self.GHOST, "web"):
+                    code, resp = self._post("/interrupt", {"name": who})
+                    self.assertEqual(code, 404, (who, resp))
+                    self.assertIn("no live session named '%s'" % who, resp.get("error", ""))
+        # a tmux-less box never asks the probe: the 404 stands
+        with mock.patch.object(km._TMUX, "available", lambda: False), \
+             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)):
+            code, resp = self._post("/interrupt", {"name": self.GHOST})
+            self._assert_404(code, resp)
+
+    def test_a_failed_live_scan_stands_ahead_of_the_roster_by_name(self):
+        # with the local scan failed, "a local session wins" cannot be evaluated (a local session of the name
+        # may be running unseen), so a name the roster lists is not forwarded: the 503 comes first and
+        # nothing is done, where a forward could have acted on the wrong session. With the scan answering (a
+        # set; the no-server exit included) the same name forwards as before (review round 5, 2026-09-09).
+        import subprocess
+        srv = _far_kernel(200, json.dumps({"ok": True}))
+        row = _remote_row(srv, sids=[FAR_SID], names={FAR_SID: "far-web"})
+        gone = subprocess.CompletedProcess(args=[], returncode=1, stdout="",
+                                           stderr="error connecting to /tmp/tmux-1000/default (No such file or directory)")
+        try:
+            with mock.patch.dict(km._remotes, {"TESTHOST": row}, clear=True), \
+                 mock.patch.object(km._TMUX, "available", lambda: True):
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: None):
+                    code, resp = self._post("/interrupt", {"name": "far-web"})
+                    self.assertEqual(code, 503, resp)
+                    self.assertIn("could not read the live session list", resp.get("error", ""))
+                    self.assertEqual(srv.received, [], "nothing is forwarded while the local scan is unread")
+                with mock.patch.object(km._TMUX, "_run", lambda *a, **k: gone):
+                    code, resp = self._post("/interrupt", {"name": "far-web"})
+                    self.assertEqual((code, resp), (200, {"ok": True}))
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/interrupt", {"id": FAR_SID})])
 
     def test_a_far_kernels_answer_is_relayed_in_its_own_words(self):
         # against a REAL far kernel on loopback, so the helper's body read is under test, not a stub of

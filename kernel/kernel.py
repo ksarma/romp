@@ -26900,13 +26900,15 @@ def _control_target(who):
     (sid, remote, refusal). `remote` is the attached host's row when the roster lists the sid
     (_host_for_sid; the request forwards there with the far sid). `refusal` is the JSON body to answer,
     with its "_status", when the request can go nowhere: the 404 for a session nothing answers to, or a
-    503 when the answer cannot be given because a record would not read: the comment threads' store
-    (_thread_names answered None while resolving a name) or the sid's own registry entry
-    (_unknown_session_refusal's first check). A failed read is never reported as a session that does not
-    exist (review round 4, 2026-09-09; the fail-loudly rule). Order: the local doors (a local session
-    wins), the roster by sid, the gate with the live map the resolution read (so a refused request scans
-    once), and, when the gate would answer 404, the roster by NAME (_remote_session_named): a session an
-    attached host runs is reached by the name that host lists, with the far sid, as it is by id."""
+    503 when the answer cannot be given because a read failed: the live session list (the tmux probe the
+    resolution's scan rides did not answer), the comment threads' store (_thread_names answered None while
+    resolving a name) or the sid's own registry entry (_unknown_session_refusal's unreadable verdict). A
+    failed read is never reported as a session that does not exist (review rounds 4 and 5, 2026-09-09; the
+    fail-loudly rule). Order: the local doors (a local session wins), the roster by sid, the gate with the
+    live map the resolution read (so a refused request scans once), and, when the gate would answer 404:
+    the failed-scan 503 (with the local scan failed, "a local session wins" cannot be evaluated, so nothing
+    forwards), the store's 503, then the roster by NAME (_remote_session_named): a session an attached
+    host runs is reached by the name that host lists, with the far sid, as it is by id."""
     sid, live, store_unreadable = _resolve_sid(who)
     r = _host_for_sid(sid)
     if r is not None:
@@ -26915,6 +26917,19 @@ def _control_target(who):
     if refusal is None:
         return sid, None, None
     if refusal["_status"] == 404:
+        if live is not None and _TMUX.available() and _TMUX.alive_sids() is None:
+            # the scan the resolution read inherits list_lines' error->[] collapse: a tmux probe that failed
+            # (an exec error, a timeout, an unrecognised nonzero exit) read as an empty board, so a name the
+            # kernel knows mapped to no sid and was about to be answered "no live session named", while the
+            # same request by id said tmux isn't answering. alive_sids is the failure-aware primitive: None
+            # only on a real probe failure; a set is the authoritative answer (the no-server exit included),
+            # and a tmux-less box is never asked, so an SDK-only box keeps its 404s. Ahead of the store and
+            # the roster by name: with the local scan failed, "a local session wins" cannot be evaluated and
+            # a forward could act on the wrong far session. "Try again" is right here: tmux answers again
+            # (review round 5, 2026-09-09)
+            return sid, None, {"ok": False, "error": "could not read the live session list while resolving '%s' "
+                                                     "(tmux did not answer); nothing was done, try again" % who,
+                               "_status": 503}
         if store_unreadable:
             return sid, None, {"ok": False, "error": "could not read the comment threads' store (%s) while "
                                                      "resolving '%s'; nothing was done"
