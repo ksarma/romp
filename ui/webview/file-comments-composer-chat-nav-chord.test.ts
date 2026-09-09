@@ -367,7 +367,7 @@ function atWindow(target: N, init: Init): Event & Init {
 // ── pinned at source: one listener for the module, added at load, keyed on the live panel ─────────
 
 test("source: the claim is a module function added to the window once, when the module loads, keyed on `live`; it stops every later listener; no panel adds or removes one", () => {
-  assert.match(SRC, /\nfunction claimSaveChord\(ev: KeyboardEvent\): void \{\n\s*const p = live;\n\s*if \(!p \|\| ev\.target !== p\.input \|\| composerKeyAction\(ev\) !== "save"\) return;\n\s*ev\.stopImmediatePropagation\(\);\n\s*p\.boxKey\(ev\);\n\}\n/,
+  assert.match(SRC, /\nfunction claimSaveChord\(ev: KeyboardEvent\): void \{\n\s*const p = live;\n\s*if \(!p \|\| composerKeyAction\(ev\) !== "save"\) return;\n\s*if \(ev\.target === p\.input\) \{ ev\.stopImmediatePropagation\(\); p\.boxKey\(ev\); \}\n\s*else if \(ev\.target === p\.noteBox\) \{ ev\.stopImmediatePropagation\(\); p\.noteKey\(ev\); \}[^\n]*\n\}\n/,
     "the live panel's box as target and the save verdict, or nothing; then the event stops short of every other listener on the window and boxKey saves");
   assert.match(SRC, /^if \(typeof window !== "undefined"\) window\.addEventListener\("keydown", claimSaveChord, true\);$/m,
     "added at the module's top level — when it loads, before render.ts's body — on the window, capture");

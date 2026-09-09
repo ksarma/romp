@@ -203,7 +203,7 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
 }
 
 for (const name of ["chromium", "firefox"]) {
-  test(`in ${name}: the Send confirm with its preview open stays inside the aside, scrolls under the wheel to Send · Cancel, and leaves the track its cards`, async (t) => {
+  test(`in ${name}: the Send confirm with its note box grown stays inside the aside, scrolls under the wheel to Send · Cancel, and leaves the track its cards`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       let f = await foot(page, ".fc-sec-send");
@@ -213,10 +213,13 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(f.box.height < ROOM * f.aside.height, "the closed section is small: " + f.box.height + " of " + f.aside.height);
       const roomBefore = f.trackHeight;
       await click(page, "fcsend");
-      await click(page, "fcpreview");
+      await frames(page);
+      // the note box grown to its cap (the preview it replaced, 2026-09-09, was a 40vh block): eight rows of typed lines
+      await page.focus(".fileview-aside .fc-confirm .fc-send-note");
+      await page.keyboard.type(Array.from({ length: 9 }, (_, i) => "Line " + (i + 1) + " of the note.").join("\n"));
       await frames(page);
       f = await foot(page, ".fc-sec-send");
-      // the finding's state: the confirm lists four comments, an option, a 40vh preview and Send · Cancel — more than fits
+      // the finding's state: the confirm lists four comments, an option, the note box at its cap and Send · Cancel — more than fits
       assert.equal(f.overflowY, "auto", "the grown section is a scroll container of its own");
       assert.ok(f.scrollHeight > f.clientHeight + 40, "the confirm outgrows the section, so the section scrolls: " + f.scrollHeight + " in " + f.clientHeight);
       inside(f.box, f.aside, "the Send section");

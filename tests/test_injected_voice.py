@@ -477,6 +477,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # a hand-copied noun list elsewhere would drift from ROMP_WORDS (the review, 2026-09-06)
             "file comments message (decisions only)": km._file_comments_message(
                 "/TESTDIR/notes-api/docs/report.md", [], 3, 1, True, True),
+            # …and a send carrying a NOTE (the owner's ruling, 2026-09-09): the Send confirm's text box
+            # replaced the message preview, and what the person types there is the first paragraph after
+            # the header, unlabeled, in both shapes — or the whole middle of the message when nothing else
+            # is unsent, where the line saying nothing needs a reply stands down. The note is the person's
+            # own words and adds no vocabulary; the frame around it is what the scan reads, rendered here
+            # in the note-only shape, the one whose text no other entry carries
+            "file comments message (note only)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [], 0, 0, True, True,
+                note="Two things before the next pass: keep the numbers as measured, and add the run's date."),
             # Slice 3: a region of a standalone image — fractions of its natural size, two decimals —
             # beside a whole-file comment; the image bullet, since the file is not text
             "file comments message (image, region)": km._file_comments_message(

@@ -493,7 +493,8 @@ the editor rewrites its line endings, which would move them; accept or reject th
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
 what it refers to and the commands the session needs to answer it. The number on the button
-is what will go, and the confirm lists it, with the message itself one click away. When a
+is what will go, and the confirm lists it, with a box for anything you want to add in your own
+words, which go first in the message; words alone send too. When a
 todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
 answers that todo with the same send; when several todos name the file, a row of choices
 picks the one to answer, or none. When tracking is off, another checkbox

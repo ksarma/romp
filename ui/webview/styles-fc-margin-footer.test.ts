@@ -204,7 +204,7 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
 }
 
 for (const name of ["chromium", "firefox"]) {
-  test(`in ${name}: the Send confirm with fifteen comments and the preview open scrolls within its section, Send and Cancel are in reach, the track keeps its floor, and closing it gives the room back`, async (t) => {
+  test(`in ${name}: the Send confirm with fifteen comments and the note box grown scrolls within its section, Send and Cancel are in reach, the track keeps its floor, and closing it gives the room back`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       let s = await scene(page);
@@ -214,10 +214,12 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(s.send.scrollHeight <= s.send.clientHeight + 1, "the collapsed Send section has nothing to scroll");
       const trackBefore = s.track.height;
       assert.ok(s.sendBtn && s.sendBtn.inside && s.sendBtn.hit, "Send to session is in the panel and clickable");
-      // Send to session, tick nothing, open The message: the confirm lists fifteen comments with the preview under them
+      // Send to session, tick nothing, grow the note box to its cap (the preview it replaced, 2026-09-09): the confirm lists
+      // fifteen comments with the box under them
       await click(page, '[data-act="fcsend"]');
       await frames(page);
-      await click(page, '[data-act="fcpreview"]');
+      await page.focus(".fileview-aside .fc-confirm .fc-send-note");
+      await page.keyboard.type(Array.from({ length: 9 }, (_, i) => "Line " + (i + 1) + " of the note.").join("\n"));
       await frames(page);
       s = await scene(page);
       assert.ok(s.sendGo && s.cancel, "the confirm is up with Send and Cancel");

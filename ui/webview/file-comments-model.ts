@@ -416,6 +416,10 @@ export function isTextPath(fp: string): boolean {
 export type MessageOpts = {
   absPath: string; comments: SendComment[]; accepted: number; rejected: number;
   tracked: boolean;   // the post-toggle verdict: picks the second bullet on a text file
+  /** the person's own words from the Send confirm's box (the owner's ruling, 2026-09-09: the box replaced the message
+   *  preview), already trimmed by the caller; empty or absent means none. The first paragraph after the header line in
+   *  both shapes, unlabeled, marker-neutralized like every other request-supplied string. */
+  note?: string;
   /** The viewer's image-or-PDF verdict. NOT consulted: the kernel picks the second bullet by its text
    *  allowlist, not a client flag (C2), so the builder reads the path through isTextPath the same way —
    *  the two verdicts differ on a file the viewer calls neither image nor PDF and the kernel calls not
@@ -428,23 +432,30 @@ export type MessageOpts = {
 const SEND_ASK_AGAIN = ["ask me for another look the same way you asked for this one,", "naming the file."] as const;
 
 export function buildSendMessage(o: MessageOpts): string {
-  // The same fields the kernel neutralizes, so the preview is the sent text byte for byte: the path (it
-  // rides the header plain and both command lines as one shell word) and each comment's id, desc and
-  // body. The counts are numbers. Text or not is the RAW path's verdict, as the kernel's _is_text_path(p).
+  // The same fields the kernel neutralizes, so the two builders produce the sent text byte for byte (the panel
+  // shows no preview since 2026-09-09; this builder stands as the kernel's twin for the parity tests): the path
+  // (it rides the header plain and both command lines as one shell word), the note and each comment's id, desc
+  // and body. The counts are numbers. Text or not is the RAW path's verdict, as the kernel's _is_text_path(p).
   const ap = neutralizeRompMarkers(o.absPath);
+  const nt = neutralizeRompMarkers(o.note || "");
   if (!o.comments.length) {
     // Decisions only (Slice 2: a manual Accept or Reject is unsent until a send carries it): the kernel's
     // second shape. The comments shape would say "I left 0 comments", print two `--thread <id>` command lines
     // with no id to put in them, and ask the session to address a list that is not there. No shell word: the
     // shape has no command line, so the path reads as written.
     const lines: string[] = ["[obsidian-diff] I went over " + ap + ".", ""];
+    if (nt) lines.push(nt, "");
     if (o.accepted + o.rejected > 0) lines.push("I accepted " + o.accepted + " of your changes and rejected " + o.rejected + ".", "");
-    lines.push("No comments this time, so nothing needs a reply.", "When you have made more changes, " + SEND_ASK_AGAIN[0], SEND_ASK_AGAIN[1]);
+    // the line saying nothing needs a reply goes only when there is no note: with one, whether something needs a reply
+    // is the person's to say (a note alone is the header, the note and the closing ask)
+    if (!nt) lines.push("No comments this time, so nothing needs a reply.");
+    lines.push("When you have made more changes, " + SEND_ASK_AGAIN[0], SEND_ASK_AGAIN[1]);
     return lines.join("\n") + "\n";
   }
   const word = shWord(ap);
   const n = o.comments.length;
   const lines: string[] = ["[obsidian-diff] I left " + n + " comment" + (n === 1 ? "" : "s") + " on " + ap + ".", ""];
+  if (nt) lines.push(nt, "");
   for (const c of o.comments) {
     lines.push("Comment " + neutralizeRompMarkers(c.id) + " (" + neutralizeRompMarkers(c.desc) + "):", neutralizeRompMarkers(c.body), "");
   }
@@ -462,6 +473,15 @@ export function buildSendMessage(o: MessageOpts): string {
     SEND_ASK_AGAIN[1],
   );
   return lines.join("\n") + "\n";
+}
+
+/** The most characters the Send confirm's note may carry: the kernel's _SEND_NOTE_MAX, refused there too. The panel refuses
+ *  before any request goes (noteTooLong), so a kernel refusal means a client that skipped its own check. */
+export const SEND_NOTE_MAX = 4000;
+/** The panel's refusal for a note over the bound, or null when the note fits: one plain line naming the bound. */
+export function noteTooLong(note: string): string | null {
+  if (note.length <= SEND_NOTE_MAX) return null;
+  return "Nothing sent: the note is " + note.length + " characters, and a send carries at most " + SEND_NOTE_MAX + ". Shorten it.";
 }
 
 // ── region comments (Slice 3) ──────────────────────────────────────────────────────────────────────
@@ -723,7 +743,10 @@ export function logRowText(e: LogEntry, nameOf: (sid: string) => string | null =
     const ids = Array.isArray(e.comments) ? (e.comments as unknown[]).length : 0;
     const sid = typeof e.sid === "string" ? e.sid : "";
     const who = (typeof e.sessionName === "string" && e.sessionName) || (sid && nameOf(sid)) || (sid ? sid.slice(0, 8) : "the session");
-    let t = "Sent " + plural(ids, "comment", "comments") + " to " + who;
+    // a note of the person's own (the Send confirm's box, 2026-09-09) rides the entry as `note`: named with the comments,
+    // or alone when the send carried nothing else
+    const noted = typeof e.note === "string" && e.note.trim() !== "";
+    let t = "Sent " + (noted && !ids ? "a note" : plural(ids, "comment", "comments") + (noted ? " and a note" : "")) + " to " + who;
     const acc = typeof e.accepted === "number" ? e.accepted : 0;
     const rej = typeof e.rejected === "number" ? e.rejected : 0;
     if (acc || rej) t += " with " + plural(acc, "accept", "accepts") + " and " + plural(rej, "reject", "rejects");

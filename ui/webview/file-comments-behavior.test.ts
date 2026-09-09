@@ -740,7 +740,9 @@ test("a disabled Send says why in a visible caption, not only a tooltip: no owni
   const w2 = world(); t.after(() => w2.close());
   const sent = status({ unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: T0 } });
   const p2 = await openPanel(w2, sent);
-  assert.equal(p2.aside.querySelector('[data-act="fcsend"]')!.disabled, true);
+  // Send stays on with nothing unsent since the note box (2026-09-09): a note of the person's own is a message by itself,
+  // and the confirm's own Send is off until one is typed; the caption still says nothing is unsent
+  assert.equal(p2.aside.querySelector('[data-act="fcsend"]')!.disabled, false);
   assert.equal(p2.aside.querySelector(".fc-send .fc-note")!.textContent, "Nothing unsent: every comment, reply, and decision has gone.");
   w2.close();
   const w3 = world(); t.after(() => w3.close());

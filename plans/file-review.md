@@ -522,6 +522,9 @@ When you have addressed these, ask me for another look the same way you asked fo
 naming the file.
 ```
 
+With a note from the Send confirm's box (decision 40, 2026-09-09) the note is the first paragraph after the header line
+in both shapes, in the person's own words with no label, before the comments; a note with nothing else unsent is the
+header, the note and the closing ask, without the line saying nothing needs a reply.
 The parenthetical for a comment bound to a change follows the change's kind: a substitution reads
 `on your change "<old>" to "<new>"` as above, an insertion `on the text you added "<new>"`, a
 deletion `on the text you removed "<old>"` — never an empty quoted string in the person's voice. A
@@ -1670,10 +1673,11 @@ rendered, behind a fold or the filter, is not on screen and stays an arrival. A 
 anywhere in the body row, a wheel or a touch move (the two events that begin a scroll of the person's: the scroll
 event itself is not one, since the lock's writes, a centering and the save's scroll fire it with no gesture behind
 them, and a wheel fires before the scroll it starts), a save, a send; never a timer. The line's own press marks
-nothing, so the glance the click buys survives the click; the dots and the line change in place rather than by a
+nothing, so the click that shows an arrival does not mark it seen; the dots and the line change in place rather than by a
 render, the line through the row's press hold (`pressHold`), since a line removed during a press moves the list under
 the pointer. The Send confirm's accept option reads "accept the N pending changes (M arrived since you last looked)"
-when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's. The set lives with the
+when arrivals include pending changes (`acceptOptionLabel`); the default stays decision 8's; the same confirm lost its message preview to a box for the person's own words the same
+day (decision 40), which travel first in the message as `note`. The set lives with the
 panel: a Raw/Rendered switch, a reload and a close and reopen of the aside keep it, and a new file is a new panel. The
 second report: he saved a reply, scrolled on while the host answered, and the reply's landing pulled the text back to
 the card (the save's scroll above, from the 2026-09-07 review, ran unconditionally). Built: `saveComposer` counts the
@@ -2536,6 +2540,18 @@ document stands on its own, each with the reasoning it was given.
     `config.json`, and the commented file. An installer run writes `~/.claude` and `settings.json`
     and is outside that list, so the button adds a server-side surface the posture does not name.
     It awaits the user's ruling; until then the row's sentence is the offer.
+40. **The Send confirm's message preview gives way to a note box** (2026-09-09). The user's ruling: the grey preview
+    text in the confirm is a system message tied to the send and not worth showing; a text box for anything he wants
+    to add takes its place. The box is optional and empty by default (three rows, growing to about eight, then
+    scrolling; Enter adds a line, the composer's chord or the Send button sends); its text survives every re-render
+    while the confirm is open and is cleared only by a successful send or by Cancel. The note travels as `note` in the
+    fileCommentsSend request, trimmed, at most 4000 characters (refused before any request with a line naming the
+    bound; the kernel refuses the same bound), and both builders place it as the first paragraph after the header
+    line, unlabeled, before the comments, marker-neutralized like every other request-supplied string; a note with
+    nothing else unsent still sends, as the header, the note and the closing ask, so Send opens the confirm with
+    nothing unsent and the confirm's own Send waits for words. The comments log's send entry gains `note`, and the
+    panel's Log shows it. The sent-note line is unchanged. A kernel change: the panel and the kernel land together,
+    and the kernel restarts to go live.
 
 ## Open questions for the user
 

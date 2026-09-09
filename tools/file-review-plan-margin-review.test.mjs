@@ -156,12 +156,12 @@ const MODULES = [
   ] },
   { file: 'ui/webview/feed-css-margin-footers.test.ts', holds: [
     'test("feed.css: the margin layout gives the Send and Log sections an overflow of their own, inside the panel block"',
-    'the Send confirm with its preview open stays inside the aside, scrolls under the wheel to Send · Cancel, and leaves the track its cards',
+    'the Send confirm with its note box grown stays inside the aside, scrolls under the wheel to Send · Cancel, and leaves the track its cards',
     'the open Log stays inside the aside, scrolls under the wheel to its oldest row, and leaves the track its cards',
   ] },
   { file: 'ui/webview/styles-fc-margin-footer.test.ts', holds: [
     'test("styles.css: the margin layout\'s track has a floor, the expanded footer sections yield and scroll, the panel never scrolls"',
-    'the Send confirm with fifteen comments and the preview open scrolls within its section',
+    'the Send confirm with fifteen comments and the note box grown scrolls within its section',
     'the Log with thirty rows scrolls within its section under a sticky toggle',
   ] },
   { file: 'ui/webview/feed-css-margin-leader.test.ts', holds: [
