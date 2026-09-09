@@ -437,7 +437,8 @@ class CodexBackend:
     def _drop_row(self, s):
         """Remove `s` from the registry, counting a gate closing when a LIVE row left the set empty:
         spawn's failure paths pop the row they just put live (a door that snapshotted the gate open on
-        that row needs to hear it went away); the name-write retire pops a row _retire_row already
+        that row and lands after the pop reads the moved count; one that landed beside it is told by the
+        aborting door's own helper, run from its finally, since this set never empties); the name-write retire pops a row _retire_row already
         flipped, which is no second closing."""
         with self._sessions_lock:
             gone = self._sessions.pop(s.sid, None)

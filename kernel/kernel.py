@@ -15412,7 +15412,8 @@ def _codex_gate_opened(cx, door, was_closed, closings0):
     registry save) takes the row back, by the failure pop or the rollback, and reaches this line through
     the finally. Another door may have snapshotted that row as the open gate and landed beside it, so
     the set never emptied, no closing was counted, and that door's own window held nothing: the
-    aborting door is the only one that saw the gate closed, and with a row live now it sends the frame.
+    aborting door is the only one whose window saw the gate closed or a closing, and with a row live now it
+    sends the frame.
     With nothing live now it sends none (the failing spawn alone; its pop counted the closing it is,
     for a door that lands after it), and a failure beside a row that was live at the snapshot moves
     neither fact. The live read is cx.has_live, one read under the backend's sessions lock. `door` names

@@ -100,6 +100,13 @@ class _ParkingSdk:
     def live_sessions(self):
         return {}
 
+    # the doors read the gate through these two (nothing is live on this fake, so no frame either way)
+    def has_live(self):
+        return False
+
+    def gate_closings(self):
+        return 0
+
     def spawn(self, nm, cwd, bg="", fg="", sid=None, auth="", env=None):
         self.spawns.append(nm)
         self.claims_at_spawn.append({k: dict(v) for k, v in getattr(km, "_NAME_CLAIMS", {}).items()})

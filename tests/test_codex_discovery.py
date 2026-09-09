@@ -142,7 +142,7 @@ class ModelsRouteConsultsCodexOnlyWhenOptedIn(unittest.TestCase):
     def test_the_gate_reads_opt_in_state_not_readiness(self):
         src = open(os.path.join(ROOT, "kernel", "kernel.py")).read()
         self.assertIn('if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"', src)
-        # the gate is the backend's one locked read (has_live), not the row walk (verification round 7, 2026-09-09)
+        # the gate is the backend's one locked read (has_live), not the row walk that could tear across a landing and a kill
         self.assertIn("or cx.has_live()):", src)
         self.assertNotIn("if cx:\n                    try:\n                        cx_models = cx.model_catalog()", src)
         self.assertIn("def _judge_engine_name():", src)

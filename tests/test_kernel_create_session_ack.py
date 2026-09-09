@@ -104,6 +104,11 @@ class TagsLandBeforeTheDirectPush(unittest.TestCase):
             return self.sid
         def live_sessions(self):
             return {}
+        # the doors read the gate through these two (nothing is live on this fake, so no frame either way)
+        def has_live(self):
+            return False
+        def gate_closings(self):
+            return 0
 
     def setUp(self):
         self.at_push = {}
