@@ -296,7 +296,7 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
   assert.match(RW, /return fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\);/, "the kernel URL is fileUrl's");
   assert.equal((RW.match(/fileUrl\(/g) || []).length, 1, "built in one place, whatever attribute carries it");
   // gated to path-shaped refs: a scheme (http:, data:) or a protocol-relative URL is the browser's, and an img's data-fv-src goes with it
-  assert.match(RW, /if \(!one \|\| one\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(one\)\) return null;/);
+  assert.match(RW, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) return null;/);
   assert.match(RW, /if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}/);
   // code only: rewriteFigureSrcs's doc comment names the relay route in prose, and the shared MD_FN slice spans it
   assert.doesNotMatch((MD_FN + RW).replace(/\/\*[\s\S]*?\*\//g, ""), /"\/file\?path="|\/remote\//, "the route is fileUrl's to build (federation-aware)");

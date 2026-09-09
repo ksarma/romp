@@ -2704,10 +2704,10 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
   // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the
   // plain `href` as the anchors' is in mdBlock, so the element carries one attribute every reader agrees on.
-  const path = (one: string): string | null => {
-    if (!one || one.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(one)) return null;   // a web address, a data: URL, an empty src: as written
-    let rel = one;
-    try { rel = decodeURI(one); } catch { /* a malformed escape: the spelling as written */ }
+  const path = (src: string): string | null => {
+    if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;   // a web address, a data: URL, an empty src: as written
+    let rel = src;
+    try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
     return fileUrl(rel.startsWith("/") ? rel : dir + rel, sid);
   };
   for (const ref of figureRefs(root)) {
