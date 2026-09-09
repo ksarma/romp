@@ -373,7 +373,7 @@ test("own card → the change card hosting it: the session's track-edit binds th
   assert.equal(h.card(passage.id), null, "the comment's own card is gone: the list shows it on the change's card");
   const hosted = h.hosted(passage.id);
   assert.ok(hosted && hosted.contains(compo), "the box stands in the comment's box on the change card");
-  assert.deepEqual(h.kids(hosted!), ["fc-reply fc-reply-you", "fc-replies", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
+  assert.deepEqual(h.kids(hosted!), ["fc-reply fc-reply-you", "fc-replies fc-clip", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
   assert.ok(h.card("chg:h1")!.classList.contains("open"), "the change card is open for it");
   assert.equal(h.q('.fc-card[data-id="chg:h1"] .fc-card-head')!.getAttribute("aria-disabled"), "true", "…and its head is held");
   assert.deepEqual(h.sections(), NO_SLOT, "the slot is empty");
@@ -447,7 +447,7 @@ test("the same move with the keyboard elsewhere leaves the view where the person
 
 test("source: render keys the scroll on the node the box stood in, so a card-to-card move scrolls too; the comments claim no more than the code keeps", () => {
   assert.match(SRC, /const home = this\.composerBox\.parentElement;[^\n]*\n\s*const typing = document\.activeElement === this\.input;/, "the box's node, read before the rebuild");
-  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n\s*if \(moved\) this\.showComposer\(\);/, "between a card and the slot, or between two cards: one check, the node the box stood in against the one it stands in");
+  assert.match(SRC, /const moved = typing && this\.composerBox\.parentElement !== home;\n(?:[^\n]*\n)*?\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);\n\s*if \(moved\) this\.showComposer\(\);/, "between a card and the slot, or between two cards: one check, the node the box stood in against the one it stands in");
   assert.doesNotMatch(SRC, /const inCard = cards\.contains\(this\.composerBox\)/, "no slot-or-card bit beside it: the parent check covers a move to or from the slot too");
   assert.doesNotMatch(SRC, /box leaves a card only when/, "swapCards no longer says the box leaves a card only when its card is gone");
   assert.doesNotMatch(SRC, /a rebuilt list never makes it move/, "placeComposer neither");
