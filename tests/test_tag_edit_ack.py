@@ -41,7 +41,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # Hermetic state BEFORE the loads, which resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state). This is
 # the loads' floor only: every test runs under a state root of its own (_own_state below), and
-# OwnStateRoot's roster walk enforces that by running every class's setUp, not by reading two of them.
+# OwnStateRoot's roster walk enforces that by running the setUp of every unittest.TestCase subclass in the
+# module's namespace (what pytest collects from it, defined here or imported), not by reading two of them.
+# Convention: a test in this module is a method on a _Wire subclass, or on a TestCase whose setUp calls
+# _own_state itself. A pytest-style test (a Test* class that is no TestCase, a module-level test function)
+# would run with no state root at all, so the walk refuses the module when one appears.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -189,55 +193,108 @@ class OwnStateRoot(_Wire):
         self.assertNotIn(views, km._flags_cache)
         self.assertNotIn(views, km._VIEWS_SEQ_FLOOR)
 
-    # A class that needs no state root of its own is listed here with its reason and the walk skips it.
-    # Empty: every class that runs a test binds a root (WebBootWiring derives from _Wire for this).
+    # A TestCase that needs no state root of its own is listed here with its reason and the walk skips it.
+    # Empty: every TestCase with tests binds a root (WebBootWiring derives from _Wire for this). Either set can
+    # only name a class defined above this one (a later or deleted name is a NameError at import); an entry for
+    # a class moved out of the module, or no longer a TestCase, fails the roster check in the walk by name.
     EXEMPT = frozenset()
     # The base: setUp and the socket helpers, no tests of its own; every subclass runs its setUp below.
     BASES = frozenset({_Wire})
 
+    # The kernel globals a walked setUp assigns (grep the module's setUps for `km.`): the walk must leave the
+    # process exactly as it found it, so each is read before the walk, compared after every class, and put back
+    # in a finally. A setUp that resets one of these registers the restore on the same test (Capability for
+    # _UNKNOWN_OPS_SEEN, the two ReaderRestampUnwritable classes for _VIEWS_RESTAMP_ERR[0], _Wire's and
+    # SetterReturnsRefusals's tearDown for _sync_notice). A setUp that gains a `km.` assignment is listed here too.
+    @staticmethod
+    def _kernel_globals():
+        return {"_UNKNOWN_OPS_SEEN": set(km._UNKNOWN_OPS_SEEN),
+                "_VIEWS_RESTAMP_ERR[0]": km._VIEWS_RESTAMP_ERR[0],
+                "_sync_notice": km._sync_notice}
+
+    @staticmethod
+    def _restore_kernel_globals(snapshot):
+        km._UNKNOWN_OPS_SEEN.clear()
+        km._UNKNOWN_OPS_SEEN.update(snapshot["_UNKNOWN_OPS_SEEN"])
+        km._VIEWS_RESTAMP_ERR[0] = snapshot["_VIEWS_RESTAMP_ERR[0]"]
+        km._sync_notice = snapshot["_sync_notice"]
+
     def test_every_class_in_the_module_binds_its_own_root(self):
-        """Executed, not read from source: every unittest.TestCase subclass this module defines gets an
-        instance built on one of its test names, and its setUp must move jd.STATE to a new directory
-        under the run's temp root (not the import-time floor, not the binding the walk found); its
-        tearDown and cleanups must put that binding back and remove the root. A class whose setUp
+        """Executed, not read from source: every unittest.TestCase subclass in this module's namespace (what
+        pytest collects from it, defined here or imported) gets an instance built on one of its test names,
+        and its setUp must move jd.STATE to a new directory under the run's temp root (not the import-time
+        floor, not the binding the walk found); its tearDown and cleanups must put that binding back, remove
+        the root, and leave the kernel globals a setUp assigns as the walk found them. A class whose setUp
         stopped calling _own_state writes under the shared root again, the shape this module failed in
-        after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk."""
+        after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk.
+        A pytest-style test (a Test* class that is no TestCase, a class with test methods that is no
+        TestCase, a module-level test function) would run with no state root at all: the walk refuses the
+        module when one appears, naming it."""
         module = sys.modules[__name__]
+        namespace = vars(module)
+        # pytest collects every TestCase subclass bound in the module, imported names included, and skips
+        # abstract ones; the roster is that set, so nothing pytest runs from here escapes the walk.
         roster = [cls for _, cls in inspect.getmembers(module, inspect.isclass)
-                  if cls.__module__ == __name__ and issubclass(cls, unittest.TestCase)]
+                  if issubclass(cls, unittest.TestCase) and cls is not unittest.TestCase
+                  and not inspect.isabstract(cls)]
+        pytest_style = sorted(
+            name for name, obj in namespace.items()
+            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
+                and (name.startswith("Test")
+                     or any(n.startswith("test") and callable(getattr(obj, n, None)) for n in dir(obj))))
+            or (not inspect.isclass(obj) and callable(obj) and name.startswith("test")))
+        self.assertFalse(pytest_style, "pytest-style tests run with no state root; make them _Wire subclasses: %s"
+                         % pytest_style)
+        stale = (self.EXEMPT | self.BASES) - set(roster)
+        self.assertFalse(stale, "EXEMPT and BASES name TestCases in this module's namespace; not here (moved out of "
+                         "the module, or no longer a TestCase): %s" % sorted(c.__name__ for c in stale))
         loader = unittest.TestLoader()
         found = km.jd.STATE
         tmp_root = Path(tempfile.gettempdir()).resolve()
+        snapshot = self._kernel_globals()
         roots = []
-        for cls in roster:
-            names = loader.getTestCaseNames(cls)
-            if cls in self.BASES:
-                self.assertEqual(names, [], "%s is listed as a base but has tests of its own" % cls.__name__)
-                continue
-            self.assertTrue(names, "%s has no tests and is not a listed base" % cls.__name__)
-            if cls in self.EXEMPT:
-                continue
-            case = cls(names[0])
-            set_up = False
-            made = None
-            try:
-                case.setUp()
-                set_up = True
-                made = km.jd.STATE
-                self.assertNotEqual(made, found, "%s binds no state root of its own: its tests write under the shared root again" % cls.__name__)
-                self.assertNotEqual(made, FLOOR, "%s left jd.STATE on the import-time floor" % cls.__name__)
-                self.assertTrue(made.is_dir(), "%s's root exists: %s" % (cls.__name__, made))
-                self.assertIn(tmp_root, made.resolve().parents, "%s's root lies under the run's temp root: %s" % (cls.__name__, made))
-            finally:
+        try:
+            for cls in roster:
+                names = loader.getTestCaseNames(cls)
+                if cls in self.BASES:
+                    self.assertEqual(names, [], "%s is listed as a base but has tests of its own" % cls.__name__)
+                    continue
+                self.assertTrue(names, "%s has no tests and is not a listed base" % cls.__name__)
+                if cls in self.EXEMPT:
+                    continue
+                case = cls(names[0])
+                result = unittest.TestResult()
+                case._outcome = unittest.case._Outcome(result)    # doCleanups files a raising cleanup here (an
+                                                                  # assertion under failures, anything else under
+                                                                  # errors) instead of dropping it on the floor
+                set_up = False
+                made = None
                 try:
-                    if set_up:
-                        case.tearDown()
+                    case.setUp()
+                    set_up = True
+                    made = km.jd.STATE
+                    self.assertNotEqual(made, found, "%s binds no state root of its own: its tests write under the shared root again" % cls.__name__)
+                    self.assertNotEqual(made, FLOOR, "%s left jd.STATE on the import-time floor" % cls.__name__)
+                    self.assertTrue(made.is_dir(), "%s's root exists: %s" % (cls.__name__, made))
+                    self.assertIn(tmp_root, made.resolve().parents, "%s's root lies under the run's temp root: %s" % (cls.__name__, made))
                 finally:
-                    clean = case.doCleanups()
-            self.assertTrue(clean, "%s's cleanups ran without error" % cls.__name__)
-            self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
-            self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
-            roots.append(made)
+                    try:
+                        if set_up:
+                            case.tearDown()
+                    finally:
+                        clean = case.doCleanups()
+                raised = [tb for _, tb in result.errors + result.failures]
+                self.assertTrue(clean, "%s's cleanups raised:\n%s" % (cls.__name__, "\n".join(raised)))
+                self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
+                self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
+                for name, value in self._kernel_globals().items():
+                    self.assertEqual(value, snapshot[name],
+                                     "%s's setUp changed km.%s and nothing put it back" % (cls.__name__, name))
+                roots.append(made)
+        finally:
+            self._restore_kernel_globals(snapshot)
+        for name, value in self._kernel_globals().items():
+            self.assertEqual(value, snapshot[name], "the walk left km.%s as it found it" % name)
         self.assertEqual(len(roots), len(roster) - len(self.BASES) - len(self.EXEMPT), "every class was walked")
         self.assertEqual(len(set(roots)), len(roots), "every class got a root of its own")
 
@@ -946,6 +1003,8 @@ class Capability(_Wire):
 
     def setUp(self):
         super().setUp()
+        seen = set(km._UNKNOWN_OPS_SEEN)
+        self.addCleanup(lambda: (km._UNKNOWN_OPS_SEEN.clear(), km._UNKNOWN_OPS_SEEN.update(seen)))
         km._UNKNOWN_OPS_SEEN.clear()
 
     def test_ready_is_answered_with_the_caps_frame_after_the_pushes(self):
@@ -1445,6 +1504,7 @@ class ReaderRestampUnwritable(_Wire):
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(km._VIEWS_RESTAMP_ERR.__setitem__, 0, km._VIEWS_RESTAMP_ERR[0])
         km._VIEWS_RESTAMP_ERR[0] = None
 
     def test_a_read_only_state_dir_is_served_not_raised_and_logged_once(self):
@@ -2162,12 +2222,12 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(km._VIEWS_RESTAMP_ERR.__setitem__, 0, km._VIEWS_RESTAMP_ERR[0])
         km._VIEWS_RESTAMP_ERR[0] = None
         self._real_write = km._atomic_write
 
     def tearDown(self):
         km._atomic_write = self._real_write
-        km._VIEWS_RESTAMP_ERR[0] = None
         super().tearDown()
 
     def _file(self, n, **extra):
