@@ -108,6 +108,21 @@ marked.use({
 // file — per-browser view state, the same call feed-view-state.ts makes for the feed's open sections (it
 // must survive a kernel restart without a round-trip to the thing that just restarted). RENDERED is the
 // default for markdown (the user 2026-08-09); Raw stays one click away.
+/** Run a paint pass of the viewer as one timed frame of the page's performance collector (ui/webview/perf-telemetry.ts,
+ *  window.__rompPerf), under the type `fileview:<why>`: `paint` for a text body painted anew, `reflow` for the panel's
+ *  re-place of its cards over reflowed text (the body's width changed, or a text-size step). The Files pane gets no
+ *  frames pushed to it, so these brackets and the socket's op replies (`fed:<type>`) are the only work its collector
+ *  times; the cost of a large reviewed file then shows per minute in `romp perf client` under app "files", with the
+ *  main-thread-free sample the collector takes after an outermost bracket, instead of a long frame nobody attributed
+ *  (2026-09-09: a divider drag with a big note open blocked the main thread for about 20 s and no pane recorded it).
+ *  On the chat page the same brackets count under the chat's collector. No collector (a page without one, a
+ *  stand-in): the pass runs untimed, exactly as before. */
+export function perfTimed<T>(why: string, fn: () => T): T {
+  let p: any = null;
+  try { p = typeof window !== "undefined" ? (window as any).__rompPerf : null; } catch { p = null; }
+  return p && typeof p.timed === "function" ? p.timed("fileview:" + why, fn) : fn();
+}
+
 const FMT_KEY = "romp:fileviewFmt";
 // wrap is GONE from the format state (the user 2026-08-24: "there doesn't need to be a button for
 // that") — long lines always soft-wrap; a stored wrap key from the toggle era is simply ignored.
@@ -1048,7 +1063,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
   // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
   // keep nothing: there the text itself is new.
-  const fireRenderedKeepingSelection = () => {
+  // Both reflows (a text-size step, the body's width changing) run through here, so this is where the pass is timed
+  // as one fileview:reflow frame of the page's collector (perfTimed): the panel's re-place of its cards over the
+  // reflowed text is what a large reviewed file pays per reflow, and it shows per minute.
+  const fireRenderedKeepingSelection = () => perfTimed("reflow", () => {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
       && typeof document.createRange === "function"
@@ -1059,7 +1077,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
     const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
     try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
-  };
+  });
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
@@ -1408,12 +1426,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
-    body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
-    stampBodyWidth();                           // the fresh root's tables take the body's width (no report follows a render)
-    fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
-    shownText = text;
-    seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+    perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
+      if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
+      const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
+      body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
+      fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
+      shownText = text;
+      seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+    });
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });

@@ -1237,3 +1237,62 @@ test("source: the Slice 5 seam — text() answers the buffer in edit mode, the m
   assert.match(VIEW, /\n    post\(\{ type: "saveFile", path, sid: sid \|\| undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq \}\);\n  \};/, "the untracked path ends in the pinned frame");
   assert.doesNotMatch(VIEW, /@codemirror|track-decorations|editor-chunk"/, "the viewer imports nothing from the chunk: the option is data through the mount call");
 });
+
+test("the paint pass runs as one fileview:paint frame of the page's performance collector, the panel's re-place of its cards after the body's width changed as one fileview:reflow frame (the bracket is fireRenderedKeepingSelection's, which both reflow triggers run through), and the pane's minute row carries both with the pass cost; no collector, the pass runs untimed", async (t) => {
+  // The Files pane gets no frames pushed to it; its collector (perf-telemetry.ts, published as window.__rompPerf by
+  // federation) times nothing unless the viewer brackets its own work (file-view.ts perfTimed), which is what made a
+  // 20 s divider drag over a large reviewed note invisible to `romp perf client` (2026-09-09). The collector here is
+  // the real one on a fake clock, the ResizeObserver a stand-in the test reports through (the viewer's reflow is keyed
+  // on the body's width report; with no requestAnimationFrame the report itself is the frame).
+  const { createPerfTelemetry } = await import("./perf-telemetry");
+  const clock = { t: 1000, wall: 1_700_000_000_000 };
+  const posted: any[] = [];
+  const perf = createPerfTelemetry("files", {
+    now: () => clock.t, wallNow: () => clock.wall, post: (m) => posted.push(m), raf: null, caf: null, setInterval: null,
+    observer: null, supportedEntryTypes: [], heapBytes: () => null, domCount: () => 42, visible: () => true, hiddenPane: () => false,
+    ua: "chrome-desktop", pageUrl: "http://h:1/files", windowEvents: null, documentEvents: null,
+  });
+  const observers: Array<{ cb: (entries: any[]) => void; targets: any[] }> = [];
+  (globalThis as any).ResizeObserver = class {
+    private rec: { cb: (entries: any[]) => void; targets: any[] };
+    constructor(cb: (entries: any[]) => void) { this.rec = { cb, targets: [] }; observers.push(this.rec); }
+    observe(el: any): void { this.rec.targets.push(el); }
+    disconnect(): void {}
+  };
+  t.after(() => { delete win.__rompPerf; delete (globalThis as any).ResizeObserver; });
+  // no collector on the page: the open paints as before, nothing is timed
+  const o0 = await open(REPORT, t);
+  const paintsBefore = paints;
+  assert.ok(paintsBefore >= 1, "the open painted");
+  o0.fv.closeFileView(); await settle();
+  // the collector on the page: every paint of the open is a fileview:paint bracket, at the pass's cost
+  win.__rompPerf = perf;
+  const o = await open(REPORT, t);   // open() zeroes the paint count
+  const painted = paints;
+  assert.ok(painted >= 1, "the open painted");
+  let snap: any = perf.snapshot();
+  assert.deepEqual(Object.keys(snap.frames), ["fileview:paint"], "the open's paint passes, and nothing else, were timed");
+  assert.equal(snap.frames["fileview:paint"].n, painted, "one bracket per paint pass (the onRendered hooks ran inside it)");
+  // the body's width changes (the divider released): the panel re-places its cards once per changed width, as fileview:reflow
+  const wo = observers.find((r) => r.targets.includes(o.body));
+  assert.ok(wo, "the viewer observes the body's width");
+  const reportsBefore = paints;
+  wo!.cb([{ contentRect: { width: 600 } }]);           // the first report is the size at observe(), not a change
+  assert.equal(paints, reportsBefore, "no reflow on the first report");
+  wo!.cb([{ contentRect: { width: 400 } }]);           // narrower: the re-paint
+  assert.equal(paints, reportsBefore + 1, "one reflow");
+  wo!.cb([{ contentRect: { width: 400 } }]);           // the same width again: nothing
+  assert.equal(paints, reportsBefore + 1);
+  snap = perf.snapshot();
+  assert.deepEqual(Object.keys(snap.frames).sort(), ["fileview:paint", "fileview:reflow"]);
+  assert.equal(snap.frames["fileview:reflow"].n, 1);
+  assert.equal(snap.frames["fileview:paint"].n, painted, "a reflow is not a paint");
+  // the minute row: app files, both types
+  clock.wall += 60_000;
+  perf.tick();
+  const rows = posted.filter((m) => m.what === "minute");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].data.app, "files");
+  assert.deepEqual(Object.keys(rows[0].data.frames).sort(), ["fileview:paint", "fileview:reflow"]);
+  assert.equal(rows[0].data.dom, 42);
+});
