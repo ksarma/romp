@@ -90,8 +90,10 @@ export type TailEvent = {
   undelivered?: boolean;
   images?: unknown[];
   sendIds?: string[];   // a user event: the send id(s) it stands for — an echo's own, a landed record's every send
-  texts?: { md?: string; sendId?: string; hiddenByPending?: boolean }[];   // a queued bubble: each entry's id, when the
-                        //   kernel holds one; hiddenByPending: render.ts hid this copy for a send drawn as our own bubble (T252d)
+  texts?: { md?: string; sendId?: string; hiddenByPending?: boolean; landing?: boolean }[];   // a queued bubble: each entry's id, when the
+                        //   kernel holds one; hiddenByPending: render.ts hid this copy for a send drawn as our own bubble (T252d);
+                        //   landing: a copy the caller holds after it left the kernel's queue (T262i, queued-held.ts), a hold
+                        //   marker, not an identity: the copy is read like any other, by its id, else by its text
   blocks?: string[];    // a user record the CLI wrote from SEVERAL sends taken at one boundary: one text per
                         //   block (kernel.py build_session ships them when there are two or more); `md` is
                         //   the blocks joined, so each block is a copy of its own send
@@ -399,23 +401,34 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
     // ONE kernel copy covers ONE send: an unclaimed echo atom first — its uuid is then background for
     // every later same-text entry, this push and every push after (the claim must outlive the claimant:
     // a ✕ on it must not hand its echo to the next entry; an echo is one text, so one entry in `seen` is
-    // the whole of it); else a queued copy: one that NAMES this send covers it exactly (no position is
-    // taken, none is handed out), else the first id-less copy beyond this entry's press-time count that
-    // no earlier entry took this push. A queued cover is `byQueued`, an echo cover `byEcho`: the id says
-    // WHICH copy is this send's, and T252d says where the bubble sits (ours, at the tail; the covering
-    // copy hidden, the echo too since T262h).
+    // the whole of it); AND, beside the echo or alone, the kernel's queued copy (below): one that NAMES
+    // this send covers it exactly (no position is taken, none is handed out), else the first id-less copy
+    // beyond this entry's press-time count that no earlier entry took this push. A queued cover is
+    // `byQueued`, an echo cover `byEcho`, and a send in the fed gap wears both: the id says WHICH copy is
+    // this send's, and T252d says where the bubble sits (ours, at the tail; the covering copy hidden, the
+    // echo too since T262h).
     let covered = false, byQueued = false, byEcho = false;
     if (echoIdx >= 0) {
       covered = true; byEcho = true;
       const u = events[echoIdx].uuid;
       if (u) for (const q of list) if (q !== p && q.at && q.text === p.text && !q.at.seen.includes(u)) q.at.seen.push(u);
-    } else if (own) {
+    }
+    // The kernel's QUEUED copy of this send, beside the echo or alone (the fed-gap fix, upstream #1124, on this wire):
+    // the copy has left the queue and is HELD by the pane, marked `landing`, while the kernel's echo shows, and an echo
+    // cover that skipped the queued attribution left the held card visible beside our bubble, two bubbles for one
+    // message. By id first: the entry NAMING this send is ours wherever it sits (no position is taken, none is handed
+    // out; an entry naming ANOTHER send counts for neither, queuedCopies). Else by text, for a copy the kernel gave no
+    // id: the first id-less copy beyond this entry's press-time count that no earlier entry took this push. An
+    // id-carrying copy is never a position on this wire, so the review's rule (after an echo, an id-less copy only; a
+    // copy wearing another id is another send's, and taking it by text handed the second of two identical presses'
+    // copy to the first) holds by construction.
+    const taken = takenCopies.get(p.text) || new Set<number>();
+    if (own) {
       covered = true; byQueued = true;                  // the kernel's queued copy naming this send: exact, and hidden for ours
     } else if (copies > at.queued) {
-      const taken = takenCopies.get(p.text) || new Set<number>();
       for (let k = at.queued; k < copies; k++) if (!taken.has(k)) { taken.add(k); covered = true; byQueued = true; break; }
-      takenCopies.set(p.text, taken);
     }
+    takenCopies.set(p.text, taken);
     if (covered) p.received = true;             // the kernel holds this send: proven once, latched
     if (p.received) p.lost = undefined;         // the drop is older news than the kernel's own copy
     if (landedIdx >= 0) {

@@ -266,11 +266,12 @@ class SdkSingleFlight(unittest.TestCase):
         fake_mod = mock.Mock()
         fake_mod.SdkBackend = lambda *a, **k: FakeBackend()
         prev = km._sdk_backend
-        # _sdk_locked wires the loaded module's readers into the SHARED romp_judge module (jd._WORK_KEY_FN
-        # and its siblings, jd._LOGIN_AUTH_ENV_FN included); with the module a Mock those wires would outlive
-        # this test and hand a later module in the same process (test_judge's JudgeEnv) a Mock where it
-        # expects an environment. Saved here, restored below, and checked afterwards so a new wire added to
-        # _sdk_locked without a `_FN` name still shows up here.
+        # _sdk_locked wires the loaded module's readers into the SHARED romp_judge module (jd._LOGIN_AUTH_ENV_FN
+        # and its siblings, jd._UNPICKED_AUTH_FN and jd._USAGE_REFRESH_FN included; the key wires went with
+        # romp's own key sources, 2026-09-08); with the module a Mock those wires would outlive this test and
+        # hand a later module in the same process (test_judge's JudgeEnv) a Mock where it expects an
+        # environment. Saved here, restored below, and checked afterwards so a new wire added to _sdk_locked
+        # without a `_FN` name still shows up here.
         wires = {n: getattr(km.jd, n) for n in dir(km.jd) if n.endswith("_FN")}
         try:
             km._sdk_backend = None

@@ -3,8 +3,9 @@
 // (billing-label.test.ts); the callers own their chrome.
 //
 // Two sources ride the status payload. `auth` is the INTENT: the pick when one was made (the picker, the
-// gear, a remembered pick), else the default the kernel seeds for an unpicked session (the key romp holds
-// to inject, else the side ROMP_EXPECTED_AUTH declares, else the login). `authLive` is the CLI's OWN
+// gear, a remembered pick), else the default the kernel seeds for an unpicked session (the API key when
+// Claude Code's settings carry an apiKeyHelper, else the side ROMP_EXPECTED_AUTH declares, else the
+// login; romp holds no key of its own). `authLive` is the CLI's OWN
 // report from its init, "" until one has landed. `authPicked` says which kind `auth` is.
 //
 // The CLI's report is the fact, so it leads whenever there is one. A pick the CLI contradicted deserves a
@@ -34,7 +35,7 @@ export function billingSide(side: string, acct?: string): string {
 // The host kernel's availability reply for the new-session picker (the sessionList payload's authAvail).
 export interface BillingAvail {
   login?: boolean;   // the credential store names a signed-in account
-  key?: boolean;     // romp holds a key source of its own
+  key?: boolean;     // Claude Code's settings carry an apiKeyHelper (the kernel's key_available; romp holds no key)
   acct?: string;     // the login's display name, when known
   default?: string;  // what a session created now without an explicit pick would bill: "login" | "key"
 }
@@ -42,16 +43,16 @@ export interface BillingAvail {
 // The picker's Billing row, from that reply: whether the row has anything to say, whether it offers BUTTONS
 // (both choices real) and, when not, the single applying choice written out (the user 2026-08-09:
 // informative, never a one-option selector). The row shows whenever the host can name what a new session
-// bills: a login, a key of romp's, or a DECLARED key (`default` reads "key" under ROMP_EXPECTED_AUTH=key
-// on an apiKeyHelper box, which holds neither credential of romp's). Until 2026-09-09 the gate required a
-// login or a key of romp's, so on that box, the one the fix is for, the row was absent while the created
+// bills: a login, a helper's key, or a DECLARED key (`default` reads "key" under ROMP_EXPECTED_AUTH=key
+// on a box whose settings carry no helper, where the kernel sees neither credential). Until 2026-09-09 the
+// gate required a login or a key, so on that box, the one the fix is for, the row was absent while the created
 // session's hover said "API key" (review round 1). With none of the three the row stays hidden rather
 // than writing out a "Login" nobody can vouch for (the CLI would refuse at init).
 export function pickerBillingRow(a: BillingAvail | null | undefined): { show: boolean; both: boolean; fixed: string } {
   const show = !!(a && (a.login || a.key || a.default === "key"));
   const both = !!(a && a.login && a.key);
   // the written-out choice is the kernel's `default`, exactly what a spawn without a pick bills (new_session_auth):
-  // a remembered login pick on a keyed box seeds the login into the created session, so the key romp holds
+  // a remembered login pick on a keyed box seeds the login into the created session, so the helper's key
   // is not the answer there; the key arm serves only a reply carrying no default
   const keyed = !!a && (a.default ? a.default === "key" : !!a.key);
   const fixed = !show || both ? "" : (keyed ? "API key" : billingSide("login", a!.acct));

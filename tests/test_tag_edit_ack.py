@@ -20,22 +20,36 @@ Two changes at the kernel's door, both pinned here through the real WS dispatche
 The whole-blob `setTimelineViews` stays for lens and order edits, with the guard unchanged (its
 stderr and sync-notice paths still fire) plus the ack. Frames pushed to other clients are unchanged.
 Synthetic sids only."""
+import abc
 import contextlib
 import errno
+import functools
+import inspect
 import io
 import json
 import os
+import shutil
+import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
+from pathlib import Path
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# Hermetic state BEFORE the loads, which resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state). This is
+# the loads' floor only: every test runs under a state root of its own (_own_state below), and
+# OwnStateRoot's roster walk enforces that by running the setUp of every unittest.TestCase subclass in the
+# module's namespace (what pytest collects from it, defined here or imported), not by reading two of them.
+# Convention: a test in this module is a method on a _Wire subclass, or on a TestCase whose setUp calls
+# _own_state itself. Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level
+# test* callable) is refused by the walk whether or not pytest would run it: a test of that shape would run
+# with no state root at all, and a helper of that shape is misnamed.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -43,6 +57,7 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_tagack", os.path.join(BIN, "romp-kernel"))
+FLOOR = km.jd.STATE    # the import-time root (XDG_STATE_HOME/romp); the roster walk asserts no setUp leaves jd.STATE here
 
 SID1 = "11111111-2222-3333-4444-555555555501"
 SID2 = "11111111-2222-3333-4444-555555555502"
@@ -54,14 +69,46 @@ def store_tag(name):
     return next((t for t in km._timeline_views()["tags"] if t["name"] == name), None)
 
 
+def _own_state(test):
+    """A state root of the test's own for its duration: made here, bound into the judge for the test,
+    put back and removed when the test ends (a cleanup, so it runs after tearDown). The judge is ONE
+    module object per process (load_source re-executes into it), so jd.STATE is shared with every
+    module the xdist worker collected, and a neighbour's fixture that rebinds it to a temp dir it removes
+    without putting the prior root back (tests/test_episode_boundary.py's setUp/tearDown does) leaves the
+    shared root pointing at a removed directory. The exposure is per test, not per class: _atomic_write
+    recreates the parent, so a test whose first touch of the views file went through it (a seed(), a setter
+    call) recreated the directory, and a test whose first touch is a direct write_text (a legacy, torn,
+    over-cap or foreign fixture written before any seed) failed with FileNotFoundError on
+    timeline-views.json when it was the first tag-edit test on a worker after such a polluter. Verified on
+    the base, polluter module first and one class at a time: LegacyStoreStampedOnce,
+    LegacyTagsStampedOnFirstRead, MigrationStampsTheArchivedTag, ReaderRestampKeepsTheDiskCap and
+    ReaderRestampUnwritableNamesTheDrop fail as classes; ReaderRestampUnwritable passes as a class (its
+    first test seeds first) and its read-only test fails when it runs first; the other 18 classes pass. A
+    root per test covers every class, whichever of its tests runs first. The path-keyed caches are cleared
+    of this root's entries with it. OwnStateRoot below pins this without the external polluter."""
+    saved = km.jd.STATE
+    root = tempfile.mkdtemp()
+    km.jd._rebind_state(Path(root))
+    views = str(km._views_path())
+
+    def restore():
+        km._flags_cache.pop(views, None)
+        km._VIEWS_SEQ_FLOOR.pop(views, None)
+        km.jd._rebind_state(saved)
+        try:
+            os.chmod(root, 0o755)    # the unwritable-store tests leave the dir 0o555 if they fail before their finally
+        except OSError:
+            pass
+        shutil.rmtree(root, ignore_errors=True)
+    test.addCleanup(restore)
+    return Path(root)
+
+
 class _Wire(unittest.TestCase):
     """A dashboard's timeline socket, through the real dispatcher; every ack it receives is kept."""
 
     def setUp(self):
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
+        _own_state(self)
         self.notices = []
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: self.notices.append((text, ok))
@@ -72,10 +119,6 @@ class _Wire(unittest.TestCase):
 
     def tearDown(self):
         km._sync_notice = self._sync
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
 
     @contextlib.contextmanager
     def real_notices(self):
@@ -110,6 +153,241 @@ class _Wire(unittest.TestCase):
                          "views": {"active": "all", "tags": [dict(WEB)]}})
         self.assertEqual((ack["type"], ack["ok"], ack["refused"]), ("viewsAck", True, []))
         return ack["views"]
+
+
+class OwnStateRoot(_Wire):
+    """_own_state: the binding a preceding test left behind decides nothing about where this module's
+    tests write, and comes back untouched afterwards. setUp leaves jd.STATE the way a neighbour's
+    tearDown does (bound to a temp root that has been removed, the prior root not put back) BEFORE
+    _Wire.setUp runs, so the fixture is all that stands between a direct write_text and
+    FileNotFoundError; without _own_state the first test here fails as the legacy-fixture classes did."""
+
+    def setUp(self):
+        found = km.jd.STATE
+        self.addCleanup(km.jd._rebind_state, found)    # registered first, so it runs last: the root found here
+                                                        # comes back after _own_state's own restore has run
+        gone = Path(tempfile.mkdtemp())
+        gone.rmdir()
+        km.jd._rebind_state(gone)                       # the polluter's shape: a temp root, removed, never put back
+        self.gone = gone
+        super().setUp()
+
+    def test_a_dangling_binding_left_by_an_earlier_test_is_not_inherited_by_a_direct_write(self):
+        p = km._views_path()
+        p.write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))   # a legacy fixture: write_text before any seed;
+                                                                            # FileNotFoundError under the dangling root
+        self.assertNotEqual(p.parent, self.gone, "the write landed under a root of this test's own, not the dangling one")
+        self.assertTrue(p.parent.is_dir(), "and that root exists")
+        self.assertIsNotNone(store_tag("web"), "and the reader reads the file back from it")
+
+    def test_a_cleanup_puts_the_prior_root_back_and_drops_the_views_path_from_the_caches(self):
+        case = unittest.TestCase()
+        before = km.jd.STATE
+        root = _own_state(case)
+        views = str(km._views_path())
+        self.assertEqual(km.jd.STATE, root)
+        self.assertNotEqual(root, before)
+        km._views_path().write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))
+        store_tag("web")                                # a read: caches the blob and raises the floor under this path
+        self.assertIn(views, km._flags_cache)
+        self.assertIn(views, km._VIEWS_SEQ_FLOOR)
+        case.doCleanups()
+        self.assertEqual(km.jd.STATE, before, "the binding _own_state found comes back")
+        self.assertFalse(root.exists(), "and the root it made is gone")
+        self.assertNotIn(views, km._flags_cache)
+        self.assertNotIn(views, km._VIEWS_SEQ_FLOOR)
+
+    # A TestCase that needs no state root of its own is listed here with its reason and the walk skips it.
+    # Empty: every TestCase with tests binds a root (WebBootWiring derives from _Wire for this). Either set can
+    # only name a class defined above this one (a later or deleted name is a NameError at import); an entry for
+    # a class moved out of the module, or no longer a TestCase, fails the roster check in the walk by name.
+    EXEMPT = frozenset()
+    # The base: setUp and the socket helpers, no tests of its own; every subclass runs its setUp below.
+    BASES = frozenset({_Wire})
+
+    # The kernel globals a walked setUp assigns (grep the module's setUps for `km.`): the walk must leave the
+    # process exactly as it found it, so each is read before the walk, compared after every class, and put back
+    # in a finally. A setUp that resets one of these registers the restore on the same test (Capability for
+    # _UNKNOWN_OPS_SEEN, the two ReaderRestampUnwritable classes for _VIEWS_RESTAMP_ERR[0], _Wire's and
+    # SetterReturnsRefusals's tearDown for _sync_notice). A setUp that gains a `km.` assignment is listed here too.
+    @staticmethod
+    def _kernel_globals():
+        return {"_UNKNOWN_OPS_SEEN": set(km._UNKNOWN_OPS_SEEN),
+                "_VIEWS_RESTAMP_ERR[0]": km._VIEWS_RESTAMP_ERR[0],
+                "_sync_notice": km._sync_notice}
+
+    @staticmethod
+    def _restore_kernel_globals(snapshot):
+        km._UNKNOWN_OPS_SEEN.clear()
+        km._UNKNOWN_OPS_SEEN.update(snapshot["_UNKNOWN_OPS_SEEN"])
+        km._VIEWS_RESTAMP_ERR[0] = snapshot["_VIEWS_RESTAMP_ERR[0]"]
+        km._sync_notice = snapshot["_sync_notice"]
+
+    # Everything else bound in the module is judged by NAME, and deliberately STRICTER than pytest's collection
+    # (_pytest/python.py with its default python_classes and python_functions; the repo sets neither): refused
+    # is anything pytest-shaped, a class named Test* that is no TestCase or a module-level callable named test*,
+    # or either opting in with __test__ = True, minus abstract classes and anything opting out with
+    # __test__ = False. That is a superset of what pytest collects: it also refuses a Test* class that defines
+    # or inherits __init__ or __new__ (pytest warns and skips it), a test*-named callable that is not a function
+    # (pytest warns and skips it too), and a Test* class with no test-prefixed method (pytest yields nothing
+    # from it). Refusing the superset means a helper never has to be argued about: a pytest-shaped name here is
+    # either a test with no state root or a misnamed helper, and either is fixed at its name. A helper class
+    # with a test-named method is not pytest-shaped, so it is not refused. Kept as a function of the namespace so
+    # the rule is pinned on a namespace built in a test (the walk itself refuses one bound at module level).
+    @staticmethod
+    def _pytest_shaped(namespace):
+        def shaped(name, obj, prefix):
+            return ((name.startswith(prefix) or getattr(obj, "__test__", False) is True)
+                    and bool(getattr(obj, "__test__", True)))
+        return sorted(
+            name for name, obj in namespace.items()
+            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase) and not inspect.isabstract(obj)
+                and shaped(name, obj, "Test"))
+            or (not inspect.isclass(obj) and callable(obj) and shaped(name, obj, "test")))
+
+    def test_the_guard_refuses_by_name_and_is_stricter_than_pytests_collection(self):
+        """The rule the walk applies, on a namespace built here. Refused: what pytest collects (a Test* class
+        with a test method, a test* function, a class opting in with __test__ = True, and a test*-named
+        functools.partial, which pytest unwraps and runs) and the three shapes pytest warns about or collects
+        nothing from (a Test* class with an __init__ or __new__, own or inherited; a test*-named callable that
+        is not a function; a Test* class with no test-prefixed method). Not refused: a TestCase (the roster
+        covers it), a helper class with a test-named method, a mixin, a name opting out with __test__ = False,
+        an abstract Test* class and a non-callable test* binding."""
+        class TestBare:
+            def test_x(self): pass
+        def test_bare_fn(): pass
+        class Plain:
+            __test__ = True
+            def test_x(self): pass
+        class TestWithInit:
+            def __init__(self): pass
+            def test_x(self): pass
+        class TestWithNew:
+            def __new__(cls): return object.__new__(cls)
+            def test_x(self): pass
+        class _HasInit:
+            def __init__(self): pass
+        class TestInheritedInit(_HasInit):
+            def test_x(self): pass
+        class _Callable:
+            def __call__(self): pass
+        class TestNoMethods:
+            def check(self): pass
+        class TestCased(_Wire):
+            def test_x(self): pass
+        class HelperThing:
+            def test_x(self): pass
+        class SharedChecks:
+            def test_shared(self): pass
+        class TestOff:
+            __test__ = False
+            def test_x(self): pass
+        def test_off_fn(): pass
+        test_off_fn.__test__ = False
+        class TestAbstract(abc.ABC):
+            @abc.abstractmethod
+            def test_x(self): pass
+        namespace = {
+            "TestBare": TestBare, "test_bare_fn": test_bare_fn, "Plain": Plain,
+            "test_partial_fn": functools.partial(test_bare_fn),
+            "TestWithInit": TestWithInit, "TestWithNew": TestWithNew, "TestInheritedInit": TestInheritedInit,
+            "test_callable_obj": _Callable(), "TestNoMethods": TestNoMethods,
+            "TestCased": TestCased, "HelperThing": HelperThing, "SharedChecks": SharedChecks,
+            "TestOff": TestOff, "test_off_fn": test_off_fn, "TestAbstract": TestAbstract, "test_data": 3,
+        }
+        self.assertEqual(self._pytest_shaped(namespace),
+                         ["Plain", "TestBare", "TestInheritedInit", "TestNoMethods", "TestWithInit", "TestWithNew",
+                          "test_bare_fn", "test_callable_obj", "test_partial_fn"])
+
+    def test_every_class_in_the_module_binds_its_own_root(self):
+        """Executed, not read from source: every unittest.TestCase subclass in this module's namespace (what
+        pytest collects from it, defined here or imported) gets an instance built on one of its test names,
+        and its setUp must move jd.STATE to a new directory under the run's temp root (not the import-time
+        floor, not the binding the walk found); its tearDown and cleanups must put that binding back, remove
+        the root, and leave the kernel globals a setUp assigns as the walk found them. A class whose setUp
+        stopped calling _own_state writes under the shared root again, the shape this module failed in
+        after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk.
+        Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level test* callable,
+        or either opting in with __test__ = True; not a helper class with a test-named method, and not a name
+        opting out with __test__ = False) is refused, naming it. That guard is deliberately stricter than
+        pytest's collection: it refuses the shapes pytest would warn about or collect nothing from too, so a
+        helper never has to be argued about (_pytest_shaped above)."""
+        module = sys.modules[__name__]
+        namespace = vars(module)
+        # pytest collects every TestCase subclass bound in the module, imported names included, and skips
+        # abstract ones and any hidden with __test__ = False (_pytest/unittest.py; the attribute is inherited,
+        # so a subclass of a hidden helper sets __test__ = True to be collected); the roster is that set, so
+        # nothing pytest runs from here escapes the walk and nothing it skips is refused.
+        roster = [cls for _, cls in inspect.getmembers(module, inspect.isclass)
+                  if issubclass(cls, unittest.TestCase) and cls is not unittest.TestCase
+                  and not inspect.isabstract(cls) and getattr(cls, "__test__", True)]
+
+        pytest_shaped = self._pytest_shaped(namespace)
+        self.assertFalse(pytest_shaped, "pytest-shaped by name (a Test* class that is no TestCase, or a test* "
+                         "callable): a test of that shape runs here with no state root, and a helper of that "
+                         "shape is misnamed; rename it so it is not pytest-shaped, or make it a _Wire subclass: "
+                         "%s" % pytest_shaped)
+        stale = (self.EXEMPT | self.BASES) - set(roster)
+        self.assertFalse(stale, "EXEMPT and BASES name TestCases in this module's namespace; not here (moved out of "
+                         "the module, or no longer a TestCase): %s" % sorted(c.__name__ for c in stale))
+        loader = unittest.TestLoader()
+        found = km.jd.STATE
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+        snapshot = self._kernel_globals()
+        roots = []
+        try:
+            for cls in roster:
+                names = loader.getTestCaseNames(cls)
+                if cls in self.BASES:
+                    self.assertEqual(names, [], "%s is listed as a base but has tests of its own" % cls.__name__)
+                    continue
+                self.assertTrue(names, "%s has no tests and is not a listed base" % cls.__name__)
+                if cls in self.EXEMPT:
+                    continue
+                case = cls(names[0])
+                set_up = False
+                made = None
+                raised = []
+                try:
+                    case.setUp()
+                    set_up = True
+                    made = km.jd.STATE
+                    self.assertNotEqual(made, found, "%s binds no state root of its own: its tests write under the shared root again" % cls.__name__)
+                    self.assertNotEqual(made, FLOOR, "%s left jd.STATE on the import-time floor" % cls.__name__)
+                    self.assertTrue(made.is_dir(), "%s's root exists: %s" % (cls.__name__, made))
+                    self.assertIn(tmp_root, made.resolve().parents, "%s's root lies under the run's temp root: %s" % (cls.__name__, made))
+                finally:
+                    try:
+                        if set_up:
+                            case.tearDown()
+                    finally:
+                        # The instance's cleanups, run here and not through doCleanups: that files a raising
+                        # cleanup on the instance's _Outcome, and where it lands differs by version (3.10 keeps
+                        # it on the outcome, 3.11 onward hands it to the TestResult), so a walk reading one
+                        # place showed an empty message on the other. The same order as doCleanups (LIFO, and
+                        # every cleanup runs after one raises), from the list addCleanup appends to, the one
+                        # private attribute touched here, unchanged from 3.10 to 3.14t; each exception is kept
+                        # as its traceback, so the failure below reads the same on every interpreter.
+                        while case._cleanups:
+                            function, args, kwargs = case._cleanups.pop()
+                            try:
+                                function(*args, **kwargs)
+                            except Exception:
+                                raised.append(traceback.format_exc())
+                if raised:
+                    self.fail("%s's cleanups raised:\n%s" % (cls.__name__, "\n".join(raised)))
+                self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
+                self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
+                for name, value in self._kernel_globals().items():
+                    self.assertEqual(value, snapshot[name],
+                                     "%s's setUp changed km.%s and nothing put it back" % (cls.__name__, name))
+                roots.append(made)
+        finally:
+            self._restore_kernel_globals(snapshot)
+        for name, value in self._kernel_globals().items():
+            self.assertEqual(value, snapshot[name], "the walk left km.%s as it found it" % name)
+        self.assertEqual(len(roots), len(roster) - len(self.BASES) - len(self.EXEMPT), "every class was walked")
+        self.assertEqual(len(set(roots)), len(roots), "every class got a root of its own")
 
 
 class TargetedTagEdits(_Wire):
@@ -816,6 +1094,8 @@ class Capability(_Wire):
 
     def setUp(self):
         super().setUp()
+        seen = set(km._UNKNOWN_OPS_SEEN)
+        self.addCleanup(lambda: (km._UNKNOWN_OPS_SEEN.clear(), km._UNKNOWN_OPS_SEEN.update(seen)))
         km._UNKNOWN_OPS_SEEN.clear()
 
     def test_ready_is_answered_with_the_caps_frame_after_the_pushes(self):
@@ -942,6 +1222,7 @@ class Capability(_Wire):
         from pathlib import Path as _P
         s0 = self.seed()["seq"]
         tmp = _tf.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -976,19 +1257,12 @@ class SetterReturnsRefusals(unittest.TestCase):
     ignored None keep ignoring a list."""
 
     def setUp(self):
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
+        _own_state(self)
         self._sync = km._sync_notice
         km._sync_notice = lambda text, ok=True: None
 
     def tearDown(self):
         km._sync_notice = self._sync
-        try:
-            km._views_path().unlink()
-        except OSError:
-            pass
 
     def test_clean_writes_return_an_empty_list_and_stale_ones_the_rows(self):
         self.assertEqual(km._set_timeline_views({"active": "all", "tags": [dict(WEB)]}), [])
@@ -1213,6 +1487,7 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
         home = km.jd.STATE
         self.assertGreaterEqual(km._views_seq_floor(), s1, "the first store's floor is raised by its own writes")
         other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other, True)
         km.jd.STATE = Path(other)
         p2 = km._views_path()
         try:
@@ -1320,6 +1595,7 @@ class ReaderRestampUnwritable(_Wire):
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(km._VIEWS_RESTAMP_ERR.__setitem__, 0, km._VIEWS_RESTAMP_ERR[0])
         km._VIEWS_RESTAMP_ERR[0] = None
 
     def test_a_read_only_state_dir_is_served_not_raised_and_logged_once(self):
@@ -2037,12 +2313,12 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(km._VIEWS_RESTAMP_ERR.__setitem__, 0, km._VIEWS_RESTAMP_ERR[0])
         km._VIEWS_RESTAMP_ERR[0] = None
         self._real_write = km._atomic_write
 
     def tearDown(self):
         km._atomic_write = self._real_write
-        km._VIEWS_RESTAMP_ERR[0] = None
         super().tearDown()
 
     def _file(self, n, **extra):
@@ -2387,6 +2663,7 @@ class SentinelConnectPushCaps(_Wire):
         from pathlib import Path as _P
         s0 = self.seed()["seq"]
         tmp = _tf.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -2456,10 +2733,11 @@ class SentinelConnectPushCaps(_Wire):
         self.assertEqual(self.notices, [])
 
 
-class WebBootWiring(unittest.TestCase):
+class WebBootWiring(_Wire):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
-    bridge sets equal)."""
+    bridge sets equal). Reads the kernel's source only; a _Wire so it runs under a state root of its
+    own like every class here, which keeps OwnStateRoot's exemption set empty."""
 
     def test_the_bridge_and_the_ack_dispatch(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
