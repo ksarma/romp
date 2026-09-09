@@ -84,7 +84,11 @@ test('the save\'s stand-down is as the paragraph states it: the count stood AND 
 
 test('the Send confirm\'s words and the notice\'s are the model\'s', () => {
   assert.ok(note.includes('"accept the N pending changes (M arrived since you last looked)"'));
-  assert.ok(model.includes('if (arrived > 0) parts.push(arrived + " arrived since you last looked");'));
+  // decision 41 (2026-09-09) moved the option to the seen split: the unseen pending changes are named as staying pending, and
+  // the arrivals' count is the line's alone (the same set, said once). The paragraph's quoted words are the option as the
+  // follow-on built it; the seen follow-on's paragraph carries the words as they are now
+  assert.ok(model.includes('if (unseen > 0) parts.push(unseen + " unseen " + (unseen === 1 ? "stays" : "stay") + " pending");'));
+  assert.ok(!model.includes('" arrived since you last looked"'), 'the option no longer says arrived: the line under the header does');
   assert.ok(note.includes('"api made 11 changes and 7 replies since you last looked"'));
   assert.ok(model.includes('return listWords(names) + " made " + listWords(parts) + " since you last looked";'));
 });

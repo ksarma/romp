@@ -542,8 +542,8 @@ const filterButton = (w: World, key: string): El => w.aside().querySelectorAll('
 test("a primary press on an arrival's card marks it seen but the line and the accept option keep their words until the release: the dot comes off in place, the words change after the pointerup; the last arrivals' press keeps the line standing until the release too", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived());
-  actIn(w.aside(), "fcsend")!.click();                  // the confirm up: its accept option names the arrived change
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)");
+  actIn(w.aside(), "fcsend")!.click();                  // the confirm up: its accept option counts the arrived change as unseen
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)");
   gesture(w.body, "wheel");                             // the findings' reply, in the box, is seen: a wheel is no press, the words change at once
   assert.equal(lineOf(w)!.textContent, "api made 1 change, 1 comment and 1 reply since you last looked");
   scrollBody(w, 200);                                   // the passage's card (240) is in the box [200, 360)
@@ -561,10 +561,10 @@ test("a primary press on an arrival's card marks it seen but the line and the ac
   assert.ok(!isNew(w.card(CHG2)) && !isNew(w.card(line9.id)), "seen at the press");
   assert.ok(lineOf(w), "the line stands through the press (before: removed at the pointerdown, the list moved up by its height under the pointer)");
   assert.equal(lineOf(w)!.textContent, "api made 1 change and 1 comment since you last looked", "with the words it had");
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "the accept option waits too");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "the accept option waits too");
   await release();
   assert.equal(lineOf(w), null, "released: every arrival seen, the line is gone");
-  assert.equal(acceptLabel(w), "accept the 2 pending changes", "and the option says so");
+  assert.equal(acceptLabel(w), "accept the 2 pending changes you have seen", "and the option says so: the arrived change is seen, and the accept takes it");
   w.close();
 });
 
@@ -587,35 +587,35 @@ test("at source: the hold is installed before the gesture listeners on the same 
 const detachedH2 = { id: "h2", author: "api", authorId: SID, ts: T0 + 31000, kind: "ins", from: MORE_AT, oldText: "", newText: MORE };
 const storeWith = (comments: StoreComment[], detached: unknown[] = []) => ({ v: 3, path: "docs/report.md", suggestions: [], comments, ...(detached.length ? { detached } : {}) });
 
-test("a change that arrived pending and was detached since is still an arrival on the line but no longer a pending one on the accept option; one that arrived detached and re-attached as a hunk is", async (t) => {
+test("a change that arrived pending and was detached since is still an arrival on the line but no longer an unseen pending one on the accept option (detached, it is not a hunk: neither seen nor unseen); one that arrived detached and re-attached as a hunk is counted unseen again", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived());                          // h2 arrives pending
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)");
   actIn(w.aside(), "fcsendcancel")!.click();
   // the sidecar's rebase could not place h2 after a write: the same id under store.detached, no longer a hunk
   await land(w, ok, arrived({ hunks: [hunk], store: storeWith([whole, findingsR, passageR, closing, line9, mine2], [detachedH2]), storeMtimeNs: "1757145600000000005" }));
   assert.equal(lineOf(w)!.textContent, ARRIVED, "the change is still an arrival: the person has not seen it");
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change", "the one pending change was in the first status; the arrived one is detached, and the accept does not touch it (before: '(1 arrived since you last looked)')");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen", "the one pending change was in the first status and is seen; the arrived one is detached, and the accept neither takes it nor counts it unseen (before the fix the option went on counting it)");
   actIn(w.aside(), "fcsendcancel")!.click();
   // re-attached: the same id is a hunk again
   await land(w, ok, arrived({ storeMtimeNs: "1757145600000000006" }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "pending again: named on the option");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "pending again: counted unseen on the option");
   w.close();
 });
 
-test("the reverse: a change that arrived detached is named on the accept option once a status re-attaches it", async (t) => {
+test("the reverse: a change that arrived detached is counted unseen on the accept option once a status re-attaches it", async (t) => {
   const { w, ok } = await open(t, textWorld());
   await land(w, ok, arrived({ hunks: [hunk], store: storeWith([whole, findingsR, passageR, closing, line9, mine2], [detachedH2]) }));
   assert.equal(lineOf(w)!.textContent, ARRIVED, "a detached change of the session's is an arrival");
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 1 pending change", "not pending: not on the option");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen", "not pending: not on the option");
   actIn(w.aside(), "fcsendcancel")!.click();
   await land(w, ok, arrived({ storeMtimeNs: "1757145600000000005" }));
   actIn(w.aside(), "fcsend")!.click();
-  assert.equal(acceptLabel(w), "accept the 2 pending changes (1 arrived since you last looked)", "the entry followed the status (before: 'accept the 2 pending changes', the arrival uncounted)");
+  assert.equal(acceptLabel(w), "accept the 1 pending change you have seen (1 unseen stays pending)", "the entry followed the status (before the fix: no unseen count, the arrival uncounted)");
   w.close();
 });
 
@@ -752,7 +752,7 @@ test("the note box grows with its content to SEND_NOTE_ROWS rows, then scrolls; 
 });
 
 test("a height the person dragged the box to stands through typing (the composer's rule), before the first keystroke and after; Cancel clears it; a successful send clears the words and the height; a refused send keeps both", async (t) => {
-  const { w, ok } = await open(t, textWorld(), status({ hunks: [] }));   // no pending change: the send posts at once, with no accept-all to answer first
+  const { w, ok } = await open(t, textWorld(), status({ hunks: [] }));   // no pending change: the send posts at once, with no accept to answer first
   actIn(w.aside(), "fcsend")!.click();
   const box = noteBox(w);
   lendRows(box);

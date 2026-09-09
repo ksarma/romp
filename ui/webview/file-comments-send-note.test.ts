@@ -458,7 +458,7 @@ test("a note over the bound is refused before any request, with a line naming th
   typeNote(aside, "x".repeat(SEND_NOTE_MAX + 1));
   aside.querySelector('[data-act="fcsendgo"]')!.click(); await flush();
   assert.equal(lastOf(w, "fileCommentsSend"), undefined, "nothing posted");
-  assert.equal(countOf(w, "fileComments", "set-tracked") + countOf(w, "fileComments", "accept-all"), 0, "no step of the send ran");
+  assert.equal(countOf(w, "fileComments", "set-tracked") + countOf(w, "fileComments", "accept"), 0, "no step of the send ran");
   assert.equal(errText(aside.querySelector(".fc-send .fc-err")!), "Nothing sent: the note is 4001 characters, and a send carries at most 4000. Shorten it.");
   assert.equal(noteBox(aside).value.length, SEND_NOTE_MAX + 1, "the words stay for the person to shorten");
   typeNote(aside, "y".repeat(SEND_NOTE_MAX));

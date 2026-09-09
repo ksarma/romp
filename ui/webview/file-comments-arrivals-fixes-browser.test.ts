@@ -194,15 +194,15 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
 // the session's reply alone: one arrival, its card in the track's box
 const REPLY_ONLY = { ...base, store: { v: 3, path: "docs/report.md", suggestions: [], comments: [REPLIED] }, storeMtimeNs: "1757145600000000004" };
 const HEAD = '.fileview-aside .fc-card[data-id="' + COMMENT.id + '"] .fc-card-head';
-type Press = { line: string | null; headTop: number | null; isNew: boolean; open: boolean; accept: string | null };
+type Press = { line: string | null; headTop: number | null; isNew: boolean; open: boolean; accept: string | null; acceptOff: boolean | null };
 type Click = { act: string | null; card: string | null; inHead: boolean };
 const press = (page: any): Promise<Press> => page.evaluate((sel: string) => {
   const aside = document.querySelector(".fileview-aside")!;
   const line = aside.querySelector('[data-act="fcarrivals"]');
   const head = document.querySelector(sel);
   const card = head ? head.closest(".fc-card") as HTMLElement : null;
-  const cb = aside.querySelector('input[data-opt="accept"]');
-  return { line: line ? line.textContent : null, headTop: head ? head.getBoundingClientRect().top : null, isNew: !!card && card.dataset.new === "1", open: !!card && card.classList.contains("open"), accept: cb && cb.parentElement ? cb.parentElement.textContent : null };
+  const cb = aside.querySelector('input[data-opt="accept"]') as HTMLInputElement | null;
+  return { line: line ? line.textContent : null, headTop: head ? head.getBoundingClientRect().top : null, isNew: !!card && card.dataset.new === "1", open: !!card && card.classList.contains("open"), accept: cb && cb.parentElement ? cb.parentElement.textContent : null, acceptOff: cb ? cb.disabled && !cb.checked : null };
 }, HEAD);
 /** The release's aftermath: the click (synchronous with the pointerup), then the hold's zero timer, then a frame. */
 const settled = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => setTimeout(() => setTimeout(() => requestAnimationFrame(() => r()), 0), 0)));
@@ -230,12 +230,13 @@ for (const name of ["chromium", "firefox"]) {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       await land(page, ARRIVED);
-      await click(page, '[data-act="fcsend"]');                   // the confirm up: its accept option names the arrived change
+      await click(page, '[data-act="fcsend"]');                   // the confirm up: its accept option counts the arrived change as unseen
       await frames(page);
       const { before, during, after, clicks } = await pressHead(page);
       assert.equal(before.line, "api made 1 change and 1 reply since you last looked");
       assert.equal(before.open, false);
-      assert.equal(before.accept, "accept the 1 pending change (1 arrived since you last looked)");
+      assert.equal(before.accept, "accept the pending changes you have seen (the 1 pending change is unseen; nothing is accepted until you look)");
+      assert.equal(before.acceptOff, true, "nothing seen: the box is unchecked and disabled");
       assert.equal(before.isNew, true);
       assert.equal(during.isNew, false, "seen at the press: the dot came off in place");
       assert.equal(during.line, before.line, "the line keeps its words through the press (before: rewritten at the pointerdown)");
@@ -244,7 +245,8 @@ for (const name of ["chromium", "firefox"]) {
       assert.deepEqual(clicks, CARD_CLICK, "one click, on the pressed head, resolved to the card's toggle");
       assert.equal(after.open, true, "the click landed on the card: it opened");
       assert.equal(after.line, "api made 1 change since you last looked", "released: the words follow");
-      assert.equal(after.accept, "accept the 1 pending change (1 arrived since you last looked)", "the change below is still unseen");
+      assert.equal(after.accept, "accept the pending changes you have seen (the 1 pending change is unseen; nothing is accepted until you look)", "the change below is still unseen: nothing to accept");
+      assert.equal(after.acceptOff, true, "the box stays unchecked and disabled");
     });
   });
 

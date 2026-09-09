@@ -259,23 +259,30 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
     "the view's mtime against the status's: a re-fetch keyed on the mtime, and the loader until the paint shows it");
   assert.doesNotMatch(once, /this\.ctx\.reload\(\)/, "mutateOnce asks no fetch of its own: a moved fence's fresh status carries the file's mtime");
   assert.match(once, /await this\.refreshAfterMoved\(e\.code\);/, "a moved fence: the fresh status (and the bytes, when the file is what moved and no status lands)");
-  // the send: parts first, set-tracked, accept-all, then the send with A = unsent.accepted + N and R = unsent.rejected
+  // the send: parts first, set-tracked, the accept of the SEEN pending changes by id (decision 41: the card's own verb with
+  // the ids, never an accept-all, so an unseen change stays pending), then the send with A = unsent.accepted + N and R = unsent.rejected
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
   const pos = (s: string) => { const i = send.indexOf(s); assert.ok(i >= 0, s); return i; };
-  assert.ok(pos("const parts: SendParts = sendParts(s);") < pos('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message parts come first: a bound comment's desc needs the change accept-all removes");
-  assert.ok(pos('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")') < pos('await this.mutate("accept-all", {}, "send")'), "set-tracked before accept-all");
-  assert.ok(pos('await this.mutate("accept-all", {}, "send")') < pos("await this.sendOnce(msg, false)"), "accept-all before the send");
-  assert.match(send, /if \(acceptAll\) \{\n\s*const a = await this\.mutate\("accept-all", \{\}, "send"\);\n\s*if \(!a\) return;/, "a refused accept-all aborts before the send");
-  assert.match(send, /const acceptAll = this\.sendOpts\.accept && pending > 0;/);
-  assert.match(send, /const counts = sendCounts\(parts, acceptAll, pending\);/);
+  assert.ok(pos("const parts: SendParts = sendParts(s);") < pos('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")'), "the message parts come first: a bound comment's desc needs the change the accept removes");
+  assert.ok(pos('await this.mutate("set-tracked", { on: true, scope: "file" }, "send")') < pos('await this.mutate("accept", { ids: acceptIds }, "send")'), "set-tracked before the accept");
+  assert.ok(pos('await this.mutate("accept", { ids: acceptIds }, "send")') < pos("await this.sendOnce(msg, false)"), "the accept before the send");
+  assert.match(send, /if \(acceptIds\.length\) \{\n\s*const a = await this\.mutate\("accept", \{ ids: acceptIds \}, "send"\);\n\s*if \(!a\) return;/, "a refused accept aborts before the send; with no id to accept, no accept goes");
+  assert.match(send, /const acceptIds = this\.sendOpts\.accept \? this\.pendingSplit\(s\)\.seen\.map\(\(h\) => String\(h\.id\)\) : \[\];/, "the ids: the seen pending changes' (pendingSplit), in the hunks' order; none with the box unchecked");
+  assert.doesNotMatch(send, /mutate\("accept-all"/, "the send runs no accept-all: the unseen changes are not its to decide");
+  assert.match(send, /accepted = decided\.length;/, "N is what the accept's reply lists");
+  assert.match(send, /const counts = sendCounts\(parts, acceptIds\.length > 0, accepted\);/);
   assert.match(send, /accepted: counts\.accepted, rejected: counts\.rejected, watermark: parts\.watermark,/);
   assert.match(MODEL, /return \{ accepted: parts\.accepted \+ \(acceptPending && pending > 0 \? pending : 0\), rejected: parts\.rejected \};/);
-  // the third checkbox: checked by default, offered when any change is pending, wired through the same change listener
+  // the third checkbox: checked by default, offered when any change is pending (seen or not), wired through the same change listener
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/);
-  assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", acceptOptionLabel\(pending, this\.arrivedPending\(\), resolvedByAccept\(s\.store, s\.hunks \|\| \[\]\)\)\)\);/, "the words are the model's (acceptOptionLabel), naming the pending changes that arrived since the person last looked (the arrivals follow-on, 2026-09-09) and the comments the accept resolves (the lost-update probe, the same day)");
+  assert.match(SRC, /if \(split\.seen\.length \+ split\.unseen\.length\) opts\.appendChild\(this\.acceptOption\(s\)\);/, "the option stands whenever a change is pending; its words and state are syncAcceptOption's");
+  const syncOpt = SRC.split("private syncAcceptOption(cb: HTMLInputElement, s: Status): void {")[1].split("\n  }\n")[0];
+  assert.match(syncOpt, /acceptOptionLabel\(split\.seen\.length, split\.unseen\.length, resolvedByAccept\(s\.store, split\.seen\)\)/,
+    "the words are the model's (acceptOptionLabel): the seen pending changes the send accepts, the unseen ones it leaves pending (decision 41, 2026-09-09), and the comments bound to the SEEN changes that the accept resolves (the lost-update probe, the same day)");
+  assert.match(syncOpt, /cb\.disabled = split\.seen\.length === 0;/, "nothing seen: the box is off, there is nothing it may accept");
   assert.match(SRC, /else if \(k === "todo" \|\| k === "track" \|\| k === "accept"\) this\.sendOpts\[k\] = t\.checked;/, "the three checkboxes land in sendOpts…");
   assert.match(SRC, /if \(k === "todopick"\) this\.todoPick = t\.value;/, "…and the todo radio group (the todo-file follow-on) in todoPick; anything else flips nothing");
-  assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/, "the list uses the send's own counts");
+  assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, split\.seen\.length\);/, "the list uses the send's own counts: the seen pending changes are what the send accepts");
   // the confirm shows no message since the note box replaced the preview (2026-09-09): the panel builds none, the kernel does
   assert.doesNotMatch(SRC, /buildSendMessage\(/);
   assert.match(SRC, /cf\.appendChild\(this\.noteBox\);/, "the note box stands in the confirm");
@@ -724,21 +731,25 @@ test("Reject refused twice: the second refusal shows verbatim under the card, wi
   assert.deepEqual(acc.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003" });
 });
 
-test("Accept all through the send confirm: the third checkbox, checked, names the N; the list carries A = unsent + N; Send runs accept-all, then the send with those counts", async (t: TestContext) => {
+test("Accept through the send confirm: the third checkbox, checked, names the N seen; the list carries A = unsent + N; Send runs the accept by id over the seen changes, then the send with those counts", async (t: TestContext) => {
+  // the panel's first status holds both changes, so both are seen (the arrivals follow-on's rule): the accept names them by id
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } }));
   act(aside, "fcsend")!.click();
   const cb = aside.querySelector('input[data-opt="accept"]')!;
   assert.ok(cb, "the third checkbox appears when changes are pending");
   assert.equal(cb.checked, true, "checked by default");
-  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes");
+  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes you have seen");
   assert.equal(aside.querySelector('input[data-opt="track"]'), null, "the file is tracked: no tracking box");
   assert.ok(texts(aside.querySelectorAll(".fc-list li")).includes("3 accepted, 0 rejected"), "the log's 1 plus the 2 the send accepts");
   assert.equal(act(aside, "fcpreview"), null, "no message preview in the confirm (the note box took its place, 2026-09-09)");
   assert.ok(aside.querySelector(".fc-confirm .fc-send-note"), "the note box stands in the confirm");
   act(aside, "fcsendgo")!.click(); await flush();
-  const acc = lastOf(w, "fileComments", "accept-all");
-  assert.ok(acc, "accept-all goes before the send");
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.ok(acc, "the accept goes before the send");
+  assert.deepEqual(acc.args, { ids: ["h1", "h3"] }, "by id, the seen pending changes in the hunks' order: the card's own verb, never an accept-all");
+  assert.equal(countOf(w, "fileComments", "accept-all"), 0);
+  assert.deepEqual(acc.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003" }, "the sidecar fence, as the card's accept carries it");
   assert.equal(countOf(w, "fileCommentsSend"), 0, "…and the send waits for it");
   assert.equal(countOf(w, "fileComments", "set-tracked"), 0, "already tracked: no toggle");
   const after = status({ hunks: [], store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] }, storeMtimeNs: "1757145600000000005",
@@ -753,7 +764,7 @@ test("Accept all through the send confirm: the third checkbox, checked, names th
   assert.ok(aside.querySelector(".fc-sent")!.textContent.startsWith("Sent to api at "));
 });
 
-test("the accept box unchecked: no accept-all, the send carries the log's counts alone; a refused accept-all aborts before the send and shows the refusal", async (t: TestContext) => {
+test("the accept box unchecked: no accept, the send carries the log's counts alone; a refused accept aborts before the send and shows the refusal", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   act(aside, "fcsend")!.click();
@@ -761,19 +772,21 @@ test("the accept box unchecked: no accept-all, the send carries the log's counts
   cb.checked = false; dispatch(cb, new Ev("change"));
   assert.equal(texts(aside.querySelectorAll(".fc-list li")).some((t) => /accepted/.test(t)), false, "no decisions line with nothing to state");
   act(aside, "fcsendgo")!.click(); await flush();
-  assert.equal(countOf(w, "fileComments", "accept-all"), 0);
+  assert.equal(countOf(w, "fileComments", "accept"), 0, "unchecked: no accept goes");
   const send = lastOf(w, "fileCommentsSend");
   assert.ok(send); assert.equal(send.accepted, 0); assert.equal(send.rejected, 0);
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsSent", reqId: send.reqId, queued: false } })); await flush();
   answer(w, status()); await flush();
-  // checked again, but the host refuses the accept-all: nothing is sent, the refusal is the send's row
+  // checked again, but the host refuses the accept: nothing is sent, the refusal is the send's row
   act(aside, "fcsend")!.click();
   const cb2 = aside.querySelector('input[data-opt="accept"]')!;
   assert.equal(cb2.checked, false, "the choice is remembered for the viewer");
   cb2.checked = true; dispatch(cb2, new Ev("change"));
   act(aside, "fcsendgo")!.click(); await flush();
-  const acc = lastOf(w, "fileComments", "accept-all");
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.deepEqual(acc.args, { ids: ["h1", "h3"] });
   refuse(w, acc, "corrupt", "the comments for ~/notes-api/docs/report.md are not valid JSON"); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "accept"), 1, "a corrupt sidecar is no moved fence: no retry");
   assert.equal(countOf(w, "fileCommentsSend"), 1, "no second send");
   assert.ok(aside.querySelector(".fc-send .fc-err")!.textContent.includes("not valid JSON"), "the refusal, under Send");
 });

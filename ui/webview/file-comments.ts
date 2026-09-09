@@ -88,6 +88,7 @@ import {
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
   todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
   statusEntries, arrivalWords, acceptOptionLabel, YOU, type Entry,   // the arrivals notice (the arrivals follow-on, 2026-09-09)
+  partitionPending,   // the Send's accept takes the seen pending changes only (decision 41, 2026-09-09)
   resolvedByAccept, sentNoteWords,   // a send whose accept resolves comments says so (the lost-update probe, 2026-09-09)
   noteTooLong, trimNote,   // the Send confirm's note box (the user's ruling, 2026-09-09); trimNote: the note as the kernel reads it
 } from "./file-comments-model";
@@ -2483,12 +2484,6 @@ class Panel {
       else this.arrivals.set(e.key, e);
     }
   }
-  /** The pending changes among the arrivals: what the Send confirm's accept option names (acceptOptionLabel). */
-  private arrivedPending(): number {
-    let n = 0;
-    for (const e of this.arrivals.values()) if (e.kind === "change" && e.pending) n++;
-    return n;
-  }
   /** The card an entry shows on: a change's own; a comment's or a reply's the comment's card, which for a comment bound
    *  to a pending change is the change's card (cardKey, as the list shows it). */
   private arrivalCard(e: Entry): string {
@@ -2545,10 +2540,10 @@ class Panel {
     const words = (): void => {
       const b = this.root?.querySelector('[data-act="fcarrivals"]') as HTMLElement | null;
       if (b) { if (!this.arrivals.size) b.remove(); else b.textContent = this.arrivalText(); }
-      // the Send confirm's accept option, when it is up, names the pending changes still unseen (renderSend's words)
-      const cb = this.root?.querySelector('input[data-opt="accept"]') as HTMLElement | null;
-      const label = cb && cb.parentElement ? cb.parentElement.querySelector("span") : null;
-      if (label && this.status) label.textContent = acceptOptionLabel(this.ctx.editing() ? 0 : (this.status.hunks || []).length, this.arrivedPending(), this.ctx.editing() ? 0 : resolvedByAccept(this.status.store, this.status.hunks || []));
+      // the Send confirm's accept option, when it is up, follows the seen side (renderSend's words and state, syncAcceptOption):
+      // a change this gesture marked seen is one the send now accepts, and a box that was disabled with nothing seen comes on
+      const cb = this.root?.querySelector('input[data-opt="accept"]') as HTMLInputElement | null;
+      if (cb && this.status) this.syncAcceptOption(cb, this.status);
     };
     if (this.hold) void this.hold.defer(words); else words();
   }
@@ -3815,11 +3810,6 @@ class Panel {
     if (long) { this.errors.set("send", { text: long, reload: false }); this.render(); return; }
     if (!unsentCount(s.unsent) && !note) return;
     const parts: SendParts = sendParts(s);
-    // the changes the send may accept on the way: none while the editor is up, whose marks they are (DECIDES; renderSend
-    // shows no box for them then), so acceptAll is false and the counts carry only the log's own decisions. Once the
-    // accept-all answers, the N it decided (below)
-    let pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
-    const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
     // the comments open before the send: the accept-all resolves the ones bound to the changes it accepts (the host's rule),
     // and a comment that leaves the visible list must leave a visible word behind (the lost-update probe, 2026-09-09: seven
@@ -3833,6 +3823,13 @@ class Panel {
     // confirm, and there is no box to put it back in
     const noting = document.activeElement === this.noteBox;
     this.gesture();                                    // a send is a gesture of the person's (the arrivals follow-on)
+    // the changes the send accepts on the way (decision 41): the pending changes the person has SEEN, by id through the
+    // same accept the card's button uses, never an accept-all — an unseen change stays pending for the next look. Read
+    // after the send's own gesture, so a card on screen at the Send press counts as seen the way any gesture counts it.
+    // None while the editor is up, whose marks they are (DECIDES; renderSend shows no box for them then), and none with
+    // the box unchecked; the counts then carry only the log's own decisions. Once the accept answers, the N it decided
+    const acceptIds = this.sendOpts.accept ? this.pendingSplit(s).seen.map((h) => String(h.id)) : [];
+    let accepted = 0;
     this.sending = true; this.errors.delete("send"); this.render();
     try {
       if (this.sendOpts.track && !s.trackedBy) {
@@ -3840,26 +3837,25 @@ class Panel {
         if (!r) return;
         tracked = !!r.trackedBy;
       }
-      if (acceptAll) {
-        const a = await this.mutate("accept-all", {}, "send");
-        if (!a) return;                                // a refused accept-all sends nothing: the message would claim decisions never made
-        // A is what the accept-all DECIDED, read off its reply — never the count the confirm was built from: the
-        // set-tracked reply just applied, or a change landing between the two, grows the set the accept-all then
-        // decides, and the message and the log's send entry would state fewer accepts than the accept entry beside
-        // it (CLAUDE.md, the authoritative source). A reply that does not say sends nothing: the decisions are in
-        // the log already, and the next Send carries them.
+      if (acceptIds.length) {
+        const a = await this.mutate("accept", { ids: acceptIds }, "send");
+        if (!a) return;                                // a refused accept sends nothing: the message would claim decisions never made
+        // A is what the accept DECIDED, read off its reply — never the count the confirm was built from: a change that
+        // grew or went between the two is the host's to refuse or to report, and the message and the log's send entry
+        // must state the same accepts as the accept entry beside it (CLAUDE.md, the authoritative source). A reply
+        // that does not say sends nothing: the decisions are in the log already, and the next Send carries them.
         const decided = (a as unknown as { accepted?: unknown }).accepted;
         if (!Array.isArray(decided)) {
           this.errors.set("send", { text: "Nothing sent: the reply to the accept did not list what it accepted, so the message could not state the count. The decisions are recorded; Send again to carry them.", reload: false });
           return;
         }
-        pending = decided.length;
+        accepted = decided.length;
         // the comments the accept resolved: unresolved before, resolved in the reply. The Resolved fold opens before the
         // renders that follow, so the cards stay in view with the session's replies, and the acknowledgment line names them (sentNoteWords)
         moved = (a.store ? a.store.comments : []).filter((c) => openBefore.has(c.id) && !!c.resolved).length;
         if (moved) this.resolvedOpen = true;
       }
-      const counts = sendCounts(parts, acceptAll, pending);
+      const counts = sendCounts(parts, acceptIds.length > 0, accepted);
       // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
       // status lists it as naming this file — as the checkbox or the radio group left it; one id, or none
       const todoId = this.chosenTodoId(s);
@@ -3878,7 +3874,7 @@ class Panel {
       if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       const base = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
-      this.sentNote = sentNoteWords(base, acceptAll ? pending : 0, moved);   // …and what the accept moved to Resolved, when it did
+      this.sentNote = sentNoteWords(base, accepted, moved);   // …and what the accept moved to Resolved, when it did
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
       this.sendConfirm = false;
       this.sendNote = ""; this.noteBox.value = "";     // sent: the words went with the message; a refusal (the catch) keeps them
@@ -4907,12 +4903,13 @@ class Panel {
     if (!this.sendConfirm && !this.sendNote && (this.noteBox.style.height || this.noteSizedTo !== null)) { this.noteBox.style.height = ""; this.noteSizedTo = null; }
     if (this.sendConfirm && s && !this.sending) {
       const parts = sendParts(s);
-      // the changes the checkbox may accept on the way: none while the editor is up (doSend counts the same way) — the
-      // changes are the editor's then, and a decision from here would strand its buffer (DECIDES); so no box, no count
-      const pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
-      // the same A and R the send will carry (doSend): the log's unsent decisions plus the pending changes the
-      // checkbox accepts on the way — so the list and the preview show the sent text
-      const counts = sendCounts(parts, this.sendOpts.accept, pending);
+      // the changes the checkbox may accept on the way: the SEEN pending changes (decision 41; pendingSplit), none while
+      // the editor is up (doSend counts the same way) — the changes are the editor's then, and a decision from here would
+      // strand its buffer (DECIDES); so no box, no count
+      const split = this.pendingSplit(s);
+      // the same A and R the send will carry (doSend): the log's unsent decisions plus the seen pending changes the
+      // checkbox accepts on the way — so the list shows the sent text
+      const counts = sendCounts(parts, this.sendOpts.accept, split.seen.length);
       const cf = el("div", "fc-confirm");
       const who = this.sessionName();
       cf.appendChild(el("div", "fc-note", (n ? "This goes to " : "Nothing is unsent; a note goes to ") + who + ":"));
@@ -4928,10 +4925,11 @@ class Panel {
       const opts = el("div", "fc-opts");
       this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
-      // the pending changes that arrived since the person last looked are named on the option (the arrivals follow-on,
-      // 2026-09-09): the user's Send accepted eleven they had not seen. The words change; the default stays decision 8's
-      // ...and the comments the accept resolves along with their changes (the host's rule; the lost-update probe, 2026-09-09)
-      if (pending) opts.appendChild(this.opt("accept", acceptOptionLabel(pending, this.arrivedPending(), resolvedByAccept(s.store, s.hunks || []))));
+      // the accept option names the seen pending changes it accepts and the unseen ones it leaves (decision 41, 2026-09-09:
+      // the user's Send had accepted eleven they had not seen; the arrivals follow-on named them, this leaves them pending).
+      // Its words and its state — unchecked and disabled with nothing seen — are syncAcceptOption's, the same the in-place
+      // update after a gesture writes (reflectSeen), so a change seen while the confirm is up moves to the seen side either way
+      if (split.seen.length + split.unseen.length) opts.appendChild(this.acceptOption(s));
       if (opts.childNodes.length) cf.appendChild(opts);
       // the note box (the fields' comment): the person's own words, the first paragraph of the message after its header;
       // the placeholder names the session, or asks plainly when the panel cannot name one
@@ -4983,6 +4981,30 @@ class Panel {
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
     l.appendChild(cb); l.appendChild(el("span", undefined, label));
     return l;
+  }
+  /** The pending changes a send may accept, split into the ones the person has seen and the ones they have not (decision
+   *  41; partitionPending over the seen set): none of either while the editor is up, whose marks they are (DECIDES). */
+  private pendingSplit(s: Status): { seen: Hunk[]; unseen: Hunk[] } {
+    if (this.ctx.editing()) return { seen: [], unseen: [] };
+    return partitionPending(s.hunks || [], this.seenKeys);
+  }
+  /** The confirm's accept option: the box and its words (acceptOptionLabel), in the state syncAcceptOption gives them. */
+  private acceptOption(s: Status): HTMLElement {
+    const l = this.opt("accept", "");
+    this.syncAcceptOption(l.querySelector("input") as HTMLInputElement, s);
+    return l;
+  }
+  /** The accept option's words and state from the seen split (decision 41): "accept the N pending changes you have seen",
+   *  the unseen count after it, and the comments the accept resolves counted over the SEEN changes (resolvedByAccept); with
+   *  nothing seen the box is unchecked and disabled, since there is nothing it may accept — the person's own choice
+   *  (sendOpts.accept, decision 8's default) is kept for when a look brings a change to the seen side. Called by the render
+   *  (acceptOption) and in place after a gesture marked arrivals seen (reflectSeen), so both write the same thing. */
+  private syncAcceptOption(cb: HTMLInputElement, s: Status): void {
+    const split = this.pendingSplit(s);
+    const label = cb.parentElement ? cb.parentElement.querySelector("span") : null;
+    if (label) label.textContent = acceptOptionLabel(split.seen.length, split.unseen.length, resolvedByAccept(s.store, split.seen));
+    cb.disabled = split.seen.length === 0;
+    cb.checked = split.seen.length > 0 && this.sendOpts.accept;
   }
   /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
    *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those

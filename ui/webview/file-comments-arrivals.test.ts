@@ -6,7 +6,8 @@
 // that are not in it as arrivals, and while any stand shows one line under the header naming them — a button that shows the
 // first of them — with a dot on each arrival's card and marks; seen is a gesture of the person's (a pointer press, a key, a
 // wheel, a touch move, a save, a send) finding the card on screen, never a timer; the person's own writes and the panel's
-// first status are never arrivals; the Send confirm's accept option names the pending changes that arrived. The SAVE'S
+// first status are never arrivals; the Send confirm's accept option accepts the pending changes the person has seen and
+// counts the arrived ones as unseen, left pending (the seen follow-on's words, decision 41). The SAVE'S
 // SCROLL: the save used to scroll the text to the saved card whatever the person had done meanwhile; it now stands down
 // when a gesture of theirs came between Save and the reply, or when the card is already whole in view, and the saved card
 // is the focus for the layout either way. The numbers a real engine measures are file-comments-arrivals-browser.test.ts.
@@ -614,21 +615,22 @@ test("the line's click shows the first arrival in the list's order as the focus 
   w.close();
 });
 
-test("the Send confirm's accept option names the pending changes that arrived, and its default is untouched; the words follow the arrivals as they are seen", async (t) => {
+test("the Send confirm's accept option counts an arrived pending change as unseen, left pending, and its default is untouched; the words follow the arrivals as they are seen", async (t) => {
   const { w, ok } = await open(t, textWorld());
   actIn(w.aside(), "fcsend")!.click();
   let cb = w.aside().querySelector('input[data-opt="accept"]')!;
-  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change", "no arrivals: the option as before");
+  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change you have seen", "no arrivals: the first status's change is seen, and nothing is unseen");
   assert.equal(cb.checked, true, "checked by default (decision 8)");
   actIn(w.aside(), "fcsendcancel")!.click();
   await land(w, ok, arrived());
   actIn(w.aside(), "fcsend")!.click();
   cb = w.aside().querySelector('input[data-opt="accept"]')!;
-  assert.equal(cb.parentNode!.textContent, "accept the 2 pending changes (1 arrived since you last looked)");
+  assert.equal(cb.parentNode!.textContent, "accept the 1 pending change you have seen (1 unseen stays pending)", "the arrived change is the unseen one");
   assert.equal(cb.checked, true, "the words changed, the default did not");
+  assert.equal(cb.disabled, false, "a change is seen, so the box can be checked");
   // the change seen: the option says so without a render
   scrollBody(w, 340); gesture(w.body, "wheel");
-  assert.equal(w.aside().querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes");
+  assert.equal(w.aside().querySelector('input[data-opt="accept"]')!.parentNode!.textContent, "accept the 2 pending changes you have seen");
   w.close();
 });
 

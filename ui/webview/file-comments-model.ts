@@ -333,9 +333,9 @@ export function sendParts(s: Status): SendParts {
   return { comments: out, accepted: u.accepted || 0, rejected: u.rejected || 0, watermark };
 }
 
-/** The counts the send carries and the preview prints (D5): what the log says is unsent plus, when the
- *  confirm's "accept the N pending changes" is checked, the N the send is about to accept — the same A and R
- *  in both places, so the preview is the sent text. */
+/** The counts the send carries and the confirm lists (D5): what the log says is unsent plus, when the confirm's
+ *  "accept the N pending changes you have seen" is checked, the N the send is about to accept — the seen pending
+ *  changes (decision 41), never the unseen ones — the same A and R in both places, so the list shows the sent text. */
 export function sendCounts(parts: SendParts, acceptPending: boolean, pending: number): { accepted: number; rejected: number } {
   return { accepted: parts.accepted + (acceptPending && pending > 0 ? pending : 0), rejected: parts.rejected };
 }
@@ -1096,15 +1096,33 @@ export function resolvedByAccept(store: Store | null, hunks: Hunk[]): number {
   return store.comments.filter((c) => !c.resolved && typeof c.suggestionId === "string" && pending.has(c.suggestionId)).length;
 }
 
-/** The Send confirm's accept option: "accept the N pending changes", and in one parenthesis after it what else the accept
- *  does: "resolves M comments" when `resolves` unresolved comments are bound to those changes, and "K arrived since you
- *  last looked" when `arrived` of the changes landed since the person last looked, joined with "; ". The default is
- *  decision 8's and is not this function's. */
-export function acceptOptionLabel(pending: number, arrived: number, resolves = 0): string {
-  const base = "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes");
+/** The pending changes split by whether the person has seen them (decision 41: the Send's accept takes the seen ones only).
+ *  Seen is the panel's set of entry keys (statusEntries' "chg:" + id for a change): a change whose card or mark was on
+ *  screen at one of the person's gestures, or that the panel's first status held, or that the person wrote. A null set is
+ *  a panel that has not rendered a status yet, and then nothing counts as seen: the accept would take changes nobody has
+ *  looked at, the thing the rule exists to stop. The order within each side is the hunks' own. */
+export function partitionPending(hunks: Hunk[], seen: ReadonlySet<string> | null): { seen: Hunk[]; unseen: Hunk[] } {
+  const out = { seen: [] as Hunk[], unseen: [] as Hunk[] };
+  for (const h of hunks) (seen && seen.has("chg:" + h.id) ? out.seen : out.unseen).push(h);
+  return out;
+}
+
+/** The Send confirm's accept option (decision 41): "accept the N pending changes you have seen", and in one parenthesis
+ *  after it what else there is to say, joined with "; ": "resolves M comments" when `resolves` unresolved comments are
+ *  bound to the seen changes, and "K unseen stay pending" when `unseen` pending changes have not been on screen at a
+ *  gesture of the person's yet (the same K the arrivals line counts as changes since they last looked, so it is not said
+ *  twice here). With NO seen change the option has nothing to accept: "accept the pending changes you have seen (all K
+ *  pending changes are unseen; nothing is accepted until you look)" — the panel shows that box unchecked and disabled.
+ *  The default of a box that can be checked is decision 8's and is not this function's. */
+export function acceptOptionLabel(seen: number, unseen: number, resolves = 0): string {
+  if (seen <= 0) {
+    const all = unseen === 1 ? "the 1 pending change is unseen" : "all " + unseen + " pending changes are unseen";
+    return "accept the pending changes you have seen (" + all + "; nothing is accepted until you look)";
+  }
+  const base = "accept the " + seen + " pending " + (seen === 1 ? "change" : "changes") + " you have seen";
   const parts: string[] = [];
   if (resolves > 0) parts.push("resolves " + plural(resolves, "comment", "comments"));
-  if (arrived > 0) parts.push(arrived + " arrived since you last looked");
+  if (unseen > 0) parts.push(unseen + " unseen " + (unseen === 1 ? "stays" : "stay") + " pending");
   return parts.length ? base + " (" + parts.join("; ") + ")" : base;
 }
 
