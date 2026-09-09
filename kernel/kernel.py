@@ -49685,31 +49685,38 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # the backstop the fold's ruling asked for (romp-general, 2026-09-09): a pane-reported word ('upload',
 # 'held-send', any word busyHere returns that is not one of the core's own five gesture words) ends only when
 # its owner delivers the event, and an upload that never acks or nacks would pin the page on the old build for
-# good. The clock is the pane word's, and gestures are invisible to it (the fold's review, UI-2): busy() walks
-# the shell and every pane to the end and records the first pane word it finds in `paneWord`, gesture or not;
-# `clock` starts a clock when that word first blocks an owed reload, keeps it while the same word keeps
-# blocking, and zeroes it when the word drops to nothing or another pane word takes its place, so a hold
-# released and re-raised gets its own 60 s (the fold-4 review's F1) while a user who keeps clicking, dragging
-# or typing during a stuck upload no longer restarts its 60 s with every gesture. One timer, armed for the time
-# left, reaches the deadline without an event (a standalone pane has no poll). Past the deadline the word is
-# released at the first tryFire with no gesture up (a gesture mid-flight defers the release to its own ending
-# event; a reload mid-drag or mid-draft is what this core exists to prevent): one console line names the word
-# and the seconds, and the reload fires with a note the pane's pre-reload hook reads through `released()` and
-# appends to the toasts it persists (render.ts persistNoticesForReload, reload-hold.ts releasedNotices), so the
-# fresh page says why it reloaded over the wait; the loss toast still names what was lost. A refused reload
-# (fire()'s catch) drops the note and the clock and persists once more, so the panes' stored toasts no longer
-# carry a note about a reload that never happened (the fold's review, F2). The shim's 'sends' (a prompt queued
-# for a socket that is down) is a pane word for the ranking and the message but has NO deadline (NOCLOCK; the
-# fold's review, F1/UI-1): the word is true only while this pane's socket is not open, so a reload fired over it
+# good. The clock is the pane word's, and a gesture anywhere leaves it alone, in the word's own pane included
+# (the fold's review, UI-2, and the verification that found the own-pane gap): busyHere answers a window's
+# gesture before its pane word, so busy() reads the two apart, each window's busyHere for the gesture and its
+# paneHere (the window's __rompPaneBusy alone) for the word, and records the first CLOCKED pane word it finds
+# in `paneWord`, behind any gesture in the shell, a sibling pane or the pane that owns the word (an older pane
+# core without paneHere is read through its busyHere word, so a gesture there hides its word as before).
+# `clock` starts a clock when that word first blocks an owed reload, gesture or not, keeps it while the same
+# word keeps blocking, and zeroes it when the word drops to nothing or another clocked word takes its place,
+# so a hold released and re-raised gets its own 60 s (the fold-4 review's F1) while a user who clicks, drags,
+# selects or types during a stuck upload, in that pane or any other, never restarts its 60 s. One timer, armed
+# for the time left, reaches the deadline without an event (a standalone pane has no poll). Past the deadline
+# the word is released at the first tryFire with nothing deferring (a gesture or a no-deadline word mid-flight
+# defers the release to its own ending event; a reload mid-drag or mid-draft is what this core exists to
+# prevent): one console line names the word and the seconds, and the reload fires with a note the pane's
+# pre-reload hook reads through `released()` and appends to the toasts it persists (render.ts
+# persistNoticesForReload, reload-hold.ts releasedNotices), so the fresh page says why it reloaded over the
+# wait; the loss toast still names what was lost. A refused reload (fire()'s catch) drops the note and the
+# clock and persists once more, so the panes' stored toasts no longer carry a note about a reload that never
+# happened (the fold's review, F2). The shim's 'sends' (a prompt queued for a socket that is down) has NO
+# deadline (NOCLOCK; the fold's review, F1/UI-1) and defers a release like a gesture: the word is true only
+# while this pane's socket is not open, so a reload fired over it, on its own clock or on a sibling pane's,
 # would land on a kernel that is not answering the page and take the queued prompt with it; the flush in
-# ws.onopen is its only end, and the shim redials every 1.5 s, so a live kernel ends the hold within seconds.
-# busy() ranks a gesture anywhere above a pane word for the word it reports (the fold-4 review's K1: with a
-# deadline on the word, upstream's first-match walk released the chat pane's word over a later pane's drag; a
-# gesture has an ending event and no deadline, so it is the word to report and the one to wait for).
-# tests/test_dashboard_auto_reload.py UploadHoldExecuted runs the hold and the backstop.
+# ws.onopen is its only end, and the shim redials every 1.5 s, so a live kernel ends the hold within seconds,
+# and a clocked word beside it (the chat pane's upload past its 60 s) is released at once on that flush.
+# busy() ranks the word it reports: a gesture anywhere first (the fold-4 review's K1: with a deadline on the
+# word, upstream's first-match walk released the chat pane's word over a later pane's drag; a gesture has an
+# ending event and no deadline, so it is the word to report and the one to wait for), then a no-deadline
+# word, then the clocked word. tests/test_dashboard_auto_reload.py UploadHoldExecuted runs the hold and the
+# backstop.
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,ptr=0,pan=false,drag=false,owed=null,fired=false,refusedFor=null;
-var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',paneWord='',GESTURE={pointer:1,pan:1,drag:1,selection:1,typing:1},NOCLOCK={sends:1};/*fork: the pane hold's backstop (the comment above); NOCLOCK: the pane words with no deadline*/
+var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',paneWord='',GESTURE={pointer:1,pan:1,drag:1,selection:1,typing:1},NOCLOCK={sends:1};/*fork: the pane hold's backstop (the comment above); paneWord: the first clocked pane word busy() found; NOCLOCK: the pane words with no deadline, which defer a release like a gesture*/
 function shell(){try{var p=window.parent;if(p&&p!==window&&p.__rompReload)return p.__rompReload;}catch(e){}return null;}
 function editing(){try{var a=document.activeElement;if(!a)return false;var tag=(a.tagName||'').toUpperCase();
 var textual=tag==='TEXTAREA'||(tag==='INPUT'&&/^(text|search|url|email|number|password|tel)$/i.test(a.type||'text'))||!!a.isContentEditable;
@@ -49718,11 +49725,12 @@ function busyHere(){if(ptr>0)return 'pointer';if(pan)return 'pan';if(drag)return
 try{var s=document.getSelection&&document.getSelection();var focused=!document.hasFocus||document.hasFocus();
 if(focused&&s&&s.rangeCount&&!s.isCollapsed&&String(s).length)return 'selection';}catch(e){}
 if(editing())return 'typing';
-try{if(window.__rompPaneBusy){var b=window.__rompPaneBusy();if(b)return String(b);}}catch(e){}
-return '';}
+return paneHere();}
+function paneHere(){try{if(window.__rompPaneBusy){var b=window.__rompPaneBusy();if(b)return String(b);}}catch(e){}return '';}/*fork: the pane's word alone, so busy() reads it behind this window's gesture*/
 function panes(){var out=[],fs=document.querySelectorAll?document.querySelectorAll('iframe'):[];
 for(var i=0;i<fs.length;i++){try{var w=fs[i].contentWindow;if(w&&w.__rompReload)out.push(w);}catch(e){}}return out;}
-function busy(){var g='',held='',b=busyHere();if(b&&GESTURE[b])g=b;else held=b;var ps=panes();for(var i=0;i<ps.length;i++){b=ps[i].__rompReload.busyHere();if(!b)continue;if(GESTURE[b]){if(!g)g=b;}else if(!held)held=b;}paneWord=held;return g||held;}/*fork: a gesture anywhere outranks a pane word, which has a deadline (K1); the walk runs to its end so paneWord names the pane word behind the gesture for clock()*/
+function busy(){var g='',nc='',held='';function take(b,p){if(b&&GESTURE[b]){if(!g)g=b;b=p;}if(!b)return;if(NOCLOCK[b]){if(!nc)nc=b;}else if(!held)held=b;}
+take(busyHere(),paneHere());var ps=panes();for(var i=0;i<ps.length;i++){var r=ps[i].__rompReload;take(r.busyHere(),r.paneHere?r.paneHere():'');}paneWord=held;return g||nc||held;}/*fork: each window's gesture (busyHere) and its pane word (paneHere) are read apart, so paneWord names the first CLOCKED pane word behind any gesture, the word's own window included; a pane without paneHere is read through its busyHere word; the word reported is a gesture anywhere (K1), then a no-deadline word, then the clocked word*/
 function persist(){try{if(window.__rompPersistForReload)window.__rompPersistForReload();}catch(e){}
 var ps=panes();for(var i=0;i<ps.length;i++){try{if(ps[i].__rompPersistForReload)ps[i].__rompPersistForReload();}catch(e){}}}
 function key(o){return o?o.reason+':'+(o.detail||''):'';}
@@ -49732,13 +49740,13 @@ try{sessionStorage.setItem('romp:reloaded',JSON.stringify({reason:owed.reason,de
 try{document.body.classList.remove('settings-open','picker-open');}catch(e){}}
 function what(k){return k==='upload'?'An upload':k==='held-send'?'A message held behind an upload':"A '"+k+"' hold";}
 function unclock(){heldKind='';heldT=0;if(heldTimer){clearTimeout(heldTimer);heldTimer=null;}}
-function clock(b){var kind=(paneWord&&!NOCLOCK[paneWord])?paneWord:'';if(kind!==heldKind){unclock();heldKind=kind;heldT=kind?Date.now():0;}
+function clock(b){var kind=paneWord;if(kind!==heldKind){unclock();heldKind=kind;heldT=kind?Date.now():0;}
 if(!kind)return b;var age=Date.now()-heldT;
 if(age<DEADLINE){if(!heldTimer)heldTimer=setTimeout(function(){heldTimer=null;tryFire();},DEADLINE-age);return b;}
-if(GESTURE[b])return b;/*fork: past the deadline a gesture defers the release to its own ending event*/
+if(GESTURE[b]||NOCLOCK[b])return b;/*fork: past the deadline a gesture or a no-deadline word defers the release to its own ending event*/
 var secs=Math.round(age/1000);overdueNote=what(kind)+' had not finished after '+secs+' s, so the page reloaded without waiting longer.';
 try{console.warn("romp: the '"+kind+"' hold did not end within "+secs+" s; reloading anyway");}catch(e){}
-unclock();return '';}/*fork: the backstop: the clock is the pane word's (paneWord; gestures are invisible to it); the word released is named in the console and in the note released() hands the pane*/
+unclock();return '';}/*fork: the backstop: the clock is the clocked pane word's (paneWord, read behind every gesture); the word released is named in the console and in the note released() hands the pane*/
 function tryFire(){if(!owed||fired)return;if(refusedFor!==null&&refusedFor===key(owed))return;var b=clock(busy());if(b){R.waiting=b;return;}R.waiting='';fire();}
 function request(reason,detail){var s=shell();if(s){s.request(reason,detail);return;}if(fired)return;
 var next={reason:reason,detail:detail||''};if(refusedFor!==null&&key(next)!==refusedFor){refusedFor=null;owed=next;}
@@ -49765,7 +49773,7 @@ var END=['pointerup','touchend','touchcancel','scrollend','dragend','drop','sele
 function ended(){setTimeout(function(){var s=shell();if(s)s.tryFire();else tryFire();},0);}
 for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);
 window.addEventListener('blur',function(){ptr=0;pan=false;drag=false;ended();});
-var R={request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,busy:busy,noteDv:noteDv,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,
+var R={request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,paneHere:paneHere,busy:busy,noteDv:noteDv,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,
 inShell:function(){return !!shell();},owed:function(){return owed;},fired:function(){return fired;},refusedFor:function(){return refusedFor;},
 released:function(){var s=shell();return (s&&s.released)?s.released():overdueNote;},refused:null,waiting:'',loaded:LOADED,boot:BOOT};
 window.__rompReload=R;})();/*end-reload-core*/"""

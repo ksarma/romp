@@ -124,31 +124,35 @@ test("the reload core asks the pane's word after the gesture holds, defers while
   // ends on the pane's __rompPaneBusy, after its own reasons (pointer, pan, drag, selection, typing); the fork's 'ships' read
   // and its 500 ms re-check are gone, and its 60 s deadline is the BACKSTOP inside upstream's shape: tryFire runs the word
   // through clock(), which arms one timer for the time left and releases the word past DEADLINE with a console line and the
-  // note released() hands the pane. After the fold's review (F1/UI-1, UI-2, F2): the clock is the pane word's, read from the
-  // paneWord busy()'s walk records, so a gesture (the GESTURE set) neither clocks nor resets it and only defers a release
-  // past the deadline to its own ending event; the shim's 'sends' (the NOCLOCK set) is a pane word with no deadline; a
-  // refused reload persists once more without the note; busy() still ranks a gesture anywhere above a pane word for the
-  // word it reports (the fold-4 review's K1)
+  // note released() hands the pane. After the fold's review (F1/UI-1, UI-2, F2) and its verification (findings A and D): the
+  // clock is the clocked pane word's, read from the paneWord busy()'s walk records; busy() reads each window's gesture
+  // (busyHere) and its pane word (paneHere, the window's __rompPaneBusy alone) apart, so a gesture (the GESTURE set) in any
+  // window, the word's own pane included, neither clocks nor resets it and only defers a release past the deadline to its
+  // own ending event; the shim's 'sends' (the NOCLOCK set) is a pane word with no deadline, reported ahead of a clocked
+  // word and deferring a release past the deadline like a gesture; a refused reload persists once more without the note;
+  // busy() still ranks a gesture anywhere above every pane word for the word it reports (the fold-4 review's K1)
   const core = KERNEL.slice(KERNEL.indexOf("/*reload-core*/"), KERNEL.indexOf("/*end-reload-core*/"));
   assert.ok(core.length > 0, "the core's anchors exist");
-  assert.match(core, /if\(editing\(\)\)return 'typing';\ntry\{if\(window\.__rompPaneBusy\)\{var b=window\.__rompPaneBusy\(\);if\(b\)return String\(b\);\}\}catch\(e\)\{\}\nreturn '';\}/,
-    "the pane's word is the last reason busyHere gives");
+  assert.match(core, /if\(editing\(\)\)return 'typing';\nreturn paneHere\(\);\}\nfunction paneHere\(\)\{try\{if\(window\.__rompPaneBusy\)\{var b=window\.__rompPaneBusy\(\);if\(b\)return String\(b\);\}\}catch\(e\)\{\}return '';\}/,
+    "the pane's word is the last reason busyHere gives, and paneHere reads that word alone (the one reader of __rompPaneBusy)");
+  assert.equal((core.match(/window\.__rompPaneBusy/g) || []).length, 2, "read in paneHere alone (the existence check and the call)");
   assert.match(core, /function tryFire\(\)\{[^\n]*var b=clock\(busy\(\)\);if\(b\)\{R\.waiting=b;return;\}R\.waiting='';fire\(\);\}/, "tryFire defers on the word clock() hands back, and says which; an empty answer (nothing holds, or the word was released) fires");
   assert.match(core, /function ended\(\)\{setTimeout\(function\(\)\{var s=shell\(\);if\(s\)s\.tryFire\(\);else tryFire\(\);\},0\);\}/, "the ending event re-tries, in the shell when there is one");
-  assert.match(core, /var R=\{request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,/, "ended() is the pane's door (render.ts endReloadHoldIfIdle calls it)");
+  assert.match(core, /var R=\{request:request,tryFire:tryFire,ended:ended,busyHere:busyHere,paneHere:paneHere,busy:busy,/, "ended() is the pane's door (render.ts endReloadHoldIfIdle calls it); paneHere is exported after busyHere, so a shell reads a pane's word behind its gesture");
   // the backstop's shape
   assert.match(core, /^var DEADLINE=60000,heldKind='',heldT=0,heldTimer=null,overdueNote='',paneWord='',GESTURE=\{pointer:1,pan:1,drag:1,selection:1,typing:1\},NOCLOCK=\{sends:1\};/m,
-    "one deadline, one clock, the pane word behind a gesture, the core's five gesture words exempt, the shim's 'sends' with no deadline");
-  assert.match(core, /^function clock\(b\)\{var kind=\(paneWord&&!NOCLOCK\[paneWord\]\)\?paneWord:'';if\(kind!==heldKind\)\{unclock\(\);heldKind=kind;heldT=kind\?Date\.now\(\):0;\}\n/m,
-    "the clock is the pane word's whatever busy() reported: a change of pane word (or nothing) resets it, a no-deadline word runs none");
-  assert.match(core, /if\(age<DEADLINE\)\{if\(!heldTimer\)heldTimer=setTimeout\(function\(\)\{heldTimer=null;tryFire\(\);\},DEADLINE-age\);return b;\}\nif\(GESTURE\[b\]\)return b;/, "one timer for the time left, never a re-check; past the deadline a gesture defers the release to its own ending event");
+    "one deadline, one clock, the clocked pane word behind any gesture, the core's five gesture words exempt, the shim's 'sends' with no deadline");
+  assert.match(core, /^function clock\(b\)\{var kind=paneWord;if\(kind!==heldKind\)\{unclock\(\);heldKind=kind;heldT=kind\?Date\.now\(\):0;\}\n/m,
+    "the clock is the clocked pane word's whatever busy() reported (paneWord holds only clocked words): a change of pane word (or nothing) resets it");
+  assert.match(core, /if\(age<DEADLINE\)\{if\(!heldTimer\)heldTimer=setTimeout\(function\(\)\{heldTimer=null;tryFire\(\);\},DEADLINE-age\);return b;\}\nif\(GESTURE\[b\]\|\|NOCLOCK\[b\]\)return b;/, "one timer for the time left, never a re-check; past the deadline a gesture or a no-deadline word defers the release to its own ending event");
   assert.match(core, /function what\(k\)\{return k==='upload'\?'An upload':k==='held-send'\?'A message held behind an upload':"A '"\+k\+"' hold";\}/, "no note words 'sends': it is never released");
   assert.doesNotMatch(core, /'sends'\?/, "no 'sends' arm in what()");
   assert.match(core, /catch\(e\)\{fired=false;refusedFor=key\(owed\);unclock\(\);if\(overdueNote\)\{overdueNote='';persist\(\);\}R\.waiting='refused';/, "a refused reload drops the note and the clock and persists once more, so the panes' stored toasts drop the note (the fold's review, F2)");
   assert.match(core, /console\.warn\("romp: the '"\+kind\+"' hold did not end within "\+secs\+" s; reloading anyway"\)/, "the console line names the word");
   assert.match(core, /overdueNote=what\(kind\)\+' had not finished after '\+secs\+' s, so the page reloaded without waiting longer\.';/, "the note the pane persists");
   assert.match(core, /^released:function\(\)\{var s=shell\(\);return \(s&&s\.released\)\?s\.released\(\):overdueNote;\},/m, "released() answers with the shell's note when a shell decided");
-  assert.match(core, /^function busy\(\)\{var g='',held='',b=busyHere\(\);if\(b&&GESTURE\[b\]\)g=b;else held=b;[^\n]*paneWord=held;return g\|\|held;\}/m, "a gesture anywhere outranks a pane word for the word reported, and the walk runs to its end to record the pane word for clock()");
+  assert.match(core, /^function busy\(\)\{var g='',nc='',held='';function take\(b,p\)\{if\(b&&GESTURE\[b\]\)\{if\(!g\)g=b;b=p;\}if\(!b\)return;if\(NOCLOCK\[b\]\)\{if\(!nc\)nc=b;\}else if\(!held\)held=b;\}\ntake\(busyHere\(\),paneHere\(\)\);var ps=panes\(\);for\(var i=0;i<ps\.length;i\+\+\)\{var r=ps\[i\]\.__rompReload;take\(r\.busyHere\(\),r\.paneHere\?r\.paneHere\(\):''\);\}paneWord=held;return g\|\|nc\|\|held;\}/m,
+    "each window's gesture and its pane word are taken apart (a gesture stands aside for the paneHere word behind it; a pane without paneHere falls back to its busyHere word), paneWord is the first clocked pane word, and the word reported is a gesture anywhere, then a no-deadline word, then the clocked word");
   assert.doesNotMatch(core, /,500\)/, "no 500 ms re-check");
   assert.ok(!core.includes("__rompReloadHold") && !core.includes("shipsHold") && !core.includes("HOLD_MAX"), "the fork's 'ships' route is gone from the core; the backstop has its own names");
 });

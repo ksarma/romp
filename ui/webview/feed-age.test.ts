@@ -163,7 +163,7 @@ test("feed.ts reads the clock only through nowSec(), stamps every age and durati
   assert.equal((FEED.match(/\bhostNow\b/g) || []).length, 4,
     "hostNow is declared, recorded (with and without a kernel clock) and read by nowSec() — nothing else reads it raw (a raw read is a frozen age)");
   // the stamps: the ask card's and the group card's time, the sub-goal row (parenthesized, tinted), the modal
-  // (tinted), the log rows — every age the board shows is a stamp, so nothing reads hostNow raw (a raw read is
+  // (tinted), the log rows: every age the board shows is a stamp, so nothing reads hostNow raw (a raw read is
   // an age frozen at the frame). The tint is computed client-side from the live clock (age-color.ts ageTint).
   assert.match(FEED, /stampAge\(a\._time, it\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(a\._time, g\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);

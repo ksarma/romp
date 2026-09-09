@@ -917,10 +917,15 @@ class Wiring(unittest.TestCase):
         # the reference's Update-notices paragraph said the automatic mode restarted "at the next quiet
         # moment", which no caller has done since T160. Nor is the restart every converge's route (the
         # fold's review, F4): _run_main_update returns before it when the pulled range touches no kernel
-        # code (_kernel_code_changed: kernel/ and bin/ are kernel class; the UI, tests, docs, cli/ and
-        # postal/ converge through _in_place_converge with the kernel left up, the served bundles
-        # rebuilt). Both texts name the two routes: a kernel-code change restarts at once, anything
-        # else converges in place. The code pin couples the copy to the route it describes.
+        # code. _kernel_code_changed classes each changed file by the RUNNING PROCESS its code lives in
+        # (_restart_class): the kernel's own Python and launchers are kernel class, postal/ and the bus's
+        # script bin/romp-postal-service are the bus's, .md files are never code, and a kernel-class
+        # Python file whose AST is unchanged is skipped; the UI, tests, docs and cli/ converge through
+        # _in_place_converge with the kernel left up, the served bundles rebuilt. Both texts name the
+        # routes by that class rule, never by directory (the fold's verification, round 2: a directory
+        # list over-claims for the bus's script under bin/): code the running kernel executes restarts
+        # at once, anything else converges in place. The code pin couples the copy to the route it
+        # describes.
         self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):", self.src,
                       "the pull converge's in-place route, which the copy describes")
         ref = (Path(BIN).parent / "docs" / "reference.md").read_text()
@@ -933,7 +938,8 @@ class Wiring(unittest.TestCase):
                       "flight are cut and resume with their history) and anything else (the UI, the docs, the CLI, "
                       "the postal bus) converges in place with no restart", self.gear)
         self.assertIn("*Install automatically* converges on its own", para)
-        self.assertIn("A change to the kernel's own code (`kernel/`, `bin/`) restarts Romp at once", para)
+        self.assertIn("When the new commits change code the running kernel executes, Romp restarts at once", para)
+        self.assertNotIn("`kernel/`, `bin/`", para, "the paragraph names the class rule, not a directory list")
         self.assertIn("converges in place with the kernel left up", para)
         self.assertIn("`romp refresh --quiet`", para, "the paragraph names the quiet window's one door")
 

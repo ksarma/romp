@@ -1,6 +1,6 @@
 // The fence highlight cache (highlight-cache.ts): the same (language, source) tokenizes once
 // while its entry is held; an unlabeled fence still goes through auto-detection, among the chat's registered
-// grammars (AUTO_LANGUAGES; code-block.test.ts executes that subset) — the detection is kept, only the repeat
+// grammars (AUTO_LANGUAGES; code-block.test.ts executes that subset). The detection is kept, only the repeat
 // work goes; the cache is bounded by entries and by output size.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

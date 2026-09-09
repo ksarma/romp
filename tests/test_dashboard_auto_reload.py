@@ -325,15 +325,21 @@ class UploadHoldExecuted(unittest.TestCase):
     backstop the fold's ruling asked for (romp-general, 2026-09-09): a pane word that has blocked an owed reload
     for 60 s is released, one console line names the word and the seconds, and the reload fires with a note the
     pane's pre-reload hook reads through released() and persists among the toasts the fresh page replays. The
-    clock is the pane word's and gestures are invisible to it (the fold's review, UI-2): it starts when the word first
-    blocks an owed reload, gesture or not, runs while the same word stays up, and zeroes when the word drops to
-    nothing or another pane word replaces it, so a hold released and re-raised gets its own 60 s (the fold-4 review's
-    F1) and a user's clicks, drags and typing during a wedged upload no longer restart its 60 s; past the deadline a
-    gesture defers the release to its own ending event, and the first gesture-free tryFire fires at once. A gesture
-    anywhere outranks a pane word for the word reported (K1) and has no deadline; the shim's 'sends' (a prompt queued
-    for a socket that is down) is a pane word with no deadline either (NOCLOCK; the fold's review, F1/UI-1), since a
-    reload over it would land on a kernel not answering the page and lose the prompt. A refused reload persists once
-    more without the release note (the fold's review, F2).
+    clock is the pane word's, and a gesture anywhere leaves it alone, the word's own pane included (the fold's review,
+    UI-2, and the verification that found the own-pane gap): busy() reads each window's gesture (busyHere) and its
+    pane word (paneHere, the window's __rompPaneBusy alone) apart, so the word is seen behind a gesture in the shell,
+    a sibling pane or the pane that owns it; the clock starts when the word first blocks an owed reload, gesture or
+    not, runs while the same word stays up, and zeroes when the word drops to nothing or another clocked word replaces
+    it, so a hold released and re-raised gets its own 60 s (the fold-4 review's F1) and a user's clicks, drags,
+    selections and typing during a wedged upload, in that pane or any other, never restart its 60 s; past the
+    deadline a gesture defers the release to its own ending event, and the first tryFire with nothing deferring fires
+    at once. A gesture anywhere outranks every pane word for the word reported (K1) and has no deadline; the shim's
+    'sends' (a prompt queued for a socket that is down) has no deadline either (NOCLOCK; the fold's review, F1/UI-1),
+    since a reload over it would land on a kernel not answering the page and lose the prompt: it is reported ahead of
+    a clocked word and defers a release past the deadline like a gesture, so a chat pane's upload beside a sibling
+    pane's 'sends' clocks from its first sight and is released only when the flush ends the 'sends'. An older pane
+    core without paneHere is read through its busyHere word. A refused reload persists once more without the release
+    note (the fold's review, F2).
     The timers, the clock and the console are the scenario's own fakes (the core calls setTimeout, clearTimeout,
     Date.now and console.warn by name, so a bare assignment in the sloppy-mode script replaces the global): a
     captured timer records its delay, so a case can pin that the one timer armed is the deadline's remainder and
@@ -656,6 +662,152 @@ out({ held: held, heldArmed: heldArmed, trace: trace, after: state(), warns: WAR
         self.assertEqual(s["after"]["reloads"], 1)
         self.assertEqual(len(s["warns"]), 1, s["warns"])
         self.assertIn("'upload' hold did not end within 65 s", s["warns"][0], "the line measures the upload's wait from its first sight")
+        self.assertEqual(s["armed"], [])
+
+    def test_a_gesture_in_the_uploads_own_page_does_not_restart_its_clock(self):
+        # The fold's verification of UI-2 (2026-09-09, finding A): busyHere answers a window's own gesture before its
+        # pane word, and busy() read only busyHere per window, so a click, a selection, a drag or a draft in the page
+        # that OWNS the wedged upload hid the word: paneWord read '', clock() unclocked, and the word got a fresh 60 s
+        # when the gesture ended (a reload at 125 s, its line saying 60 s). busy() now reads each window's gesture and
+        # its pane word apart (paneHere), so the clock runs through a gesture in the word's own page too: the deadline
+        # timer fires into the gesture and defers, and the gesture's end releases at once, the line naming the whole wait.
+        gestures = {
+            "pointer": ('emit("pointerdown");', 'emit("pointerup");'),
+            "drag": ('emit("dragstart");', 'emit("dragend");'),
+            "selection": ('SEL = { rangeCount: 1, isCollapsed: false, toString: function () { return "a passage"; } };',
+                          'SEL = { rangeCount: 0, isCollapsed: true, toString: function () { return ""; } }; emit("selectionchange");'),
+            "typing": ('COMPOSER.value = "a reply"; document.activeElement = COMPOSER;',
+                       'document.activeElement = null; emit("focusout");'),
+        }
+        for gesture, (start, end) in gestures.items():
+            with self.subTest(gesture=gesture):
+                s = run_core(self.FAKES + """
+var R = window.__rompReload; var NOTE = null;
+window.__rompPaneBusy = function () { return "upload"; };                          // render.ts: a ship awaits an ack that never comes
+window.__rompPersistForReload = function () { PERSISTED++; NOTE = R.released(); };
+R.noteDv(8); var held = state(); var heldArmed = armed();
+NOW += 30000; %s                                                                    // 30 s: the gesture starts in this page (a start is no re-ask)
+NOW += 30000; runDue(); var mid = state(); var midArmed = armed(); var midWarns = WARNS.length;   // 60 s: the deadline timer fires into the gesture
+NOW += 5000; %s await tick(); var after = state(); var afterArmed = armed();       // 65 s: the gesture's ending event
+NOW += 60000; runDue(); R.tryFire(); var much = state();                            // 125 s: nothing left to fire
+out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: midWarns, after: after, afterArmed: afterArmed,
+      much: much, note: NOTE, warns: WARNS, armed: armed() });""" % (start, end))
+                self.assertEqual(s["held"]["waiting"], "upload")
+                self.assertEqual(s["heldArmed"], [60000], "the upload's clock from its first sight")
+                self.assertEqual(s["mid"]["reloads"], 0, "never mid-gesture")
+                self.assertEqual(s["mid"]["waiting"], gesture, "the gesture is the word reported while it lives")
+                self.assertEqual(s["midArmed"], [], "the deadline timer fired into the gesture and is not re-armed")
+                self.assertEqual(s["midWarns"], 0)
+                self.assertEqual(s["after"]["reloads"], 1, "the gesture's end is the first tryFire with nothing deferring past 60 s: the reload fires at once, with no fresh 60 s for the word hidden behind the gesture")
+                self.assertEqual(s["after"]["waiting"], "")
+                self.assertEqual(s["afterArmed"], [], "no fresh clock")
+                self.assertEqual(len(s["warns"]), 1, s["warns"])
+                self.assertIn("'upload' hold did not end within 65 s", s["warns"][0], "the line measures the upload's whole wait, the gesture in its own page included")
+                self.assertEqual(s["note"], "An upload had not finished after 65 s, so the page reloaded without waiting longer.")
+                self.assertEqual(s["much"]["reloads"], 1, "one reload")
+                self.assertEqual(s["armed"], [])
+
+    def test_a_gesture_in_the_pane_that_owns_the_upload_does_not_restart_its_clock_through_the_shell(self):
+        # the same through a shell (finding A's shell configuration): the chat pane is the landing's first iframe, and
+        # its busyHere answers its own gesture before its 'upload'; the shell reads the pane's word through paneHere
+        s = run_core(self.FAKES + """
+var R = window.__rompReload; var chatGesture = "";
+var chat = { __rompReload: { busyHere: function () { return chatGesture || "upload"; }, paneHere: function () { return "upload"; } } };
+IFRAMES = [{ contentWindow: chat }, { contentWindow: { __rompReload: { busyHere: function () { return ""; }, paneHere: function () { return ""; } } } }];
+R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+NOW += 30000; chatGesture = "pointer";                                              // 30 s: a click in the chat pane, where the upload lives
+NOW += 30000; runDue(); var mid = state(); var midArmed = armed(); var midWarns = WARNS.length;   // 60 s: the timer fires into it
+NOW += 5000; chatGesture = ""; R.tryFire(); var after = state(); var afterArmed = armed();        // 65 s: the pane's pointerup, its ended() reaching the shell's tryFire
+NOW += 60000; runDue(); R.tryFire(); var much = state();
+out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, midWarns: midWarns, after: after, afterArmed: afterArmed, much: much, warns: WARNS, armed: armed() });""")
+        self.assertEqual(s["held"]["waiting"], "upload")
+        self.assertEqual(s["heldArmed"], [60000])
+        self.assertEqual(s["mid"]["reloads"], 0)
+        self.assertEqual(s["mid"]["waiting"], "pointer", "the pane's gesture is the word reported")
+        self.assertEqual(s["midArmed"], [], "fired into the gesture, not re-armed")
+        self.assertEqual(s["midWarns"], 0)
+        self.assertEqual(s["after"]["reloads"], 1, "the gesture's end releases at once: the shell read 'upload' behind the pane's gesture, so the clock ran on")
+        self.assertEqual(s["afterArmed"], [])
+        self.assertEqual(len(s["warns"]), 1, s["warns"])
+        self.assertIn("'upload' hold did not end within 65 s", s["warns"][0])
+        self.assertEqual(s["much"]["reloads"], 1)
+        self.assertEqual(s["armed"], [])
+        # an older pane core without paneHere is read through its busyHere word: it clocks when no gesture is up in it,
+        # and a gesture there still hides its word (that pane keeps the pre-fix behaviour: a fresh 60 s at the gesture's end)
+        s2 = run_core(self.FAKES + """
+var R = window.__rompReload; var chatGesture = "";
+IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatGesture || "upload"; } } } }];
+R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+NOW += 30000; chatGesture = "pointer";
+NOW += 30000; runDue(); var mid = state(); var midArmed = armed();
+NOW += 5000; chatGesture = ""; R.tryFire(); var after = state(); var afterArmed = armed();
+NOW += 60000; runDue(); var much = state();
+out({ held: held, heldArmed: heldArmed, mid: mid, midArmed: midArmed, after: after, afterArmed: afterArmed, much: much, warns: WARNS });""")
+        self.assertEqual(s2["held"]["waiting"], "upload", "no gesture up: the busyHere word is the pane word")
+        self.assertEqual(s2["heldArmed"], [60000], "and it clocks")
+        self.assertEqual(s2["mid"]["waiting"], "pointer")
+        self.assertEqual(s2["midArmed"], [])
+        self.assertEqual(s2["after"]["reloads"], 0, "the older pane's word was hidden by its own gesture, so its clock restarted at the gesture's end (the fallback keeps that pane's pre-fix behaviour)")
+        self.assertEqual(s2["after"]["waiting"], "upload")
+        self.assertEqual(s2["afterArmed"], [60000])
+        self.assertEqual(s2["much"]["reloads"], 1)
+        self.assertIn("within 60 s", s2["warns"][0])
+
+    def test_an_upload_beside_a_sibling_panes_sends_clocks_and_never_releases_over_it(self):
+        # The fold's verification (2026-09-09, finding D): with the chat pane's 'upload' first and a sibling pane's
+        # 'sends' behind it, paneWord was the first pane word found and the shell reloaded at 60 s over the sibling's
+        # queued prompt; in the other order the upload never clocked while the 'sends' stood. busy() now records the
+        # no-deadline word and the clocked word apart, whatever the order: 'sends' is the word reported (it defers a
+        # release like a gesture), the upload's clock runs beside it, and the flush that ends the 'sends' releases the
+        # upload at once, the line naming its whole wait.
+        for order in ("chat-first", "sends-first"):
+            with self.subTest(order=order):
+                s = run_core(self.FAKES + """
+var R = window.__rompReload; var chatHold = "upload", queued = 1; var NOTE = null;
+var chat = { __rompReload: { busyHere: function () { return chatHold; }, paneHere: function () { return chatHold; } },
+             __rompPersistForReload: function () { PERSISTED += 10; NOTE = window.__rompReload.released(); } };
+var sib = { __rompReload: { busyHere: function () { return queued ? "sends" : ""; }, paneHere: function () { return queued ? "sends" : ""; } } };   // the shim: everConnected && queue.length > queuedDiag
+IFRAMES = %s === "chat-first" ? [{ contentWindow: chat }, { contentWindow: sib }] : [{ contentWindow: sib }, { contentWindow: chat }];
+R.request("restart", "2.2"); var held = state(); var heldArmed = armed();
+NOW += 60000; runDue(); var atDeadline = state(); var atDeadlineArmed = armed(); var atDeadlineWarns = WARNS.length;   // 60 s: the upload's timer fires into the 'sends'
+NOW += 30000; R.tryFire(); var later = state(); var laterArmed = armed();                                                // 90 s: the poll re-asks; still deferred
+queued = 0; R.tryFire(); var after = state();                                                                            // the sibling's flush in ws.onopen: its ended() reaches the shell's tryFire
+out({ held: held, heldArmed: heldArmed, atDeadline: atDeadline, atDeadlineArmed: atDeadlineArmed, atDeadlineWarns: atDeadlineWarns,
+      later: later, laterArmed: laterArmed, after: after, note: NOTE, warns: WARNS, armed: armed() });""" % json.dumps(order))
+                self.assertEqual(s["held"]["reloads"], 0)
+                self.assertEqual(s["held"]["waiting"], "sends", "the no-deadline word is the one reported, ahead of the clocked word")
+                self.assertEqual(s["heldArmed"], [60000], "the upload's clock runs beside the 'sends', whichever pane comes first")
+                self.assertEqual(s["atDeadline"]["reloads"], 0, "60 s: no release over the 'sends': a reload would land on a kernel not answering the sibling and lose its prompt")
+                self.assertEqual(s["atDeadline"]["waiting"], "sends")
+                self.assertEqual(s["atDeadlineArmed"], [], "the timer fired into the 'sends' and is not re-armed: the flush is the next re-ask")
+                self.assertEqual(s["atDeadlineWarns"], 0)
+                self.assertEqual(s["later"]["reloads"], 0, "the poll 30 s on: still deferred")
+                self.assertEqual(s["later"]["waiting"], "sends")
+                self.assertEqual(s["laterArmed"], [], "no fresh clock")
+                self.assertEqual(s["after"]["reloads"], 1, "the flush ends the 'sends', and the upload past its deadline is released at once")
+                self.assertEqual(s["after"]["waiting"], "")
+                self.assertEqual(s["after"]["persisted"], 11, "the shell and the chat pane persisted before the reload")
+                self.assertEqual(len(s["warns"]), 1, s["warns"])
+                self.assertIn("'upload' hold did not end within 90 s", s["warns"][0], "the line measures the upload's whole wait, the 'sends' included")
+                self.assertEqual(s["note"], "An upload had not finished after 90 s, so the page reloaded without waiting longer.", "the chat pane's hook reads the shell's note")
+                self.assertEqual(s["armed"], [])
+        # the upload's ack lands first: its clock goes with the word, the 'sends' holds on with no clock, and the flush reloads with no note
+        s = run_core(self.FAKES + """
+var R = window.__rompReload; var chatHold = "upload", queued = 1;
+IFRAMES = [{ contentWindow: { __rompReload: { busyHere: function () { return chatHold; }, paneHere: function () { return chatHold; } } } },
+           { contentWindow: { __rompReload: { busyHere: function () { return queued ? "sends" : ""; }, paneHere: function () { return queued ? "sends" : ""; } } } }];
+R.request("restart", "2.2");
+NOW += 20000; chatHold = ""; R.tryFire(); var acked = state(); var ackedArmed = armed();   // the chat pane's ended()
+NOW += 600000; R.tryFire(); var later = state();                                          // ten minutes on: the 'sends' still holds, no deadline
+queued = 0; R.tryFire();
+out({ acked: acked, ackedArmed: ackedArmed, later: later, after: state(), warns: WARNS, armed: armed() });""")
+        self.assertEqual(s["acked"]["reloads"], 0)
+        self.assertEqual(s["acked"]["waiting"], "sends")
+        self.assertEqual(s["ackedArmed"], [], "the upload's clock went with its word; a 'sends' alone arms none")
+        self.assertEqual(s["later"]["reloads"], 0, "a 'sends' hold has no deadline")
+        self.assertEqual(s["after"]["reloads"], 1, "the flush reloads")
+        self.assertEqual(s["after"]["released"], "", "no note: nothing was released")
+        self.assertEqual(s["warns"], [])
         self.assertEqual(s["armed"], [])
 
     def test_a_gesture_in_a_later_pane_and_an_earlier_panes_upload_hold_each_end_on_their_own_event(self):
