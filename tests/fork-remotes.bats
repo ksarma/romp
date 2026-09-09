@@ -141,6 +141,71 @@ upstream_commit() {  # <file> <text> <subject>
     [ "$(git -C "$REPO" config --get branch.main.pushRemote)" = "origin" ]
 }
 
+# gh resolves a bare PR number (`gh pr view N`, `gh pr merge N` without -R) against a default
+# repository it reads from git config: the remote carrying `gh-resolved = base`. With no such key
+# and no terminal to ask on, a clone with both remotes reads the PROJECT's PR N, not the fork's; a
+# script that merges by number would aim there. The guard sets the key on origin and --check reads
+# it, the way it reads pushDefault. These tests set the key by hand on fixture clones only.
+
+@test "--check fails when gh has no default repository for a bare PR number" {
+    # A clone the guard configured before it learned about gh's default: every push guard is in
+    # place and the key alone is missing.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" config --unset remote.origin.gh-resolved || true
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"gh has no default repository"* ]]
+}
+
+@test "configuring makes origin gh's default repository and --check passes" {
+    "$REPO/scripts/fork-remotes.sh"
+    [ "$(git -C "$REPO" config --get remote.origin.gh-resolved)" = "base" ]
+    run git -C "$REPO" config --get remote.upstream.gh-resolved
+    [ "$status" -ne 0 ]                              # only origin carries the key
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check fails when gh's default repository is upstream, and configuring moves it" {
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" config --unset remote.origin.gh-resolved || true
+    git -C "$REPO" config remote.upstream.gh-resolved base
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"remote.upstream.gh-resolved"* ]]
+    "$REPO/scripts/fork-remotes.sh"
+    [ "$(git -C "$REPO" config --get remote.origin.gh-resolved)" = "base" ]
+    run git -C "$REPO" config --get remote.upstream.gh-resolved
+    [ "$status" -ne 0 ]                              # unset by configure
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check fails when upstream also carries the key, which gh reads before origin's" {
+    # gh consults the remotes in its own order, upstream before origin, so a key on upstream shadows
+    # origin's even when origin's is right. Verified against gh 2.97: both remotes resolved as base,
+    # a bare PR number went to the project.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" config remote.upstream.gh-resolved base
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"remote.upstream.gh-resolved"* ]]
+}
+
+@test "configuring collapses a doubled gh default on origin to one value" {
+    # `git config --add` by hand leaves two values under remote.origin.gh-resolved (gh itself unsets
+    # before it adds), and a plain `git config <key> <value>` then refuses to overwrite them. Set
+    # mode must still finish, with exactly one value, and not stop after the push guards.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" config --add remote.origin.gh-resolved base
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fork-remotes: configured"* ]]
+    [ "$(git -C "$REPO" config --get-all remote.origin.gh-resolved | wc -l)" -eq 1 ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
 @test "it refuses a clone whose origin is the project itself" {
     git -C "$REPO" remote set-url origin "$UP"
     run "$REPO/scripts/fork-remotes.sh"
@@ -154,8 +219,12 @@ upstream_commit() {  # <file> <text> <subject>
 @test "running it twice changes nothing the second time" {
     "$REPO/scripts/fork-remotes.sh"
     before="$(git -C "$REPO" remote -v)"
+    # The whole local config, not only the remotes: a second run must not add a second value under
+    # any key it sets (pushDefault, gh-resolved) or drop anything it left in place the first time.
+    config_before="$(git -C "$REPO" config --list --local)"
     "$REPO/scripts/fork-remotes.sh"
     [ "$(git -C "$REPO" remote -v)" = "$before" ]
+    [ "$(git -C "$REPO" config --list --local)" = "$config_before" ]
 }
 
 @test "upstream-check says nothing when there is nothing new" {
