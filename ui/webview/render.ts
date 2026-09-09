@@ -848,6 +848,7 @@ function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
     warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
     syncNewTagInput();                     // a dropped create no longer gates the flyout's input
   } else if (!adopted) return;             // nothing in flight, nothing adopted: the caps changed, nothing shown did
+  viewsChanged();                          // the open tab menu re-dresses for the reverted or adopted blob (round 5; before, a stale row stood until the next push)
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   renderTabs();
 }
@@ -875,15 +876,15 @@ function onViewsAck(m: ViewsAck) {
   if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   syncNewTagInput();                       // a create's ack re-arms the flyout's New tag… input in place
-  tabMenuViewsHook();                      // and the open tab menu re-dresses for the ack's blob (a create's ack gives a claimed copy its row)
+  viewsChanged();                          // and the open tab menu re-dresses for the ack's blob (a create's ack gives a claimed copy its row)
   renderTabs();
 }
 // The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
 // (the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
 // place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
-// (The open menu's views hook, tabMenuViewsHook, rebuilds the flyout only when an arrival changed
-// what its rows show, and carries the typed text and the focus across that rebuild: round 4 of the
-// tab menu review.)
+// (The open menu's hook, tabMenuViewsHook, run by viewsChanged on every change to what the strip reads,
+// the caps frame included, rebuilds the flyout only when a change altered what its rows show, and
+// carries the typed text and the focus across that rebuild: rounds 4 and 5 of the tab menu review.)
 let tagsFlyNewInput: HTMLInputElement | null = null;
 function syncNewTagInput() {
   if (!tagsFlyNewInput) return;
@@ -6346,12 +6347,18 @@ function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): 
 // outside click, Escape, scroll, or losing window focus.
 let ctxMenuEl: HTMLElement | null = null;
 let ctxMenuAt: { x: number; y: number } | null = null;   // the tab menu's last (clamped) corner: where its emoji picker opens
-// THE OPEN MENU FOLLOWS A VIEWS ARRIVAL (round 4 of the tab menu review): a tabOrder frame or an ack that lands while the tab
-// menu is open runs this, and the menu re-dresses for the blob it carried (the Hide tab row's refresh, the Tags row's sub-line,
-// and the Tags flyout's rows when the frame changed what they show), the same path the flyout's own edits take. showTabMenu
-// sets it once its menu is on the page; dismissTabMenu clears it, so it is a no-op while no menu is open. Before it, a push
-// that took the copy's tag off the session left the row naming a group the copy had left.
+// THE OPEN MENU FOLLOWS EVERY CHANGE TO WHAT THE STRIP READS (round 4 of the tab menu review, widened in round 5): a change
+// that lands while the tab menu is open runs this, and the menu re-dresses for it (the Hide tab row's refresh, the Tags row's
+// sub-line, and the Tags flyout's rows when the change altered what they show), the same path the flyout's own edits take.
+// showTabMenu sets it once its menu is on the page; dismissTabMenu clears it, so it is a no-op while no menu is open. Before it,
+// a push that took the copy's tag off the session left the row naming a group the copy had left. ONE NOTIFIER, viewsChanged
+// (round 5): every site that changes what the strip reads calls it, and nothing calls the hook directly: the tabOrder frame
+// handler (a views push), onViewsAck (an edit's answer), onKernelCaps (a reconnect that drops the writes in flight and the
+// optimistic copy; before, an open menu kept a "creating..." row and a stale Hide tab row across it) and the two tab-groups
+// store listeners (TABGROUPS_EVENT from this window, the storage event from a sibling pane: another pane's Hide or Show, or
+// the Group tabs by tag switch, re-dresses the row or takes it off). tab-hide.test pins the five callers.
 let tabMenuViewsHook: () => void = () => {};
+function viewsChanged() { tabMenuViewsHook(); }
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
@@ -6670,9 +6677,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
   // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
   // left (event-keyed on the write, no timer), and a views arrival while the menu is open runs it too (round 4:
-  // tabMenuViewsHook, set at the end of this build, so a push that takes the copy's tag off the session, renames
-  // it or answers its create re-dresses the row in the same event; before, the row kept naming a group the copy
-  // had left), and the refresh ends by seating the menu and the open flyout
+  // tabMenuViewsHook, set at the end of this build and run by viewsChanged, the one notifier, on every change to
+  // what the strip reads, so a push that takes the copy's tag off the session, renames it or answers its create,
+  // a reconnect that drops an edit in flight, or another pane's hide re-dresses the row in the same event; before,
+  // the row kept naming a group the copy had left), and the refresh ends by seating the menu and the open flyout
   // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
   // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
   // and no other (round 4: a resolution at the click that names a copy the row did not, which the hook leaves
@@ -6707,8 +6715,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const now = homeNow();
       if (!now) { dismissTabMenu(); return; }
       const sec = sectionRef(now), st = tabGroups();
-      // the copy the row named, or nothing (round 4): a views arrival re-dresses the row (tabMenuViewsHook), so the resolution at the
-      // click names the row's copy unless something moved it since the last arrival; a hide of any other copy would be of one the
+      // the copy the row named, or nothing (round 4): every change to what the strip reads re-dresses the row (viewsChanged), so the
+      // resolution at the click names the row's copy unless something moved it since the last one; a hide of any other copy would be of one the
       // user never touched. The same tag under a new name matches by its id (sameSection: the ids when both are local, else the names,
       // so two remote-only sections are two). The guard runs BEFORE the dismissal (round 5): a refused
       // click re-dresses the row in place and leaves the menu open, so the new words are seen and a second click acts on them (before,
@@ -6788,8 +6796,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const sb = el("span", "ctx-item-sub");
     const subText = () => { const names = holding().map((g) => g.name); return names.length ? names.join(" · ") : "none yet — tag it to organize and dispatch"; };
     sb.textContent = subText();
-    // A VIEWS ARRIVAL while this menu is open (round 4; tabMenuViewsHook): the sub-line re-reads the names, and the flyout, while
-    // open, rebuilds its rows when the frame changed what they show (rebuildFly, assigned in openTagsFly; a no-op while it is closed)
+    // A CHANGE TO WHAT THE STRIP READS while this menu is open (round 4; tabMenuViewsHook, run by viewsChanged): the sub-line re-reads
+    // the names, and the flyout, while open, rebuilds its rows when the change altered what they show (rebuildFly, assigned in openTagsFly;
+    // a no-op while it is closed)
     let rebuildFly = () => {};
     refreshTags = () => { sb.textContent = subText(); rebuildFly(); };
     bodyEl.appendChild(sb);
@@ -7115,7 +7124,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   }
   document.body.appendChild(menu);
   ctxMenuEl = menu;
-  tabMenuViewsHook = () => { refreshHideRow(); refreshTags(); };   // a views arrival while this menu is open re-dresses it (round 4); dismissTabMenu clears the hook
+  tabMenuViewsHook = () => { refreshHideRow(); refreshTags(); };   // a change to what the strip reads while this menu is open re-dresses it (round 4; viewsChanged runs it, round 5); dismissTabMenu clears the hook
   seatMenu(e.clientX, e.clientY);   // at the cursor, clamped so it never overflows the pane
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires
@@ -16578,7 +16587,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     if (typeof m.selfHost === "string" && m.selfHost) adoptSelfHost(m.selfHost);   // the LOCAL kernel's own name: federation puts only its own on the merged frame
     captureViews(m.views || null);
     applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined }, m.live);
-    tabMenuViewsHook();   // the open tab menu re-dresses for the blob this frame carried (round 4 of the tab menu review)
+    viewsChanged();   // the open tab menu re-dresses for the blob this frame carried (round 4 of the tab menu review; the one notifier, round 5)
   }
   else if (m.type === "renamed" && m.id && typeof m.name === "string") {
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
@@ -17907,10 +17916,14 @@ window.addEventListener("storage", (e) => {
     setActive(sid);
   } catch { /* malformed echo — the kernel frame corrects momentarily */ }
 });
-// TAB SECTIONS state (tab-groups.ts): a fold/open or the "Group tabs by tag" switch — from this
-// window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip
-window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) renderTabs(); });
-window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
+// TAB SECTIONS state (tab-groups.ts): a fold/open, a hide or show, a pin, or the "Group tabs by tag" switch — from this
+// window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip, and re-dresses the open tab menu
+// (viewsChanged, round 5 of the tab menu review: another pane's Hide flips the row to Show tab; grouping off takes it away).
+// The CustomEvent is dispatched inside writeTabGroups, so a write from the menu's own rows runs the hook before the row's
+// own rebuild: the Hide tab row's write comes after its dismissal (the hook is cleared), and the pin row's changes nothing
+// the flyout's rows are built from (flySig), so its rebuild is a no-op there
+window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) { renderTabs(); viewsChanged(); } });
+window.addEventListener(TABGROUPS_EVENT, () => { renderTabs(); viewsChanged(); });
 // …and so does crossing the phone/desktop boundary (an iPad rotation): renderTabs samples
 // phoneLayout() per render, and the kernel's CSS swaps the strip for its scraped session list the
 // instant the same media rule flips — so the DOM kept the desktop plan (folded tabs absent from the

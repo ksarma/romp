@@ -58,7 +58,7 @@ test("a view change that excludes the ACTIVE session converts it into the peek �
   // …and the kernel's ack, a views arrival like the pushed frame: the peek is derived, then the flyout input's re-arm
   // and the open tab menu's views hook (round 4 of the tab menu review, 2026-09-09), all BEFORE the renderTabs that
   // repaints the strip
-  assert.match(RENDER, /if \(out\.clearPending\) pendingSessionViews = null;[\s\S]{0,300}?if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*syncNewTagInput\(\);[^\n]*\n\s*tabMenuViewsHook\(\);[^\n]*\n\s*renderTabs\(\);/);
+  assert.match(RENDER, /if \(out\.clearPending\) pendingSessionViews = null;[\s\S]{0,300}?if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*syncNewTagInput\(\);[^\n]*\n\s*viewsChanged\(\);[^\n]*\n\s*renderTabs\(\);/);
   // the derivation is symmetric, so a view that now INCLUDES the active peek sheds the dress — the
   // same next-null branch the auto-close pin above holds; and the fallback's fire-time revalidation
   // (below) re-checks tabInView, so a converted peek can never be bounced by an in-flight timeout

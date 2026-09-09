@@ -119,7 +119,7 @@ test("the tabOrder frame's views land before the strip repaints — a CLI tag ed
   // (the kernel's own name, selfHost, is adopted first, pr-links.test.ts pins that line; the frame's live
   // set rides into applyTabOrder, T258; and the open tab menu's views hook runs LAST, after the strip is applied,
   // so it reads the blob the strip was just built from: round 4 of the tab menu review, 2026-09-09)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*tabMenuViewsHook\(\);[^\n]*\n\s*\}/);
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*viewsChanged\(\);[^\n]*\n\s*\}/);
   assert.match(RENDER, /const inViewIds = ids\.filter\(tabInView\);/);
 });
 
