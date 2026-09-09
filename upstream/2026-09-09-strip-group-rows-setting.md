@@ -1,7 +1,7 @@
 ---
 title: Tab strip: one tag group per row becomes a setting (default per project)
 status: candidate
-where: ui/webview/settings.ts (stripGroupRows, default off), ui/webview/gear.js (the Chat checkbox "One tag group per row in the tab strip"), ui/webview/render.ts (the T264 row breaks gated on the setting, makeTrailSep for the inline trail divider, the strip signature, the drop walk edge), ui/webview/styles.css (the divider rule scoped off the break), docs/guide.md (one sentence); tests ui/webview/tab-groups.test.ts, ui/webview/tab-drag-live.test.ts, ui/webview/settings.test.ts, tests/test_tab_groups_rows.py
+where: ui/webview/settings.ts (stripGroupRows, default off), ui/webview/gear.js (the Chat checkbox "One tag group per row in the tab strip"), ui/webview/render.ts (the T264 row breaks gated on the setting, makeTrailSep for the inline trail divider, the strip signature, the drop walk edge), ui/webview/styles.css (the divider rule scoped off the break), docs/guide.md (one sentence); tests ui/webview/tab-groups.test.ts, ui/webview/tab-drag-live.test.ts, ui/webview/settings.test.ts, tests/test_tab_groups_rows.py, ui/webview/tab-hide-browser.test.ts (the harness's settings stub at the fork default)
 added: 2026-09-09
 pr:
 tier: feature
