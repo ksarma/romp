@@ -1,7 +1,7 @@
 ---
 title: Billing label: a helper-authenticated session reads API key, not login
 status: candidate
-where: kernel/kernel.py (Sessions.live merge, build_session Billing fields, _bills_login, _auth_key_present, _declared_default_auth, _auth_avail), kernel/sdk_backend.py (unpicked_auth, effective_auth, default_auth, declared_auth, snapshot, _live_row, _note_auth_source), ui/webview/billing-label.ts (new), ui/webview/render.ts (Billing row, tab-menu Billing item, picker written-out choice, Status.authPicked), docs/reference.md; tests: tests/test_expected_auth.py, tests/test_retry_pause_autoresume.py, ui/webview/billing-label.test.ts (new), ui/webview/auth-selector.test.ts
+where: kernel/kernel.py (Sessions.live merge, build_session Billing fields, _bills_login, _auth_key_present, _unpicked_default, _auth_avail, the judge's _UNPICKED_AUTH_FN wire), kernel/sdk_backend.py (read_sdk_defaults cache, unpicked_auth, seeded_auth, new_session_auth, spawn's seed, effective_auth, default_auth, snapshot, _live_row, _note_auth_source), kernel/judge.py (_judge_auth, _unpicked_auth), ui/webview/billing-label.ts (new; pickerBillingRow), ui/webview/render.ts (Billing row, tab-menu Billing item, picker Billing row, Status.authPicked), docs/reference.md; tests: tests/test_expected_auth.py, tests/test_judge_auth_billing.py, tests/test_retry_pause_autoresume.py, tests/test_session_auth.py, tests/test_reference_billing_label.py (new), ui/webview/billing-label.test.ts (new), ui/webview/auth-selector.test.ts
 added: 2026-09-09
 pr:
 tier: fix

@@ -529,11 +529,14 @@ environment), with the same switching-dots the effort badge wears.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key` — no fragment of the key, not
 even a last-4 tail, ever reaches a browser or a screen. A new session
-defaults to the last pick made anywhere, and before any pick to the key when
+defaults to the last pick made anywhere (an API-key pick remembered from a
+box that held a key is set aside once it holds none: the picker cannot offer
+it, and such a session starts unpicked), and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
 existed; with neither, to the side `ROMP_EXPECTED_AUTH` declares (see below),
 so a box whose sessions bill a key through Claude Code's `apiKeyHelper`
-reads `API key` rather than the login. tmux sessions are not covered by the picker: their CLI lives in the
+reads `API key` rather than the login, and the picker's Billing row writes
+that out even when the box has no Claude login to show beside it. tmux sessions are not covered by the picker: their CLI lives in the
 tmux server's environment, which the kernel does not control. What Romp does
 do there, when a key provider is configured, is keep the manager's
 startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
@@ -575,7 +578,11 @@ reading of a session that reports nothing all read the declared side, where
 they read the login before. One explicit gear **Billing** pick supersedes the
 declaration from then on: the remembered pick becomes the box's expectation
 and the env var goes inert (it described the unpicked design), so re-seeded
-spawns are judged against your pick, never against stale doctrine.
+spawns are judged against your pick, never against stale doctrine. The one
+exception is an API-key pick remembered from a box that no longer holds a
+key: it is set aside at spawn, so it seeds nothing, and the declaration
+decides the unpicked default again (the per-init check still judges each
+landing against the pick).
 
 The declaration is also checked once, when the kernel starts, against the
 key source a launch would select. Under `ROMP_EXPECTED_AUTH=login`, a selected
@@ -1051,9 +1058,11 @@ configure no key source in Romp and point Claude Code's
 at the secret manager instead. Romp passes a key to a session only when it has
 one itself, so with no source configured every session and every API-key-billed
 judge call uses Claude Code's own authentication. Romp cannot see that key: the
-Billing picker offers no API-key choice, a session's Billing row reads
-`Login (CLI reports API key)`, and `romp keyswap --cycle` skips every session
-as billing the login.
+Billing picker offers no API-key buttons (under `ROMP_EXPECTED_AUTH=key` its
+Billing row writes out `API key` as the one applying choice), a session's
+Billing row reads `API key` once its CLI has reported the helper's key (before
+that report it shows the side `ROMP_EXPECTED_AUTH` declares, else `Login`), and
+`romp keyswap --cycle` skips every session as billing the login.
 
 1. Write a script that prints the key from your secret manager, and make it
    executable. With 1Password, for example:

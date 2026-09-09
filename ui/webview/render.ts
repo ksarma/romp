@@ -82,7 +82,7 @@ import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from ".
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
-import { billingRowText, billingSubText } from "./billing-label";
+import { billingRowText, billingSubText, pickerBillingRow } from "./billing-label";
 import { chatMdExtensions, userMdHtml } from "./chat-md";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
@@ -5303,8 +5303,9 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // a pending switch reads as pending, never as applied fact (T124), and an EXPLICIT pick the CLI
   // contradicted leads with a warning naming what is billed (the user 2026-08-15). A seeded default
   // the CLI disagrees with is no contradiction (authPicked tells the two apart): until 2026-09-09
-  // every session on an apiKeyHelper box read "Login picked, but the CLI reports the API key" when
-  // nobody had picked anything (the user 2026-09-09).
+  // every unpicked session on an apiKeyHelper box read plain "Login", its seeded intent, because the
+  // kernel's live merge never forwarded the CLI's report; had it, the old wording would have called that
+  // seeded default a pick the CLI contradicted (the user 2026-09-09).
   if (s.status.auth) rows.push(["Billing", billingRowText(s.status)]);
   for (const [k, v] of rows) {
     const r = el("div", "tab-tip-row");
@@ -7562,18 +7563,19 @@ function syncPickerAuth(): void {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap) return;
   const a = pickerAuthAvail;
-  const show = !pickMode && !!(a && (a.login || a.key)) && pickerBackendChoice() === "sdk";
+  // the row's decision is billing-label.ts's (pickerBillingRow, executed in billing-label.test.ts): shown
+  // whenever the host can name what a new session bills (a login, a key of romp's, or a declared key), buttons
+  // when both choices are real, else the single applying choice written out, naming the login account when known
+  const row = pickerBillingRow(a);
+  const show = !pickMode && row.show && pickerBackendChoice() === "sdk";
   wrap.style.display = show ? "" : "none";
   if (!show) return;
-  const both = !!(a!.login && a!.key);
+  const both = row.both;
   wrap.querySelectorAll(".picker-be-opt").forEach((x) => ((x as HTMLElement).style.display = both ? "" : "none"));
   const fixed = wrap.querySelector(".picker-auth-fixed") as HTMLElement | null;
   if (fixed) {
     fixed.style.display = both ? "none" : "";
-    // one real choice → written out in the buttons' place, naming the login account when known
-    // the one applying choice: the key romp holds, or the key the host DECLARES its sessions bill (a.default
-    // reads "key" under ROMP_EXPECTED_AUTH=key on an apiKeyHelper box that holds no key of romp's), else the login
-    fixed.textContent = both ? "" : ((a!.key || a!.default === "key") ? "API key" : (a!.acct ? `Login (${a!.acct})` : "Login"));
+    fixed.textContent = row.fixed;
   }
   if (!both) return;   // the fixed text is the whole row — nothing to seed
   // the Login button's hover names WHICH account (the user 2026-08-09)

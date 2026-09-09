@@ -430,15 +430,19 @@ class LimitPauseLift(_PauseFixture):
         self.assertFalse(km._retry_paused_on(), "the user's own stop: the mtime rule is unchanged")
 
     def test_a_session_of_unknown_auth_bills_the_login_only_when_this_box_holds_no_key(self):
-        # the box declares nothing here (a backend without declared_auth reads as no declaration; the
-        # declared cases are test_expected_auth's), so the fallback is the key test alone
+        # the box declares nothing here (the declared cases, on a real backend, are test_expected_auth's), so
+        # the backend's rule (new_session_auth, which _bills_login's fallback calls directly) is the key test
+        # alone: the stub answers what sdk_backend.unpicked_auth answers with nothing declared and no pick
         real_sdk = km._sdk
-        km._sdk = lambda: type("B", (), {})()
+
+        def world(key):
+            km._sdk = lambda: type("B", (), {"work_key_configured": key,
+                                             "new_session_auth": lambda self: "key" if key else "login"})()
         try:
-            km._auth_key_present = lambda: True
+            world(True)
             self.assertFalse(km._bills_login({"state": "idle"}), "a key on the box: this session may be billing it")
             self.assertFalse(km._bills_login(None))
-            km._auth_key_present = lambda: False
+            world(False)
             self.assertTrue(km._bills_login({"state": "idle"}), "no key and nothing declared: the login")
             self.assertTrue(km._bills_login({"auth": "key", "authLive": "login"}), "the CLI's own live report wins")
             self.assertFalse(km._bills_login({"auth": "key"}))

@@ -1571,6 +1571,8 @@ _WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when i
                       # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
 _WORK_KEY_CONFIGURED_FN = None  # metadata only; never retrieve a secret to decide billing
 _LOGIN_AUTH_ENV_FN = None      # login tokens claimed out of the manager's ambient environment
+_UNPICKED_AUTH_FN = None       # the kernel wires this to sdk_backend.unpicked_auth over its state dir: the
+                               # side an unpicked session bills given whether romp holds a key (_unpicked_auth)
 _ENV_SET_FN = None    # the kernel wires this to sdk_backend.credential_set: the command source's set
                       # (kernel/envsource.py, 2026-09-05) — role variables for a judge call's env, minus
                       # the key, which rides the explicit billing decision below. None = file mode /
@@ -1689,10 +1691,11 @@ def _judge_auth(fsid):
     user 2026-08-12: a judge rides the account of the session it judges, never a third choice and
     never a silent fall to the other one — a judge quietly billing the login on a session the user
     put on the key is the same wrong-account failure the per-session picker exists to prevent).
-    Same resolution as the picker (sdk_backend default_auth / effective_auth), read from the same
-    registry file: an explicit 'login' pick → login; anything else → the key when the environment
-    carries one, else login. A call with no session (fleet-level rows) takes the same default a
-    fresh session would."""
+    Same resolution as the session's own badge (sdk_backend default_auth / effective_auth), read from
+    the same registry file: an explicit 'login' or 'key' pick stands; anything else is the unpicked
+    rule (_unpicked_auth): the key when romp holds one, else the side the box declares when no gear
+    pick has made it inert, else login. A call with no session (rows about every session at once) takes
+    the same unpicked default."""
     a = ""
     if fsid:
         try:
@@ -1701,7 +1704,35 @@ def _judge_auth(fsid):
             a = ""
     if a in ("login", "key"):
         return a
-    return "key" if _work_key_configured() else "login"
+    return _unpicked_auth(_work_key_configured())
+
+
+def _unpicked_auth(key):
+    """The side an unpicked session bills, given whether romp holds a key: sdk_backend.unpicked_auth
+    through the kernel's wire (_UNPICKED_AUTH_FN), else a MIRROR of it for the standalone judge
+    (romp-judge --once), kept in sync by test rather than import (the _is_auth_error pattern; judge.py
+    loads standalone). The rule: the key when romp holds one (the launch injects it for every unpicked
+    session, whatever the box declares); else a remembered gear Billing pick in STATE/sdk-defaults.json
+    speaks for itself when it is a login pick (it is re-seeded into every new reg, and it makes
+    ROMP_EXPECTED_AUTH inert), while a key pick on a keyless box is one spawn sets aside, so the
+    declaration speaks again under it; else the declaration; else login. Until 2026-09-09 the fallback
+    was the key test alone, so on a declared-key box with no key of romp's every unpicked call was
+    classified login-billed while the session's badge said key: the rate-limit gate then read the login
+    account's windows for it, a limit-shaped envelope minted the login-account latch, and a credential
+    error recorded the wrong side."""
+    if _UNPICKED_AUTH_FN is not None:
+        return _UNPICKED_AUTH_FN(key)
+    if key:
+        return "key"
+    try:
+        d = json.loads((STATE / "sdk-defaults.json").read_text())
+        pick = d.get("auth") if isinstance(d, dict) else None
+    except Exception:
+        pick = None
+    if pick == "login":
+        return "login"
+    exp = (os.environ.get("ROMP_EXPECTED_AUTH") or "").strip().lower()
+    return exp if exp in ("key", "login") else "login"
 
 
 def _is_auth_error(text):

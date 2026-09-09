@@ -3,14 +3,15 @@
 //
 // The bug these pin (the user 2026-09-09): on a box whose sessions authenticate through Claude Code's
 // apiKeyHelper, romp holds no key, so the seeded intent read "login" for every unpicked session, and the
-// row either showed plain "Login" (no report on the wire) or "Login picked, but the CLI reports the API
-// key" when nobody had picked anything. The CLI's report leads now, and only an EXPLICIT pick it
-// contradicts is worded as a contradiction.
+// row showed plain "Login" (the kernel's live merge never put the CLI's report on the wire); had the report
+// reached it, the old wording would have shown "Login picked, but the CLI reports the API key" for a default
+// nobody picked. The CLI's report leads now, and only an EXPLICIT pick it contradicts is worded as a
+// contradiction. The new-session picker's Billing row takes its decision from the same module.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { billingRowText, billingSubText, billingSide, billingContradicted } from "./billing-label";
+import { billingRowText, billingSubText, billingSide, billingContradicted, pickerBillingRow } from "./billing-label";
 
 const ROOT = path.resolve(process.cwd(), "..");
 const KERNEL = fs.readFileSync(path.join(ROOT, "kernel", "kernel.py"), "utf8");
@@ -53,6 +54,49 @@ test("a pick the CLI confirmed reads plainly", () => {
   assert.equal(billingSubText({ auth: "key", authLive: "key", authPicked: true }), "API key");
   assert.equal(billingRowText({ auth: "login", authLive: "login", authPicked: true, authAcct: "user@example.com" }),
     "Login (user@example.com)");
+});
+
+test("a pick before its init lands shows the pick as the intent, never as a contradiction", () => {
+  // a real, open-ended window: spawn writes the reg's auth from a remembered pick and authLive stays ""
+  // until the first init's report (a dormant session holds this state indefinitely). Dropping the
+  // report guard in billingContradicted would word every such session as "Login picked, but the CLI
+  // reports the login" until its init; the shipped cases never exercised it (review round 1, 2026-09-09).
+  const f = { auth: "login", authPicked: true, authLive: "", authAcct: "user@example.com" };
+  assert.equal(billingRowText(f), "Login (user@example.com)");
+  assert.equal(billingSubText(f), "Login (user@example.com)");
+  assert.equal(billingContradicted(f), false, "no report yet: nothing to contradict");
+  const g = { auth: "key", authPicked: true };   // the dormant row before any init: authLive absent
+  assert.equal(billingRowText(g), "API key");
+  assert.equal(billingSubText(g), "API key");
+  assert.equal(billingContradicted(g), false);
+  // and a pick whose applying reconnect is in flight still says so
+  assert.equal(billingRowText({ auth: "login", authPicked: true, authLive: "", authPending: true }),
+    "Login (applying, not confirmed yet)");
+  assert.equal(billingSubText({ auth: "login", authPicked: true, authLive: "", authPending: true }), "applying…");
+});
+
+test("the picker's Billing row shows whenever the host can name what a new session bills, buttons only for two real choices", () => {
+  // both real: buttons, nothing written out
+  assert.deepEqual(pickerBillingRow({ login: true, key: true, acct: "user@example.com", default: "key" }),
+    { show: true, both: true, fixed: "" });
+  // a login alone: written out, naming the account when known
+  assert.deepEqual(pickerBillingRow({ login: true, key: false, acct: "user@example.com", default: "login" }),
+    { show: true, both: false, fixed: "Login (user@example.com)" });
+  assert.equal(pickerBillingRow({ login: true, default: "login" }).fixed, "Login");
+  // a key of romp's alone
+  assert.deepEqual(pickerBillingRow({ login: false, key: true, acct: "", default: "key" }),
+    { show: true, both: false, fixed: "API key" });
+  // the apiKeyHelper box (W2, review round 1): neither credential of romp's, the host declares the key;
+  // the gate used to require a login or a key of romp's, so this box, the one the fix is for, had no row
+  assert.deepEqual(pickerBillingRow({ login: false, key: false, acct: "", default: "key" }),
+    { show: true, both: false, fixed: "API key" });
+  // a login beside a declared key: no buttons (romp cannot pick the helper's key), the declared side written out
+  assert.deepEqual(pickerBillingRow({ login: true, key: false, acct: "user@example.com", default: "key" }),
+    { show: true, both: false, fixed: "API key" });
+  // nothing the host can vouch for: hidden, never a fabricated Login
+  assert.deepEqual(pickerBillingRow({ login: false, key: false, acct: "", default: "login" }),
+    { show: false, both: false, fixed: "" });
+  assert.equal(pickerBillingRow(null).show, false, "no availability reply yet (an older kernel never sends one)");
 });
 
 test("a pending switch reads as pending, never as applied fact, and outranks a stale report (T124)", () => {
