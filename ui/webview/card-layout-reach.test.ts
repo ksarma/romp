@@ -9,7 +9,10 @@
 // past the start is laid below the focused card instead, by the push-down rule from its end: the marked ones first,
 // wearing the leader up to their marks, then the loose ones in the list's order, then the cards whose marks are below
 // the focus. The room above the focus stays for the cards further up the chain, and of the loose group the cards at
-// its end go below until the rest fit, so the group's head keeps its place at the start. Synthetic measurements only.
+// its end go below until the rest fit, so the group's head keeps its place at the start. The scenes here spill one card
+// or the group's end and lay the rest once; a card BETWEEN a spilled card and the focus is laid again without it, from
+// its own mark (the verification round, 2026-09-09; card-layout-spill.test.ts drives that re-lay). Synthetic
+// measurements only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { layoutCards, type LayoutItem, type Layout } from "./card-layout";

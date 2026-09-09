@@ -311,8 +311,10 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(s.cards.c3.height + 8 <= s.trackHeight, "the fixture: the card with its reply fits the track: " + s.cards.c3.height);
       assert.ok(s.marks.c3!.top >= s.bodyBox.top - 1 && s.marks.c3!.bottom <= s.bodyBox.bottom + 1, "the mark is in the body's box: " + JSON.stringify(s.marks.c3) + " in " + JSON.stringify(s.bodyBox));
       assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
-      // level with its mark: the card the save landed in is the focus (scrollToSaved → scrollCard → focusOn; the focus
-      // follow-on, 2026-09-08), held at its mark whatever stands above it. The loose group (the whole-file cards, at the top
+      // level with its mark: the card the save landed in is the focus (the focus follow-on, 2026-09-08), held at its mark
+      // whatever stands above it. The head click that opened it two steps up set the focus (installLayout); the save's own
+      // setter runs here (scrollToSaved → scrollCard → focusOn) and finds it set, so it changes nothing in this scene —
+      // file-comments-focus-verify.test.ts drives the save whose setter does the work. The loose group (the whole-file cards, at the top
       // of the track) reaches past the mark here — the head is a row taller since Show changes inline joined its button row
       // (the file has a change, and three buttons wrap at 340px), so the track begins that much lower and the card's
       // desired top falls inside the group — and the group is never moved past the track's start: the cards at its end
