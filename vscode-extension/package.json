@@ -167,7 +167,7 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "node esbuild.js --production",
-    "test": "node esbuild.js --tests && node --test --test-concurrency=8 'out-tests/**/*.test.js'"
+    "test": "node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=8 'out-tests/**/*.test.js'"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
