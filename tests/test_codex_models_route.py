@@ -9,8 +9,12 @@ backend name themselves, so the menu never reads an empty list as the app-server
 live Codex session fires the models frame the pick memory and the catalog fetch already send, through
 EITHER door that opens the gate: the spawn (_create_codex_session_inner) and the revive of a dead session
 (_revive_session_inner's Codex arm; the first cut covered the spawn alone, the round-1 verification). The
-backend is a FAKE here (no app-server, no network); the handler runs in-process on a loopback
-ThreadingHTTPServer, the test_kernel_cors idiom. Synthetic fixtures only.
+frame is keyed on the door's OWN before-snapshot of the gate (_codex_gate_closed), not on the live count read
+after the row landed: two first creates or two first revives can interleave (a thread per POST /new, one per WS
+client), and the post-count test saw 2 in both and fired for neither (the round-2 verification, executed with a
+barrier); the snapshot fires both, once each when sequential. The backend is a FAKE here (no app-server, no
+network); the handler runs in-process on a loopback ThreadingHTTPServer, the test_kernel_cors idiom. Synthetic
+fixtures only.
 """
 import http.client
 import json
@@ -34,17 +38,25 @@ os.environ["ROMP_MODEL_CATALOG"] = "off"          # never the Models API from a 
 km = load_source("romp_kernel_codex_models", os.path.join(BIN, "romp-kernel"))
 
 SID = "11111111-2222-4333-8444-555555555555"
+SID2 = "22222222-3333-4444-8555-666666666666"
 
 
 class FakeCodex:
     """The slice of CodexBackend the /models handler, the spawn door and the revive door read. `dead`:
-    sids the registry knows (a _session row) that are not live, the shape a revive starts from."""
+    sids the registry knows (a _session row) that are not live, the shape a revive starts from. `sids`:
+    what successive spawns mint (the last one repeats). `barrier`: a threading.Barrier that spawn and
+    resume wait on AFTER landing their row, so two doors driven from two threads both hold a live row
+    before either reaches the gate check, the interleaving the real backend's tail (registry save,
+    transcript touch, names write) leaves open."""
 
-    def __init__(self, models=None, error=None, live=None, raise_catalog=None, dead=()):
+    def __init__(self, models=None, error=None, live=None, raise_catalog=None, dead=(), sids=(SID,), barrier=None):
         self.models, self.error, self.live = list(models or []), error, dict(live or {})
         self.raise_catalog = raise_catalog
         self.catalog_calls = 0
         self.dead = set(dead)
+        self.sids, self.spawns = list(sids), 0
+        self.barrier = barrier
+        self._lock = threading.Lock()
 
     def live_sessions(self):
         return self.live
@@ -52,11 +64,17 @@ class FakeCodex:
     def _session(self, sid):
         return object() if sid in self.live or sid in self.dead else None
 
+    def _landed(self):
+        if self.barrier is not None:
+            self.barrier.wait()   # the other door's row is live too before this one checks the gate
+
     def resume(self, name, sid, cwd=None):
-        if sid not in self.dead:
-            return False
-        self.dead.discard(sid)
-        self.live[sid] = {"state": "waiting", "model": "gpt-5-test", "backend": "codex", "name": name}
+        with self._lock:
+            if sid not in self.dead:
+                return False
+            self.dead.discard(sid)
+            self.live[sid] = {"state": "waiting", "model": "gpt-5-test", "backend": "codex", "name": name}
+        self._landed()
         return True
 
     def model_catalog(self):
@@ -69,8 +87,12 @@ class FakeCodex:
         return self.error
 
     def spawn(self, nm, cwd, bg, fg):
-        self.live[SID] = {"state": "ready", "model": "gpt-5-test", "backend": "codex", "name": nm}
-        return SID
+        with self._lock:
+            sid = self.sids[min(self.spawns, len(self.sids) - 1)]
+            self.spawns += 1
+            self.live[sid] = {"state": "ready", "model": "gpt-5-test", "backend": "codex", "name": nm}
+        self._landed()
+        return sid
 
 
 class ModelsRoute(unittest.TestCase):
@@ -178,7 +200,6 @@ class GateFlipFrame(unittest.TestCase):
         # (_revive_session_inner's Codex arm). A kernel restart that found every Codex session dead,
         # then a revive, flipped the gate with no frame from the first cut: every tab loaded in the
         # zero-live window kept an empty Codex list (the round-1 verification).
-        SID2 = "22222222-3333-4444-8555-666666666666"
         fake = FakeCodex(models=[{"value": "gpt-5-test", "label": "GPT-5 Test"}], dead=[SID, SID2])
         km._codex_backend = fake
         rev0 = km._models_rev[0]
@@ -203,6 +224,65 @@ class GateFlipFrame(unittest.TestCase):
             km._revive_session_inner(SID2, {"wid": "w-chat"})
             self.assertEqual((failed, sorted(fake.live)), ([], sorted([SID, SID2])))
             self.assertEqual(self._frames(), [], "a second live session changes nothing the payload carries")
+
+    # Two doors at once. POST /new runs on a thread per request and the WS create op per client, so two
+    # first creates (a script's two `romp new` Codex sessions) can both land their rows before either
+    # reaches the gate check; the same for two revives after a kernel restart that found every Codex
+    # session dead. The frame used to key on `len(live_sessions()) == 1` read AFTER the row landed, so
+    # both threads saw 2 and neither sent one: every open dashboard's Codex list stayed empty until the
+    # chat's own open-time re-read, and the timeline lane never re-reads (the round-2 verification,
+    # executed with this barrier). Keyed on each door's own before-snapshot, both fire. The assertion is
+    # the SET of apps reached, not a frame count: two frames per app is the designed outcome here (each
+    # a cheap re-read; the rev increments and the picker drops the lower), one is fine, zero is the bug.
+    def _race(self, run, names):
+        errs = []
+        def go(n):
+            try:
+                run(n)
+            except Exception as e:   # a thread's raise must fail the test, not vanish
+                errs.append(e)
+        ts = [threading.Thread(target=go, args=(n,)) for n in names]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(15)
+        self.assertEqual(errs, [])
+        self.assertFalse(any(t.is_alive() for t in ts), "a door never came back")
+
+    def test_two_first_creates_that_race_both_send_the_frame(self):
+        fake = FakeCodex(models=[{"value": "gpt-5-test", "label": "GPT-5 Test"}], sids=(SID, SID2),
+                         barrier=threading.Barrier(2, timeout=10))
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            self._race(lambda nm: km._create_codex_session_inner(nm, "/TESTDIR"), ("web", "api"))
+        self.assertEqual(sorted(fake.live), sorted([SID, SID2]), "both creates landed")
+        frames = self._frames()
+        self.assertEqual(set(a for a, _ in frames), {"chat", "feed", "timeline"},
+                         "two first creates raced: every app that hosts a picker still hears the gate open")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_two_first_revives_that_race_both_send_the_frame(self):
+        fake = FakeCodex(models=[{"value": "gpt-5-test", "label": "GPT-5 Test"}], dead=[SID, SID2],
+                         barrier=threading.Barrier(2, timeout=10))
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        focused, failed = [], []
+        with mock.patch.object(km, "_sdk", lambda: None), \
+             mock.patch.object(km, "_codex_ready", lambda: True), \
+             mock.patch.object(km, "_name_of", lambda sid: "web"), \
+             mock.patch.object(km, "_cwd_of", lambda sid: "/TESTDIR"), \
+             mock.patch.object(km, "_commands_for_cwd", lambda cwd: None), \
+             mock.patch.object(km, "_push_soon", lambda: None), \
+             mock.patch.object(km, "_reveal_chat_for", lambda client, msg: focused.append(msg)), \
+             mock.patch.object(km, "_send_to_view", lambda app, msg, wid: failed.append(msg)):
+            self._race(lambda sid: km._revive_session_inner(sid, {"wid": "w-chat"}), (SID, SID2))
+        self.assertEqual((failed, sorted(fake.live)), ([], sorted([SID, SID2])), "both revives succeeded")
+        self.assertEqual([m["type"] for m in focused], ["focus", "focus"])
+        frames = self._frames()
+        self.assertEqual(set(a for a, _ in frames), {"chat", "feed", "timeline"},
+                         "two first revives raced: every app that hosts a picker still hears the gate open")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
 
 
 if __name__ == "__main__":

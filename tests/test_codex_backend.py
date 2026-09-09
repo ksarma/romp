@@ -119,10 +119,12 @@ class FakeClient:
         ms = 1781100000000 + self._n * 100000
         text = " ".join(i.get("text", "") for i in input_items)
         if script is None:
+            # the app-server's shape: ONE userMessage item carrying the turn's input list, an entry per
+            # input (the worker sends one input per queued send), never a joined text
             script = [
                 ("item/completed", {"threadId": tid, "turnId": turn_id, "completedAtMs": ms,
                                     "item": {"type": "userMessage", "id": "u-%d" % self._n,
-                                             "content": [{"type": "text", "text": text}]}}),
+                                             "content": list(input_items)}}),
                 ("item/completed", {"threadId": tid, "turnId": turn_id, "completedAtMs": ms + 1000,
                                     "item": {"type": "agentMessage", "id": "a-%d" % self._n,
                                              "text": "ack: " + text}}),
@@ -353,6 +355,37 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(params["permissions"], "romp_workspace")
         self.assertEqual(params["runtimeWorkspaceRoots"], ["/TESTDIR"])
         self.assertNotIn("sandboxPolicy", params)
+
+    def test_two_sends_queued_before_the_turn_land_as_two_blocks_and_retire_both_echoes(self):
+        # Two sends queued before the worker starts a turn (an idle session sent twice quickly, sends
+        # while the client is down or backing off, a resume after a kernel restart) go out as ONE
+        # turn_start with an input per send; the app-server answers one userMessage item carrying both,
+        # and the normalizer lands it as one record with a text block per input. Until 2026-09-09 that
+        # record was one newline-joined block that matched neither echo, so both echoes stayed live for
+        # good and painted beside the record in every later build (the round-3 verification).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        ensure = be._ensure_worker
+        be._ensure_worker = lambda s: None             # hold the worker so both sends queue
+        self.assertTrue(be.send(sid, "first send"))
+        self.assertTrue(be.send(sid, "second send"))
+        be._ensure_worker = ensure
+        self.assertEqual([a["_echo_text"] for a in be.live_atoms(sid)], ["first send", "second send"])
+        self.assertTrue(be.wake(sid))
+        self.assertTrue(until(lambda: not be.busy(sid) and not be.pending_queued(sid)))
+        starts = fake.called("turn_start")
+        self.assertEqual(len(starts), 1, "one turn for the whole queue")
+        self.assertEqual([i["text"] for i in starts[0][2]], ["first send", "second send"])
+        recs = [json.loads(l) for l in Path(be.transcript_path(sid)).read_text().splitlines()]
+        users = [r for r in recs if r["type"] == "user"]
+        self.assertEqual(len(users), 1, "one user record for the batch")
+        self.assertEqual(users[0]["message"]["content"],
+                         [{"type": "text", "text": "first send"}, {"type": "text", "text": "second send"}],
+                         "a text block per send, never the sends joined")
+        self.assertTrue(until(lambda: be.live_atoms(sid) == []), "both echoes retired, one per block")
+        s = be._session(sid)
+        with s.lock:
+            self.assertEqual(s.echoes, [])
 
     def test_send_during_open_turn_steers(self):
         be, fake, _ = build()
@@ -1279,11 +1312,13 @@ class PruneLive(unittest.TestCase):
 class EchoAtoms(unittest.TestCase):
     """What the kernel reads off a Codex echo. `_echo_text` is the marker every kernel reader of an input
     echo keys on (SdkBackend's echo atoms carry it): _merge_live_atoms hides the echo behind its queued
-    bubble and never counts it as live work, build_session's _live_cmd_keys and the feed's held-send fold
-    read it. Until 2026-09-09 CodexBackend.live_atoms left it off, so a Codex echo painted as a solid user
-    atom beside its own queued bubble and forced the last turn open (the round-1 verification; the merge
-    itself is pinned in tests/test_codex_echo_merge.py). The backend's own retire, _append, takes one echo
-    per landed user record."""
+    bubble and never counts it as live work, build_session's queued fold and _live_cmd_keys read it (the
+    comment-thread frame's held fold reads SDK echoes only: _comments_frame binds _sdk()). Until
+    2026-09-09 CodexBackend.live_atoms left it off, so a Codex echo painted as a solid user atom beside
+    its own queued bubble and forced the last turn open (the round-1 verification; the merge itself is
+    pinned in tests/test_codex_echo_merge.py). The backend's own retire, _append, takes one echo per
+    landed text BLOCK: a turn started from several queued sends lands as one record with a block per
+    send, and send()'s dead path takes back only the echo it minted."""
 
     def test_the_echo_atom_is_marked_as_an_input_echo(self):
         be, fake, _ = build()
@@ -1329,6 +1364,73 @@ class EchoAtoms(unittest.TestCase):
             be._append(s, [rec("user", "u-3", "ok")])
         self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
                          "a record with no echo left to take retires nothing else")
+
+    @staticmethod
+    def _two_block_record(uid="u-1"):
+        """The record the normalizer writes for a turn started from two queued sends: the app-server's one
+        userMessage item, a text block per input (codex_events._user_input_texts)."""
+        return {"type": "user", "uuid": uid,
+                "message": {"role": "user", "content": [{"type": "text", "text": "first send"},
+                                                         {"type": "text", "text": "  second send\n"}]}}
+
+    def test_a_two_block_record_retires_one_echo_per_block(self):
+        # Until 2026-09-09 the batch's record was ONE newline-joined block, "first send\nsecond send", which
+        # matched neither echo: both stayed live for good and painted beside the record in every later
+        # build (the round-3 verification). One echo per block, the oldest carrying the text.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "first send", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "second send", "t": 1000, "uuid": "echo-22222222"},
+                             {"text": "third send", "t": 1001, "uuid": "echo-33333333"}])
+        with s.norm_lock:
+            be._append(s, [self._two_block_record()])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-33333333"],
+                         "one record with two blocks retires two echoes, one per block")
+
+    def test_a_joined_text_echo_does_not_match_a_two_block_record(self):
+        # Per block, never the blocks joined: an echo spelling both texts in ONE message is a third send the
+        # app-server has not recorded, and a joined key would retire it against the two-send record.
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.echoes.extend([{"text": "first send second send", "t": 1000, "uuid": "echo-11111111"},
+                             {"text": "first send\nsecond send", "t": 1000, "uuid": "echo-22222222"}])
+        rec = self._two_block_record()
+        with s.norm_lock:
+            be._append(s, [rec])
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111", "echo-22222222"],
+                         "neither joined spelling is a block of the record")
+        self.assertEqual(be._rec_texts(rec), ["first send", "second send"], "one key per block, stripped")
+        self.assertEqual(be._rec_texts({"type": "user", "message": {"role": "user", "content": "  plain \n"}}),
+                         ["plain"], "a string content is one entry")
+        self.assertEqual(be._rec_texts({"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "   "}, {"type": "image", "source": {}}]}}), [],
+            "blank and non-text blocks key nothing")
+
+    def test_a_send_that_finds_the_session_dead_takes_back_only_its_own_echo(self):
+        # send() minted an echo, steered, and found the session dead under its second lock (it died
+        # during the steer RPC). It takes back the echo it minted, by uuid. Until 2026-09-09 it dropped
+        # every echo carrying the text, so an earlier same-text send the app-server never recorded, which
+        # must stay visible (the 2026-09-06 rule), vanished with the failed one (the round-3 finder).
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._session(sid)
+        with s.lock:
+            s.turn_id = "t-live"                           # an open turn: send() steers
+            s.echoes.append({"text": "ok", "t": 1000, "uuid": "echo-11111111"})   # an earlier, unrecorded send
+
+        def dies_mid_steer(tid, expected_turn_id, input_items):
+            with s.lock:
+                s.dead = True
+            raise RuntimeError("synthetic: the app-server went away during the steer")
+
+        fake.turn_steer = dies_mid_steer
+        self.assertFalse(be.send(sid, "ok"))
+        self.assertEqual([a["uuid"] for a in be.live_atoms(sid)], ["echo-11111111"],
+                         "the earlier echo survives; only the failed send's own echo is taken back")
 
 
 class LaunchErrorNames(unittest.TestCase):

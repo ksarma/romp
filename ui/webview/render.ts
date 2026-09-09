@@ -13455,7 +13455,9 @@ let onModelChoicesLoaded: (() => void) | null = null;
 // until the next change. A payload without a rev (an older kernel) always applies.
 let modelChoicesRev = -1;
 function loadModelChoices(): void {
-  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+  // a non-2xx (a 403 from a token the kernel refused, a 500) answers with an empty or text body, and
+  // .json() on it read as a bare parse message ("Unexpected end of JSON input"); name the status instead
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((d) => {
     if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
     if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
     if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
@@ -13662,6 +13664,7 @@ function metaDots(): HTMLElement {
 function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {
   const btn = el("span", "meta-btn");
   btn.dataset.kind = kind;
+  if (forSid) btn.dataset.sid = forSid;   // the popover's badges name their thread; the chat's name no session (metaAnchor)
   if (kind === "mode") {   // the permission glyph, always beside its text (never instead of it)
     const ico = el("span", "meta-ico mode-ico");
     ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
@@ -13757,6 +13760,19 @@ function closeMetaMenu() {
   metaMenuEl = null;
   onModelChoicesLoaded = null;   // a rebuild hook belongs to the menu it was set for
 }
+// The badge a menu anchors to, as it stands NOW: `btn` while it is still in the document, else the badge
+// of the same kind for the same session (the popover's, by data-sid; the chat's carry none) that the
+// last statusline rebuild put in its place, else null. updateStatusline() replaceChildren()s the
+// statusline on every kernel push, so a button captured at open is often detached by the time a
+// deferred rebuild wants it, and a menu placed from a detached element's rect (all zeros) lands
+// off-screen. A null says: leave the menu closed; the next open builds against a live badge.
+function metaAnchor(kind: MetaKind, forSid: string | null | undefined, btn: HTMLElement): HTMLElement | null {
+  if (btn.isConnected) return btn;
+  const want = forSid || "";
+  const found = (Array.from(document.querySelectorAll(".meta-btn")) as HTMLElement[])
+    .find((b) => b.dataset.kind === kind && (b.dataset.sid || "") === want && b.isConnected);
+  return found || null;
+}
 function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null) {
   const wasOpen = metaMenuEl?.dataset.kind === kind;
   closeMetaMenu();
@@ -13812,8 +13828,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     onModelChoicesLoaded = () => {
       if (metaMenuEl !== menu) return;
       const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
-      if (now.length) { closeMetaMenu(); toggleMetaMenu(kind, btn, forSid); }
-      else sub.textContent = CODEX_MODELS_ERROR || "no model list yet";   // textContent drops the dots
+      if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || "no model list yet"; return; }   // textContent drops the dots
+      // The list landed: rebuild against the badge as it stands now, not the one captured at open. The
+      // spawn that opened the gate also pushes, and every push rebuilds the statusline, so the captured
+      // button is often detached by the time the frame's re-read lands (the round-1 verification); with
+      // no live badge for this kind and session (the popover closed, the tab changed) the menu stays
+      // closed and the next open reads the fresh list.
+      closeMetaMenu();
+      const anchor = metaAnchor(kind, forSid, btn);
+      if (anchor) toggleMetaMenu(kind, anchor, forSid);
     };
     loadModelChoices();
   }

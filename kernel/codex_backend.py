@@ -739,13 +739,18 @@ class CodexBackend:
         with open(path, "a", encoding="utf-8") as f:
             for r in recs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        # A landed user record replaces its optimistic echo (uuid-independent: match by text, under
-        # echo_text_key on both sides). ONE echo per record, the OLDEST carrying the text: until
-        # 2026-09-09 every echo carrying the text went with the first record, so a text queued twice
-        # lost its second echo the moment the first landed, and a second send dropped after that (the
-        # client dying mid-queue) left nothing visible. The kernel's prune_live is the other retire,
-        # floored by record time; this one sees only the records it just wrote.
-        landed = [t for t in (self._rec_text(r) for r in recs if r.get("type") == "user") if t]
+        # A landed user record replaces its optimistic echoes (uuid-independent: match by text, under
+        # echo_text_key on both sides). ONE echo per landed text BLOCK, the OLDEST carrying the text.
+        # A block is one send: the worker starts a turn from its whole queue, one input per queued
+        # send, and the normalizer writes the app-server's one userMessage item as one record with a
+        # block per input (codex_events._user_input_texts), so a turn started from two queued sends
+        # lands both echoes here; a one-send record is one block. Until 2026-09-09 the record was one
+        # joined block that matched neither echo, and both stayed live for good. One per KEY, not
+        # every echo carrying it: a second identical STEER (delivered mid-turn, never queued) keeps its
+        # echo when the first one's record lands, and a second send dropped after that (the client
+        # dying mid-queue) stays visible. The kernel's prune_live is the other retire, floored by
+        # record time; this one sees only the records it just wrote.
+        landed = [t for r in recs if r.get("type") == "user" for t in self._rec_texts(r)]
         if landed:
             with s.lock:
                 kept = list(s.echoes)
@@ -758,14 +763,18 @@ class CodexBackend:
                     s.echoes = kept
 
     @staticmethod
-    def _rec_text(rec):
-        """A user record's text under the shared key rule (echo_text_key: outer whitespace stripped,
-        nothing else), the key send() stores on the echo and _append and prune_live compare."""
+    def _rec_texts(rec):
+        """A user record's texts under the shared key rule (echo_text_key: outer whitespace stripped,
+        nothing else), the key send() stores on the echo and _append and prune_live compare: one entry
+        per text BLOCK (a string content is one entry), empty ones dropped. Per block and never the
+        blocks joined: each block of a Codex user record is one send (see _append), and a joined key
+        would match an echo of some third send that happened to spell both texts in one message."""
         c = (rec.get("message") or {}).get("content")
         if isinstance(c, list):
-            return echo_text_key(" ".join(b.get("text", "") for b in c
-                                          if isinstance(b, dict) and b.get("type") == "text"))
-        return echo_text_key(c)
+            keys = [echo_text_key(b.get("text")) for b in c if isinstance(b, dict) and b.get("type") == "text"]
+        else:
+            keys = [echo_text_key(c)]
+        return [k for k in keys if k]
 
     # ── liveness / identity ──────────────────────────────────────────────────────────────────────
     def end_marker(self, sid):
@@ -830,8 +839,8 @@ class CodexBackend:
             # after its send, so a float stamp kept an echo whose record was written later in the
             # same second (the round-1 verification, 2026-09-09). The text is stored under the shared
             # key rule (echo_text_key), the key _append and prune_live compare against.
-            s.echoes.append({"text": echo_text_key(text), "t": int(time.time()),
-                             "uuid": "echo-%s" % uuidlib.uuid4().hex[:8]})
+            echo_uuid = "echo-%s" % uuidlib.uuid4().hex[:8]
+            s.echoes.append({"text": echo_text_key(text), "t": int(time.time()), "uuid": echo_uuid})
             turn_id = s.turn_id
             tid = s.tid
         if c is not None and turn_id:
@@ -844,7 +853,11 @@ class CodexBackend:
                 pass
         with s.lock:
             if s.dead:
-                s.echoes = [e for e in s.echoes if e["text"] != echo_text_key(text)]
+                # The session died during the steer RPC: take back THIS send's echo, by the uuid minted
+                # above, and no other. Until 2026-09-09 every echo carrying the text went, so an earlier
+                # same-text send the app-server never recorded (which must stay visible, the 2026-09-06
+                # rule prune_live states) vanished with the one that failed.
+                s.echoes = [e for e in s.echoes if e["uuid"] != echo_uuid]
                 return False
             entry_id = "q-%s" % uuidlib.uuid4().hex
             s.queue.append(text)
@@ -1539,10 +1552,12 @@ class CodexBackend:
                 # `_echo_text` marks the atom as an INPUT ECHO to the kernel, as SdkBackend's echo atoms
                 # do: _merge_live_atoms hides it behind its queued bubble (shown_texts) and never counts
                 # it as live work (an echo-only merge keeps the turn's real ended state), and
-                # build_session's _live_cmd_keys and the feed's held-send fold read it. Without it
-                # (until 2026-09-09) a Codex echo painted as a solid user atom beside its own queued
-                # bubble, painted once more beside its landed record, and forced the last turn open: a
-                # false "working" chip for a session whose only live item was a pending send.
+                # build_session's queued fold and _live_cmd_keys read it. (The comment-thread frame's
+                # held fold reads SDK echoes only: _comments_frame binds _sdk(), so no Codex echo
+                # reaches it.) Without the marker (until 2026-09-09) a Codex echo painted as a solid
+                # user atom beside its own queued bubble, painted once more beside its landed record,
+                # and forced the last turn open: a false "working" chip for a session whose only live
+                # item was a pending send.
                 atom = {"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
                         "t": e["t"], "parentUuid": None, "author": "human", "_echo_text": e["text"],
                         "message": {"role": "user",
@@ -1565,8 +1580,10 @@ class CodexBackend:
         An echo retires on the events SdkBackend.prune_live names: its uuid is on disk; its text LANDED,
         where `tx_user_texts` as a MAPPING (text -> the newest record time carrying it) lands the echo
         only through a record written at or after its own send -- the backend's own _append retire is
-        unfloored but sees only the records it just wrote, and takes ONE echo per record (the oldest
-        carrying the text); this kernel-side prune sees the whole transcript, and without the floor a
+        unfloored but sees only the records it just wrote, and takes ONE echo per landed text BLOCK (the
+        oldest carrying the text; a turn started from several queued sends lands as one record with a
+        block per send, and the kernel's _atom_user_texts yields each block, so both retires land every
+        echo of the batch); this kernel-side prune sees the whole transcript, and without the floor a
         repeated text ("ok" twice) retired the second echo the moment it was sent (T237b) -- while a
         plain set (an older caller) keeps the unfloored match; or it
         is a COMMAND atom that a genuine-human turn (`human_floor`) postdates, the rule the SDK applies to

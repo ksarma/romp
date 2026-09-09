@@ -15354,21 +15354,45 @@ def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
         _release_name(nm)
 
 
-def _codex_gate_opened(cx, door):
-    """Send the models frame when `cx` has just gained its FIRST live session. GET /models consults the
-    Codex catalog only where this machine opted in (the Codex default backend, the Codex judge engine,
-    or a live Codex session), so the first live session flips that gate from closed to open, and every
-    open picker's cached `codex.models` just went from [] to the real list: tell them with a models
-    frame, the same event the pick memory and the catalog fetch send. Without it a dashboard loaded
-    before the flip kept its empty Codex menu until a reload (the owner's empty picker, 2026-09-09).
-    Event-keyed on the gate's flip itself, never on every spawn or revive: a second live session
-    changes nothing the payload carries. TWO doors open the gate and both call this once the backend
-    holds the session live: _create_codex_session_inner (cx.spawn) and _revive_session_inner's Codex
-    arm (a successful cx.resume makes a dead session live again; the first cut sent the frame from the
-    spawn alone, so reviving the only Codex session after a kernel restart left every tab's Codex list
-    empty, the round-1 verification). `door` names the caller in the log line."""
+def _codex_gate_closed(cx):
+    """The gate's state BEFORE a door opens it: True while `cx` holds no live session. Taken by the
+    two doors (the spawn and the revive) on the line before the backend lands the row, so that
+    _codex_gate_opened keys its frame on the transition this caller made rather than on a count
+    read after the fact (see there). A backend that raises here reads as closed: the worst case is
+    one frame too many, which costs each picker one /models re-read; the other answer would be a
+    picker that never hears the list landed."""
     try:
-        if len(cx.live_sessions()) == 1:
+        return not cx.live_sessions()
+    except Exception:
+        return True
+
+
+def _codex_gate_opened(cx, door, was_closed):
+    """Send the models frame when the caller has just taken `cx` from NO live session to one or
+    more. GET /models consults the Codex catalog only where this machine opted in (the Codex default
+    backend, the Codex judge engine, or a live Codex session), so the first live session flips that
+    gate from closed to open, and every open picker's cached `codex.models` just went from [] to the
+    real list: tell them with a models frame, the same event the pick memory and the catalog fetch
+    send. Without it a dashboard loaded before the flip kept its empty Codex menu until a reload (the
+    owner's empty picker, 2026-09-09). Event-keyed on the gate's flip itself, never on every spawn or
+    revive: a second live session changes nothing the payload carries. TWO doors open the gate and
+    both call this once the backend holds the session live: _create_codex_session_inner (cx.spawn)
+    and _revive_session_inner's Codex arm (a successful cx.resume makes a dead session live again;
+    the first cut sent the frame from the spawn alone, so reviving the only Codex session after a
+    kernel restart left every tab's Codex list empty, the round-1 verification).
+
+    `was_closed` is the door's own snapshot (_codex_gate_closed) taken BEFORE its spawn or resume.
+    The frame is keyed on that snapshot, not on the count after the row landed: POST /new runs on a
+    thread per request and the WS create op per client, so two first creates (or two first revives
+    after a restart) can both land their rows before either reaches this line, and a post-count test
+    (`len(live_sessions()) == 1`) then saw 2 in both threads and fired for neither, leaving every open
+    dashboard's Codex list empty until the chat's own open-time re-read (the timeline lane never
+    re-reads; the round-2 verification, executed with a barrier). With the snapshot both racing doors
+    fire: two frames, each one cheap re-read, the rev increments and the picker drops the lower one.
+    Sequential creates fire exactly once, since the second door's snapshot sees the first's row.
+    `door` names the caller in the log line."""
+    try:
+        if was_closed and cx.live_sessions():
             _models_changed()
     except Exception as e:
         sys.stderr.write("codex %s: models frame not sent (%s)\n" % (door, e))
@@ -15391,9 +15415,10 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     kernel. Returns (sid, echo)."""
     bg, fg = _pick_identity_color()
     cx = _codex()
+    was_closed = _codex_gate_closed(cx)   # the gate's state before THIS spawn, not a count after it
     sid = cx.spawn(nm, cwd, bg, fg)
     extra = {}
-    _codex_gate_opened(cx, "spawn")   # the first live Codex session: every picker re-reads /models
+    _codex_gate_opened(cx, "spawn", was_closed)   # the first live Codex session: every picker re-reads /models
     if parent or tags:
         extra.update(_tag_ack(sid, parent, tags))
     if client is not None:
@@ -18721,10 +18746,11 @@ def _revive_session_inner(sid, client=None):
             if not _codex_ready():
                 detail = (getattr(cx, "_client_err", "") or CODEX_SETUP_HINT)
             else:
+                was_closed = _codex_gate_closed(cx)   # the gate's state before THIS resume, not a count after it
                 ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
                 detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
                 if ok:
-                    _codex_gate_opened(cx, "revive")   # the only Codex session, live again: the gate opened
+                    _codex_gate_opened(cx, "revive", was_closed)   # the only Codex session, live again: the gate opened
         else:
             cwd = _cwd_of(sid)
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
@@ -54688,7 +54714,8 @@ class Handler(BaseHTTPRequestHandler):
                 # client in retry backoff, a failed model_list, or this gate closed on a dashboard
                 # loaded before the first Codex session, none of them visible. Fail loudly: the reason
                 # rides to the menu, and the gate's own flip sends a models frame (_codex_gate_opened,
-                # from the spawn and the revive). The CLOSED gate carries a reason of its own: the
+                # from the spawn and the revive, keyed on the door's own before-snapshot so two racing
+                # first creates both send one). The CLOSED gate carries a reason of its own: the
                 # backend was not asked, so the menu must never read the empty list as an answer from
                 # the app-server (the round-1 verification: the menu's fallback said it sent no list).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"

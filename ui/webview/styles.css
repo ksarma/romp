@@ -1525,8 +1525,9 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 }
 .meta-item:hover { background: var(--menu-hover); }   /* the themed row wash (T226) */
 /* the one row a Codex menu shows when it has no list to offer (2026-09-09): a statement, not a choice,
-   so no pointer, no hover wash; its sub-line carries the kernel's reason */
-.meta-item.meta-empty { cursor: default; }
+   so no pointer, no hover wash; its sub-line carries the kernel's reason, which wraps: a reason names
+   the client's state in a sentence, and .meta-item's nowrap would run it past the panel's edge */
+.meta-item.meta-empty { cursor: default; white-space: normal; max-width: 280px; }
 .meta-item.meta-empty:hover { background: none; }
 .meta-item-sub .meta-dots { margin-left: 5px; vertical-align: middle; }   /* the wait's loader dots, beside the text */
 /* second line for a choice whose consequence its label doesn't carry (Bypass permissions). Same
