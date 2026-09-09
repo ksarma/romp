@@ -342,8 +342,10 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      (render.ts ensureTabRowObserver), one loop notice per crossing. Stable, the strip's width holds, at the cost of a
      10px gutter on the bar's right in every host where scrollbars take space; no gutter under the phone layout, whose
      media rule (kernel.py _CHAT_MOBILE_CSS) sets overflow: visible, where the property has no effect. The per-row
-     hairlines' right bleed covers the gutter (.tab-row-line below, review round 3), so each line still meets the bar's
-     edge like the border-bottom; the gutter narrows #tabs, not the lines */
+     hairlines' right bleed covers the gutter (.tab-row-line below, review round 3), so the gutter narrows #tabs, not
+     the lines, and in Chromium and WebKit hosts each line still meets the bar's edge like the border-bottom where no
+     scrollbar is painted; Firefox with classic scrollbars clips the strip's content at the gutter's inner edge, so its
+     lines end there (the T134 comment below has the measurements) */
   scrollbar-gutter: stable;
   border-bottom: 1px solid var(--box-border);
   /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
@@ -371,11 +373,24 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    by paintTabRowLines (render.ts, since CSS cannot select wrap rows); the last row is closed by
    #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding, and on the right
    its 10px scrollbar gutter too (scrollbar-gutter: stable above; the sheet's ::-webkit-scrollbar
-   width), so each line runs the bar's full width, like the outer close: measured in Chromium to the
-   bar's edge, scrollbar shown or not (a shown scrollbar paints over its end), and the -8px bleed alone
-   stopped 10px short (review round 3). A host with no gutter (overlay scrollbars) clips the overshoot
-   at the bar's edge, measured in Firefox; a host whose classic gutter is wider than 10px is not
-   measured here. Classic only; Yatharth keeps his merged look. */
+   width), so each line runs the bar's full width, like the outer close, in Chromium and WebKit hosts,
+   where that rule sets the gutter. Measured in Chromium on a 600px bar: the line paints to x=599, the
+   border-bottom's last pixel, when no scrollbar is painted, where the -8px bleed alone stopped 10px
+   short (review round 3). While a scrollbar is painted (the bar scrolls and the launch shows
+   scrollbars) Chromium clips the line at the scrollbar's inner edge, and the sheet leaves the track
+   transparent, so the bar's background shows in the last 10px wherever the thumb is not while the
+   border-bottom runs the full width; the line's box still ends at the bar's edge, the rect the
+   browser leg reads at every width (it reads the paint only where nothing scrolls). The -8px line
+   looked the same while scrolling, so nothing regressed there (review round 4). Firefox with overlay
+   scrollbars (gutter 0) clips the overshoot at the bar's edge and the line reaches it. Firefox with
+   classic scrollbars clips the scroll container's content at the padding edge, so the line ends at the
+   gutter's inner edge there whatever the bleed (measured under GTK: 12px short at the default width,
+   6px under scrollbar-width: thin; -40px and -100px paint the same): a clip, not a width, and no
+   bleed value crosses it. A line that meets the edge in that host must be drawn outside the scroll
+   container (a background on #tabbar), a design call beyond this change, so that host keeps the gap.
+   The bleed stays the exact sum rather than a generous overshoot: more paints nothing further in any
+   measured host, and it would push the line's box past the bar's edge, which the browser leg reads as
+   the edge. Classic only; Yatharth keeps his merged look. */
 body:not(.chat-theme-yatharth) #tabs .tab-row-line {
   position: absolute; left: -8px; right: -18px; height: 1px; background: var(--box-border); pointer-events: none; }
 body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
@@ -2958,8 +2973,10 @@ pre.has-copy:hover .code-copy, .code-copy:focus-visible { opacity: 0.9; }
 .hljs-addition { color: var(--hl-str); }
 .hljs-deletion { color: var(--err); }
 
-/* scrollbars. The tab strip's hairline bleed (.tab-row-line) adds this width to its right offset, to cross
-   #tabbar's reserved gutter; change the two together */
+/* scrollbars. This width has readers that move with it: the tab strip's hairline bleed (.tab-row-line's right
+   offset is this width plus the bar's padding, to cross #tabbar's reserved gutter; tab-row-lines.test.ts pins the
+   offset) and the overview ruler (render.ts RULER_W and .glow-ruler's width; glow-ruler.test.ts pins both against
+   this rule); change them together */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(255, 255, 255, 0.12)); border-radius: 5px; }
 

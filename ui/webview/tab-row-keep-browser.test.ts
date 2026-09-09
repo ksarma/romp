@@ -24,8 +24,10 @@
 //     pointercancel at dragstart released the press-hold, so the drop's render is not deferred, and dragend then
 //     renders nothing); the wipe disconnects the dragged element, the painter's gate, so the pass runs in that paint;
 //   - the hairlines' right edge (review round 3): under classic scrollbars the bar reserves a 10px gutter, and each
-//     hairline's bleed crosses it to the bar's border edge, painted there (a hit test at the edge lands on the line),
-//     scrollbar shown or not; at the round-2 head every line stopped 10px short while the bar's border ran on;
+//     hairline's bleed crosses it: the line's rect ends at the bar's border edge at every width, and where no
+//     scrollbar is painted the line paints there (a hit test at the edge lands on the line); a painted scrollbar clips
+//     the line at its inner edge (review round 4), so the hit test is read on the non-scrolling widths only; at the
+//     round-2 head every line stopped 10px short while the bar's border ran on;
 //   - the invariant across widths: no header or divider ends a row above its first tab unless no row can hold the
 //     pair, and the hairlines sit under every row but the last.
 // Skips, never fails, where playwright or Chromium is missing (CI installs none). The notes-api demo world.
