@@ -293,11 +293,12 @@ test("a replaced viewer's Escape handler leaves the live card's notice alone", a
   assert.ok(aKeys.every((fn) => !docKeys.includes(fn)), "the replace dropped every handler of the first viewer (dropOnKey, the panel's close hooks)");
   const mine = docKeys.filter((fn) => !before.has(fn));   // what the document would run now: the live card's handlers, oldest first
   assert.ok(mine.length >= 1, "the live viewer's Escape handler is registered");
+  for (const fn of aKeys) fn({ key: "Escape", preventDefault() {} });   // the dropped handlers, run directly: the stale exitEdit runs (editing true in its closure, dirty cleared by the Reload click) and must reach only its own card's notice
   for (const fn of mine) fn({ key: "Escape", preventDefault() {} });
   win.confirm = () => true;
   const note = assertAboveBody(noteEl(), b, ["fileview-editor"]);
   assert.match(note.textContent, /editing in the plain fallback editor\.$/, "the live card's own notice, still up");
-  assert.ok(conflict.parentNode === a.card && !conflict.isConnected, "the old card's notice went with the old card; no exit reached across the replace");
+  assert.ok(conflict.parentNode === null, "the old viewer's exitEdit removed its own notice, not the live card's");
   assert.equal(ta.value, TEXT + "b\n", "the kept edits are still in the buffer");
   assert.equal(b.edit.hidden, true); assert.equal(b.cancel.hidden, false, "still in edit mode");
 });

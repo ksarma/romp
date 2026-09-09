@@ -11,19 +11,28 @@ in the module reddens here before the reference goes stale, and a retired readin
 Upstream's copy of this module (romp-on/romp #1182, this fork's own offer) pins ui/webview/render.ts, which
 renders the row inline there. In this fork render.ts hands the row, the sub-line and the picker's written-out
 choice to billing-label.ts (the fork's one renderer, kept under the 2026-09-09 fold's ruling C), so the copy
-pins read that module and one pin holds render.ts to calling it. The pins are the rendered text, not the
-expressions around it: a rename, a reshuffle or a further extraction that leaves every rendered word as it
-was stays green here, since the doc is not stale then. Where a fragment is a common word (`unavailable`) or
-the warning glyph, the template quote beside it is included, so the pin names the row's own copy and not a
-comment or another control's. Two readings keep the fork's punctuation (`(applying, not confirmed yet)`, `;
-this session bills that`) where upstream's inline copy uses an em dash: the doc quotes what this tree renders.
+pins read that module and one pin holds render.ts to calling it. The copy pins (BillingLabelRendersThePinnedCopy
+and TheReferenceQuotesEachReading) are the rendered text, not the expressions around it: a rename, a reshuffle
+or a further extraction that leaves every rendered word as it was keeps them green, since the doc is not stale
+then. Where a fragment is a common word (`unavailable`) or the warning glyph, the template quote beside it is
+included, so the pin names the row's own copy and not a comment or another control's. Two readings keep the
+fork's punctuation (`(applying, not confirmed yet)`, `; this session bills that`) where upstream's inline copy
+uses an em dash: the doc quotes what this tree renders.
 
-The fork's earlier pins (the billing-label fix's review round 1 and the slice-1 and slice-2 folds, 2026-09-09)
-stay beside them, each holding a doc claim to the code it describes:
+The fork's earlier pins (the billing-label fix's review round 1 and the slice-2 fold, 2026-09-09) stay beside
+them, each holding a doc claim to the code it describes. Three read billing-label.ts's expressions on purpose,
+the templates, branch and gate the doc's claims rest on (TheWarningFormIsTheModules's two warning templates and
+billingSide's body, TheRetiredFormIsGone's authPending branch, ThePickerRowClaimMatchesTheGate's `const show`
+gate), so renaming those identifiers reddens here with every rendered word unchanged. Two round-1 pins that the
+offer's rewrite dropped and upstream landed under other names retired in the slice-3 fold, an offer coming home
+converging on upstream's landed text: the absence of the retired `(CLI reports API key)` form is pinned by
+test_no_retired_reading_lingers now, and the contradicted reading's quote by test_the_contradicted_pick_reading.
+What stays:
 
-- the retired `(CLI reports API key)` form appears nowhere in the reference, and no paragraph promises the
-  effort badge's switching dots for a pending billing pick (nothing renders dots for one: the two applying
-  texts are billing-label.ts's);
+- the warning form the hover-row paragraph quotes is the one billingRowText builds, pinned as the module's two
+  template expressions and billingSide's labels (the key is `API key`, never key material);
+- no paragraph promises the effort badge's switching dots for a pending billing pick (nothing renders dots for
+  one: the two applying texts are billing-label.ts's, and the applying branch is pinned);
 - the how-to says the picker and the tooltip row read Claude Code's apiKeyHelper setting to know a key exists
   (the key choice exists when the settings carry a helper; the row follows the CLI's report, and before it the
   launch intent), and no longer names a `Login (...)` reading for it; the fork's `romp keyswap --cycle` pin
@@ -138,10 +147,10 @@ class TheWarningFormIsTheModules(unittest.TestCase):
         self.assertIn('return side === "key" ? "API key" : (acct ? `Login (${acct})` : "Login");', BILLING,
                       "billingSide's labels: the key is 'API key', never any key material")
 
-    def test_the_hover_row_paragraph_quotes_the_warning_the_module_renders(self):
-        # the login-picked, key-landed case, as billingRowText words it
-        quoted = "`" + WARN + "Login" + CONTRADICTED_HEAD + "the API key" + CONTRADICTED_TAIL + "`"
-        self.assertIn(quoted, REFERENCE, "the hover-row paragraph quotes billingRowText's warning form")
+    def test_the_default_nobody_picked_sentence_stands_beside_the_warning(self):
+        # the warning quote itself (the login-picked, key-landed case) is TheReferenceQuotesEachReading's
+        # test_the_contradicted_pick_reading, upstream's landed pin; this holds the fork's sentence beside it
+        # (slice-2 ruling 10: billingContradicted reads authPicked)
         self.assertIn("A default nobody picked is never worded that way: a session started unpicked on a box "
                       "whose `apiKeyHelper` supplies the key reads `API key`.", REFERENCE)
 
@@ -151,9 +160,6 @@ class TheReferenceQuotesEachReading(_Pins):
 
     def test_the_plain_readings(self):
         self.assertQuoted("`API key` or `Login (name@example.com)`", REFERENCE, self.DOC)
-        self.assertQuoted("once the session's CLI has reported which credential it found (its init names the "
-                          "source), the row shows that side; before any report it shows the intent the session "
-                          "was launched with", REFERENCE, self.DOC, "the plain reading follows the CLI's report")
 
     def test_the_applying_reading(self):
         self.assertQuoted("`Login%s`" % PENDING, REFERENCE, self.DOC)
@@ -189,12 +195,6 @@ class TheRetiredFormIsGone(unittest.TestCase):
         self.assertIn("the menu entry's sub-line reads `applying…`", REFERENCE)
         self.assertIn('if (f.authPending) return "applying…";', BILLING)
         self.assertNotIn("switching-dots the effort", REFERENCE)
-
-    def test_no_paragraph_promises_the_login_cli_reports_api_key_row(self):
-        self.assertNotIn("CLI reports API key)", REFERENCE,
-                         "the `Login (CLI reports API key)` row never existed in the code; the how-to carried it "
-                         "after the hover-row paragraph was fixed")
-        self.assertNotIn("(CLI reports", REFERENCE)
 
     def test_the_apikeyhelper_how_to_says_the_row_reads_the_helper_setting(self):
         # upstream #1128 (folded in slice 2): romp holds no key of its own, so the how-to's row claims follow

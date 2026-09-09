@@ -7821,9 +7821,9 @@ function syncPickerAuth(): void {
   if (fixed) {
     fixed.style.display = both ? "none" : "";
     fixed.textContent = row.fixed;
-    // …and the hover says why the OTHER side is not on offer, in the kernel's reason (2026-09-08), when that
-    // side is reported unavailable (pickerBillingTitle): a side that is available but not offered because the
-    // declared default decides (a login beside a declared key) gets no such claim
+    // …and the hover says why the OTHER side is not on offer, in the kernel's reason (upstream https://github.com/romp-on/romp/pull/1147, 2026-09-08),
+    // keyed on the helper as upstream keys it (pickerBillingTitle, executed in billing-label.test.ts): with a helper the
+    // login side is explained, without one the key side
     fixed.title = pickerBillingTitle(a);
   }
   if (!both) return;   // the fixed text is the whole row — nothing to seed

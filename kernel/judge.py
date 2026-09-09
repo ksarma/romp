@@ -1245,9 +1245,11 @@ def tier_stats():
     stamp matched, clock not due), stamped (runs that ended complete and wrote a stamp), bypassed (runs
     with no signature to stamp, or whose parse was served under another cut), incomplete (runs the
     completeness bit voided: a deferral, a failed call, a read that failed on a file that exists; for the
-    courier, scans that produced rows or consulted another store; for the index tier, sessions a body found
-    work for this pass, a caption owed or an archive refresh due, or whose reader or cache publish failed),
-    due_clock (runs the clock input made due); plus `stamps`, the number of stamps held.
+    index tier, sessions a body found work for this pass, a caption owed or an archive refresh due, or whose
+    reader or cache publish failed), due_clock (runs the clock input made due); plus `stamps`, the number of
+    stamps held. The plan and courier rows read zero since the fold of 2026-09-09: those passes are skipped
+    by upstream's change gates, whose counters are memos.plannerSkip and memos.courierSkip (the comment
+    above GATED_TIERS).
     ran == stamped + bypassed + incomplete over any window, for every tier."""
     with _TIER_LOCK:
         out = {t: dict(d) for t, d in _TIER_STATS.items()}
@@ -16833,13 +16835,16 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbose=
     only, the user 2026-07-27). (Sender goals are read as-of-NOW for the MVP; true as-of-send is a
     refinement.)
 
-    The per-session scan (_courier_scan) is on the evidence gate (2026-09-07): a session is scanned only
-    when its pinned parse pair, its store trio or its episode log moved since the scan that last
-    completed with no rows and no backref (the inventory above GATED_TIERS); otherwise the gate stamps
-    pass_done and moves on. The scans run inline on this thread in discover order (CPU-bound walks over
-    a cached parse; a pool adds nothing under the GIL). The write loop below is not gated: a session with
-    rows is never stamped, so it is scanned every pass until its rows are consumed by a write, which
-    moves the store and re-arms the scan once more."""
+    The per-session scan (_courier_scan) is behind upstream's change gate (_courier_scan_key / _COURIER_SEEN,
+    upstream #1158/#1161; the fold of 2026-09-09 retired the fork's evidence-gate wrap for this tier): the
+    key, taken before the store read, is the transcript path, the pinned parse key, the store trio and the
+    episode log, and a session whose key equals its _COURIER_SEEN record is skipped; the skip still stamps
+    pass_done (the evidence gate's rule, kept: pass_watermark reads the stamp). The record is written only
+    when the scan returned no rows and left the completeness bit (_judge_ctx.stage_incomplete) clear, and
+    dropped otherwise; a None key (the parse is not the cache's own) is neither skipped nor recorded. The
+    scans run inline on this thread in discover order (CPU-bound walks over a cached parse; a pool adds
+    nothing under the GIL). The write loop below is not gated: a session with rows is never recorded, so it
+    is scanned every pass until its rows are consumed by a write, which moves the store and so the key."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)[:sessions_cap]

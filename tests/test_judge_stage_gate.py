@@ -3098,10 +3098,10 @@ class IndexGate(_Gate):
         jd.parsed_session = real
         real_stc = self._saved_index[5]
 
-        def stc_crashes(fsid, rows=None):
+        def stc_crashes(fsid):
             if fsid == SID:
                 raise RuntimeError("a row without a grain")
-            return real_stc(fsid, rows)
+            return real_stc(fsid)
         jd.session_turn_captions = stc_crashes
         self._reset()
         self._pass(tiers=("index",))
