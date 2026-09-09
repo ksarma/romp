@@ -546,11 +546,25 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-door { margin: 0; padding: 1px 3px; border: 0; border-radius: 3px; background: none; color: inherit; font: inherit; letter-spacing: inherit; line-height: 1; cursor: pointer; }
 .tab-group-door:hover { background: var(--accent-wash); opacity: 1; }
 .tab-group-door:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
-/* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
-   is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
-   getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its
-   offsetTop as the row's. */
-.tab-group-sep { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
+/* THE UNTAGGED TRAIL'S DIVIDER in the inline layout (the fork's default; render.ts makeTrailSep): the
+   strip as it was before T264. Its 6px gutters are PADDING, not margin, and the 1px line is the content
+   box: its box is then the full 13px it occupies in the row, so the tab drag's virtual layout (which
+   measures getBoundingClientRect widths) wraps where the real strip wraps. Scoped off the row break
+   below, which wears .tab-group-sep too (the boundary sectionHeadOf reads) and must keep no box. */
+.tab-group-sep:not(.tab-group-break) { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
+/* ONE GROUP PER LINE (T264, the user 2026-09-08: the grouped strip read as one long concatenation).
+   ON THE FORK the breaks are emitted only under the gear's "One tag group per row in the tab strip"
+   setting (stripGroupRows, off by default: the user 2026-09-08, whose strip of eleven tag groups
+   became eleven rows; upstream's default is the per-row layout). This rule styles them when present.
+   A break is a zero-height flex item spanning the whole row, so the item after it — a group's header,
+   or the untagged trail's first tab — opens a new line: the chip sits at the left edge and its tabs
+   follow, wrapping onto further rows as they need. Zero height, so it adds no rhythm of its own
+   (the Yatharth seam is a column gap only); no pointer, so it can neither take a drop nor a hover.
+   Under the setting the untagged trail stands behind no visible divider: a line of its own, with
+   no chip, already says "in no tag" (the trail stays unlabeled by the user's ruling); the element
+   keeps the .tab-group-sep class as the boundary sectionHeadOf reads. The tab drag's virtual layout
+   (dragslot.ts) opens a row at the same places (`br`), so a drag wraps where the strip wraps. */
+.tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
@@ -788,6 +802,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    (overflow-y:auto alone makes overflow-x compute to auto, which allowed it) */
 /* overflow-y: scroll (not auto) so the chat scrollbar + its gutter are ALWAYS shown and never
    auto-hide on the side — and the content doesn't shift when it would appear (the user 2026-06-16). */
+/* The browser's scroll anchoring stays ON here (measured 2026-09-08, T262e): after a scroll that slides the
+   virtualization window, the pane's rewindow write keeps the focus unit still and Chrome's anchoring then absorbs
+   the LATER layout changes the pane does not compensate (spacer re-measures, late-sizing rows). With
+   overflow-anchor: none the visible line drifted 194-246 px after every such scroll on a headless run; with it on,
+   0 px on every row. Do not add overflow-anchor: none to #content. */
 #content { flex: 1 1 auto; overflow-y: scroll; overflow-x: hidden; padding: 8px 0 12px; }
 /* a clearly-visible always-on thumb for the chat pane (brighter than the faint global thumb) */
 #content::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
@@ -1001,7 +1020,8 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    SAME box — a normal column puts the header first and the list below it, reading top-to-bottom, so
    everything stays within the one bordered rectangle. flex 0 0 auto HOLDS its content; capped at
    min(50vh, 340px) so it never crowds the composer, with the inner .bg-list scrolling. A top+side gap sets it
-   off from the transcript (the "little divider"). */
+   off from the transcript (the "little divider"). The open LIST itself shows about six rows and scrolls
+   beyond (the .bg-list cap below, 2026-09-08). */
 #bg-tasks { flex: 0 0 auto; min-height: 0; max-height: min(50vh, 340px); overflow: hidden;
   box-sizing: border-box; margin: 8px 10px 6px; border: 1px solid var(--box-border); border-radius: 8px;
   background: var(--box-bg); display: flex; flex-direction: column; }
@@ -1026,6 +1046,13 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* level 2: a flat list of task LINES (no boxes) BELOW the header, fills the box and scrolls when many */
 .bg-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; padding: 4px 2px; }
+/* …but never more than about six rows (29px each: 12px text at the page's 1.6 line height plus 5px padding
+   top and bottom) before it scrolls (the user 2026-09-08, whose phone showed the open box over the transcript:
+   seven agents in flight fit under the box's 340px cap without scrolling, so the open list took half the screen
+   and left about three lines of chat). The header keeps the counts, so the fold stays glanceable. The cap
+   lifts while a row's details are open (:has), so a command's output tail is not read through two nested
+   scrolls; the box's own cap above still bounds it. */
+.bg-list:not(:has(.bg-task.open)) { max-height: 180px; }
 .bg-task { --bgt: var(--st-working-bg); }
 .bg-task.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-task.bg-completed { --bgt: var(--st-ready-bg); }
@@ -1760,14 +1787,30 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    the pane's — "2 days ago" is wider than the 47px gutter, and the old gutter-pinned box clipped
    the leading digit at the pane edge (the user 2026-08-18, with a screenshot). Smaller than the
    stamp on purpose — context, not the time itself. */
-/* the user-message scroll notches (render.ts paintScrollMarks, the user 2026-08-17): passive fixed
-   chrome over the scroller's right edge, one 2px tick per user message at its proportional position.
-   The blue is the OUTGOING-BUBBLE blue (#2b6cef, "yours"), deliberately not the romp accent. */
+/* the scroll notches (render.ts paintScrollMarks, the user 2026-08-17): the BOX is passive fixed chrome
+   over the scroller's right edge (it never intercepts the native scrollbar); each notch is a 2px tick at
+   its message's proportional position and, since T260, a LINK to that message (the [data-act] rules
+   below). Blue = the OUTGOING-BUBBLE blue (#2b6cef, "yours"), deliberately not the romp accent; gray
+   (.machine, further down) = machine-sent. */
 .scroll-marks { position: fixed; z-index: 3; pointer-events: none; width: 12px; }
 .scroll-marks .scroll-mark { position: absolute; right: 1px; width: 8px; height: 2px;
   border-radius: 1px; background: var(--you); opacity: 0.65;
   transition: top 180ms ease; }   /* history streaming in rescales the map — carried, not teleported */
 @media (prefers-reduced-motion: reduce) { .scroll-marks .scroll-mark { transition: none; } }
+/* a notch is a LINK to its message (T260, the user 2026-09-08): the box above stays pointer-events:none —
+   the native scrollbar under it keeps working wherever a notch is not — and only a notch that knows its
+   message (data-act) takes the pointer, with the link cursor. The painted mark stays 8×2; the HIT box is
+   the ::before, 12px wide and padded up to 2px above and below (a 6px target for a 2px line), each pad
+   CLAMPED per notch to half the gap to its neighbour (--hit-t / --hit-b, set by paintScrollMarks) so no
+   pad reaches a neighbour's paint: hover, tip and click always answer for the notch under the pointer.
+   The pads do sit over the scrollbar thumb's track: where notches are dense the thumb is grabbable only
+   in the gaps — the price of clickable notches ON the scrollbar, kept small on purpose; the wheel over a
+   notch still scrolls the transcript (the box forwards it). Hover: full opacity plus an accent ring
+   (the focus family's colour; never a status colour, never a size change). The machine notch's dimmer
+   opacity (its rule below) yields to :hover by specificity, so a gray notch lights up the same. */
+.scroll-marks .scroll-mark[data-act] { pointer-events: auto; cursor: pointer; }
+.scroll-marks .scroll-mark[data-act]::before { content: ""; position: absolute; left: -2px; right: -2px; top: calc(-1 * var(--hit-t, 2px)); bottom: calc(-1 * var(--hit-b, 2px)); }
+.scroll-marks .scroll-mark[data-act]:hover { opacity: 1; box-shadow: 0 0 0 1.5px var(--accent); }
 .rail-day {
   position: fixed; z-index: 3; pointer-events: none; white-space: nowrap; line-height: 1;
   font-size: 0.66em; letter-spacing: 0.03em; color: var(--dim); opacity: 0.85;
@@ -4012,8 +4055,9 @@ body.filebrowse-open { overflow: hidden; }
    column at most a pixel over 80ch): a fractional left edge put the text on sub-pixel positions where headless
    Chromium's drag selection stayed collapsed at some offsets (a hit-test rounding quirk, measured 2026-09-08), and
    whole pixels keep the two gaps equal to the pixel. The plain 18px shorthand before it is the fallback for a
-   browser without round() (Chromium 125, Safari 15.4, Firefox 118), as `max-width: 100%` is the table rule's
-   for one without container units. A table alone may leave the column, evenly into both
+   browser without round() (Chromium 125, Safari 15.4, Firefox 118); the table rule below keeps its round() in the
+   translate alone, which such a browser drops, so a table there loses its shift and keeps its cap (the rule says
+   what each reads before the body's width is known). A table alone may leave the column, evenly into both
    gutters up to the body's inset (its rule below), and wider than that scrolls in its own box, whole words kept
    (`overflow-wrap: normal` against the root's `anywhere`, which crushed every column to fit), so the page never
    widens. Code blocks keep the column and wrap their long lines (the user 2026-08-24: long lines always
@@ -4580,17 +4624,83 @@ body.filebrowse-open { overflow: hidden; }
    the focus family, never a status colour. */
 ::highlight(cite-span) { background-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text-bright); }
 
+/* ── COMPACT TABS AND AGENTS (the gear's denseChrome setting; the user 2026-09-08, whose phone showed about
+   three lines of transcript between the tab strip and the box of background work). Density only, under ONE
+   body class the settings applier toggles (dense-chrome.ts applyDenseChrome, run from applyChatScheme at
+   startup and on every settings change), so a gear flip repaints the strip and the box at once through the
+   cascade and neither is rebuilt. Every rule here is scoped to body.dense-chrome and shadows a default written
+   above; the defaults themselves are untouched, and the trailing comment on each line records the value it
+   shadows (dense-chrome.test.ts pins both). Sizes reuse the sheet's own rungs: the tab's 0.86em is on the em
+   ladder (css-vocab.test.ts); the row's 11px and 10px are the box's own sizes (.bg-since, .bg-status). The
+   group header keeps its 0.82em: the next rung down, 0.72em, is 9.4px at the 13px base, under the 10px floor
+   the sheet's smallest labels sit at, and the sections wear one size (tab-groups.test.ts); its count inherits
+   that size and its 0.7 opacity, so it stays legible. Click targets after: a tab about 25px tall (32px by
+   default), a group header about 23px (29px), a row about 20px (29px), or 24px with the open-transcript arrow,
+   which keeps its 18px. Off by default. Nothing here touches #tabbar itself: under the phone layout's media
+   rule (kernel.py _CHAT_MOBILE_CSS) the bar holds the session picker, not the strip. ── */
+body.dense-chrome .tab { gap: 3px; padding: 3px 5px; font-size: 0.86em; }              /* 4px · 6px 7px · 0.92em */
+/* a federated tab's host prefix is a 0.86em child of the label (host-prefix.ts hostNameNodes), so under the 0.86em tab
+   it would compound to 9.6px (0.86 x 0.86 x 13), under the 10px floor; 0.92em (on the ladder) puts it back at the
+   default's rendered 10.3px. The tab's other em child, .tab-close at 1.1em, stays above the floor on its own. */
+body.dense-chrome .tab .host-prefix { font-size: 0.92em; }                              /* 0.86em */
+/* the + keeps its glyph size: the dense .tab rule above (0,2,1) outranks .tab-add's own 1.1em (0,1,0), so the size
+   is restated; the box is still 25px because .tab-add pins its 18px line-height */
+body.dense-chrome .tab-add { padding: 3px 8px; font-size: 1.1em; }                      /* 6px 10px · 1.1em, restated */
+/* the tag control's floor is the + tab's rendered box, as by default (styles.css .tab-tagbox, tag-mounts.test.ts):
+   the 18px line + 2 x 3px dense padding + the 1px border; #tabs stretches every item on a row to the tallest, so
+   without this the row holding the + and the tag control stayed 31px beside 25px rows */
+body.dense-chrome .tab-tagbox { min-height: 25px; }                                     /* 31px */
+body.dense-chrome .tab-group-head { gap: 4px; padding: 3px 5px 3px 4px; }               /* 5px · 6px 7px 6px 6px */
+/* the untagged trail's divider (the inline layout, stripGroupRows off): its 1px line is the content box under fixed
+   gutters, so the 8px gutters sized for the 32px row would leave a 9px line in the 25px row; 6px keeps the default's
+   half-row proportion (about 13px). Scoped off the row break, which must keep no box; the width stays 13px, so the
+   tab drag's virtual layout (dragslot.ts) is unaffected */
+body.dense-chrome .tab-group-sep:not(.tab-group-break) { padding: 6px 6px; }            /* 8px 6px */
+/* the box: the rows shrink; the header keeps its 12px, it is the box's title */
+body.dense-chrome #bg-tasks { margin: 4px 10px 4px; }                                   /* 8px 10px 6px */
+body.dense-chrome .bg-fold-head { padding: 5px 11px; }                                  /* 7px 11px */
+/* the cap: about four rows while no row's details are open, the inner scroll .bg-list already has taking the rest.
+   Four 24px rows (3px + the 18px arrow + 3px; a row without the arrow is about 20px) plus the list's 4px of padding.
+   The default list's cap is the 180px six-row rule above (.bg-list:not(:has(.bg-task.open)), the user 2026-09-08),
+   and this one carries the SAME :not(:has(.bg-task.open)) guard for two reasons: an open row lifts both caps to the
+   box's own min(50vh, 340px), so a command's 220px output tail is not read through two nested scrolls; and the
+   guard's specificity (0,4,1) is what lets this rule outrank the default's (0,3,0), where a bare
+   body.dense-chrome .bg-list (0,2,1) lost to it while closed and applied only while a row was open, inverting
+   both caps (the review of 2026-09-09 measured it). The padding stays on the bare rule so it holds in both states. */
+body.dense-chrome .bg-list { padding: 2px 2px; }                                        /* 4px 2px */
+body.dense-chrome .bg-list:not(:has(.bg-task.open)) { max-height: 100px; }              /* 180px, the six-row cap; both lift while a row's details are open */
+body.dense-chrome .bg-group-head { padding: 3px 9px 1px; }                              /* 6px 9px 2px */
+body.dense-chrome .bg-head { gap: 6px; padding: 3px 9px; line-height: 1.3; }            /* 8px · 5px 9px · the body's 1.6 */
+body.dense-chrome .bg-sum { font-size: 11px; }                                          /* 12px */
+body.dense-chrome .bg-since { font-size: 10px; }                                        /* 11px */
+/* the trailing status word goes where the dot already says it: a row's caption IS its status (taskRowSpec and
+   awaitRowSpec: running, armed, completed, failed) and the dot wears that status's tint (.bg-task.bg-<status>
+   sets --bgt), so the word repeats the dot. A "timer" caption stays: its dot says only waiting. The label and
+   the open-transcript arrow stay. Hidden by the sheet, so the render path is unchanged and the word is back the
+   moment the setting goes off. */
+body.dense-chrome .bg-task.bg-running > .bg-head > .bg-status,
+body.dense-chrome .bg-task.bg-armed > .bg-head > .bg-status,
+body.dense-chrome .bg-task.bg-completed > .bg-head > .bg-status,
+body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
+
 /* ── print (Slice 3 of plans/markdown-viewer.md) ── a note prints as a document. The modal's fixed overlay and 95% card
    join the page's flow, the body's scroll box opens so the note runs across pages, the chrome that is for a screen (the
    title bar, the Comments aside, the Comment float, the notice bar, the Copy buttons) is left out, and so is everything
    else on the page while a note is open (the chat, the feed: the note is what the reader asked to print). Black on white:
-   the theme's tokens are for a screen, and the dark palette's light inks would print near white. Code keeps wrapping
-   (pre-wrap stands) and prints black too, its faint line numbers included. A link that names a file is named on its own
-   (its class outranks the bare anchor rule, so it kept the screen's link ink and lost its underline); a task box prints in
-   the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on the white page, an open task
-   reading as done); a table is a table again, its cells wrapping to the column, since paper cannot scroll the columns the
-   screen's block hides past the page edge; and the comment marks print bare, the comments they point to being left out
-   (review 2026-09-08). A comment on a picture frames it with an outline file-comments.ts's styleFrame writes INLINE, which
+   the theme's tokens are for a screen, and the dark palette's light inks would print near white. The page's head is `:root`,
+   not `html`: the kernel's pages inline THEME_CSS after the sheet, and its `html,body{background:...}` is a type selector
+   later in the cascade, so a head of `html` tied with it and lost, and on the chat and feed pages the root, which paints
+   the page canvas, printed the editor's dark grey wherever the body did not cover the page (the Files pane was spared by
+   files-pane.css's own print rule, which sits after THEME_CSS in the same style element); `:root` outranks a type selector
+   wherever the theme's rule sits (review round 3; the print leg's page carries THEME_CSS now). Code keeps wrapping
+   (pre-wrap stands) and prints black too, its line numbers at full ink: the screen dims them by opacity (0.32 in a fence,
+   0.55 in the Raw view), which black ink would print as grey, the fence's at 2.24:1 (review round 3). A link that names a
+   file is named on its own (its class outranks the bare anchor rule, so it kept the screen's link ink and lost its
+   underline); a task box prints in the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on
+   the white page, an open task reading as done); a table is a table again, its cells wrapping to the column, since paper
+   cannot scroll the columns the screen's block hides past the page edge; and the comment marks print bare, the comments
+   they point to being left out (review 2026-09-08). A comment on a picture frames it with an outline file-comments.ts's
+   styleFrame writes INLINE, which
    outranks every plain sheet rule, so the picture printed ringed in amber while its comment was left out; the block strips
    `.fileview-body img.fc-img` with `!important`, the one way a sheet rule outranks an inline declaration (review round 2;
    file-view-print-marks-browser.test.ts measures the five). Code prints black wherever it is in the
@@ -4609,7 +4719,7 @@ body.filebrowse-open { overflow: hidden; }
    one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). Byte-equal in styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the
    Files pane's own overrides are in files-pane.css. */
 @media print {
-  html, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
+  :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
   body.fileview-open > :not(#romp-fileview) { display: none; }
   #romp-fileview { position: static; inset: auto; z-index: auto; display: block; background: none; }
@@ -4627,6 +4737,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md pre, .fileview-md th, .fileview-md td, .fileview-md hr, .fileview-md blockquote, .fileview-md h1, .fileview-md h2, .fileview-md kbd { border-color: black; }
   .fileview-md kbd { box-shadow: none; }
   .fileview-body code.hljs, .fileview-body code.hljs span, .fileview-body .fv-cl::before { color: black; }
+  .fileview-md pre code .cl::before, .fileview-body .fv-cl::before { opacity: 1; }
   .fileview-md table { display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; }
   .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }

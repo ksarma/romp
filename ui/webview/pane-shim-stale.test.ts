@@ -37,10 +37,13 @@ function shimJs(app: string, caps: string): string {
   const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\"):");
   assert.ok(def > 0, "the shim renderer exists with its caps parameter");
   const start = KERNEL.indexOf('return """', def) + 'return """'.length;
-  const end = KERNEL.indexOf('""" % (app, int(v), caps, NO_STALE_CAP, app, app)', start);
+  // the tuple's first slot is the reload core (T265, its own executed test in tests/test_dashboard_auto_reload.py);
+  // an empty core here leaves window.__rompReload undefined, so the shim's raise takes its fallback path; the
+  // caps and the no-stale cap constant are the fork's slots (the Files pane's opt-out, at the end)
+  const end = KERNEL.indexOf('""" % (_reload_core(v), app, int(v), caps, NO_STALE_CAP, app, app)', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
   assert.ok(NO_STALE_CAP, "the no-stale cap constant exists");
-  const args = [app, "5", caps, NO_STALE_CAP, app, app];
+  const args = ["", app, "5", caps, NO_STALE_CAP, app, app];
   let i = 0;
   return KERNEL.slice(start, end).replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }
@@ -49,6 +52,7 @@ class Harness {
   posted: any[] = [];          // what the pane told the shell (wsStale / wsFresh / wsState)
   sent: any[] = [];            // what went up the socket (ready, clientDiag rows)
   toBundle: any[] = [];        // frames the shim handed to the bundle
+  reloads: any[] = [];         // what the shim asked the reload core for (T265: the build raise goes there)
   sockets: any[] = [];
   timers: Array<() => void> = [];
   interval: (() => void) | null = null;   // the progress watchdog's 5 s tick, run by hand (tick)
@@ -72,6 +76,11 @@ class Harness {
         sessionStorage: { getItem: () => "" },
         dispatchEvent: (e: any) => { if (e && e.data !== undefined) h.toBundle.push(e.data); return true; },
         addEventListener: () => {}, innerWidth: 800, innerHeight: 600,
+        // T265 (upstream 2026-09-08): the build raise asks the reload core embedded above the shim, not the shell
+        // directly. The core's own tests are tests/test_dashboard_auto_reload.py; here a fake records the requests,
+        // and says the page sits in a shell so the reconnect's checkBoot stays the shell's
+        __rompReload: { requests: [] as any[], request(reason: string, detail: string) { h.reloads.push({ reason, detail }); },
+                        inShell: () => true, checkBoot: () => {}, refused: null as any },
       },
       document: {
         addEventListener: (t: string, f: () => void) => { if (t === "visibilitychange") h.visibility.push(f); },
@@ -102,6 +111,7 @@ class Harness {
   tick() { assert.ok(this.interval, "the watchdog is armed"); this.interval!(); }
   stale() { return this.posted.filter((m) => m.romp === "wsStale" && !m.build).length; }
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
+  builds() { return this.reloads.filter((r) => r.reason === "build"); }
   diags(what: string) { return this.sent.filter((m) => m.type === "clientDiag" && m.what === what); }
   kaReachedBundle() { return this.toBundle.some((m) => m && m.type === "ka"); }
   readys() { return this.sent.filter((m) => m.type === "ready").length; }
@@ -445,11 +455,12 @@ test("a page announcing the no-stale cap never arms: no keepalive count, no clos
   h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
   assert.equal(h.stale(), 0);
   assert.equal(h.fresh(), 0);
-  // BUILD drift is a separate raise and still stands: new code is not delivered by any frame, only a reload
+  // BUILD drift is a separate raise and still stands: new code is not delivered by any frame, only a reload.
+  // Since T265 (upstream 2026-09-08, taken as written) the raise is a request to the reload core, which forwards
+  // to the shell or reloads the page itself, not a wsStale post; the cap leaves it alone either way
   h.ws.msg({ type: "ka", dv: 9 });
-  const raises = h.posted.filter((m) => m.romp === "wsStale");   // field checks: the sandbox realm's objects fail deepEqual on their prototype
-  assert.equal(raises.length, 1, "the newer-build prompt is untouched");
-  assert.equal(raises[0].build, 1, "…and it is the build raise, not the connection one");
+  assert.equal(h.builds().length, 1, "the newer-build request is untouched");
+  assert.equal(h.posted.filter((m) => m.romp === "wsStale").length, 0, "…and it is the reload core's raise, not the connection prompt");
   h.settles(0);
   // the contrast: the same page shape WITHOUT the cap, the same sequence — raised on the second keepalive.
   // The opt-out is the cap the page announces, not its app name.

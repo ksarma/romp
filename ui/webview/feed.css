@@ -461,6 +461,11 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* a folded header IS its whole group, so it takes the bottom margin the run of cards would have had —
    without it, consecutive folded threads jam into one unreadable stack of names. */
 .feed-sess-head.folded { margin-bottom: 7px; }
+/* the session-wide CLEAR (the user 2026-09-08, twice): it IS the card's Clear (.fdismiss: the outline, the
+   0.72em size, the accent hover), built by the same builder; this class carries its POSITION only — far
+   right of the header row, before the full-width process list that wraps below. No size, colour, border
+   or hover of its own: any of those here would be a second button that drifts. */
+.feed-sess-clear { flex: none; margin-left: auto; }
 /* the neutral background-process chip on the header (kernel bgServices): a process the session KEEPS
    (a dev server the judge classified as nobody-waits). Reuses the .fask-secbtn chip vocabulary — dim,
    0.74em, accent only while its list is open (a selected toggle, the accent's job) — and un-bolds from
@@ -1104,7 +1109,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 }
 /* controls row — the "+" expand toggle (left, below the title) + Dismiss to its
    right; replaces the old right-rail button stack. */ .fdismiss {
-  font: inherit; font-size: 0.72em; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 0.72em; font-weight: 400; cursor: pointer; white-space: nowrap;
+  /* ^ weight pinned, not inherited: the session header renders at 600 and its Clear is THIS button
+     (the user 2026-09-08: identical to the card's); cards already sat at 400, so nothing moves there */
   color: var(--dim); background: transparent;
   border: 1px solid var(--card-border); border-radius: 6px;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
@@ -1608,8 +1615,9 @@ a.fileview-gh-note { border-style: dashed; }
    column at most a pixel over 80ch): a fractional left edge put the text on sub-pixel positions where headless
    Chromium's drag selection stayed collapsed at some offsets (a hit-test rounding quirk, measured 2026-09-08), and
    whole pixels keep the two gaps equal to the pixel. The plain 18px shorthand before it is the fallback for a
-   browser without round() (Chromium 125, Safari 15.4, Firefox 118), as `max-width: 100%` is the table rule's
-   for one without container units. A table alone may leave the column, evenly into both
+   browser without round() (Chromium 125, Safari 15.4, Firefox 118); the table rule below keeps its round() in the
+   translate alone, which such a browser drops, so a table there loses its shift and keeps its cap (the rule says
+   what each reads before the body's width is known). A table alone may leave the column, evenly into both
    gutters up to the body's inset (its rule below), and wider than that scrolls in its own box, whole words kept
    (`overflow-wrap: normal` against the root's `anywhere`, which crushed every column to fit), so the page never
    widens. Code blocks keep the column and wrap their long lines (the user 2026-08-24: long lines always
@@ -2424,13 +2432,20 @@ body.filebrowse-open { overflow: hidden; }
    join the page's flow, the body's scroll box opens so the note runs across pages, the chrome that is for a screen (the
    title bar, the Comments aside, the Comment float, the notice bar, the Copy buttons) is left out, and so is everything
    else on the page while a note is open (the chat, the feed: the note is what the reader asked to print). Black on white:
-   the theme's tokens are for a screen, and the dark palette's light inks would print near white. Code keeps wrapping
-   (pre-wrap stands) and prints black too, its faint line numbers included. A link that names a file is named on its own
-   (its class outranks the bare anchor rule, so it kept the screen's link ink and lost its underline); a task box prints in
-   the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on the white page, an open task
-   reading as done); a table is a table again, its cells wrapping to the column, since paper cannot scroll the columns the
-   screen's block hides past the page edge; and the comment marks print bare, the comments they point to being left out
-   (review 2026-09-08). A comment on a picture frames it with an outline file-comments.ts's styleFrame writes INLINE, which
+   the theme's tokens are for a screen, and the dark palette's light inks would print near white. The page's head is `:root`,
+   not `html`: the kernel's pages inline THEME_CSS after the sheet, and its `html,body{background:...}` is a type selector
+   later in the cascade, so a head of `html` tied with it and lost, and on the chat and feed pages the root, which paints
+   the page canvas, printed the editor's dark grey wherever the body did not cover the page (the Files pane was spared by
+   files-pane.css's own print rule, which sits after THEME_CSS in the same style element); `:root` outranks a type selector
+   wherever the theme's rule sits (review round 3; the print leg's page carries THEME_CSS now). Code keeps wrapping
+   (pre-wrap stands) and prints black too, its line numbers at full ink: the screen dims them by opacity (0.32 in a fence,
+   0.55 in the Raw view), which black ink would print as grey, the fence's at 2.24:1 (review round 3). A link that names a
+   file is named on its own (its class outranks the bare anchor rule, so it kept the screen's link ink and lost its
+   underline); a task box prints in the light scheme (Chromium paints a dark-scheme UNCHECKED box as a filled dark square on
+   the white page, an open task reading as done); a table is a table again, its cells wrapping to the column, since paper
+   cannot scroll the columns the screen's block hides past the page edge; and the comment marks print bare, the comments
+   they point to being left out (review 2026-09-08). A comment on a picture frames it with an outline file-comments.ts's
+   styleFrame writes INLINE, which
    outranks every plain sheet rule, so the picture printed ringed in amber while its comment was left out; the block strips
    `.fileview-body img.fc-img` with `!important`, the one way a sheet rule outranks an inline declaration (review round 2;
    file-view-print-marks-browser.test.ts measures the five). Code prints black wherever it is in the
@@ -2449,7 +2464,7 @@ body.filebrowse-open { overflow: hidden; }
    one that holds there (review round 2; file-view-print-inks-browser.test.ts measures these). Byte-equal in styles.css and feed.css (file-view-print-browser.test.ts pins the block and lays it out); the
    Files pane's own overrides are in files-pane.css. */
 @media print {
-  html, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
+  :root, body.fileview-open { height: auto; overflow: visible; background: white; color: black; }
   body.fileview-open { display: block; }
   body.fileview-open > :not(#romp-fileview) { display: none; }
   #romp-fileview { position: static; inset: auto; z-index: auto; display: block; background: none; }
@@ -2467,6 +2482,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md pre, .fileview-md th, .fileview-md td, .fileview-md hr, .fileview-md blockquote, .fileview-md h1, .fileview-md h2, .fileview-md kbd { border-color: black; }
   .fileview-md kbd { box-shadow: none; }
   .fileview-body code.hljs, .fileview-body code.hljs span, .fileview-body .fv-cl::before { color: black; }
+  .fileview-md pre code .cl::before, .fileview-body .fv-cl::before { opacity: 1; }
   .fileview-md table { display: table; width: max-content; overflow: visible; overflow-wrap: anywhere; }
   .fileview-md > table { max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }

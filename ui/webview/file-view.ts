@@ -27,7 +27,7 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlace, seatPlaceOutcome, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
+import { readPlace, seatPlaceOutcome, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -2082,6 +2082,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
+    // Whether this fetch's answer STANDS to land: its viewer is up (wrap.isConnected: a close removes the wrap, and a
+    // replace-open detaches it while the id the guards used to open with sits on the NEW viewer, so that check passed for
+    // the wrong viewer) and no newer fetch is out (fetchSeq). `land` runs a landing through the hold's defer for an answer
+    // that stands and drops one that does not, BEFORE the hold as well as inside the parked run: the hold parks in DEFER
+    // order and a later defer replaces the parked run, so an overtaken answer that reached defer under a press displaced
+    // the newer fetch's parked landing (resolved, unpainted) and then bailed itself at the release on fetchSeq: two writes
+    // within a poll interval, the newer answer first, and the body kept the old text under the old mtime with nothing
+    // re-asking (the Comments panel asks once per mtime). And a landing parked under a press whose viewer a replace-open
+    // removed during the press painted into the detached body and fired the replaced viewer's hooks (the Slice 3 review,
+    // round 3, 2026-09-09; file-view-landing-order-browser.test.ts). An answer that does not stand paints nothing, parks
+    // nothing and displaces nothing; the guards re-run inside the parked run for what changes while it is parked.
+    const stands = (): boolean => wrap.isConnected && my === fetchSeq;
+    const land = (run: () => void): Promise<void> | void => { if (stands()) return hold.defer(run); };
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
       if (my !== fetchSeq) return Promise.resolve("");   // a newer fetch is out: read nothing, set nothing
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
@@ -2109,16 +2122,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
-    }).then((t) => hold.defer(() => {   // parked while a pointer is pressed over the body; the guards below re-run at the release
-      if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
-      if (my !== fetchSeq) return;                              // a newer fetch is the one that lands
+    }).then((t) => land(() => {   // parked while a pointer is pressed over the body; the guards re-run at the release
+      if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
       if (t instanceof Blob) {
-        // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
-        // and never clobbers the new open's mediaUrlLive registration.
-        if (!wrap.isConnected) return;
+        // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
+        // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
         if (objUrl !== null) dropMediaUrl();    // a reload: the previous bytes' URL goes before the new one is minted
         mediaBlob = t;
         objUrl = URL.createObjectURL(t);
@@ -2141,9 +2152,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
-    })).catch((err) => hold.defer(() => {
-      if (!document.getElementById("romp-fileview")) return;
-      if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
+    })).catch((err) => land(() => {
+      if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
@@ -2297,6 +2307,23 @@ export function openUrlView(href: string): void {
     requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, hash); });
   };
   let shownText: string | null = null;                // the text the body's view was painted from (the reader's place, below)
+  // The reader's place across the Rendered/Raw switch, as the local viewer keeps it (openFileView's keptPlace and seat): read
+  // before the swap, seated after it, and a seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the view swapped in
+  // is shorter and the body stands at its end) holds the place it was given while the body stands where the clamp left it
+  // (heldScrollTop) instead of reading the body back, which would name the block the clamp shows, so the swap back seats the
+  // reader's passage. Without the hold the round trip from the end of the taller view came back a paragraph early or tens of
+  // pixels off here after review round 1 had given it to the local viewer alone (the Slice 3 review, round 3, 2026-09-09;
+  // file-view-url-place-bottom-browser.test.ts). The first scroll that moves the body ends the hold (the seat's own scroll
+  // event reports the held scrollTop and changes nothing); no timers. The switch is the one swap this viewer's place crosses:
+  // no reload, no aside, no text-size control, so none of the local viewer's reflow bookkeeping is needed here.
+  let heldPlace: Place | null = null;
+  let heldScrollTop = -1;
+  const keptPlace = (): Place | null => (shownText === null ? null : heldPlace && body.scrollTop === heldScrollTop ? heldPlace : readPlace(body, shownText));
+  const seat = (kept: Place | null) => {
+    if (kept && shownText !== null && seatPlaceOutcome(body, shownText, kept).clamped) { heldPlace = kept; heldScrollTop = body.scrollTop; }
+    else heldPlace = null;
+  };
+  body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;
@@ -2304,12 +2331,12 @@ export function openUrlView(href: string): void {
       b.setAttribute("aria-pressed", String(on));
     }
     if (text === null) return;                         // the loader holds the body until the bytes land
-    const kept = shownText === null ? null : readPlace(body, shownText);   // the reader's place under the view about to go
+    const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
     shownText = text;
-    if (kept) seatPlace(body, text, kept);             // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
+    seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
   };
   renderBody();

@@ -880,7 +880,7 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
   assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = opts && typeof opts\.line === "number" && opts\.line > 0 \? Math\.floor\(opts\.line\) : null;/);
   assert.match(VIEW, /text = t;\n\s*\/\/[^\n]*\n\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}/);
-  const landing = VIEW.split("text = t;\n")[1].split(").catch(")[0];   // the landing closes as `})).catch(`: hold.defer wraps it (actions.ts pressHold)
+  const landing = VIEW.split("text = t;\n")[1].split(").catch(")[0];   // the landing closes as `})).catch(`: `land` wraps it (hold.defer for an answer that stands; actions.ts pressHold)
   assert.doesNotMatch(landing, /saveFmt/, "the Raw view for this open only: the preference is not written");
 });
 

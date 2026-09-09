@@ -30,13 +30,27 @@ test("highlight() captures the raw source then adds a Copy button to each <pre>"
   assert.doesNotMatch(RENDER, /function (addCopyBtn|wrapCodeLines|copyText|fallbackCopy)\(/, "render.ts keeps no copy of its own");
 });
 
-test("addCopyBtn builds a .code-copy button, is idempotent, and shows Copied feedback", () => {
+test("addCopyBtn builds a .code-copy button, is idempotent, and shows Copied feedback on the button on screen", () => {
   assert.match(BLOCK, /export function addCopyBtn\(pre: HTMLElement, raw: string\)/);
   assert.match(BLOCK, /if \(pre\.querySelector\(":scope > \.code-copy"\)\) return;/);  // never doubles up on a re-render
   assert.match(BLOCK, /el\("button", "code-copy"\)/);
-  assert.match(BLOCK, /copyText\(raw\)/);
-  assert.match(BLOCK, /btn\.textContent = ok \? "Copied" : "Copy failed"/);
-  assert.match(BLOCK, /btn\.classList\.toggle\("copied", ok\)/);
+  // the fence's source (the text its Copy copies) and its ancestors are read at the press, while the button is in the
+  // document, and the acknowledgement goes to the button on screen of the fence with that source: a held landing swaps
+  // the pressed one out a tick after its click, and the async Clipboard API answers after the swap (Slice 3 review,
+  // round 3; file-view-copy-ack-browser.test.ts runs it). By source, not by index among the fenced blocks: a write that
+  // put a fence above the pressed one marked the new fence (the final fixes; file-view-copy-held-browser.test.ts scenes
+  // 5 and 6)
+  assert.match(BLOCK, /const SOURCES = new WeakMap<Element, string>\(\);/);
+  assert.match(BLOCK, /pre\.classList\.add\("has-copy"\);\n\s*SOURCES\.set\(pre, raw\);/, "every dressed fence records its source");
+  assert.match(BLOCK, /const slot = fenceSlot\(pre, raw\);[^\n]*\n\s*copyText\(raw\)\.then\(\(ok\) => acknowledge\(btn, slot, ok\)\);/);
+  assert.match(BLOCK, /function shownButton\(pressed: HTMLButtonElement, slot: Slot\): HTMLButtonElement \| null \{\n\s*if \(pressed\.isConnected\) return pressed;/);
+  assert.match(BLOCK, /const same = sameSource\(s\.root, slot\.source\);\n\s*const pre = same\[Math\.min\(s\.nth, same\.length - 1\)\];/, "the fence with the pressed fence's source; of several, the pressed one's ordinal among them; none, no button");
+  assert.match(BLOCK, /const b = shownButton\(pressed, slot\);\n\s*if \(!b \|\| b === shown\) return;\n\s*shown = b;\n\s*b\.textContent = ok \? "Copied" : "Copy failed";\n\s*b\.classList\.toggle\("copied", ok\);/);
+  // a swap inside the window carries the label to the replacement on the swap's own event, and the window's close
+  // resets the button last acknowledged
+  assert.match(BLOCK, /const swaps = new MutationObserver\(place\);\n\s*for \(const \{ root \} of slot\.at\) swaps\.observe\(root, \{ childList: true \}\);/);
+  assert.match(BLOCK, /swaps\.disconnect\(\);\n\s*if \(shown\) \{ shown\.textContent = "Copy"; shown\.classList\.remove\("copied"\); \}/);
+  assert.match(BLOCK, /for \(let a = pre\.parentElement; a && a !== document\.body; a = a\.parentElement\)/, "the walk stops under document.body: a surface swapped out whole is nothing to acknowledge on");
 });
 
 test("addCopyBtn: Space acts on the keydown, the key's default prevented on the keydown and the keyup, a held key's repeats the same press", () => {

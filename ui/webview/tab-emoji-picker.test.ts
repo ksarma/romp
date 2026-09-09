@@ -69,7 +69,8 @@ test("anchoring and dismissal follow the color swatches: where the menu stood, c
   // dismissal
   assert.match(RENDER, /window\.addEventListener\("mousedown", \(e\) => \{ if \(emojiPrompt && !emojiPrompt\.card\.contains\(e\.target as Node\)\) closeEmojiPrompt\(\); \}, true\);/);
   assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && emojiPrompt\) \{ e\.stopPropagation\(\); e\.preventDefault\(\); closeEmojiPrompt\(\); \} \}, true\);/);
-  assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string\) \{\n  dismissTabMenu\(\);\n  closeEmojiPrompt\(\);/);
+  // the signature carries T264b's `copy?` (the group the right-clicked copy sits in; upstream, folded 2026-09-08); the picker still closes second
+  assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string, copy\?: string\) \{[^\n]*\n\s*dismissTabMenu\(\);\s*\n\s*closeEmojiPrompt\(\);/);
   // the menu's scroll and blur closers do NOT reach the picker: its grid scrolls, and its field invites a paste
   assert.doesNotMatch(RENDER, /addEventListener\("scroll", closeEmojiPrompt/);
   assert.doesNotMatch(RENDER, /addEventListener\("blur", [^\n]*closeEmojiPrompt/);

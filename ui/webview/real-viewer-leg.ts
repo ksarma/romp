@@ -76,14 +76,21 @@ export function bundleViewer(): string {
  *  JSON.stringify leaves `<` alone; JSON.parse and the engine read `\u003c` back as `<`. */
 export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/</g, "\\u003c");
 
-/** The page: the surface's sheet, the bundle, the file table and fetch stub, the status-answering poster, the probe action.
+/** The page: the surface's sheet (and the kernel's inlined THEME_CSS after it when `theme` carries it), the bundle, the file
+ *  table and fetch stub, the status-answering poster, the probe action.
  *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
  *  is on. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow). */
-export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT): string {
-  const css = mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + web("files-pane.css") : web("styles.css");
-  return `<!DOCTYPE html><html><head><meta charset=utf-8><style>${css}</style></head>
+export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = ""): string {
+  // The sheets in the kernel's order (_chat_page, _feed_page and _files_page in kernel/kernel.py): the surface's sheet (a
+  // <link> there), then a <style> holding THEME_CSS and, on the Files pane, files-pane.css after it. `theme` is that
+  // inlined CSS; the print leg passes the kernel's own, since a page rule the sheet must outrank sits there and not in any
+  // sheet (the Slice 3 review, round 3). With none the sheet and the pane's own share one <style>, as every leg had them.
+  const sheet = mode === "feed" ? web("feed.css") : web("styles.css");
+  const own = mode === "pane" ? "\n" + web("files-pane.css") : "";
+  const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
+  return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
 window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__fetches = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url) {
@@ -140,13 +147,14 @@ export async function inBrowser(t: any, body: (browser: any) => Promise<void>): 
 export type Opened = { page: any; errors: string[] };
 /** A page of the surface at the viewport size, the report open in it (Rendered, or Raw when `raw`: the preference is written
  *  first, as a person's earlier choice would stand), the first paint awaited. `docs` replaces the file table; `openOpts` is
- *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`. */
+ *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`;
+ *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
-  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string> } = {}): Promise<Opened> {
+  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
-  const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT);
+  const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
   await page.goto(ORIGIN + "/");
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });

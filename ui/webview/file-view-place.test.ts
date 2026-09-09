@@ -371,7 +371,13 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];
-  assert.match(url, /const kept = shownText === null \? null : readPlace\(body, shownText\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*shownText = text;\n\s*if \(kept\) seatPlace\(body, text, kept\);/, "the URL viewer reads before its swap and seats after it");
+  assert.match(url, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "the URL viewer reads before its swap and seats after it");
+  // the URL viewer keeps the held place across a clamped seat as the local viewer does (the Slice 3 review, round 3: with the plain
+  // seatPlace its round trip from the end of the taller view came back a paragraph early; file-view-url-place-bottom-browser.test.ts)
+  assert.match(url, /const keptPlace = \(\): Place \| null => \(shownText === null \? null : heldPlace && body\.scrollTop === heldScrollTop \? heldPlace : readPlace\(body, shownText\)\);/, "the URL viewer's read hands back the held place while the body stands where the clamp left it");
+  assert.match(url, /if \(kept && shownText !== null && seatPlaceOutcome\(body, shownText, kept\)\.clamped\) \{ heldPlace = kept; heldScrollTop = body\.scrollTop; \}\n\s*else heldPlace = null;/, "its seat reports the clamp and holds the place it was given");
+  assert.match(url, /body\.addEventListener\("scroll", \(\) => \{ if \(heldPlace && body\.scrollTop !== heldScrollTop\) heldPlace = null; \}, \{ passive: true \}\);/, "the first scroll that moves the body ends the hold");
+  assert.doesNotMatch(url, /\bseatPlace\(/, "no plain seat in the URL viewer: every seat reports its clamp");
   // the note bar: a child of the card above the body row, in both builders' place (the fallback editor's calls noteBar now)
   assert.match(local, /bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);/);
   assert.equal((local.match(/bar2\.id = "fileview-save-err";/g) || []).length, 1, "one builder of the bar");
@@ -387,10 +393,12 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   const install = PANEL.split("private installLayout(row: HTMLElement): void {")[1].split("\n  }\n")[0];
   assert.doesNotMatch(install, /hideFloatOnScroll/, "not among installLayout's scroll listeners, which feed the margin lock's mirrorScroll and act in the margin layout alone");
   // the sheets: no overflow-anchor rule (the swap never relied on anchoring, and anchoring helps after the seat when a
-  // figure above loads late), and the row declares no container of its own
+  // figure above loads late), and the row declares no container of its own. The anchoring pin reads declarations only,
+  // comments stripped: upstream's 2026-09-08 note above #content (keep the browser's scroll anchoring on, measured
+  // under T262e; its own pin is box-below.test.ts) names the property in prose to say the same thing this pin says.
   for (const f of ["styles.css", "feed.css"]) {
     const css = read(f);
-    assert.doesNotMatch(css, /overflow-anchor/, f + ": no overflow-anchor");
+    assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /overflow-anchor/, f + ": no overflow-anchor");
     assert.match(css, /\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/, f + ": the row without container-type");
     assert.match(css, /\n\.fileview > \.fileview-err \{ flex: 0 0 auto; \}\n/, f + ": the note bar's rule");
   }

@@ -124,8 +124,8 @@ several. Right-click a tab and open **Tags** to add or remove them. Tags filter 
 surface (the tag button in the strip narrows the tabs to the tags you pick), and they group
 the tabs: as soon as any session carries a tag, the strip shows one section per tag, in your
 tag order, each with a header in the tag's color, and the untagged sessions after a divider
-at the end. A session with several tags sits under the first of them in your tag order; its
-other tags still filter. Each header shows a chevron, the tag's color, its name, and a
+at the end. A session with several tags appears under each of them; every copy is the same
+session (click either to open it, and closing either ends it). Each header shows a chevron, the tag's color, its name, and a
 member count. Click a header, or press Enter on it, to fold its section down to the header
 alone; the count then says how many tabs are folded away, and a small dot after it says when
 one of them is working or waiting on you (hover it for their names). A folded header keeps the ⚑ flag
@@ -138,9 +138,11 @@ again to fold the tab with the rest. A tab set to show when folded keeps that se
 group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
-adds that tag and drops the tab's current group tag, leaving its other tags alone. The row's
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
-button's menu, turns the sections off for this browser.
+button's menu, turns the sections off for this browser. The groups follow one another across the
+strip and wrap as they need; the gear's **One tag group per row in the tab strip** starts every
+group on its own row instead.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
@@ -156,7 +158,8 @@ the feed. What it is doing now comes from its current task, else from the headli
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
 its formatting; click one to open that session, which also opens its section if the section is
-folded (a hidden session's section stays as it was; see the next paragraph). The rows update as
+folded (with several tags, the first folded group of them that does not hide it; a section that
+hides the session stays as it was; see the next paragraph). The rows update as
 the sessions work and change only when something about a session changes; the **needs you** word
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
@@ -170,17 +173,27 @@ and moves its row under a **Hidden (N)** fold at the foot of the view, one click
 **Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
 open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
-when one of them needs you), and its count says how many are hidden. When a hidden session needs
-you, the fold's head says so in red before you open it, and its row says **needs you**. While the
+when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
+hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
+red before you open it, and its row says **needs you**. While the
 group is open, its count opens this view without folding the group, so hiding a session never needs
 a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
 the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
 you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
-standing in for the tab, and leaves it hidden, its group folded or open as it was. A session set to
-**Show when folded** stays hidden while it is hidden: the hide wins, and the setting resumes when
-you show it again. A hidden session keeps the setting when its group is renamed, and shows again
-wherever it lands when it leaves the group. Like the sections, hiding is per browser and for the
-desktop layout.
+standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the
+session has another tag whose group is folded and does not hide it: that group opens and the tab
+shows there, the hide standing where it was. A session set to **Show when folded** stays hidden
+while it is hidden: the hide wins, and the setting resumes when you show it again. A hidden
+session keeps the setting when its group is renamed, and shows again wherever it lands when it
+leaves the group. Like the sections, hiding is per browser and for the desktop layout.
+
+**On a small screen.** To keep more of the transcript in view, turn on the gear's
+**Compact tabs and agents** setting. It tightens the rows in the box of background work above the
+message box (the one headed **Awaiting** or **In the background**) and caps that box's list at
+about four rows that scroll; the cap lifts while a row's details are open. Where the tab strip is
+showing (a desktop-width screen, or a tablet wide enough for it) it also shrinks the tabs and group
+headers; on a phone the session picker stands in for the strip, so there the setting tightens the
+box. Like the other chat settings, it is per browser.
 
 ### The feed
 

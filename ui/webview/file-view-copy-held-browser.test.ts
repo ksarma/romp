@@ -8,7 +8,10 @@
 // second option is the one that applies: the landing is HELD while a pointer is pressed over the body and runs on the
 // release (actions.ts pressHold; file-view-copy-held.test.ts has the helper alone). Two scenes over the real viewer
 // (real-viewer-leg.ts), the pane surface: (1) mousedown on Copy, the reload's fetch lands, mouseup: one copy, of the
-// text the reader pressed on, the button acknowledges, and only then do the new bytes paint; (2) the release paths: a
+// text the reader pressed on, the button acknowledges, and only then do the new bytes paint; the write REWROTE the fence,
+// so after the swap no button on screen claims the copy: the acknowledgement follows the fence's source, and the fence
+// with the copied text is gone (the final fixes after round 3; scenes 5 and 6 below have the fence kept and moved, and
+// removed; file-view-copy-ack-browser.test.ts has the two clipboard paths over a write that keeps the fence); (2) the release paths: a
 // press begun over the body and released over the title bar, and a blur while pressed (a release in another frame),
 // each let the parked landing paint, once. Round 2 of the review added two more: (3) a right or middle press holds
 // nothing (a right press's release commonly never reaches the page, the native context menu takes it on Linux and
@@ -84,6 +87,9 @@ test("in a browser: a press on Copy that a reload lands under still copies, the 
     assert.equal(shown.code, FENCE2.replace(/\n/g, ""), "the fence too (the rows drop the newlines)");
     assert.equal(shown.oldGone, true, "the pressed button went with the old body, after its click");
     assert.equal(shown.paints, pressed.paints + 1, "one paint for the one landing");
+    const onScreen = await page.evaluate(() => { const b = document.querySelector(".fileview-md pre > .code-copy")!; return { label: b.textContent, copied: b.classList.contains("copied") }; });
+    assert.equal(onScreen.label, "Copy", "and the button on screen does not claim the copy: the write rewrote the fence, the clipboard holds the old text, and the acknowledgement follows the fence's source, not its index (code-block.ts acknowledge; round 3 marked the rewritten fence Copied)");
+    assert.equal(onScreen.copied, false);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
@@ -189,6 +195,100 @@ test("in a browser: a release and a second press on Copy back-to-back: the landi
     assert.equal(after.copied.length, 2, "and both copied");
     assert.equal(after.paints, pressed.paints + 1, "one paint for the one landing");
     assert.equal(after.mt, MT2, "which is on screen");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// The acknowledgement follows the fence's SOURCE, not its index (the final fixes after round 3, 2026-09-09): a landing
+// under the press that inserts a fence above the pressed one, and one that removes the pressed fence with another fence
+// standing at its old index. Round 3 read the fence's index among the fenced blocks under each ancestor, so the first
+// scene marked the inserted fence Copied and the second marked the fence that took the pressed one's place.
+const FENCE_B = "SELECT id FROM notes;";
+const DOC_BA = ["# Report", "", "An intro paragraph, and a session put a second fence above the first.", "", F + "sql", FENCE_B, F, "", "Between the fences.", "", F + "python", FENCE1, F, "", "A paragraph after the fence.", ""].join("\n");
+const DOC_B = ["# Report", "", "An intro paragraph before the fence, the first fence removed by a session.", "", F + "sql", FENCE_B, F, "", "A paragraph after the fence.", ""].join("\n");
+type Fenced = { code: string; label: string | null; copied: boolean };
+/** Every fenced block on screen, in order: its code (the rows drop the newlines), its button's label and class. */
+const fenced = (page: any): Promise<Fenced[]> => page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md pre.has-copy")).map((pre) => {
+  const b = pre.querySelector(":scope > .code-copy")!;
+  return { code: (pre.querySelector("code")!.textContent || "").trimEnd(), label: b.textContent, copied: b.classList.contains("copied") };
+}));
+
+test("in a browser: a landing under the press inserts a fence above the pressed one: the pressed fence's new button reads Copied and the inserted fence's reads Copy", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: DOC1 } });
+    await arm(page);
+    const b = await centre(page, ".fileview-md pre > .code-copy");
+    await page.mouse.move(b.x, b.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed = await counts(page);
+    await reload(page, DOC_BA, MT2);
+    assert.equal((await counts(page)).paints, pressed.paints, "the landing waits under the press");
+    await page.mouse.up();
+    await paintsReach(page, pressed.paints + 1);
+    await frames(page, 2);
+    const copied = await page.evaluate(() => (window as any).__copied.slice());
+    assert.equal(copied.length, 1, "the press copied once");
+    assert.equal(copied[0].trimEnd(), FENCE1, "the text the reader pressed on");
+    assert.deepEqual(await fenced(page), [
+      { code: FENCE_B, label: "Copy", copied: false },
+      { code: FENCE1.replace(/\n/g, ""), label: "Copied", copied: true },
+    ], "the acknowledgement is on the button of the fence with the pressed fence's source, now second; the inserted fence above it reads Copy (an index read marked the inserted one)");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, "over the new bytes");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser: a landing under the press removes the pressed fence and another fence stands at its index: no button reads Copied", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: DOC1 } });
+    await arm(page);
+    const b = await centre(page, ".fileview-md pre > .code-copy");
+    await page.mouse.move(b.x, b.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed = await counts(page);
+    await reload(page, DOC_B, MT2);
+    assert.equal((await counts(page)).paints, pressed.paints, "the landing waits under the press");
+    await page.mouse.up();
+    await paintsReach(page, pressed.paints + 1);
+    await frames(page, 2);
+    const copied = await page.evaluate(() => (window as any).__copied.slice());
+    assert.equal(copied.length, 1, "the press copied once");
+    assert.equal(copied[0].trimEnd(), FENCE1, "the text the reader pressed on, which the write removed");
+    assert.deepEqual(await fenced(page), [{ code: FENCE_B, label: "Copy", copied: false }], "the fence at the pressed one's index has other text and does not claim the copy (an index read marked it Copied)");
+    assert.equal(await page.evaluate(() => document.querySelectorAll(".code-copy.copied").length), 0, "nothing on screen reads Copied: the copied fence is gone");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, "over the new bytes");
+    assert.deepEqual(errors, [], "no script error: a fence the write removed is nothing to acknowledge on");
+    await page.close();
+  });
+});
+
+// Of several fences with the pressed fence's source, the pressed one's ordinal among them (identical fences, which
+// nothing else tells apart): two fences of one text, the second pressed, a write puts a third fence above both.
+const DOC_AA = ["# Report", "", "An intro paragraph before two fences of one text.", "", F + "python", FENCE1, F, "", "Between the fences.", "", F + "python", FENCE1, F, "", "A paragraph after the fences.", ""].join("\n");
+const DOC_BAA = ["# Report", "", "An intro paragraph, and a session put a third fence above the two.", "", F + "sql", FENCE_B, F, "", "Between the fences.", "", F + "python", FENCE1, F, "", "Between the fences.", "", F + "python", FENCE1, F, "", "A paragraph after the fences.", ""].join("\n");
+
+test("in a browser: two fences of one text, the second pressed, a landing under the press inserts a fence above both: the second of the two reads Copied", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: DOC_AA } });
+    await arm(page);
+    const b = await centre(page, ".fileview-md > pre:nth-of-type(2) > .code-copy");
+    await page.mouse.move(b.x, b.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed = await counts(page);
+    await reload(page, DOC_BAA, MT2);
+    assert.equal((await counts(page)).paints, pressed.paints, "the landing waits under the press");
+    await page.mouse.up();
+    await paintsReach(page, pressed.paints + 1);
+    await frames(page, 2);
+    assert.equal((await page.evaluate(() => (window as any).__copied.length)), 1, "the press copied once");
+    const A = FENCE1.replace(/\n/g, "");
+    assert.deepEqual(await fenced(page), [
+      { code: FENCE_B, label: "Copy", copied: false },
+      { code: A, label: "Copy", copied: false },
+      { code: A, label: "Copied", copied: true },
+    ], "the second fence of the pressed text carries the acknowledgement: the source decides which text, the pressed fence's ordinal among that text's fences which one (an index read marked the first of the two)");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
