@@ -26265,22 +26265,44 @@ def _end_on_idle_sweep(now, tmux):
                                  "alive — request kept for the next cycle\n" % sid)
             # None: _confirmed_ended already reported the failed probe; the request stands
             continue
+        dead_fork = False
         if thread and reg.get("forkOf"):
             # the fork has not landed: lastSid is still the PARENT's transcript (sdk_backend.fork mints the reg
             # so, and the CLI init that pins the thread's own fsid pops forkOf), so reading it would gate this
             # thread's kill on the parent's turn. The wish stays armed until that flip, the exact event, as
-            # _thread_messages stands down on the same field (review round 3, 2026-09-09)
-            continue
-        try:
-            # a thread's transcript is reached through its reg: discovery lists no threads, so _path_of
-            # answers None for one, and an empty path parses as "not working", a kill on the first cycle
-            # even mid-turn. The settle signal itself is the one sessions get: the transcript's open turn
-            path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
-            ps = _parse(path, sid, now)
-            if _session_working(ps.get("turns") or []):
-                continue                             # the turn it asked from is still open — its end is the event
-        except Exception:
-            continue
+            # _thread_messages stands down on the same field (review round 3, 2026-09-09), and the stand-down
+            # is said each tick like the sibling branches' (it stood down silently, and a wish nothing would
+            # ever serve looked like a wish being waited on). UNLESS the fork will never land: a reg carrying
+            # launchError says the CLI failed to start (_record_launch_error writes it; only a connect proof
+            # clears it), so no turn can be open and nothing waits on the settle, and the wish is served now
+            # through the routine the immediate door already runs on this reg. Guarded on the backend's
+            # in-flight set: a reply that relaunches the CLI leaves launchError AND forkOf set for the whole
+            # launch (launchError clears at the connect proof, forkOf at the init), and a kill then would cut
+            # the turn "when idle" promised to wait for, so only a thread nothing is launching takes it. A
+            # limit:true launchError (a usage-limit hold) would have relaunched when the window reset; the
+            # kill drops that parked queue, which is what the user asked for and what the immediate door
+            # does today (review round 4, 2026-09-09)
+            try:
+                launching = sid in Sessions.backend_for(sid).running_sids()
+            except Exception:
+                launching = False                    # a backend without the set (tmux hosts no threads) launches nothing
+            if reg.get("launchError") and not launching:
+                dead_fork = True                     # nothing to wait for: the kill below, no transcript read
+            else:
+                sys.stderr.write("end-on-idle: %s is a comment thread whose fork has not landed; request kept "
+                                 "for the next cycle\n" % sid)
+                continue
+        if not dead_fork:
+            try:
+                # a thread's transcript is reached through its reg: discovery lists no threads, so _path_of
+                # answers None for one, and an empty path parses as "not working", a kill on the first cycle
+                # even mid-turn. The settle signal itself is the one sessions get: the transcript's open turn
+                path = _thread_transcript_path(reg, sid) if thread else (_path_of(sid) or "")
+                ps = _parse(path, sid, now)
+                if _session_working(ps.get("turns") or []):
+                    continue                         # the turn it asked from is still open — its end is the event
+            except Exception:
+                continue
         # the one end routine (_end_and_record: the /end route's and the endSession op's), with a FRESH,
         # own-scan corroboration, never the cycle snapshot, never _pass_scan's memo: the post-kill probe's
         # evidence must POSTDATE the kill, and both of those predate it, the snapshot by construction

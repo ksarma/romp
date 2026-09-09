@@ -16,6 +16,8 @@ XDG_STATE_HOME is pointed at a temp dir BEFORE the kernel module loads, so jd.ST
 pending-ops.json and every state write — stays out of the live user state (see
 [[distiller-giveup-rearm]]: leaking test state into ~/.local/state/romp corrupts live behavior).
 """
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -741,6 +743,63 @@ class UnknownSessionRefused(_RouteServer):
                 self.assertEqual(parsed, [km._thread_transcript_path(reg, THREAD_TSID)])
                 fake.kill.assert_called_once_with(THREAD_TSID)
                 self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_thread_whose_fork_never_launched_takes_its_deferred_end(self):
+        # a thread whose fork failed to launch keeps forkOf (spent only by a CLI init that never came) and
+        # carries launchError (_record_launch_error writes it; only a connect proof clears it), with alive
+        # still True. Its deferred end was accepted (200 deferred) and the sweep's forkOf arm then stood down
+        # silently on every tick, forever short of a relaunch, while the immediate door on the same reg
+        # killed and recorded. Nothing is launching it, so no turn can be open: the sweep takes the kill
+        # path through the one routine (the death record, the closed frame, the spent wish), reading no
+        # transcript. While the backend lists the sid as running (a reply relaunching the CLI leaves both
+        # flags set for the whole launch) it stands down and says so each tick, as the sibling branches do
+        # (review round 4, 2026-09-09).
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        fake.running_sids.return_value = [THREAD_TSID]
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        reg = json.loads(reg_path.read_text())
+        reg["forkOf"], reg["lastSid"] = THREAD_PARENT, THREAD_PARENT
+        reg["launchError"] = {"kind": "spawn", "text": "the CLI exited before it connected", "t": 1}
+        reg_path.write_text(json.dumps(reg))
+        deaths, sent, parsed = [], [], []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: parsed.append(path) or {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: False), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                # a launch in flight: the backend lists the sid; stand down, and say so
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1000, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish stays armed while a launch is in flight")
+                self.assertIn("fork has not landed", err.getvalue(), "the stand-down is said, not silent")
+                self.assertEqual(parsed, [], "the parent's transcript is never read for the thread")
+                # nothing launching it: the fork will never land, and the wish is served now
+                fake.running_sids.return_value = []
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertEqual(deaths, [THREAD_TSID], "the death is recorded")
+                self.assertIn({"type": "closed", "id": THREAD_TSID}, sent, "the closed frame is sent")
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "the wish is spent")
+                self.assertEqual(parsed, [], "no transcript is parsed: no CLI is up, so no turn can be open")
+                self.assertIn("kill: %s via end-on-idle" % THREAD_TSID, err.getvalue())
         finally:
             km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
             _rm_thread(THREAD_PARENT, THREAD_TSID)
