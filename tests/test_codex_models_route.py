@@ -17,16 +17,23 @@ with a barrier below); the snapshot fires both. A kill of the only other session
 its landing is the order the snapshot misses and the counter catches, and two creates racing that kill (both
 snapshots saw the row, both landings followed it) is the order a count of exactly one after landing missed too.
 Sequential second doors fire on neither; a kill after the row landed and a revive of an already-live row send
-nothing, since the set never emptied. A backend that raises under the snapshot reads as closed and fires; one
-that raises under the helper's own read breaks neither door and names the door on stderr. The backend is a
-FAKE here (no app-server, no network); the handler runs in-process on a loopback ThreadingHTTPServer, the
-test_kernel_cors idiom. Synthetic fixtures only.
+nothing, since the set never emptied. A door whose landing call raises after putting its row (a spawn's
+registry write, a revive's registry save) runs the helper from a finally: another door may have snapshotted
+that transient row as the open gate and landed beside it, so no closing was counted and its own window held
+nothing, and only the aborting door knows the gate was closed. The gate's live read is has_live, one read under
+the backend's sessions lock; live_sessions() walks a row list it took earlier and can read empty across a
+landing and a kill while a row is live. A backend that raises under the snapshot reads as closed and fires;
+one that raises under the helper's own read breaks neither door and names the door on stderr. The backend is
+a FAKE in most tests (no app-server, no network) and the REAL clientless CodexBackend where the failure path
+is the backend's own; the handler runs in-process on a loopback ThreadingHTTPServer, the test_kernel_cors
+idiom. Synthetic fixtures only.
 """
 import contextlib
 import http.client
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -36,7 +43,8 @@ from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-BIN = os.path.join(os.path.dirname(HERE), "bin")
+ROOT = os.path.dirname(HERE)
+BIN = os.path.join(ROOT, "bin")
 # Hermetic state BEFORE the loads -- they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
@@ -45,6 +53,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["ROMP_MODEL_CATALOG"] = "off"          # never the Models API from a test
 km = load_source("romp_kernel_codex_models", os.path.join(BIN, "romp-kernel"))
+cb = load_source("romp_codex_backend_codex_models", os.path.join(ROOT, "kernel", "codex_backend.py"))
 
 SID = "11111111-2222-4333-8444-555555555555"
 SID2 = "22222222-3333-4444-8555-666666666666"
@@ -69,8 +78,9 @@ class FakeCodex:
     resume wait on AFTER landing their row, so two doors driven from two threads both hold a live row
     before either reaches the gate check, the interleaving the real backend's tail (registry save,
     transcript touch, names write) leaves open. `closings`: the real backend's gate_closings counter,
-    incremented when a kill (fake.kill, a kill on another thread) leaves the live set empty, the event
-    the doors compare across their window."""
+    incremented once per transition when a kill (fake.kill, a kill on another thread) or a failure pop
+    (fake.drop, spawn's _drop_row) takes the last live row out of the set, the event the doors compare
+    across their window. `has_live`: the gate read, the set's emptiness under the fake's lock."""
 
     def __init__(self, models=None, error=None, live=None, raise_catalog=None, dead=(), sids=(SID,), barrier=None):
         self.models, self.error, self.live = list(models or []), error, dict(live or {})
@@ -85,16 +95,28 @@ class FakeCodex:
     def live_sessions(self):
         return self.live
 
+    def has_live(self):
+        with self._lock:
+            return bool(self.live)
+
     def gate_closings(self):
         with self._lock:
             return self.closings
 
     def kill(self, sid):
         with self._lock:
-            self.live.pop(sid, None)
+            was_live = self.live.pop(sid, None) is not None
             self.dead.add(sid)
-            if not self.live:
-                self.closings += 1   # the set went empty: the gate closed, whatever lands after
+            if was_live and not self.live:
+                self.closings += 1   # the set went empty: the gate closed, whatever lands after (once per
+                #                      transition, as _retire_row: a second kill of a dead row counts none)
+
+    def drop(self, sid):
+        """spawn's failure pop (_drop_row): the row leaves the set, and a LIVE row leaving it empty counts."""
+        with self._lock:
+            was_live = self.live.pop(sid, None) is not None
+            if was_live and not self.live:
+                self.closings += 1
 
     def _session(self, sid):
         return object() if sid in self.live or sid in self.dead else None
@@ -193,6 +215,21 @@ class ModelsRoute(unittest.TestCase):
         cx = self._models()["codex"]
         self.assertEqual((cx["models"], cx["error"]),
                          ([], "the Codex backend is unavailable (see the kernel log)"))
+
+    def test_the_gate_is_the_backends_one_locked_read_not_the_row_walk(self):
+        # live_sessions() snapshots the row list under the sessions lock and reads each row's dead flag
+        # later under the row's own lock, so across a landing and a kill of the list's only row it reads
+        # {} while a row is live (the real tear is reproduced on the real backend in test_codex_backend's
+        # GateClosings); a GET in that instant answered the closed gate's empty list, and no door fires
+        # for it (the set never emptied, so the counter is still). The gate reads has_live, one read under
+        # the lock. The fake answers the two reads as the torn backend did: a row live under the lock, the
+        # row walk empty; the handler must take the first.
+        fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}})
+        fake.live_sessions = lambda: {}
+        km._codex_backend = fake
+        cx = self._models()["codex"]
+        self.assertEqual((cx["models"], cx["error"], fake.catalog_calls), (MODELS, None, 1),
+                         "the gate read the live row: the list, not the closed gate's reason")
 
 
 class GateFlipFrame(unittest.TestCase):
@@ -428,21 +465,128 @@ class GateFlipFrame(unittest.TestCase):
         self.assertEqual((failed, [m["type"] for m in focused], list(fake.live)), ([], ["focus"], [SID]))
         self.assertEqual(self._frames(), [], "a live row revived again: the gate did not move")
 
+    # The aborting door. A spawn that put its row and then failed (a registry or names write) pops it and
+    # raises; a revive whose registry save failed rolls its flip back and raises. That transient live row
+    # was the open gate for the save's duration, and a door whose snapshot saw it, and whose row landed
+    # before the pop, saw no closing (the set never emptied) and nothing in its own window: only the
+    # aborting door knows the gate was closed. Both doors call the helper from a finally, so on the raise
+    # path too, where it fires exactly when a row is live now and this door's window saw the gate closed
+    # or a closing. Realized three ways: the fake, the real backend's spawn, the real backend's revive.
+    def _real_backend(self):
+        """The REAL CodexBackend, clientless (client_factory answers None: no app-server, no network) on a
+        private state dir; a spawn lands a live launch-error row, as it does in the kernel."""
+        td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, td, True)
+        return cb.CodexBackend(td, client_factory=lambda: None, log=lambda m: None)
+
+    def test_a_spawn_that_fails_after_another_door_landed_on_its_row_still_sends_the_frame(self):
+        fake = FakeCodex(models=MODELS, sids=(SID, SID2))
+        land, inner = fake.spawn, []
+        def spawn(nm, cwd, bg, fg):
+            if nm != "web":
+                return land(nm, cwd, bg, fg)          # door A's own landing
+            sid = land(nm, cwd, bg, fg)               # the failing door's row lands live: the gate opens
+            inner.append(km._create_codex_session_inner("api", "/TESTDIR")[0])   # door A, whole, on that row
+            fake.drop(sid)                            # the failure pop: A is live, so no closing is counted
+            raise OSError("disk full")
+        fake.spawn = spawn
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            with self.assertRaises(OSError):
+                km._create_codex_session_inner("web", "/TESTDIR")
+        self.assertEqual((inner, list(fake.live), fake.closings), ([SID2], [SID2], 0),
+                         "the other door's row is live, the failing spawn's is gone, and the set never emptied")
+        frames = self._frames()
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "the gate was closed before the failing spawn and is open now: every app hears")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_real_spawn_whose_registry_write_fails_after_another_door_landed_still_sends_the_frame(self):
+        be = self._real_backend()
+        km._codex_backend = be
+        self.assertFalse(be.has_live(), "the gate starts closed")
+        real_save, inner = be._save_registry, []
+        def save(s, **kw):
+            if s.name == "web" and kw.get("create"):      # the failing door's own row write, its row already live
+                inner.append((be.has_live(), km._create_codex_session_inner("api", "/TESTDIR")[0]))   # door A, whole
+                raise OSError("disk full")
+            return real_save(s, **kw)
+        be._save_registry = save
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            with self.assertRaises(OSError):
+                km._create_codex_session_inner("web", "/TESTDIR")
+        live = be.live_sessions()
+        self.assertEqual(([r["name"] for r in live.values()], [t for t, _ in inner], be.gate_closings()),
+                         (["api"], [True], 0),
+                         "door A ran on the live row; that row is gone, A's is live, and the set never emptied")
+        frames = self._frames()
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "the real backend's failure pop: the aborting door still announces the gate it saw closed")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_real_revive_whose_registry_save_fails_after_another_door_landed_still_sends_the_frame(self):
+        be = self._real_backend()
+        km._codex_backend = be
+        g = be.spawn("web", "/TESTDIR")
+        be.kill(g)
+        self.assertEqual((be.has_live(), be.gate_closings()), (False, 1), "the only row died: the gate is closed")
+        real_save, inner = be._save_registry, []
+        def save(s, **kw):
+            if s.sid == g and "dead" in kw.get("fields", ()):   # the resume's own save: the row is flipped live
+                inner.append((be.has_live(), km._create_codex_session_inner("api", "/TESTDIR")[0]))   # door A, whole
+                raise OSError("disk full")
+            return real_save(s, **kw)
+        be._save_registry = save
+        rev0 = km._models_rev[0]
+        focused, failed = [], []
+        with _revive_patched(focused, failed), \
+             mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            km._revive_session_inner(g, {"wid": "w-chat"})
+        live = be.live_sessions()
+        self.assertEqual(([m["type"] for m in failed], focused, be._session(g).dead,
+                          [r["name"] for r in live.values()], [t for t, _ in inner], be.gate_closings()),
+                         (["reviveFailed"], [], True, ["api"], [True], 1),
+                         "the revive failed and rolled its flip back; door A ran on the flipped row and is live; "
+                         "the rollback found A live, so no closing was counted")
+        frames = self._frames()
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "the real backend's rollback: the aborting revive still announces the gate it saw closed")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_spawn_that_fails_with_no_other_door_landed_sends_no_frame(self):
+        # The controls. Alone: the gate was closed at the snapshot and is closed again after the pop, which
+        # counted the closing it is (for a door that lands after it); nothing is live, so no frame. Beside a
+        # live row: the snapshot saw the row, the pop left it live and counted nothing; neither fact moved.
+        for live, sids, closings in (({}, (SID,), 1), ({SID: {"backend": "codex"}}, (SID2,), 0)):
+            with self.subTest(beside=sorted(live)):
+                fake = FakeCodex(models=MODELS, live=dict(live), sids=sids)
+                land = fake.spawn
+                def spawn(nm, cwd, bg, fg, land=land, fake=fake):
+                    fake.drop(land(nm, cwd, bg, fg))   # the row lands, then the failure pops it
+                    raise OSError("disk full")
+                fake.spawn = spawn
+                km._codex_backend = fake
+                with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+                    with self.assertRaises(OSError):
+                        km._create_codex_session_inner("web", "/TESTDIR")
+                self.assertEqual((sorted(fake.live), fake.closings, self._frames()), (sorted(live), closings, []))
+
     def test_a_snapshot_that_raises_reads_as_closed_and_sends_the_frame(self):
         # _codex_gate_closed's rule: a backend that raises under the snapshot reads as closed with no count
         # to compare, erring toward a frame (one re-read too many beats a picker that never hears the list
         # landed). Pinned where nothing else fires: SID is live and stays live, so no closing is counted
-        # and only the snapshot can fire. The fake raises on the snapshot's read alone, named by its
-        # caller's frame (_pick_identity_color reads live_sessions before the snapshot and the helper after
-        # it), so the helper's own read works and nothing reaches stderr: the raise was swallowed where it
-        # was read, not logged as a lost frame.
+        # and only the snapshot can fire. The fake raises on the snapshot's gate read alone, named by its
+        # caller's frame (the helper reads has_live after the landing), so the helper's own read works and
+        # nothing reaches stderr: the raise was swallowed where it was read, not logged as a lost frame.
         fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
-        real = fake.live_sessions
-        def live_sessions():
+        real = fake.has_live
+        def has_live():
             if sys._getframe(1).f_code.co_name == "_codex_gate_closed":
                 raise RuntimeError("live boom")
             return real()
-        fake.live_sessions = live_sessions
+        fake.has_live = has_live
         km._codex_backend = fake
         err = io.StringIO()
         with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"), \
@@ -454,14 +598,14 @@ class GateFlipFrame(unittest.TestCase):
         self.assertNotIn("codex spawn", err.getvalue())
         self.assertNotIn("live boom", err.getvalue())
 
-    def test_a_backend_whose_live_sessions_always_raises_names_the_door_and_breaks_neither(self):
+    def test_a_backend_whose_gate_read_always_raises_names_the_door_and_breaks_neither(self):
         # Fail loudly, never the create or the revive: the snapshot reads closed, the helper's own read
-        # raises, one stderr line names the door and the error, and no frame goes out. The create still
-        # returns its sid and the revive still focuses the asker's chat with no reviveFailed.
+        # (has_live) raises, one stderr line names the door and the error, and no frame goes out. The
+        # create still returns its sid and the revive still focuses the asker's chat with no reviveFailed.
         fake = FakeCodex(models=MODELS, dead=[SID2])
         def boom():
             raise RuntimeError("live boom")
-        fake.live_sessions = boom
+        fake.has_live = boom
         km._codex_backend = fake
         err = io.StringIO()
         with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"), \

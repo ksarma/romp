@@ -1517,6 +1517,34 @@ class GateClosings(unittest.TestCase):
             self.assertEqual(be.gate_closings(), 2,
                              "the flip held a live row for the save's duration; taking it back emptied the set")
 
+    def test_has_live_is_one_read_under_the_lock_where_the_row_walk_tears(self):
+        # live_sessions() takes the row list under the sessions lock and reads each row's dead flag later
+        # under the row's own lock. Between the two, a row lands and the list's only row dies: the walk
+        # reads {} while a row is live, and the counter (rightly) never moved, so no door fires for a gate
+        # read that answered closed there. has_live reads the set under the lock at one instant and agrees
+        # with the counter; the kernel's /models gate and the doors' emptiness reads consult it.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            be = cb.CodexBackend(td, client_factory=lambda: None)
+            y = be.spawn("web", "/TESTDIR")
+            self.assertEqual((be.has_live(), be.gate_closings()), (True, 0))
+            real_items, torn = be._session_items, []
+            def items():
+                rows = real_items()
+                if not torn:
+                    torn.append(True)
+                    be.spawn("api", "/TESTDIR")   # a row lands after the list was taken
+                    be.kill(y)                    # and the list's only row dies before its flag is read
+                return rows
+            be._session_items = items
+            self.assertEqual((be.live_sessions(), torn), ({}, [True]), "the torn walk: empty while a row is live")
+            self.assertEqual((be.has_live(), be.gate_closings()), (True, 0),
+                             "one read under the lock: a row is live, and the set never emptied")
+            for sid in list(be._sessions):
+                be.kill(sid)
+            self.assertEqual((be.has_live(), be.gate_closings()), (False, 1),
+                             "every row dead: the read says closed and the counter says one closing")
+
 
 class LaunchErrorNames(unittest.TestCase):
     """A LIVE launch-error row without a shared name let a retry mint a duplicate live session

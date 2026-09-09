@@ -15356,33 +15356,35 @@ def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
 
 def _codex_gate_closed(cx):
     """The gate's state BEFORE a door opens it, as the pair (closed, closings0): `closed` is True while
-    `cx` holds no live session; `closings0` is the backend's count of gate closings, the live set going
-    empty, counted where the row leaves it (CodexBackend.gate_closings). Taken by the two doors (the
-    spawn and the revive) on the line before the backend lands the row; _codex_gate_opened compares
-    both against the world after the landing. The count is read FIRST: a kill that lands between the
-    two reads then shows in the snapshot (the set reads empty), and one that lands after both shows in
-    the count, so no kill escapes both reads. A backend that raises here reads as (True, None), closed
-    with no count to compare, and the frame fires: the worst case is one frame too many, which costs
-    each picker one /models re-read; the other answer would be a picker that never hears the list
-    landed."""
+    `cx` holds no live session (cx.has_live, one read under the backend's sessions lock; live_sessions()
+    walks a row list it took earlier, so it can read empty across a landing and a kill while a row is
+    live); `closings0` is the backend's count of gate closings, the live set going empty, counted where
+    the row leaves it (CodexBackend.gate_closings). Taken by the two doors (the spawn and the revive) on
+    the line before the backend lands the row; _codex_gate_opened compares both against the world after
+    the landing. The count is read FIRST: a kill that lands between the two reads then shows in the
+    snapshot (the set reads empty), and one that lands after both shows in the count, so no kill escapes
+    both reads. A backend that raises here reads as (True, None), closed with no count to compare, and
+    the frame fires: the worst case is one frame too many, which costs each picker one /models re-read;
+    the other answer would be a picker that never hears the list landed."""
     try:
         closings0 = cx.gate_closings()
-        return (not cx.live_sessions(), closings0)
+        return (not cx.has_live(), closings0)
     except Exception:
         return (True, None)
 
 
 def _codex_gate_opened(cx, door, was_closed, closings0):
     """Send the models frame when the gate was closed at any point between the caller's snapshot and
-    this line, and the caller's row is live now. GET /models consults the Codex catalog only where
-    this machine opted in (the Codex default backend, the Codex judge engine, or a live Codex
-    session), so the first live session flips that gate from closed to open, and every open picker's
-    cached `codex.models` just went from [] to the real list: tell them with a models frame, the same
-    event the pick memory and the catalog fetch send. Without it a dashboard loaded before the flip
-    kept its empty Codex menu until a reload (the owner's empty picker, 2026-09-09). Event-keyed on
-    the gate's flip itself, never on every spawn or revive: a second live session changes nothing the
-    payload carries. TWO doors open the gate and both call this once the backend holds the session
-    live: _create_codex_session_inner (cx.spawn) and _revive_session_inner's Codex arm (a successful
+    this line, and a row is live now (the caller's; or, on the caller's raise path, another door's, see
+    the end). GET /models consults the Codex catalog only where this machine opted in (the Codex
+    default backend, the Codex judge engine, or a live Codex session), so the first live session flips
+    that gate from closed to open, and every open picker's cached `codex.models` just went from [] to
+    the real list: tell them with a models frame, the same event the pick memory and the catalog fetch
+    send. Without it a dashboard loaded before the flip kept its empty Codex menu until a reload (the
+    owner's empty picker, 2026-09-09). Event-keyed on the gate's flip itself, never on every spawn or
+    revive: a second live session changes nothing the payload carries. TWO doors open the gate and
+    both call this from a finally around the backend's landing call, so on its raise path too:
+    _create_codex_session_inner (cx.spawn) and _revive_session_inner's Codex arm (a successful
     cx.resume makes a dead session live again; the first cut sent the frame from the spawn alone, so
     reviving the only Codex session after a kernel restart left every tab's Codex list empty).
 
@@ -15404,11 +15406,19 @@ def _codex_gate_opened(cx, door, was_closed, closings0):
     itself. Sequential second creates fire on neither fact (the snapshot saw a row, the counter is
     still); two racing first creates send two frames per app when both snapshots ran before either
     landing, each a cheap re-read (the rev increments and the picker drops the lower one); a kill of
-    the only other session anywhere between the snapshot and this line sends one; a kill after this
-    row landed sends none. `door` names the caller in the log line."""
+    the only other session between the snapshot and the landing sends one (the closing is counted only
+    while this row is not yet in the set); a kill after this row landed sends none. The raise path: a
+    door whose landing call put its row and then failed (a spawn's registry or names write, a revive's
+    registry save) takes the row back, by the failure pop or the rollback, and reaches this line through
+    the finally. Another door may have snapshotted that row as the open gate and landed beside it, so
+    the set never emptied, no closing was counted, and that door's own window held nothing: the
+    aborting door is the only one that saw the gate closed, and with a row live now it sends the frame.
+    With nothing live now it sends none (the failing spawn alone; its pop counted the closing it is,
+    for a door that lands after it), and a failure beside a row that was live at the snapshot moves
+    neither fact. The live read is cx.has_live, one read under the backend's sessions lock. `door` names
+    the caller in the log line."""
     try:
-        live = cx.live_sessions()
-        if live and (was_closed or closings0 is None or cx.gate_closings() != closings0):
+        if cx.has_live() and (was_closed or closings0 is None or cx.gate_closings() != closings0):
             _models_changed()
     except Exception as e:
         sys.stderr.write("codex %s: models frame not sent (%s)\n" % (door, e))
@@ -15432,9 +15442,13 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     bg, fg = _pick_identity_color()
     cx = _codex()
     was_closed, closings0 = _codex_gate_closed(cx)   # the gate before THIS spawn, and the closings so far
-    sid = cx.spawn(nm, cwd, bg, fg)
+    try:
+        sid = cx.spawn(nm, cwd, bg, fg)
+    finally:
+        # on the raise path too: a spawn that put its row and then failed held the gate open until its
+        # pop, and a door whose snapshot saw that row as the open gate has nothing of its own to fire on
+        _codex_gate_opened(cx, "spawn", was_closed, closings0)   # the gate opened under this spawn: every picker re-reads /models
     extra = {}
-    _codex_gate_opened(cx, "spawn", was_closed, closings0)   # the gate opened under this spawn: every picker re-reads /models
     if parent or tags:
         extra.update(_tag_ack(sid, parent, tags))
     if client is not None:
@@ -18763,10 +18777,13 @@ def _revive_session_inner(sid, client=None):
                 detail = (getattr(cx, "_client_err", "") or CODEX_SETUP_HINT)
             else:
                 was_closed, closings0 = _codex_gate_closed(cx)   # the gate before THIS resume, and the closings so far
-                ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
-                detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
-                if ok:
+                try:
+                    ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
+                finally:
+                    # on the raise path too: a failed registry save rolls the flip back, and another
+                    # door may have landed on the flipped row; the outer except still files reviveFailed
                     _codex_gate_opened(cx, "revive", was_closed, closings0)   # the gate opened under this revive
+                detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
         else:
             cwd = _cwd_of(sid)
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
@@ -54733,12 +54750,17 @@ class Handler(BaseHTTPRequestHandler):
                 # the spawn and the revive, keyed on the door's own before-snapshot of the gate or on
                 # the backend's closings counter, gate_closings, having moved since it: the live set
                 # emptied under the door, so two racing first creates still send at least one, a kill
-                # interleaved with a create sends one, and a kill after the row landed sends none). The
+                # interleaved with a create sends one, and a kill after the row landed sends none; a
+                # door whose landing call raises after putting its row runs the helper too, for a door
+                # that snapshotted that row as the open gate and landed beside it). The gate is read
+                # with cx.has_live, ONE read under the backend's sessions lock: live_sessions() walks a
+                # row list it took earlier, so across a landing and a kill it could answer this closed
+                # gate while a row was live, and no door fires for that (the set never emptied). The
                 # CLOSED gate carries a reason of its own: the backend was not asked, so the menu must
                 # never read the empty list as an answer from the app-server (the menu's fallback used
                 # to say it sent no list).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
-                           or bool(cx.live_sessions())):
+                           or cx.has_live()):
                     try:
                         cx_models = cx.model_catalog()
                     except Exception as e:

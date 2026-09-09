@@ -406,6 +406,18 @@ class CodexBackend:
         with self._sessions_lock:
             return self._gate_closings
 
+    def has_live(self):
+        """Is any row live: ONE read under _sessions_lock, the hold every put and every live-to-dead write
+        takes, so the answer is the set at one instant. It takes no row lock (the order is s.lock then
+        _sessions_lock everywhere, so nothing inverts). live_sessions() is not such a read: it snapshots
+        the row list, then reads each row's `dead` flag later under the row's own lock, so a read whose
+        list predates a landing and whose flag read follows a kill of the list's only row answers empty
+        while a row is live, and no door fires for it (the set never emptied, so gate_closings is still).
+        The kernel's /models gate and the two doors' emptiness reads consult this; live_sessions() stays
+        where the rows themselves are wanted."""
+        with self._sessions_lock:
+            return self._live_row_remains_locked()
+
     def _live_row_remains_locked(self):
         # under _sessions_lock; `dead` is a plain attribute, and every live-to-dead write holds this lock
         return any(not t.dead for t in self._sessions.values())
