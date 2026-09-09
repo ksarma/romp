@@ -341,7 +341,9 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      dropped that crossed the cap toggled it and changed #tabs' width from inside the strip's ResizeObserver callback
      (render.ts ensureTabRowObserver), one loop notice per crossing. Stable, the strip's width holds, at the cost of a
      10px gutter on the bar's right in every host where scrollbars take space; no gutter under the phone layout, whose
-     media rule (kernel.py _CHAT_MOBILE_CSS) sets overflow: visible, where the property has no effect */
+     media rule (kernel.py _CHAT_MOBILE_CSS) sets overflow: visible, where the property has no effect. The per-row
+     hairlines' right bleed covers the gutter (.tab-row-line below, review round 3), so each line still meets the bar's
+     edge like the border-bottom; the gutter narrows #tabs, not the lines */
   scrollbar-gutter: stable;
   border-bottom: 1px solid var(--box-border);
   /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
@@ -364,13 +366,18 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    scrollbar gutter above covers the other way the callback could change the strip's width, a row change
    crossing the scroll cap (review round 2). */
 #tabs .tab-row-sentinel { position: absolute; top: 0; left: 0; right: 0; height: 0; pointer-events: none; }
-/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call — theirs to make):
+/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call, theirs to make):
    a full-bleed hairline under EVERY row of tabs, so a row above a short row never floats. Painted
-   by paintTabRowLines (render.ts — CSS cannot select wrap rows); the last row is closed by
-   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding so each line
-   runs the strip's full width, like the outer close. Classic only; Yatharth keeps his merged look. */
+   by paintTabRowLines (render.ts, since CSS cannot select wrap rows); the last row is closed by
+   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding, and on the right
+   its 10px scrollbar gutter too (scrollbar-gutter: stable above; the sheet's ::-webkit-scrollbar
+   width), so each line runs the bar's full width, like the outer close: measured in Chromium to the
+   bar's edge, scrollbar shown or not (a shown scrollbar paints over its end), and the -8px bleed alone
+   stopped 10px short (review round 3). A host with no gutter (overlay scrollbars) clips the overshoot
+   at the bar's edge, measured in Firefox; a host whose classic gutter is wider than 10px is not
+   measured here. Classic only; Yatharth keeps his merged look. */
 body:not(.chat-theme-yatharth) #tabs .tab-row-line {
-  position: absolute; left: -8px; right: -8px; height: 1px; background: var(--box-border); pointer-events: none; }
+  position: absolute; left: -8px; right: -18px; height: 1px; background: var(--box-border); pointer-events: none; }
 body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
 /* T141 (the user 2026-08-28, explicit ruling): the T125/T128 band is OUT — one dark background
    everywhere; the strip's plane is the page dark again (#tabbar's own background above), the same
@@ -584,9 +591,10 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    .tab-keep-break, ahead of a group header or the trail's divider whose first tab wrapped to the next
    row, so a group never opens at a row's end with its tabs below. The painter clears and re-places
    them on every strip rebuild, on the strip's width observer and when the document's fonts finish a
-   load, the three events that paint the hairlines, and never while a tab is dragged (the drag's virtual
-   layout reads them as row openers); they are this same item, styled by this rule, and no rule names
-   .tab-keep-break on its own. */
+   load, the three events that run the pass (the painter's fourth, the tab drag's own insert, lays the
+   lines only, since the pass stands down while the dragged tab is in the strip: the drag's virtual
+   layout reads the breaks as row openers); they are this same item, styled by this rule, and no rule
+   names .tab-keep-break on its own. */
 .tab-group-break { flex: 0 0 100%; height: 0; margin: 0; padding: 0; pointer-events: none; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
@@ -2950,7 +2958,8 @@ pre.has-copy:hover .code-copy, .code-copy:focus-visible { opacity: 0.9; }
 .hljs-addition { color: var(--hl-str); }
 .hljs-deletion { color: var(--err); }
 
-/* scrollbars */
+/* scrollbars. The tab strip's hairline bleed (.tab-row-line) adds this width to its right offset, to cross
+   #tabbar's reserved gutter; change the two together */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(255, 255, 255, 0.12)); border-radius: 5px; }
 

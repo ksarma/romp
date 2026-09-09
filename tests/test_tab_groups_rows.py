@@ -131,6 +131,21 @@ await page.click(`#tabs .tab[data-id="${cfg.twoTag}"][data-copy="infra"]`);
 await page.waitForFunction((id) => document.querySelectorAll(`#tabs .tab.active[data-id="${id}"]`).length === 2, cfg.twoTag, { timeout: 8000 });
 await page.waitForTimeout(400);
 const clicked = await survey();
+// THE COMMITTED DROP (review round 3): a real drag of one tab onto the end of another in its group. In Chromium the
+// drag's start fires pointercancel, which releases the strip's press-hold, so the drop's reorderTo rebuilds the strip
+// while the drag is still open and dragend then renders nothing; the rebuild's paint must run the keep pass (before
+// the fix its gate, draggedId, was still set). Wait on the rebuilt order (the dragged tab right after its target),
+// then two frames, never on a timer
+let dropped = null;
+if (cfg.drag) {
+  const src = `#tabs .tab[data-id="${cfg.drag.src}"]`, dst = `#tabs .tab[data-id="${cfg.drag.dst}"]`;
+  const box = await page.locator(dst).boundingBox();
+  await page.dragAndDrop(src, dst, { targetPosition: { x: Math.floor(box.width) - 3, y: Math.floor(box.height / 2) } });
+  await page.waitForFunction(([s, d]) => { const t = document.querySelector(`#tabs .tab[data-id="${s}"]`); const p = t && t.previousElementSibling; return !!(p && p.dataset.id === d); },
+                             [cfg.drag.src, cfg.drag.dst], { timeout: 8000 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  dropped = await survey();
+}
 await page.mouse.move(320, 400);   // off the strip, so no hover tip rides the screenshots
 await page.waitForTimeout(200);
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-dark.png", clip: { x: 0, y: 0, width, height: 130 } });
@@ -158,7 +173,7 @@ await page.evaluate((s) => { localStorage.setItem("romp:settings", JSON.stringif
 await page.waitForFunction(() => document.body.classList.contains("dense-chrome"), null, { timeout: 8000 });
 await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const dense = await survey();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ open, clicked, light, resized, dense }) + "\n");
+fs.writeSync(1, "RESULT:" + JSON.stringify({ open, clicked, dropped, light, resized, dense }) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -226,14 +241,16 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
             cls.kernel.wait()
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
-    def _drive(self, script, name, rows, width=640, resize_to=None):
+    def _drive(self, script, name, rows, width=640, resize_to=None, drag=None):
         """rows: drive with the fork's stripGroupRows setting on (T264's per-row layout) or off (the inline default).
         width: the viewport the page opens at; resize_to: a second viewport width the driver narrows to after the
-        surveys, for a survey through the strip's live ResizeObserver (`resized` in the result)."""
+        surveys, for a survey through the strip's live ResizeObserver (`resized` in the result); drag: a {src, dst}
+        pair of sids the driver drags at the opening width, src onto the end of dst with a real Chromium drag, for a
+        survey right after the drop's rebuild (`dropped` in the result)."""
         cfg = os.path.join(self.lab, name + ".json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "rows": rows,
-                       "width": width, "resizeTo": resize_to,
+                       "width": width, "resizeTo": resize_to, "drag": drag,
                        "visible": len([s for s in SESSIONS if s[2] != "archived"]) + 1,   # web-search has two copies
                        "twoTag": next(sid for (n, sid, _t) in SESSIONS if n == "web-search"),
                        "shots": os.environ.get("TABROWS_SHOTS", "")}, f)
@@ -385,7 +402,9 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         # strip: the viewport less #tabbar's two 8px paddings and its 10px scrollbar gutter, review round 2), where
         # the infra header fits at the end of row 0 while its first tab wraps (at 640px nothing does, and the
         # keep pass places nothing; review round 1), then narrowed to 640px through the live observer
-        r = self._drive(DRIVER, "inline", rows=False, width=810, resize_to=640)
+        by_name = {n: sid for (n, sid, _t) in SESSIONS}
+        r = self._drive(DRIVER, "inline", rows=False, width=810, resize_to=640,
+                        drag={"src": by_name["web-frontend"], "dst": by_name["web-billing"]})
         o = r["open"]
         self.assertEqual(o["breaks"], 0, "no row break of the setting's in the inline layout: %r" % [i["cls"] for i in o["items"]])
         self._openers_share_rows(o, "810px")
@@ -402,7 +421,6 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertGreater(o["seps"][0]["h"], 0, "…and visible: %r" % o["seps"])
         secs = self._sections(o["items"])
         self.assertEqual([g for g, _h, _t in secs], ["web", "infra", "archived", None], "three groups in tag order, then the trail: %r" % secs)
-        by_name = {n: sid for (n, sid, _t) in SESSIONS}
         want = {"web": ["web-frontend", "web-backend", "web-gateway", "web-search", "web-billing"],
                 "infra": ["web-search", "infra-ci", "infra-deploy"], "archived": [], None: ["scratch"]}
         for g, _h, tabs in secs:
@@ -417,6 +435,22 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertEqual(len(keep_items), o["keeps"])
         for k in keep_items:
             self.assertEqual((k["h"], k["w"] > 0), (0, True), "a keep break spans the row at zero height: %r" % k)
+        # THE COMMITTED DROP (review round 3): web-frontend dragged onto the end of web-billing, a real Chromium drag on
+        # the served page at 810px. The drop's reorderTo rebuilds the strip while the drag is still open (pointercancel
+        # at dragstart released the press-hold) and dragend renders nothing after it; the same items fill row 0, so the
+        # infra header again ends row 0 above its first tab unless the rebuild's paint ran the pass. Before the fix the
+        # pass stood down under the still-set draggedId: keeps 0, the infra header at the top row's end over its first
+        # tab, until an unrelated push or width change
+        p = r["dropped"]
+        ids = lambda s: [it["id"] for it in s["items"] if it["id"]]
+        self.assertNotEqual(ids(p), ids(o), "the premise: the drop changed the order")
+        wf, wb = by_name["web-frontend"], by_name["web-billing"]
+        self.assertEqual(ids(p).index(wf), ids(p).index(wb) + 1, "web-frontend now follows web-billing: %r" % ids(p))
+        self.assertEqual(p["innerWidth"], 810)
+        self.assertEqual(p["keeps"], 1, "right after the drop's rebuild the infra header has its break again: %r" % [(it["name"] or it["cls"], it["top"]) for it in p["items"]])
+        self._openers_share_rows(p, "after the drop")
+        self.assertEqual(p["lines"], self._row_bottoms(p), "the hairlines sit under the rebuilt rows: %r vs %r" % (p["lines"], self._row_bottoms(p)))
+        self.assertEqual([e for e in p["errs"] if "ResizeObserver" in e], [], "no loop notice through the drag: %r" % p["errs"])
         # THE OBSERVER'S PATH (review round 1): narrowed to 640px with no rebuild, the strip re-wraps, the infra header
         # opens its row by wrapping, and the painter's ResizeObserver takes the keep break back out; the pass changed
         # the strip's height from inside the callback, and Chromium raised no loop notice: the observer watches a

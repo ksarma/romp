@@ -5861,12 +5861,13 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
 // unchanged width, which no observer sees: it calls the painter right after the move, once per actual
 // insert). Classic-scoped in CSS (the Yatharth theme hides .tab-row-line), like every strip tuning. The
 // keep-with-next pass (keepGroupsWithTabs, below) rides the same events and runs first: the breaks it
-// places move rows, and the lines go under the rows as they then stand. It stands down while a tab is
-// dragged (draggedId): the lines still follow the rows, through the observer on a width change and
-// through the drag's insert on each move; the breaks stay where the drag found them.
+// places move rows, and the lines go under the rows as they then stand. It stands down while the
+// dragged tab is in the strip (draggedEl connected; dragend or the rebuild's wipe ends that, see the
+// pass): the lines still follow the rows, through the observer on a width change and through the
+// drag's insert on each move; the breaks stay where the drag found them.
 function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
-  if (!draggedId) keepGroupsWithTabs(bar);   // frozen mid-drag: the breaks are the drag's row openers (see the pass)
+  if (!(draggedEl && draggedEl.isConnected)) keepGroupsWithTabs(bar);   // frozen while the dragged tab is in the strip: the breaks are the drag's row openers (see the pass)
   const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
   for (const t of Array.from(bar.children) as HTMLElement[]) {
     // tabs, the section headers (tab groups) and the untagged trail's inline divider: a wrapped row
@@ -5901,13 +5902,21 @@ function paintTabRowLines(bar: HTMLElement): void {
 // full-row item, styled by the same rule, a row opener in the tab drag's virtual layout, and no
 // boundary for sectionHeadOf), cleared and re-placed on every run, so the pass is a pure function of
 // the strip's content and width: a widened strip takes a break back out. Event-keyed like the lines:
-// the strip rebuild, the strip's width observer and the document's fonts finishing a load run the
-// painter (ensureTabRowObserver), and nothing else does; no timer, no frame callback. FROZEN WHILE A
-// TAB IS DRAGGED (review round 1): the drag's virtual layout reads the breaks standing at dragstart
-// as row openers (`br`), and a pass re-running mid-drag moved them under the pointer, so a parked
-// pointer hopped the tab a second time, and some strips flapped between two rows for as long as the
-// pointer stayed. The painter skips this pass while draggedId is set; a header may then end a row
-// above its tab until the drop, when dragend's rebuild re-places the breaks. One forward walk is
+// the strip rebuild runs the pass through the painter, as do the strip's width observer and the
+// document's fonts finishing a load (ensureTabRowObserver); the tab drag's own insert (the dragover
+// handler) runs the painter too, lines only, since the pass stands down under a drag, next; no timer,
+// no frame callback. FROZEN WHILE A TAB IS DRAGGED (review round 1): the drag's virtual layout reads
+// the breaks standing at dragstart as row openers (`br`), and a pass re-running mid-drag moved them
+// under the pointer, so a parked pointer hopped the tab a second time, and some strips flapped between
+// two rows for as long as the pointer stayed. The painter skips this pass while the dragged tab is in
+// the strip (draggedEl connected), so a header may end a row above its tab for the drag's duration.
+// The gate is the element, not draggedId (review round 3): in Chromium the drag's start fires
+// pointercancel, which releases the press-hold (releaseTabStrip), so a committed drop's reorderTo
+// rebuilds the strip at the drop with draggedId still set, and dragend then renders nothing (the
+// render already ran). The rebuild's wipe disconnects the dragged element, which ends the freeze in
+// that same paint, so the drop's rebuild places the breaks; a rebuild a push forced mid-drag does the
+// same, and the drag it wiped is inert from then on (the dragover and drop handlers need the connected
+// element), so its breaks are nobody's row openers. One forward walk is
 // exact: a break moves only the rows after it (flex-wrap lays out in order), and each header is
 // judged by reads made after the breaks ahead of it were placed, so a header that a break above
 // pushed onto its own row gets none. Placing a break changes the strip's height, which is why the
@@ -6175,11 +6184,14 @@ function renderTabs() {
       snapshotDragGeometry(tab);           // widths once at dragstart — the virtual hit-test's stable input (dragslot.ts)
     });
     // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
-    // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
-    // released here by hand, covering the whole gesture against pushes (the click-safe rule). A
-    // CANCELLED drag re-renders from the untouched order and everything FLIP-animates home — that
-    // render also folds in any push that arrived, deferred, mid-drag. A committed drop's reorderTo
-    // already asked for its render; it ran deferred, so flush it.
+    // drag latched tabPointerHeld. In Chromium the drag's start fires pointercancel, which releases
+    // the hold (releaseTabStrip) at dragstart: a mid-drag render is not deferred there, and a
+    // committed drop's reorderTo rebuilds the strip at the drop (the keep pass runs in that rebuild:
+    // its gate is the dragged element's presence, which the wipe ends). Where no pointercancel
+    // arrived the drag swallowed the matching pointerup, so the hold is released here by hand as a
+    // backstop, and a render a push deferred mid-drag is flushed. A CANCELLED drag re-renders from
+    // the untouched order and everything FLIP-animates home; that render also folds in any push that
+    // arrived mid-drag.
     tab.addEventListener("dragend", () => {
       const cancelled = !tabDragCommitted;
       draggedId = null; draggedEl = null; tabDragCommitted = false;
@@ -18353,9 +18365,10 @@ setupSettings();
     // visible separator. In the inline layout (the setting off) the trail's divider is a real 13px box
     // the boxes below measure, as they did before T264; the only breaks there are the painter's keep
     // breaks (keepGroupsWithTabs), standing ahead of a header or the divider whose first tab wrapped,
-    // and frozen for the whole drag (the pass stands down while draggedId is set, so these `br` inputs
-    // cannot move in response to the insert either). A keep break wears no .tab-group-sep, so it is
-    // no box of its own; it opens the row the same way, through `br` via before(t). A drop changes
+    // and frozen for the whole drag (the pass stands down while the dragged tab is in the strip, so
+    // these `br` inputs cannot move in response to the insert either). A keep break wears no
+    // .tab-group-sep, so it is no box of its own; it opens the row the same way, through `br` via
+    // before(t). A drop changes
     // no membership (the tab re-sections on the next render); "Move to" in the tab menu is the
     // membership path.
     const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
@@ -18375,11 +18388,10 @@ setupSettings();
     // them would open the trail's row ahead of its divider). The trail's own break under the setting is
     // a break, not a divider, and needs no redirect (isBreak(ref)).
     if (ref && ref.classList.contains("tab-group-sep") && !isBreak(ref) && isBreak(before(ref as HTMLElement))) ref = before(ref as HTMLElement);
-    // the insert re-packs the rows at an unchanged strip width, which no observer sees, and renderTabs is
-    // deferred while the pointer is down: the hairlines are re-laid right after the move, keyed on the insert
-    // itself (once per actual move, inside the no-op guard). Lines only: the keep pass stands down under
-    // draggedId, so the drag's row openers stay where dragstart found them (review round 2 of the
-    // keep-with-next change)
+    // the insert re-packs the rows at an unchanged strip width, which no observer sees: the hairlines are
+    // re-laid right after the move, keyed on the insert itself (once per actual move, inside the no-op
+    // guard). Lines only: the keep pass stands down while the dragged tab is in the strip, so the drag's
+    // row openers stay where dragstart found them (review round 2 of the keep-with-next change)
     if (ref !== dragged && dragged.nextElementSibling !== ref) {
       flipTabs(() => tabs.insertBefore(dragged, ref));
       paintTabRowLines(tabs);

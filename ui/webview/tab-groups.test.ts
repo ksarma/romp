@@ -474,7 +474,7 @@ test("executed + pinned: with stripGroupRows off (the fork default) the rebuild 
   assert.match(GEAR, /if \(sr\) sr\.checked = s\.stripGroupRows === true;/);
   assert.doesNotMatch(GEAR, /stripGroupRows: true/, "the gear's defaults mirror agrees: off");
   // the guide says so in one sentence
-  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need \(a header never ends a row with its tabs on the next one: it moves down\s+with them\); the gear's \*\*One tag group per row in the tab strip\*\* starts every group on its own row\s+instead\./,
+  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need \(a header left at a row's end with its first tab on the next row moves\s+down to join it, when the two fit on one row\); the gear's \*\*One tag group per row in the tab strip\*\*\s+starts every group on its own row instead\./,
     "the guide says how the inline flow wraps (the keep-with-next rule, tab-row-keep.test.ts) and names the per-row setting");
 });
 

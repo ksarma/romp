@@ -143,9 +143,9 @@ a tab into another group, right-click it and pick **Move to <tag>** under **Tags
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser. The groups follow one another across the
-strip and wrap as they need (a header never ends a row with its tabs on the next one: it moves down
-with them); the gear's **One tag group per row in the tab strip** starts every group on its own row
-instead.
+strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
+down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
+starts every group on its own row instead.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a

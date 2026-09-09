@@ -20,6 +20,12 @@
 //   - the drag freeze: a width change while a tab is dragged runs the painter through the observer, and the keep
 //     breaks stand exactly where the drag found them (the same elements, the same places); the paint after dragend
 //     re-places them as a fresh paint would;
+//   - the committed drop's rebuild (review round 3): the strip is rebuilt while the drag is still open (in Chromium
+//     pointercancel at dragstart released the press-hold, so the drop's render is not deferred, and dragend then
+//     renders nothing); the wipe disconnects the dragged element, the painter's gate, so the pass runs in that paint;
+//   - the hairlines' right edge (review round 3): under classic scrollbars the bar reserves a 10px gutter, and each
+//     hairline's bleed crosses it to the bar's border edge, painted there (a hit test at the edge lands on the line),
+//     scrollbar shown or not; at the round-2 head every line stopped 10px short while the bar's border ran on;
 //   - the invariant across widths: no header or divider ends a row above its first tab unless no row can hold the
 //     pair, and the hairlines sit under every row but the last.
 // Skips, never fails, where playwright or Chromium is missing (CI installs none). The notes-api demo world.
@@ -51,7 +57,8 @@ function probeSource(): string {
   const INSERT = slice("if (ref !== dragged && dragged.nextElementSibling !== ref)", "// Drop commits the LIVE DOM position").replace(/\}\);\s*$/, "");
   return `
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
-let draggedId: string | null = null;   // render.ts's drag state, which the painter reads
+let draggedId: string | null = null;   // render.ts's drag state: the id, and the very element, whose presence in the strip is the painter's gate
+let draggedEl: HTMLElement | null = null;
 ${BREAK}
 ${PAINT}
 const errs: string[] = [];
@@ -75,7 +82,7 @@ type Spec = ["head", string] | ["tab", string, string] | ["sep"] | ["add"];
   width(w: number) { barbox.style.width = w + "px"; },
   /** the bar's own size (its width is the probe's dial; its height the cap's) and the tab's, for the fixed-width legs */
   size(sel: string, w: number, h?: number) { for (const e of Array.from(document.querySelectorAll<HTMLElement>(sel))) { e.style.width = w + "px"; if (h !== undefined) e.style.height = h + "px"; } },
-  drag(id: string | null) { draggedId = id; },
+  drag(id: string | null) { draggedId = id; draggedEl = id ? bar.querySelector('.tab[data-id="' + id + '"]') as HTMLElement | null : null; },
   paint() { paintTabRowLines(bar); },
   /** the dragover handler's insert of the dragged tab ahead of ref, as render.ts runs it (the sliced block above) */
   insert(id: string, beforeId: string | null) {
@@ -105,11 +112,25 @@ type Spec = ["head", string] | ["tab", string, string] | ["sep"] | ["add"];
     const bottoms = [...rows.values()].sort((x, y) => x - y); bottoms.pop();
     const lines = Array.from(bar.querySelectorAll(".tab-row-line")).map((l) => parseFloat((l as HTMLElement).style.top));
     const keeps = Array.from(bar.querySelectorAll(".tab-keep-break")) as HTMLElement[];
+    // the first hairline's right edge against the bar's border edge, and whether the line PAINTS there: a hit test at
+    // the bar's last pixel on the line's row (its pointer-events lifted for the read), which a clip at the padding edge
+    // would hand to #tabbar; under a shown scrollbar the point is the scrollbar's, so the leg reads it only when the bar
+    // does not scroll
+    const barRight = barbox.getBoundingClientRect().right;
+    const first = bar.querySelector(".tab-row-line") as HTMLElement | null;
+    let lineRight = -1, edgePaints = false;
+    if (first) {
+      const lr = first.getBoundingClientRect(); lineRight = lr.right;
+      first.style.pointerEvents = "auto";
+      edgePaints = document.elementFromPoint(barRight - 1, lr.top + 0.5) === first;
+      first.style.pointerEvents = "";
+    }
     // the strip in DOM order, lines and the sentinel left out: what the drag's virtual layout reads
     const order = kids.filter((k) => !k.classList.contains("tab-row-line") && !k.classList.contains("tab-row-sentinel"))
       .map((k) => k.dataset.id || k.dataset.group || (k.classList.contains("tab-keep-break") ? "keep:" + (k.dataset.probe || "?") : k.className));
     return { bad, lines, bottoms, keeps: keeps.length, probes: keeps.map((k) => k.dataset.probe || null), order,
              height: bar.offsetHeight, width: bar.clientWidth, rows: rows.size, errs: errs.slice(),
+             barRight, lineRight, edgePaints, draggedConnected: !!(draggedEl && draggedEl.isConnected),
              // #tabbar: its content width (the gutter and any scrollbar excluded), its border-box width, and whether it scrolls
              boxClientW: barbox.clientWidth, boxW: barbox.offsetWidth, scrolls: barbox.scrollHeight > barbox.clientHeight,
              lineEls: Array.from(bar.querySelectorAll(".tab-row-line")).map((l) => (l as HTMLElement).dataset.probe || null),
@@ -142,6 +163,7 @@ const SPEC = [["head", "web"], ["tab", "a1", "web-frontend"], ["tab", "a2", "web
 
 type Survey = { bad: string[]; lines: number[]; bottoms: number[]; keeps: number; probes: (string | null)[]; order: string[];
   height: number; width: number; rows: number; errs: string[]; boxClientW: number; boxW: number; scrolls: boolean; lineEls: (string | null)[];
+  barRight: number; lineRight: number; edgePaints: boolean; draggedConnected: boolean;
   sentinels: number; sentinelW: number; sentinelH: number };
 
 /** launch: Playwright launch options (the scrollbar leg drops --hide-scrollbars); spec: the strip built after load. */
@@ -291,6 +313,30 @@ test("in Chromium, mid-drag: the dragover handler's own insert (sliced from rend
   });
 });
 
+test("in Chromium, the committed drop's rebuild (review round 3): the strip is rebuilt while the drag is still open, the wipe disconnects the dragged element, and the pass runs in that paint, so a header that would end a row above its first tab has its break before dragend, which renders nothing", async (t) => {
+  await withPage(t, async (page, { survey, frames }) => {
+    let s = await survey(), w0 = 0;
+    for (let w = 880; w >= 200 && !s.keeps; w -= 4) { await page.evaluate((w: number) => (window as any).__probe.width(w), w); await frames(); s = await survey(); w0 = w; }
+    assert.ok(s.keeps > 0 && w0 > 0, "a width with a keep break exists in the demo world");
+    const before = s;
+    await page.evaluate(() => (window as any).__probe.drag("a1"));
+    assert.equal((await survey()).draggedConnected, true, "dragstart: the dragged element is in the strip");
+    // the drop: reorderTo's renderTabs rebuilds at once (pointercancel released the press-hold at dragstart): every child
+    // out, the plan in, the painter; the same strip, so the header that had its break needs it again
+    await page.evaluate((spec: unknown) => (window as any).__probe.build(spec), SPEC);
+    await frames();
+    s = await survey();
+    assert.equal(s.draggedConnected, false, "the wipe took the dragged element out of the strip");
+    assert.deepEqual(s.bad, [], "no opener ends a row above its first tab right after the drop's rebuild, before dragend: " + JSON.stringify(s.bad));
+    assert.equal(s.keeps, before.keeps, "the breaks are back as before the drag (at the round-2 head 0: the pass stood down under the still-set draggedId)");
+    assert.deepEqual(s.lines, s.bottoms, "the hairlines under the rebuilt rows");
+    await page.evaluate(() => (window as any).__probe.drag(null));   // dragend on the committed path renders nothing
+    const after = await survey();
+    assert.deepEqual(after.order, s.order, "dragend changed nothing: the breaks were placed at the drop");
+    assert.deepEqual(loopNotice(after.errs), [], "no loop notice through the drop");
+  });
+});
+
 // a strip tall enough to cross #tabbar's 150px scroll cap (styles.css --tabbar-cap) while the pass is placing and removing
 // breaks: five groups, eleven tabs, the folded tests group, the trail's divider and its tab, and the +. Under classic
 // scrollbars (this leg's launch) the cap's scrollbar takes 10px of the bar's width when it appears. Without the gutter rule
@@ -305,7 +351,7 @@ const TALL_SPEC = [["head", "web"], ["tab", "a1", "web-frontend"], ["tab", "a2",
 test("in Chromium with classic scrollbars (launched without --hide-scrollbars): a sweep whose keep flips cross #tabbar's scroll cap raises no loop notice, because #tabbar's scrollbar gutter is stable and the strip's width holds when the scrollbar comes and goes", { timeout: 120000 }, async (t) => {
   await withPage(t, async (page, { survey, frames }) => {
     let s = await survey(), prev = s;
-    let scrollSteps = 0, capCrossings = 0, flipsScrolling = 0, flipsNot = 0, steps = 0;
+    let scrollSteps = 0, capCrossings = 0, flipsScrolling = 0, flipsNot = 0, steps = 0, edgeReads = 0, edgeReadsScrolling = 0;
     const gutters = new Set<number>();
     for (let w = 880; w >= 200; w -= 4) {
       await page.evaluate((w: number) => (window as any).__probe.width(w), w);
@@ -316,6 +362,13 @@ test("in Chromium with classic scrollbars (launched without --hide-scrollbars): 
       assert.equal(s.width, s.boxClientW - 16, "the strip is the bar's content width less its two 8px paddings at " + w + ", scrollbar or not");
       assert.deepEqual(s.bad, [], "no opener ends a row above its first tab at " + w + ": " + JSON.stringify(s.bad));
       assert.deepEqual(s.lines, s.bottoms, "a hairline under every row but the last at " + w);
+      // the hairline meets the bar's edge like the border-bottom (T134), across the gutter: its right edge is the bar's
+      // border edge, and where no scrollbar covers the gutter the line paints there
+      if (s.lines.length) {
+        assert.equal(s.lineRight, s.barRight, "the first hairline's right edge is the bar's border edge at " + w + " (at the round-2 head: 10px short, at the gutter)");
+        if (s.scrolls) edgeReadsScrolling++;
+        else { assert.ok(s.edgePaints, "the hairline paints to the bar's edge across the gutter at " + w + " (a clip at the padding edge hands the point to #tabbar)"); edgeReads++; }
+      }
       if (s.scrolls) scrollSteps++;
       if (s.scrolls !== prev.scrolls) capCrossings++;
       if (s.keeps !== prev.keeps) { if (s.scrolls || prev.scrolls) flipsScrolling++; else flipsNot++; }
@@ -325,6 +378,7 @@ test("in Chromium with classic scrollbars (launched without --hide-scrollbars): 
     assert.ok(flipsScrolling > 0 && flipsNot > 0, `the pass placed and removed breaks on both sides of the cap: ${flipsScrolling} flips at or into the scrolling strip, ${flipsNot} in the short one`);
     assert.equal(gutters.size, 1, "one gutter width at every step, scrollbar shown or not: " + JSON.stringify([...gutters]));
     assert.ok([...gutters][0] > 0, "the gutter is the classic scrollbar's width (the sheet's 10px): this launch shows scrollbars");
+    assert.ok(edgeReads > 0 && edgeReadsScrolling > 0, `the right edge was read on both sides of the cap: ${edgeReads} painted reads on the short bar, ${edgeReadsScrolling} rect reads on the scrolling one`);
     assert.deepEqual(loopNotice(s.errs), [], "no 'ResizeObserver loop completed with undelivered notifications' window error across the sweep (without the gutter rule the cap crossing at a keep flip raised one)");
     assert.deepEqual(s.errs, [], "no window error at all");
   }, { launch: { ignoreDefaultArgs: ["--hide-scrollbars"] }, spec: TALL_SPEC });

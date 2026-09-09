@@ -3,15 +3,17 @@
 // over a fake #tabs whose layout is a flex-wrap model, the way dragslot.test.ts models rows: every item has a width,
 // the bar a width and one row height; an item that does not fit opens the next row; a .tab-group-break is a
 // zero-height line of its own, so the item after it starts a row at the same y. Two rules ride the painter, keyed on
-// the three events that run it (a strip rebuild, the strip's width observer, the document's fonts finishing a load):
+// the four events that run it (a strip rebuild, the strip's width observer, the document's fonts finishing a load, the
+// tab drag's own insert):
 //  - a group keeps with its first tab: a header, or the untagged trail's divider, whose first tab wrapped to the
 //    next row gets a break ahead of it, so a group never opens at a row's end with its tabs below; not while a tab
-//    is dragged (the breaks are the drag's row openers), and not for a pair no row can hold;
+//    is dragged (the breaks are the drag's row openers; the gate is the dragged element's presence in the strip, so the
+//    rebuild a committed drop runs while the drag is still open, whose wipe disconnects that element, runs the pass), and
+//    not for a pair no row can hold;
 //  - the divider is a row member for the hairlines, like a tab (the pre-T264 rule, back).
-// The observer watches a zero-height width sentinel, not #tabs, so its own row changes never re-trigger it. A fourth
-// caller (review round 2) is the tab drag's own insert: the dragover handler moves the dragged tab through the DOM and
-// runs the painter after the move, since the rows re-pack at an unchanged width, which no observer sees.
-// tab-row-keep-browser.test.ts runs the same code in Chromium. Synthetic ids only.
+// The observer watches a zero-height width sentinel, not #tabs, so its own row changes never re-trigger it. The drag's
+// insert is a caller because the rows re-pack at an unchanged width, which no observer sees; under a drag the painter
+// lays the lines only. tab-row-keep-browser.test.ts runs the same code in Chromium. Synthetic ids only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -135,23 +137,23 @@ class FakeFonts {
 type Api = {
   paintTabRowLines: (bar: Bar) => void;
   ensureTabRowObserver: (bar: Bar) => void;
-  drag: (id: string | null) => void;
+  drag: (id: string | null, el?: Item | null) => void;
   observer: () => FakeRO | null;
   sentinel: () => Item | null;
 };
 
 /** makeRowBreak, paintTabRowLines, keepGroupsWithTabs and ensureTabRowObserver, transpiled, over the fakes. The
- *  strip's drag state (draggedId, a render.ts module variable the painter reads) is declared in the prelude and
- *  set through `drag`. */
+ *  strip's drag state (draggedId and draggedEl, render.ts module variables; the painter reads the element, whose
+ *  presence in the strip is its gate) is declared in the prelude and set through `drag(id, element)`. */
 function lift(fonts: FakeFonts | null = new FakeFonts()): Api & { fonts: FakeFonts | null } {
   const a = RENDER.indexOf("function makeRowBreak("), b = RENDER.indexOf("function makeTrailSep(");
   const c = RENDER.indexOf("function paintTabRowLines("), d = RENDER.indexOf("function tabEmojiNode(");
   assert.ok(a > 0 && b > a && c > b && d > c, "anchors not found: makeRowBreak, makeTrailSep, paintTabRowLines or tabEmojiNode moved; re-anchor");
   const js = requireCjs("esbuild").transformSync(RENDER.slice(a, b) + RENDER.slice(c, d), { loader: "ts" }).code;
-  const prelude = `const el = (tag, cls) => new ITEM(cls || "", 0);\nlet draggedId = null;\n`;
+  const prelude = `const el = (tag, cls) => new ITEM(cls || "", 0);\nlet draggedId = null;\nlet draggedEl = null;\n`;
   const document = fonts ? { fonts } : {};
   const api = new Function("ITEM", "ResizeObserver", "document", prelude + js +
-    "\nreturn { paintTabRowLines, ensureTabRowObserver, drag: (id) => { draggedId = id; }, observer: () => tabRowObserver, sentinel: () => tabRowSentinel };")
+    "\nreturn { paintTabRowLines, ensureTabRowObserver, drag: (id, el) => { draggedId = id; draggedEl = el ?? null; }, observer: () => tabRowObserver, sentinel: () => tabRowSentinel };")
     (Item, FakeRO, document) as Api;
   return { ...api, fonts };
 }
@@ -306,14 +308,14 @@ test("no break for a pair no row can hold (review round 1): a header, or the div
   assert.deepEqual(two.rows(), [["a0", "g1"], ["g10"], ["g11"], ["g2", "h1", "tab tab-add"]]);
 });
 
-test("frozen while a tab is dragged (review round 1): with draggedId set, the observer's paint and a direct paint leave the keep breaks where the drag found them though the layout changed; the paint after dragend re-places them", () => {
+test("frozen while a tab is dragged (review round 1): with the dragged tab in the strip, the observer's paint and a direct paint leave the keep breaks where the drag found them though the layout changed; the paint after dragend re-places them", () => {
   const { paintTabRowLines, ensureTabRowObserver, drag, observer } = lift();
-  const api = head("api"), b1 = tab("b1");
-  const bar = strip(300, head("web"), tab("a1"), tab("a2", 80), api, b1, tab("b2"), add());
+  const api = head("api"), b1 = tab("b1"), a1 = tab("a1");
+  const bar = strip(300, head("web"), a1, tab("a2", 80), api, b1, tab("b2"), add());
   paintTabRowLines(bar); ensureTabRowObserver(bar);
   const brk = bar.keeps()[0];
   assert.equal(api.previousElementSibling, brk, "the premise: api's break stands at dragstart");
-  drag("a1");
+  drag("a1", a1);
   bar.resize(400);   // the layout changed under the drag: without the break, api and b1 would share row 0
   observer()!.fire();   // the strip's width observer, mid-drag
   assert.equal(bar.keeps().length, 1, "the break count is unchanged");
@@ -324,7 +326,7 @@ test("frozen while a tab is dragged (review round 1): with draggedId set, the ob
   paintTabRowLines(bar);   // a direct paint mid-drag (a rebuild flushed early) is covered the same way: the guard is in the painter
   assert.equal(bar.keeps()[0], brk);
   // the other direction: no break stands, a narrowing mid-drag places none; a header may end a row above its tab
-  // until the drop, when dragend's rebuild repairs it
+  // until the drop, whose rebuild repairs it (its wipe ends the freeze: the round-3 test below)
   const api2 = head("api"), c1 = tab("b1");
   const two = strip(400, head("web"), tab("a1"), tab("a2", 80), api2, c1, tab("b2"), add());
   paintTabRowLines(two);
@@ -444,7 +446,7 @@ test("the drag's live insert (review round 2, executed: render.ts's dragover ins
   paintTabRowLines(bar);
   assert.deepEqual(bar.rows(), [["a", "b"], ["c", "d", "e"]]);
   assert.deepEqual(bar.lines(), [ROW_H]);
-  drag("c");
+  drag("c", c);
   const n = bar.paints;
   insert(bar, c, b, flipTabs, paintTabRowLines);
   assert.deepEqual(bar.rows(), [["a", "c"], ["b", "d"], ["e"]], "the insert re-packed the rows");
@@ -462,7 +464,7 @@ test("the drag's live insert (review round 2, executed: render.ts's dragover ins
   paintTabRowLines(two);
   const brk = two.keeps()[0];
   assert.equal(api.previousElementSibling, brk, "the premise: api's break stands at dragstart");
-  drag("a1");
+  drag("a1", a1);
   insert(two, a1, b1, flipTabs, paintTabRowLines);   // a1 moves into the api group
   assert.equal(two.keeps()[0], brk, "the same break: the pass stood down under the drag");
   assert.equal(api.previousElementSibling, brk, "still ahead of api");
@@ -470,10 +472,55 @@ test("the drag's live insert (review round 2, executed: render.ts's dragover ins
   drag(null);
 });
 
+test("the committed drop's rebuild runs the pass (review round 3): the strip rebuilds while the drag is still open, and the wipe, which disconnects the dragged element, ends the freeze in that same paint, so the breaks stand before dragend, which paints nothing; a rebuild a push forced mid-drag is the same, and the cancel after it repaints nothing", () => {
+  const { paintTabRowLines, drag } = lift();
+  // the rebuild as renderTabs runs it: every child out (the dragged element with them: a NEW element is built for its
+  // id and the old one stays disconnected), the plan appended in the new order, then the painter
+  const rebuild = (bar: Bar, ...items: Item[]) => { bar.replaceChildren(); for (const it of items) bar.appendChild(it); paintTabRowLines(bar); };
+  const a1 = tab("a1");
+  const bar = strip(300, head("web"), a1, tab("a2", 80), head("api"), tab("b1"), tab("b2"), add());
+  paintTabRowLines(bar);
+  assert.equal(bar.keeps().length, 1, "the premise: api's break stands at dragstart");
+  drag("a1", a1);   // dragstart: draggedId and the very element, in the strip
+  // the drop: reorderTo's renderTabs is not deferred (in Chromium pointercancel at dragstart released the press-hold) and
+  // rebuilds at once, a1 after a2: the same items fill row 0, so api again ends row 0 above b1 unless the pass runs
+  const api = head("api"), b1 = tab("b1");
+  rebuild(bar, head("web"), tab("a2", 80), tab("a1"), api, b1, tab("b2"), add());
+  assert.equal(a1.isConnected, false, "the wipe took the dragged element out of the strip");
+  assert.equal(bar.keeps().length, 1, "the drop's rebuild placed api's break (at the round-2 head 0: the pass stood down under the still-set draggedId)");
+  assert.equal(api.offsetTop, b1.offsetTop, "the header sits with its first tab right after the drop, before dragend");
+  assert.deepEqual(bar.rows(), [["web", "a2", "a1"], ["api", "b1", "b2", "tab tab-add"]]);
+  // dragend on the committed path: the drag state cleared, no render (the drop's ran; the signature is equal): the breaks stand
+  drag(null);
+  assert.equal(bar.keeps().length, 1);
+  assert.equal(api.offsetTop, b1.offsetTop);
+  // a rebuild a PUSH forced mid-drag: the same wipe, the order unchanged; the drag it wiped is inert (the dragover and drop
+  // handlers need the connected element), so the pass runs here too, and the CANCEL after it, whose renderTabs returns
+  // on the equal signature, paints nothing and needs to paint nothing
+  const a1b = tab("a1");
+  const two = strip(300, head("web"), a1b, tab("a2", 80), head("api"), tab("b1"), tab("b2"), add());
+  paintTabRowLines(two);
+  drag("a1", a1b);
+  const api2 = head("api"), b1b = tab("b1");
+  rebuild(two, head("web"), tab("a1"), tab("a2", 80), api2, b1b, tab("b2"), add());
+  assert.equal(two.keeps().length, 1, "the pushed rebuild placed the break under the wiped drag");
+  assert.equal(api2.offsetTop, b1b.offsetTop);
+  drag(null);
+  assert.equal(api2.offsetTop, b1b.offsetTop, "the cancel's render returns on the equal signature: nothing repaints, and the breaks already stand");
+  // the gate is the ELEMENT: a paint with the dragged element still in the strip is the frozen case (the round-1 test above)
+  const c1 = tab("c1");
+  const three = strip(400, head("web"), c1, tab("a2", 80), head("api"), tab("b1"), tab("b2"), add());
+  paintTabRowLines(three);
+  assert.equal(three.keeps().length, 0, "the premise: at 400 the pair shares row 0");
+  drag("c1", c1); three.resize(300); paintTabRowLines(three);
+  assert.equal(three.keeps().length, 0, "frozen: the dragged element is connected, no new break");
+  drag(null);
+});
+
 test("event-keyed only: the pass rides the painter, which the rebuild, the width observer, the fonts events and the drag's insert run, and nothing else does; no timer, no frame callback", () => {
   const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
   const arming = RENDER.slice(RENDER.indexOf("let tabRowObserver"), RENDER.indexOf("function tabEmojiNode("));
-  assert.match(painter, /if \(!draggedId\) keepGroupsWithTabs\(bar\);/, "the keep pass runs inside the painter, frozen mid-drag, before the rows are read for the lines");
+  assert.match(painter, /if \(!\(draggedEl && draggedEl\.isConnected\)\) keepGroupsWithTabs\(bar\);/, "the keep pass runs inside the painter, frozen while the dragged element is in the strip (not while draggedId is set: a committed drop rebuilds before dragend clears it), before the rows are read for the lines");
   assert.ok(painter.indexOf("keepGroupsWithTabs(bar);") < painter.indexOf("const rows = new Map"), "breaks first: they move the rows the lines are laid under");
   for (const [name, text] of [["the painter and the pass", painter], ["the observer and the fonts events", arming]] as const)
     assert.doesNotMatch(text, /setTimeout|setInterval|requestAnimationFrame|Date\.now|performance\.now/, name + ": exact events over time heuristics (repo rule)");
@@ -485,7 +532,7 @@ test("event-keyed only: the pass rides the painter, which the rebuild, the width
   const sites = (name: string) => RENDER.split("\n").map((l) => l.replace(/\s*\/\/.*$/, "").trim()).filter((l) => l.includes(name + "(") && !/^\*/.test(l)).sort();
   assert.deepEqual(sites("keepGroupsWithTabs"), [
     "function keepGroupsWithTabs(bar: HTMLElement): void {",
-    "if (!draggedId) keepGroupsWithTabs(bar);",
+    "if (!(draggedEl && draggedEl.isConnected)) keepGroupsWithTabs(bar);",
   ], "the pass is called from the painter and nowhere else");
   assert.deepEqual(sites("paintTabRowLines"), [
     'fonts.addEventListener("loadingdone", () => paintTabRowLines(bar));',
