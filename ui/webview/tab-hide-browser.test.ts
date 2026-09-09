@@ -14,7 +14,8 @@
 //     words say the sessions are shown below, and a click puts the transcript back with nothing written, whether or
 //     not the header holds the tab being read; the pip and the flag on that header do the same, their phrases kept;
 //   - a repeat click (the platform's count) acts on nothing and shows no acknowledgement pulse (round 2);
-//   - the open header over a hidden member wears "1 hidden" as a button, and a click on it, on the pip or on the
+//   - the open header over a hidden member wears the compact "2+1" as a button (two tabs on the strip, one hidden;
+//     the user 2026-09-08), and a click on it, on the pip or on the
 //     flag shows the pane and leaves the fold and the strip as they were; Show from that pane puts the tab back on
 //     the strip at once, the group still open; the flag on a FOLDED header still opens the group;
 //   - a double-click on Hide hides one session, not two (the platform's click count);
@@ -87,12 +88,12 @@ const closingTabs = new Map<string, number>();
 let order: string[] = [];
 let activeId: string | null = null;
 let collapsedTabIds = new Set<string>();
-let hiddenTabIds = new Set<string>();
 let lastStripItems: any[] = [];
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
 let draggedGroup: string | null = null;
 let sessionViews: any = null;
+const settings: any = { stripGroupRows: false };   // render.ts's settings object (settings.ts) at the fork's default: makeGroupHead's trail branch reads it (the user 2026-09-08: the strip flows inline unless the per-row setting is on)
 const ctxMenuEl: any = null, metaMenuEl: any = null, citePreviewEl: any = null, openCommentKey: any = null;
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function effViews() { return sessionViews; }
@@ -123,7 +124,7 @@ function showActive() {
 }
 function setActive(id: string) {
   snapView = null;
-  if (collapsedTabIds.has(id) && !hiddenTabIds.has(id)) unfoldSectionOf(id);
+  if (collapsedTabIds.has(id)) unfoldSectionOf(id);
   activeId = id;
   renderTabs(); showActive();
 }
@@ -134,7 +135,6 @@ function renderTabs() {
   const unions = viewTagUnion(effViews());
   const plan = planStrip(order, unions, readTabGroups(unions), activeId, phoneLayout(), null);
   collapsedTabIds = plan.folded;
-  hiddenTabIds = new Set(plan.items.flatMap((it: any) => ("head" in it ? it.hides : [])));
   lastStripItems = plan.items;
   const focusedEl = document.activeElement as HTMLElement | null;
   const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
@@ -318,7 +318,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, s.snapView, s.paneShown, h.snapShown], [["web", "tests"], "0", "infra", true, true]);
     // the header's click showed the section, so the count is the way back (round 3), its words led by its visible text
-    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-transcript", sectionDoorTitle(1, 3, true)]);
+    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["2+1", "BUTTON", "show-transcript", sectionDoorTitle(1, 3, true)], "the compact count (the user 2026-09-08: the words took too much of the strip)");
     assert.ok(h.countTitle!.startsWith(h.count!), "label in name (round 2): the door's words lead with its visible text");
     assert.ok(h.label!.startsWith("infra, 3 sessions, 1 hidden"), h.label!);
 
@@ -515,6 +515,60 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.snapView, h.folded, s.tabs], ["infra", "0", ["web", "tests"]], "infra open again (api hidden inside it, old1 hidden inside archived)");
     assert.ok(h.title.includes("; " + BACK_TO_TRANSCRIPT_CLICK + "; "), "open, shown and holding web: the way back's words");
+
+    // S15: A PICK UNDER TWO TAGS (T264b meets the hide; the fourth fold's review, UI-1), render.ts's own unfoldSectionOf
+    // running: api under infra AND archived, hidden in infra, folded away in archived. Picked from infra's pane (its
+    // Hidden fold), the pick opens archived, the folded holder that can show it, and api's tab appears there. The gate
+    // used to read a hide anywhere as "hidden" and open nothing, and the unfold took the first holder, the one hiding it.
+    const V_BOTH = { ...V, tags: [V.tags[0], { ...V.tags[1], members: ["old1", "api"] }], seq: 5 };
+    const hiddenRow = (id: string) => `#tab-snapshot .snap-hidden-list .snap-item[data-id="${id}"] .snap-row`;
+    const shownRow = (id: string) => `#tab-snapshot > .snap-list > .snap-item[data-id="${id}"] .snap-row`;
+    // the stand-in's setup resets the world but not the pane (snapView) or the Hidden fold's open set, both module state
+    // the slices own: leave any pane first, and open the fold only when it is closed
+    const both = async () => {
+      await page.evaluate(([v, sess]: [unknown, unknown]) => (window as any).__probe.setup(v, ["web", "api", "tests", "old1"], sess, "web"), [V_BOTH, SESS] as [unknown, unknown]);
+      if ((await state()).paneShown) await page.keyboard.press("Escape");
+      const st = await state();
+      assert.deepEqual([st.paneShown, st.snapView, st.tabs], [false, null, ["web", "api", "tests"]], "api under infra and archived (folded by default): one tab, under infra");
+    };
+    const openFold = async () => { if (!(await state()).foldOpen) await page.click("#tab-snapshot .snap-hidden-head"); };
+    await both();
+    await page.evaluate(() => (window as any).__probe.otherPane("infra", "api", true));
+    s = await state();
+    assert.deepEqual([s.tabs, (await head("infra")).folded, (await head("archived")).folded], [["web", "tests"], "0", "1"], "api hidden in infra, folded away in archived: no tab anywhere");
+    await page.click(inHead("infra", ".tab-group-door"));
+    await openFold();
+    s = await state();
+    assert.deepEqual([s.snapView, s.hiddenRows, s.foldOpen], ["infra", ["api"], true]);
+    await page.click(hiddenRow("api"));
+    s = await state();
+    assert.deepEqual([s.tabs, (await head("infra")).folded, (await head("archived")).folded, s.snapView, s.paneShown, s.transcriptShown],
+                     [["web", "tests", "api", "old1"], "0", "0", null, false, true], "archived opened for the pick; infra's hide stands; the transcript shows");
+    assert.deepEqual(s.stored.hidden, [{ sid: "api", name: "infra", id: "g1" }], "the pick wrote the fold, not the flag");
+    // S16: the reverse: hidden in archived, infra folded. The pick from infra's pane opens infra, api's tab under it
+    await both();
+    await page.evaluate(() => (window as any).__probe.otherPane("archived", "api", true));
+    await page.click(nameOf("infra"));   // folds infra and shows it: api is a shown row there
+    s = await state();
+    assert.deepEqual([s.tabs, s.snapView, s.shownRows], [[], "infra", ["web", "api", "tests"]], "both holders folded, api hidden only in archived");
+    await page.click(shownRow("api"));
+    s = await state();
+    assert.deepEqual([s.tabs, (await head("infra")).folded, (await head("archived")).folded, s.snapView],
+                     [["web", "api", "tests"], "0", "1", null], "infra opened for the pick; archived, hiding api, stays folded");
+    // S17: hidden in both, infra folded: nothing opens; the transcript shows with a header as stand-in
+    await both();
+    await page.evaluate(() => (window as any).__probe.otherPane("infra", "api", true));
+    await page.evaluate(() => (window as any).__probe.otherPane("archived", "api", true));
+    await page.click(nameOf("infra"));
+    await openFold();
+    s = await state();
+    assert.deepEqual([s.tabs, s.snapView, s.hiddenRows], [[], "infra", ["api"]]);
+    const storedBefore = JSON.stringify(s.stored);
+    await page.click(hiddenRow("api"));
+    s = await state();
+    assert.deepEqual([s.tabs, (await head("infra")).folded, (await head("archived")).folded, s.snapView, s.transcriptShown],
+                     [[], "1", "1", null, true], "hidden in every holder: every fold stands, the transcript shows");
+    assert.equal(JSON.stringify(s.stored), storedBefore, "nothing written");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   } finally { await browser.close(); }

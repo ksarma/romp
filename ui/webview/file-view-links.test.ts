@@ -783,8 +783,8 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.match(codeFn, /if \(hl !== null\) code\.innerHTML = hl; else code\.textContent = text;\n\s*linkifyFileText\(code, path\);/, "the gutter branch too");
   assert.doesNotMatch(codeFn, /linkifyFileText\(text|escapeHtml\(linkify/, "never over the HTML string");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/,
-    "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7`");
+  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n[^\n]*\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
+    "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7` (the walkTokens itself runs for every kind since the Slice 3 review, collecting the code tokens for Copy)");
   const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, doc.path);");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
   const textAt = mdFn.indexOf('if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);');
@@ -875,7 +875,7 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
   assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = opts && typeof opts\.line === "number" && opts\.line > 0 \? Math\.floor\(opts\.line\) : null;/);
   assert.match(VIEW, /text = t;\n\s*\/\/[^\n]*\n\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}/);
-  const landing = VIEW.split("text = t;\n")[1].split("}).catch(")[0];
+  const landing = VIEW.split("text = t;\n")[1].split(").catch(")[0];   // the landing closes as `})).catch(`: `land` wraps it (hold.defer for an answer that stands; actions.ts pressHold)
   assert.doesNotMatch(landing, /saveFmt/, "the Raw view for this open only: the preference is not written");
 });
 
@@ -918,7 +918,8 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /const a = el\("span", "file-uri-link"\);\n\s*a\.textContent = raw;[^\n]*\n\s*return markPathLink\(a, open, relative, sid\);/, "openPathLink mints and marks");
   assert.match(MOD, /linkifyPathTokens\(root, null, undefined, \{\n\s*inPre: true,\n\s*accept: \(tok, ctx\) => !insideUrl\(ctx\) && viewerPathGate\(tok, ctx\),\n\s*resolve: \(tok\) => resolveViewerPath\(tok, filePath\),\n\s*lineSuffix: true,\n\s*unit: LINE_UNITS,\n\s*\}\);/, "the viewer runs the chat's walk under its own gate, a line at a time, and never inside a URL of the line");
   assert.match(MOD, /if \(ctx\.text !== lineText\) \{ lineText = ctx\.text; lineUrls = \/https\?:\\\/\\\/\/i\.test\(ctx\.text\) \? urlRanges\(ctx\.text\) : \[\]; \}/, "the line's URLs are found once per line, not per token");
-  assert.match(MOD, /for \(const u of textUnits\(root, LINE_UNITS, DEAD_TEXT\)\) \{/, "the URL pass reads the same lines and skips the same text");
+  assert.match(MOD, /return markUrls\(root, \{ className: URL_LINK_CLASS, unit: LINE_UNITS, draggable: false \}\);/, "the URL pass (url-links.ts, since 2026-09-08) reads the same lines…");
+  assert.match(fs.readFileSync(path.join(UI, "url-links.ts"), "utf8"), /for \(const u of textUnits\(root, opts\.unit, opts\.skip \|\| DEAD_TEXT\)\) \{/, "…and skips the same text");
   assert.match(MOD, /a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   assert.doesNotMatch(MOD, /innerHTML|outerHTML|insertAdjacentHTML/, "the module builds elements; it never writes markup");
 });

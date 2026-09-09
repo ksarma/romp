@@ -84,7 +84,7 @@ function sheet(): string {
   const a = FEED.indexOf(BLOCK_A), b = FEED.indexOf(BLOCK_B);
   assert.ok(a >= 0 && b > a, "the file-comments block's markers in feed.css");
   const r = (sel: string): string => rule(FEED, sel, "feed.css");
-  return [r(".fileview"), r(".fileview-body"), r(".fileview-md"), r(".fileview-md p"), r(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), r(".fileview-btn"), FEED.slice(a, b)].join("\n");
+  return [r(".fileview"), r(".fileview-body"), r(".fileview-md"), r(".fileview-md p"), r(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), r(".fileview-btn"), FEED.slice(a, b)].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>

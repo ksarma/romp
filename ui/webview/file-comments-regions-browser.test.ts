@@ -3,10 +3,13 @@
 // built, under the sheet's own rules for the wrapper, the overlay, the rectangles and the viewer's pictures. This
 // is the leg no stand-in can stand in for: the browser decides where a captured pointer's click goes — to the
 // CAPTURING element, the overlay, which is how a click on a rectangle or on a framed picture opened nothing while
-// the panel was open — and the browser lays the picture out: a rendered-markdown figure with width and height
-// attributes is drawn under whatever `object-fit` the sheet gives `.fileview-md img`, and the overlay must sit where
-// the picture's pixels are either way. Skips LOUDLY without a playwright browser (CI installs none), as
-// waiting-link-focus.test.ts does. Synthetic values only: a picture painted on a canvas, placeholder ids.
+// the panel was open; and it lays the picture out under the sheet's own rules: a rendered-markdown figure with a
+// pixel width and height pair takes the sheet's `height: auto` (Slice 2 of plans/markdown-viewer.md), so its box
+// follows the picture's ratio as the column caps the width; a height-only picture, which that rule's guard leaves
+// alone, keeps the author's height and is drawn under whatever `object-fit` the sheet gives `.fileview-md img` (none,
+// so `fill` stretches it); and the overlay must sit where the picture's pixels are in every case. Skips LOUDLY
+// without a playwright browser (CI installs none), as waiting-link-focus.test.ts does. Synthetic values only: a
+// picture painted on a canvas, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -31,7 +34,8 @@ function bundle(): string {
   });
   return r.outputFiles[0].text;
 }
-/** The sheet's rules the layer lives under: the viewer's pictures, and the whole file-comments block. */
+/** The sheet's rules the layer lives under: the viewer's pictures (the column cap, and the pixel-sized media rule
+ *  that gives a sized picture its own ratio), and the whole file-comments block. */
 function sheet(): string {
   const a = FEED.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)");
   const b = FEED.indexOf("/* ── end file comments panel ── */");
@@ -41,7 +45,7 @@ function sheet(): string {
     assert.ok(m, "a rule for " + sel + " in feed.css");
     return m![1];
   };
-  return [rule(".fileview-md img"), rule(".fileview-imgbox"), rule(".fileview-img"), FEED.slice(a, b)].join("\n");
+  return [rule(".fileview-md img"), rule(':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"]))'), rule(".fileview-imgbox"), rule(".fileview-img"), FEED.slice(a, b)].join("\n");
 }
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 body { margin: 0; padding: 20px; } .fileview-md { width: 600px; } p { margin: 0; }
@@ -49,12 +53,12 @@ ${sheet()}</style></head><body><div class="fileview-body" id="row"></div><script
 
 type Box = { left: number; top: number; width: number; height: number };
 type Scene = { img: Box; overlay: Box; rect: Box | null; style: string | null; fit: string; natural: number[] };
-type Kind = "md" | "md-sized" | "media" | "media-square";
+type Kind = "md" | "md-sized" | "md-height" | "media" | "media-square";
 const MARK = { id: "c1", region: { x: 0.1667, y: 0.2, w: 0.3333, h: 0.3 }, label: "you", state: "current" };
 
-/** Mount one picture in the viewer's body row — a figure in rendered markdown (plain, or with the width/height pair
- *  an author wrote), or the media body's picture (auto-sized, or forced square) — put the layer over it, wire the
- *  panel's listeners on the row (once), and report where everything is. */
+/** Mount one picture in the viewer's body row: a figure in rendered markdown (plain, with the width and height pair
+ *  an author wrote, or with a height alone), or the media body's picture (auto-sized, or forced square). Then put the
+ *  layer over it, wire the panel's listeners on the row (once), and report where everything is. */
 function setup(page: any, kind: Kind, marks: unknown[], active: boolean): Promise<Scene> {
   return page.evaluate(async ([kind, marks, active]: [Kind, unknown[], boolean]) => {
     const w = window as any;
@@ -64,10 +68,11 @@ function setup(page: any, kind: Kind, marks: unknown[], active: boolean): Promis
     const c = document.createElement("canvas"); c.width = 600; c.height = 400;   // a 600×400 picture, painted here
     const cx = c.getContext("2d")!; cx.fillStyle = "#336699"; cx.fillRect(0, 0, 600, 400); cx.fillStyle = "#ffcc00"; cx.fillRect(0, 0, 300, 200);
     const img = document.createElement("img");
-    if (kind === "md" || kind === "md-sized") {
+    if (kind === "md" || kind === "md-sized" || kind === "md-height") {
       const md = document.createElement("div"); md.className = "fileview-md";
       const p = document.createElement("p"); md.appendChild(p); p.appendChild(img); row.appendChild(md);
       if (kind === "md-sized") { img.setAttribute("width", "1200"); img.setAttribute("height", "800"); }   // the README figure: DOMPurify keeps both
+      if (kind === "md-height") img.setAttribute("height", "800");   // a height-only picture: no pixel width, so the sheet's height: auto does not apply
     } else {
       const box = document.createElement("div"); box.className = "fileview-imgbox"; box.style.width = "400px"; box.style.height = "400px";
       img.className = "fileview-img"; box.appendChild(img); row.appendChild(box);
@@ -175,23 +180,35 @@ test("in a browser, panel closed: the overlay takes no events, so the browser's 
   });
 });
 
-test("in a browser, the overlay sits where the picture's pixels are: a markdown figure with width and height attributes under the sheet's own object-fit, the media body's letterbox under contain", async (t) => {
+test("in a browser, the overlay sits where the picture's pixels are: a markdown figure with a width and height pair under the sheet's height: auto, a height-only figure under the sheet's own object-fit, the media body's letterbox under contain", async (t) => {
   await inBrowser(t, async (page) => {
-    // the README figure: <img width=1200 height=800> for a 600×400 picture in a 600px column — the element is 600×800
+    // the README figure: <img width=1200 height=800> for a 600×400 picture in a 600px column. The sheet's height: auto on
+    // a pixel-width picture lets the box follow the picture's own ratio as the column caps the width: the element is
+    // 600×400 (before Slice 2 of plans/markdown-viewer.md the height attribute held, the element was 600×800 and the
+    // picture was stretched over it), so the picture fills its element under either fit and the overlay is the element
     const md = await setup(page, "md-sized", [], true);
-    sameBox(md.img, { left: 20, top: 20, width: 600, height: 800 }, "the width caps at the column, the height attribute holds");
-    if (md.fit === "fill") {
+    sameBox(md.img, { left: 20, top: 20, width: 600, height: 400 }, "the width caps at the column, the height follows the picture's ratio, not the attribute");
+    assert.equal(md.style, null, "the picture fills its element: no offsets");
+    sameBox(md.overlay, md.img, "the overlay covers the whole element");
+    await drag(page, [md.img.left + 150, md.img.top + 1], [md.img.left + 450, md.img.top + 200]);
+    const rm = drawn(await calls(page));
+    near(rm.y, 0, "the top of the element is the top of the picture"); near(rm.h, 0.5, "half the element is half the picture");
+    // a height-only picture: <img height=800> for the same 600×400 picture. No pixel width, so the rule's guard leaves the
+    // author's height in place: the element is 600×800 (the width capped by the column, the height attribute holding)
+    const tall = await setup(page, "md-height", [], true);
+    sameBox(tall.img, { left: 20, top: 20, width: 600, height: 800 }, "the width caps at the column, the height attribute holds");
+    if (tall.fit === "fill") {
       // .fileview-md img has no object-fit rule: the picture is STRETCHED over the element, so the overlay is the element
-      assert.equal(md.style, null, "no letterbox offsets for a stretched picture");
-      sameBox(md.overlay, md.img, "the overlay covers the whole element");
-      await drag(page, [md.img.left + 150, md.img.top + 1], [md.img.left + 450, md.img.top + 200]);
+      assert.equal(tall.style, null, "no letterbox offsets for a stretched picture");
+      sameBox(tall.overlay, tall.img, "the overlay covers the whole element");
+      await drag(page, [tall.img.left + 150, tall.img.top + 1], [tall.img.left + 450, tall.img.top + 200]);
       const r = drawn(await calls(page));
       near(r.y, 0, "the top of the element is the top of the picture"); near(r.h, 0.25, "a quarter of the element is a quarter of the picture");
     } else {
       // the sheet letterboxes rendered-markdown figures too: the overlay is the 600×400 picture drawn 200px down
-      assert.equal(md.fit, "contain", "the only other fit a romp sheet gives a picture");
-      assert.equal(md.style, "left: 0px; top: 200px; width: 600px; height: 400px;");
-      sameBox(md.overlay, { left: md.img.left, top: md.img.top + 200, width: 600, height: 400 }, "the overlay is the drawn picture");
+      assert.equal(tall.fit, "contain", "the only other fit a romp sheet gives a picture");
+      assert.equal(tall.style, "left: 0px; top: 200px; width: 600px; height: 400px;");
+      sameBox(tall.overlay, { left: tall.img.left, top: tall.img.top + 200, width: 600, height: 400 }, "the overlay is the drawn picture");
     }
     // the media body's picture forced square: object-fit contain letterboxes the 600×400 picture to 300×200, 50px down
     const sq = await setup(page, "media-square", [], true);

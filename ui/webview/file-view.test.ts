@@ -381,8 +381,10 @@ test("it waits with the romp loader and fails with the kernel's own words, never
   // it. The status rides along since 2026-08-09, so the catch can decide whether to offer the download.
   assert.match(VIEW, /if \(!r\.ok\) return r\.text\(\)\.then\(\(t\) => \{\s*\n\s*throw Object\.assign\(new Error\(t \|\| \("HTTP " \+ r\.status\)\), \{ status: r\.status \}\);\s*\n\s*\}\);/);
   assert.match(VIEW, /const why = el\("div", "fileview-err"\);/);
-  // a reply that lands after the user closed the viewer paints nothing
-  assert.match(VIEW, /if \(!document\.getElementById\("romp-fileview"\)\) return;/);
+  // a reply that lands after the user closed OR REPLACED the viewer paints nothing: the landing and the failure path both
+  // read `stands` (the wrap connected, this fetch the newest), never the viewer id, which a replace-open moves to the new
+  // viewer (the Slice 3 review, round 3; file-view-landing-order-browser.test.ts)
+  assert.equal((VIEW.match(/if \(!stands\(\)\) return;/g) || []).length, 2, "the landing and the failure path");
 });
 
 test("it reuses fileUrl, so a REMOTE session's file is relayed from the host that owns it", () => {
@@ -401,14 +403,20 @@ test("langFor maps known extensions and returns null rather than guessing", () =
     yaml: "yaml", yml: "yaml", sh: "bash", bash: "bash", zsh: "bash", bats: "bash",
     html: "xml", htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "css",
     md: "markdown", markdown: "markdown", diff: "diff", patch: "diff",
+    rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",   // decision 5's six (viewer-grammars.ts)
   };
   const langFor = (p: string): string | null => LANG[p.slice(p.lastIndexOf(".") + 1).toLowerCase()] || null;
   assert.equal(langFor("kernel/kernel.py"), "python");
   assert.equal(langFor("ui/webview/render.TS"), "typescript");   // case-insensitive
   assert.equal(langFor("notes.md"), "markdown");
-  for (const p of ["server.log", "Makefile", "a.conf", "data.csv", "x.rs"]) {
+  assert.equal(langFor("src/main.rs"), "rust", "a grammar the viewer registers since Slice 3 of plans/markdown-viewer.md");
+  assert.equal(langFor("Cargo.toml"), "ini", "toml is hljs's ini grammar (its own alias)");
+  for (const p of ["server.log", "Makefile", "a.conf", "data.csv", "x.cfg", "x.zig"]) {
     assert.equal(langFor(p), null, p + " has no registered grammar → plain, not a guess");
   }
+  // the module's map holds the same row: the copy above is the executed shape, this the source
+  assert.match(VIEW, /rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",/);
+  assert.match(VIEW, /^import "\.\/viewer-grammars";/m, "the six grammars register through the viewer's own module");
   assert.doesNotMatch(VIEW, /hljs\.highlightAuto\(/, "auto-detection is what this map exists to avoid");
 });
 
@@ -437,7 +445,7 @@ test("the hljs token palette lives in feed.css too, identical to the chat's", ()
     /\.hljs-addition \{ color: var\(--hl-str\); \}/,
     /\.hljs-deletion \{ color: var\(--err\); \}/,
     /--hl-fg: #d8c6a8; --hl-kw: #c98a6a; --hl-str: #9fb878; --hl-num: #d4a36a;/,
-    /--hl-cmt: #6f6a5f; --hl-title: #e1c08d; --hl-meta: #9a8f7a; --hl-attr: #cdaf7e;/,
+    /--hl-cmt: #978f81; --hl-title: #e1c08d; --hl-meta: #9a8f7a; --hl-attr: #cdaf7e;/,   // --hl-cmt lifted to 4.79:1 on a code block (Slice 3 of plans/markdown-viewer.md; theme-parity.test.ts holds the floor)
   ];
   for (const r of rules) {
     assert.match(FEED_CSS, r, "feed.css is missing a palette rule: " + r.source);
@@ -502,8 +510,13 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
   assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");
-  // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor
-  assert.match(VIEW, /if \(!lang \|\| !hljs\.getLanguage\(lang\)\) return;/);
+  // fenced blocks highlight only a NAMED, registered language (the same no-guessing rule as langFor); then EVERY fence, named or
+  // not, gets the chat's rows and Copy button (code-block.ts; Slice 3 of plans/markdown-viewer.md), the raw text captured first
+  assert.match(VIEW, /if \(lang && hljs\.getLanguage\(lang\)\) \{/);
+  // Copy hands the clipboard the fence's text as the note holds it (fence-source.ts; the raw text has marked's four spaces for
+  // each leading tab), the raw text when the fence was not found in the note
+  assert.match(VIEW, /const raw = codeEl\.textContent \|\| "";[\s\S]{0,600}codeEl\.innerHTML = hljs\.highlight\(raw, \{ language: lang \}\)\.value;[\s\S]{0,200}wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, toCopy\);/);
+  assert.match(VIEW, /const toCopy = \(queued && queued\.length \? queued\.shift\(\) : null\) \?\? raw;/);
   // the prose typography exists on BOTH sheets (the chat's .md block is the reference aesthetic)
   assert.match(FEED_CSS, /\.fileview-md \{/);
   assert.match(FEED_CSS, /\.fileview-md pre code \{/);
@@ -772,12 +785,14 @@ test("the media branch keys on the kernel's Content-Type verdict, never the exte
 
 test("a 200 image renders ONE <img> at an object URL; the quote gesture stays off RENDERED media", () => {
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
-  // the blob becomes an object URL only AFTER the still-open/still-this-viewer checks — a viewer
-  // closed or replaced mid-flight creates nothing to leak
-  assert.ok(openFn.indexOf('if (!document.getElementById("romp-fileview")) return;')
-            < openFn.indexOf("URL.createObjectURL"),
-    "no URL is minted for a viewer that is already gone");
-  assert.match(openFn, /if \(!wrap\.isConnected\) return;/);
+  // the blob becomes an object URL only AFTER the still-this-viewer, still-the-newest-fetch check (`stands`: the wrap
+  // connected, so a close or a REPLACE both count, and this fetch the newest out): a viewer closed or replaced
+  // mid-flight creates nothing to leak. The check reads the wrap, not the viewer id: after a replace-open the id sits on
+  // the new viewer and passed for the old one (the Slice 3 review, round 3; file-view-landing-order-browser.test.ts)
+  assert.match(openFn, /const stands = \(\): boolean => wrap\.isConnected && my === fetchSeq;/, "the landing's guard: the wrap connected and this fetch the newest");
+  const standsAt = openFn.indexOf("if (!stands()) return;");
+  assert.ok(standsAt >= 0 && standsAt < openFn.indexOf("URL.createObjectURL"), "no URL is minted for a viewer that is already gone");
+  assert.doesNotMatch(openFn.slice(openFn.indexOf("const fetchFile = "), openFn.indexOf("URL.createObjectURL")), /document\.getElementById\("romp-fileview"\)/, "the landing never reads the viewer id: a replace-open moves it to the new viewer");
   // renderBody's img/PDF arm renders and returns — an <img>/iframe body has no honest text to
   // quote (affordance honesty: no real target, no affordance), so the mouseup seed gates off
   // RENDERED media too. The SVG SOURCE view is the deliberate exception — a text view, covered by

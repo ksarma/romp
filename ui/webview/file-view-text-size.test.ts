@@ -9,13 +9,16 @@
 // and two browser legs (headless Chromium, skipped loudly without one): the sheets over a static page, laying out a
 // wide table, a long code line, an unbreakable string and a bare picture at two pane widths and two sizes, and the
 // real module bundled into a page (the bar's geometry with a kernel-answered row, the fixed readout slot, the dimmed
-// end, the kept focus, the selection guard). Synthetic fixtures only: the notes-api world, placeholder ids.
+// end, the kept focus, the selection guard), and the page's own inlining of a note holding `</script>` (scriptLiteral,
+// the shared leg page's escape; the Slice 2 review, round 3: a bare JSON.stringify here would let such a note end the
+// harness script before the fetch stub). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import type { FileViewActionCtx } from "./file-view";
+import { scriptLiteral } from "./real-viewer-leg";
 
 const requireCjs = createRequire(__filename);
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -79,7 +82,7 @@ class El {
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
   src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
   innerHTML = "";
-  style: Record<string, string> = {};
+  style: Record<string, any> = { setProperty: (k: string, v: string) => { this.style[k] = v; } };   // CSSOM's write, for the body's --fv-body-w
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
@@ -589,12 +592,12 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.equal(paints, at, "at the end of the table nothing changed, so nothing fired (no move without new information)");
   // the panel's side of the contract: its onRendered hides the floating Comment button (placed by a passage that has
   // moved) and re-runs the paint pass that wraps the highlights around the text again
-  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
+  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
   assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
-  assert.equal((VIEW.match(/if \(textShowing\(\)\) fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the step and the width's frame");
+  assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
@@ -674,41 +677,55 @@ test("both sheets: the step table maps every TEXT_SIZES entry to --fv-scale on t
     }
     const steps = css.match(/\.fileview\[data-fv-text="\d+"\]/g) || [];
     assert.equal(steps.length, TEXT_SIZES.length, name + ": no step the table does not hold");
-    // the readers: the prose (em of its parent, so the page's size times the scale), its code, the Raw view's rows and gutter
-    assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("font-size: calc(1em * var(--fv-scale, 1))"), name + ": the prose reads it");
-    assert.ok(!decls(ruleOf(css, ".fileview-md {")).some((d) => d.startsWith("max-width")), name + ": the root is fluid to the pane (the measure moved to the prose blocks)");
+    // the readers: the prose (1.15 times the page's size, times the scale: 15px at the 13px default, Slice 3 of
+    // plans/markdown-viewer.md), its code, the Raw view's rows and gutter
+    assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1))"), name + ": the prose reads it, at the document size over the page's");
+    assert.ok(!decls(ruleOf(css, ".fileview-md {")).some((d) => d.startsWith("max-width")), name + ": the root is fluid to the pane (the measure is its inline padding)");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": fenced code reads it");
     assert.ok(decls(ruleOf(css, ".fileview-pre {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the Raw rows read it");
     assert.ok(decls(ruleOf(css, ".fileview-gutter {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the gutter reads it, in lockstep with the rows");
-    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 1.3em"), name + ": headings stay em of the prose, so they scale with it");
+    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 2em"), name + ": headings stay em of the prose, so they scale with it (GitHub's 2em h1 since Slice 3 of plans/markdown-viewer.md)");
     assert.ok(decls(ruleOf(css, ".fileview-md :not(pre) > code {")).includes("font-size: 0.92em"), name + ": inline code stays em of the prose");
     assert.ok(decls(ruleOf(css, ".fileview-md .fc-overlay {")).includes("font-size: var(--fs)"), name + ": a figure's region chip keeps the page's size, not the text's");
     // no other rule reads the property: the bar, the aside, the editor keep the page's size
     const readers = (css.match(/^[^\n{]*\{[^}]*var\(--fv-scale[^}]*\}/gm) || []).map((r) => r.slice(0, r.indexOf("{")).trim());
-    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md > :where(:not(table))", ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly");
+    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly (the 860px measure rule and the direct-child media cap that scaled it went with Slice 3 of plans/markdown-viewer.md: the measure is 80ch of the root's own font, which the scale moves)");
   }
 });
 
-test("both sheets: the measure sits on the prose blocks at zero specificity and scales with the text; a table takes the pane and scrolls in its own box with whole words; a picture always fits its column; the new rules are byte-equal across the sheets", () => {
+test("both sheets: the measure is the root's inline padding, a centred column of 80ch that scales with the text; a table may leave the column up to the body's inset and scrolls in its own box with whole words; a picture always fits its column; the new rules are byte-equal across the sheets", () => {
   for (const [name, css] of SHEETS) {
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md > :where(:not(table)) {")), ["max-width: calc(860px * var(--fv-scale, 1))"], name + ": the measure, a max that grows with the size (860px today, the same characters per line at every size)");
-    // :where carries no specificity, so `.fileview-md img { max-width: 100% }` below outranks it for a bare <img> line (a
-    // direct child of the root): the plain :not() chain was (0,1,2) and laid a 1600px banner out at the measure in a 380px
-    // pane (review 2026-09-07); code blocks are inside the measure too (a two-line snippet needs no 1400px box)
-    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": the measure rule carries no specificity of its own");
+    // Slice 3 of plans/markdown-viewer.md (decision 4): the 860px cap on every block became the root's own inline padding,
+    // at least 18px a side and half of what the body is wider than 80ch beyond that; ch is the root's own zero glyph, so
+    // the column is eighty characters at every --fv-scale and in either face, and every child sits in it
+    const root = decls(ruleOf(css, ".fileview-md {"));
+    assert.ok(root.includes("padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px))"), name + ": the measure, the root's inline padding, in whole pixels (a fractional edge met a Chromium drag-selection quirk)");
+    assert.ok(root.indexOf("padding: 14px 18px") >= 0 && root.indexOf("padding: 14px 18px") < root.findIndex((d) => d.startsWith("padding-inline")), name + ": the plain 18px stands first, the fallback for a browser without round()");
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(bare, /\.fileview-md > :where\(:not\(table\)\)|860px/, name + ": no per-block cap and no 860px constant in any rule (the comments may tell the history)");
+    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": no block-cap rule at any specificity");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {")), ["max-width: min(100%, calc(860px * var(--fv-scale, 1)))"], name + ": a picture that is a block of the page, wrapped by the figure layer or not, takes the measure AND the column, like an image paragraph; so does a standalone svg, canvas or video block (an uncapped one is clipped under the md box's contain: layout)");
+    assert.doesNotMatch(css, /\.fileview-md > img, \.fileview-md > svg/, name + ": the direct-child media cap went with the constant (100% of the column is the measure for a direct child too)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
-    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks; a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
+    assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
+    // the table's cap is the BODY's width less the root's 18px inset (--fv-body-w: the body's content width, written on the body
+    // by the viewer's ResizeObserver), and a table wider than the column is moved left by half the excess (a percentage in
+    // translate is of the table's own width; half the body less the padding is half the column), so it grows out of the column
+    // evenly, into both gutters, and a table no wider than the column is not moved at all (the min); with the property unset
+    // the cap falls back to the column and the shift to none. file-view-typescale-browser.test.ts lays the three widths out
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
-      name + ": a table is a block as wide as its content up to the column, scrolling inside beyond it, whole words kept");
+      name + ": a table is a block as wide as its content up to its container, scrolling inside beyond it, whole words kept (a table in a quote or a list item stays in it)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-md > table {")),
+      ["max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))"],
+      name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (with the property unset both read the stand-in: the cap is the column and the shift none)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls in its own box");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
+  for (const head of [".fileview-md {", ".fileview-md table {", ".fileview-md > table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-body {"]) {
     assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly (the viewer mounts in both documents)");
   }
   const block = (css: string) => css.slice(css.indexOf("/* ── text size and measure"), css.indexOf("/* Rendered markdown ("));
@@ -755,7 +772,7 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 const PANE_CSS = web("files-pane.css");
-const LONG = "unbreakable".repeat(6);
+const LONG = "unbreakable".repeat(5);
 const SVG = (w: number) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="200"><rect width="${w}" height="200" fill="#369"/></svg>`)}`;
 const ROWS = Array.from({ length: 3 }, (_, i) => `<tr><td>row ${i} alpha beta gamma delta</td><td>a fairly long cell of prose that keeps going on for a while</td><td>${LONG}</td><td>another long cell with many words in it to widen the table</td><td>five</td><td>six more text here</td></tr>`).join("");
 const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
@@ -769,13 +786,16 @@ const MD = `<h1 id=h1>Report</h1><p id=p>Prose ${"lorem ipsum ".repeat(40)}</p>
  *  over the feed (feed.css alone, the browser over the feed's document). */
 const PAGE = (mode: "pane" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("feed.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : "fileview-open"}"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-bar"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/docs/</span><span class="fileview-base">report.md</span></div><div class="fileview-acts"><button class="fileview-btn">Rendered</button><button class="fileview-btn">Raw</button><button class="fileview-btn">A−</button><button class="fileview-btn">A+</button><button class="fileview-btn">✕</button></div></div>
-<div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div></body></html>`;
-type Lay = { bodyClient: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
-const layout = (page: any): Promise<Lay> => page.evaluate(() => {
+<div class="fileview-main"><div class="fileview-body" id="body"><div class="fileview-md" id="md">${MD}</div></div></div></div></div>
+<script>/* the viewer's one write (file-view.ts, the width observer): the body's content width, for the pane-wide table's cap */
+new ResizeObserver(function (es) { document.getElementById("body").style.setProperty("--fv-body-w", es[es.length - 1].contentRect.width + "px"); }).observe(document.getElementById("body"));</script></body></html>`;
+type Lay = { bodyClient: number; gutter: number; bodyScroll: number; docScroll: number; win: number; md: number; p: number; t: number; tClient: number; tScroll: number; pre: number; preScroll: number; preClient: number; pre2: number; lw: number; img: number; img2: number; mdFont: string; h1Font: string; preFont: string };
+const layout = (page: any): Promise<Lay> => page.evaluate(async () => {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));   // the width observer's report lands before a frame paints
   const q = (s: string) => document.querySelector(s) as HTMLElement;
   const w = (s: string) => q(s).getBoundingClientRect().width;
   const body = q("#body");
-  return { bodyClient: body.clientWidth, bodyScroll: body.scrollWidth, docScroll: document.documentElement.scrollWidth, win: innerWidth,
+  return { bodyClient: body.clientWidth, gutter: body.offsetWidth - body.clientWidth, bodyScroll: body.scrollWidth, docScroll: document.documentElement.scrollWidth, win: innerWidth,
     md: w("#md"), p: w("#p"), t: w("#t"), tClient: q("#t").clientWidth, tScroll: q("#t").scrollWidth, pre: w("#pre"), preScroll: q("#pre").scrollWidth, preClient: q("#pre").clientWidth, pre2: w("#pre2"), lw: w("#lw"), img: w("#im"), img2: w("#im2"),
     mdFont: getComputedStyle(q("#md")).fontSize, h1Font: getComputedStyle(q("#h1")).fontSize, preFont: getComputedStyle(q("#pre code")).fontSize };
 });
@@ -798,7 +818,17 @@ const fits = (l: Lay, cell: string) => {
   assert.ok(l.preScroll <= l.preClient + 1, cell + ": the long code line wraps inside its block");
 };
 
-test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; the prose and the code blocks keep the measure and the table takes the pane; at 150% the measure and every text size grow together; narrow, the table scrolls in its own box", async (t) => {
+/** The column's width in the root's own ch, and where it sits: the root's content box (its padding is the measure). */
+const column = (page: any) => page.evaluate(() => {
+  const md = document.getElementById("md")!; const cs = getComputedStyle(md); const r = md.getBoundingClientRect();
+  const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); md.appendChild(sp);
+  const ch = sp.getBoundingClientRect().width / 40; sp.remove();
+  const body = document.getElementById("body")!.getBoundingClientRect();
+  const p = document.getElementById("p")!.getBoundingClientRect();
+  return { ch, chars: p.width / ch, leftGap: p.left - body.left, rightGap: body.right - p.right - (document.getElementById("body")!.offsetWidth - document.getElementById("body")!.clientWidth), padL: parseFloat(cs.paddingLeft), padR: parseFloat(cs.paddingRight), fontDoc: cs.fontFamily };
+});
+
+test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; the prose and the code blocks keep the measure, an 80ch column centred in the body, and a wide table leaves it evenly up to the body's inset; at 150% the measure and every text size grow together; narrow, the table scrolls in its own box", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "feed"] as const) {
       const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
@@ -809,21 +839,37 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       const step = (n: number) => page.evaluate((n: number) => { document.getElementById("root")!.dataset.fvText = String(n); }, n);
       // 1000px wide, the default size
       let l = await layout(page);
+      // the body reserves nothing beside its content: round 1's `scrollbar-gutter: stable` (a table's 100cqi against the column's
+      // 100%) was a blank strip beside every body that does not scroll, and went in round 2; the cap reads the body's width off
+      // its ResizeObserver instead (file-view-scrollbar-browser.test.ts measures it with the scrollbar drawn; this page runs
+      // under playwright's --hide-scrollbars, where a scrollbar takes no room either)
+      assert.equal(l.gutter, 0, mode + " @1000: no scrollbar gutter is reserved");
       near(l.bodyClient, 1000 - inset, mode + " @1000: the body is the pane, less the modal's inset");
       fits(l, mode + " @1000/100");
-      assert.equal(l.mdFont, "13px", mode + ": the page's size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "16.9px");
-      near(l.p, 860, mode + " @1000: the prose measure is 860px at 100%");
-      near(l.pre, 860, mode + " @1000: a code block keeps the measure"); near(l.pre2, 860, mode + " @1000: ...a two-line snippet too, no pane-wide box");
-      assert.ok(l.t > 860 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table takes the pane (" + l.t + "), past the prose measure, inside the padding");
-      assert.equal(l.tScroll, l.tClient, mode + " @1000: room enough, so the table does not scroll");
+      // the document size: 1.15 times the page's 13px, GitHub's 2em h1 of it, fenced code at 12px (Slice 3 of plans/markdown-viewer.md)
+      assert.equal(l.mdFont, "14.95px", mode + ": the document size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "29.9px");
+      let c = await column(page);
+      assert.ok(Math.abs(c.chars - 80) < 0.5, mode + " @1000: the prose measure is 80ch of the root's own font at 100% (" + c.chars.toFixed(1) + "ch of " + c.ch.toFixed(2) + "px)");
+      assert.ok(l.p >= 80 * c.ch - 0.5 && l.p < 80 * c.ch + 2, mode + " @1000: ...in pixels, eighty zero glyphs, at most the two pixels the padding's rounding down leaves (" + l.p + " vs " + (80 * c.ch).toFixed(1) + ")");
+      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @1000: the column is centred in the body (gaps " + c.leftGap.toFixed(1) + " / " + c.rightGap.toFixed(1) + ")");
+      near(c.padL, c.padR, mode + " @1000: the root's inline padding is the measure, both sides alike");
+      near(l.pre, l.p, mode + " @1000: a code block keeps the measure"); near(l.pre2, l.p, mode + " @1000: ...a two-line snippet too, no pane-wide box");
+      assert.ok(l.t > l.p + 20 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table leaves the column (" + l.t + " vs " + l.p + "), inside the body's 18px inset");
+      // a max-content table is as wide as its content to the layout unit; scrollWidth and clientWidth snap a fractional width
+      // two ways (913 vs 912 at the document size, when the unbreakable cell was 66 characters), so the pixel of slack the code
+      // block's check has applies here too. The unbreakable cell is 55 characters: the table's min-content (the unbreakable cell
+      // plus each column's longest word) has to fit the body less its 36px inset
+      assert.ok(l.tScroll <= l.tClient + 1, mode + " @1000: room enough, so the table does not scroll (" + l.tScroll + " in " + l.tClient + ")");
       near(l.md, l.bodyClient, mode + " @1000: the root is the body's width");
-      assert.ok(l.img <= 860 + 0.5 && l.lw <= 860 + 0.5 && l.img2 <= 860 + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
+      assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
       // 150%: the one property, read by every text size and the measure
       await step(150);
       l = await layout(page);
       fits(l, mode + " @1000/150");
-      assert.equal(l.mdFont, "19.5px", mode + " @150%: the prose"); assert.equal(l.h1Font, "25.35px", mode + " @150%: the heading, 1.3em of it"); assert.equal(l.preFont, "18px", mode + " @150%: fenced code");
-      near(l.p, Math.min(1290, l.bodyClient - 36), mode + " @150%: the measure is 860 × 1.5, capped by the pane");
+      assert.equal(l.mdFont, "22.425px", mode + " @150%: the prose"); assert.equal(l.h1Font, "44.85px", mode + " @150%: the heading, 2em of it"); assert.equal(l.preFont, "18px", mode + " @150%: fenced code");
+      c = await column(page);
+      assert.ok(l.p >= Math.min(80 * c.ch, l.bodyClient - 36) - 0.5 && l.p < Math.min(80 * c.ch, l.bodyClient - 36) + 2, mode + " @150%: the measure is 80ch of the grown glyph, capped by the pane (" + l.p + ")");
+      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @150%: still centred");
       near(l.pre, l.p, mode + " @150%: the code block's measure grows with the prose's");
       // 420px, a phone-wide pane, at BOTH sizes (the leg once shrank the pane at 150% only)
       await page.setViewportSize({ width: 420, height: 900 });
@@ -926,7 +972,14 @@ const SNIPPET_MD = "# Notes\n\ndef main():\n    return 1\n\nDone.\n";
 // a short markdown file for the Rendered view's hard break: a paragraph of two lines around a <br> (two trailing spaces)
 const BREAK = ROOT + "/docs/break.md";
 const BREAK_MD = "# Notes\n\nfirst line  \nsecond line of prose here\n\nDone.\n";
+// a note holding a script element and `</script>` in a code span: an HTML tokenizer ends script data at the first
+// `</script` whatever the JavaScript around it, so the file table is inlined with `<` as `\u003c` (scriptLiteral, as the
+// shared leg page does; file-view-leg-page-browser.test.ts pins the shared page's escape)
+const SCRIPTED = ROOT + "/docs/scripted.md";
+const SCRIPTED_MD = "# Report\n\nA paragraph before the script.\n\n<script>alert(1)</script>\n\n`</script>` inside a code span, and `<!--` before it.\n\nAfter the script.\n";
 const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${SVG(1600)})\n\n<div align="center"><img src="${SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
+/** The file table the page inlines (scriptLiteral: `<` as `\u003c`, so SCRIPTED's `</script>` cannot end the script). */
+const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD };
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
@@ -937,7 +990,7 @@ const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n
  *  the selection stands in. */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${JSON.stringify({ [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD })};
+window.__docs = ${scriptLiteral(DOCS)};
 window.fetch = async function (url) {
   url = String(url);
   if (url.indexOf("/version") === 0) return new Response(JSON.stringify({ fileEditing: true }), { headers: { "Content-Type": "application/json" } });
@@ -1000,6 +1053,41 @@ const SEL = { down: 'button[aria-label="Smaller text"]', up: 'button[aria-label=
 const rectOf = (page: any, sel: string) => page.evaluate((s: string) => { const r = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; }, sel);
 const sizeOf = (page: any) => page.evaluate((s: string) => (document.querySelector(s) as HTMLElement).dataset.fvText, SEL.root);
 
+test("the real-module page inlines its file table with `<` escaped: two script elements whatever the notes hold, the table parsing back to the same texts (a bare JSON.stringify let a note's `</script>` end the harness script before the fetch stub)", () => {
+  const count = (s: string, re: RegExp) => (s.match(re) || []).length;
+  const bundle = bundleViewer();
+  for (const mode of ["chat", "feed", "pane"] as const) {
+    const html = REAL_PAGE(mode);
+    // the bundle's own text is subtracted: esbuild output may hold the strings
+    assert.equal(count(html, /<script[\s>]/g) - count(bundle, /<script[\s>]/g), 2, mode + ": two script elements open");
+    assert.equal(count(html, /<\/script/g) - count(bundle, /<\/script/g), 2, mode + ": and two close, the note's own `</script>` escaped");
+    const m = /\nwindow\.__docs = (.*);\nwindow\.fetch = /.exec(html);
+    assert.ok(m, mode + ": the table is inlined on its line");
+    assert.ok(!/<|-->/.test(m![1]), mode + ": no `<` or `-->` in the literal");
+    assert.deepEqual(JSON.parse(m![1]), DOCS, mode + ": the literal reads back as the table");
+  }
+});
+
+test("in a browser, the real module: a note holding a script element and `</script>` in a code span opens through the page's fetch stub, the sanitizer dropping the script", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReal(browser, "chat", 900, undefined, false, { path: SCRIPTED, raw: false });
+    const seen = await page.evaluate(([p, text]: [string, string]) => ({
+      stubbed: String(window.fetch).indexOf("__docs") >= 0,
+      table: (window as any).__docs[p] === text,
+      first: (document.querySelector(".fileview-md p") as HTMLElement).textContent,
+      scripts: document.querySelectorAll(".fileview-md script").length,
+      paints: (window as any).__paints as number,
+    }), [SCRIPTED, SCRIPTED_MD]);
+    assert.equal(seen.stubbed, true, "the fetch stub survived the inlined table");
+    assert.equal(seen.table, true, "the note in the table, byte for byte");
+    assert.equal(seen.first, "A paragraph before the script.", "the note's own first paragraph, not the harness page");
+    assert.equal(seen.scripts, 0, "no script element under the rendered note");
+    assert.ok(seen.paints >= 1, "the seam painted");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
 test("in a browser, the real module: a bare <img> line, an image paragraph and a centred figure fit the column at 380 and 640px, at 100% and 200%, wrapped by the figure layer or not; wide, the pictures and the code blocks keep the measure", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "feed"] as const) for (const width of [380, 640]) for (const size of [100, 200]) {
@@ -1041,10 +1129,11 @@ test("in a browser, the real module: a bare <img> line, an image paragraph and a
         imgs: Array.from(document.querySelectorAll(".fileview-md img")).map(w), md: w(document.querySelector(".fileview-md")!) };
     });
     assert.ok(c.md > 1300, "the root is fluid to the pane: " + c.md);
-    near(c.p, 860, "the prose measure at 1400px");
+    const ch = await page.evaluate(() => { const md = document.querySelector(".fileview-md") as HTMLElement; const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); md.appendChild(sp); const w = sp.getBoundingClientRect().width / 40; sp.remove(); return w; });
+    assert.ok(c.p >= 80 * ch - 0.5 && c.p < 80 * ch + 2, "the prose measure at 1400px: 80ch of the root's own font, at most two pixels over from the rounding (" + (c.p / ch).toFixed(1) + "ch, " + c.p + "px)");
     assert.equal(c.pres.length, 2);
-    for (const pre of c.pres) { near(pre.w, 860, "a code block keeps the measure: no 1364px box for a two-line snippet"); assert.ok(pre.scroll <= pre.client + 1, "...and a long line wraps inside it"); }
-    for (const i of c.imgs) assert.ok(i <= 860 + 0.5 && i > 800, "a picture takes the measure at most, in every form the markdown used: " + i);
+    for (const pre of c.pres) { near(pre.w, c.p, "a code block keeps the measure: no 1364px box for a two-line snippet"); assert.ok(pre.scroll <= pre.client + 1, "...and a long line wraps inside it"); }
+    for (const i of c.imgs) assert.ok(i <= c.p + 0.5 && i > c.p - 60, "a picture takes the measure at most, in every form the markdown used: " + i);
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -1133,9 +1222,13 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       assert.equal(f.focused, true, mode + ": the focus stays on A− at the end (a disabled button would have dropped it to " + f.active + ")");
       await page.keyboard.press("Enter");
       assert.equal(await sizeOf(page), "70", mode + ": a fourth Enter does nothing, under a ring on a dimmed button");
-      // a passage selected by a real drag, then a press on A+: the size steps, the hooks stay quiet
+      // a passage selected by a real drag, then a press on A+: the size steps, the hooks stay quiet. The drag starts 2px into
+      // the paragraph: at certain sub-pixel offsets from a fractional left edge (4px into the first glyph at 70% here, 5 and 12px
+      // at 100%) headless Chromium leaves the drag's selection collapsed, a hit-test rounding quirk of the harness's mouse
+      // events, not the viewer's (measured 2026-09-08, Slice 3 of plans/markdown-viewer.md, when the centred column moved the
+      // edge to 183.97px); 2px selects at every size and surface measured
       const pBox = await rectOf(page, ".fileview-md > p");
-      await page.mouse.move(pBox.left + 4, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
+      await page.mouse.move(pBox.left + 2, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
       const s1 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
       assert.ok(s1.chars > 0, mode + ": a passage is selected (" + s1.chars + " chars)"); assert.equal(s1.sels, 1, mode + ": the lift over the body ran the selection hooks once");
       const up = await rectOf(page, SEL.up);
@@ -1148,7 +1241,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       // the standing selection goes first: a mousedown on selected text starts a text drag-and-drop, not a selection
       await page.evaluate(() => { getSelection()!.removeAllRanges(); document.addEventListener("mouseup", (e) => { (window as any).__lastUp = (e.target as Element).className; }, true); });
       const p2 = await rectOf(page, ".fileview-md > p"); const nameBox = await rectOf(page, ".fileview-name");
-      await page.mouse.move(p2.left + 4, p2.top + 8); await page.mouse.down(); await page.mouse.move(nameBox.left + 30, (nameBox.top + nameBox.bottom) / 2, { steps: 6 }); await page.mouse.up();
+      await page.mouse.move(p2.left + 2, p2.top + 8); await page.mouse.down(); await page.mouse.move(nameBox.left + 30, (nameBox.top + nameBox.bottom) / 2, { steps: 6 }); await page.mouse.up();
       const s3 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length, lastUp: (window as any).__lastUp as string, anchorInBody: !!document.querySelector(".fileview-body")!.contains(getSelection()!.anchorNode) }));
       assert.match(s3.lastUp, /fileview-(dir|base|name)/, mode + ": the lift landed on the bar's path: " + s3.lastUp);
       assert.ok(s3.chars > 0 && s3.anchorInBody, mode + ": a passage anchored in the body is selected (" + s3.chars + " chars)");

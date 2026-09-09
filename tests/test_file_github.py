@@ -433,7 +433,10 @@ class BranchOnOrigin(_WithOrigin):
         self.assertTrue(os.path.exists(pidfile), "the stand-in ssh ran before the cut")
         pid = int(open(pidfile).read())
         self.addCleanup(_kill_quiet, pid)
-        deadline = time.time() + 3
+        # The kernel's own query timeout runs first and the group kill follows it, so under a loaded CI
+        # runner the child can outlive a 3-second wait by a second or two (a false red on 2026-09-08 in
+        # two suites); 15 seconds is still far short of the 30 the stand-in would sleep if the cut missed.
+        deadline = time.time() + 15
         while _alive(pid) and time.time() < deadline:
             time.sleep(0.02)
         self.assertFalse(_alive(pid), "the ssh git spawned outlived the cut")

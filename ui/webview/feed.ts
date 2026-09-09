@@ -10,6 +10,7 @@
 // a board-level input it reads moved, a gesture touched it, or the 15 s live pass
 // aged it. Its column and order are re-applied on every render regardless.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
+import { delegate } from "./actions";
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { paintHeld, paintReleased } from "./paint-gate";
 import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is upstream's text, pinned by its tests
@@ -746,6 +747,16 @@ let prevItemKey = new Map<string, string>();
 // Counts renders: the per-card update gate's key for a quarantine card carries it, so those cards never skip.
 let renderSeq = 0;
 
+// ONE builder for every Clear on the feed (the user 2026-09-08): the card's, the turn-group's and the
+// session header's wear the same element, class set, label and hover, so they cannot drift apart. Callers
+// add behaviour (an onclick, a data-act) and, for the header, a layout-only positional class.
+function clearButton(title: string): HTMLElement {
+  const b = el("button", "fdismiss");
+  b.textContent = "Clear";
+  b.title = title;
+  return b;
+}
+
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -1175,7 +1186,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // The header "awaiting" chip was REMOVED (the user 2026-07-04): it duplicated the "Awaiting background
   // agents" box in the card body, which says the same thing with room for the full "why" — so the chip was
   // pure redundancy. The awaiting state now reads only from that body box (see the awaitSpin block below).
-  const clr = el("button", "fdismiss"); clr.textContent = "Clear"; clr.title = "clear this task";   // plain-spoken (the user 2026-07-13, over the inbox-zero jargon)
+  const clr = clearButton("clear this task");   // plain-spoken (the user 2026-07-13, over the inbox-zero jargon)
   // "Continue" (the user 2026-08-08): the needs-you card's one-click "nothing needed from me, keep
   // going" — a REPLY with a kernel-canned body (askFollowUp cont:true), never a bare column move (the
   // removed cardMove is the cautionary tale: a move with no message adds no information). The card
@@ -2580,7 +2591,7 @@ function makeGroupCard(g: AskGroup): HTMLElement {
   const idwrap = el("div", "fask-id");
   const name = el("a", "fname"); name.title = "open this session";
   idwrap.append(name);   // no "· N parts" label — the member checklist below already shows the count
-  const clr = el("button", "fdismiss"); clr.textContent = "Clear"; clr.title = "clear ALL sub-asks of this request (inbox-zero)";
+  const clr = clearButton("clear ALL sub-asks of this request (inbox-zero)");
   // Clear rides row1's action corner in every mode (the user 2026-08-08) — matches the ask card. Same
   // fask-btns wrapper so the float/wrap CSS is shared; no Continue here (a group is a multi-ask turn —
   // its members carry their own).
@@ -2602,7 +2613,10 @@ function makeGroupCard(g: AskGroup): HTMLElement {
     dressHeaderIfLast(card, cur.sid);   // a group is one session's turn — same one-motion rule (2026-08-24)
     card.classList.add("dismissing");
     clearedStack.push(cur.members.slice());   // cache the whole batch for an instant optimistic Undo
-    for (const m of cur.members) { pendingCleared.add(m.itemId); vscodeApi?.postMessage({ type: "askClear", itemId: m.itemId, sid: m.sid }); }   // clear every member
+    for (const m of cur.members) pendingCleared.add(m.itemId);
+    // ONE kernel batch for every member (askClearMany): the kernel's Undo restores a batch by its one
+    // stamp, so per-member posts left N-1 members archived after an Undo the client had shown whole
+    vscodeApi?.postMessage({ type: "askClearMany", itemIds: cur.members.map((m) => m.itemId), sid: cur.sid });
     // only finalize if a render in the 180ms window didn't revive (re-render clears
     // .dismissing) or replace this card — else a stale timeout yanks the wrong one
     setTimeout(() => { if (groupEls.get(cur.turnId) === card && card.classList.contains("dismissing")) { card.remove(); groupEls.delete(cur.turnId); dropDismissed(cur.members.map((m) => m.itemId)); } }, 180);
@@ -3422,7 +3436,7 @@ function renderModal() {
     agent.onclick = () => vscodeApi?.postMessage({ type: "openSession", id: grp.sid });
     stampAge(ageEl, grp.t, "plain", true, nowSec(), relAge, ageTint);   // the age, tinted by recency (the time colour scheme)
     wireAgeTip(ageEl, () => provenanceGroupRows(grp.members.map(rootStart), grp.t, nowSec(), PROV_FMT));
-    clrEl.onclick = () => { for (const mem of grp.members) vscodeApi?.postMessage({ type: "askClear", itemId: mem.itemId, sid: mem.sid }); fullscreenAskId = null; renderModal(); };
+    clrEl.onclick = () => { vscodeApi?.postMessage({ type: "askClearMany", itemIds: grp.members.map((mem) => mem.itemId), sid: grp.sid }); fullscreenAskId = null; renderModal(); };   // one batch, one Undo
     // follow-up on a group goes to the session that took the typed prompt — one
     // message prefixed with the GROUP title, filed under the first member's ask
     wireFollowUp(fupEl, fuboxEl, fuinEl, fusendEl, (txt) => postFollowUp(txt, grp.members[0].itemId, grp.members[0].sid, grp.title));
@@ -3540,9 +3554,19 @@ function makeSessHead(): HTMLElement {
   // most. The count beside it is what keeps the folded row from dead-ending — you can see what is under it.
   const fold = el("button", "feed-sess-fold");
   const cnt = el("span", "feed-sess-foldn"); cnt.style.display = "none";
-  h.append(nm, fold, cnt, svc, svcList);
+  // CLEAR for the whole session (the user 2026-09-08): far right of the header row, the header's own size,
+  // as quiet as the caret — one word, the same "Clear" every card wears. One click clears every card this
+  // session has in the current view (every column, folded ones included), with the same optimistic Undo
+  // the group clear uses instead of a confirm dialog. The action is DELEGATED on the stable columns root
+  // (data-act, installed once where the root is built) — never bound to this header node, which grouped
+  // mode re-homes and re-renders; the header only says which session it stands for (data-fsid).
+  // THE card's Clear, built by the same builder (the user 2026-09-08: same size, the outline, blue on hover),
+  // plus one positional class that carries layout only (far right of the row) — never a lookalike
+  const clr = clearButton("clear every card for this session");
+  clr.classList.add("feed-sess-clear"); clr.dataset.act = "sess-clear"; clr.style.display = "none";
+  h.append(nm, fold, cnt, svc, clr, svcList);
   (h as any)._name = nm; (h as any)._fold = fold; (h as any)._foldn = cnt;
-  (h as any)._svc = svc; (h as any)._svcList = svcList;
+  (h as any)._svc = svc; (h as any)._svcList = svcList; (h as any)._clear = clr;
   return h;
 }
 function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
@@ -3573,6 +3597,13 @@ function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
     if (collapsedThreads.has(e.sid)) collapsedThreads.delete(e.sid); else collapsedThreads.add(e.sid);
     render();
   };
+  // the session-wide Clear: which session, and only while it has cards in the current view (a header
+  // exists only for a run, so this is a guard against a stale header, not a common state)
+  const sclr = (h as any)._clear as HTMLElement;
+  sclr.dataset.fsid = e.sid;
+  const ncards = sessionCards(e.sid).length;
+  sclr.style.display = ncards ? "" : "none";
+  sclr.setAttribute("aria-label", "clear every card for " + e.name);
   const svc = (h as any)._svc as HTMLElement, svcList = (h as any)._svcList as HTMLElement;
   const procs = e.live ? bgServicesMap[e.name] || [] : [];
   const open = procs.length > 0 && openBgSvc.has(e.sid);
@@ -4211,6 +4242,12 @@ function ensureCols(list: HTMLElement) {
   if (!document.getElementById("feed-cols")) {
     list.innerHTML = "";
     const cols = el("div", "feed-cols"); cols.id = "feed-cols";
+    // Header actions ride the STABLE columns root (the click-safety rule): the header nodes under it are
+    // re-homed and re-rendered on every push, and a native click needs mousedown and mouseup on one element.
+    // delegate() also flashes the pressed control (.romp-acted), the instant acknowledgement.
+    delegate(cols, {
+      "sess-clear": (b, ev) => { ev.stopPropagation(); const sid = b.dataset.fsid; if (sid) clearSessionCards(sid); },
+    });
     // "Working" (the user's rename, 2026-06-11): every card is an ASK; the left
     // column holds the ones being worked — internal keys keep the old names
     // each header is a filled state chip reproducing the chat status chips
@@ -4306,6 +4343,55 @@ function childKeys(listEl: HTMLElement): string[] {
   // not a move, so it does not make its column read rects for the 600 ms it lingers
   for (const c of Array.from(listEl.children) as HTMLElement[]) { const k = c.dataset.key; if (k && !k.startsWith("x:")) out.push(k); }
   return out;
+}
+
+// What a Clear may take: not a PLACEHOLDER (provisional / awaiting / blocked stand-ins carry no goal to
+// curate — the kernel keeps listing them, so a clear would only suppress them on this page until reload)
+// and not a QUARANTINE hold (a held peer message is approved or denied, never cleared — clearing would
+// hide its only surface while the held file stayed undelivered). The card-level Clear hides itself for
+// both; the session Clear must not reach around that (the review of the session Clear, 2026-09-08).
+function clearable(it: AskItem): boolean {
+  return !it.provisional && it.blocked?.state !== "quarantine";
+}
+// Every CLEARABLE card a session has in the CURRENT view (the same filters render reads: scope, lens,
+// `#only=`), across every column, folded-under-the-header ones included — the set the header's Clear removes.
+function sessionCards(sid: string): AskItem[] {
+  return viewFiltered(asks).filter((a) => a.sid === sid && clearable(a));
+}
+// The session header's Clear (the user 2026-09-08): one click, every card of that session in the current
+// view, as ONE motion and ONE Undo batch. The same optimistic path the ask-group clear takes, applied to
+// every card and turn-group of the session in every column: flush each card's cross-surface hover
+// highlight, mark it .dismissing, start every column's header for this session on its exit at the same
+// moment (the one-motion rule), cache the whole batch on clearedStack so Undo restores the session in one
+// click, suppress the ids from incoming pushes (pendingCleared) and post ONE askClearMany — one kernel
+// batch, one cleared.jsonl stamp, so the kernel's UndoClear restores the whole gesture the way the client's
+// does (N single posts stamped N batches, and Undo brought back only the last-posted card while the
+// client restored all N: phantom cards). Finalize after the 180ms exit only what is STILL ours and still
+// dismissing — a render inside the window that revived a card (re-render resets its class) or replaced
+// its element must not be yanked by a stale timeout — and drop from the model only ids still pending
+// (an Undo inside the window deleted its ids from pendingCleared; a kernel-confirmed clear already left).
+function clearSessionCards(sid: string): void {
+  const members = sessionCards(sid);
+  if (!members.length) return;
+  const ids = members.map((m) => m.itemId);
+  const turns = new Set(members.map((m) => m.turnId).filter(Boolean));
+  const leaving: [HTMLElement, () => boolean, () => void][] = [];
+  for (const m of members) {
+    const c = askEls.get(m.itemId);
+    if (c) leaving.push([c, () => askEls.get(m.itemId) === c, () => askEls.delete(m.itemId)]);
+  }
+  for (const [tid, g] of Array.from(groupEls)) {
+    if (turns.has(tid) && ((g as any)._g as AskGroup | undefined)?.sid === sid) leaving.push([g, () => groupEls.get(tid) === g, () => groupEls.delete(tid)]);
+  }
+  for (const [c] of leaving) { c.dispatchEvent(new MouseEvent("mouseleave")); c.classList.add("dismissing"); }
+  for (const [key, head] of Array.from(sessHeadEls)) if (head.getAttribute("data-fsid") === sid) startSessHeadExit(key, head);
+  clearedStack.push(members.slice());   // one batch: one Undo brings the whole session back
+  for (const m of members) pendingCleared.add(m.itemId);
+  vscodeApi?.postMessage({ type: "askClearMany", itemIds: ids, sid });   // ONE kernel batch (see above)
+  setTimeout(() => {
+    for (const [c, stillOurs, forget] of leaving) if (stillOurs() && c.classList.contains("dismissing")) { c.remove(); forget(); }
+    dropDismissed(ids.filter((id) => pendingCleared.has(id)));
+  }, 180);
 }
 
 function reconcileCol(listEl: HTMLElement, entries: Entry[], globalDesired: Set<string>, gate: GateEnv) {

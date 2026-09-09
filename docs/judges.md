@@ -482,6 +482,9 @@ permission/API-error floors: one interrupt at a time, the present event first.
   filed once per fault episode and ended by the next successful read,
   store-unwritable: a goals file whose publish failed under a user gesture,
   store-quarantined: a goals file whose bytes did not parse, moved aside,
+  frozen-store-write: a read-only site wrote to the shared store view, naming
+  the site, after which the shared cache is off for the process,
+  frozen-store-save: a shared store view was handed to `save_goals`, refused,
   and the read-failure kinds the evidence gate's strict readers write once
   per failure episode when a side file exists and does not read:
   states-unreadable, cleared-unreadable, stall-unreadable,

@@ -87,7 +87,7 @@ test("the Reply modal quotes the detail beneath the ask when there is one, in th
   // also takes the todo's file (the todo-file follow-on, 2026-09-07), a fifth argument the Reply
   // button rides the same way the detail does; the chip itself is render-todo-file-chip.test.ts's
   assert.match(TODO, /\(reply as any\)\._utdetail = t\.detail \|\| "";/);
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\): void/);
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""\): void/);
   const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply"), RENDER.indexOf("\nfunction ", RENDER.indexOf("function showUserTodoReply") + 10));
   assert.match(modal, /const dd = todoDetail\.trim\(\) \? el\("div", "ut-detail open"\) : null;/);
   assert.match(modal, /box\.append\(h, d\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);/, "between the quoted line and the answer box");
@@ -95,5 +95,5 @@ test("the Reply modal quotes the detail beneath the ask when there is one, in th
   // ask AND the file it names: text, chip, detail — the row's order, the whole need in view
   assert.ok(modal.indexOf("todoFileChip(todoFile, sid)") > -1 && modal.indexOf("todoFileChip(todoFile, sid)") < modal.indexOf("const dd = todoDetail.trim()"), "the chip joins the quoted line, the detail follows both");
   const handler = RENDER.slice(RENDER.indexOf("utreply: (elx) => {"), RENDER.indexOf("utdismiss: (elx) => {"));
-  assert.match(handler, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| "", \(\(elx as any\)\._utfile as string\) \|\| ""\);/);
+  assert.match(handler, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| "", \(\(elx as any\)\._utfile as string\) \|\| "", \(\(elx as any\)\._utlink as string\) \|\| ""\);/);   // …and the address it carries (2026-09-08)
 });

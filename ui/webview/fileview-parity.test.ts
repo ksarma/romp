@@ -6,6 +6,12 @@
 // pane-specific (wrap mode, the pane's own load cue `.fileview-load {`) are not pinned. The md body's
 // own rule IS (since Slice 1 of plans/markdown-viewer.md): its `contain: layout` is what keeps a note's
 // fixed-positioned element inside the note, and it has to hold in both documents.
+// The reader (`rulesOf`) matches a head at a LINE START only, and pins every rule declared under it. A shorter head
+// can end a longer one (`.fileview-md h5, .fileview-md h6 {` is the tail of the six-heading head), and a plain
+// indexOf read the longer rule's body twice and never the h5/h6 dim rule (Slice 3 of plans/markdown-viewer.md,
+// review round 3); a head declared twice (the six-heading head: its type rule and its scroll-margin rule) is held
+// twice, so the second copy cannot drift either. A body runs to its first `}`, so a rule inside a nested block (an
+// @media wrap) is not readable here; such a block is pinned whole by its own test.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -24,11 +30,22 @@ const RULES = [
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
   "a.fileview-gh-note {", ".fileview-body {", ".fileview-md {",
+  ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",
-  ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only
-  ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {",
+  ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only (a sized <img> since Slice 2 of plans/markdown-viewer.md)
+  // the document type scale (Slice 3 of plans/markdown-viewer.md): the headings, the list gutter and the task item, kbd, the
+  // fences' rows and Copy button, the table's fill, striping, alignment and pane-wide break-out
+  ".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6 {", ".fileview-md h1 {", ".fileview-md h2 {", ".fileview-md h3 {",
+  ".fileview-md h4 {", ".fileview-md h5, .fileview-md h6 {", ".fileview-md h1, .fileview-md h2 {",
+  ".fileview-md ul, .fileview-md ol {", ".fileview-md li.task-list-item {", ".fileview-md li.task-list-item input {",
+  '.fileview-md li.task-list-item > input[type="checkbox"], .fileview-md li.task-list-item > p:first-child > input[type="checkbox"] {',
+  ".fileview-md kbd {", ".fileview-md pre code {", ".fileview-md pre code .cl {", ".fileview-md pre code .cl::before {", ".fileview-md pre code .ct {", ".fileview-md pre code .ct::before {",
+  ".fileview-md pre.has-copy {", ".fileview-md .code-copy {", ".fileview-md pre.has-copy:hover .code-copy, .fileview-md .code-copy:focus-visible {",
+  ".fileview-md .code-copy:hover {", ".fileview-md .code-copy.copied {",
+  ".fileview-md table {", ".fileview-md > table {", ".fileview-md th, .fileview-md td {", ".fileview-md th {", ".fileview-md tbody tr:nth-child(even) {",
+  '.fileview-md th[align="center"], .fileview-md td[align="center"] {', '.fileview-md th[align="right"], .fileview-md td[align="right"] {', '.fileview-md th[align="left"], .fileview-md td[align="left"] {',
   ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
@@ -52,14 +69,39 @@ const RULES = [
   ".tc-diff-del-kept-embed {", ".tc-diff-del-kept-embed::after {",
 ];
 
-function ruleOf(css: string, head: string): string {
-  const at = css.indexOf(head);
-  assert.ok(at >= 0, head + " present");
-  return css.slice(at, css.indexOf("}", at) + 1);
+// Every rule declared under `head` in `css`, in sheet order: each occurrence of the head at a line start, read
+// through its first `}`. Line-start only, so a head that is the tail of a longer head resolves to its own rule.
+function rulesOf(css: string, head: string): string[] {
+  const text = "\n" + css;   // a head on the sheet's first line is found the same way as any other
+  const key = "\n" + head;
+  const out: string[] = [];
+  for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
+    out.push(text.slice(at + 1, text.indexOf("}", at) + 1));
+  }
+  return out;
 }
+
+test("the rule reader anchors a head at a line start and reads every rule declared under it", () => {
+  // a synthetic sheet in the sheets' own shape: a two-selector head whose tail is another head, the shorter head's
+  // own rule after it, and the longer head declared a second time further down
+  const css = [
+    "/* a comment */",
+    ".fv-a, .fv-b {",
+    "  color: var(--fg); }",
+    ".fv-b { color: var(--dim); }",
+    ".fv-a, .fv-b { margin: 0; }",
+  ].join("\n");
+  assert.deepEqual(rulesOf(css, ".fv-b {"), [".fv-b { color: var(--dim); }"], "the tail of a longer head resolves to its own rule");
+  assert.deepEqual(rulesOf(css, ".fv-a, .fv-b {"), [".fv-a, .fv-b {\n  color: var(--fg); }", ".fv-a, .fv-b { margin: 0; }"], "a head declared twice yields both rules");
+  assert.deepEqual(rulesOf(css, ".fv-c {"), [], "an absent head yields nothing");
+  assert.deepEqual(rulesOf(".fv-a { top: 0; }\n.fv-a { left: 0; }", ".fv-a {"), [".fv-a { top: 0; }", ".fv-a { left: 0; }"], "a head on the first line counts");
+});
 
 test("the viewer's shared chrome exists in BOTH sheets, byte-equal", () => {
   for (const head of RULES) {
-    assert.equal(ruleOf(CHAT, head), ruleOf(FEED, head), head + " mirrors exactly");
+    const chat = rulesOf(CHAT, head), feed = rulesOf(FEED, head);
+    assert.ok(chat.length > 0, head + " present in styles.css");
+    assert.ok(feed.length > 0, head + " present in feed.css");
+    assert.deepEqual(chat, feed, head + " mirrors exactly");
   }
 });

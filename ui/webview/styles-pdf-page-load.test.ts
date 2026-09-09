@@ -95,7 +95,8 @@ const schemeOpeners = (css: string): string[] => Array.from(strip(css).matchAll(
 
 // ── a small cascade resolver for one property along one chain: class/id/tag compounds joined by descendant or child
 // combinators — the grammar the viewer's colour rules use. A selector using anything else is skipped when it names
-// none of the chain's classes and FAILS LOUDLY when it does, so a :hover / :has rule on the cue cannot slip past. ──
+// none of the chain's classes and FAILS LOUDLY when it does, so a :hover / :has rule on the cue cannot slip past; a rule
+// on a pseudo-element (`::before`) of a chain node is skipped too, since it styles a box no chain leaf is. ──
 type Node = { tag: string; id: string | null; classes: string[] };
 type Compound = { tag: string | null; id: string | null; classes: string[] };
 type Rule = { head: string; selector: string; parts: Compound[]; combinators: string[]; spec: number; order: number; value: string; conditional: string | null; important: boolean };
@@ -154,6 +155,9 @@ function rulesFor(css: string, prop: string, chainClasses: string[]): Rule[] {
       }
       if (value === null) continue;
       for (const selector of splitList(head)) {
+        // a rule on a PSEUDO-ELEMENT of a chain node (`.fileview-body .fv-cl::before`: Slice 3's print block colours the Raw
+        // view's row numbers black) styles the pseudo's own box, which no node on the chain is: skipped, whatever it names
+        if (/::[a-z-]+$/i.test(selector)) continue;
         const toks = selector.replace(/\s*>\s*/g, " > ").split(/\s+/);
         const parts: Compound[] = []; const combinators: string[] = []; let pending: string | null = null; let simple = true;
         for (const tok of toks) {

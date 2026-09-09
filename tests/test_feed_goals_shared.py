@@ -430,7 +430,9 @@ class LandingGate(_World):
             km._feed_goals_view(SID)
         finally:
             km._end_goals_pass()
-        snap = km._PERF_STATS.snapshot()["memos"]["goals_snap"]
+        # memos.pass: upstream's name for the pass memo since the memos bundle's review (#1059; the
+        # 2026-09-08 fold took the rename, kernel-code DECISIONS 2)
+        snap = km._PERF_STATS.snapshot()["memos"]["pass"]
         self.assertEqual(snap["live"] - self.memo0["live"], 1)
         self.assertEqual(snap["snap"] - self.memo0["snap"], 1)
 

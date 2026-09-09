@@ -12,7 +12,8 @@ it leans on.
 **User todo**:
 A need an agent registers with the person it works for — a decision, input, or action only
 they can provide — held open while the agent keeps working on whatever else it can. It may name
-the file it is about. Cleared only by answer, dismiss, or withdraw; never by inference.
+the file it is about, and carry the web address it is about. Cleared only by answer, dismiss, or
+withdraw; never by inference.
 _Avoid_: ask (the feed payload's `asks` field already means the card list), request, user task
 
 **Answer**:

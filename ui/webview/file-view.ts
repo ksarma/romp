@@ -16,7 +16,7 @@
 // BROWSER (file-browse.ts, feed bundle) opens files through this same viewer in the FEED document, so
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import { sanitizeMd } from "./md-sanitize";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
@@ -25,14 +25,18 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { readPlace, seatPlaceOutcome, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
-import { delegate } from "./actions";
+import { delegate, pressHold } from "./actions";   // pressHold: a fetch landing waits while a pointer is pressed over the body (the reload under a press)
 import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
+import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own (code-block.ts; Slice 3 of plans/markdown-viewer.md)
+import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the note holds it, tabs and all (the Slice 3 review)
+import "./viewer-grammars";   // decision 5's six grammars, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -67,13 +71,15 @@ for (const [name, lang] of Object.entries({
 
 // Extension → the hljs language to force. Anything absent is shown unhighlighted rather than guessed:
 // highlightAuto on a config file or a log picks a language at random and paints it misleadingly, and a
-// wrong highlight reads as information the file does not contain.
+// wrong highlight reads as information the file does not contain. The last row is decision 5's six grammars
+// (viewer-grammars.ts): a `.rs` file's code view reads as a rust fence in a note does.
 const LANG: Record<string, string> = {
   py: "python", pyi: "python", js: "javascript", jsx: "javascript", mjs: "javascript",
   cjs: "javascript", ts: "typescript", tsx: "typescript", json: "json", jsonc: "json",
   yaml: "yaml", yml: "yaml", sh: "bash", bash: "bash", zsh: "bash", bats: "bash",
   html: "xml", htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "css",
   md: "markdown", markdown: "markdown", diff: "diff", patch: "diff",
+  rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",
 };
 
 function langFor(path: string): string | null {
@@ -977,6 +983,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  // A fetch landing rebuilds the body with no gesture of the reader's behind it (a reload the Comments panel's poll asked
+  // for after a session's write). A press under way on a fence's Copy, or anywhere in the body, must outlive that swap: a
+  // pressed node removed before the mouseup dispatches no click at all (actions.ts, the header), so the landing waits while
+  // a pointer is pressed over the body and runs on the release (ui/CLAUDE.md, click-safe option 2;
+  // file-view-copy-held-browser.test.ts). The reader's own paints (a view swap, the editor) follow clicks already released.
+  const hold = pressHold(body);
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
   // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
   // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
@@ -1066,6 +1078,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     aside: (node) => {
       main.querySelector(".fileview-aside")?.remove();
       if (node) { node.classList.add("fileview-aside"); main.appendChild(node); }
+      // the one width change the viewer sees made: this read lays the new width out, the browser's own scroll adjustment
+      // in it, and the reader's place (below) skips the scroll event that reports this number
+      asideScrollTop = body.scrollTop;
       // a PDF's body follows the panel (Slice 4): pages while it is open, the frame when it closes. The bytes not yet
       // landed: renderBody's fetch continuation reads the flag and chooses then.
       const was = asideOpen;
@@ -1091,6 +1106,77 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
   // triggers below: a paint hook is for a body whose text has positions to re-measure.
   const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
+  // ── the reader's place (plans/markdown-viewer.md Slice 2; reader-place.ts) ── kept in the file's own terms, the
+  // source span of the top-visible block and its height in the body, across every paint of a text view: the swap
+  // (renderBody: a view switch, a reload), the width reflow (the observer below) and a text-size step. `shownText` is
+  // the text the body's view was PAINTED from, the source readPlace reads it against: a reload has put the new bytes in
+  // `text` before renderBody swaps the old view out. `place` is the reader's place under the layout last painted, read
+  // again after every seat and, off the body's scroll event, once per frame as the reader moves; the width reflow
+  // seats from it, since by the time the observer reports, the layout has changed and the old top block cannot be read.
+  // A scroll under a body width the last read did not see, before that repaint, is the browser's own: its anchoring
+  // keeping an anchor node's top edge through the reflow, or its clamp as the content got shorter (which reads as a
+  // LATER block, the wrong place). Read as the reader's place, either stands in the NEW layout already, so the repaint's
+  // seat moves nothing and the reader's depth into the top block is held in pixels where reader-place.ts keeps it as a
+  // fraction of the block's height; the aside's close, whose padding write suppresses the anchoring, applied the
+  // fraction, so each open of the Comments panel halved the depth and each close kept it (the Slice 2 review, round 2).
+  // Skipped, the pre-reflow place stands for the repaint to seat, and the depth is the same fraction in both directions
+  // and across a pane drag. One scroll in that window is made on purpose and must not be undone: the panel's reveal
+  // (file-comments.ts fcopen: a click on a highlight with the panel closed mounts the aside and centers the mark in one
+  // task), which the repaint used to scroll back to the pre-click place one frame later, the text jumping twice and a
+  // mark low in the viewport pushed off the screen with its card (round 1). The viewer sees that width change made: the
+  // panel mounts the aside through the seam's aside hook, the one place a toggle's width change happens, and the hook
+  // reads the body's scrollTop after the mount, which lays the new width out with the browser's adjustment in it, and
+  // keeps the number (asideScrollTop). A scroll under the new width that reports that number is the adjustment the hook
+  // already saw, and skipped; one that reports another number is a script's after the mount (the reveal) or the
+  // reader's, and read, unless it is the clamp, whose landing is the body's end reached from above it, which nothing
+  // does on purpose. Under a new width no hook saw (the pane dragged, the window resized) nothing scrolls on purpose in
+  // the same task, and every scroll before the repaint is skipped. Round 2 recognised the anchoring by a signature
+  // instead, the kept block's top edge within a pixel of where it stood, which holds for a paragraph, a picture or a
+  // code block, whose anchor node shares the block's top edge, and not for a table, a list or a blockquote, where the
+  // browser anchors on a row, an item or an inner paragraph and the content above it inside the block reflows (round
+  // 3: a 40-row table walked two rows up per toggle, 0.4 to 0.35 to 0.298 to 0.243 of its height; a 40-item list 0.4
+  // to 0.422; a 12-paragraph blockquote 0.4 to 0.412), and on a drag the table held pixels where the paragraph held
+  // the fraction. The hook's number is exact whatever the browser anchored on, and costs one layout per toggle, which
+  // the panel's own measurements force in the same task anyway. file-view-place-reveal-browser.test.ts drives the
+  // reveal, a width change no hook saw and the clamp; file-view-place-browser.test.ts the toggle and the drag with the
+  // reader partway into a paragraph, a picture, a table, a list and a blockquote.
+  let shownText: string | null = null;
+  let place: Place | null = null;
+  let placeWidth = -1;
+  let placeScrollTop = -1;
+  let placeHeld = false;   // `place` is the one a clamped seat was given, standing while the body stands where the clamp left it (seat, below)
+  let asideScrollTop = -1;   // the body's scrollTop as the aside hook (ctx.aside, above) left it, -1 once a read has followed
+  const keptPlace = (): Place | null => (shownText === null ? null : placeHeld && place && body.scrollTop === placeScrollTop ? place : readPlace(body, shownText));
+  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; asideScrollTop = -1; } };
+  // A seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the write asked for more scroll than the view has, and the
+  // body stands at its end) keeps the place it was given instead of reading the body: the read would name the block the
+  // clamp shows, a paragraph before the reader's, and the next swap would seat THAT, so the Rendered/Raw round trip from
+  // the end of the taller view came back one paragraph early (the Slice 3 review: the top block changed and its edge moved
+  // 65 to 107px; before the slice the Raw view was the taller and the same clamp drifted the other direction by up to
+  // 264px). The held place stands while the body stands where the clamp left it (placeScrollTop): the seat's own scroll
+  // event moves nothing and is skipped below, the first scroll that does move it is the reader's and is read, and a swap
+  // or a reflow that finds the hold seats the reader's own passage, which the other view can show. Either branch consumes
+  // the aside hook's number (asideScrollTop): the seat is the paint the hook's width change led to.
+  const seat = (kept: Place | null) => {
+    const clamped = kept && shownText !== null ? seatPlaceOutcome(body, shownText, kept).clamped : false;
+    if (clamped && kept) { place = kept; placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = true; asideScrollTop = -1; }
+    else notePlace();
+  };
+  const clamped = (): boolean => body.scrollTop < placeScrollTop && body.scrollTop >= body.scrollHeight - body.clientHeight - 1;
+  /** A scroll under a new width the aside hook saw made, reporting a scrollTop other than the one the hook read after the
+   *  mount: a script's (the reveal) or the reader's, past the browser's own adjustment. */
+  const pastAside = (): boolean => asideScrollTop >= 0 && body.scrollTop !== asideScrollTop;
+  let placeFrame = 0;
+  body.addEventListener("scroll", () => {
+    if (placeFrame) return;
+    const read = () => {
+      placeFrame = 0;
+      if (placeHeld && body.scrollTop === placeScrollTop) return;   // the clamped seat's own scroll event: the body has not moved since
+      if (body.clientWidth === placeWidth || (pastAside() && !clamped())) notePlace();
+    };
+    if (typeof requestAnimationFrame === "function") placeFrame = requestAnimationFrame(read); else read();
+  }, { passive: true });
+  ctx.onClose(() => { if (placeFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(placeFrame); placeFrame = 0; });
   // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
   // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
   // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
@@ -1100,8 +1186,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (pct === sizePct) return;
     sizePct = pct;
     saveTextSize(pct);
+    const kept = textShowing() ? keptPlace() : null;   // the top block before the text grows or shrinks around it
     applyTextSize();
-    if (textShowing()) fireRenderedKeepingSelection();
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); }
   };
   sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
   sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
@@ -1140,10 +1227,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       frame = 0;
       if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
       paintedWidth = seenWidth;
-      if (textShowing()) fireRenderedKeepingSelection();
+      if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      // the body's content width, for the sheets (the pane-wide table's cap, `.fileview-md > table`): on the BODY, which
+      // stands for the open (mdBlock rebuilds .fileview-md on every render and no report follows a render), from the
+      // layout's own report, one write per report; a scrollbar's width is taken, a reserved gutter is none (Slice 3 review,
+      // round 2: `scrollbar-gutter: stable` reserved a blank strip on every body that never scrolls)
+      body.style.setProperty("--fv-body-w", w + "px");
       if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
       seenWidth = w;
       if (w === paintedWidth || frame) return;
@@ -1188,15 +1280,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.appendChild(box);
   document.body.appendChild(wrap);
 
-  // A one-line notice above the body in the viewer's error dress (the edit-blocked reason, a save
-  // failure, a save whose comments-log entry did not land): one at a time, replacing the last, and
-  // the body content underneath survives.
+  // A one-line notice in the viewer's error dress (the edit-blocked reason, a save failure, a save whose
+  // comments-log entry did not land, a line past the end): one at a time, replacing the last. Mounted ABOVE
+  // the body row, between the title bar and .fileview-main, never inside the body (plans/markdown-viewer.md
+  // Slice 2): inside it the notice scrolled away with the text (at scrollTop 400 it was 400px above the
+  // body's top; the past-the-end notice was scrolled out of view by the very landing it explains) and went
+  // with the next swap of the body's children. Here it shows at any scroll position and outlives a view
+  // switch and a reload; the editor's entry and exit remove it themselves (enterEdit, exitEdit).
   const noteBar = (msg: string): HTMLElement => {
     document.getElementById("fileview-save-err")?.remove();
     const bar2 = el("div", "fileview-err");
     bar2.id = "fileview-save-err";
     bar2.textContent = msg;
-    body.prepend(bar2);
+    box.insertBefore(bar2, main);
     return bar2;
   };
 
@@ -1262,10 +1358,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       if (svgSource && svgText !== null) {
+        // the Source view is a text view (textShowing), so it keeps the reader's place as the Raw view does: read, swap,
+        // hooks, record the XML as the text painted, seat (the Slice 2 review, round 3: a reload under the Source view
+        // and the Comments panel's close left the numeric scrollTop over the re-laid rows, 27 rows off)
+        const kept = keptPlace();
         body.replaceChildren(codeBlock(svgText, path, true));   // long lines always soft-wrap (the user 2026-08-24)
         fireRendered();                         // a text body: the panel's highlight pass runs on it too
+        shownText = svgText;
+        seat(kept);
         return;
       }
+      shownText = null;                         // a picture or a PDF frame: no text the body was painted from
       if (isPdf && asideOpen) { showPdfPages(); return; }   // the Comments panel is open: the chunk's pages, not the frame (Slice 4)
       if (keepShownFrame()) return;           // the panel closing over a frame at these bytes: the frame stays; the notice, or the attempt under way, goes
       notePdfPage();                          // the reader's page, off the shells, before dropPdf removes them
@@ -1277,8 +1380,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
+    shownText = text;
+    seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
     if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
@@ -1699,6 +1805,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
     fireRendered();
+    // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
+    // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar)
+    document.getElementById("fileview-save-err")?.remove();
     // per the loading-state rule the chunk wait shows the romp loader, not a blank body
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
@@ -1735,12 +1844,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         noteBar(why + " — " + pending.refusal);
         return;
       }
-      document.getElementById("fileview-save-err")?.remove();
-      const bar2 = el("div", "fileview-err");   // loud: say the editor is degraded, never pretend
-      bar2.id = "fileview-save-err";
-      bar2.textContent = why + " — editing in the plain fallback editor.";
       enterFallback();
-      body.prepend(bar2);
+      noteBar(why + " — editing in the plain fallback editor.");   // loud: say the editor is degraded, never pretend
     });
   };
   const exitEdit = () => {
@@ -1749,6 +1854,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     applied = { accepted: [], rejected: [] };   // the decisions went with the editor; the next mount starts its own afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
+    // the edit's notices (a refused save's, a declined close's, a fallback editor's) go with the editor: the repaint took
+    // them while the bar sat inside the body, and a notice that must outlive the exit is raised again after it (noteLog)
+    document.getElementById("fileview-save-err")?.remove();
     renderBody();
     // a fetch that landed while the editor was up painted nothing (fetchFile): now that the edit is over, read the file
     // as it is — the exit is the event the dropped bytes were waiting for
@@ -1960,11 +2068,31 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
   let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
+  // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
+  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
+  // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
+  // under the new mtime with no error row, while the same throw from an immediate landing reached the `.catch` below.
+  // The promise rejects with the parked run's throw into that same `.catch` now (review round 2, 2026-09-08;
+  // file-view-landing-throw-browser.test.ts); a parked run a later landing replaced resolves with nothing painted, which
+  // is what the hold's header says of an overtaken landing.
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
+    // Whether this fetch's answer STANDS to land: its viewer is up (wrap.isConnected: a close removes the wrap, and a
+    // replace-open detaches it while the id the guards used to open with sits on the NEW viewer, so that check passed for
+    // the wrong viewer) and no newer fetch is out (fetchSeq). `land` runs a landing through the hold's defer for an answer
+    // that stands and drops one that does not, BEFORE the hold as well as inside the parked run: the hold parks in DEFER
+    // order and a later defer replaces the parked run, so an overtaken answer that reached defer under a press displaced
+    // the newer fetch's parked landing (resolved, unpainted) and then bailed itself at the release on fetchSeq: two writes
+    // within a poll interval, the newer answer first, and the body kept the old text under the old mtime with nothing
+    // re-asking (the Comments panel asks once per mtime). And a landing parked under a press whose viewer a replace-open
+    // removed during the press painted into the detached body and fired the replaced viewer's hooks (the Slice 3 review,
+    // round 3, 2026-09-09; file-view-landing-order-browser.test.ts). An answer that does not stand paints nothing, parks
+    // nothing and displaces nothing; the guards re-run inside the parked run for what changes while it is parked.
+    const stands = (): boolean => wrap.isConnected && my === fetchSeq;
+    const land = (run: () => void): Promise<void> | void => { if (stands()) return hold.defer(run); };
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
       if (my !== fetchSeq) return Promise.resolve("");   // a newer fetch is out: read nothing, set nothing
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
@@ -1992,16 +2120,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
-    }).then((t) => {
-      if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
-      if (my !== fetchSeq) return;                              // a newer fetch is the one that lands
+    }).then((t) => land(() => {   // parked while a pointer is pressed over the body; the guards re-run at the release
+      if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
       if (t instanceof Blob) {
-        // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
-        // and never clobbers the new open's mediaUrlLive registration.
-        if (!wrap.isConnected) return;
+        // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
+        // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
         if (objUrl !== null) dropMediaUrl();    // a reload: the previous bytes' URL goes before the new one is minted
         mediaBlob = t;
         objUrl = URL.createObjectURL(t);
@@ -2024,9 +2150,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
-    }).catch((err) => {
-      if (!document.getElementById("romp-fileview")) return;
-      if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
+    })).catch((err) => land(() => {
+      if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
@@ -2049,7 +2174,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       body.replaceChildren(why);
-    });
+    }));
   };
   fetchFile();
   return true;
@@ -2177,6 +2302,24 @@ export function openUrlView(href: string): void {
     landed = true;
     requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, hash); });
   };
+  let shownText: string | null = null;                // the text the body's view was painted from (the reader's place, below)
+  // The reader's place across the Rendered/Raw switch, as the local viewer keeps it (openFileView's keptPlace and seat): read
+  // before the swap, seated after it, and a seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the view swapped in
+  // is shorter and the body stands at its end) holds the place it was given while the body stands where the clamp left it
+  // (heldScrollTop) instead of reading the body back, which would name the block the clamp shows, so the swap back seats the
+  // reader's passage. Without the hold the round trip from the end of the taller view came back a paragraph early or tens of
+  // pixels off here after review round 1 had given it to the local viewer alone (the Slice 3 review, round 3, 2026-09-09;
+  // file-view-url-place-bottom-browser.test.ts). The first scroll that moves the body ends the hold (the seat's own scroll
+  // event reports the held scrollTop and changes nothing); no timers. The switch is the one swap this viewer's place crosses:
+  // no reload, no aside, no text-size control, so none of the local viewer's reflow bookkeeping is needed here.
+  let heldPlace: Place | null = null;
+  let heldScrollTop = -1;
+  const keptPlace = (): Place | null => (shownText === null ? null : heldPlace && body.scrollTop === heldScrollTop ? heldPlace : readPlace(body, shownText));
+  const seat = (kept: Place | null) => {
+    if (kept && shownText !== null && seatPlaceOutcome(body, shownText, kept).clamped) { heldPlace = kept; heldScrollTop = body.scrollTop; }
+    else heldPlace = null;
+  };
+  body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;
@@ -2184,9 +2327,12 @@ export function openUrlView(href: string): void {
       b.setAttribute("aria-pressed", String(on));
     }
     if (text === null) return;                         // the loader holds the body until the bytes land
+    const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    shownText = text;
+    seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
   };
   renderBody();
@@ -2369,17 +2515,22 @@ type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; si
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
   let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
+  const fences: Fence[] = [];                          // marked's code tokens in document order, for the fence pass's Copy (fence-source.ts)
   try {
     // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
     // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
     // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
     // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
-    // the defaults runs as well: per-call options replace, not compose. The file kind's alone: a URL document has
-    // no directory for `notes.md:7` to sit in, and its links resolve against the URL below.
+    // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
+    // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
+    // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
+    // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
     const base = marked.defaults.walkTokens;
-    const dirty = marked.parse(text, doc && doc.kind === "file"
-      ? { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }
-      : undefined) as string;
+    const dirty = marked.parse(text, { walkTokens: (t) => {
+      if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
+      if (doc && doc.kind === "file") viewerWalkTokens(t);
+      if (base) void base.call(marked, t);
+    } }) as string;
     // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
     // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
     // and interrupt the active session; review find on #958, 2026-09-07), and GitHub's rules for a note's own
@@ -2406,6 +2557,15 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
+  // A task item wears GitHub's class (Slice 3 of plans/markdown-viewer.md): marked emits the checkbox as the li's first
+  // child with no hook on the li (inside its first paragraph in a loose list), and the sheets' `li.task-list-item` rule
+  // drops the bullet that sat beside the box and pulls the box into the gutter. After the sanitize, and only for the
+  // disabled checkbox the sanitizer's post-pass leaves (every other input is removed there); an author who writes the
+  // class on an li of their own gets the same bullet-less item GitHub would give them.
+  box.querySelectorAll('li > input[type="checkbox"]:first-child:disabled, li > p:first-child > input[type="checkbox"]:first-child:disabled').forEach((input) => {
+    const li = input.closest("li");
+    if (li) li.classList.add("task-list-item");
+  });
   // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
   // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
   // document the browser knows nothing about). getAttribute, never the .src/.href property: the
@@ -2479,15 +2639,33 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     });
   }
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
-  // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
+  // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random. Then, for EVERY
+  // fence, named or not, the chat's own dress (code-block.ts; Slice 3 of plans/markdown-viewer.md): the per-line rows
+  // that number the lines and make a soft-wrap read distinctly from a real newline, and the Copy button. Copy copies
+  // the fence's text AS THE NOTE HOLDS IT (fence-source.ts, off the code tokens the parse collected): the raw text
+  // captured here is read before the rows drop the newlines, but after marked's lexer turned the note's leading tabs
+  // into four spaces each, so a Makefile recipe copied from the rendered text pasted back with spaces (the Slice 3
+  // review); a fence the module does not find in the note copies the raw text as before. The math fill's source
+  // fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module carries no KaTeX)
+  // is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
+  const copySources = fenceCopyQueue(text, fences);
   box.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;
+    const raw = codeEl.textContent || "";
+    const pre = codeEl.parentElement;
+    const host = pre && pre.tagName === "PRE" ? pre : null;
+    if (codeEl.classList.contains("md-math-src")) { if (host) addCopyBtn(host, raw); return; }
+    const queued = copySources.get(raw);
+    const toCopy = (queued && queued.length ? queued.shift() : null) ?? raw;
     const lang = (codeEl.className.match(/language-([\w-]+)/) || [])[1];
-    if (!lang || !hljs.getLanguage(lang)) return;
-    try {
-      codeEl.innerHTML = hljs.highlight(codeEl.textContent || "", { language: lang }).value;
-      codeEl.classList.add("hljs");
-    } catch { /* leave plain */ }
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;
+        codeEl.classList.add("hljs");
+      } catch { /* leave plain */ }
+    }
+    wrapCodeLines(codeEl);
+    if (host) addCopyBtn(host, toCopy);
   });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.

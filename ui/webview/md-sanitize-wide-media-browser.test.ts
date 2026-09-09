@@ -7,7 +7,8 @@
 // never shrinks keeps the author's explicit height: the first cut's unconditional height: auto grew a full-width
 // `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to Chromium's default 150;
 // review round 1), and a direct child carries the prose measure like a direct-child
-// <img> (at 380px the bare 860px cap would itself overflow). Both rules sit at zero class specificity (:where) so
+// <img> (at 380px the bare 860px cap of the time would itself overflow; since Slice 3 of plans/markdown-viewer.md the
+// root's padding is the measure and 100% of the column is the cap). Both rules sit at zero class specificity (:where) so
 // KaTeX's own `.katex svg { height: inherit }` still wins over its stretchy glyphs once math renders here (Slice 4);
 // the last step holds that cascade with the KaTeX sheet inlined where the built styles.css carries it. A <video> is
 // the one of the three whose natural ratio can differ from its attributes: the browser maps `width="640"
@@ -22,7 +23,13 @@
 // (DOMPurify, all but `value`), and the leg pins that on a padded length and a padded percentage, since the sheet's
 // `[width$="%"]` test and mdBlock's `%` test both rely on it. A witness video (a poster and no height attribute) tells the leg when the
 // poster has been decoded, since a video fires no event for it. A 12-column table is the control: its own overflow-x
-// scroll is untouched. Skips LOUDLY without a playwright browser (CI
+// scroll is untouched. A sized <img> joined the pixel-sized rule with Slice 2 of plans/markdown-viewer.md: `<img
+// width="900" height="300">` laid out 344 by 300 in a 380px pane (ratio 1.15) and 860 by 300 under the measure (2.87),
+// the height attribute holding while the cap took the width, so every picture wider than the measure was squashed at
+// every width; the picture fixtures below hold 3:1 in the three shapes the markdown gives a picture (a bare HTML line,
+// in prose, in a centred div), while a percentage-width picture keeps its height attribute and a height-only badge its
+// size (the same two guards the svg and video fixtures hold), and a picture whose attributes lie about its bytes follows
+// the bytes, as an attribute-less picture always did. Skips LOUDLY without a playwright browser (CI
 // installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST paths, a
 // placeholder sid.
 import { test } from "node:test";
@@ -46,6 +53,11 @@ const PATH = "/tmp/TESTHOST/notes-api/report.md";
 const RATIO = 40 / 1500;                                          // every wide fixture is 1500 by 40
 const POSTER_URL = "http://romp.test/media/square.svg";           // an absolute poster URL, as a note pointing at a host would carry
 const SQUARE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" fill="#c60"/></svg>';
+// the pictures: a 900 by 300 plot and a 300 by 100 badge, absolute URLs on the page's own host (a path figure would be
+// rewritten to the kernel's /file route; these stay as written)
+const PLOT_URL = "http://romp.test/media/plot.svg", BADGE_URL = "http://romp.test/media/badge.svg";
+const PLOT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="300" viewBox="0 0 900 300"><rect width="900" height="300" fill="#369"/></svg>';
+const BADGE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="100" viewBox="0 0 300 100"><rect width="300" height="100" fill="#693"/></svg>';
 
 // the fixture note: a standalone <svg> block (a direct child of .fileview-md), the same nested in prose (marked puts a
 // one-line tag inside a <p>), a canvas and a video sized 1500 by 40, a KaTeX-shaped stretchy glyph, a wide table
@@ -100,6 +112,20 @@ const NOTE = [
   "",
   'Glyph: <span class="katex"><span class="hide-tail fx-tail"><svg class="fx-katex" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M0 0h400000v1080H0z"/></svg></span></span>',
   "",
+  // a sized picture in the three shapes the markdown gives one: a bare HTML line (a direct child of the md box), in prose,
+  // and in a centred div; then the two guards (a percentage width with a height, a height alone) and the lying attributes
+  '<img class="fx-img" src="' + PLOT_URL + '" width="900" height="300">',
+  "",
+  'Picture in prose: <img class="fx-img-prose" src="' + PLOT_URL + '" width="900" height="300"> end.',
+  "",
+  '<div align="center"><img class="fx-img-centred" src="' + PLOT_URL + '" width="900" height="300"></div>',
+  "",
+  'Banner picture: <img class="fx-img-pct" src="' + PLOT_URL + '" width="100%" height="30">',
+  "",
+  'Badge: <img class="fx-img-h" src="' + BADGE_URL + '" height="100">',
+  "",
+  'Declared square: <img class="fx-img-lie" src="' + PLOT_URL + '" width="300" height="300">',
+  "",
   "| " + Array.from({ length: 12 }, (_, i) => "column_" + (i + 1) + "_wide_header").join(" | ") + " |",
   "|" + Array.from({ length: 12 }, () => "---").join("|") + "|",
   "| " + Array.from({ length: 12 }, (_, i) => "cell_" + (i + 1)).join(" | ") + " |",
@@ -144,6 +170,8 @@ async function inBrowser(t: any, body: (page: any, errors: string[]) => Promise<
         return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body: NOTE });
       }
       if (u.href === POSTER_URL) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: SQUARE_SVG });
+      if (u.href === PLOT_URL) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: PLOT_SVG });
+      if (u.href === BADGE_URL) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: BADGE_SVG });
       return route.fulfill({ status: 404, body: "" });
     });
     await page.goto("http://romp.test/files");
@@ -154,6 +182,9 @@ async function inBrowser(t: any, body: (page: any, errors: string[]) => Promise<
       const v = document.querySelector("#romp-fileview .fileview-md .fx-witness");
       return !!v && Math.abs(v.getBoundingClientRect().height - v.getBoundingClientRect().width) < 1;
     }, null, { timeout: 10000 });
+    // every picture fixture has decoded (its load event has fired: complete with a natural size), so a box that follows the
+    // bytes' ratio is measured after the bytes, not the attributes', are what the browser has
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("#romp-fileview .fileview-md img[class^=fx-img]")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
     await body(page, errors);
   } finally {
@@ -182,6 +213,8 @@ const POSTERS: Record<string, { width: number; height: number }> = {
 // percentage-width videos: not a length, so no ratio is written and the browser's own value stays `auto` (its mapping
 // stops at a percentage too); the height attribute stands (SIZED, above)
 const PCT_VIDEOS = ["fx-vidh", "fx-pct-poster", "fx-pct-ws"];
+// the sized pictures: 900 by 300 by their attributes and their bytes, 3:1 wherever the column or the measure caps them
+const PICTURES = ["fx-img", "fx-img-prose", "fx-img-centred"];
 // what the viewer reads after the sanitizer: every attribute value trimmed (DOMPurify trims all but `value`), so neither
 // the sheet's `[width$="%"]` nor mdBlock's dimension parse meets whitespace, and a padded percentage still ends in `%`
 const TRIMMED: Record<string, string> = { "fx-poster-ws": "640", "fx-pct-ws": "100%" };
@@ -193,7 +226,7 @@ function measure(): Facts {
   body.scrollLeft = 100000; const maxScrollLeft = body.scrollLeft; body.scrollLeft = 0;
   const br = body.getBoundingClientRect();
   const els: Record<string, Box> = {};
-  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly", "fx-poster", "fx-poster-ws", "fx-poster-frac", "fx-poster-px", "fx-pct-poster", "fx-pct-ws", "fx-witness"]) {
+  for (const cls of ["fx-block", "fx-nested", "fx-canvas", "fx-video", "fx-pct", "fx-pct-sq", "fx-vidh", "fx-vidonly", "fx-poster", "fx-poster-ws", "fx-poster-frac", "fx-poster-px", "fx-pct-poster", "fx-pct-ws", "fx-witness", "fx-img", "fx-img-prose", "fx-img-centred", "fx-img-pct", "fx-img-h", "fx-img-lie"]) {
     const el = md.querySelector("." + cls) as HTMLElement | null;
     if (!el) { els[cls] = { width: 0, height: 0, right: 0, parent: "", present: false, parentWidth: 0, aspect: "", widthAttr: null }; continue; }
     const r = el.getBoundingClientRect();
@@ -270,6 +303,27 @@ function check(f: Facts, at: string): void {
     assert.ok(Math.abs(b.height - h) <= 1, at + ": ." + cls + " keeps its height attribute of " + h + "px: " + b.width + " by " + b.height);
     assert.ok(b.right <= f.body.right + 0.5, at + ": ." + cls + " ends inside the body");
   }
+  // a picture sized by its attributes keeps its 3:1 whether the column (380px: 344 wide) or the measure (900px: 860 wide)
+  // caps it: before Slice 2 of plans/markdown-viewer.md the height attribute held at 300 while the cap took the width
+  // (344 by 300 at 380px, 860 by 300 at 900px)
+  for (const cls of PICTURES) {
+    const b = f.els[cls];
+    assert.ok(b.present, at + ": ." + cls + " survives the sanitizer");
+    assert.ok(b.width < 900 && b.width > 300, at + ": ." + cls + " is capped below its 900px: " + b.width);
+    assert.ok(Math.abs(b.height - b.width / 3) <= 1, at + ": ." + cls + " keeps its 3:1 as the cap shrinks it (height: auto): " + b.width + " by " + b.height);
+    assert.ok(b.right <= f.body.right + 0.5, at + ": ." + cls + " ends inside the body");
+  }
+  assert.equal(f.els["fx-img"].parent, "fileview-md", at + ": the bare picture line is a direct child of the md box");
+  {
+    // the guards a picture shares with the svg and video rules: a percentage width the cap never shrinks keeps its height
+    // attribute (an unconditional height: auto grew this banner from 30 to 115px at 380px), a height-only badge keeps its size
+    const pct = f.els["fx-img-pct"], badge = f.els["fx-img-h"], lie = f.els["fx-img-lie"];
+    assert.ok(pct.present && Math.abs(pct.height - 30) <= 1, at + ": the percentage-width picture keeps its height attribute of 30px: " + pct.width + " by " + pct.height);
+    assert.ok(badge.present && Math.abs(badge.width - 300) <= 1 && Math.abs(badge.height - 100) <= 1, at + ": the height-only badge keeps its 300 by 100: " + badge.width + " by " + badge.height);
+    // attributes that lie about the bytes (300 by 300 declared over a 900 by 300 picture): the box follows the bytes, as the
+    // browser lays out an attribute-less picture and as GitHub shows it, not the author's squash
+    assert.ok(lie.present && Math.abs(lie.width - 300) <= 1 && Math.abs(lie.height - 100) <= 1, at + ": the picture declared square follows its bytes' 3:1 at its declared width: " + lie.width + " by " + lie.height);
+  }
   // the control: a 12-column table still scrolls inside its own box, and its last cell is reachable there
   assert.ok(f.table.scrollWidth > f.table.clientWidth, at + ": the wide table overflows its own box (" + f.table.scrollWidth + " > " + f.table.clientWidth + ")");
   assert.ok(f.table.maxScrollLeft > 0, at + ": the table's own scroll range is intact: " + f.table.maxScrollLeft);
@@ -280,7 +334,7 @@ test("wide inline media in a rendered note fits the column instead of vanishing 
   await inBrowser(t, async (page, errors) => {
     // 1. a 900px pane: the nested svg, canvas and video used to lay out at 1500px behind a body that could not scroll
     check(await page.evaluate(measure), "900px");
-    // 2. a 380px pane (the Files column is often that narrow): the standalone block's 860px prose cap alone would overflow too
+    // 2. a 380px pane (the Files column is often that narrow): a standalone block's cap must be the column's, never a constant
     await page.setViewportSize({ width: 380, height: 600 });
     check(await page.evaluate(measure), "380px");
     // 3. the cascade KaTeX needs: `.katex svg { height: inherit; position: absolute; width: 100% }` (katex.min.css,

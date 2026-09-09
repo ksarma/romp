@@ -44,3 +44,12 @@ body.fileview-pane .filebrowse{width:100%;height:100%;border:0;border-radius:0;b
 .fs-recent-head{font-size:11px;font-weight:650;opacity:.6;text-transform:uppercase;letter-spacing:.04em;padding:0 8px 4px}
 .fs-row{display:flex;align-items:center;gap:8px;min-width:0;padding:5px 8px;border-radius:6px;cursor:pointer}
 .fs-row:hover{background:var(--overlay-05,rgba(255,255,255,0.05))}
+/* Print (Slice 3 of plans/markdown-viewer.md): the pane's own screen rules undone so the note prints as a document, as the
+   base sheets' print block does for the modal (styles.css, which this page loads first, carries it). The page and the
+   viewer grow to the note's height, the body row's fill and clip go, and the ink is black on white; keywords, since this
+   sheet holds no bare hex (css-census.test.ts). The viewer's own position:relative above stands in print too: in flow it
+   prints as a block, and the z-index it keeps is what files.test.ts pins. file-view-print-browser.test.ts lays it out and
+   counts the pages. */
+@media print{html,body{height:auto;overflow:visible;display:block;background:white;color:black}
+body.fileview-pane .fileview{width:auto;height:auto}
+#files-empty{display:none}}

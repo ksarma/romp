@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""The shared read-only goal-store cache (kernel/judge.py load_goals_shared, performance plan P9 / C1).
+"""The shared read-only goal-store cache (kernel/judge.py load_goals_shared).
 
 The pusher thread's read-only sites used to parse a goal store on every load; load_goals_shared serves
 them one deep-frozen parsed object per file version, verified on every call by the store's identity
 (inode, mtime_ns, size) PLUS a byte compare, the override journal's identity and the goals-archive's.
 Writers stay on load_goals. All fixtures SYNTHETIC; this module uses a PRIVATE synthetic sid and a
-fresh state root per test (the root CLAUDE.md, "Goal-store fixtures use a PRIVATE synthetic sid")."""
+fresh state root per test, so another module's journaled overrides against a shared placeholder sid
+cannot land on its nodes mid-test."""
 import contextlib
 import copy
 import errno
@@ -174,14 +175,14 @@ class SharedStoreCache(unittest.TestCase):
         # onto a recycled inode inside one clock tick. The byte compare catches it.
         p = self._seed()
         a = jd.load_goals_shared(SID)
-        key0 = jd.store_key(SID)
+        key0 = jd._file_key(str(p))
         st = os.stat(p)
         raw = p.read_bytes()
         self.assertIn(b'"text": "A goal"', raw)
         with open(p, "r+b") as f:                         # in place: the inode stays
             f.write(raw.replace(b'"text": "A goal"', b'"text": "B goal"'))
         os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))  # pin the stamp: the identity is unchanged
-        self.assertEqual(jd.store_key(SID), key0, "the stat key did not move")
+        self.assertEqual(jd._file_key(str(p)), key0, "the stat key did not move")
         b = jd.load_goals_shared(SID)
         self.assertIsNot(a, b)
         self.assertEqual(b["nodes"][self._nid(1)]["text"], "B goal")
@@ -276,11 +277,30 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual(jd.shared_store_stats()["entries"], 0)
         self.assertEqual(self._delta("evict"), 1)
 
-    def test_store_key(self):
-        self.assertIsNone(jd.store_key(SID), "no file, no key")
+    def test_a_removed_store_read_as_absent_drops_its_entry(self):
+        # a store file gone at the read drops its stale entry at once (the compaction sweep would evict it
+        # later, and a recycled inode is caught by the byte compare either way: dead weight, not a wrong answer)
         p = self._seed()
-        st = os.stat(p)
-        self.assertEqual(jd.store_key(SID), (st.st_ino, st.st_mtime_ns, st.st_size))
+        jd.load_goals_shared(SID)
+        self.assertEqual(jd.shared_store_stats()["entries"], 1)
+        os.unlink(p)
+        s = jd.load_goals_shared(SID)
+        self.assertIs(type(s), dict, "the fresh store: private, nothing to share")
+        self.assertEqual(self._delta("absent"), 1)
+        self.assertEqual(jd.shared_store_stats()["entries"], 0, "the removed store's entry went with it")
+
+    def test_the_cache_exports_no_uncalled_key_reader(self):
+        # store_key (a fresh stat of the store's identity) shipped with no caller: the two kernel view signatures
+        # that stat the store carry (mtime, size) inside larger multi-file keys and are not its consumer, so it
+        # is gone rather than kept ahead of a use (review find, 2026-09-08). _file_key stays: the cache's own.
+        self.assertFalse(hasattr(jd, "store_key"))
+
+    def test_the_two_kinds_this_cache_files_are_documented(self):
+        # docs/judges.md lists the judge-errors kinds; the two the frozen guard files were missing from it
+        # (review find, 2026-09-08)
+        doc = (Path(BIN).parent / "docs" / "judges.md").read_text()
+        for kind in ("frozen-store-write", "frozen-store-save"):
+            self.assertIn(kind, doc, "%s is documented" % kind)
 
     # ── the degraded inputs ──────────────────────────────────────────────────────────────────────────
 
@@ -296,11 +316,10 @@ class SharedStoreCache(unittest.TestCase):
                          "handed to load_goals, which counts it: loads + loads_shared stays one read per call")
 
     def test_a_corrupt_store_is_handed_to_load_goals_and_quarantined_once(self):
-        # Upstream #1019 (steer 1 of the 2026-09-08 fold) superseded the per-version corrupt memo: the shared
-        # loader never keeps a fresh store for bytes the writer's loader would move aside. Bytes that do not
-        # parse go to load_goals, which quarantines the file (one stderr line, one store-quarantined row) and
-        # answers the legitimate fresh store. The path then reads as absent, so nothing is cached for it and
-        # the next call is the absent-store answer.
+        # The shared loader never keeps a fresh store for bytes the writer's loader would move aside: bytes
+        # that do not parse go to load_goals, which quarantines the file (one stderr line, one
+        # store-quarantined row) and answers the legitimate fresh store. The path then reads as absent, so
+        # nothing is cached for it and the next call is the absent-store answer.
         p = self._seed()
         p.write_bytes(b"{not a store")
         err = io.StringIO()
@@ -329,8 +348,8 @@ class SharedStoreCache(unittest.TestCase):
         return mock.patch.object(os, "open", faulting_open)
 
     def test_a_read_fault_raises_from_load_goals_shared_and_caches_nothing(self):
-        # The shared loader raises a read fault exactly as load_goals does (upstream #1019): no empty store,
-        # no stale view, and the entry for the path is dropped. The pusher's builders take it through
+        # The shared loader raises a read fault exactly as load_goals does: no empty store, no stale view,
+        # and the entry for the path is dropped. The pusher's builders take it through
         # load_goals_shared_or_fault, which files the fault once per episode (the next test).
         p = self._seed()
         self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore)
@@ -401,7 +420,7 @@ class SharedStoreCache(unittest.TestCase):
         self._seed()
 
         def marking_replay(fsid, store, lines=None):
-            store["_unread"] = True
+            store["_unread"] = "journal"
             return False
         o_rp = jd._replay_overrides
         jd._replay_overrides = marking_replay
@@ -410,7 +429,7 @@ class SharedStoreCache(unittest.TestCase):
         finally:
             jd._replay_overrides = o_rp
         self.assertEqual(type(a), dict, "served private and mutable, like load_goals' fallback")
-        self.assertIs(a.get("_unread"), True)
+        self.assertEqual(a.get("_unread"), "journal")
         self.assertEqual(jd.shared_store_stats()["entries"], 0, "not published")
         self.assertEqual(self._delta("unreadable_journal"), 1)
         self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore, "the real replay publishes")
@@ -484,16 +503,25 @@ class SharedStoreCache(unittest.TestCase):
     def test_save_goals_refuses_the_shared_store_and_files_a_row(self):
         p = self._seed()
         s = jd.load_goals_shared(SID)
-        key0 = jd.store_key(SID)
+        st0 = os.stat(p)
         saves0 = jd.goal_io_stats()["saves"]
-        with self.assertRaises(jd.FrozenStoreError):
-            jd.save_goals(SID, s)
-        with self.assertRaises(jd.FrozenStoreError):
-            jd.save_goals(SID, dict(s))                   # a shallow copy still carries the shared nodes map
+        temps = []
+        o_tmp = jd._publish_tmp
+        jd._publish_tmp = lambda d, fsid: (temps.append(fsid), o_tmp(d, fsid))[1]
+        try:
+            with self.assertRaises(jd.FrozenStoreError):
+                jd.save_goals(SID, s)
+            with self.assertRaises(jd.FrozenStoreError):
+                jd.save_goals(SID, dict(s))               # a shallow copy still carries the shared nodes map
+        finally:
+            jd._publish_tmp = o_tmp
         rows = [r for r in self._errors() if r["err"] == "frozen-store-save"]
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["fsid"], SID)
-        self.assertEqual(jd.store_key(SID), key0, "nothing was published")
+        st1 = os.stat(p)
+        self.assertEqual((st1.st_ino, st1.st_mtime_ns, st1.st_size), (st0.st_ino, st0.st_mtime_ns, st0.st_size),
+                         "nothing was published: the file's identity is unchanged across both refusals")
+        self.assertEqual(temps, [], "the refusal comes before the publish path: no temp file was opened for either save")
         self.assertEqual(self._delta("poisoned"), 0, "a refused save is not a write to the shared object")
         self.assertEqual(jd.shared_store_stats()["off"], 0)
         self.assertEqual(jd.goal_io_stats()["saves"], saves0, "the refusal comes before the counter: neither save counted")
@@ -553,14 +581,22 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual(rows[1]["fsid"], SID)
         self.assertNotIn(" -> ", rows[1]["note"], "the writer is outside the judge module: one frame is the site")
         self.assertRegex(rows[1]["note"], r" at %s:\d+ %s\(\) " % (re.escape(here), self._testMethodName))
+        # a TOP-LEVEL write: the container is the store itself, so the sid is the FrozenStore's own _fsid
+        jd._shared_clear()
+        with self.assertRaises(jd.FrozenStoreError):
+            jd.load_goals_shared(SID)["x"] = 1
+        rows = [r for r in self._errors() if r["err"] == "frozen-store-write"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[2]["fsid"], SID, "the store names itself")
+        self.assertNotIn(" -> ", rows[2]["note"])
         # a nested map: the site, no sid
         jd._shared_clear()
         with self.assertRaises(jd.FrozenStoreError):
             jd.load_goals_shared(SID)["status"][nid] = "completed"
         rows = [r for r in self._errors() if r["err"] == "frozen-store-write"]
-        self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[2]["fsid"], "")
-        self.assertIn(" at %s:" % here, rows[2]["note"])
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[3]["fsid"], "")
+        self.assertIn(" at %s:" % here, rows[3]["note"])
 
     def test_copies_of_the_shared_view_are_plain_and_writable(self):
         self._seed()

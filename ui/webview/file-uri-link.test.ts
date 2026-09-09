@@ -32,7 +32,7 @@ test("linkify runs on chat message bodies (assistant reply + user bubble + nudge
   assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\)/);   // a compact nudge's expanded full text (2026-07-17)
   // …plus a user todo's note, in the card's fold and quoted in the reply dialog, through linkTodoDetailPaths:
   // the same pass, DELEGATED, since the card rebuilds every push and its spans are not bound (user-todo-links.test.ts)
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);/);   // the URL pass first (url-links.ts, 2026-09-08)
   assert.match(RENDER, /linkTodoDetailPaths\(d, renderingSid \|\| null\)/);
   assert.match(RENDER, /linkTodoDetailPaths\(dd, sid\)/);
   // exactly the definition + those four applications, so tool-use reports/summaries stay untouched

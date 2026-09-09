@@ -134,7 +134,7 @@ class AUserTodoMayNameItsFile(unittest.TestCase):
 
     def test_the_entry_says_a_todo_may_name_its_file(self):
         self.assertIn("held open while the agent keeps working on whatever else it can. It may name the file it is "
-                      "about.", self.definition)
+                      "about, and carry the web address it is about.", self.definition)
 
     def test_the_clearing_rule_is_unchanged(self):
         # docs/adr/0001: an authority tier the judges cannot clear; nothing here may let inference clear a todo

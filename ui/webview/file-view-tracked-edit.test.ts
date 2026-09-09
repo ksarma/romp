@@ -361,7 +361,13 @@ const saveReply = async (reqId: number, s: Status, log: { logged: boolean; logWa
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId, ...s, verb: "save", ...log } }));
   await settle();
 };
-const errBar = (body: El) => body.querySelector(".fileview-err");
+// the viewer's notice bar (file-view.ts noteBar, #fileview-save-err) is a child of the card before .fileview-main since
+// Slice 2 of plans/markdown-viewer.md, so it is read from the card: the card's first .fileview-err is the bar when one is
+// up, else a pane inside the body (a fetch failure's), the set the body-scoped read used to answer
+const cardOf = (body: El) => body.parentNode!.parentNode as El;
+const errBar = (body: El) => cardOf(body).querySelector(".fileview-err");
+/** The bar stands right above the body row (the read view, or the editor, stands untouched under it). */
+const aboveRow = (body: El) => { const main = body.parentNode!, box = cardOf(body), bar = errBar(body); return !!bar && box.childNodes.indexOf(bar) === box.childNodes.indexOf(main) - 1; };
 const versionReads = () => fetches.filter((f) => f === "GET /version").length;
 const asideOpen = (wrap: El) => wrap.querySelector(".fc-panel") !== null;
 
@@ -387,7 +393,7 @@ test("CRLF: pending changes that land during the consent read are refused at the
   assert.match(errBar(body)!.textContent, CRLF_WORDS, "the consequence, stated as the click states it");
   assert.match(errBar(body)!.textContent, /1 change is pending in this file, so Edit is off here/, "…with the panel's refusal");
   assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
-  assert.ok(body.childNodes.length > 1 && body.childNodes[0] === errBar(body), "above the read view, which stands");
+  assert.ok(body.childNodes.length > 0 && aboveRow(body), "above the body row; the read view stands");
   assert.equal(ctx.mode(), "rendered", "a refused Edit leaves the Rendered view it was clicked from: no Raw choice saved and unpainted");
 });
 
@@ -465,8 +471,8 @@ test("a tracked save that landed with a failed comments-log append: the host's w
   assert.deepEqual(savedInfos, [{ mtimeNs: NS(9), logged: false }]);
   assert.ok(errBar(body), "the warning is shown");
   assert.equal(errBar(body)!.textContent, WARN, "in the host's words");
-  assert.equal(body.childNodes[0], errBar(body), "above the saved read view, after its repaint");
-  assert.ok(body.childNodes.length > 1, "which is painted");
+  assert.ok(aboveRow(body), "above the saved read view, after its repaint");
+  assert.ok(body.childNodes.length > 0 && body.querySelector("code.hljs"), "which is painted");
   assert.equal(asideOpen(wrap), false, "with the aside still closed: the bar is the one surface");
   assert.equal(b.save.hidden, true);
 });
@@ -483,7 +489,7 @@ test("in-flight typing: the warned ack keeps the editor and says the warning abo
   assert.equal(ed.destroyed, 0);
   assert.equal(b.save.disabled, false); assert.equal(b.save.textContent, "Save", "re-armed");
   assert.equal(errBar(body)!.textContent, WARN, "said above the editor the stay keeps");
-  assert.equal(body.childNodes[0], errBar(body));
+  assert.ok(aboveRow(body));
   assert.ok(body.querySelector(".fileview-cm"), "the editor is still the body");
   assert.deepEqual(savedInfos, [{ mtimeNs: NS(9), logged: false }]);
   const m2 = saveTracked(o, DOC + "one\ntwo\n");

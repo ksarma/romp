@@ -95,6 +95,16 @@ class ToolSurface(unittest.TestCase):
         # in the same breath it files the need
         self.assertIn("withdraw_user_todo", self._tool("add_user_todo")["description"])
 
+    def test_the_descriptions_name_the_bounds_on_text_and_detail(self):
+        # the 2026-09-09 review: neither had a cap, and the webview re-links both on every pane frame and chat push
+        t = self._tool("add_user_todo")
+        self.assertIn("at most 300 characters", t["description"])
+        self.assertIn("at most 4000", t["description"])
+        props = t["inputSchema"]["properties"]
+        self.assertIn("at most 300 characters", props["text"]["description"])
+        self.assertIn("at most 4000 characters", props["detail"]["description"])
+        self.assertEqual((pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX), (300, 4000))
+
 
 class Dispatch(unittest.TestCase):
     def setUp(self):
@@ -266,6 +276,150 @@ class File(unittest.TestCase):
         out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})
         for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check"):
             self.assertNotIn(word, out.lower(), "%r names machinery the agent cannot see" % word)
+
+
+class Link(unittest.TestCase):
+    """The optional `link` (the user 2026-09-08): the http or https address the need is about. The tool
+    checks it BEFORE any post (_todo_link_error, the kernel's _user_todo_link twin): a value that is not such
+    an address is refused in the tool's own reply and nothing is saved, so the agent files again with an
+    address, or puts it in the text or detail, where it links too. A good one rides the post stripped, the kernel
+    echoes it as stored, and a reply that echoes none to a body that sent one is an older kernel's, named
+    in the reply the way the file's skew is (never swallowed; the todo stands, so no error flag). PRIVATE
+    synthetic sid (the fixture rule)."""
+
+    SID = "5f5f5f5f-1111-4222-8333-944444444444"
+    LINK = "https://example.invalid/notes-api/pull/398"
+    MINTED = {"ok": True, "todoId": "ut-0a1b2c3d", "link": LINK}
+
+    def setUp(self):
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        self.posts = []
+        self.canned = dict(self.MINTED)
+        pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body)) or self.canned)
+        pm._self_identity = lambda: (self.SID, "api")
+        pm._heartbeat = lambda *a, **k: None
+        _switch(True)
+
+    def tearDown(self):
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
+        _switch(None)
+
+    def test_the_link_rides_the_post_stripped(self):
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request",
+                                                  "link": "  " + self.LINK + " \n"})
+        self.assertFalse(err)
+        self.assertEqual(self.posts, [("/usertodo", {"id": self.SID, "text": "Need a review of the pull request",
+                                                     "detail": "", "link": self.LINK})])
+        self.assertIn("ut-0a1b2c3d", out)
+        self.assertNotIn("About the link", out, "echoed as stored: nothing to say about it")
+
+    def test_no_link_means_no_link_key_the_shape_the_route_always_took(self):
+        for args in ({"text": "Need the staging port"}, {"text": "Need the staging port", "link": None},
+                     {"text": "Need the staging port", "link": "   "}):
+            _, err = pm._mcp_call("add_user_todo", args)
+            self.assertFalse(err)
+            self.assertNotIn("link", self.posts[-1][1])
+
+    def test_a_value_that_is_not_a_web_address_is_refused_before_any_post(self):
+        for value in ("ftp://example.invalid/x", "example.invalid/x", "https://", "mailto:someone@example.invalid",
+                      "https://example.invalid/a b", ["https://example.invalid/x"], {"href": self.LINK}, 7, True,
+                      "https://example.invalid/" + "x" * pm.TODO_LINK_MAX):
+            with self.subTest(link=value):
+                out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request", "link": value})
+                self.assertTrue(err, "a refusal, not a filing")
+                self.assertTrue(out.startswith("Refused: "), out)
+                self.assertIn("http or https address", out, "what would have been taken")
+                self.assertIn("Nothing was saved", out, "plain about the outcome: the agent must not believe the need was filed")
+                self.assertIn("file it again", out, "and the remedy: `link`, or the address in the text")
+                self.assertIn("`link`", out)
+        self.assertEqual(self.posts, [], "the kernel was never asked")
+
+    def test_the_refusal_names_the_reason(self):
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a review", "link": ["x"]})
+        self.assertIn("is not a string", out)
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a review", "link": "https://example.invalid/a b"})
+        self.assertIn("whitespace or a control character", out)
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a review", "link": "ftp://example.invalid/x"})
+        self.assertIn("must start with http:// or https:// and name a host", out)
+        long = "https://example.invalid/" + "x" * pm.TODO_LINK_MAX
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a review", "link": long})
+        self.assertIn("longer than %d characters" % pm.TODO_LINK_MAX, out)
+        self.assertNotIn(long, out, "shown by its head and its length, never whole")
+
+    def test_a_kernel_that_echoes_no_link_is_named_in_the_reply_and_the_todo_stands(self):
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d"}      # an older kernel: id/text/detail/file alone
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request", "link": self.LINK})
+        self.assertFalse(err, "the todo was filed: the loss of its link is not a failure (a retry files a duplicate)")
+        self.assertIn("Noted (id ut-0a1b2c3d)", out, "the filing is confirmed first")
+        self.assertIn("About the link: " + self.LINK + " was not recorded", out)
+        self.assertIn("older version", out)
+        self.assertIn("update and a restart", out, "the remedy for the machine")
+        self.assertIn("address in its text", out, "and the remedy for this todo: the text links too")
+        self.assertTrue(out.index("Noted") < out.index("About the link"))
+        # the file's skew sentence and the link's are independent: both when both were dropped
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look", "file": "/TESTDIR/notes-api/a.md", "link": self.LINK})
+        self.assertIn("About the file:", out)
+        self.assertIn("About the link:", out)
+        self.assertTrue(out.index("About the file") < out.index("About the link"))
+
+    def test_the_kernels_own_link_warning_is_relayed_and_no_skew_of_the_tools_is_read(self):
+        # a hub kernel that forwarded the todo to an older remote says so under `linkWarning` (its own key, apart from
+        # the file's `warning`): the tool relays the kernel's words after the filing and adds no sentence of its own
+        lw = ("the link %s was not recorded. The session manager on TESTHOST runs an older version that does not keep a "
+              "todo's link (an update and a restart there fix that), so the todo stands there without it. If the link "
+              "matters, withdraw it and file it again with the address in its detail, where it becomes a link too." % self.LINK)
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d", "linkWarning": lw}
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review of the pull request", "link": self.LINK})
+        self.assertFalse(err, "the todo was filed")
+        self.assertIn("Noted (id ut-0a1b2c3d)", out)
+        self.assertIn("About the link: " + lw, out)
+        self.assertNotIn("on this machine", out, "the tool's own skew sentence is not added: the kernel's account stands alone")
+        self.assertEqual(out.count("About the link"), 1)
+        self.assertTrue(out.index("Noted") < out.index("About the link"))
+        # a file warning and a link warning from the same reply: each under its own label, the file's first
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d", "warning": "the file path /TESTDIR/notes-api/a.md was not recorded", "linkWarning": lw}
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look", "file": "/TESTDIR/notes-api/a.md", "link": self.LINK})
+        self.assertIn("About the file: the file path /TESTDIR/notes-api/a.md was not recorded", out)
+        self.assertIn("About the link: " + lw, out)
+        self.assertTrue(out.index("About the file") < out.index("About the link"))
+
+    def test_an_over_long_text_or_detail_is_refused_before_any_post(self):
+        out, err = pm._mcp_call("add_user_todo", {"text": "N" * (pm.TODO_TEXT_MAX + 1), "link": self.LINK})
+        self.assertTrue(err)
+        self.assertIn("Too long: the line takes at most %d characters and this one is %d" % (pm.TODO_TEXT_MAX, pm.TODO_TEXT_MAX + 1), out)
+        self.assertIn("rest can go in 'detail'", out)
+        self.assertIn("Nothing was saved", out)
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a review", "detail": "d" * (pm.TODO_DETAIL_MAX + 1)})
+        self.assertTrue(err)
+        self.assertIn("Too long: 'detail' takes at most %d characters and this one is %d" % (pm.TODO_DETAIL_MAX, pm.TODO_DETAIL_MAX + 1), out)
+        self.assertEqual(self.posts, [], "the kernel was never asked")
+        # the whitespace the tool strips does not count: a padded line at the bound is filed
+        out, err = pm._mcp_call("add_user_todo", {"text": "  " + "N" * pm.TODO_TEXT_MAX + "  ", "detail": " " + "d" * pm.TODO_DETAIL_MAX})
+        self.assertFalse(err, out)
+        self.assertEqual(len(self.posts), 1)
+        self.assertEqual((len(self.posts[0][1]["text"]), len(self.posts[0][1]["detail"])), (pm.TODO_TEXT_MAX, pm.TODO_DETAIL_MAX))
+
+    def test_the_replies_keep_the_veil(self):
+        # the refusal and the skew sentence are the tool's own words (test_injected_voice.py renders them too)
+        outs = [pm._mcp_call("add_user_todo", {"text": "Need a review", "link": "ftp://example.invalid/x"})[0]]
+        self.canned = {"ok": True, "todoId": "ut-0a1b2c3d"}
+        outs.append(pm._mcp_call("add_user_todo", {"text": "Need a review", "link": self.LINK})[0])
+        for out in outs:
+            for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check"):
+                self.assertNotIn(word, out.lower(), "%r names machinery the agent cannot see" % word)
+
+    def test_the_schema_offers_link_and_the_descriptions_say_addresses_link(self):
+        t = next(t for t in pm.MCP_TOOLS if t["name"] == "add_user_todo")
+        props = t["inputSchema"]["properties"]
+        self.assertEqual(set(props), {"text", "detail", "file", "link"})
+        self.assertEqual(props["link"]["type"], "string")
+        self.assertEqual(t["inputSchema"]["required"], ["text"], "still optional")
+        self.assertIn("http or https address", props["link"]["description"])
+        self.assertIn("new tab", props["link"]["description"])
+        self.assertIn("refused", props["link"]["description"], "the schema says a bad one is refused, so the agent expects it")
+        self.assertIn("http or https address", props["text"]["description"], "a URL in the text links")
+        self.assertIn("web address", props["detail"]["description"], "and in the detail")
+        self.assertIn("pass its address as `link`", t["description"])
 
 
 class Account(unittest.TestCase):

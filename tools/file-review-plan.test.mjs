@@ -319,7 +319,9 @@ test('the note\'s fold statement is the sheets\': the row\'s computed flex-direc
     assert.ok(at >= 0, name + ' has the card rule');
     const rule = css.slice(at, css.indexOf('}', at) + 1);
     assert.ok(rule.includes('container-type: inline-size;'), name + ': the card is the container');
-    assert.ok(/\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/.test(css), name + ': the row stays a container for the aside\'s own fold rules');
+    // the row declares no container of its own since Slice 2 of plans/markdown-viewer.md (build note item 9): the card
+    // is the container the fold resolves against, and a query styles a container's descendants, never the container
+    assert.ok(/\n\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; \}\n/.test(css), name + ': the row declares no container of its own; the card is the fold\'s container');
     assert.ok(/@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/.test(css), name + ': the fold stacks the row');
     assert.ok(/\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/.test(css), name + ': the margin layout\'s root rule');
     // basis 0 with a 30% floor since the footer fix (styles-fc-margin-footer.test.ts pins the chat sheet's geometry;

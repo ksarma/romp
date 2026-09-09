@@ -45,7 +45,7 @@ function sheet(): string {
     return m![1];
   };
   // `.fileview` is the viewer's card, the ancestor the fold's container query resolves against (its container-type)
-  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
+  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), rule(".fileview-btn"), FEED.slice(a, b)].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>

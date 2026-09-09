@@ -33,6 +33,17 @@ test("Compact transcript defaults ON (the user 2026-07-14): fresh installs read 
   assert.equal(DEFAULT_SETTINGS.compact, true);
 });
 
+// The tab strip's one-group-per-row layout (upstream's T264 default) is a per-device opt-in on the fork
+// (the user 2026-09-08, whose strip of eleven tag groups became eleven rows): off, the groups flow inline.
+test("stripGroupRows defaults OFF (the user 2026-09-08): the strip flows inline; the gear's checkbox is the opt-in and round-trips", () => {
+  assert.equal(DEFAULT_SETTINGS.stripGroupRows, false);
+  store["romp:settings"] = JSON.stringify({ stripGroupRows: true });
+  assert.equal(loadSettings().stripGroupRows, true, "the opt-in round-trips");
+  store["romp:settings"] = JSON.stringify({});
+  assert.equal(loadSettings().stripGroupRows, false, "a store from before the key reads as off");
+  delete store["romp:settings"];
+});
+
 // Where a chat file-link click opens on the web (the user 2026-08-20): "chat" is the default —
 // upstream's design, the viewer over the pane you clicked — and "feed" is the opt-in that relays
 // the open into the Feed pane so the transcript stays readable while the file is up.
@@ -94,4 +105,17 @@ test("an unknown key in storage is ignored, known keys still merge", () => {
   const s = loadSettings();
   assert.equal(s.compact, true);
   assert.equal((s as any).future, 42, "merge is shallow — extra keys pass through harmlessly");
+});
+
+// Compact tabs and agents (the user 2026-09-08, whose phone showed about three lines of transcript
+// between the tab strip and the box of background work): OFF by default, so the desktop strip and box
+// render exactly as before the setting existed until the gear opts in. Distinct from `compact`, the
+// transcript's own fold. The class it drives is dense-chrome.test.ts's subject.
+test("Compact tabs and agents defaults OFF (the user 2026-09-08); the opt-in round-trips", () => {
+  assert.equal(DEFAULT_SETTINGS.denseChrome, false);
+  delete store["romp:settings"];
+  assert.equal(loadSettings().denseChrome, false, "a fresh install is undensified");
+  saveSettings({ denseChrome: true });
+  assert.equal(loadSettings().denseChrome, true, "the opt-in survives a reload (localStorage)");
+  delete store["romp:settings"];
 });

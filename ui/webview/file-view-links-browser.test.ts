@@ -201,9 +201,12 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 type Info = { text: string | null; path: string | null; line: string | null; act: string | null; href: string | null; target: string | null; rel: string | null; cls: string; title: string | null };
+type Served = { path: string; sid: string | null };
 type Harness = {
-  page: any; ctx: any; served: Array<{ path: string; sid: string | null }>; errors: string[];
+  page: any; ctx: any; served: Served[]; errors: string[];
   open: (p: string) => Promise<void>; status: (kind: "empty" | "marked") => Promise<void>; settle: () => Promise<void>;
+  /** The /file request logged at index n of `served`, once the route has logged it (see `fetched` in inBrowser). */
+  fetched: (n: number) => Promise<Served>;
   linkInfo: (sel: string) => Promise<Info[]>; base: () => Promise<string | null>; newPages: () => number; openCards: () => Promise<number>;
 };
 async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harness) => Promise<void>): Promise<void> {
@@ -212,7 +215,20 @@ async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harn
   try { browser = await pw.chromium.launch(); }
   catch (e) { t.skip("no playwright browser on this box, and the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   const errors: string[] = [];
-  const served: Array<{ path: string; sid: string | null }> = [];
+  const served: Served[] = [];
+  // For a read of `served` that follows a click with a DOM wait alone. The viewer paints the title bar before it issues the
+  // /file fetch (openFileView sets the base name, then calls fetchFile() last), so a wait on the title bar can resolve in the same
+  // task the fetch is dispatched, and the route handler that logs the request runs in node when Chromium's interception
+  // event arrives: after the wait, under load (8 of 1920 iterations at load ~35, the Slice 3 review). `fetched(n)` resolves
+  // when the log holds entry n, from the handler's own push, with a deadline so a viewer that never fetches fails here. A
+  // read after a wait on the rows or the rendered body is sound without it: those land only after the response the same
+  // handler fulfilled, so the push has happened.
+  const waiters: Array<{ n: number; resolve: (e: Served) => void }> = [];
+  const fetched = (n: number): Promise<Served> => served.length > n ? Promise.resolve(served[n]) : new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); reject(new Error(`no /file request was logged at index ${n} within 10s (${served.length} logged)`)); }, 10000);
+    const w = { n, resolve: (e: Served) => { clearTimeout(timer); resolve(e); } };
+    waiters.push(w);
+  });
   try {
     const filesJs = bundle();
     const hostJs = host === "files" ? "" : hostScript(host);
@@ -231,7 +247,10 @@ async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harn
       if (u.pathname === "/dist/host.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: hostJs });
       if (u.pathname === "/file") {                                   // the viewer's fetch: what the kernel serves for a text file
         const p = u.searchParams.get("path") || "";
-        if (route.request().method() === "GET" && route.request().isNavigationRequest() === false) served.push({ path: p, sid: u.searchParams.get("sid") });
+        if (route.request().method() === "GET" && route.request().isNavigationRequest() === false) {
+          served.push({ path: p, sid: u.searchParams.get("sid") });
+          for (const w of waiters.splice(0)) { if (w.n < served.length) w.resolve(served[w.n]); else waiters.push(w); }
+        }
         const body = FILES[p];                                        // the viewer normalizes `..` itself now: the spelling asked for must be the plain one
         if (body === undefined) return route.fulfill({ status: 404, contentType: "text/plain", body: "no such file: " + p });
         return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body });
@@ -263,7 +282,7 @@ async function inBrowser(t: any, host: "files" | "chat" | "feed", body: (h: Harn
     }), sel);
     const base = () => page.locator("#romp-fileview .fileview-base").textContent();
     const openCards = () => page.evaluate(() => document.querySelectorAll("#romp-fileview .fc-card.open").length);
-    await body({ page, ctx, served, errors, open, status, settle, linkInfo, base, newPages: () => pages, openCards });
+    await body({ page, ctx, served, errors, open, status, settle, fetched, linkInfo, base, newPages: () => pages, openCards });
     assert.deepEqual(errors, [], "no page errors");
     await ctx.close();
   } finally {
@@ -282,7 +301,7 @@ async function nextTab(h: Harness, act: () => Promise<unknown>): Promise<string>
 
 test("in a browser: a shown file's URLs and paths are links (a site, a far host and an import stay text); a path link opens the file (into Recent, normalized) and a :line scrolls its row in Raw; a Markdown link to a file opens it; a URL opens a tab; a drag across, inside or from a link selects and opens nothing; Enter opens", async (t) => {
   await inBrowser(t, "files", async (h) => {
-    const { page, served, open, settle, linkInfo, base } = h;
+    const { page, served, open, settle, fetched, linkInfo, base } = h;
     // ── the code view: what the pass marked, on hljs's rows, with every row's text intact ──────────
     await open(APP);
     assert.deepEqual(await rowTexts(page), APP_TEXT.split("\n").slice(0, -1), "every row reads as the file's line");
@@ -315,11 +334,18 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(await page.evaluate(() => !getSelection()!.isCollapsed), true, "the repaint kept the selection");
     await page.evaluate(() => getSelection()!.removeAllRanges());
     await page.locator("#romp-fileview .fileview-size-reset").click(); await settle();   // back to 100% for the row-in-view checks below
+    // Still the one fetch: a text-size step repaints from the text on hand (setTextSize reads the place, restyles, seats;
+    // nothing there fetches). Asserted here, apart from the click below, so a stray second fetch names its moment: one red
+    // run under 34 concurrent browser legs and 16 CPU burners (the Slice 2 review, round 3) found app.py at served[1] and
+    // the assertion below could not say whether it arrived during the size steps or at the click. The viewer has no path
+    // to it (reload is the panel's, on an mtime this fixture never moves; the pane's Recent rows are hidden while the
+    // viewer is up), and 12 re-runs under the same load passed, so it is read as the environment's, not the viewer's.
+    assert.deepEqual(served, [{ path: APP, sid: SID }], "one fetch so far, the file itself: the size steps fetched nothing");
 
     // ── a path link opens the file it names, with the viewer's session, and the pane records it as recent ─
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[1], { path: CONFIG, sid: SID }, "the resolved path, the session the file belongs to");
+    assert.deepEqual(await fetched(1), { path: CONFIG, sid: SID }, "the click's open is the next fetch: the resolved path, the session the file belongs to (every fetch so far: " + JSON.stringify(served) + ")");
     const recent = await page.evaluate(() => JSON.parse(localStorage.getItem("romp:files-recent") || "[]").map((r: { path: string }) => r.path));
     assert.ok(recent.includes(CONFIG), "opened through the pane's own open: the Recent list has it");
 
@@ -378,7 +404,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     const before = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[before], { path: APP, sid: SID }, "the Markdown link opened the file in the viewer, under its plain path");
+    assert.deepEqual(await fetched(before), { path: APP, sid: SID }, "the Markdown link opened the file in the viewer, under its plain path");
     const bar = await page.evaluate(() => ({ dir: document.querySelector("#romp-fileview .fileview-dir")!.textContent, base: document.querySelector("#romp-fileview .fileview-base")!.textContent }));
     assert.deepEqual(bar, { dir: ROOT + "/src/", base: "app.py" }, "the title bar shows the normalized directory");
     const recent2 = await page.evaluate(() => JSON.parse(localStorage.getItem("romp:files-recent") || "[]").map((r: { path: string }) => r.path));
@@ -422,15 +448,16 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
 
     // ── the keyboard: a focused path link opens on Enter ─────────────────────────────────────────
     await link.focus();
+    const nEnter = served.length;
     await page.keyboard.press("Enter");
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: CONFIG, sid: SID });
+    assert.deepEqual(await fetched(nEnter), { path: CONFIG, sid: SID });
   });
 });
 
 test("in a browser, through the real sanitizer: a same-directory `notes.md:7` and a `file:///` target open (a host with a port does not); a far host is a dead link that says why; a query alone opens a tab; a section link never moves the document (and scrolls to an id or a named anchor the document has, under a middle-click too); an inline SVG's anchors are marked; a line past the end says so", async (t) => {
   await inBrowser(t, "files", async (h) => {
-    const { page, served, open, linkInfo, base } = h;
+    const { page, served, open, fetched, linkInfo, base } = h;
     await open(GUIDE);
     await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
     const md = await linkInfo("#romp-fileview .fileview-md a");
@@ -488,14 +515,16 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     const topAfter = await page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("user-content-top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
     assert.equal(topAfter, true, "scrolled to the anchor"); assert.equal(page.url(), url0);
     // a colliding id: the viewer's own chrome wears ids too (its notice bar is #fileview-save-err). A stand-in for the bar
-    // sits above the rendered document, as the bar does, and the section link still scrolls to the AUTHOR's element, the
-    // rendered document's own element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2). Two
-    // guards now: the lookup's scope (.fileview-md), and the sanitizer's prefix, under which the author's element is
-    // user-content-fileview-save-err and never the chrome's id at all (the stand-in is the viewer's own, never sanitized)
+    // sits where the bar does, above the body row (a child of the card before .fileview-main since Slice 2 of
+    // plans/markdown-viewer.md), and the section link still scrolls to the AUTHOR's element, the rendered document's own
+    // element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2). Two guards now: the lookup's
+    // scope (.fileview-md), and the sanitizer's prefix, under which the author's element is user-content-fileview-save-err
+    // and never the chrome's id at all (the stand-in is the viewer's own, never sanitized)
     await page.evaluate(() => {
       const d = document.createElement("div"); d.id = "fileview-save-err"; d.className = "fileview-err"; d.textContent = "a notice";
       const body = document.querySelector("#romp-fileview .fileview-body")!;
-      body.prepend(d);
+      const main = document.querySelector("#romp-fileview .fileview-main")!;
+      main.parentElement!.insertBefore(d, main);
       for (const e of [body, body.querySelector(".fileview-md")!]) e.scrollTop = 0;
     });
     const inView = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md p#user-content-fileview-save-err")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
@@ -504,7 +533,7 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     await h.settle();
     assert.equal(await inView(), true, "scrolled to the author's element, not to the viewer's own element of that id");
     assert.equal(page.url(), url0);
-    await page.evaluate(() => document.querySelector("#romp-fileview .fileview-body > #fileview-save-err")!.remove());
+    await page.evaluate(() => document.querySelector("#romp-fileview .fileview > #fileview-save-err")!.remove());
     // the named anchor: a click scrolls to it (the heading under it comes into view), and the page's location stays
     await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
     const installIn = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = Array.from(document.querySelectorAll("#romp-fileview .fileview-md h2")).find((h) => h.textContent === "Install")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
@@ -524,9 +553,9 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
     const nSelf = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "self" }).click();
+    assert.deepEqual(await fetched(nSelf), { path: GUIDE, sid: SID }, "the sibling was fetched (this file again)");
     await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
     await h.settle(); await h.settle();
-    assert.deepEqual(served[nSelf], { path: GUIDE, sid: SID }, "the sibling was fetched (this file again)");
     assert.equal(await installIn(), true, "…and its section came into view once the render landed"); assert.equal(page.url(), url0);
     // a middle-click on a section link: this document's scroll, as a plain click, and NO tab (the browser's own opened a second
     // copy of the hosting page at /files#top; the 2026-09-07 review, round 3); on a dead section link, nothing, and no tab either
@@ -549,9 +578,10 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     assert.deepEqual(await page.evaluate(() => Array.from(document.querySelectorAll("#romp-fileview .fileview-btn.on")).map((b) => b.textContent)), ["Raw"]);
     // the file:// target opens its file
     await open(GUIDE);
+    const nUri = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "uri" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "README.md" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: README, sid: SID });
+    assert.deepEqual(await fetched(nUri), { path: README, sid: SID });
     // a line past the end: the last row, and a notice that says so
     await open(GUIDE);
     await page.locator("#romp-fileview .fileview-md a", { hasText: "past" }).click();
@@ -587,7 +617,7 @@ test("in a browser, over the real highlighter: a substitution span cannot turn a
 
 test("in a browser, with the comments panel's marks over the links: a plain click or Enter on a mark opens the card and nothing else (no tab, no file); a Cmd/Ctrl-click or a middle-click on a marked link opens the link's own tab and no card", async (t) => {
   await inBrowser(t, "files", async (h) => {
-    const { page, served, open, status, settle, base, openCards } = h;
+    const { page, served, open, status, settle, fetched, base, openCards } = h;
     await status("marked");
     await open(APP);
     const button = page.locator("#romp-fileview .fileview-fc:not([hidden]) button");
@@ -631,15 +661,16 @@ test("in a browser, with the comments panel's marks over the links: a plain clic
     const kbTab = await nextTab(h, async () => { await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).focus(); await page.keyboard.press("Control+Enter"); });
     assert.equal(new URL(kbTab).searchParams.get("path"), CONFIG); assert.equal(await base(), "app.py");
     // the plain keyboard route on the link itself (not the mark): Enter opens the file in the viewer, as before
+    const nEnter = served.length;
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).focus(); await page.keyboard.press("Enter");
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: CONFIG, sid: SID });
+    assert.deepEqual(await fetched(nEnter), { path: CONFIG, sid: SID });
   });
 });
 
 test("in a browser, a comment typed and not yet saved survives a link click: the viewer asks in the editor's words; declined, the file and the note stay; accepted, the link is followed", async (t) => {
   await inBrowser(t, "files", async (h) => {
-    const { page, served, open, settle, base } = h;
+    const { page, served, open, settle, fetched, base } = h;
     await open(APP);
     const button = page.locator("#romp-fileview .fileview-fc:not([hidden]) button");
     await button.waitFor({ timeout: 10000 });
@@ -670,7 +701,7 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
     page.once("dialog", (d: any) => { asked.push(d.message()); void d.accept(); });
     await link.click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.equal(asked.length, 2); assert.deepEqual(served[served.length - 1], { path: CONFIG, sid: SID });
+    assert.equal(asked.length, 2); assert.deepEqual(await fetched(n0), { path: CONFIG, sid: SID }, "accepted: the one fetch since the declined click");
     // with nothing typed there is no ask: a link click opens at once
     await open(APP);
     await page.locator("#romp-fileview .fileview-fc:not([hidden]) button").click();
@@ -687,7 +718,7 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
 
 test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a drag inside the URL anchor selects and opens none, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window; a section link, plain or Ctrl-clicked, is the viewer's scroll under the opener's `#` branch and no tab, and a query alone is one tab", async (t) => {
   await inBrowser(t, "chat", async (h) => {
-    const { page, served, open, status, settle, base, openCards } = h;
+    const { page, served, open, status, settle, fetched, base, openCards } = h;
     // The chat's OWN anchor (draggable, as every anchor with an href is), first in its paragraph: a triple-click on the prose
     // after it selects the whole paragraph, and the browser anchors that selection at the paragraph's first text, inside the
     // link. A press on a draggable anchor starts no selection and collapses none, so the selection stays open around the link
@@ -735,10 +766,10 @@ test("in a browser, under the chat's own document-level opener and its body dele
     const bodyOpens = () => page.evaluate(() => (window as any).__bodyOpens as string[]);
     const bodySeen = () => page.evaluate(() => (window as any).__bodySeen as string[]);
     const windowClicks = () => page.evaluate(() => ((window as any).__windowClicks as string[]).length);
-    const w0 = await windowClicks();
+    const w0 = await windowClicks(), nGuide = served.length;
     await page.locator("#romp-fileview .file-uri-link", { hasText: "../docs/guide.md:30" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "guide.md" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: GUIDE, sid: SID }, "a path link (no href) is the viewer's, not the opener's");
+    assert.deepEqual(await fetched(nGuide), { path: GUIDE, sid: SID }, "a path link (no href) is the viewer's, not the opener's");
     assert.deepEqual(await bodyOpens(), [], "the body delegate's openpath (the todo card's route) opened nothing: the file opened once, from the viewer");
     assert.equal(await windowClicks(), w0 + 1, "the plain click went on to the window: the viewer does not stop it");
     await open(GUIDE);
@@ -764,9 +795,10 @@ test("in a browser, under the chat's own document-level opener and its body dele
     // a query alone (`[q](?foo=1)`, the scheme-less shape): one tab at the resolved address, the chat's document where it was
     const qTab = await nextTab(h, () => page.locator("#romp-fileview .fileview-md a", { hasText: "q" }).click());
     assert.equal(new URL(qTab).search, "?foo=1", "the query rides the tab"); assert.equal(page.url(), url0, "the chat's document did not navigate"); assert.equal(await base(), "guide.md");
+    const nApp = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: APP, sid: SID });
+    assert.deepEqual(await fetched(nApp), { path: APP, sid: SID });
     assert.deepEqual(await bodyOpens(), [], "a Markdown anchor marked as a path link: the same, one open");
     const w1 = await windowClicks(), seen1 = (await bodySeen()).length;
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click({ modifiers: ["Control"] });
@@ -813,13 +845,13 @@ test("in a browser, under the chat's own document-level opener and its body dele
 
 test("in a browser, under the feed's window click listener: a path link opens in place and the listener sees the click (it returns focus to the chat after one), and a URL opens a tab", async (t) => {
   await inBrowser(t, "feed", async (h) => {
-    const { page, served, open, base } = h;
+    const { page, served, open, fetched, base } = h;
     await open(APP);
     const windowClicks = () => page.evaluate(() => ((window as any).__windowClicks as string[]).length);
-    const w0 = await windowClicks();
+    const w0 = await windowClicks(), nConfig = served.length;
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
-    assert.deepEqual(served[served.length - 1], { path: CONFIG, sid: SID });
+    assert.deepEqual(await fetched(nConfig), { path: CONFIG, sid: SID });
     assert.equal(await windowClicks(), w0 + 1, "the click reached the window, so the feed's own listener ran too (a stop at the viewer's body starved it; the 2026-09-07 review)");
     await open(APP);
     const n0 = served.length;
