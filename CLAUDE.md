@@ -64,23 +64,17 @@ This repo may go public; assume every commit is permanent and world-readable.
   `notes-api` with `web`/`api`/`tests` sessions) rather than inventing per-test
   worlds.
 - Two machine-local backstops enforce this, neither a substitute for the rule:
-  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus, for
-  every commit new to every fetched remote, the lines it ADDS, its message, and
-  the domain of any author or committer address the clone is not configured to
-  use (`user.email` in any scope, or the environment's), and an annotated tag's
-  own tagger and message, for the strings in
+  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus the lines
+  every commit new to every fetched remote ADDS, for the strings in
   `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
   2026-07-25; added lines rather than every commit's tree, so a branch that
   only INHERITED a string main has since redacted pushes once it merges the
-  main that carries the redaction — 2026-09-06; "new" to EVERY fetched
+  main that carries the redaction — 2026-09-06; and "new" to EVERY fetched
   remote, so a clone with a fork and the project as two remotes is not refused
   over the project's own history when it pushes a branch cut from the project's
-  main to the fork — 2026-09-07; and the metadata since 2026-09-09, when a
-  clone with no `user.email` had git stamp `<login>@<hostname -f>`, a tailnet
-  name, on a slice's commits and a pushed merge, through both content scans);
-  and the maintainer's clone carries an UNTRACKED
+  main to the fork — 2026-09-07); and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
   deliberately not in the repo: one machine's identifiers mean nothing on anyone
