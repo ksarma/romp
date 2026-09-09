@@ -13827,13 +13827,19 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     menu.appendChild(empty);
     onModelChoicesLoaded = () => {
       if (metaMenuEl !== menu) return;
+      // The chat's badges carry no session, so a menu opened on a tab that dismissSession has since
+      // removed (activeId moves to the MRU survivor there, without setActive's closeMetaMenu) cannot be
+      // told from the survivor's menu by its badge: it would re-anchor on the survivor's badge of the
+      // same kind, or write the stale reason row over the survivor's tab. Close it instead; a thread's
+      // popover names its own sid and is never the active tab, so its rebuild below is unchanged.
+      if (!forThread && activeId !== opSid) { closeMetaMenu(); return; }
       const now = metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk");
       if (!now.length) { sub.textContent = CODEX_MODELS_ERROR || "no model list yet"; return; }   // textContent drops the dots
       // The list landed: rebuild against the badge as it stands now, not the one captured at open. The
       // spawn that opened the gate also pushes, and every push rebuilds the statusline, so the captured
-      // button is often detached by the time the frame's re-read lands (the round-1 verification); with
-      // no live badge for this kind and session (the popover closed, the tab changed) the menu stays
-      // closed and the next open reads the fresh list.
+      // button is often detached by the time the frame's re-read lands (seen when the list landed after
+      // a kernel push); with no live badge for this kind and session (the popover closed, the statusline
+      // emptied) the menu stays closed and the next open reads the fresh list.
       closeMetaMenu();
       const anchor = metaAnchor(kind, forSid, btn);
       if (anchor) toggleMetaMenu(kind, anchor, forSid);

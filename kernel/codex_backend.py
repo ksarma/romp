@@ -1551,8 +1551,10 @@ class CodexBackend:
             for e in s.echoes:
                 # `_echo_text` marks the atom as an INPUT ECHO to the kernel, as SdkBackend's echo atoms
                 # do: _merge_live_atoms hides it behind its queued bubble (shown_texts) and never counts
-                # it as live work (an echo-only merge keeps the turn's real ended state), and
-                # build_session's queued fold and _live_cmd_keys read it. (The comment-thread frame's
+                # it as live work (an echo-only merge keeps the turn's real ended state); build_session's
+                # queued fold reads it, as does /diag/sendvis (_sendvis_diag lists every live echo's
+                # text); build_session's _live_cmd_keys reads it only off an atom carrying `command`,
+                # which a Codex echo never does today (see prune_live). (The comment-thread frame's
                 # held fold reads SDK echoes only: _comments_frame binds _sdk(), so no Codex echo
                 # reaches it.) Without the marker (until 2026-09-09) a Codex echo painted as a solid
                 # user atom beside its own queued bubble, painted once more beside its landed record,

@@ -15357,10 +15357,10 @@ def _create_codex_session(nm, cwd, client=None, parent="", tags=()):
 def _codex_gate_closed(cx):
     """The gate's state BEFORE a door opens it: True while `cx` holds no live session. Taken by the
     two doors (the spawn and the revive) on the line before the backend lands the row, so that
-    _codex_gate_opened keys its frame on the transition this caller made rather than on a count
-    read after the fact (see there). A backend that raises here reads as closed: the worst case is
-    one frame too many, which costs each picker one /models re-read; the other answer would be a
-    picker that never hears the list landed."""
+    _codex_gate_opened can key its frame on the transition this caller made, not only on a count
+    read after the fact (see there for the two signals). A backend that raises here reads as
+    closed: the worst case is one frame too many, which costs each picker one /models re-read; the
+    other answer would be a picker that never hears the list landed."""
     try:
         return not cx.live_sessions()
     except Exception:
@@ -15379,20 +15379,25 @@ def _codex_gate_opened(cx, door, was_closed):
     both call this once the backend holds the session live: _create_codex_session_inner (cx.spawn)
     and _revive_session_inner's Codex arm (a successful cx.resume makes a dead session live again;
     the first cut sent the frame from the spawn alone, so reviving the only Codex session after a
-    kernel restart left every tab's Codex list empty, the round-1 verification).
+    kernel restart left every tab's Codex list empty).
 
-    `was_closed` is the door's own snapshot (_codex_gate_closed) taken BEFORE its spawn or resume.
-    The frame is keyed on that snapshot, not on the count after the row landed: POST /new runs on a
-    thread per request and the WS create op per client, so two first creates (or two first revives
-    after a restart) can both land their rows before either reaches this line, and a post-count test
-    (`len(live_sessions()) == 1`) then saw 2 in both threads and fired for neither, leaving every open
-    dashboard's Codex list empty until the chat's own open-time re-read (the timeline lane never
-    re-reads; the round-2 verification, executed with a barrier). With the snapshot both racing doors
-    fire: two frames, each one cheap re-read, the rev increments and the picker drops the lower one.
-    Sequential creates fire exactly once, since the second door's snapshot sees the first's row.
-    `door` names the caller in the log line."""
+    The frame fires on EITHER of two signals; each covers an order the other misses. `was_closed` is
+    the door's own snapshot (_codex_gate_closed) taken BEFORE its spawn or resume: POST /new runs on
+    a thread per request and the WS create op per client, so two first creates (or two first revives
+    after a restart) can both land their rows before either reaches this line, and a test on the
+    count alone (`len(live_sessions()) == 1`) saw 2 in both threads and fired for neither, leaving
+    every open dashboard's Codex list empty until the chat's own open-time re-read (the timeline
+    lane never re-reads). The count read here, exactly one live session, covers the other order: a
+    create whose snapshot saw another session live, which was then killed before this row landed,
+    so the gate went closed and open again inside the window (a /models read there answered the
+    closed gate's empty list) and the snapshot alone fired nothing. Sequential second creates fire
+    on neither signal (the snapshot saw a row and the count reads 2); two racing first creates still
+    send at least one frame, two when both snapshots were taken before either row landed, each one
+    cheap re-read (the rev increments and the picker drops the lower one); a kill interleaved with a
+    create sends one. `door` names the caller in the log line."""
     try:
-        if was_closed and cx.live_sessions():
+        live = cx.live_sessions()
+        if live and (was_closed or len(live) == 1):
             _models_changed()
     except Exception as e:
         sys.stderr.write("codex %s: models frame not sent (%s)\n" % (door, e))
@@ -54713,11 +54718,12 @@ class Handler(BaseHTTPRequestHandler):
                 # menu with the session's default badge showing and no word of why (2026-09-09): the
                 # client in retry backoff, a failed model_list, or this gate closed on a dashboard
                 # loaded before the first Codex session, none of them visible. Fail loudly: the reason
-                # rides to the menu, and the gate's own flip sends a models frame (_codex_gate_opened,
-                # from the spawn and the revive, keyed on the door's own before-snapshot so two racing
-                # first creates both send one). The CLOSED gate carries a reason of its own: the
-                # backend was not asked, so the menu must never read the empty list as an answer from
-                # the app-server (the round-1 verification: the menu's fallback said it sent no list).
+                # rides to the menu, and the live-session flip sends a models frame (_codex_gate_opened,
+                # from the spawn and the revive, keyed on the door's own before-snapshot OR on the count
+                # after landing being exactly one, so two racing first creates still send at least one
+                # and a kill interleaved with a create sends one). The CLOSED gate carries a reason of
+                # its own: the backend was not asked, so the menu must never read the empty list as an
+                # answer from the app-server (the menu's fallback used to say it sent no list).
                 if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
                            or bool(cx.live_sessions())):
                     try:

@@ -8,17 +8,22 @@ Codex session opened it. Now the section carries `error` in every empty state (t
 backend name themselves, so the menu never reads an empty list as the app-server's answer), and the first
 live Codex session fires the models frame the pick memory and the catalog fetch already send, through
 EITHER door that opens the gate: the spawn (_create_codex_session_inner) and the revive of a dead session
-(_revive_session_inner's Codex arm; the first cut covered the spawn alone, the round-1 verification). The
-frame is keyed on the door's OWN before-snapshot of the gate (_codex_gate_closed), not on the live count read
-after the row landed: two first creates or two first revives can interleave (a thread per POST /new, one per WS
-client), and the post-count test saw 2 in both and fired for neither (the round-2 verification, executed with a
-barrier); the snapshot fires both, once each when sequential. The backend is a FAKE here (no app-server, no
-network); the handler runs in-process on a loopback ThreadingHTTPServer, the test_kernel_cors idiom. Synthetic
-fixtures only.
+(_revive_session_inner's Codex arm; the first cut covered the spawn alone). The frame fires on either of two
+signals: the door's OWN before-snapshot of the gate (_codex_gate_closed), or a live count of exactly one read
+after the row landed. Two first creates or two first revives can interleave (a thread per POST /new, one per WS
+client), and a test on the count alone saw 2 in both and fired for neither (executed with a barrier below); the
+snapshot fires both. A create whose snapshot saw another session live, killed before this row landed, is the
+order the snapshot misses and the count catches. Sequential second doors fire on neither. A backend that raises
+under the snapshot reads as closed and fires; one that raises under the helper's own read breaks neither door
+and names the door on stderr. The backend is a FAKE here (no app-server, no network); the handler runs
+in-process on a loopback ThreadingHTTPServer, the test_kernel_cors idiom. Synthetic fixtures only.
 """
+import contextlib
 import http.client
+import io
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -39,6 +44,17 @@ km = load_source("romp_kernel_codex_models", os.path.join(BIN, "romp-kernel"))
 
 SID = "11111111-2222-4333-8444-555555555555"
 SID2 = "22222222-3333-4444-8555-666666666666"
+MODELS = [{"value": "gpt-5-test", "label": "GPT-5 Test"}]
+
+
+def _revive_patched(focused, failed):
+    """_revive_session_inner's neighbours, stubbed: no SDK backend, a ready Codex client, a known name and
+    cwd, no command pre-warm, no pusher; the asker's focus and any reviveFailed land in the two lists."""
+    return mock.patch.multiple(km, _sdk=lambda: None, _codex_ready=lambda: True, _name_of=lambda sid: "web",
+                               _cwd_of=lambda sid: "/TESTDIR", _commands_for_cwd=lambda cwd: None,
+                               _push_soon=lambda: None,
+                               _reveal_chat_for=lambda client, msg: focused.append(msg),
+                               _send_to_view=lambda app, msg, wid: failed.append(msg))
 
 
 class FakeCodex:
@@ -230,10 +246,10 @@ class GateFlipFrame(unittest.TestCase):
     # reaches the gate check; the same for two revives after a kernel restart that found every Codex
     # session dead. The frame used to key on `len(live_sessions()) == 1` read AFTER the row landed, so
     # both threads saw 2 and neither sent one: every open dashboard's Codex list stayed empty until the
-    # chat's own open-time re-read, and the timeline lane never re-reads (the round-2 verification,
-    # executed with this barrier). Keyed on each door's own before-snapshot, both fire. The assertion is
-    # the SET of apps reached, not a frame count: two frames per app is the designed outcome here (each
-    # a cheap re-read; the rev increments and the picker drops the lower), one is fine, zero is the bug.
+    # chat's own open-time re-read, and the timeline lane never re-reads (executed with this barrier).
+    # Keyed on each door's own before-snapshot as well, both fire. The assertion is the SET of apps
+    # reached, not a frame count: two frames per app is the designed outcome here (each a cheap re-read;
+    # the rev increments and the picker drops the lower), one is fine, zero is the bug.
     def _race(self, run, names):
         errs = []
         def go(n):
@@ -283,6 +299,76 @@ class GateFlipFrame(unittest.TestCase):
         self.assertEqual(set(a for a, _ in frames), {"chat", "feed", "timeline"},
                          "two first revives raced: every app that hosts a picker still hears the gate open")
         self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_kill_between_the_snapshot_and_the_landing_still_sends_the_frame(self):
+        # The order the snapshot alone misses. SID is live, so this create's snapshot sees the gate OPEN;
+        # SID is killed before this row lands (the fake's spawn drops it first: a kill on another thread);
+        # the row lands as the only live session. The gate went closed and open again inside the window,
+        # and a /models read there answered the closed gate's empty list, so the pickers need the frame:
+        # the count read after landing (exactly one) is the signal, and every app hears it once.
+        fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
+        land = fake.spawn
+        def spawn(nm, cwd, bg, fg):
+            del fake.live[SID]          # the kill lands here, between the snapshot and this row
+            return land(nm, cwd, bg, fg)
+        fake.spawn = spawn
+        km._codex_backend = fake
+        rev0 = km._models_rev[0]
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"):
+            sid, _ = km._create_codex_session_inner("api", "/TESTDIR")
+        self.assertEqual((sid, sorted(fake.live)), (SID2, [SID2]))
+        frames = self._frames()
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "the only live session after a kill interleaved with the create: every app hears the gate open")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames))
+
+    def test_a_snapshot_that_raises_reads_as_closed_and_sends_the_frame(self):
+        # _codex_gate_closed's rule: a backend that raises under the snapshot reads as closed, erring toward
+        # a frame (one re-read too many beats a picker that never hears the list landed). Pinned where the
+        # count says otherwise: SID is live, so the count after landing reads 2 and only the snapshot can
+        # fire. The fake raises on the snapshot's read alone, named by its caller's frame (_pick_identity_color
+        # reads live_sessions before the snapshot and the helper after it), so the helper's own read works
+        # and nothing reaches stderr: the raise was swallowed where it was read, not logged as a lost frame.
+        fake = FakeCodex(models=MODELS, live={SID: {"backend": "codex"}}, sids=(SID2,))
+        real = fake.live_sessions
+        def live_sessions():
+            if sys._getframe(1).f_code.co_name == "_codex_gate_closed":
+                raise RuntimeError("live boom")
+            return real()
+        fake.live_sessions = live_sessions
+        km._codex_backend = fake
+        err = io.StringIO()
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"), \
+             contextlib.redirect_stderr(err):
+            sid, extra = km._create_codex_session_inner("api", "/TESTDIR")
+        self.assertEqual((sid, extra, sorted(fake.live)), (SID2, {}, sorted([SID, SID2])))
+        self.assertEqual(sorted(a for a, _ in self._frames()), ["chat", "feed", "timeline"],
+                         "a raise under the snapshot reads as closed: the frame goes out")
+        self.assertNotIn("codex spawn", err.getvalue())
+        self.assertNotIn("live boom", err.getvalue())
+
+    def test_a_backend_whose_live_sessions_always_raises_names_the_door_and_breaks_neither(self):
+        # Fail loudly, never the create or the revive: the snapshot reads closed, the helper's own read
+        # raises, one stderr line names the door and the error, and no frame goes out. The create still
+        # returns its sid and the revive still focuses the asker's chat with no reviveFailed.
+        fake = FakeCodex(models=MODELS, dead=[SID2])
+        def boom():
+            raise RuntimeError("live boom")
+        fake.live_sessions = boom
+        km._codex_backend = fake
+        err = io.StringIO()
+        with mock.patch.object(km, "_push_session_now"), mock.patch.object(km, "_mark_views_dirty"), \
+             contextlib.redirect_stderr(err):
+            sid, extra = km._create_codex_session_inner("web", "/TESTDIR")
+        self.assertEqual((sid, extra), (SID, {}))
+        self.assertIn("codex spawn: models frame not sent (live boom)\n", err.getvalue())
+        focused, failed = [], []
+        err = io.StringIO()
+        with _revive_patched(focused, failed), contextlib.redirect_stderr(err):
+            km._revive_session_inner(SID2, {"wid": "w-chat"})
+        self.assertEqual((failed, [m["type"] for m in focused]), ([], ["focus"]), "the revive succeeded and focused")
+        self.assertIn("codex revive: models frame not sent (live boom)\n", err.getvalue())
+        self.assertEqual(self._frames(), [])
 
 
 if __name__ == "__main__":

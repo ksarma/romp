@@ -1312,13 +1312,14 @@ class PruneLive(unittest.TestCase):
 class EchoAtoms(unittest.TestCase):
     """What the kernel reads off a Codex echo. `_echo_text` is the marker every kernel reader of an input
     echo keys on (SdkBackend's echo atoms carry it): _merge_live_atoms hides the echo behind its queued
-    bubble and never counts it as live work, build_session's queued fold and _live_cmd_keys read it (the
-    comment-thread frame's held fold reads SDK echoes only: _comments_frame binds _sdk()). Until
-    2026-09-09 CodexBackend.live_atoms left it off, so a Codex echo painted as a solid user atom beside
-    its own queued bubble and forced the last turn open (the round-1 verification; the merge itself is
-    pinned in tests/test_codex_echo_merge.py). The backend's own retire, _append, takes one echo per
-    landed text BLOCK: a turn started from several queued sends lands as one record with a block per
-    send, and send()'s dead path takes back only the echo it minted."""
+    bubble and never counts it as live work; build_session's queued fold and /diag/sendvis
+    (_sendvis_diag) read it; build_session's _live_cmd_keys reads it only off an atom carrying
+    `command`, which a Codex echo never does today (the comment-thread frame's held fold reads SDK
+    echoes only: _comments_frame binds _sdk()). Until 2026-09-09 CodexBackend.live_atoms left it off,
+    so a Codex echo painted as a solid user atom beside its own queued bubble and forced the last turn
+    open (the merge itself is pinned in tests/test_codex_echo_merge.py). The backend's own retire,
+    _append, takes one echo per landed text BLOCK: a turn started from several queued sends lands as
+    one record with a block per send, and send()'s dead path takes back only the echo it minted."""
 
     def test_the_echo_atom_is_marked_as_an_input_echo(self):
         be, fake, _ = build()

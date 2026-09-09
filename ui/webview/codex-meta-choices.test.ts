@@ -55,6 +55,9 @@ test("a Codex menu with no list says why and re-reads /models instead of opening
   const block = RENDER.slice(RENDER.indexOf("const empty = el(\"div\", \"meta-item meta-empty\")"), RENDER.indexOf("for (const c of rows) {"));
   assert.match(block, /onModelChoicesLoaded = \(\) => \{/);
   assert.match(block, /if \(metaMenuEl !== menu\) return;/);
+  // a chat menu whose tab was dismissed under it closes on the landing (executed below): the chat's badges
+  // carry no session, so the re-anchor could not tell its badge from the MRU survivor's
+  assert.match(block, /if \(!forThread && activeId !== opSid\) \{ closeMetaMenu\(\); return; \}/);
   assert.match(block, /loadModelChoices\(\);/);
   // the rebuild anchors on the badge as it stands NOW, never the one captured at open (executed below)
   assert.match(block, /closeMetaMenu\(\);\n\s+const anchor = metaAnchor\(kind, forSid, btn\);\n\s+if \(anchor\) toggleMetaMenu\(kind, anchor, forSid\);/);
@@ -180,6 +183,7 @@ test("executed: a non-2xx answer is recorded as its HTTP status, not as a JSON p
 class FakeText { constructor(public textContent: string) {} parent: FakeEl | null = null; }
 type Kid = FakeEl | FakeText;
 const detachedRectReads: FakeEl[] = [];
+const rectReads: FakeEl[] = [];   // every rect read, attached or not: a landing that positions nothing reads none
 let BODY: FakeEl;
 class FakeEl {
   tagName: string; className = ""; id = ""; title = ""; tabIndex = -1; dataset: Record<string, string> = {};
@@ -212,6 +216,7 @@ class FakeEl {
   setAttribute(k: string, v: string): void { if (k === "class") this.className = v; }
   get offsetWidth(): number { return 0; }
   getBoundingClientRect() {
+    rectReads.push(this);
     if (!this.isConnected) detachedRectReads.push(this);
     const r = this.isConnected ? this.rect : { left: 0, top: 0, right: 0, bottom: 0 };
     return { ...r, width: r.right - r.left, height: r.bottom - r.top };
@@ -229,9 +234,12 @@ class FakeEl {
 // The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaAnchor`, `closeMetaMenu` and
 // `toggleMetaMenu` lifted from render.ts, over the stand-in and stubs for what they read of the rest of
 // the module (the session map, the thread helpers, the pick memory, the vscode bridge, the tints).
-function liftMenu() {
+// `thread`: an open comment thread's popover, as openCommentThread and threadMetaStatus report it; absent,
+// no popover is open and a thread status read throws, as in render.ts.
+function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
   BODY = new FakeEl("body");
   detachedRectReads.length = 0;
+  rectReads.length = 0;
   const doc = {
     body: BODY,
     createElement: (t: string) => new FakeEl(t),
@@ -259,9 +267,10 @@ function liftMenu() {
     "openCommentThread", "threadMetaStatus", "metaCurrent", "metaPending", "vscodeApi", "isCurrentMeta",
     "modeIconSvg", "riskyMode", "nonClassicChoiceTone", "setTip", js);
   const api = fn(doc, win, (p: string) => p, stub.fetch, () => {}, sessions,
-    () => null, () => { throw new Error("no thread here"); }, () => "", new Map(), null, () => false,
-    () => "", () => false, () => undefined, () => {});
-  return { api, sessions, body: BODY, win, pending: stub.pending };
+    () => (opts.thread ? { th: opts.thread.th } : null),
+    () => { if (!opts.thread) throw new Error("no thread here"); return opts.thread.status; },
+    () => "", new Map(), null, () => false, () => "", () => false, () => undefined, () => {});
+  return { api, sessions, body: BODY, win, pending: stub.pending, rectReads };
 }
 const SID = "11111111-2222-4333-8444-555555555555";
 const CODEX_READY = { state: "ready", sinceEpoch: null, backend: "codex", model: "gpt-5-test", effort: "medium" };
@@ -280,8 +289,8 @@ const rows = (menu: FakeEl) => menu.querySelectorAll(".meta-item").filter((r) =>
 // The rebuild used to call toggleMetaMenu with the button captured at open. updateStatusline() rebuilds
 // the statusline on every kernel push, and the spawn that opens the gate also pushes, so by the time the
 // frame's re-read landed the captured button was often detached: its rect read all zeros and the rebuilt
-// menu sat beyond the pane's left edge and above its top (the round-1 verification, unanswered until
-// round 3). Now the hook re-resolves the badge for the same kind and session.
+// menu sat beyond the pane's left edge and above its top (seen when the list landed after a kernel push).
+// Now the hook re-resolves the badge for the same kind and session.
 test("executed: the list landing rebuilds the menu against the badge the statusline holds NOW, never a detached one", async () => {
   const { api, sessions, body, win, pending } = liftMenu();
   sessions.set(SID, { status: CODEX_READY }); api.active = SID;
@@ -376,5 +385,87 @@ test("executed: the anchor resolves per session: the chat's badge never stands i
   pending[1](LIST);
   await tick(); await tick(); await tick();
   assert.equal((api.menu as FakeEl).style.right, (win.innerWidth - 730) + "px", "the chat's own replacement badge, not the thread's");
+  assert.deepEqual(detachedRectReads, []);
+});
+
+// The chat's badges carry no session, so the hook's re-anchor cannot tell the dismissed tab's badge from the
+// survivor's: dismissSession moves activeId to the MRU survivor without setActive's closeMetaMenu (a kernel
+// omission, an end, a host drop; only the in-page tab close reaches the document closer), and the landing
+// then found a badge of the same kind on the survivor's tab, so a menu the user never opened there opened
+// with the survivor's list, or the stale reason row was written over the survivor's tab. Now a chat menu
+// whose session is no longer the active one closes on the landing: no re-anchor, no reason row, no rect read.
+test("executed: the landing closes a chat menu whose tab was dismissed under it, with no reason row and no rect read", async () => {
+  const { api, sessions, body, pending, rectReads } = liftMenu();
+  const SURVIVOR = "33333333-4444-4555-8666-777777777777";
+  const LAST = "44444444-5555-4666-8777-888888888888";
+  sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+  const gone = statusline(api, 700, 760);
+  body.appendChild(gone.sl);
+  api.toggleMetaMenu("model", gone.btn, null);
+  const reason = (api.menu as FakeEl).querySelector(".meta-item-sub")!;
+  assert.equal(reason.textContent, "asking the Codex app-server for it now");
+  assert.equal(pending.length, 1);
+  // the kernel's push omits SID: dismissSession drops it, activeId moves to the survivor, the statusline repaints
+  sessions.delete(SID); sessions.set(SURVIVOR, { status: CODEX_READY }); api.active = SURVIVOR;
+  gone.sl.remove();
+  const kept = statusline(api, 720, 770);
+  body.appendChild(kept.sl);
+  let reads = rectReads.length;
+  pending[0]({ rev: 3, models: [], efforts: [], codex: { models: [], efforts: [], error: "model_list failed: app-server not ready" } });
+  await tick(); await tick(); await tick();
+  assert.equal(api.menu, null, "the menu belonged to the dismissed tab: closed");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 0);
+  assert.equal(reason.textContent, "asking the Codex app-server for it now", "the reason row was not written after the tab went");
+  assert.equal(rectReads.length, reads, "nothing was positioned: no rect read from any element");
+  // the survivor's own open is the user's gesture; the same dismissal under it, and this time a list lands
+  api.toggleMetaMenu("model", kept.btn, null);
+  assert.ok((api.menu as FakeEl).querySelector(".meta-empty"), "the survivor's menu waits on its own read");
+  assert.equal(pending.length, 2);
+  sessions.delete(SURVIVOR); sessions.set(LAST, { status: CODEX_READY }); api.active = LAST;
+  kept.sl.remove();
+  const last = statusline(api, 730, 775);
+  body.appendChild(last.sl);
+  reads = rectReads.length;
+  pending[1](LIST);
+  await tick(); await tick(); await tick();
+  assert.equal(api.menu, null, "the list landed for a dismissed tab's menu: closed, never re-anchored on the survivor's badge");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 0);
+  assert.equal(rectReads.length, reads, "no rect read from any element");
+  assert.deepEqual(detachedRectReads, []);
+  // and the survivor's badge opens the landed list on the user's own click, with no further fetch
+  api.toggleMetaMenu("model", last.btn, null);
+  assert.deepEqual(rows(api.menu as FakeEl), ["GPT-5 Test"]);
+  assert.equal(pending.length, 2);
+});
+
+// A comment thread's popover menu names its sid (forSid, never the active tab), so the guard above does not
+// touch it: the active tab may change under it and the landing still rebuilds against the thread's badge.
+test("executed: a thread popover's waiting menu still rebuilds on the landing whatever tab is active", async () => {
+  const TID = "22222222-3333-4444-8555-666666666666";
+  const OTHER = "33333333-4444-4555-8666-777777777777";
+  const { api, sessions, body, win, pending } = liftMenu({ thread: { th: { tid: TID }, status: CODEX_READY } });
+  sessions.set(SID, { status: CODEX_READY }); api.active = SID;
+  const chat = statusline(api, 700, 760);
+  body.appendChild(chat.sl);
+  const pop = new FakeEl("div"); pop.className = "cmt-pop";
+  const threadBtn = api.metaButton("model", "gpt-5-test", TID) as FakeEl;
+  threadBtn.rect = { left: 340, top: 500, right: 400, bottom: 516 };
+  pop.appendChild(threadBtn); body.appendChild(pop);
+  api.toggleMetaMenu("model", threadBtn, TID);
+  assert.ok((api.menu as FakeEl).querySelector(".meta-empty"), "the thread's Codex menu waits on the read");
+  assert.equal(pending.length, 1);
+  api.active = OTHER;                                     // the user switched tabs; the popover is still open
+  threadBtn.remove();                                     // and the popover's statusline was refreshed under it
+  const threadBtn2 = api.metaButton("model", "gpt-5-test", TID) as FakeEl;
+  threadBtn2.rect = { left: 350, top: 510, right: 410, bottom: 526 };
+  pop.appendChild(threadBtn2);
+  pending[0](LIST);
+  await tick(); await tick(); await tick();
+  const rebuilt = api.menu as FakeEl;
+  assert.ok(rebuilt, "the thread's menu was rebuilt");
+  assert.deepEqual(rows(rebuilt), ["GPT-5 Test"]);
+  assert.equal(rebuilt.style.right, (win.innerWidth - 410) + "px", "anchored to the thread's replacement badge");
+  assert.equal(rebuilt.style.bottom, (win.innerHeight - 510 + 6) + "px");
+  assert.equal(body.querySelectorAll(".meta-menu").length, 1);
   assert.deepEqual(detachedRectReads, []);
 });
