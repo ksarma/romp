@@ -29,9 +29,10 @@ import { listenForFrames } from "./frame-listener";
 import { paintHeld, paintReleased } from "./paint-gate";
 import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is the shape the Outline's tests pin
 import { linkifyPathTokens, openPathLink } from "./path-links";
+import { linkifyUrls, urlChip, installUrlLinkOpener } from "./url-links";   // a URL in a todo's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
 
 type Color = { bg: string; fg: string } | null;
-interface UserTodo { id: string; text: string; createdT: number; detail?: string; file?: string }
+interface UserTodo { id: string; text: string; createdT: number; detail?: string; file?: string; link?: string }
 interface TodoRow { sid: string; name: string; color: Color; todos: UserTodo[] }
 interface Waiting { sid: string; name: string; color: Color; todo: UserTodo }
 
@@ -43,6 +44,10 @@ const vscodeApi =
 // under it never fires. Web → the viewer's browser; VS Code → the host's openExternal (view-routing.ts).
 let repoBySid = new Map<string, string | null>();
 installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
+// A URL in an ask's text or detail, and the address chip a todo carries, open the same way (url-links.ts; the user
+// 2026-09-08): the same capture-phase opener, keyed on the URL anchors' own class, so the row's fold under a link
+// never fires. Installed whether or not this pane is framed: a web address opens from any page.
+installUrlLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
 
 // Whether a frame CARRYING userTodoRows has arrived (the Outline pane's `loaded` idiom): until then the list
 // stays empty and the romp loader holds — a feed push can reach us from a kernel that never built the
@@ -121,6 +126,7 @@ function dropTodo(sid: string, tid: string): void {
 // (user-todo-title-links.test.ts drives both through the real delegate).
 const framed = window.parent !== window;
 function linkTodoPaths(node: HTMLElement, sid: string): void {
+  linkifyUrls(node);   // an http(s) address links on every page, framed or not: a new tab needs no Files pane
   if (!framed) return;
   linkifyPathTokens(node, sid);
 }
@@ -145,6 +151,14 @@ function fileChip(file: string, sid: string): HTMLElement {
   chip.classList.add("wt-file");
   chip.title = file;
   return chip;
+}
+// The web address a todo CARRIES (the user 2026-09-08): the record's own `link`, an http(s) address the kernel
+// accepted at filing, is a chip on the row and in the Reply modal in the file chip's dress (`.wt-link` beside
+// `.wt-file`): the address without its scheme as the label, the whole address on hover, a new tab on click. An
+// ordinary anchor (url-links.ts urlChip), served by the URL opener installed above, framed or not: unlike the
+// file chip it needs no Files pane, so it is live on every page and wears the accent everywhere.
+function linkChip(link: string): HTMLElement {
+  return urlChip(link, "wt-link");
 }
 // The click: {romp:"viewFile", pane:"pane"} — the shell's Files-pane branch brings that pane forward and
 // forwards this whole message into it (kernel.py's landing shell; files.ts opens the viewer). The
@@ -208,7 +222,7 @@ function warnToast(msg: string): void {
 // modal, not an inline input on the row — the list rebuilds on every frame, which would clobber a
 // half-typed box; the overlay lives outside #waiting-list and survives. ONE kernel op (userTodoAnswer)
 // both injects the reply and stamps the todo answered at the send, so the two cannot diverge.
-function showReply(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""): void {
+function showReply(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""): void {
   document.getElementById("ut-reply-prompt")?.remove();
   const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
   const box = el("div", "picker-box confirm-box");
@@ -217,6 +231,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   linkTodoPaths(d, sid);   // the quoted line's paths open like the row's…
   linkifyPrRefs(d, repoBySid.get(sid) || null);   // …and its `#123` links as in the row: paths first, then PR refs (rowEl's order)
   const chip = todoFile ? fileChip(todoFile, sid) : null;   // the file the todo names, as on the row (the box's delegate opens it)
+  const lchip = todoLink ? linkChip(todoLink) : null;   // the address it carries, as on the row (the document's URL opener serves it)
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) {
     dd.textContent = todoDetail;
@@ -254,7 +269,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  box.append(h, d); if (chip) box.appendChild(chip); if (dd) box.appendChild(dd); box.append(input, actions);
+  box.append(h, d); if (chip) box.appendChild(chip); if (lchip) box.appendChild(lchip); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -305,6 +320,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   (reply as any)._uttext = w.todo.text;          // the modal quotes the need it answers…
   (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, so the whole need is in view
   (reply as any)._utfile = w.todo.file || "";       // …and the file it names, as the row's chip
+  (reply as any)._utlink = w.todo.link || "";       // …and the address it carries, as the row's other chip
   reply.textContent = "Reply";
   reply.title = "answer this — your reply goes straight to the session";
   const dis = el("button", "ut-btn ut-dismiss");
@@ -317,6 +333,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   dis.title = "clear this without a reply (for moot or stale asks)";
   line.append(sess, txt);
   if (w.todo.file) line.appendChild(fileChip(w.todo.file, w.sid));   // the file the todo names, one click away (fileChip)
+  if (w.todo.link) line.appendChild(linkChip(w.todo.link));   // the web address it carries, beside the file (linkChip)
   line.append(age, reply, dis);
   item.appendChild(line);
   if (hint) {
@@ -450,7 +467,8 @@ function applyFrame(m: any): void {
         .filter((t) => t && typeof t === "object" && typeof t.id === "string")
         .map((t) => ({ id: t.id as string, text: String(t.text || ""), createdT: Number(t.createdT) || 0,
                        detail: typeof t.detail === "string" ? t.detail : undefined,
-                       file: typeof t.file === "string" && t.file ? t.file : undefined })),   // the file the todo names (the todo-file follow-on)
+                       file: typeof t.file === "string" && t.file ? t.file : undefined,   // the file the todo names (the todo-file follow-on)
+                       link: typeof t.link === "string" && t.link ? t.link : undefined })),   // the web address it carries (the user 2026-09-08)
     }));
   render();
 }
@@ -515,7 +533,7 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
     utreply: (x) => {
       const tid = x.dataset.tid, sid = x.dataset.sid;
       if (!tid || !sid) return;
-      showReply(sid, tid, ((x as any)._uttext as string) || "", ((x as any)._utdetail as string) || "", ((x as any)._utfile as string) || "");
+      showReply(sid, tid, ((x as any)._uttext as string) || "", ((x as any)._utdetail as string) || "", ((x as any)._utfile as string) || "", ((x as any)._utlink as string) || "");
     },
     // a file path in a row's text or detail: the ROW says which session and which todo, the same way the Reply
     // modal's delegate takes both from its closure. Not the span's own data-sid: path-links.ts stamps it

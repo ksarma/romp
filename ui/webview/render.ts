@@ -85,6 +85,7 @@ import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
 import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
+import { linkifyUrls, urlChip } from "./url-links";   // a URL in a todo's or a note's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
 import { perfFrameHandler } from "./perf-telemetry";
 import { listenForFrames } from "./frame-listener";
 import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";   // the shim's hidden word for the chat page (no paint gate here)
@@ -275,7 +276,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 // A USER TODO (plans/user-todos.md): a need the agent flagged for the person it works for — a
 // decision, input, or action only they can provide — open until answered, dismissed, or withdrawn.
 // Fixed store values only (createdT is stamped once): this rides the dedup-compared chat payload.
-interface UserTodo { id: string; text: string; detail?: string; createdT?: number; file?: string }   // file: the absolute path of the file the todo is about, as the kernel filed it (the todo-file follow-on, 2026-09-07) — the row and the Reply modal show it as a chip (todoFileChip)
+interface UserTodo { id: string; text: string; detail?: string; createdT?: number; file?: string; link?: string }   // file: the absolute path of the file the todo is about, as the kernel filed it (the todo-file follow-on, 2026-09-07) — the row and the Reply modal show it as a chip (todoFileChip); link: the http(s) address the todo carries (the user 2026-09-08), a chip beside it (todoLinkChip)
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
@@ -1956,9 +1957,11 @@ function bindPathLink(a: HTMLElement): HTMLElement {
 // (.ut-text, data-act uttoggle), and a link inside it opens the file rather than toggling the fold: the
 // delegate routes a click to the NEAREST data-act (actions.ts).
 function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
+  linkifyUrls(node);
   linkifyPathTokens(node, sid);
 }
 function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {
+  linkifyUrls(node);
   linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true);
 }
 // The file a todo NAMES (the todo-file follow-on, 2026-09-07): the record's own `file`, the absolute path the
@@ -1984,6 +1987,19 @@ function todoFileChip(file: string, sid: string | null): HTMLElement {
   chip.classList.add("ut-file");
   chip.title = file;   // the full path on hover; the label is the basename
   return chip;
+}
+// The web address a todo CARRIES (the user 2026-09-08, whose todo titles named pull requests by URL): the record's
+// own `link`, an http(s) address the kernel accepted when the todo was filed, trails the row's text and the Reply
+// modal's quoted line as a chip in the file chip's dress (`.ut-link` beside `.ut-file`): the address without its
+// scheme as the label, the whole address on hover, and a new tab on click. The chip is an ordinary anchor
+// (url-links.ts urlChip: target _blank, rel noopener noreferrer), which the chat's document-level a[href] delegate
+// opens like every absolute-scheme anchor (web: the browser's tab; VS Code: the host's openExternal), at the
+// capture phase, so the span's uttoggle under it never fires; nothing is bound on the chip, and the card rebuilds
+// every push. It sits after the file chip, inside the text span, so the two chips wrap as words of the line do
+// and neither label is scanned by the linkifiers that ran before them. The Waiting-on-you pane shows the same
+// address the same way (waiting.ts linkChip).
+function todoLinkChip(link: string): HTMLElement {
+  return urlChip(link, "ut-link");
 }
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
@@ -3683,6 +3699,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       linkTodoLinePaths(txt, renderingSid || null);   // a path in the line opens like one in the detail: the todo's own session resolves it
       linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
       if (t.file) txt.append(" ", todoFileChip(t.file, renderingSid || null));   // the file the todo names, one click away whether or not the text spells its path (todoFileChip)
+      if (t.link) txt.append(" ", todoLinkChip(t.link));   // the web address the todo carries, beside the file (todoLinkChip)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
       // exists, nothing when it doesn't, so a bare ask and one with context read differently at a
@@ -3701,6 +3718,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
       (reply as any)._utdetail = t.detail || "";   // …and its detail, so the whole need is in view while answering
       (reply as any)._utfile = t.file || "";   // …and the file it names, as the row's chip
+      (reply as any)._utlink = t.link || "";   // …and the address it carries, as the row's other chip
       reply.textContent = "Reply";
       reply.title = "answer this — your reply goes straight to the session";
       const dis = el("button", "ut-btn ut-dismiss");
@@ -8703,7 +8721,7 @@ function showForkPrompt(sid: string, uuid: string): void {
 // at the send — never sendMessage plus a separate stamp, so the two can't diverge. A modal, not
 // an inline input on the card: the card rebuilds on every push, which would clobber a half-typed
 // inline box; the overlay lives outside #content and survives.
-function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""): void {
+function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""): void {
   document.getElementById("ut-reply-prompt")?.remove();
   const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
   const box = el("div", "picker-box confirm-box");
@@ -8712,6 +8730,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   linkTodoLinePaths(d, sid);   // the quoted line's paths open like the row's
   linkifyPrRefs(d, prRepoFor(sid));
   if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
+  if (todoLink) d.append(" ", todoLinkChip(todoLink));   // the address it carries, as on the row: the document's anchor delegate opens it
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
@@ -17760,7 +17779,7 @@ setupSettings();
     utreply: (elx) => {
       const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
       if (!tid || !sid) return;
-      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "", ((elx as any)._utfile as string) || "");
+      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "", ((elx as any)._utfile as string) || "", ((elx as any)._utlink as string) || "");
     },
     // Dismiss arms then confirms in place (the cmtdelete idiom): clearing an ask the agent still
     // waits on deserves a second click, but is light enough to skip a modal. Optimistic removal —

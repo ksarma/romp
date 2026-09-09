@@ -185,18 +185,20 @@ type Opened = [string, string | null];
 type Handler = (el: Elm, ev: unknown) => void;
 interface Host {
   renderTodo: (ev: unknown) => Elm;
-  showUserTodoReply: (sid: string, todoId: string, todoText: string, todoDetail?: string, todoFile?: string) => void;
+  showUserTodoReply: (sid: string, todoId: string, todoText: string, todoDetail?: string, todoFile?: string, todoLink?: string) => void;
   todoFileChip: (file: string, sid: string | null) => Elm;
+  todoLinkChip: (link: string) => Elm;
   openpath: Handler;
   utreply: Handler;
   opened: Opened[];
 }
 async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const { linkifyPathTokens, openPathLink } = await import("./path-links");
+  const { linkifyUrls, urlChip } = await import("./url-links");   // the URL pass the linkers run first, and the link chip's anchor (2026-09-08)
   const hint = await import("./user-todo-hint");
   const opened: Opened[] = [];
   const code = transpile([
-    liftRender("todoFileChip"), liftRender("linkTodoLinePaths"), liftRender("linkTodoDetailPaths"),
+    liftRender("todoFileChip"), liftRender("todoLinkChip"), liftRender("linkTodoLinePaths"), liftRender("linkTodoDetailPaths"),
     liftRender("renderTodo"), liftRender("showUserTodoReply"), liftRender("openLinkedPath"),
     "const openpath = " + bodyHandler("openpath") + ";",
     "const utreply = " + bodyHandler("utreply") + ";",
@@ -204,8 +206,8 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const fn = new Function(
     "el", "dot", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
     "linkifyPrRefs", "prRepoFor", "isCoarsePointer", "renderingSid", "utDetailOpen", "linkifyPathTokens", "linkifyFileUris",
-    "openPathLink", "vscodeApi", "activeId", "openPath",
-    code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, openpath, utreply };");
+    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip",
+    code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, todoLinkChip, openpath, utreply };");
   const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
   const out = fn(
     el, () => el("span", "dot ring"), () => undefined, () => undefined, hint.utDetailHint, hint.applyUtHint, hint.utHintFor, hint.UT_HINT_CLASS,
@@ -213,6 +215,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, sid: string | null) => linkifyPathTokens(node, sid),   // the detail's figure pass is not under test: its paths link the same way
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
+    linkifyUrls, urlChip,
   );
   return { ...out, opened };
 }
@@ -338,10 +341,10 @@ test("a todo whose text spells the path AND names the file: the text's path link
 // ── at source: the field, the button's ride, the signature, the delegate's hand-off, the chip's shape and its
 // place after the linkifiers, on both surfaces
 test("render.ts: the todo row carries `file`, the Reply button rides it, the modal takes it, and the chip is a path link appended after the line's linkifiers", () => {
-  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number; file\?: string \}/);
+  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number; file\?: string; link\?: string \}/);   // link: the address the todo carries (2026-09-08)
   assert.match(RENDER, /\(reply as any\)\._utfile = t\.file \|\| "";/);
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\): void/);
-  assert.match(RENDER, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| "", \(\(elx as any\)\._utfile as string\) \|\| ""\);/);
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""\): void/);
+  assert.match(RENDER, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| "", \(\(elx as any\)\._utfile as string\) \|\| "", \(\(elx as any\)\._utlink as string\) \|\| ""\);/);
   const chip = liftRender("todoFileChip");
   assert.match(chip, /openPathLink\(base, file, true, sid\)/, "a path link, marked as a bare path with the todo's session so openLinkedPath opens it against that session");
   assert.match(chip, /chip\.classList\.add\("ut-file"\)/);
@@ -355,4 +358,103 @@ test("render.ts: the todo row carries `file`, the Reply button rides it, the mod
   assert.match(modal, /if \(todoFile\) d\.append\(" ", todoFileChip\(todoFile, sid\)\);/);
   assert.ok(modal.indexOf("linkTodoLinePaths(d, sid)") < modal.indexOf("todoFileChip(todoFile, sid)"), "the modal's chip too comes after the quoted line's linkifier");
   assert.equal((RENDER.match(/todoFileChip\(/g) || []).length, 3, "defined once, applied at the two sites");
+});
+
+// ── the web address a todo CARRIES (the user 2026-09-08, whose todo titles named pull requests by URL): the
+// record's `link`, a second chip beside the file's in the same dress, an anchor the chat's document-level
+// a[href] delegate opens (target _blank, rel noopener noreferrer, the whole address on hover)
+const LINK = "https://github.com/example-org/notes-api/pull/398";
+const LINK_LABEL = "github.com/example-org/notes-api/pull/398";
+const LINK_EV = { kind: "todo", tasks: [], userTodos: [{ id: TID, text: TEXT, detail: DETAIL, createdT: 1, file: FILE, link: LINK }] };
+
+test("a todo that carries a link: the row trails the file chip with the link chip, the address without its scheme as the label and whole on hover, an anchor that opens a new tab; Reply carries it", async () => {
+  const h = await host();
+  const turn = h.renderTodo(LINK_EV);
+  const chip = one(turn, hasClass("ut-link"), "link chip");
+  assert.equal(chip.tagName, "a", "an ordinary anchor: the document's a[href] delegate opens it, at the capture phase, so uttoggle never folds the row");
+  assert.ok(chip.classList.contains("url-link"), "the URL anchors' class, for the sheets and the pane's opener");
+  assert.equal(chip.getAttribute("href"), LINK, "the href as an attribute, which the openers read");
+  assert.equal(chip.textContent, LINK_LABEL, "the label: the address without its scheme");
+  assert.equal(chip.title, LINK, "the whole address on hover");
+  assert.equal((chip as any).target, "_blank");
+  assert.equal((chip as any).rel, "noopener noreferrer");
+  assert.deepEqual(chip.dataset, {}, "no data-act: the click is the anchor's own, never the body delegate's");
+  assert.equal(chip.listeners.click, undefined, "nothing bound on the chip");
+  assert.equal(chip.childNodes.length, 1, "the label is one text node: the linkifiers ran before it and never scanned it");
+  // its place: inside the text span, after the file chip, before the hint
+  const txt = chip.parentElement!;
+  assert.equal(txt.className, "ut-text ut-has-detail");
+  const kids = txt.childNodes;
+  assert.equal(kids.length, 6);
+  assert.equal((kids[0] as TextNode).data, TEXT);
+  assert.equal((kids[1] as TextNode).data, " ");
+  assert.ok((kids[2] as Elm).classList.contains("ut-file"), "the file chip first");
+  assert.equal((kids[3] as TextNode).data, " ", "a space keeps the two chips apart");
+  assert.equal(kids[4], chip);
+  assert.equal((kids[5] as Elm).className, "ut-more", "the hint still trails everything");
+  const reply = one(turn, hasClass("ut-reply"), "Reply button");
+  assert.equal((reply as any)._utlink, LINK, "the Reply button rides the address to the modal");
+  assert.equal((reply as any)._utfile, FILE);
+});
+
+test("a todo with a link and no file: the link chip alone; without either: no chip and an empty link on Reply", async () => {
+  const h = await host();
+  const turn = h.renderTodo({ kind: "todo", tasks: [], userTodos: [{ id: TID, text: TEXT, createdT: 1, link: LINK }] });
+  assert.equal(all(turn, hasClass("ut-file")).length, 0);
+  assert.equal(all(turn, hasClass("ut-link")).length, 1);
+  assert.equal(all(turn, hasClass("file-uri-link")).length, 0, "no path link anywhere: the address is not a path");
+  const bare = h.renderTodo({ kind: "todo", tasks: [], userTodos: [{ id: TID, text: TEXT, createdT: 1 }] });
+  assert.equal(all(bare, hasClass("ut-link")).length, 0);
+  assert.equal((one(bare, hasClass("ut-reply"), "Reply button") as any)._utlink, "");
+  assert.equal(h.todoLinkChip(LINK).textContent, LINK_LABEL);
+});
+
+test("Reply carries the link into the modal: the quoted line trails the file chip and then the link chip, the same anchor", async () => {
+  const body = freshBody();
+  const { delegate } = await import("./actions");
+  const h = await host(ACTIVE);
+  delegate(body as unknown as HTMLElement, { openpath: h.openpath as any, utreply: h.utreply as any });
+  const turn = h.renderTodo(LINK_EV); body.appendChild(turn);
+  body.click(one(turn, hasClass("ut-reply"), "Reply button"));
+  const overlay = one(body, (e) => e.id === "ut-reply-prompt", "Reply modal");
+  const quote = one(overlay, hasClass("ut-reply-quote"), "quoted line");
+  const chip = one(overlay, hasClass("ut-link"), "link chip in the modal");
+  assert.equal(chip.parentElement, quote, "the chip trails the quoted line");
+  assert.equal(quote.textContent, TEXT + " report.md " + LINK_LABEL, "text, the file chip, the link chip");
+  assert.equal(chip.getAttribute("href"), LINK);
+  assert.equal(chip.title, LINK);
+  assert.equal((chip as any).target, "_blank");
+  assert.equal(one(overlay, hasClass("ut-detail"), "quoted detail").textContent, DETAIL);
+});
+
+test("a todo whose text spells the URL AND carries it as its link: the text's URL links as typed, the chip is added once with its label, and nothing is linked twice", async () => {
+  const h = await host();
+  const turn = h.renderTodo({ kind: "todo", tasks: [], userTodos: [{
+    id: TID, text: "Review " + LINK + " before the merge.", detail: "the description at " + LINK + " is stale", createdT: 1, link: LINK }] });
+  const anchors = all(turn, (e) => e.tagName === "a");
+  assert.deepEqual(anchors.map((a) => a.textContent), [LINK, LINK_LABEL, LINK], "the text's URL as typed, the chip's label, the detail's URL as typed");
+  assert.deepEqual(anchors.map((a) => a.classList.contains("ut-link")), [false, true, false], "one chip");
+  for (const a of anchors) {
+    assert.equal(a.childNodes.length, 1, "each label is one text node: nothing linked twice");
+    assert.equal(a.getAttribute("href"), LINK);
+  }
+  const txt = anchors[0].parentElement!;
+  assert.ok(txt.classList.contains("ut-text") || txt.className.includes("ut-text"));
+  assert.ok(txt.textContent.startsWith("Review " + LINK + " before the merge. " + LINK_LABEL), "the period stays outside the text's link, the chip follows: " + txt.textContent);
+  assert.equal(txt.textContent.slice(("Review " + LINK + " before the merge. " + LINK_LABEL).length), "▸ details", "and the hint still trails everything (the todo has detail)");
+});
+
+test("render.ts: the todo row carries `link`, the Reply button rides it, the modal takes it, and the chip is an anchor appended after the file chip", () => {
+  assert.match(RENDER, /\(reply as any\)\._utlink = t\.link \|\| "";/);
+  const chip = liftRender("todoLinkChip");
+  assert.match(chip, /return urlChip\(link, "ut-link"\);/, "url-links.ts's chip anchor in the card's dress");
+  assert.doesNotMatch(chip, /addEventListener|onclick|dataset/, "nothing bound and no data-act: the document's a[href] delegate is the click");
+  const card = RENDER.slice(RENDER.indexOf('const txt = el("span", "ut-text");'), RENDER.indexOf('const reply = el("button", "ut-btn ut-reply");'));
+  assert.match(card, /if \(t\.link\) txt\.append\(" ", todoLinkChip\(t\.link\)\);/);
+  assert.ok(card.indexOf("todoFileChip(t.file") < card.indexOf("todoLinkChip(t.link"), "the file chip first, then the link chip");
+  assert.ok(card.indexOf("todoLinkChip(t.link") < card.indexOf("utDetailHint(t.detail"), "and both before the hint");
+  const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply("), RENDER.indexOf('input.className = "ut-reply-input"'));
+  assert.match(modal, /if \(todoLink\) d\.append\(" ", todoLinkChip\(todoLink\)\);/);
+  assert.ok(modal.indexOf("todoFileChip(todoFile, sid)") < modal.indexOf("todoLinkChip(todoLink)"), "the modal's chips in the row's order");
+  assert.equal((RENDER.match(/todoLinkChip\(/g) || []).length, 3, "defined once, applied at the two sites");
 });

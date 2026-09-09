@@ -4365,11 +4365,12 @@ MCP_TOOLS = [
     # its parent session — the right behavior (the need belongs to the session the user talks to),
     # it just means "who filed this" is always the session, never an individual subagent.
     {"name": "add_user_todo",
-     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`; when it is a look at a web page (a change under review, an issue, a document online), pass its address as `link`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
      "inputSchema": {"type": "object",
-                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI)"},
-                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"},
-                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; the person sees it as a link that opens the file, and their comments on that file can answer this todo"}},
+                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI), and so does an http or https address"},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path or a web address in it becomes a link the same way"},
+                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; the person sees it as a link that opens the file, and their comments on that file can answer this todo"},
+                                    "link": {"type": "string", "description": "optional: the http or https address of the web page this is about; the person sees it beside the file as a link that opens in a new tab. Anything that is not such an address is refused and nothing is saved"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
      "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a need that no longer stands.",
@@ -4403,6 +4404,36 @@ MCP_TOOLS = [
 ]
 
 USER_TODO_TOOLS = ("add_user_todo", "withdraw_user_todo")   # the pair the user-todos switch governs
+# A todo's `link` (the user 2026-09-08): an http or https address, checked HERE before any post, so a value that
+# is not one is refused in the tool's own reply and the kernel is never asked (the kernel checks the same shape,
+# _user_todo_link, and answers 400 for every other client; the two must agree, tests hold them to it). The rule:
+# a string; no whitespace or control character anywhere; at most TODO_LINK_MAX characters; `http://` or
+# `https://` then a host. None and a blank string are no link.
+TODO_LINK_MAX = 2048
+_TODO_LINK_RE = re.compile(r"^https?://[^\s/?#]+", re.I)
+
+
+def _todo_link_error(value):
+    """Why `value` cannot be a todo's link, or None when it can (or when it is no link at all: None, blank)."""
+    if value is None:
+        return None
+    fix = "; pass one http or https address, as a string"
+    if not isinstance(value, str):
+        return "the link value %s is not a string%s" % (repr(value)[:80], fix)
+    raw = value.strip()
+    if not raw:
+        return None
+    shown = raw if len(raw) <= 80 else raw[:60] + "... (%d characters)" % len(raw)
+    if any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in raw):
+        return "the link %s holds whitespace or a control character, which no web address does%s" % (shown.replace("\x00", "\\0"), fix)
+    if len(raw) > TODO_LINK_MAX:
+        return "the link %s is longer than %d characters, the most an address here may be%s" % (shown, TODO_LINK_MAX, fix)
+    if not _TODO_LINK_RE.match(raw):
+        return ("the link %s is not an http or https address: it must start with http:// or https:// and name a host%s"
+                % (shown, fix))
+    return None
+
+
 # What a call anyway hears while the switch is off (a session that connected while it was on still
 # holds the tool). Plain and LOUD — the agent must not believe the need was filed — and in the voice
 # the descriptions use (test_injected_voice.py scans it): no tracking-system nouns.
@@ -4608,6 +4639,19 @@ def _mcp_call(name, args):
             file_ = file_.strip()
         if file_ is not None and file_ != "":
             body["file"] = file_
+        # `link` (the user 2026-09-08): the web address the need is about. Checked before the post
+        # (_todo_link_error): a value that is not an http(s) address is REFUSED here, in plain words,
+        # and nothing is saved, so the agent files again with an address or puts it in the text (where
+        # it links too). Not `file`'s keep-and-warn: an address the person's click cannot open has no
+        # resolution the kernel could try later. A good one rides the post stripped.
+        link_ = args.get("link")
+        lerr = _todo_link_error(link_)
+        if lerr:
+            return ("Refused: %s. Nothing was saved, so the person you work for will not see this yet; file it "
+                    "again with the address as `link`, or with the address in the text, where it becomes a link "
+                    "too." % lerr), True
+        if isinstance(link_, str) and link_.strip():
+            body["link"] = link_.strip()
         res = _kernel_post("/usertodo", body)
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
@@ -4639,6 +4683,15 @@ def _mcp_call(name, args):
                     "that), so this todo shows without a link to the file. If the link matters, "
                     "withdraw this todo and file it again with the path in its text or detail."
                     % body["file"])
+        if "link" in body and not res.get("link"):
+            # The same version skew for the link (the user 2026-09-08): a kernel that predates a todo's
+            # link filed the todo without it and echoes none, while one that takes it echoes the address
+            # as stored (or refused the whole post, which never reaches here). Said, not swallowed, in the
+            # same veiled words; the todo stands, so no error flag.
+            out += (" About the link: %s was not recorded. The session manager on this machine runs an older "
+                    "version that does not keep a todo's link (an update and a restart fix that), so this todo "
+                    "shows without it. If the link matters, withdraw this todo and file it again with the address "
+                    "in its text, where it becomes a link too." % body["link"])
         return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain

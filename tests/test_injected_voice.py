@@ -1022,6 +1022,13 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["add: noted, path unresolved"] = pm._mcp_call(
                 "add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})[0]
             results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
+            # the address the need is about (2026-09-08): a value that is not an http(s) address is refused
+            # before any post, and a kernel that echoes no link to a body that sent one is named
+            results["add: link refused"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a review of the pull request", "link": "ftp://example.invalid/x"})[0]
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
+            results["add: noted, link not recorded"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a review of the pull request", "link": "https://example.invalid/pull/1"})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
@@ -1045,6 +1052,8 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
         self.assertIn("About the file: that path did not resolve", results["add: noted, path unresolved"])
+        self.assertIn("Refused: the link ftp://example.invalid/x is not an http or https address", results["add: link refused"])
+        self.assertIn("About the link: https://example.invalid/pull/1 was not recorded", results["add: noted, link not recorded"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
         self.assertIn("Already closed", results["withdraw: already answered"])

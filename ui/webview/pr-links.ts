@@ -65,6 +65,8 @@
 // guessed host.
 
 import { hostPrefix } from "./host-prefix";
+import { installLinkOpener, anchorHrefAt } from "./link-opener";
+import type { OpenerDoc, OpenerPost, OpenerEnv } from "./link-opener";
 
 /** One run of text; `href` marks a link, `label` its repo-qualified reference for the hover title. */
 export interface PrRefSegment { text: string; href?: string; label?: string }
@@ -329,6 +331,9 @@ export function postalSenderHost(peerHost: unknown, selfHost: string, cardHost =
   return peerHost === selfHost ? "" : peerHost;
 }
 
+/** the pr-link href under an event target, or null: only the hrefs this module writes */
+export const prLinkHrefAt = (t: EventTarget | null): string | null =>
+  anchorHrefAt(t, "a." + PR_LINK_CLASS + "[href]", (href) => /^https:\/\/github\.com\//.test(href));
 /** Follow a PR link the way the chat follows its links (render.ts's a[href] delegate): on the web
  *  dashboard the viewer's own browser opens a tab; in a VS Code webview the href goes to the host,
  *  which openExternal()s it (view-routing.ts routes `openLink` for every pane; extension.ts consumes it
@@ -349,54 +354,9 @@ export function postalSenderHost(peerHost: unknown, selfHost: string, cardHost =
  *  ate one such click before; review find, 2026-09-06). The click path itself stays for a keyboard
  *  activation (Enter on a focused link fires click alone). Every flag clears on the next press, key or
  *  click — an event, never a timer. The chat pane does NOT install this — its own delegate already opens
- *  every absolute-scheme anchor the same way. */
-export function installPrLinkOpener(
-  doc: { addEventListener(type: string, fn: (e: Event) => void, capture?: boolean): void },
-  post: ((msg: { type: string; href: string }) => void) | undefined,
-  env: { protocol: () => string; open: (href: string) => void } = {
-    protocol: () => (typeof location !== "undefined" ? location.protocol : ""),
-    open: (href) => { window.open(href, "_blank", "noopener,noreferrer"); },
-  },
-): void {
-  /** the pr-link href under an event target, or null — only the hrefs this module writes */
-  const hrefAt = (t: EventTarget | null): string | null => {
-    const el = t as Element | null;
-    const a = el && typeof el.closest === "function" ? (el.closest("a." + PR_LINK_CLASS + "[href]") as HTMLAnchorElement | null) : null;
-    const href = a ? a.getAttribute("href") || "" : "";
-    return /^https:\/\/github\.com\//.test(href) ? href : null;
-  };
-  const open = (href: string): void => {
-    const p = env.protocol();
-    if (p === "http:" || p === "https:") env.open(href);
-    else if (post) post({ type: "openLink", href });
-  };
-  const primary = (e: Event): boolean => {
-    const pe = e as PointerEvent;
-    return (pe.button === undefined || pe.button === 0) && pe.isPrimary !== false;
-  };
-  /** is `t` `node` or one of its ancestors — the only targets the click after a release on `node` can have */
-  const inclusiveAncestor = (t: EventTarget | null, node: EventTarget): boolean =>
-    t === node || (!!t && typeof (t as Node).contains === "function" && (t as Node).contains(node as Node));
-  let pressed: string | null = null;        // the pr-link href under the primary button since pointerdown
-  let served: EventTarget | null = null;    // the node released on when pointerup opened a link: its click is already served
-  doc.addEventListener("pointerdown", (e) => { served = null; pressed = primary(e) ? hrefAt(e.target) : null; }, true);
-  doc.addEventListener("pointercancel", () => { pressed = null; }, true);
-  doc.addEventListener("keydown", () => { served = null; pressed = null; }, true);
-  doc.addEventListener("pointerup", (e) => {
-    const was = pressed;
-    pressed = null;
-    if (!was || !primary(e) || hrefAt(e.target) !== was) return;   // released elsewhere: no click
-    open(was);
-    served = e.target;
-  }, true);
-  doc.addEventListener("click", (e) => {
-    const node = served;
-    served = null;
-    if (node && inclusiveAncestor(e.target, node)) { e.preventDefault(); e.stopPropagation(); return; }
-    const href = hrefAt(e.target);
-    if (!href) return;
-    e.preventDefault();
-    e.stopPropagation();
-    open(href);
-  }, true);
+ *  every absolute-scheme anchor the same way.
+ *  The mechanics live in link-opener.ts (installLinkOpener), shared with the URL links url-links.ts writes into
+ *  the same rows; this is the PR-link installer: its anchors' class and the GitHub href shape it writes. */
+export function installPrLinkOpener(doc: OpenerDoc, post: OpenerPost, env?: OpenerEnv): void {
+  installLinkOpener(doc, post, prLinkHrefAt, env);
 }

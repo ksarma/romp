@@ -211,6 +211,78 @@ class TheParagraphSaysWhatTheKernelDoes(_Sandbox):
                                 + re.escape(self.fp))
 
 
+class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
+    """`link` (the user 2026-09-08): the reference's account of a URL in the text and of a todo's own `link`,
+    each held to the code that does it: the URL pass is the webview's (url-links.ts; pinned at source there and
+    run in url-links.test.ts), the `link` check the kernel's `_user_todo_link`."""
+
+    LINK = "https://example.invalid/notes-api/pull/398"
+
+    def setUp(self):
+        super().setUp()
+        self.para = _paragraph(_read("docs", "reference.md"), "**User todos.**")
+
+    def test_the_paragraph_says_a_url_in_the_text_links_and_what_stays_outside(self):
+        self.assertIn("An http or https address in the text or the detail is a link too, shown as typed and opened in a new "
+                      "tab; it runs to the next whitespace, quote, angle bracket or backtick, sentence punctuation after it "
+                      "stays outside the link, and so does a closing bracket the address itself did not open", self.para)
+        self.assertIn("A path-shaped run inside an address is part of the address, never a file link.", self.para)
+        # the webview's grammar, the sentence's source: the same characters end a URL, the same trail is trimmed
+        urls = _read("ui", "webview", "url-links.ts")
+        self.assertIn('const URL_RE = /https?:\\/\\/[^\\s<>"\'`]+/gi;', urls)
+        self.assertIn('const URL_TRAIL = ".,;:!?\'\\"";', urls)
+        self.assertIn('const PAIRS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };', urls)
+        # and both hosts run it before the path walk, which is what makes the last sentence true
+        render = _read("ui", "webview", "render.ts")
+        self.assertIn("function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {\n  linkifyUrls(node);\n  linkifyPathTokens(node, sid);\n}", render)
+        waiting = _read("ui", "webview", "waiting.ts")
+        self.assertRegex(waiting, r"function linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n  linkifyUrls\(node\);[^\n]*\n  if \(!framed\) return;\n  linkifyPathTokens\(node, sid\);\n\}")
+
+    def test_the_paragraph_states_the_link_argument_and_what_is_refused(self):
+        self.assertIn("A todo can carry a web address of its own as well, through the tool's `link` argument: an http or "
+                      "https address, shown as a chip beside the file's on the session's card and in the pane alike, the "
+                      "address without its scheme as the label and the whole address on hover, opening in a new tab.", self.para)
+        self.assertIn("Only such an address is taken: anything else (another scheme, a bare host, a value with whitespace "
+                      "in it, one past 2048 characters) is refused, the todo is not filed, and the tool's reply says why.",
+                      self.para)
+        self.assertIn("The kernel does not fetch the address, so a mistyped host is stored as typed.", self.para)
+        self.assertIn("The handed-back list shows the address after the path.", self.para)
+        self.assertEqual(km._TODO_LINK_MAX, 2048, "the number the paragraph states")
+
+    def test_only_such_an_address_is_taken(self):
+        self.assertEqual(km._user_todo_link(self.LINK), (self.LINK, None))
+        self.assertEqual(km._user_todo_link("http://example.invalid/notes"), ("http://example.invalid/notes", None))
+        for value, why in (("ftp://example.invalid/x", "another scheme"), ("example.invalid/x", "a bare host"),
+                           ("https://example.invalid/a b", "whitespace"), ("https://example.invalid/" + "x" * 2048, "past 2048")):
+            with self.subTest(case=why):
+                stored, err = km._user_todo_link(value)
+                self.assertIsNone(stored)
+                self.assertIn("http or https address", err, "the tool's reply says why")
+                with self.assertRaises(ValueError):
+                    km._add_user_todo(RSID, "Need a review of the pull request", link=value)
+        self.assertEqual(km._user_todos(), {}, "the todo is not filed")
+
+    def test_a_mistyped_host_is_stored_as_typed(self):
+        typo = "https://exmaple.invalid/notes-api/pull/398"
+        self.assertEqual(km._user_todo_link(typo), (typo, None))
+        km._add_user_todo(RSID, "Need a review of the pull request", link=typo)
+        self.assertEqual(km._user_todos()[RSID][0]["link"], typo)
+        self.assertEqual(km._open_user_todos(RSID)[0]["link"], typo, "shown as typed on every surface")
+
+    def test_the_handed_back_list_shows_the_address_after_the_path(self):
+        km._add_user_todo(RSID, "Need a look at the findings report", file=self.fp, link=self.LINK)
+        block = km._user_todo_context_block(RSID)
+        self.assertRegex(block, r"- Need a look at the findings report \(ut-[0-9a-f]{8}, opened \d{4}-\d{2}-\d{2}\) — file: "
+                                + re.escape(self.fp) + "; link: " + re.escape(self.LINK))
+
+    def test_the_tools_reply_refuses_before_the_post_and_names_a_kernel_that_kept_no_link(self):
+        postal = _read("postal", "postal_service.py")
+        self.assertIn("lerr = _todo_link_error(link_)", postal)
+        self.assertIn('return ("Refused: %s. Nothing was saved', postal)
+        self.assertIn('if "link" in body and not res.get("link"):', postal)
+        self.assertIn('out += (" About the link: %s was not recorded', postal)
+
+
 class TheReferenceUsesTheTodoVocabulary(unittest.TestCase):
     """The paragraph, the two MCP rows and the File comments paragraph say "todo", never a word CONTEXT.md's
     **User todo** entry avoids — the rule the guide already holds to."""
@@ -236,12 +308,12 @@ class TheReferenceUsesTheTodoVocabulary(unittest.TestCase):
         self.assertIn("A todo can also name the file it is about, through the tool's `file` argument.", para)
 
     def test_the_mcp_rows(self):
-        add = _table_row(self.ref, "`add_user_todo(text, detail?, file?)`")
+        add = _table_row(self.ref, "`add_user_todo(text, detail?, file?, link?)`")
         withdraw = _table_row(self.ref, "`withdraw_user_todo(id)`")
         self._assert_no_avoid_word(add, "the add_user_todo row")
         self._assert_no_avoid_word(withdraw, "the withdraw_user_todo row")
         self.assertIn("`text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the "
-                      "file the todo is about (User todos, above)", add)
+                      "file the todo is about, `link` the http or https address it is about (User todos, above)", add)
         self.assertIn("Take back a todo by the id `add_user_todo` returned", withdraw)
 
     def test_the_file_comments_paragraph(self):
