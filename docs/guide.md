@@ -177,11 +177,16 @@ the tab and pick **Hide tab**. The line under the label names the group the sess
 where to show it again: the group's view, where its row has the **Show** button. Which click opens
 that view depends on the fold: an open group's count opens the view and leaves the group open; a
 folded group's header opens the group and the view together. While the **Tags** flyout is open,
-moving the session to another group or removing its tag updates the line; once the session is in
-no group, the row goes away. The menu has **Hide tab** only while
+the row follows the copy you right-clicked. Moving it to another group changes the group the
+line names. Removing that group's tag takes the row away, unless the session is left under
+exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
+which copy you mean. While the row is away, adding a tag brings it back for that group, and a
+removal that leaves one tag brings it back for that one. Removing one of the session's other
+tags leaves the line alone. The menu has **Hide tab** only while
 the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
 on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
-row under **Tags** says creating) has no **Hide tab** yet; it comes a moment later. A hidden
+row under **Tags** says creating) has no **Hide tab** yet; the row is there the next time you open
+the menu, once the tag exists. A hidden
 session has no tab to right-click, so this view's **Show** button puts it back. Hiding is separate
 from folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
 come back. Nothing is lost by

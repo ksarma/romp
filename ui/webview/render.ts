@@ -6575,23 +6575,47 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes",
     () => setSessionFlag(id, "notify", !onBell));
   // THE RIGHT-CLICKED COPY'S HOME SECTION, TRACKED. `copy` is the group the copy sat in when the menu opened (the
-  // tab's dataset.copy); copyNow follows it through the Tags flyout's Move to, which leaves this menu open with the
-  // copy in another group, so every later read (the Hide tab row's refresh and click, the flyout's Move to and Show
-  // when folded rows on every build of its own) speaks for the copy where it now sits, never for the first remaining
-  // holder in tagOrder (round 2: for a session under two tags that hid a copy the user never touched, and which one
-  // depended on the drag order). A named copy resolves to its own group or to nothing: once its tag was removed
-  // inside the menu there is no copy left to hide, move or pin, so the Hide tab row leaves and the flyout's rows read
-  // "+ <name>" (add without moving) until a "+" puts the tag back, which restores the copy. The first holder in
-  // tagOrder serves only a caller that names no copy (the flat strip names none). None while Group tabs by tag is
-  // off or the tag's create is still in flight (no id to address).
+  // tab's dataset.copy; a tab in the untagged trail carries "" there, which names no group, so it reads as no copy);
+  // copyNow follows it through the Tags flyout, which leaves this menu open with the copy elsewhere: Move to writes
+  // the destination, and a "+ <name>" or a name typed while the copy's own tag no longer holds the session names the
+  // group the add put it in (with no tag, the add is the move), so every later read (the Hide tab row's refresh and
+  // click, the flyout's Move to and Show when folded rows on every build of its own) speaks for the copy where it now
+  // sits. The resolution (round 3): the named copy's own group while it still holds the session; else the session's
+  // ONE remaining holder, the unambiguous case (an x on the copy's tag on a two-tag session leaves one copy; a caller
+  // naming no copy on a one-tag session has one); else nothing, so with two or more other holders there is no copy to
+  // hide, move or pin (round 2: a session under two tags hid a copy the user never touched, and which one depended on
+  // the drag order), and the Hide tab row leaves while the flyout's rows read "+ <name>" (add without moving) until an
+  // add gives the copy a group again or the holders are down to one. None while Group tabs by tag is off or the
+  // resolved tag's create is still in flight (no id to address).
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
-  let copyNow = copy;
+  let copyNow: string | undefined = copy || undefined;
   const homeNow = (): TagUnion | undefined => {
-    const home0 = readTabGroups().on ? (copyNow !== undefined ? holding().find((g) => g.name === copyNow) : holding()[0]) : undefined;
+    if (!readTabGroups().on) return undefined;
+    const held = holding();
+    const home0 = (copyNow !== undefined ? held.find((g) => g.name === copyNow) : undefined) ?? (held.length === 1 ? held[0] : undefined);
     return home0 && !home0.pending ? home0 : undefined;
   };
   let refreshHideRow = () => {};   // the Hide tab row's refresh, assigned below; the Tags flyout calls it after each of its writes
+  // THE MENU'S SEAT (round 3): the menu sits at the cursor, clamped inside the pane (seatMenu, called once the menu is on
+  // the page), and the Tags flyout beside the Tags row (place, in openTagsFly). The Hide tab row's refresh can take a
+  // row out of the menu or put one back above the Tags row, and the flyout's rows change with every write, so the
+  // refresh ends by seating both again (reseat): the menu from its own corner, so a menu that shrank stays where it
+  // was and one that grew moves only as far as the pane's edge asks, the flyout from the Tags row's current rect and
+  // its own current size, read after the menu. Keyed on the refresh, which is keyed on the write; no timer. Nothing to
+  // seat while the menu is still being built (corner null) or the flyout is closed (isConnected).
+  let corner: { x: number; y: number } | null = null;
+  const seatMenu = (x: number, y: number) => {
+    const r = menu.getBoundingClientRect();
+    const mx = Math.max(0, Math.min(x, window.innerWidth - r.width - 4));
+    const my = Math.max(0, Math.min(y, window.innerHeight - r.height - 4));
+    menu.style.left = mx + "px";
+    menu.style.top = my + "px";
+    ctxMenuAt = { x: mx, y: my };   // Emoji… opens its picker here, where this menu stands
+    corner = ctxMenuAt;
+  };
+  let reseatFly = () => {};   // the open Tags flyout's placement, assigned when the flyout opens; a no-op while it is closed
+  const reseat = () => { if (!corner) return; seatMenu(corner.x, corner.y); reseatFly(); };
   // HIDE TAB (the user 2026-09-09): put this session's tab away inside its group from the menu, with
   // neither the section's at-a-glance pane nor the Sessions and tags dialog open. The same per-browser,
   // per-(tab, section) entry the pane's Hide and Show write (tab-groups.ts `hidden`), through the one
@@ -6608,8 +6632,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
   // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
   // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
-  // left (event-keyed on the write, no timer). The click resolves the section once more (a push between the
-  // refresh and the click) and SETS the state the row promised, the pin row's idiom: a copy already in that
+  // left (event-keyed on the write, no timer), and the refresh ends by seating the menu and the open flyout
+  // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
+  // section once more (a push between the refresh and the click) and SETS the state the row promised, the pin
+  // row's idiom: a copy already in that
   // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
   // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
   // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
@@ -6618,16 +6644,17 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // backgrounding, and the kernel migrated its hidden entries into the "archived" tag. revealIn survives
   // for the picker's tagged-session jump.)
   {
-    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide");
+    const row = el("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped");   // ctx-sub-capped: its sub-line carries the tag name, so it is capped (styles.css)
     let hidden = false;   // the stored bit the row last showed; the click sets its opposite
     refreshHideRow = () => {
       const home = phoneLayout() ? undefined : homeNow();
-      if (!home) { row.remove(); return; }
+      if (!home) { row.remove(); reseat(); return; }
       hidden = isHidden(tabGroups(), sectionRef(home), id);
       dressToggle(row, "tab", hidden,
         hidden ? "Show tab" : "Hide tab",
         hidden ? `back on the strip in ${home.name}` : `hidden in ${home.name}; to show it, open the group's view`);
       if (!row.parentNode) bellItem.after(row);
+      reseat();
     };
     row.addEventListener("click", (ev) => {
       ev.stopPropagation(); dismissTabMenu();
@@ -6787,6 +6814,12 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       else postUnionEdits(nv, a, r);
       copyNow = to.name;   // the copy sits in `to` now: the Hide tab row's refresh and this flyout's next build speak for it there
     };
+    // an add from a copy with no group is the move (the "+ <name>" rows below): a copy whose own tag no longer holds
+    // the session, after an x on it or the untagged trail's copy, which named none, is claimed by the tag the add puts
+    // it under, so the Hide tab row and this flyout's next build speak for it there (round 3: the menu went inert for
+    // the copy the add had just made); a copy whose tag still holds the session (its create in flight, or grouping off)
+    // keeps its claim, and the add is an add. Read before the edit; the "+" beside a Move to row never gets here
+    const claimIfLoose = (name: string) => { if (copyNow === undefined || !holding().some((g) => g.name === copyNow)) copyNow = name; };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
     // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
@@ -6855,7 +6888,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           } else {
             lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); claimIfLoose(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
           sub.appendChild(row);
         }
@@ -6902,7 +6935,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const name = inp.value.trim();
           if (!name) return;
           const existing = unionFor().find((g) => g.name === name);
-          if (existing) { editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
+          if (existing) { claimIfLoose(existing.name); editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
@@ -6912,6 +6945,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
+          claimIfLoose(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack and the next open)
           // ONE targeted create carrying the session — the tag and its first member land together
           postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
@@ -6935,13 +6969,20 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       });
       sub.appendChild(cfg);
       menu.appendChild(sub);
-      const ir = tagsItem.getBoundingClientRect();
-      const sr = sub.getBoundingClientRect();
-      // the side rule (the model-version submenus): PREFER right; fall LEFT only when the right
-      // edge would clip — never slide over the row
-      if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
-      else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
-      sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
+      // beside the Tags row: the side rule (the model-version submenus): PREFER right; fall LEFT only when the right
+      // edge would clip — never slide over the row; the top at the row's, clamped to the pane. Read again on every
+      // reseat while this flyout is open (the Hide tab row's refresh, after each write here): the row's coming or going
+      // above the Tags row moves the row, and the flyout's own size changes with its rows (round 3: the flyout stood one
+      // row too low after an x on the copy's tag)
+      const place = () => {
+        const ir = tagsItem.getBoundingClientRect();
+        const sr = sub.getBoundingClientRect();
+        if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
+        else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
+        sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
+      };
+      place();
+      reseatFly = () => { if (sub.isConnected) place(); };
       if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
       // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
       sub.addEventListener("pointerenter", cancelHoverTimers);
@@ -6994,13 +7035,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   }
   document.body.appendChild(menu);
   ctxMenuEl = menu;
-  // at the cursor, clamped so it never overflows the pane
-  const r = menu.getBoundingClientRect();
-  const mx = Math.max(0, Math.min(e.clientX, window.innerWidth - r.width - 4));
-  const my = Math.max(0, Math.min(e.clientY, window.innerHeight - r.height - 4));
-  menu.style.left = mx + "px";
-  menu.style.top = my + "px";
-  ctxMenuAt = { x: mx, y: my };   // Emoji… opens its picker here, where this menu stood
+  seatMenu(e.clientX, e.clientY);   // at the cursor, clamped so it never overflows the pane
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires
 // this only when the reachable set actually CHANGES (its own /tunnels poll is the event), so this is a

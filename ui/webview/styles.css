@@ -717,13 +717,17 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .ctx-tag-input { width: 100%; background: var(--vscode-editor-background, #1e1e1e); color: var(--menu-fg); border: 1px solid var(--hairline); border-radius: 5px; padding: 3px 6px; font: inherit; }   /* themed (T226): the dark values resolve byte-equal */
 .ctx-tag-input:focus { outline: none; border-color: var(--accent); }
 .ctx-item-body { display: flex; flex-direction: column; line-height: 1.25; }
-/* The sub-line has a cap (tab menu review round 2, 2026-09-09): the menu's rows are nowrap (.ctx-item above) and
-   sized by their widest row, so a sub-line that carries a tag name (the Hide tab row's, the Tags row's joined names,
-   Show when folded) widened the menu with the name, past a narrow pane's edge at the 40-character maximum. The cap
-   is in the sub-line's own em: the widest fixed sub-line (Rename's) measures 31.8em in Inter and about 8% more in a
-   fallback face, so 36em keeps every fixed row whole while a long name elides; the menu then stays near 405px at
-   the 13px root, inside a 450px pane. tab-hide.test pins the rule and tab-hide-browser.test measures it. */
-.ctx-item-sub { font-size: 0.82em; opacity: 0.6; max-width: 36em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-item-sub { font-size: 0.82em; opacity: 0.6; }
+/* A row whose sub-line carries a tag name wears a cap (tab menu review rounds 2 and 3, 2026-09-09): the menu's rows
+   are nowrap (.ctx-item above) and the menu is sized by its widest row, so the Hide tab row's sub-line, whose
+   variable part is the tag name, widened the menu with the name past a narrow pane's edge at the 40-character
+   maximum. The cap is the ROW's, a modifier class (.ctx-sub-capped) the Hide tab row alone wears, never
+   .ctx-item-sub's (round 3: a cap on the class cut the Emoji row's sub-line, the widest fixed one, in the light theme's Space Grotesk and in a
+   fallback face); the fixed rows stay whole in every face. Measured in Chromium with the faces loaded
+   (tab-hide-browser.test): the fixed sub-lines reach 33.1em in Inter and 36.1em in Space Grotesk; the Hide tab
+   sub-line at a 40-character name is 40.8em in Inter and 41.7em in Space Grotesk, so at 36em it elides, and a
+   menu holding it stays about 407px wide at the 13px root, inside a 450px pane. tab-hide.test pins the rule. */
+.ctx-sub-capped .ctx-item-sub { max-width: 36em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* identity-color swatches (the user 2026-06-29): the romp palette as circles, the current one ringed. A grid
    so 9 colors wrap to a tidy block instead of one long row. */
 /* Billing submenu (the user 2026-08-09: the login/API-key switch lives here now, not the statusline).

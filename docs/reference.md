@@ -475,7 +475,8 @@ view). The tab's right-click menu writes the same hide entry: **Hide tab** on a 
 **Show tab** on a hidden one (a hidden copy has no tab on the strip; the way back is the view's
 **Show**, and the group's count opens the view while the group is open). The row is present only
 while the tabs are grouped by tag and the right-clicked copy is in a group whose tag the kernel
-has already created (a tag still being created has no row until the kernel answers); on the flat
+has already created (a tag still being created has no row until the kernel answers and the menu
+is next opened); on the flat
 strip, on the phone layout and for the untagged sessions after the divider, where hides do not
 apply, the menu has no such row. A pin or a hide names the session and its group (the tag's name,
 and the tag's id
