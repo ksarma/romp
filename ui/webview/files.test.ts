@@ -165,7 +165,7 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
 // Files branch and never touches the feed's flags; the same click without `pane` still takes the feed route
 test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; the feed route is untouched", () => {
   const start = KERNEL.indexOf("if(m.romp==='browseFiles'&&m.pane==='pane'){");   // the first browse arm (2026-09-06)
-  const stop = KERNEL.indexOf("// One id per dashboard", start);
+  const stop = KERNEL.indexOf("// The dashboard's one id", start);   // the comment after the listener's close (2026-09-09 fold)
   assert.ok(start >= 0 && stop > start, "arm anchors not found — re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();
   assert.ok(arms.endsWith("}});"));

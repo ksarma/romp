@@ -169,6 +169,8 @@ DOTTED = {
     "jd.load_goals_shared_or_fault": ("sig", "store"),   # the shared read behind the per-session fault boundary (upstream #1019)
     "em.MSG_TAG_RE.search": ("pure", "over a text"),
     "em.parse_teammate_message": ("pure", "over a text"),
+    "em.injected_source": ("pure", "over a message record"),        # upstream #1099: the injected-message origin word
+    "em.strip_harness_preamble": ("pure", "over a text"),           # upstream #1099: the harness preamble split off a prompt
     "sb.echo_text_key": ("pure", "over a text"),
     "cm.context_rgb": ("pure", "over a percentage"),
     "cm.ramp": ("pure", "over a fraction and the colormap's stops"),

@@ -209,9 +209,11 @@ test("the guide names the folder link and where its listing opens", () => {
 // EXTRACTED from kernel.py's landing shell (the files.test.ts idiom): from the Files-pane browse branch to the
 // end of the listener, run against a shimmed window/document. A `pane:'pane'` browse drives the Files branch and
 // never touches the feed's flags; 'feed' (or no pane, an older sender) takes the feed route exactly as before.
+// The stop is the comment right after the listener's close: the dashboard-id minting that followed the listener
+// moved to the head script (upstream #1127, taken in the 2026-09-09 fold) and left this comment in its place.
 function arms(): (w: unknown, d: unknown, m: unknown) => void {
   const start = KERNEL.indexOf("if(m.romp==='browseFiles'&&m.pane==='pane'){");
-  const stop = KERNEL.indexOf("// One id per dashboard", start);
+  const stop = KERNEL.indexOf("// The dashboard's one id", start);
   assert.ok(start >= 0 && stop > start, "arm anchors not found: re-anchor this extraction");
   let js = KERNEL.slice(start, stop).trimEnd();
   assert.ok(js.endsWith("}});"));
@@ -404,11 +406,17 @@ function paneCss(): string {
   assert.ok(a > 0, "the landing's pane-hiding rule moved: re-anchor");
   return KERNEL.slice(a + 1, KERNEL.indexOf('"', a + 1));
 }
-// the shell's browse arms and the Files pane's close edge, as the landing ships them (the extraction above)
+// the shell's browse arms and the Files pane's close edge, as the landing ships them (the extraction above).
+// The anchors are asserted here too: a missing stop made slice() run to the end of kernel.py, and the landing
+// template it dragged into SHELL_HTML's script put a second #f-files on the page (a strict-mode violation in the
+// browser legs that pointed nowhere near the cause)
 function relayJs(): string {
   const start = KERNEL.indexOf("if(m.romp==='browseFiles'&&m.pane==='pane'){");
-  const stop = KERNEL.indexOf("// One id per dashboard", start);
-  return KERNEL.slice(start, stop).trimEnd().slice(0, -3);
+  const stop = KERNEL.indexOf("// The dashboard's one id", start);
+  assert.ok(start >= 0 && stop > start, "relay anchors not found: re-anchor this extraction (see arms())");
+  const js = KERNEL.slice(start, stop).trimEnd();
+  assert.ok(js.endsWith("}});"), "the relay slice no longer ends at the listener's close: re-anchor");
+  return js.slice(0, -3);
 }
 function bundle(entry: string): string {
   const esbuild = requireCjs("esbuild");

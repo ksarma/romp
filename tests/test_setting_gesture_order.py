@@ -813,7 +813,7 @@ class VersionReportsEveryStoredStamp(_Base):
     def test_a_fresh_install_reports_every_store_at_zero(self):
         gts = km._version_info()["settingsGt"]
         self.assertEqual(set(gts), set(km._GT_STORES), "one key per gt-gated store, no more, no less")
-        self.assertEqual(len(km._GT_STORES), 15, "five toggles/modes + nine judge-tier stores + the fork's user-todos switch")
+        self.assertEqual(len(km._GT_STORES), 16, "five toggles/modes + ten judge-tier stores (judge-concurrency since T277) + the fork's user-todos switch")
         self.assertEqual(set(gts.values()), {0}, "nothing applied yet reads 0 — nothing to outrank")
         self.assertEqual(json.loads(json.dumps(gts)), gts, "plain JSON — ints, no paths, nothing to redact")
 
@@ -826,10 +826,11 @@ class VersionReportsEveryStoredStamp(_Base):
         self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW + 8), T_NEW + 8)
         self.assertEqual(km._set_comment_fast("on", gt=T_NEW + 9), T_NEW + 9)
         self.assertEqual(km._set_user_todos(True, gt=T_NEW + 10), T_NEW + 10)
+        self.assertEqual(km._set_judge_concurrency("4", gt=T_NEW + 11), T_NEW + 11)   # T277's store, stamped like the rest
         gts = km._version_info()["settingsGt"]
         want = {"judge-model": T_NEW, "auto-nudge": T_OLD, "compact-suggest": T_NEW + 5,
                 "file-editing": T_NEW + 6, "update-mode": T_NEW + 7, "thinking-summaries": T_NEW + 8,
-                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10}
+                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10, "judge-concurrency": T_NEW + 11}
         for store, gt in want.items():
             self.assertEqual(gts[store], gt, store)
         for store in set(km._GT_STORES) - set(want):
@@ -852,7 +853,8 @@ class VersionReportsEveryStoredStamp(_Base):
                  {"type": "setFileEditing", "enabled": True}, {"type": "setUpdateMode", "mode": "auto"},
                  {"type": "setThinkingSummaries", "enabled": True}, {"type": "setJudgeModel", "model": "fable"},
                  {"type": "setIndexModel", "model": "fable"}, {"type": "setJudgeEffort", "effort": "high"},
-                 {"type": "setIndexEffort", "effort": "high"}, {"type": "setDistillModel", "model": "haiku"},
+                 {"type": "setIndexEffort", "effort": "high"}, {"type": "setJudgeConcurrency", "value": "4"},
+                 {"type": "setDistillModel", "model": "haiku"},
                  {"type": "setDistillEffort", "effort": "high"}, {"type": "setCommentModel", "model": "haiku"},
                  {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"},
                  {"type": "setUserTodos", "enabled": True}]
@@ -860,7 +862,8 @@ class VersionReportsEveryStoredStamp(_Base):
                  {"type": "setFileEditing", "enabled": False}, {"type": "setUpdateMode", "mode": "off"},
                  {"type": "setThinkingSummaries", "enabled": False}, {"type": "setJudgeModel", "model": "opus"},
                  {"type": "setIndexModel", "model": "opus"}, {"type": "setJudgeEffort", "effort": "low"},
-                 {"type": "setIndexEffort", "effort": "low"}, {"type": "setDistillModel", "model": "triage"},
+                 {"type": "setIndexEffort", "effort": "low"}, {"type": "setJudgeConcurrency", "value": "2"},
+                 {"type": "setDistillModel", "model": "triage"},
                  {"type": "setDistillEffort", "effort": "low"}, {"type": "setCommentModel", "model": "session"},
                  {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"},
                  {"type": "setUserTodos", "enabled": False}]
@@ -870,7 +873,7 @@ class VersionReportsEveryStoredStamp(_Base):
                 km.Handler._dispatch_ws(types.SimpleNamespace(), dict(o, gt=T_OLD), client)
         named = {m["setting"] for m in sent if m.get("type") == "settingStale"}
         self.assertEqual(named, set(km._version_info()["settingsGt"]), "frames and the report share one vocabulary")
-        self.assertEqual(len(named), 15)
+        self.assertEqual(len(named), 16)   # ten judge-tier stores since T277, plus the fork's user-todos switch
 
     def test_the_forks_user_todos_switch_is_taught_like_every_other_store(self):
         # the fork's per-install switch is gt-gated (_set_user_todos) and the gear stamps it, so a dashboard
@@ -954,9 +957,9 @@ class WiringPins(unittest.TestCase):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client, msg)"), 15,
-                                "all fifteen gt-gated branches (six toggles + nine judge tiers; the "
-                                "user-todos switch is this fork's) answer the delivering socket on a "
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client, msg)"), 16,
+                                "all sixteen gt-gated branches (six toggles + ten judge-tier stores, judge-concurrency "
+                                "since T277; the user-todos switch is this fork's) answer the delivering socket on a "
                                 "stand-down, handing over the refused message so the frame can echo it")
         self.assertNotIn("_tell_stale_gesture(client)\n", self.src,
                          "no branch still calls the echo-less form — the toast's Apply anyway "

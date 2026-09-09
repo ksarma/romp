@@ -555,8 +555,7 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
     be.__dict__.update({
         "state_dir": Path(state), "claude_bin": "/bin/false", "sessions": {},
         "_lock": threading.Lock(), "_reg_lock": threading.Lock(), "_pending_ask": {}, "_live": {},
-        "_fork_children_memo": None, "_work_key_pin": "", "work_key": "",   # a property with a pin at
-        #   HEAD (the pin wins), a plain attribute in older revisions (the instance value wins)
+        "_fork_children_memo": None,
         "_problems": [], "_problem_seq": 0,
         "_problem_lock": threading.Lock(), "_sdk_missing": False, "_turn_seq": {}, "_drive_marks": {},
         "_drive_inflight": set(), "_heal_attempts": {}, "_notify": None, "_poke_cb": None,

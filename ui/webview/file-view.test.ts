@@ -193,7 +193,10 @@ test("mobile: closing a relay-opened viewer returns the phone to the Chat tab", 
   // so viewFileClosed goes back to Chat — unconditionally, not gated on the was-off flag, because
   // the tab switch happened whatever the pane's desktop state was. The silent browser handoff posts
   // no viewFileClosed at all, so heading into the browser correctly STAYS on the Feed tab.
-  const closed = KERNEL.split("if(m.romp==='viewFileClosed')")[1].split("// One id per dashboard")[0];
+  // the arm ends where the listener does: the comment that follows it (the dashboard-id minting that sat there
+  // moved to the head script in the 2026-09-09 fold, upstream #1127)
+  const closed = KERNEL.split("if(m.romp==='viewFileClosed')")[1].split("// The dashboard's one id")[0];
+  assert.ok(closed.trimEnd().endsWith("}});"), "the viewFileClosed slice no longer ends at the listener's close: re-anchor");
   assert.ok(closed.includes("window.__rompMobileTab&&window.__rompMobileTab('chat')"),
     "the symmetric return to the tab the click always comes from");
   assert.ok(closed.indexOf("__rompMobileTab") < closed.indexOf("__rompFeedWasOffView"),
@@ -207,7 +210,7 @@ test("mobile: closing a relay-opened viewer returns the phone to the Chat tab", 
 test("shell flag algebra: both handoff routes restore once, a lost viewFile arms nothing", () => {
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   const start = KERNEL.indexOf("if(m.romp==='browseFiles')");
-  const stop = KERNEL.indexOf("// One id per dashboard", start);
+  const stop = KERNEL.indexOf("// The dashboard's one id", start);   // the comment after the listener's close (2026-09-09 fold)
   assert.ok(start >= 0 && stop > start, "arm anchors not found — the landing shell moved; re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();
   assert.ok(arms.endsWith("}});"), "the slice no longer ends at the message listener's close — re-anchor");

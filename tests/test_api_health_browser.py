@@ -526,22 +526,34 @@ class ServedCell(unittest.TestCase):
         # disabled and relabeled across the reconnect until an unrelated pause write moved the seq
         R = self.R
         ready, pressed = '{"type":"ready"}', '{"type":"setGlobalRetryPaused","value":false}'
+        # The shell's own client-diag rows ride this socket too since the 2026-09-09 fold (upstream #1127): the
+        # tap-landing script files 'deeplink' at boot and 'tap-resume' at boot and on pageshow, queued until the
+        # socket opens and flushed after ready. They are the shell's breadcrumbs, not the detail's ops, so the
+        # frame lists below are read without them; the rows themselves are pinned once (surface, and ready first)
+        def ops(frames):
+            return [f for f in frames if json.loads(f).get("type") != "clientDiag"]
+        def diag(frames):
+            return [json.loads(f) for f in frames if json.loads(f).get("type") == "clientDiag"]
         self.assertEqual(R["sockCount"], 1, "shellWS dialed once at load, and the shim let it stay unopened: %r" % R.get("err2"))
         self.assertIn("/ws?app=shell", R["sock0"]["url"])
         self.assertEqual(R["sockRedialed"], 2, "a close redials")
-        self.assertEqual(R["sock1Ready"], [ready], "the open sends ready")
+        self.assertEqual(R["sock1Ready"][:1], [ready], "the open sends ready first, before the queued breadcrumbs")
+        self.assertEqual(ops(R["sock1Ready"]), [ready], "the open sends ready")
+        self.assertTrue(diag(R["sock1Ready"]), "the rows that waited for the socket flushed on its open")
+        self.assertEqual({d["surface"] for d in diag(R["sock1Ready"])}, {"shell"}, "and they are the shell's own")
         self.assertEqual(R["sockPainted"], "paused · usage limit · 1 waiting", "a frame on the socket paints the cell")
-        self.assertEqual(R["sockPressSent"], [ready, pressed], "the press rode the real socket")
+        self.assertEqual(ops(R["sockPressSent"]), [ready, pressed], "the press rode the real socket")
         self.assertEqual(R["sockAcked"], {"disabled": True, "label": "Stop all auto-retries", "acted": True, "hint": ""})
         self.assertEqual(R["sockDropped"], {"disabled": False, "label": "Resume all auto-retries", "acted": False,
                                             "hint": "Connection lost before the answer arrived. When it is back, the button shows the current state."},
                          "the close clears the acknowledgment and says why")
         self.assertIn("/ws?app=shell", R["sock2"]["url"])
-        self.assertEqual(R["sock2Ready"], [ready], "the redial sends ready")
+        self.assertEqual(R["sock2Ready"][:1], [ready], "the redial sends ready first")
+        self.assertEqual(ops(R["sock2Ready"]), [ready], "the redial sends ready")
         self.assertEqual(R["sockResent"], {"disabled": False, "label": "Resume all auto-retries", "acted": False, "hint": ""},
                          "the re-sent frame (same seq) repaints the truth and drops the hint")
-        self.assertEqual(R["sock2Sent"], [ready, pressed], "the next press rides the new socket")
-        self.assertEqual(R["sock1After"], [ready, pressed], "and nothing more reached the dead one")
+        self.assertEqual(ops(R["sock2Sent"]), [ready, pressed], "the next press rides the new socket")
+        self.assertEqual(ops(R["sock1After"]), [ready, pressed], "and nothing more reached the dead one")
         self.assertEqual(R["sockMoved"], {"disabled": False, "label": "Stop all auto-retries", "acted": False, "hint": ""},
                          "a re-sent frame with a moved seq (the kernel took the press) repaints that truth")
 
