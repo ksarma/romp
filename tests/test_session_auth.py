@@ -11,6 +11,10 @@ The mechanics under test:
   * set_auth mirrors set_effort: persist + authPending + reconnect to apply (auth is connect-time).
   * The CLI's init apiKeySource is compared against what _options actually launched with — a landing
     on the wrong side is a session billing the wrong account, flagged into the problems ring.
+    Under a ROMP_EXPECTED_AUTH declaration the comparison is against the declared side, and on a helper
+    box the declaration is checked, never obeyed: an unpicked session bills the key whatever the box
+    declares (unpicked_auth reads key_available first), and a declared login rings on the keyed landing
+    instead of relabelling the session (the fold of upstream #1128, slice 2, 2026-09-09).
   * spend.json buckets carry a `key` sub-count for key-billed turns, so the rail's API readout on a
     mixed host sums ONLY the key's turns (_spend_windows(keyed_only=True)); a login turn's computed
     cost is dollars nobody is billed.
@@ -321,6 +325,49 @@ class InitMismatchIsLoud(_Keyed):
         s._launched_keyed = True
         self.be._note_auth_source(s, "ANTHROPIC_API_KEY")
         self.assertFalse([p for p in self.be.problems(10) if "billing" in p["text"]])
+
+
+class DeclaredLoginOnAHelperBox(_Keyed):
+    """A helper box whose service.env declares ROMP_EXPECTED_AUTH=login (the fold of upstream #1128, slice 2,
+    2026-09-09). The helper is the one key path, so an unpicked session bills the key whatever the box declares
+    (sdk_backend.unpicked_auth reads key_available before the declaration), and the declaration is an
+    expectation the init check judges each landing against, never a label the kernel writes onto the session:
+    the keyed landing is a problem row naming the declaration and the CLI's report, and the session's pick, reg
+    and default stay as they were. Before the fold the same box read every unpicked session as login (the rule's
+    key input was a key romp held, and this box holds none). The judge side of the rule is
+    tests/test_judge_auth_billing.py UnpickedBillingOnADeclaredBox.test_a_configured_helper_comes_before_the_declaration."""
+
+    def test_an_unpicked_session_bills_the_key_and_its_keyed_landing_rings_the_declaration(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        self.assertTrue(self.be.key_available, "the fixture helper is configured: the box has a key side")
+        sid = self.be.spawn("n", "/tmp")
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertNotIn("auth", reg, "no pick anywhere: the session is unpicked")
+        s = sb.SdkSession(self.be, reg)
+        self.assertEqual(s.effective_auth(), "key", "the helper bills every unpicked session, whatever the box declares")
+        self.assertEqual(self.be.default_auth({}), "key", "the picker's default says the same")
+        self.be._note_auth_source(s, "apiKeyHelper")          # the init: the CLI ran the helper
+        rung = [p["text"] for p in self.be.problems(10) if "ROMP_EXPECTED_AUTH=login" in p["text"]]
+        self.assertEqual(len(rung), 1, "the declaration is checked: one problem row names it")
+        self.assertIn("the CLI reports apiKeySource='apiKeyHelper'", rung[0], "and the report it contradicts")
+        self.assertIn("this session is billing the API key", rung[0])
+        # checked, not obeyed: nothing relabels the session to the declared side
+        self.assertEqual(s.auth, "", "no pick was written onto the session")
+        self.assertEqual(s.auth_live, "key", "the Billing row shows the CLI's report")
+        self.assertEqual(s.effective_auth(), "key")
+        snap = s.snapshot()
+        self.assertEqual((snap["auth"], snap["authLive"], snap["authPicked"]), ("key", "key", False))
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertNotIn("auth", reg, "the reg carries no pick the user never made")
+        self.assertIs(reg.get("apiKeyAuth"), True, "the report itself persists, as for any keyed landing")
+
+    def test_the_same_box_declaring_key_is_quiet(self):
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        s = self._sess(1)
+        self.assertEqual(s.effective_auth(), "key")
+        self.be._note_auth_source(s, "apiKeyHelper")
+        self.assertFalse([p for p in self.be.problems(10) if "billing" in p["text"]],
+                         "the declaration that describes a helper box truthfully rings nothing")
 
 
 class SetAuth(_Keyed):

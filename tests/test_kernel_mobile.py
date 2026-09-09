@@ -554,6 +554,13 @@ class MobileFitExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
+        # RED since the 2026-09-09 fold, on purpose (ruling 3 of its review). This harness executes the template
+        # UNSPLICED, and the fork's template carries the __MOBILE_MQ__ placeholder that _landing() splices for the
+        # layout probe (__rompMobileOn), so matchMedia(__MOBILE_MQ__) throws a ReferenceError at top level here.
+        # The review ruled the probe carries no try/catch (a missing matchMedia is checked explicitly and leaves
+        # the probe answering false; any other error surfaces) and that a harness this leaves red is named in the
+        # PR body rather than met by a wider guard. Pending that call; a harness that runs the script as served
+        # would splice the placeholder the way _landing() does.
         assert r.returncode == 0, "the mobile script threw: " + r.stderr[:800]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -732,6 +739,8 @@ class MobileBellExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
+        # RED since the 2026-09-09 fold, on purpose: the same unspliced __MOBILE_MQ__ ReferenceError as the fit
+        # harness above (ruling 3 of the fold review; the comment there has the whole reason)
         assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 

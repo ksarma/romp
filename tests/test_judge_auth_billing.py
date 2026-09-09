@@ -293,12 +293,19 @@ class JudgeArgvBilling(_JudgeAuthBase):
         self.addCleanup(lambda: ((jd.STATE / "judge-fast").unlink(missing_ok=True), jd._state_cache.clear()))
         cmd = jd._judge_cmd("opus", "SYS", None, auth="login")
         self.assertEqual(cmd.count("--settings"), 1, "one overlay, never two flags")
-        self.assertEqual(json.loads(cmd[cmd.index("--settings") + 1]), {"fastMode": True, "apiKeyHelper": ""})
+        both = json.loads(cmd[cmd.index("--settings") + 1])
+        self.assertEqual(both, {"fastMode": True, "apiKeyHelper": ""}, "both keys, neither overlay lost")
+        self.assertEqual(both["apiKeyHelper"], "", "the empty string, the value the CLI takes as unset (null falls through)")
+        # the two single shapes hold beside it: fast alone is the static file (its content IS the opt-in), login
+        # alone is the verbatim inline string, each on one flag
         cmd = jd._judge_cmd("opus", "SYS", None, auth="key")
         self.assertEqual(cmd.count("--settings"), 1)
         self.assertEqual(cmd[cmd.index("--settings") + 1], jd._judge_fast_settings(), "fast alone: the static file")
+        self.assertEqual(json.loads(Path(jd._judge_fast_settings()).read_text()), {"fastMode": True})
         cmd = jd._judge_cmd("sonnet", "SYS", None, auth="login")
+        self.assertEqual(cmd.count("--settings"), 1)
         self.assertEqual(cmd[-2:], HELPER_OFF, "login alone on a model fast mode does not cover: the verbatim string")
+        self.assertNotIn("--settings", jd._judge_cmd("sonnet", "SYS", None, auth="key"), "neither applies: no overlay")
 
 
 class RuntimeJudgeBilling(_JudgeAuthBase):

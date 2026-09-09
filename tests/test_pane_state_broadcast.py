@@ -149,12 +149,16 @@ class MobileVisibility(unittest.TestCase):
     def test_the_layout_is_the_stylesheets_own_media_query(self):
         # one constant lays out the grid AND answers the JS — never two strings that can drift
         self.assertIn("@media " + km._MOBILE_MQ + "{", self.html)
-        # guarded (try/catch): upstream's executed tests run the script UNSPLICED, and a bare placeholder threw at
-        # top level there and took the whole tab bar with it; the probe answers false instead (#1132 fold)
-        self.assertIn("var MQ=null;try{MQ=(window.matchMedia&&matchMedia(" + json.dumps(km._MOBILE_MQ) + "))||null;}catch(e){}", self.mob)
-        self.assertIn("function mobileOn(){return !!(MQ&&MQ.matches);}\nwindow.__rompMobileOn=mobileOn;\n"
+        # no try/catch around the probe (the 2026-09-09 fold review, ruling 3): the one legitimate absence, a window
+        # without matchMedia, is an explicit check that leaves MQ null, the way show() skips a pane the page lacks;
+        # any other error surfaces. The probe sits ABOVE upstream's one-line bar lookup-and-return (the #1132 fold),
+        # so __rompMobileOn exists even when the tab bar is missing (it answers false there)
+        self.assertIn("var MQ=(window.matchMedia&&matchMedia(" + json.dumps(km._MOBILE_MQ) + "))||null;\n"
+                      "function mobileOn(){return !!(MQ&&MQ.matches);}\nwindow.__rompMobileOn=mobileOn;\n"
                       "var bar=document.getElementById('mtabs');if(!bar)return;", self.mob,
-                      "__rompMobileOn exists even when the tab bar is missing (answers false): the probe sits above the bar lookup")
+                      "the explicit-check probe, directly above the bar lookup")
+        self.assertNotIn("try{MQ=", self.mob, "the probe is not wrapped: a placeholder never spliced throws, it does not answer false")
+        self.assertNotIn("try{MQ=", km._LANDING_MOBILE_JS)
         self.assertNotIn("__MOBILE_MQ__", self.html)
         self.assertIn("__MOBILE_MQ__", km._LANDING_MOBILE_JS, "the template keeps the placeholder")
         src = open(os.path.join(BIN, "romp-kernel")).read()

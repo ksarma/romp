@@ -3,7 +3,9 @@
 // the provider-gated scrub is retired with the providers). What guards the panes instead is the refusal to start
 // at all while the environment carries a retired provider variable: every pane the server creates inherits the
 // SERVER's globals, and a `romp new -t` session's `exec claude` would read a leftover ANTHROPIC_API_KEY from there
-// while the kernel alone refused to boot. Synthetic values throughout.
+// while the kernel alone refused to boot. The last case runs a real `romp-manager up` on private ports and reads
+// the refusal off its log: it names every retired variable found (the 2026-09-09 fold review, ruling 6). Synthetic
+// values throughout.
 // Run: node --test tests/manager-*.test.js
 'use strict';
 const { test } = require('node:test');
@@ -11,6 +13,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 process.env.ROMP_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-op-env-'));
 const mgr = require(path.join(__dirname, '..', 'bin', 'romp-manager'));
@@ -60,4 +63,37 @@ test('startManager refuses before the tmux server starts (source pin: the check 
   const tmux = body.indexOf('startTmuxServer();');
   assert.ok(check > 0 && tmux > 0 && check < tmux, 'the refusal runs before startTmuxServer()');
   assert.ok(body.slice(check, tmux).includes('process.exit(1)'), 'and it exits rather than warns');
+});
+
+// The refusal, executed (the 2026-09-09 fold review, ruling 6): `romp-manager up` with retired names in its
+// environment exits 1 and its one log line NAMES the variables to remove, never their values, so the operator
+// reading manager.log knows which lines to take out of service.env. Two more facts of the resolved order ride
+// along: the `romp down` marker is cleared first (the start was asked for, so `romp status` does not call the
+// kernel stopped on purpose while the manager refuses to run), and the tmux server is never started (the stub
+// tmux on PATH leaves a witness file when it runs). Private ports: on the default port a live manager would
+// answer the probe and the exit would be its "already running" refusal, not this one.
+test('romp-manager up: the exit-1 line names every retired variable found, values stay out, the marker is cleared, tmux never starts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-mgr-refusal-'));
+  try {
+    const bin = path.join(dir, 'bin'), state = path.join(dir, 'state'), witness = path.join(dir, 'tmux-ran');
+    fs.mkdirSync(bin); fs.mkdirSync(state);
+    fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\necho ran >> "$ROMP_TEST_TMUX_LOG"\nexit 0\n', { mode: 0o755 });
+    const marker = path.join(state, 'down-by-romp');
+    fs.writeFileSync(marker, JSON.stringify({ t: 1700000000, cmd: 'romp down' }) + '\n');
+    const env = { PATH: bin, HOME: '/nonexistent', ROMP_STATE_DIR: state, ROMP_MANAGER_PORT: '7625', ROMP_SERVE_PORT: '7626',
+      ROMP_TEST_TMUX_LOG: witness, ROMP_EXPECTED_AUTH: 'key',
+      ANTHROPIC_API_KEY: 'synthetic-value-never-printed', ROMP_API_KEY_REF: 'op://synthetic-vault/synthetic-item/field' };
+    const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status, 1, `exit 1: ${r.stderr}`);
+    const line = r.stderr.split('\n').find((l) => /did NOT start/.test(l)) || '';
+    assert.ok(line, `the refusal is on the log: ${r.stderr}`);
+    assert.match(line, /its environment carries ROMP_API_KEY_REF, ANTHROPIC_API_KEY\. /, 'every retired name found, each spelled out');
+    assert.doesNotMatch(r.stderr, /synthetic-value|op:\/\//, 'names only, never a value');
+    assert.doesNotMatch(r.stderr, /already running/, 'the private port held no manager: this is the retired-names refusal');
+    assert.match(r.stderr, /cleared the `romp down` marker/, 'the clear runs first and says so');
+    assert.equal(fs.existsSync(marker), false, 'the marker is gone: a refused start still counts as asked for');
+    assert.equal(fs.existsSync(witness), false, 'the refusal precedes startTmuxServer(): the stub tmux never ran');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -53387,10 +53387,11 @@ f.addEventListener('load',function(){hearBlur(f);});hearBlur(f);});   // now (al
 // _MOBILE_MQ, spliced by _landing()) — one pane at a time, bottom tabs, the po-* classes ignored. Exposed for
 // the pane-set broadcast (on a phone "on" means the tab showing, not the po flag) and for the viewFile
 // relay's tab switch, which is meaningless on desktop. Above the bar lookup on purpose: a desktop layout has no
-// bar and returns there, and must still define __rompMobileOn (the probe reads no bar). Guarded: _landing() splices the
-// query in; a harness that executes this script unspliced (upstream's executed tests) must not lose the whole tab bar to
-// a ReferenceError from this one line, so the probe answers false there instead.
-var MQ=null;try{MQ=(window.matchMedia&&matchMedia(__MOBILE_MQ__))||null;}catch(e){}
+// bar and returns there, and must still define __rompMobileOn (the probe reads no bar). No try/catch around the probe
+// (the 2026-09-09 fold review): the one legitimate absence, a window without matchMedia, is an explicit check that leaves
+// MQ null (the probe answers false), the way show() below skips a pane the page lacks; anything else, a placeholder that
+// _landing() never spliced included, throws where it can be seen instead of answering false quietly.
+var MQ=(window.matchMedia&&matchMedia(__MOBILE_MQ__))||null;
 function mobileOn(){return !!(MQ&&MQ.matches);}
 window.__rompMobileOn=mobileOn;
 var bar=document.getElementById('mtabs');if(!bar)return;

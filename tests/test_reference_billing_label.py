@@ -15,7 +15,13 @@ stale:
   launch intent), and no longer names a `Login (...)` reading for it; the fork's `romp keyswap --cycle` pin
   retired with the command (upstream #1128, folded in slice 2);
 - the picker paragraph's claim that the row writes out `API key` on a declared helper box with no login
-  matches pickerBillingRow's gate (a declared key shows the row).
+  matches pickerBillingRow's gate (a declared key shows the row);
+- the ROMP_EXPECTED_AUTH paragraph states the unpicked rule in one sentence (the fold of upstream #1128,
+  slice 2, 2026-09-09): with a helper the key is billed and the declaration is checked against the CLI's
+  report (sdk_backend.unpicked_auth reads key_available first, _note_auth_source judges the landing); without
+  one the declaration seeds the label. tests/test_session_auth.py executes the helper-box half and
+  tests/test_expected_auth.py the seeding half; the pin here holds the words to them, and holds the seeding
+  claim to ONE sentence (the fork's restored sentence and upstream's helper sentence were folded into it).
 
 Text only: labels, never key material.
 """
@@ -108,6 +114,27 @@ class ThePickerRowClaimMatchesTheGate(unittest.TestCase):
         # "an API-key pick remembered from a box that held a key is set aside once it holds none")
         self.assertIn("A remembered key pick on a box whose settings carry no helper leaves new sessions unpicked, "
                       "and the kernel log says so once, naming the settings file to configure.", REFERENCE)
+
+
+class TheDeclarationRuleIsOneSentence(unittest.TestCase):
+    def test_the_rule_names_both_halves(self):
+        self.assertIn("With a helper configured, an unpicked session bills the key whatever the box declares, and "
+                      "the declaration is checked against the CLI's report at each init, never applied as a label "
+                      "(`ROMP_EXPECTED_AUTH=key` describes such a box truthfully and stays quiet; "
+                      "`ROMP_EXPECTED_AUTH=login` flags every unpicked session's keyed landing in the Log panel, and "
+                      "the session keeps billing the key); without a helper, the declaration seeds what an unpicked "
+                      "session is *taken* to bill: the Billing row's fallback before the CLI has reported, the "
+                      "picker's written-out choice, and the spend pause's reading of a session that reports nothing "
+                      "all read the declared side, where they read the login before.", REFERENCE)
+
+    def test_the_seeding_claim_is_made_once(self):
+        # the fork's restored "The declaration also decides what an unpicked session is *taken* to bill when no
+        # helper is configured" and upstream's "On a box with a helper every session without a login pick bills
+        # the key, so `ROMP_EXPECTED_AUTH=key` describes such a box truthfully" were two claims over the halves
+        # of one rule; the paragraph carries the rule once
+        self.assertEqual(REFERENCE.count("all read the declared side"), 1)
+        self.assertEqual(REFERENCE.count("describes such a box truthfully"), 1)
+        self.assertNotIn("The declaration also decides what an unpicked session", REFERENCE)
 
 
 if __name__ == "__main__":

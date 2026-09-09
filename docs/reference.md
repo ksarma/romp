@@ -585,15 +585,18 @@ The auth check compares each session's landing against a declaration of the
 box's design. `ROMP_EXPECTED_AUTH=key` (or `login`) in `service.env` (the
 declaration) says which side the box's sessions are meant to bill: a session
 landing on the declared side is quiet, and one landing on the other side is
-flagged, naming the declaration. On a box with a helper every session without
-a login pick bills the key, so `ROMP_EXPECTED_AUTH=key` describes such a box
-truthfully. An undeclared box (the variable unset, or any other value)
-compares each landing against what that session was launched for and stays
-quiet when they agree. The declaration also decides what an unpicked session
-is *taken* to bill when no helper is configured: the Billing row's fallback
-before the CLI has reported, the picker's written-out choice, and the spend
-pause's reading of a session that reports nothing all read the declared side,
-where they read the login before. One explicit gear **Billing** pick supersedes
+flagged, naming the declaration. An undeclared box (the variable unset, or any
+other value) compares each landing against what that session was launched for
+and stays quiet when they agree. With a helper configured, an unpicked session
+bills the key whatever the box declares, and the declaration is checked against
+the CLI's report at each init, never applied as a label (`ROMP_EXPECTED_AUTH=key`
+describes such a box truthfully and stays quiet; `ROMP_EXPECTED_AUTH=login`
+flags every unpicked session's keyed landing in the Log panel, and the session
+keeps billing the key); without a helper, the declaration seeds what an
+unpicked session is *taken* to bill: the Billing row's fallback before the CLI
+has reported, the picker's written-out choice, and the spend pause's reading of
+a session that reports nothing all read the declared side, where they read the
+login before. One explicit gear **Billing** pick supersedes
 the declaration from then on: the remembered pick becomes the box's expectation
 and the env var goes inert (it described the unpicked design), so re-seeded
 spawns are judged against your pick, never against stale doctrine. The one
