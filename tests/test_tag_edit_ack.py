@@ -27,6 +27,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -37,9 +38,10 @@ from romp_load import load_source
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# Hermetic state BEFORE the loads, which resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state). This is
-# the loads' floor only: every test runs under a state root of its own (_own_state below).
+# the loads' floor only: every test runs under a state root of its own (_own_state below), and
+# OwnStateRoot's roster walk enforces that by running every class's setUp, not by reading two of them.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -47,6 +49,7 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_tagack", os.path.join(BIN, "romp-kernel"))
+FLOOR = km.jd.STATE    # the import-time root (XDG_STATE_HOME/romp); the roster walk asserts no setUp leaves jd.STATE here
 
 SID1 = "11111111-2222-3333-4444-555555555501"
 SID2 = "11111111-2222-3333-4444-555555555502"
@@ -186,9 +189,57 @@ class OwnStateRoot(_Wire):
         self.assertNotIn(views, km._flags_cache)
         self.assertNotIn(views, km._VIEWS_SEQ_FLOOR)
 
-    def test_every_setup_in_the_module_binds_its_own_root(self):
-        for cls in (_Wire, SetterReturnsRefusals):
-            self.assertIn("_own_state(self)", inspect.getsource(cls.setUp), cls.__name__)
+    # A class that needs no state root of its own is listed here with its reason and the walk skips it.
+    # Empty: every class that runs a test binds a root (WebBootWiring derives from _Wire for this).
+    EXEMPT = frozenset()
+    # The base: setUp and the socket helpers, no tests of its own; every subclass runs its setUp below.
+    BASES = frozenset({_Wire})
+
+    def test_every_class_in_the_module_binds_its_own_root(self):
+        """Executed, not read from source: every unittest.TestCase subclass this module defines gets an
+        instance built on one of its test names, and its setUp must move jd.STATE to a new directory
+        under the run's temp root (not the import-time floor, not the binding the walk found); its
+        tearDown and cleanups must put that binding back and remove the root. A class whose setUp
+        stopped calling _own_state writes under the shared root again, the shape this module failed in
+        after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk."""
+        module = sys.modules[__name__]
+        roster = [cls for _, cls in inspect.getmembers(module, inspect.isclass)
+                  if cls.__module__ == __name__ and issubclass(cls, unittest.TestCase)]
+        loader = unittest.TestLoader()
+        found = km.jd.STATE
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+        roots = []
+        for cls in roster:
+            names = loader.getTestCaseNames(cls)
+            if cls in self.BASES:
+                self.assertEqual(names, [], "%s is listed as a base but has tests of its own" % cls.__name__)
+                continue
+            self.assertTrue(names, "%s has no tests and is not a listed base" % cls.__name__)
+            if cls in self.EXEMPT:
+                continue
+            case = cls(names[0])
+            set_up = False
+            made = None
+            try:
+                case.setUp()
+                set_up = True
+                made = km.jd.STATE
+                self.assertNotEqual(made, found, "%s binds no state root of its own: its tests write under the shared root again" % cls.__name__)
+                self.assertNotEqual(made, FLOOR, "%s left jd.STATE on the import-time floor" % cls.__name__)
+                self.assertTrue(made.is_dir(), "%s's root exists: %s" % (cls.__name__, made))
+                self.assertIn(tmp_root, made.resolve().parents, "%s's root lies under the run's temp root: %s" % (cls.__name__, made))
+            finally:
+                try:
+                    if set_up:
+                        case.tearDown()
+                finally:
+                    clean = case.doCleanups()
+            self.assertTrue(clean, "%s's cleanups ran without error" % cls.__name__)
+            self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
+            self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
+            roots.append(made)
+        self.assertEqual(len(roots), len(roster) - len(self.BASES) - len(self.EXEMPT), "every class was walked")
+        self.assertEqual(len(set(roots)), len(roots), "every class got a root of its own")
 
 
 class TargetedTagEdits(_Wire):
@@ -2531,10 +2582,11 @@ class SentinelConnectPushCaps(_Wire):
         self.assertEqual(self.notices, [])
 
 
-class WebBootWiring(unittest.TestCase):
+class WebBootWiring(_Wire):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
-    bridge sets equal)."""
+    bridge sets equal). Reads the kernel's source only; a _Wire so it runs under a state root of its
+    own like every class here, which keeps OwnStateRoot's exemption set empty."""
 
     def test_the_bridge_and_the_ack_dispatch(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
