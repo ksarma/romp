@@ -272,7 +272,7 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(MODEL, /return \{ accepted: parts\.accepted \+ \(acceptPending && pending > 0 \? pending : 0\), rejected: parts\.rejected \};/);
   // the third checkbox: checked by default, offered when any change is pending, wired through the same change listener
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/);
-  assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", "accept the " \+ pending \+ " pending " \+ \(pending === 1 \? "change" : "changes"\)\)\);/);
+  assert.match(SRC, /if \(pending\) opts\.appendChild\(this\.opt\("accept", acceptOptionLabel\(pending, this\.arrivedPending\(\)\)\)\);/, "the words are the model's (acceptOptionLabel), naming the pending changes that arrived since the person last looked (the arrivals follow-on, 2026-09-09)");
   assert.match(SRC, /else if \(k === "todo" \|\| k === "track" \|\| k === "accept"\) this\.sendOpts\[k\] = t\.checked;/, "the three checkboxes land in sendOpts…");
   assert.match(SRC, /if \(k === "todopick"\) this\.todoPick = t\.value;/, "…and the todo radio group (the todo-file follow-on) in todoPick; anything else flips nothing");
   assert.match(SRC, /const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/, "the preview and the list use the send's own counts");

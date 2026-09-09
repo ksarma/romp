@@ -947,3 +947,87 @@ export function folderOf(path: string): string {
   const cut = path.lastIndexOf("/");
   return cut > 0 ? path.slice(0, cut + 1) : "/";
 }
+
+// ── arrivals (the arrivals follow-on, 2026-09-09) ──────────────────────────────────────────────────
+// A session's changes and replies land in the status while the panel is open, and until this follow-on nothing
+// said so: the user sent comments, the session answered with eleven changes and seven replies while he kept
+// commenting, and the first he knew of them was the next Send accepting the changes by default. The panel keeps
+// the set of ENTRIES the person has seen (a change, a comment, a reply, each by a key), and an entry by another
+// author that is not in that set is an arrival. Nothing here reads the DOM: the panel decides what is on screen.
+
+/** The person's author label (decision 6: `you`, one person across hosts, no authorId), so the person's own writes
+ *  returning in the status are never arrivals. */
+export const YOU = "you";
+export type EntryKind = "change" | "comment" | "reply";
+export type Entry = {
+  /** "chg:" + the change id; the comment id; the comment id + "|" + the reply's ts */
+  key: string;
+  kind: EntryKind;
+  author: string; authorId: string | null;
+  /** what the panel shows it on: a change's card key, or the comment's id (the panel maps a comment bound to a change onto
+   *  the change's card, as its list does) */
+  subject: string;
+  /** a change the sidecar still holds pending (a hunk); false for a detached change, a comment, a reply */
+  pending: boolean;
+};
+
+/** Every entry a status holds: the pending changes (the hunks), the detached changes, the comments and their replies, in
+ *  that order. A reply with no ts keys on 0 with its comment: the sidecar stamps every reply, so this is a guard. */
+export function statusEntries(s: Pick<Status, "store" | "hunks"> | null | undefined): Entry[] {
+  if (!s) return [];
+  const out: Entry[] = [];
+  const store = s.store;
+  for (const h of s.hunks || []) {
+    out.push({ key: "chg:" + h.id, kind: "change", author: h.author, authorId: authorIdOf(store, h.id), subject: "chg:" + h.id, pending: true });
+  }
+  for (const d of detachedChanges(store)) {
+    out.push({ key: "chg:" + d.id, kind: "change", author: d.author, authorId: d.authorId, subject: "chg:" + d.id, pending: false });
+  }
+  for (const c of store ? store.comments : []) {
+    if (!c || typeof c.id !== "string") continue;
+    out.push({ key: c.id, kind: "comment", author: c.author, authorId: c.authorId || null, subject: c.id, pending: false });
+    for (const r of c.replies || []) {
+      if (!r) continue;
+      out.push({ key: c.id + "|" + String(r.ts || 0), kind: "reply", author: r.author, authorId: r.authorId || null, subject: c.id, pending: false });
+    }
+  }
+  return out;
+}
+
+/** The arrivals among `entries`: those by an author other than the person (YOU) whose key is not in `seen`. */
+export function arrivalsAmong(entries: Entry[], seen: ReadonlySet<string>): Entry[] {
+  return entries.filter((e) => e.author !== YOU && !seen.has(e.key));
+}
+
+/** Words joined as a list: "a", "a and b", "a, b and c". */
+function listWords(words: string[]): string {
+  if (words.length <= 1) return words.join("");
+  return words.slice(0, -1).join(", ") + " and " + words[words.length - 1];
+}
+
+/** The notice under the panel's header: "<name> made 11 changes and 7 replies since you last looked". The counts are by
+ *  kind, changes then comments then replies, each singular when one; the names are the authors' as the cards' chips show
+ *  them (`nameOf`: the session's current name from the colour map, else the entry's label), distinct, in the order the
+ *  arrivals hold them, joined with "and". Empty with no arrivals. */
+export function arrivalWords(arrivals: Entry[], nameOf: (author: string, authorId: string | null) => string): string {
+  if (!arrivals.length) return "";
+  const names: string[] = [];
+  const counts: Record<EntryKind, number> = { change: 0, comment: 0, reply: 0 };
+  for (const e of arrivals) {
+    counts[e.kind]++;
+    const n = nameOf(e.author, e.authorId);
+    if (!names.includes(n)) names.push(n);
+  }
+  const parts: string[] = [];
+  if (counts.change) parts.push(plural(counts.change, "change", "changes"));
+  if (counts.comment) parts.push(plural(counts.comment, "comment", "comments"));
+  if (counts.reply) parts.push(plural(counts.reply, "reply", "replies"));
+  return listWords(names) + " made " + listWords(parts) + " since you last looked";
+}
+
+/** The Send confirm's accept option: "accept the N pending changes", and when `arrived` of them landed since the person
+ *  last looked, "(M arrived since you last looked)" after it. The default is decision 8's and is not this function's. */
+export function acceptOptionLabel(pending: number, arrived: number): string {
+  const base = "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes");
+  return arrived > 0 ? base + " (" + arrived + " arrived since you last looked)" : base;
+}

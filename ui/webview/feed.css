@@ -2034,6 +2034,21 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
   background: color-mix(in srgb, var(--err) 9%, transparent); }
+/* the arrivals notice (the arrivals follow-on, 2026-09-09; file-comments.ts renderHead, gesture, markNew): while a
+   session's changes, comments or replies stand unseen, one line under the header names them (.fc-arrivals: a text
+   button in the fold toggles' dress, in the accent with a dot before its words), and each arrival's card and marks wear
+   data-new until a gesture of the person's finds them on screen: a dot in the accent at the head's left, in the card's
+   padding beside its coloured edge, and one in the top right corner of a highlight, an insertion's tint and a deletion's
+   struck label. The card's dot is a positioned pseudo-element and the marks' a background layer over the mark's own wash
+   (the change marks' two pseudo-elements are the struck text and the author chip), so a dot coming off changes no
+   layout under a pointer (ui/CLAUDE.md, click-safe). */
+.fc-arrivals { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.fc-arrivals::before { content: ""; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.fc-card[data-new] > .fc-card-head { position: relative; }
+.fc-card[data-new] > .fc-card-head::before { content: ""; position: absolute; left: -9px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+  border-radius: 50%; background: var(--accent); }
+.fc-hl[data-new], .fc-ins[data-new], .fc-del[data-new]::before { background-image: radial-gradient(circle at 3px 3px, var(--accent) 2.5px, transparent 3px);
+  background-repeat: no-repeat; background-position: top right; background-size: 6px 6px; }
 /* the editor's marks over pending changes (Slice 5; ui/webview/track-decorations.ts, whose CLS names these classes): while a
    tracked file is edited, CodeMirror draws each change itself — an insertion as a mark over its new text (tc-diff-ins), a
    deletion as a widget holding the struck old text in place (tc-diff-del), a substitution as the struck text right before the
