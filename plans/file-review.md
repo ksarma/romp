@@ -2622,31 +2622,33 @@ document stands on its own, each with the reasoning it was given.
     event-based: the click that ends a drag is not a tap. In the `fcchange` and `fcopen` handlers a click arriving
     with a non-collapsed selection whose anchor and focus both lie inside the clicked mark does nothing
     (`dragClick`): no card, no scroll, no focus change; the float stands and the composer opens on the selection as
-    for any passage. A plain click or a tap on a change's text or on a comment highlight collapses a standing
-    selection at the press, so it opens the card as before; a selection elsewhere (another paragraph, the aside,
-    another pane) changes nothing; a click with no pointer behind it (`detail` 0: the keyboard's activation of the
-    focused mark) opens the card whatever selection stands. The guard reads the clicked mark rather than the whole body
-    since the slice's review (2026-09-09, with a real mouse in Chromium and Firefox, Rendered and Raw). As first
-    built it read any selection with both ends in the body as a drag's, on the premise that a press collapses a
-    standing selection, which holds only for a press on text the press can select: a press on a deletion's struck
-    label (generated text under `user-select: none`), on a region rectangle (the figure overlay cancels its
-    `pointerdown`, and with it the mousedown that would have collapsed one), on a mark inside an author's link (a
-    draggable anchor) or on a framed picture collapses nothing, so with words selected in another paragraph a click
-    on any of them opened nothing until the selection was dropped. Read against the mark, the guard yields only to
-    the drag's own selection: a drag that ends on the mark it began in puts both ends inside it, a drag that leaves
-    the mark fires its click on the common ancestor and never on the mark, a selection standing elsewhere or spanning
-    the mark from outside has no end inside it, and no selection end can lie inside a deletion's point or a rectangle,
-    so those clicks open the card whatever stands selected. An engine may report a drag's end at the mark's edge as a
-    point in the mark's parent or in the neighbouring text rather than in the mark; `endInside` takes both as the
-    mark's. The click stood down shows nothing: the press pulse the delegate put on the mark before the handler ran
-    comes off in the same task (`actions.ts`). With the panel closed the marks are painted too, and a drag inside one
-    behaves as a drag over any passage does then: no panel opens and no card, since the Comment float is the open
-    panel's; a plain click on the mark opens both. The comment saved is an ordinary passage comment, its own card and
-    highlight, no `suggestionId`. `file-comments-markclick.test.ts` and `file-comments-markclick-controls.test.ts`
-    drive the guard over the stand-in; `file-comments-markclick-browser.test.ts` and
-    `file-comments-markclick-controls-browser.test.ts` drag a real mouse in Chromium and Firefox, Rendered and Raw:
-    inside an insertion's mark, and, with words selected in another paragraph, on a deletion's label, the marks inside
-    a link, a region rectangle and a framed figure. Client-only; no kernel change.
+    for any passage. A plain click or a tap on a mark opens the card as before: its click arrives with the selection
+    collapsed, or standing with no end inside the clicked mark, and the guard yields only to a selection whose ends
+    both lie inside that mark, whatever the control's press did to a standing selection; a selection elsewhere
+    (another paragraph, the aside, another pane) changes nothing; a click with no pointer behind it (`detail` 0: the
+    keyboard's activation of the focused mark) opens the card whatever selection stands. The guard reads the clicked
+    mark rather than the whole body since the slice's review (2026-09-09, with a real mouse in Chromium and Firefox,
+    Rendered and Raw). As first built it read any selection with both ends in the body as a drag's, on the premise
+    that a press collapses a standing selection, which holds only for a press on text the press can select: a press
+    on a deletion's struck label (generated text under `user-select: none`), on a region rectangle (the figure
+    overlay cancels its `pointerdown`, and with it the mousedown that would have collapsed one), on a mark inside an
+    author's link (a draggable anchor) or on a framed picture collapses nothing, so with words selected in another
+    paragraph a click on any of them opened nothing until the selection was dropped. Read against the mark, the guard
+    yields only to the drag's own selection: a drag that ends on the mark it began in puts both ends inside it, a
+    drag that leaves the mark fires its click on the common ancestor and never on the mark, a selection standing
+    elsewhere or spanning the mark from outside has no end inside it, and no selection end can lie inside a
+    deletion's point or a rectangle, so those clicks open the card whatever stands selected. An engine may report a
+    drag's end at the mark's edge as a point in the mark's parent or in the neighbouring text rather than in the mark;
+    `endInside` takes both as the mark's. The click stood down shows nothing: the press pulse the delegate put on the
+    mark before the handler ran comes off in the same task (`actions.ts`). With the panel closed the marks are painted
+    too, and a drag inside one behaves as a drag over any passage does then: no panel opens and no card, since the
+    Comment float is the open panel's; a plain click on the mark opens both. The comment saved is an ordinary passage
+    comment, its own card and highlight, no `suggestionId`. `file-comments-markclick.test.ts` and
+    `file-comments-markclick-controls.test.ts` drive the guard over the stand-in;
+    `file-comments-markclick-browser.test.ts` and `file-comments-markclick-controls-browser.test.ts` drag a real mouse
+    in Chromium and Firefox, Rendered and Raw: inside an insertion's mark, and, with words selected in another
+    paragraph, on a deletion's label, the marks inside a link, a region rectangle and a framed figure. Client-only; no
+    kernel change.
 
 ## Open questions for the user
 
