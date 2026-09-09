@@ -2,8 +2,9 @@
 // (shell-drag-leg.ts). Pinned here (2026-09-09): while the pointer moves, the panes hold their widths and only the ghost line
 // (#gv-ghost) follows it; the two grows are written once, at mouseup, and persisted. Before this, every mousemove wrote the
 // two grows, and each write re-laid out every same-origin pane document in that frame; with a big reviewed file in the
-// Files pane one step cost over a second and a drag of sixty steps was a 20 s main-thread block. The ghost's clamp is the
-// drag's clamp (a pane never goes under min(120px, a quarter of the pair)). Synthetic page, no session data.
+// Files pane one step cost seconds (about 4 s at 15,000 lines with 466 marks on the bench) and a drag's steps back to
+// back were a 20 s main-thread block. The ghost's clamp is the drag's clamp (a pane never goes under min(120px, a
+// quarter of the pair)). Synthetic page, no session data.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, ORIGIN, frames } from "./real-viewer-leg";

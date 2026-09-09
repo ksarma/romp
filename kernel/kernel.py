@@ -50186,9 +50186,10 @@ window.__rompGrowFair=function(k){if(k==='timeline')return;var v=PANES.filter(sh
 var avg=v.length?v.reduce(function(a,b){return a+b;},0)/v.length:50;setGrow(k,avg);
 try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}};
 // A drag moves a GHOST line and writes the pair's grows ONCE, on release (2026-09-09). A grow write re-lays out every
-// same-origin pane document in that frame: with a big reviewed file open in the Files pane one width step cost over a
-// second, and a drag of sixty such steps was that day's 20 s main-thread block. So mousemove only positions #gv-ghost
-// (a fixed line over the row, where the divider will land) and mouseup gives the two panes their new widths.
+// same-origin pane document in that frame: with a big reviewed file open in the Files pane one width step cost seconds
+// (about 4 s at 15,000 lines with 466 comment and change marks on the bench), and a drag's steps back to back were that
+// day's 20 s main-thread block. So mousemove only positions #gv-ghost (a fixed line over the row, where the divider
+// will land) and mouseup gives the two panes their new widths.
 var ghost=document.getElementById('gv-ghost');
 function gutter(gid,leftPick,rightId){var h=document.getElementById(gid);if(!h)return;
 h.addEventListener('mousedown',function(e){e.preventDefault();

@@ -125,8 +125,9 @@ class PaneRailTest(unittest.TestCase):
 
     def test_a_divider_drag_moves_a_ghost_line_and_writes_the_grows_once_on_release(self):
         # (2026-09-09) a grow write re-lays out every same-origin pane document in that frame; with a big reviewed
-        # file open in the Files pane one width step cost over a second, and a drag of sixty steps was a 20 s
-        # main-thread block. So mousemove only positions #gv-ghost, a fixed line over the row where the divider
+        # file open in the Files pane one width step cost seconds (about 4 s at 15,000 lines with 466 marks on the
+        # bench), and a drag's steps back to back were a 20 s main-thread block. So mousemove only positions
+        # #gv-ghost, a fixed line over the row where the divider
         # will land, and mouseup writes the pair's two grows once and persists them. The behaviour itself is pinned
         # in ui/webview/shell-gutter-drag-browser.test.ts over the extracted script; this pins the source.
         self.assertIn("<div id=gv-ghost></div>", self.html)
