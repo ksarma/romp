@@ -182,7 +182,8 @@ that arrive from elsewhere (another pane, another dashboard); a tag renamed mean
 row, under its new name. Moving it to another group changes the group the
 line names. Removing that group's tag takes the row away, unless the session is left under
 exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
-which copy you mean. While the row is away, adding a tag brings it back for that group, unless
+which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
+again from another pane), the line names your group again. While the row is away, adding a tag brings it back for that group, unless
 the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
 row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
 Removing one of the session's other tags leaves the line alone. If the group changes under the menu

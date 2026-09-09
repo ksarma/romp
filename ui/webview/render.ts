@@ -6593,14 +6593,19 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // click, the flyout's Move to and Show when folded rows on every build of its own) speaks for the copy where it now
   // sits. The resolution (round 3): the named copy's own group while it still holds the session; else the session's
   // ONE remaining holder, the unambiguous case (an x on the copy's tag on a two-tag session leaves one copy; a caller
-  // naming no copy on a one-tag session has one), and that holder BECOMES the copy (round 4: copyNow is latched to it at
-  // the resolution, so claimIfLoose, the "+" beside a Move to row and a name typed all speak for the same copy, and an
-  // add from there is an add that keeps the row; before, copyNow still named the removed tag and every add moved the
-  // claim or took the row away); else nothing, so with two or more other holders there is no copy to
-  // hide, move or pin (round 2: a session under two tags hid a copy the user never touched, and which one depended on
-  // the drag order), and the Hide tab row leaves while the flyout's rows read "+ <name>" (add without moving) until an
-  // add gives the copy a group again or the holders are down to one. None while Group tabs by tag is off or the
-  // resolved tag's create is still in flight (no id to address).
+  // naming no copy on a one-tag session has one), which speaks for the copy while its own tag is away; else nothing, so
+  // with two or more other holders there is no copy to hide, move or pin (round 2: a session under two tags hid a copy
+  // the user never touched, and which one depended on the drag order), and the Hide tab row leaves while the flyout's
+  // rows read "+ <name>" (add without moving) until an add gives the copy a group again or the holders are down to one.
+  // None while Group tabs by tag is off or the resolved tag's create is still in flight (no id to address).
+  // THE RESOLUTION IS A PURE FUNCTION of the right-clicked copy and the current views (round 5): homeNow reads copyNow and
+  // writes nothing, so a tag that comes back from elsewhere (a remove the kernel refused, another pane's add) makes the
+  // menu speak for the copy the user right-clicked again. Round 4 latched every resolution into copyNow, so once the one
+  // remaining tag became the copy the menu kept speaking for it after the removed tag came back, and the click hid it.
+  // copyNow changes at the user's own gestures alone: a move aims it at the destination (moveUnion), and an add aims it
+  // at the copy the menu speaks for at that moment (aimAdd: the copy's own group keeps it; from the one-holder fallback,
+  // that holder, so the "+" beside a Move to row, an existing name typed and a new tag typed from there keep the row on
+  // it, an add being an add; from no group, the tag the add puts the copy under, so with no tag the add is the move).
   // THE COPY IS A SECTION REF (round 4): copyNow holds the copy's tag as a pin addresses its section (tab-groups.ts SectionRef:
   // the local tag's id when the frame carries one, and its name), and a held union is the copy's by the ids when both are
   // local, else by the names (sameSection, round 5, which the click's guard shares: a comparison that tested the ids alone
@@ -6609,8 +6614,8 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // before, the name-matched copy was lost on a session under two tags, and the click wrote nothing while the row still read
   // the old name); the name carries it where the id cannot: a tag claimed at its create wears the placeholder id the ack
   // replaces, and a union only remote hosts' tags make has no local id (so a rename of a remote-only group loses the copy,
-  // the one limit). Not either alone: a rename beside a new tag under the old name would match two unions. Every resolution
-  // latches what it found, so the id follows the ack and the name follows the rename.
+  // the one limit; a tag claimed at its create is known by its name alone the same way until an add gesture aims the ref
+  // at it with the ack's id). Not either alone: a rename beside a new tag under the old name would match two unions.
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
   const refOf = (name: string): SectionRef => { const g = unionFor().find((u) => u.name === name); return g ? sectionRef(g) : { name, localId: null }; };   // a tag not yet created: its name alone
@@ -6624,9 +6629,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   const homeNow = (): TagUnion | undefined => {
     if (!readTabGroups().on) return undefined;
     const held = holding();
-    let home0 = heldCopy(held);
-    if (!home0 && held.length === 1 && !held[0].pending) home0 = held[0];   // the one remaining holder BECOMES the copy (round 4)
-    if (home0) copyNow = sectionRef(home0);   // latched: the holder that became the copy, the ack's id for a tag claimed at its create, a pushed rename's name
+    const home0 = heldCopy(held) ?? (held.length === 1 && !held[0].pending ? held[0] : undefined);   // the copy's own group, else the one remaining holder (round 3); read, never latched (round 5)
     return home0 && !home0.pending ? home0 : undefined;
   };
   let refreshHideRow = () => {};   // the Hide tab row's refresh, assigned below; the Tags flyout calls it after each of its writes
@@ -6869,13 +6872,18 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       else postUnionEdits(nv, a, r);
       copyNow = sectionRef(to);   // the copy sits in `to` now: the Hide tab row's refresh and this flyout's next build speak for it there
     };
-    // an add from a copy with no group is the move (the "+ <name>" rows below): a copy whose own tag no longer holds
-    // the session, after an x on it or the untagged trail's copy, which named none, is claimed by the tag the add puts
-    // it under, so the Hide tab row and this flyout's next build speak for it there (round 3: the menu went inert for
-    // the copy the add had just made); a copy whose tag still holds the session (its create in flight, or grouping off)
-    // keeps its claim, and the add is an add. Read before the edit; the "+" beside a Move to row never gets here. The claim is the
-    // destination's section ref (refOf: a tag not yet created has its name alone until the ack's blob gives it an id)
-    const claimIfLoose = (name: string) => { if (!heldCopy(holding())) copyNow = refOf(name); };
+    // THE ADD AIMS THE COPY (round 5; homeNow's comment states the rule): every add gesture in this flyout runs this before its
+    // edit. A copy whose own tag holds the session (its create in flight, or grouping off, included) keeps its ref, and the add
+    // is an add. A copy whose own tag is away, with the session under one other tag, is aimed at that holder, the copy the menu
+    // speaks for (round 4 latched it at the resolution instead, so the menu kept speaking for it after the removed tag came back
+    // from elsewhere). A copy with no group is claimed by the tag the add puts it under (the "+ <name>" rows, an existing name
+    // typed, a new tag: with no tag, the add is the move; round 3: the menu went inert for the copy the add had just made). The
+    // claim is the destination's section ref (refOf: a tag not yet created has its name alone until the ack's blob gives it an id)
+    const aimAdd = (name: string) => {
+      const held = holding();
+      if (heldCopy(held)) return;
+      copyNow = held.length === 1 && !held[0].pending ? sectionRef(held[0]) : refOf(name);
+    };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
     // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
@@ -6946,13 +6954,13 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
             row.appendChild(bodyE);
             const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
             plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session keeps its other tags";
-            plus.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
             row.appendChild(plus);
             row.addEventListener("click", (e2) => { e2.stopPropagation(); moveUnion(home, g); build(); sb.textContent = subText(); });
           } else {
             lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
             row.appendChild(bodyE);
-            row.addEventListener("click", (e2) => { e2.stopPropagation(); claimIfLoose(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); aimAdd(g.name); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
           }
           sub.appendChild(row);
         }
@@ -6999,7 +7007,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const name = inp.value.trim();
           if (!name) return;
           const existing = unionFor().find((g) => g.name === name);
-          if (existing) { claimIfLoose(existing.name); editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
+          if (existing) { aimAdd(existing.name); editUnion(existing, { add: [id] }); build(); sb.textContent = subText(); return; }
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
@@ -7009,7 +7017,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
-          claimIfLoose(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
+          aimAdd(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
           // ONE targeted create carrying the session — the tag and its first member land together
           postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
