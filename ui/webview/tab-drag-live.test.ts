@@ -106,9 +106,9 @@ test("drop commits through the SAME reorderTo — neighbor + side, hidden-view i
   assert.match(rt, /renderTabs\(\);/);
 });
 
-test("the drag covers the whole gesture against pushes, and dragend releases the hold by hand", () => {
-  // pointerdown latches the hold BEFORE dragstart can fire; the drag swallows the pointerup, so
-  // dragend clears it and flushes anything a push deferred mid-drag
+test("dragend releases the press-hold by hand and flushes a render a push deferred (a backstop: in Chromium pointercancel at dragstart already released it, and a committed drop rebuilds at the drop)", () => {
+  // pointerdown latches the hold BEFORE dragstart can fire; where no pointercancel arrived the drag
+  // swallowed the pointerup, so dragend clears it and flushes anything a push deferred mid-drag
   assert.match(RENDER, /tabs\.addEventListener\("pointerdown", \(\) => \{ tabPointerHeld = true; \}\);/);
   const de = between('tab.addEventListener("dragend"', "});");
   assert.match(de, /tabPointerHeld = false;/);

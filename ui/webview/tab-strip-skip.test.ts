@@ -46,6 +46,7 @@ test("every input the strip renders is in the signature", () => {
   for (const needle of [
     "activeId", "peekId", "phoneLayout()", "ids", "visibleIds", "tabInView(activeId)", "plan.items",
     "settings.tabCtx", "settings.stripGroupRows", "settings.theme", "settings.colormap", 'titleWithKey("Open a session", "session.new")',
+    "settings.denseChrome",   // compact tabs: a body class re-heights every strip item with no width change, so only a rebuild lays the hairlines and keep breaks under the new rows (review round 2 of the keep-with-next change)
     'surfaceLens(effViews(), "chat")', "unions",
     "snapView",   // the section whose snapshot the pane shows: a header's snap-shown mark and its way-back act derive from it (makeGroupHead), and leaveSnapshot changes it with no fold change
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",

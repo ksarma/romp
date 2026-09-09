@@ -5788,10 +5788,13 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
  *  stays unlabeled by the user's ruling — its own line, with no chip, says "in no tag"). Breaks are
  *  layout only: no drop, no hover, not a row for paintTabRowLines, and in the tab drag's virtual
  *  layout the box AFTER a break starts a row (`br`) so the simulation wraps where the strip does.
- *  ON THE FORK, BREAKS ARE EMITTED ONLY UNDER THE `stripGroupRows` SETTING (the user 2026-09-08,
+ *  ON THE FORK, renderTabs EMITS BREAKS ONLY UNDER THE `stripGroupRows` SETTING (the user 2026-09-08,
  *  whose strip of eleven tag groups became eleven rows): off, the default here, the groups flow
- *  inline and wrap as they did before T264, and the trail stands behind makeTrailSep's divider.
- *  Upstream's default is the per-row layout. */
+ *  inline and wrap as they did before T264, with one exception: a header or divider that ended a row
+ *  above its first tab moves down to it, behind a break of the PAINTER's (keepGroupsWithTabs; the
+ *  same item, marked .tab-keep-break, never wearing .tab-group-sep, cleared and re-placed on every
+ *  paint and frozen while a tab is dragged). Those keep breaks count for the drag's `br` rule like the
+ *  setting's. The trail stands behind makeTrailSep's divider. Upstream's default is the per-row layout. */
 function makeRowBreak(untagged: boolean): HTMLElement {
   const brk = el("div", "tab-group-break" + (untagged ? " tab-group-sep" : ""));
   brk.setAttribute("aria-hidden", "true");
@@ -5913,18 +5916,31 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
 // row 2's tabs "look like they're sitting there floating"). CSS cannot select flex-wrap rows, so
 // the painter groups the rendered tabs by offsetTop and lays one absolute full-bleed hairline
 // under each row but the last — the strip's existing bottom border already finishes the final row. Runs on
-// every strip rebuild and on wrap changes (a ResizeObserver on #tabs: width changes re-wrap rows
-// without a rebuild — event-keyed, no polling). Classic-scoped in CSS (the Yatharth theme hides
-// .tab-row-line), like every strip tuning.
+// every strip rebuild (a setting that re-sizes the items with no width change, the gear's compact tabs,
+// is in the rebuild's signature for this reason: stripSig), on wrap changes (a ResizeObserver on the
+// strip's width, through a zero-height sentinel: ensureTabRowObserver; width changes re-wrap rows
+// without a rebuild; event-keyed, no polling), when the document's fonts finish a load (a web font
+// arriving after first paint re-widths every item and moves no box), and after the tab drag's own
+// insert (the dragover handler moves the dragged tab through the DOM and the rows re-pack at an
+// unchanged width, which no observer sees: it calls the painter right after the move, once per actual
+// insert). Classic-scoped in CSS (the Yatharth theme hides .tab-row-line), like every strip tuning. The
+// keep-with-next pass (keepGroupsWithTabs, below) rides the same events and runs first: the breaks it
+// places move rows, and the lines go under the rows as they then stand. It stands down while the
+// dragged tab is in the strip (draggedEl connected; dragend or the rebuild's wipe ends that, see the
+// pass): the lines still follow the rows, through the observer on a width change and through the
+// drag's insert on each move; the breaks stay where the drag found them.
 function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
+  if (!(draggedEl && draggedEl.isConnected)) keepGroupsWithTabs(bar);   // frozen while the dragged tab is in the strip: the breaks are the drag's row openers (see the pass)
   const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
   for (const t of Array.from(bar.children) as HTMLElement[]) {
-    // tabs, and the section headers (tab groups): a wrapped row made only of folded headers is a
-    // row too — without a line under it the headers sat directly on the tabs below, reading as
-    // captions for tabs that are not theirs (the T134 floating look, back). The zero-height row
-    // BREAKS (T264) are not rows: one would draw a line at the strip's very top edge.
-    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head"))) continue;
+    // tabs, the section headers (tab groups) and the untagged trail's inline divider: a wrapped row
+    // made only of folded headers is a row too: without a line under it the headers sat directly on
+    // the tabs below, reading as captions for tabs that are not theirs (the T134 floating look,
+    // back); and the divider is a visible 13px item of whatever row it stands on (the pre-T264
+    // rule, back: T264's exclusion was written for the breaks, which wear the divider's class). The
+    // zero-height row BREAKS (T264) are not rows: one would draw a line at the strip's very top edge.
+    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head") || (t.classList.contains("tab-group-sep") && !t.classList.contains("tab-group-break")))) continue;
     const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
     rows.set(top, Math.max(rows.get(top) ?? 0, bot));
   }
@@ -5936,11 +5952,91 @@ function paintTabRowLines(bar: HTMLElement): void {
     bar.appendChild(line);
   }
 }
+// A GROUP KEEPS WITH ITS FIRST TAB (the inline strip, 2026-09-09): a group header, or the untagged
+// trail's divider, that fit at the END of a row while its first tab wrapped to the next read as a
+// caption for the tabs it stood over, with its own tabs a row below (the T134 floating look, one
+// item wide). The pass puts a row break ahead of any header or divider whose next sibling is a
+// session tab on a lower row, so the group opens the next row with its tabs. Only where a break
+// changes anything: a header that already starts its row (it wrapped on its own, or the
+// stripGroupRows break stands ahead of it, or it is the strip's first item) is left alone, as is a
+// folded header (no tab follows), a divider with an empty trail (the + is no tab of the trail's), and
+// a pair no row can hold (the header at a row's start with its tab still below it: the break is read
+// back and taken out, so it never spends a row without joining the pair; review round 1).
+// The breaks are the painter's own (.tab-keep-break beside .tab-group-break: the same zero-height
+// full-row item, styled by the same rule, a row opener in the tab drag's virtual layout, and no
+// boundary for sectionHeadOf), cleared and re-placed on every run, so the pass is a pure function of
+// the strip's content and width: a widened strip takes a break back out. Event-keyed like the lines:
+// the strip rebuild runs the pass through the painter, as do the strip's width observer and the
+// document's fonts finishing a load (ensureTabRowObserver); the tab drag's own insert (the dragover
+// handler) runs the painter too, lines only, since the pass stands down under a drag, next; no timer,
+// no frame callback. FROZEN WHILE A TAB IS DRAGGED (review round 1): the drag's virtual layout reads
+// the breaks standing at dragstart as row openers (`br`), and a pass re-running mid-drag moved them
+// under the pointer, so a parked pointer hopped the tab a second time, and some strips flapped between
+// two rows for as long as the pointer stayed. The painter skips this pass while the dragged tab is in
+// the strip (draggedEl connected), so a header may end a row above its tab for the drag's duration.
+// The gate is the element, not draggedId (review round 3): in Chromium the drag's start fires
+// pointercancel, which releases the press-hold (releaseTabStrip), so a committed drop's reorderTo
+// rebuilds the strip at the drop with draggedId still set, and dragend then renders nothing (the
+// render already ran). The rebuild's wipe disconnects the dragged element, which ends the freeze in
+// that same paint, so the drop's rebuild places the breaks; a rebuild a push forced mid-drag does the
+// same, and the drag it wiped is inert from then on (the dragover and drop handlers need the connected
+// element), so its breaks are nobody's row openers. One forward walk is
+// exact: a break moves only the rows after it (flex-wrap lays out in order), and each header is
+// judged by reads made after the breaks ahead of it were placed, so a header that a break above
+// pushed onto its own row gets none. Placing a break changes the strip's height, which is why the
+// observer watches the strip's width through a zero-height sentinel (ensureTabRowObserver): the
+// callback's own row changes never re-trigger it, and Chromium raises no loop notice for them
+// (observing #tabs itself raised one, a window error event, on every row the pass added or dropped).
+// The strip's WIDTH can still change from inside the callback when a row the pass adds or drops
+// crosses #tabbar's scroll cap: the sheet's ::-webkit-scrollbar rule makes every Chromium scrollbar a
+// 10px classic one, so the cap's scrollbar took 10px of #tabs when it appeared, and the sentinel
+// re-fired once. #tabbar's scrollbar-gutter: stable (styles.css) reserves that space at every height,
+// so the width holds across the crossing (review round 2). Two mechanisms, one for each input.
+function keepGroupsWithTabs(bar: HTMLElement): void {
+  for (const old of Array.from(bar.querySelectorAll(":scope > .tab-keep-break"))) old.remove();
+  for (const head of Array.from(bar.children) as HTMLElement[]) {
+    const opens = head.classList.contains("tab-group-head") || (head.classList.contains("tab-group-sep") && !head.classList.contains("tab-group-break"));
+    if (!opens) continue;
+    const first = head.nextElementSibling as HTMLElement | null;
+    if (!first || !first.classList.contains("tab") || !first.dataset.id) continue;   // folded, or an empty trail
+    const prev = head.previousElementSibling as HTMLElement | null;
+    if (!prev || prev.classList.contains("tab-group-break")) continue;   // already opens its row: nothing to break from
+    if (prev.offsetTop !== head.offsetTop || first.offsetTop <= head.offsetTop) continue;   // wrapped on its own, or its tab is beside it
+    const brk = makeRowBreak(false);
+    brk.classList.add("tab-keep-break");
+    bar.insertBefore(brk, head);   // the reads that follow see the re-wrapped rows below this point
+    if (first.offsetTop > head.offsetTop) brk.remove();   // the pair fits on no row: the break bought nothing, take it back
+  }
+}
 let tabRowObserver: ResizeObserver | null = null;
+// The observer's target: a zero-height child of #tabs spanning its width (absolute, left 0 and right 0;
+// styles.css .tab-row-sentinel), so the observer fires on the strip's WIDTH alone, the input that
+// re-wraps rows. Observing #tabs itself fired on its height too, which the painter's own keep breaks
+// change from inside the callback: Chromium then raised "ResizeObserver loop completed with
+// undelivered notifications" as a window error event on every row the pass added or dropped (review
+// round 1). The sentinel removes that, the height-triggered notice; the scrollbar-triggered one (a row
+// change crossing #tabbar's scroll cap toggled its classic scrollbar and so the strip's width, inside
+// the callback) is removed by #tabbar's stable scrollbar gutter in styles.css (review round 2). The
+// rebuild's replaceChildren sweeps the sentinel out with the tabs, so every call puts it back; the
+// observation is on the element and survives.
+let tabRowSentinel: HTMLElement | null = null;
 function ensureTabRowObserver(bar: HTMLElement): void {
+  if (!tabRowSentinel) { tabRowSentinel = el("div", "tab-row-sentinel"); tabRowSentinel.setAttribute("aria-hidden", "true"); }
+  if (!tabRowSentinel.isConnected) bar.appendChild(tabRowSentinel);
   if (tabRowObserver) return;
   tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));
-  tabRowObserver.observe(bar);
+  tabRowObserver.observe(tabRowSentinel);
+  // The third event: the document's fonts finishing a load. A web font arriving after first paint
+  // (font-display swap; the light theme's face is a later swap again) re-widths every item and moves
+  // no box, so neither the rebuild nor the width observer sees it, and the fallback font's breaks stood
+  // until the next signature change or resize (review round 1). fonts.ready once, for a load already
+  // in flight at boot; loadingdone for every later one. The same painter; pinned-notes.ts's
+  // pinnedWatchWidth is the same idiom. Events, not timers.
+  const fonts = (document as any).fonts;
+  if (fonts && typeof fonts.addEventListener === "function") {
+    fonts.addEventListener("loadingdone", () => paintTabRowLines(bar));
+    if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => paintTabRowLines(bar));
+  }
 }
 
 // The tab's emoji label (the user 2026-09-06): one glyph before the name, set from the tab menu, by the
@@ -6068,6 +6164,7 @@ function renderTabs() {
   const stripSig = JSON.stringify([
     activeId, peekId, phoneLayout(), ids, visibleIds, activeId ? tabInView(activeId) : null, plan.items,
     settings.tabCtx, settings.stripGroupRows, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
+    settings.denseChrome,   // compact tabs: the body class re-heights every item at an unchanged width, an input no observer sees; the rebuild's paint lays the hairlines and keep breaks under the new rows (review round 2 of the keep-with-next change)
     surfaceLens(effViews(), "chat"), unions,
     snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
     visibleIds.map((id) => {
@@ -6111,8 +6208,10 @@ function renderTabs() {
       // every group on its own line (T264): a row break ahead of each header — except the strip's
       // first item, which already opens the first row; the untagged trail's header IS a break.
       // ON THE FORK only under the stripGroupRows setting (the user 2026-09-08, whose strip of eleven
-      // tag groups became eleven rows): off, heads and tabs flow inline and wrap as before T264,
-      // the trail behind its divider. Upstream's default is the per-row layout.
+      // tag groups became eleven rows): off, heads and tabs flow inline and wrap as before T264, the
+      // trail behind its divider, and the painter then moves a header or divider that ended a row down
+      // to its first tab behind a break of its own (keepGroupsWithTabs). Upstream's default is the
+      // per-row layout.
       if (settings.stripGroupRows && item.head.name !== null && bar.childElementCount) bar.appendChild(makeRowBreak(false));
       bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden));
       copyGroup = item.head.name;
@@ -6149,11 +6248,14 @@ function renderTabs() {
       snapshotDragGeometry(tab);           // widths once at dragstart — the virtual hit-test's stable input (dragslot.ts)
     });
     // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
-    // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
-    // released here by hand, covering the whole gesture against pushes (the click-safe rule). A
-    // CANCELLED drag re-renders from the untouched order and everything FLIP-animates home — that
-    // render also folds in any push that arrived, deferred, mid-drag. A committed drop's reorderTo
-    // already asked for its render; it ran deferred, so flush it.
+    // drag latched tabPointerHeld. In Chromium the drag's start fires pointercancel, which releases
+    // the hold (releaseTabStrip) at dragstart: a mid-drag render is not deferred there, and a
+    // committed drop's reorderTo rebuilds the strip at the drop (the keep pass runs in that rebuild:
+    // its gate is the dragged element's presence, which the wipe ends). Where no pointercancel
+    // arrived the drag swallowed the matching pointerup, so the hold is released here by hand as a
+    // backstop, and a render a push deferred mid-drag is flushed. A CANCELLED drag re-renders from
+    // the untouched order and everything FLIP-animates home; that render also folds in any push that
+    // arrived mid-drag.
     tab.addEventListener("dragend", () => {
       const cancelled = !tabDragCommitted;
       draggedId = null; draggedEl = null; tabDragCommitted = false;
@@ -17848,7 +17950,10 @@ function applyChatScheme(s: RompSettings): void {
   applyTheme(document, s);
   // compact tabs and agents (the user 2026-09-08): a body class the strip's and the #bg-tasks box's dense
   // rules key on (styles.css body.dense-chrome). Same two moments as the scheme and the theme, so the gear's
-  // flip repaints both surfaces at once through the cascade; neither is rebuilt.
+  // flip re-sizes both surfaces at once through the cascade. The box is not rebuilt; the strip is, by the
+  // renderTabs() that follows this in onExternalSettingsChange (settings.denseChrome is in its signature), so
+  // the rebuild's paint lays the row hairlines and keep breaks under the re-heighted items (review round 2 of
+  // the keep-with-next change: the cascade alone left them at the old row bottoms)
   applyDenseChrome(document, s);
 }
 function setupSettings(): void {
@@ -18411,7 +18516,12 @@ setupSettings();
     // the slot past a group's last tab (the end of its row) and the slot before the trail's first tab
     // (the head of the next row) stay two distinct slots, as they were when the trail stood behind a
     // visible separator. In the inline layout (the setting off) the trail's divider is a real 13px box
-    // and no break exists, so the boxes below simply measure it, as they did before T264. A drop changes
+    // the boxes below measure, as they did before T264; the only breaks there are the painter's keep
+    // breaks (keepGroupsWithTabs), standing ahead of a header or the divider whose first tab wrapped,
+    // and frozen for the whole drag (the pass stands down while the dragged tab is in the strip, so
+    // these `br` inputs cannot move in response to the insert either). A keep break wears no
+    // .tab-group-sep, so it is no box of its own; it opens the row the same way, through `br` via
+    // before(t). A drop changes
     // no membership (the tab re-sections on the next render); "Move to" in the tab menu is the
     // membership path.
     const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
@@ -18427,8 +18537,18 @@ setupSettings();
     // the slot before a header is the END OF THE PREVIOUS ROW: insert ahead of the header's break, never
     // between the break and the chip (a tab there would sit left of the chip on the group's own line)
     if (ref && ref.classList.contains("tab-group-head") && isBreak(before(ref as HTMLElement))) ref = before(ref as HTMLElement);
-    if (ref !== dragged && dragged.nextElementSibling !== ref)
+    // ...and so is the slot before the inline divider when a keep break stands ahead of it (a tab between
+    // them would open the trail's row ahead of its divider). The trail's own break under the setting is
+    // a break, not a divider, and needs no redirect (isBreak(ref)).
+    if (ref && ref.classList.contains("tab-group-sep") && !isBreak(ref) && isBreak(before(ref as HTMLElement))) ref = before(ref as HTMLElement);
+    // the insert re-packs the rows at an unchanged strip width, which no observer sees: the hairlines are
+    // re-laid right after the move, keyed on the insert itself (once per actual move, inside the no-op
+    // guard). Lines only: the keep pass stands down while the dragged tab is in the strip, so the drag's
+    // row openers stay where dragstart found them (review round 2 of the keep-with-next change)
+    if (ref !== dragged && dragged.nextElementSibling !== ref) {
       flipTabs(() => tabs.insertBefore(dragged, ref));
+      paintTabRowLines(tabs);
+    }
   });
   // Drop commits the LIVE DOM position through the same reorderTo the strip has always used —
   // neighbor id + side — so persistence and the kernel write are byte-identical, and ids that a
