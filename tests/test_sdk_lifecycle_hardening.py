@@ -568,16 +568,19 @@ class BootReconcile(unittest.TestCase):
         _reg(d, sid)
         sb.append_state(Path(d), sid, "working")
         me = os.getpid()
+        # both fake pids sit above pid_max (T276): the tree kill polls procfs after the orphan's SIGTERM, and a
+        # live process wearing a small fake pid on the box earns a SIGKILL the pin below does not expect (pid 559
+        # was a real process on a CI runner, 2026-09-09)
         ps = ("  901 1 /usr/lib/systemd/systemd --user\n"
               "  %d 901 python3 ./kernel.py\n"
-              "  558 %d /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
-              "  559 901 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
+              "  9999558 %d /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
+              "  9999559 901 /x/claude --output-format stream-json --resume %s --input-format stream-json\n"
               ) % (me, me, sid, sid)
         killed = []
         with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout=ps)), \
              mock.patch.object(sb.os, "kill", side_effect=lambda p, s: killed.append((p, s))):
             be._boot_reconcile([sb.read_reg(Path(d), sid)])
-        self.assertEqual(killed, [(559, sb.signal.SIGTERM)],
+        self.assertEqual(killed, [(9999559, sb.signal.SIGTERM)],
                          "a child this kernel already spawned is left alone whatever ps calls the kernel; "
                          "the orphan under the user manager is still reaped")
 
