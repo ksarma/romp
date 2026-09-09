@@ -6770,8 +6770,9 @@ def _write_user_todos(cur):
 # Line shape: {"t", "sid", "id", "kind", "text", "detail"} plus "reply" on an answered line — the
 # DELIVERED answer text (the anchored "Re: <ask> — <reply>" body, or the merged tmux batch): the
 # stamp is delivery-keyed, and at a parked drain or a merged paste the body is all that exists —
-# plus "file" on every line of a todo that names one (as the store holds it), so a rebuilt store
-# keeps the link between the todo and its file.
+# plus "file" on every line of a todo that names one and "link" on every line of a todo that
+# carries one (both as the store holds them), so a rebuilt store keeps the todo's file and its
+# address.
 USER_TODOS_LOG_FILE = "user-todos-log.jsonl"
 _USER_TODOS_LOG_ROTATE_BYTES = 5 * 1024 * 1024
 
@@ -6789,14 +6790,17 @@ def _user_todos_log_write(line):
         f.write(line + "\n")
 
 
-def _log_user_todo_event(sid, tid, kind, text, detail="", reply=None, file=None):
+def _log_user_todo_event(sid, tid, kind, text, detail="", reply=None, file=None, link=None):
     """Append one lifecycle line. Called after the store write landed; a failure here is one loud
     stderr line and nothing else — the todo operation already succeeded and must not unwind.
-    `file` rides only when the todo names one: a file-less todo's line keeps the documented shape."""
+    `file` rides only when the todo names one, `link` only when it carries one: a todo with neither
+    keeps the documented shape."""
     rec = {"t": int(time.time()), "sid": str(sid), "id": str(tid), "kind": str(kind),
            "text": str(text or ""), "detail": str(detail or "")}
     if str(file or "").strip():
         rec["file"] = str(file)
+    if str(link or "").strip():
+        rec["link"] = str(link)
     if kind == "answered":
         rec["reply"] = str(reply or "")
     try:
@@ -6833,6 +6837,8 @@ def _user_todos_from_log(lines):
                     row["detail"] = str(rec["detail"])
                 if str(rec.get("file") or "").strip():
                     row["file"] = str(rec["file"])
+                if str(rec.get("link") or "").strip():
+                    row["link"] = str(rec["link"])
                 rows.append(row)
         elif kind in ("answered", "dismissed", "withdrawn"):
             if hit is None:
@@ -6841,6 +6847,8 @@ def _user_todos_from_log(lines):
                     hit["detail"] = str(rec["detail"])
                 if str(rec.get("file") or "").strip():
                     hit["file"] = str(rec["file"])
+                if str(rec.get("link") or "").strip():
+                    hit["link"] = str(rec["link"])
                 rows.append(hit)
             hit["resolved"] = {"kind": kind, "t": int(rec.get("t") or 0)}
         elif kind == "lost":
@@ -6977,7 +6985,92 @@ def _user_todo_file(value, sid):
                  "directory is recorded for this session), %s" % (raw, tail))
 
 
-def _register_user_todo(sid, text, detail="", file=None):
+# The longest `link` a todo may carry. Browsers and servers commonly take 2 KB of address; a value past that is
+# not an address anyone will open, and a bound keeps a hand-built POST from parking a blob on every chat build
+# (_user_todo_fp re-serializes the rows; the 180 KB `file` above held a handler for 8 s).
+_TODO_LINK_MAX = 2048
+# An http(s) address with a host: the scheme, then at least one character of host before any `/`, `?` or `#`.
+# The postal tool checks the same shape before it posts (postal_service.py _todo_link_error), so the agent hears
+# the refusal in its own reply and nothing reaches this route; the check here is for every other client.
+_TODO_LINK_RE = re.compile(r"^https?://[^\s/?#]+", re.I)
+# The longest `text` and `detail` a todo may carry: the pinned notes' bounds (PINNED_TEXT_MAX / PINNED_DETAIL_MAX:
+# one short line, and the context behind it). Neither had a cap, and the webview links every open todo's text and
+# detail on every Waiting pane frame and every chat push, so one unbounded string cost every reader (the 2026-09-09
+# review). The postal tool refuses the same bounds before it posts (TODO_TEXT_MAX / TODO_DETAIL_MAX, held equal by
+# tests/test_postal_user_todo_link.py); the route's 400 is for every other client. A filed row is never cut: the
+# bound is at the door.
+USER_TODO_TEXT_MAX = 300
+USER_TODO_DETAIL_MAX = 4000
+
+
+def _todo_link_bad_char(c):
+    """A character no web address holds: whitespace (the ordinary space included) or one that does not print
+    (str.isprintable: the C0, DEL and C1 controls, the Unicode format characters such as U+200B, U+FEFF and
+    U+2060, the separators such as U+2028, surrogates, unassigned and private-use code points). One predicate
+    for the refusal and for the spelling (_todo_link_spell), so no refused character rides a reason as itself:
+    the C0/C1 gate this replaces let the format characters through and showed U+2028 unspelled (the 2026-09-09
+    review). The postal tool carries an identical copy (postal_service.py); tests/test_postal_user_todo_link.py
+    holds the two to one verdict and one wording."""
+    return not c.isprintable() or c.isspace()
+
+
+def _todo_link_spell(c):
+    """A refused character spelled out, so a reply shows it (the character itself is invisible there): \\0 for
+    NUL, \\xNN below U+0100, \\uNNNN up to U+FFFF and \\UNNNNNNNN above, Python's own spellings."""
+    o = ord(c)
+    if o == 0:
+        return "\\0"
+    if o < 0x100:
+        return "\\x%02x" % o
+    if o <= 0xFFFF:
+        return "\\u%04x" % o
+    return "\\U%08x" % o
+
+
+def _user_todo_link(value):
+    """A todo's optional `link` as the store keeps it, and the reason it is REFUSED: (stored, error). (None, None)
+    when no link was given (None or a blank string). Unlike `file` (_user_todo_file: kept as given with a warning,
+    because a path may still resolve later or be worth seeing), a link that is not an http(s) address is refused
+    and the todo is not filed (the user 2026-09-08): the chip would open nothing, there is no resolution step
+    that could mend it, and the agent hears why in the same reply it would have read the id from, so filing
+    again costs one call and loses nothing. Refused: a value that is not a string, one holding whitespace or a
+    character that does not print (_todo_link_bad_char: a control character, C0, DEL or C1, and the Unicode
+    format characters and separators, U+200B or U+2028 say; no web address holds one, and the reason spells
+    each out, _todo_link_spell), one longer than _TODO_LINK_MAX, and one that is
+    not `http://` or `https://` followed by a host. Accepted as written (stripped of surrounding whitespace): the
+    kernel does not fetch it, so a mistyped host is stored as typed, like a mistyped absolute `file`; a printable
+    character outside ASCII (an accented letter in a path) is an address's own and passes."""
+    if value is None:
+        return None, None
+    fix = "; pass one http or https address, as a string"
+    if not isinstance(value, str):
+        return None, "the link value %s is not a string%s" % (repr(value)[:80], fix)
+    raw = value.strip()
+    if not raw:
+        return None, None
+    # the address as shown: whole to 80 characters, else its first 60 and a count. The spelling below runs
+    # over the address's own characters only, never over this suffix (round 3's pass spelled the suffix's
+    # spaces as \x20 once the ordinary space became a refused character; review round 3, 2026-09-09)
+    head, tail = (raw, "") if len(raw) <= 80 else (raw[:60], "... (%d characters)" % len(raw))
+    shown = head + tail
+    if any(_todo_link_bad_char(c) for c in raw):
+        # every refused character spelled out (_todo_link_spell), by the one predicate that refused it; a
+        # refused character past the cut is named after the count, so the reason always names one
+        spelled = "".join(_todo_link_spell(c) if _todo_link_bad_char(c) else c for c in head)
+        hidden = sorted({_todo_link_spell(c) for c in raw[len(head):] if _todo_link_bad_char(c)})
+        shown = spelled + tail + (" (past the cut: %s)" % " ".join(hidden) if hidden else "")
+        return None, ("the link %s holds whitespace or a control character, which no web address does%s"
+                      % (shown, fix))
+    if len(raw) > _TODO_LINK_MAX:
+        return None, ("the link %s is longer than %d characters, the most an address here may be%s"
+                      % (shown, _TODO_LINK_MAX, fix))
+    if not _TODO_LINK_RE.match(raw):
+        return None, ("the link %s is not an http or https address: it must start with http:// or https:// "
+                      "and name a host%s" % (shown, fix))
+    return raw, None
+
+
+def _register_user_todo(sid, text, detail="", file=None, link=None):
     """Register a user todo for `sid`: (tid, stored, warning) — the minted id ("ut-" + 8 hex, the
     agent's handle for withdraw_user_todo, so it must never collide within the session's list), the
     `file` as the record keeps it (None when none was given), and the warning an unresolved one earns,
@@ -6988,8 +7081,13 @@ def _register_user_todo(sid, text, detail="", file=None):
     can ever match — while the reply carried no warning, so the agent was never told to pass the
     absolute path; the reverse order stored the absolute path and warned falsely (the review,
     2026-09-07). `detail` is the optional longer context; empty means the short line carries it all
-    and no key is stored."""
+    and no key is stored. `link` (the user 2026-09-08) is the http(s) address the todo carries, stored as
+    _user_todo_link accepts it; a value it refuses raises ValueError with its reason, so no in-process filer
+    can store one the chip could not open (the /usertodo route answers 400 with the same words first)."""
     stored, warning = _user_todo_file(file, sid)
+    link, lerr = _user_todo_link(link)
+    if lerr:
+        raise ValueError(lerr)
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
         cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
@@ -7002,17 +7100,19 @@ def _register_user_todo(sid, text, detail="", file=None):
             rec["detail"] = str(detail)
         if stored:
             rec["file"] = stored
+        if link:
+            rec["link"] = link
         lst.append(rec)
         cur[sid] = lst
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "filed", rec["text"], rec.get("detail", ""),   # after the store landed
-                             file=rec.get("file"))
+                             file=rec.get("file"), link=rec.get("link"))
     return tid, rec.get("file"), warning
 
 
-def _add_user_todo(sid, text, detail="", file=None):
+def _add_user_todo(sid, text, detail="", file=None, link=None):
     """_register_user_todo's minted id alone — the form every in-process filer uses."""
-    return _register_user_todo(sid, text, detail, file)[0]
+    return _register_user_todo(sid, text, detail, file, link)[0]
 
 
 # Per-sid bound on RESOLVED rows (round 2, 2026-08-22): on a self-hosted box sessions live for
@@ -7067,7 +7167,7 @@ def _resolve_user_todo(sid, tid, kind, reply=None):
         cur[sid] = lst
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, str(kind), hit.get("text"), hit.get("detail", ""), reply=reply,
-                             file=hit.get("file"))
+                             file=hit.get("file"), link=hit.get("link"))
     return True
 
 
@@ -7135,14 +7235,14 @@ def _reopen_user_todo(sid, tid):
         cur[sid] = lst
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""),   # the answer never arrived
-                             file=hit.get("file"))
+                             file=hit.get("file"), link=hit.get("link"))
     return True
 
 
 def _open_user_todos(sid):
     """The still-open todos for one session, oldest first — the exact shape the chat payload ships
     (id, text, createdT, optional detail, optional file — the absolute path of the file the todo is
-    about, as filed). STORE VALUES ONLY: this rides the dedup-compared chat
+    about, as filed; and optional link, the http(s) address it carries). STORE VALUES ONLY: this rides the dedup-compared chat
     payload, so a derived per-build value here (an age, a `now`) would defeat _send_client's
     serialized-payload dedup and re-send the full chat every push — the firstSeen lesson.
 
@@ -7162,6 +7262,8 @@ def _open_user_todos(sid):
             rec["detail"] = str(t["detail"])
         if str(t.get("file") or "").strip():
             rec["file"] = str(t["file"])
+        if str(t.get("link") or "").strip():
+            rec["link"] = str(t["link"])
         out.append(rec)
     out.sort(key=lambda t: (t["createdT"], t["id"]))
     return out
@@ -7619,7 +7721,12 @@ def _user_todo_context_block(sid):
         # the file the todo names, after the text (the todo-file follow-on, 2026-09-07): the agent's
         # own path, marker-neutralized like the text, so it can find the file it asked about
         fpath = _neutralize_romp_markers(str(t.get("file") or "").strip())
-        lines.append("- %s (%s%s)%s" % (text, t["id"], when, (" — file: %s" % fpath) if fpath else ""))
+        # and the address it carries (the user 2026-09-08), after the file, the same way
+        link = _neutralize_romp_markers(str(t.get("link") or "").strip())
+        tail = "; ".join(p for p in (("file: %s" % fpath) if fpath else "", ("link: %s" % link) if link else "") if p)
+        # the tail follows the parenthesis after a semicolon, its parts split the same way (no em dash in text
+        # romp writes, the 2026-09-09 review; the hook hands the block on whole, tests/romp-usertodo-context.bats)
+        lines.append("- %s (%s%s)%s" % (text, t["id"], when, ("; %s" % tail) if tail else ""))
     if len(rows) > _USER_TODO_CONTEXT_CAP:
         lines.append("- …and %d more from earlier" % (len(rows) - _USER_TODO_CONTEXT_CAP))
     lines += ["", "If one is met or moot now, withdraw it (withdraw_user_todo); otherwise "
@@ -56237,8 +56344,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Register a USER TODO — a need the session flags with the person it works for while
                 # it keeps working (plans/user-todos.md). The postal bus's add_user_todo posts here
                 # the way set_working posts /working. Body: {"id": <sid>, "text": <one short line>,
-                # "detail"?: <longer context>, "file"?: <path of the file it is about>} → {"ok": true,
-                # "todoId": "ut-…", "warning"?: <the file path did not resolve>}. Only answer /
+                # "detail"?: <longer context>, "file"?: <path of the file it is about>, "link"?: <an http(s)
+                # address it carries>} → {"ok": true, "todoId": "ut-…", "file"?: <as stored>, "link"?: <as
+                # stored>, "warning"?: <the file path did not resolve>, "linkWarning"?: <the link was lost on
+                # the way to an older remote kernel>}. Only answer /
                 # dismiss / withdraw ever clear it (the authority tier, docs/adr/0001) — no judge
                 # writes this store. Like the other postal-called routes, the body is shape-validated
                 # and the sid's existence is not (the house style: be honest about outcomes instead).
@@ -56252,6 +56361,15 @@ class Handler(BaseHTTPRequestHandler):
                 # todo is filed either way, never refused for its file. The reply echoes `file` as the
                 # record keeps it, from the same resolution (_register_user_todo) — never a second one,
                 # which could read a different cwd and describe a store the filing did not make.
+                # `link` (the user 2026-09-08) is the http(s) address the todo carries: checked here
+                # (_user_todo_link) before any forward or write, and a value that is not one is a 400
+                # naming the reason, nothing filed. Not `file`'s keep-with-a-warning: an address the chip
+                # cannot open has no later resolution, and the tool refuses the same shape before it
+                # posts, so the agent hears it in its own reply. The reply echoes `link` as stored; a
+                # reply to a body that sent one and echoes none is an older kernel's (the tool says so in
+                # its reply), and the forward below names that loss in `linkWarning` and on stderr, as the
+                # file's skew is named in `warning`. `text` and `detail` are bounded (USER_TODO_TEXT_MAX,
+                # USER_TODO_DETAIL_MAX: a 400 naming the bound), as a pinned note's are.
                 body, berr = _json_object_body(raw_body)
                 if berr:
                     return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
@@ -56269,17 +56387,57 @@ class Handler(BaseHTTPRequestHandler):
                 fraw = body.get("file")
                 if isinstance(fraw, str):
                     fraw = fraw.strip() or None                     # absent, null and blank all mean: no file
+                link, lerr = _user_todo_link(body.get("link"))      # None when absent, null or blank
+                if lerr:
+                    return self._send(400, json.dumps({"ok": False, "error": lerr}), "application/json")
+                # stripped before it is measured, as the tool strips before it posts and the pinned-notes route
+                # cleans before its bound: measured raw, a detail at the bound inside surrounding whitespace was
+                # a 400 here and a filing there (the 2026-09-09 review). Stored as measured.
+                detail = str(body.get("detail") or "").strip()
+                # the bounds (USER_TODO_TEXT_MAX / USER_TODO_DETAIL_MAX), before any forward or write, as the
+                # pinned-notes route checks its own; the tool refuses the same before it posts
+                if len(text) > USER_TODO_TEXT_MAX:
+                    return self._send(400, json.dumps({"ok": False, "error": "text is longer than %d characters (%d)"
+                                                       % (USER_TODO_TEXT_MAX, len(text))}), "application/json")
+                if len(detail) > USER_TODO_DETAIL_MAX:
+                    return self._send(400, json.dumps({"ok": False, "error": "detail is longer than %d characters (%d)"
+                                                       % (USER_TODO_DETAIL_MAX, len(detail))}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    fwd = {"id": sid, "text": text, "detail": str(body.get("detail") or "")}
+                    fwd = {"id": sid, "text": text, "detail": detail}
                     if fraw is not None:
                         fwd["file"] = fraw                          # the remote kernel resolves it against ITS disk
+                    if link:
+                        fwd["link"] = link                          # checked here already; the remote checks it again
                     res = _remote_forward(r, "/usertodo", fwd)
                     tid = str((res or {}).get("todoId") or "")
                     out = {"ok": bool(tid), "todoId": tid}
                     if isinstance(res, dict):
                         if res.get("file"):
                             out["file"] = str(res["file"])          # the path as the remote's record keeps it
+                        if res.get("link"):
+                            out["link"] = str(res["link"])          # the address as the remote's record keeps it
+                        elif "link" in fwd and tid:
+                            # Version skew, the file's below: a kernel that predates a todo's link filed the
+                            # todo without it and echoes none. Named in the reply under its own key,
+                            # `linkWarning` (the postal tool labels `warning` as the file's, so the two are
+                            # never folded into one sentence), and on stderr; the tool relays it. Through
+                            # the tool this branch is out of reach (a session's tool posts to its own host's
+                            # kernel); API for any token holder, which heard plain success before (the
+                            # 2026-09-09 review).
+                            host = r.get("host") or "that host"
+                            # In the tool's own veiled words (test_injected_voice.py: the tool relays this sentence
+                            # to the agent verbatim behind "About the link:", so no romp noun; the kernel is "the
+                            # session manager", as the tool's own skew sentence has it), and the remedy for this todo
+                            # names the detail: a link may run to 2048 characters and a text to 300, a detail to 4000
+                            # (the 2026-09-09 review). stderr below keeps the kernel's terms: it is not injected.
+                            out["linkWarning"] = ("the link %s was not recorded. The session manager on %s runs an "
+                                                  "older version that does not keep a todo's link (an update and a "
+                                                  "restart there fix that), so the todo stands there without it. If "
+                                                  "the link matters, withdraw it and file it again with the address "
+                                                  "in its detail, where it becomes a link too." % (fwd["link"], host))
+                            sys.stderr.write("user-todos: %s's link not recorded on %s: its kernel predates a "
+                                             "todo's link\n" % (sid[:8], host))
                         if res.get("warning"):
                             out["warning"] = str(res["warning"])    # the remote's account of an unresolved path
                         elif "file" in fwd and tid and "file" not in res:
@@ -56299,7 +56457,7 @@ class Handler(BaseHTTPRequestHandler):
                             sys.stderr.write("user-todos: %s's file not recorded on %s: its kernel predates a "
                                              "todo's file\n" % (sid[:8], host))
                     return self._send(200, json.dumps(out), "application/json")
-                tid, stored, warning = _register_user_todo(sid, text, str(body.get("detail") or ""), file=fraw)
+                tid, stored, warning = _register_user_todo(sid, text, detail, file=fraw, link=link)
                 # ack-fast (the push-architecture rule, 2026-07-05): wake the pusher, never build the
                 # whole payload set synchronously on this handler thread — the postal bus times its
                 # POST out at 2s, so an inline _push_all here turned a SAVED todo into a loud false
@@ -56308,6 +56466,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = {"ok": True, "todoId": tid}
                 if stored:
                     out["file"] = stored                            # what the record carries — the same resolution
+                if link:
+                    out["link"] = link                              # what the record carries, as checked above
                 if warning:
                     out["warning"] = warning
                 return self._send(200, json.dumps(out), "application/json")

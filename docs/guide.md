@@ -263,7 +263,9 @@ relative path links only when its last segment has a file extension
 file's name as a chip on the row and in the Reply box, with the full path on
 hover; the session's own todo card in the chat shows the same chip. Click the
 chip and the file opens the same way; a **Send to session** from that file can
-then answer the todo (see Files). The pane is off by default, like the outline;
+then answer the todo (see Files). A web address in a todo's text or detail is a
+link that opens in a new tab, and a todo that carries its own address shows it
+as a second chip beside the file's, the whole address on hover. The pane is off by default, like the outline;
 turn it on from the bottom bar. Sessions flag todos only where
 the gear's **User todos** switch is on, and the switch is per machine: while it
 is off on this one, the pane says so and still lists the

@@ -35,7 +35,16 @@ class T {
   constructor(public textContent: string) {}
   get data(): string { return this.textContent; }
   get parentElement(): E | null { return this.parentNode; }
+  /** the URL and path walks splice a text node into its pieces and the links between them (path-links.ts rewriteSpan) */
+  replaceWith(frag: F): void {
+    const p = this.parentNode!;
+    const i = p.childNodes.indexOf(this);
+    for (const k of frag.childNodes) k.parentNode = p;
+    p.childNodes.splice(i, 1, ...frag.childNodes);
+    this.parentNode = null;
+  }
 }
+class F { childNodes: Array<E | T> = []; appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; } }
 class E {
   nodeType = 1;
   parentNode: E | null = null;
@@ -94,12 +103,18 @@ class E {
 }
 // the stand-in document: the two factories the builder and the PR linker call, and the Range pinnedRowGeom
 // measures a text's natural width with (here the node's `natural`)
+const textNodesOf = (root: E): T[] => { const out: T[] = []; const walk = (n: E) => { for (const c of n.childNodes) { if (c instanceof T) out.push(c); else walk(c); } }; walk(root); return out; };
 const standInDoc = {
   createElement: (tag: string) => new E(tag.toUpperCase()),
   createTextNode: (s: string) => new T(s),
   createRange: () => { let node: E | null = null; return { selectNodeContents: (n: unknown) => { node = n as E; }, getBoundingClientRect: () => ({ width: node ? node.natural : 0 }) }; },
+  // the two the real linkers need beyond the builder's (url-links.ts / path-links.ts: a walk over the text nodes in
+  // document order, and a fragment to splice a marked text node with)
+  createDocumentFragment: () => new F(),
+  createTreeWalker: (root: E) => { const nodes = textNodesOf(root); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
 };
 (globalThis as any).document = standInDoc;
+(globalThis as any).NodeFilter = { SHOW_TEXT: 4, SHOW_ELEMENT: 1 };
 const doc = { createElement: (tag: string) => new E(tag.toUpperCase()) as unknown as HTMLElement };
 
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -339,6 +354,47 @@ test("paths and PR references link through the caller's linkers: the line pass o
   assert.match(RENDER_FN, /detail: \(n\) => \{ linkTodoDetailPaths\(n, s\.id\); linkifyPrRefs\(n, prRepoFor\(s\.id\)\); \},/);
   // …and a path link in the strip opens through the body delegate, like one on the todo card
   assert.match(RENDER, /openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\)/);
+});
+
+test("a web address in a note's text and in its detail links through the REAL linkers (the URL pass, then the path walk, then the PR pass: the trio render.ts hands the strip): an anchor to a new tab in the row, in the fold's full text and in its detail, the sentence's punctuation outside, nothing linked twice", async () => {
+  // the 2026-09-09 review: the strip gained URL links only through the shared linkers, and nothing here rendered a
+  // note holding an address; the fold's body (link.detail after the text is set) had no executed guard at all
+  const { linkifyUrls } = await import("./url-links");
+  const { linkifyPathTokens } = await import("./path-links");
+  const URL = "https://example.invalid/notes-api/docs/plan";
+  const PR = "https://github.com/example-org/notes-api/pull/398";
+  const pass = (n: unknown) => { linkifyUrls(n as HTMLElement); linkifyPathTokens(n as HTMLElement, SID); linkifyPrRefs(n as Node, "example-org/notes-api"); };
+  const real: PinnedLinkers = { line: pass, detail: pass };
+  const text = "Read the plan (" + URL + ").";
+  const detail = "The review is at " + PR + ", the notes in docs/plan.md and #12.";
+  const row = rowsOf(build([note(0, { text, detail })], state(), real)!)[0];
+  // the one-line row
+  const txt = textOf(row);
+  const a = txt.all("a");
+  assert.equal(a.length, 1);
+  assert.equal(a[0].className, "url-link");
+  assert.equal(a[0].getAttribute("href"), URL);
+  assert.equal(a[0].textContent, URL, "the address as typed");
+  assert.equal(a[0].target, "_blank"); assert.equal(a[0].rel, "noopener noreferrer"); assert.equal(a[0].title, URL);
+  assert.equal(txt.textContent, text, "the words are unchanged");
+  assert.deepEqual(txt.childNodes.map((c) => (c instanceof T ? c.textContent : "<a>")), ["Read the plan (", "<a>", ")."], "the paren and the period stay outside the link");
+  assert.equal(txt.title, text, "the row's title is the plain text");
+  // the fold: the full text links the same address; the detail links its address, its path and its PR number, each its own way
+  const full = row.all(".pn-full")[0], more = row.all(".pn-more")[0];
+  assert.deepEqual(full.all("a").map((x) => [x.className, x.getAttribute("href")]), [["url-link", URL]], "the fold's full text");
+  assert.equal(full.textContent, text);
+  const urls = more.all("a").filter((x) => x.classList.contains("url-link"));
+  assert.deepEqual(urls.map((x) => [x.getAttribute("href"), x.textContent, x.target]), [[PR, PR, "_blank"]], "the detail's address, the comma outside");
+  const paths = more.all(".file-uri-link");
+  assert.deepEqual(paths.map((x) => [x.tagName, x.textContent, x.dataset.path, x.dataset.sid]), [["SPAN", "docs/plan.md", "docs/plan.md", SID]], "the path links with the note's session; nothing inside the address was read as a path");
+  const prs = more.all("a").filter((x) => !x.classList.contains("url-link"));
+  assert.equal(prs.length, 1, "the #12 reference");
+  assert.match(prs[0].href, /example-org\/notes-api\/pull\/12$/);
+  assert.equal(more.textContent, detail, "the detail reads exactly as written");
+  for (const el of [...more.all("a"), ...paths, ...a]) assert.equal(el.childNodes.length, 1, "each label is one text node: nothing linked twice");
+  // a second pass over the built row marks nothing more: text already inside a link is dead to every walk
+  assert.deepEqual(linkifyUrls(txt as unknown as HTMLElement), []);
+  assert.deepEqual(linkifyPathTokens(more as unknown as HTMLElement, SID), []);
 });
 
 test("every row has an Unpin control that is click-safe: declared by data-act, handled on the stable host, no per-render listener", () => {

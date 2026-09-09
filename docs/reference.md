@@ -73,6 +73,10 @@ is made of ASCII letters, digits and `_ . ~ / -` only, so any other character en
 `(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
 link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
+An http or https address in the text or the detail is a link too, shown as typed and opened in a new tab;
+it runs to the next whitespace, quote, angle bracket or backtick, sentence punctuation after it stays
+outside the link, and so does a closing bracket the address itself did not open (`(see https://example.invalid/a)`
+links the address alone). A path-shaped run inside an address is part of the address, never a file link.
 A todo can also name the file it is about, through the tool's `file` argument. The kernel that holds the
 session makes the path absolute and stores it: `~` is expanded, a relative path is read against the
 session's working directory like one in the text, and a `file://` URI becomes its path. The todo shows the
@@ -85,7 +89,15 @@ still filed, and the tool's reply says why and asks for the absolute path. That 
 a session whose working directory the kernel does not know, a `file://` URI that does not carry an absolute
 path, a URL of another scheme, and a spelling no path can have (a NUL byte in it, or a length past the
 machine's limit). The list a resuming session is handed back shows the path after the text of each todo that
-names one.
+names one. A todo can carry a web address of its own as well, through the tool's `link` argument: an http or
+https address, shown as a chip beside the file's on the session's card and in the pane alike, opening in a new
+tab. The chip's label keeps the part that tells two addresses apart: a GitHub `pull/N` or `issues/N` address
+reads `owner/repo#N`, any other address as its host and last two path segments; the whole address is on hover. Only
+such an address is taken: anything else (another scheme, a bare host, a value with whitespace or a character that does not print in it, one past
+2048 characters) is refused, the todo is not filed, and the tool's reply says why. The kernel does not fetch the
+address, so a mistyped host is stored as typed. The handed-back list shows the address after the path. A todo's
+text takes at most 300 characters and its detail 4000, a pinned note's bounds; a longer one is refused before
+anything is filed, and the tool's reply names the bound.
 
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
@@ -97,8 +109,8 @@ its whole text has no hint. Whether a row is cut is measured on the page, so the
 a desktop and offer the hint on a phone or in a narrow pane.
 Click the row or the hint to read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
 pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
-scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request
-number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
+scrolls past that, so the transcript and the composer stay on screen. A file path, a web address or a pull
+request number in a note links the way it does in a user todo. Each row has an **Unpin** control (click it
 twice; a tap elsewhere, or leaving the control, takes the first click back); a session unpins its
 own notes with `unpin_note`, and unpinning a note that is already down is a plain answer, not an
 error. A note's line takes at most 300 characters and its detail 4000; a terminal escape sequence
@@ -383,7 +395,7 @@ romp mail remote                 # legacy singleton scheme only (ROMP_POSTAL_PEE
 | `unpin_note(id)` | Take a pinned note down; one already down is a plain answer, not an error |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
-| `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about (User todos, above) |
+| `add_user_todo(text, detail?, file?, link?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line todo, `detail` optional longer context, `file` the absolute path of the file the todo is about, `link` the http or https address it is about (User todos, above) |
 | `withdraw_user_todo(id)` | Take back a todo by the id `add_user_todo` returned |
 
 ### When a send is refused

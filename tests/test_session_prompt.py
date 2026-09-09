@@ -73,7 +73,12 @@ class SessionPrompt(unittest.TestCase):
         self.assertIn("absolute path in the detail, which can still describe it", flat,
                       "the detail keeps its descriptive role; the path there is no longer the mechanism")
         self.assertIn("my comments", flat, "says what comes back: the person's comments")
+        # a look at a web page (the user 2026-09-08): the address goes in the `link` argument the same way, and the
+        # fallback names the address too; pinned since the 2026-09-09 review (a drifted argument name would file the
+        # todo with its address silently dropped: the schema restricts no extra property)
+        self.assertIn("its address as the `link` argument the same way", flat)
         self.assertIn("if you don't have the tool", flat, "the fallback when the switch is off")
+        self.assertIn("name the file or the address", flat, "the fallback names the address as well as the file")
         self.assertNotIn("add_user_todo", housekeeping, "Housekeeping explains romp's artifacts only")
         for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check",
                      "viewer", "panel", "dashboard", "pane", "chip", "todo id", "waiting on you"):

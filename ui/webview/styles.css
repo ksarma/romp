@@ -2433,14 +2433,19 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    quotes the line inside .confirm-detail (0.92em), where an em compounds (ui/CLAUDE.md). The ellipsis
    triple needs the block container inline-block gives (text-overflow never reaches text inside a flex
    container: waiting-pane.css). The 32% share is the row's, shared with the buttons. */
-.ut-file { display: inline-block; max-width: 32%; padding: 1px 8px; border-radius: var(--radius-pill);
+.ut-link, .ut-file { display: inline-block; max-width: 32%; padding: 1px 8px; border-radius: var(--radius-pill);
   font-size: 11px; line-height: 1.5; vertical-align: middle; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   background: var(--overlay-10); color: var(--accent); text-decoration: none; }
 .ut-file.file-uri-link:hover { filter: brightness(1.12); text-decoration: none; }
-/* in the Reply modal the chip trails the quoted line, whose width is the box's: the cap is the line, as the pane's
+/* the web address a todo CARRIES (render.ts todoLinkChip; the user 2026-09-08): the same pill, an anchor in the
+   accent rather than the prose link ink .url-link wears below (the chip dress stands for the underline); the
+   element selector outranks .url-link's class-only rules, whichever sheet order loads them */
+a.ut-link { color: var(--accent); text-decoration: none; }
+a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
+/* in the Reply modal the chips trail the quoted line, whose width is the box's: the cap is the line, as the pane's
    modal rule has it (waiting-pane.css #ut-reply-prompt .wt-file) — under the row's share a basename past ~13
    characters was cut on a phone with the line to spare */
-#ut-reply-prompt .ut-file { max-width: 100%; }
+#ut-reply-prompt .ut-link, #ut-reply-prompt .ut-file { max-width: 100%; }
 /* progressive disclosure: the one-line version by default; detail opens on click (keyed fold) */
 .ut-detail { display: none; color: var(--dim); font-size: 0.86em; line-height: 1.4; margin: 2px 0 4px; white-space: pre-wrap; }
 .ut-detail.open { display: block; }
@@ -2832,6 +2837,10 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    the rest, in the same hyperlink ink. */
 .pr-link { color: var(--link); text-decoration: none; }
 .pr-link:hover { text-decoration: underline; }
+/* http(s) addresses linked in the same plain-text surfaces (url-links.ts; the user 2026-09-08): user-todo rows and
+   their Reply modals, pinned notes, the Waiting-on-you pane (which loads this sheet); the same hyperlink ink */
+.url-link { color: var(--link); text-decoration: none; }
+.url-link:hover { text-decoration: underline; }
 .md blockquote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); color: var(--dim); }
 .md hr { border: none; border-top: 1px solid var(--box-border); margin: 1em 0; }
 .md :not(pre) > code {

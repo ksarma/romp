@@ -164,13 +164,13 @@ test("the chat's todo card and its Reply modal still link the note against the t
   assert.match(card, /d\.textContent = t\.detail \|\| "";/);                           // the note stays plain text…
   assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);             // …with paths linked after
   // the detail's linker is the transcript's with the figure pass, DELEGATED: the card rebuilds every push
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   assert.match(RENDER, /reply\.dataset\.sid = renderingSid \|\| "";/);               // the buttons act where the paths resolve
   // the modal is sliced from its full signature — the five-argument form since the todo-file follow-on
   // (plans/file-review.md, decision 35: `todoFile` is the file the todo names, shown as a chip) — and the
   // anchor is checked before the slice: an indexOf of -1 slices to "" and fails the match below with an
   // empty input, which says nothing about WHAT went stale (the 2026-09-07 review round)
-  const modalSig = "function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\", todoFile = \"\"): void {";
+  const modalSig = "function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\", todoFile = \"\", todoLink = \"\"): void {";
   const modalAt = RENDER.indexOf(modalSig);
   assert.notEqual(modalAt, -1, "showUserTodoReply's signature moved — re-anchor this slice (and any sibling pin) on the new one");
   const modal = RENDER.slice(modalAt, RENDER.indexOf("input.className = \"ut-reply-input\"", modalAt));
@@ -185,7 +185,8 @@ test("the chat's todo card and its Reply modal still link the note against the t
 test("waiting.ts links the text and the detail at BOTH sites (the row and the Reply modal) with the todo's sid, only when framed", () => {
   assert.match(WAITING, /import \{ linkifyPathTokens, openPathLink \} from "\.\/path-links";/);   // openPathLink builds the file chip (waiting-file-chip.test.ts)
   // the gate: a pane the shell does not frame has no Files pane to send a click to → plain text
-  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  // the URL pass runs before the framed gate (a web address opens from any page; url-links.test.ts, 2026-09-08)
+  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*linkifyUrls\(node\);[^\n]*\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   // the row: text first, then the links, on the one-line text (the user 2026-09-07) and on the fold body
   const row = WAITING.slice(WAITING.indexOf("function rowEl("), WAITING.indexOf("function hostLine("));
   assert.match(row, /txt\.textContent = w\.todo\.text;\n\s*linkTodoPaths\(txt, w\.sid\);/);

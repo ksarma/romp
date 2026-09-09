@@ -918,7 +918,8 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /const a = el\("span", "file-uri-link"\);\n\s*a\.textContent = raw;[^\n]*\n\s*return markPathLink\(a, open, relative, sid\);/, "openPathLink mints and marks");
   assert.match(MOD, /linkifyPathTokens\(root, null, undefined, \{\n\s*inPre: true,\n\s*accept: \(tok, ctx\) => !insideUrl\(ctx\) && viewerPathGate\(tok, ctx\),\n\s*resolve: \(tok\) => resolveViewerPath\(tok, filePath\),\n\s*lineSuffix: true,\n\s*unit: LINE_UNITS,\n\s*\}\);/, "the viewer runs the chat's walk under its own gate, a line at a time, and never inside a URL of the line");
   assert.match(MOD, /if \(ctx\.text !== lineText\) \{ lineText = ctx\.text; lineUrls = \/https\?:\\\/\\\/\/i\.test\(ctx\.text\) \? urlRanges\(ctx\.text\) : \[\]; \}/, "the line's URLs are found once per line, not per token");
-  assert.match(MOD, /for \(const u of textUnits\(root, LINE_UNITS, DEAD_TEXT\)\) \{/, "the URL pass reads the same lines and skips the same text");
+  assert.match(MOD, /return markUrls\(root, \{ className: URL_LINK_CLASS, unit: LINE_UNITS, draggable: false \}\);/, "the URL pass (url-links.ts, since 2026-09-08) reads the same lines…");
+  assert.match(fs.readFileSync(path.join(UI, "url-links.ts"), "utf8"), /for \(const u of textUnits\(root, opts\.unit, opts\.skip \|\| DEAD_TEXT\)\) \{/, "…and skips the same text");
   assert.match(MOD, /a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   assert.doesNotMatch(MOD, /innerHTML|outerHTML|insertAdjacentHTML/, "the module builds elements; it never writes markup");
 });

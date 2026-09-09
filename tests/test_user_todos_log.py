@@ -103,6 +103,18 @@ class EachEventAppendsItsLine(_Sandbox):
         self.assertNotIn("reply", rec, "reply rides answered lines only")
         self.assertEqual(set(rec), {"t", "sid", "id", "kind", "text", "detail"}, "the documented shape, nothing else")
 
+    def test_a_linked_todos_line_is_the_documented_shape_plus_link(self):
+        # the header comment names "file" and "link" as the two optional keys beside "reply" (the 2026-09-09 review
+        # found it naming file alone); the writer and the comment are pinned together here
+        km._add_user_todo(SID, "Need a review of the pull request", link="https://example.invalid/notes-api/pull/398")
+        rec = self.lines()[0]
+        self.assertEqual(set(rec), {"t", "sid", "id", "kind", "text", "detail", "link"}, "the documented shape plus link")
+        self.assertEqual(rec["link"], "https://example.invalid/notes-api/pull/398")
+        with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('plus "file" on every line of a todo that names one and "link" on every line of a todo that\n'
+                      '# carries one (both as the store holds them)', src)
+
     def test_filed_without_detail_logs_an_empty_detail(self):
         km._add_user_todo(SID, "Need the staging port")
         self.assertEqual(self.lines()[0]["detail"], "")

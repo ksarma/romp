@@ -375,17 +375,117 @@ test("the field is read from every frame: a frame that drops or changes `file` r
 
 test("source pins: the chip is openPathLink's span restyled, plain when the pane is unframed; the modal takes the file from the Reply button", () => {
   assert.match(WAITING, /import \{ linkifyPathTokens, openPathLink \} from "\.\/path-links";/);
-  assert.match(WAITING, /interface UserTodo \{ id: string; text: string; createdT: number; detail\?: string; file\?: string \}/);
+  assert.match(WAITING, /interface UserTodo \{ id: string; text: string; createdT: number; detail\?: string; file\?: string; link\?: string \}/);   // link: the address the todo carries (2026-09-08)
   assert.match(WAITING, /function fileChip\(file: string, sid: string\): HTMLElement \{\n\s*const base = file\.replace\(\/\\\/\+\$\/, ""\)\.split\("\/"\)\.pop\(\) \|\| file;\n\s*const chip = framed \? openPathLink\(base, file, false, sid\) : el\("span", ""\);/,
     "a path link when framed (the click has a Files pane to go to), a plain span otherwise — the linkTodoPaths gate");
   assert.match(WAITING, /chip\.classList\.add\("wt-file"\);\n\s*chip\.title = file;/, "the full path is the hover, over openPathLink's own title");
   assert.match(WAITING, /if \(w\.todo\.file\) line\.appendChild\(fileChip\(w\.todo\.file, w\.sid\)\);/);
   assert.match(WAITING, /\(reply as any\)\._utfile = w\.todo\.file \|\| "";/);
-  assert.match(WAITING, /function showReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\): void \{/);
+  assert.match(WAITING, /function showReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""\): void \{/);
   assert.match(WAITING, /const chip = todoFile \? fileChip\(todoFile, sid\) : null;/);
-  assert.match(WAITING, /box\.append\(h, d\); if \(chip\) box\.appendChild\(chip\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);/);
+  assert.match(WAITING, /box\.append\(h, d\); if \(chip\) box\.appendChild\(chip\); if \(lchip\) box\.appendChild\(lchip\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);/);
   assert.match(WAITING, /file: typeof t\.file === "string" && t\.file \? t\.file : undefined/, "the frame's field rides through as given, or not at all");
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "waiting-pane.css"), "utf8");
   assert.ok(CSS.includes(".wt-file{"), "the chip has its rule in the pane's sheet");
   assert.ok(CSS.includes("#ut-reply-prompt .wt-file{"), "…and its place in the modal");
+});
+
+// ── the web address a todo CARRIES (the user 2026-09-08): `link` rides the frame's rows like `file`; the row and the
+// modal show it as a second chip in the file chip's dress, an anchor the pane's URL opener serves (a new tab on the
+// web, the host's openExternal under VS Code), never the list delegate: the row's fold under it does not toggle
+const LINK = "https://github.com/example-org/notes-api/pull/398";
+const WITH_LINK = { id: "t3", text: "Review the pull request", createdT: T0 - 60, detail: "The description is stale.", file: FILE, link: LINK };
+const LINK_ONLY = { id: "t4", text: "Read the design note online", createdT: T0 - 30, link: "https://example.invalid/notes-api/design/" };
+
+test("a todo with a link: the row wears the link chip after the file chip; the label keeps the distinguishing part (owner/repo#N for a pull request), the whole address on hover; an anchor, not a path link", async () => {
+  await dispatch(frame([WITH_LINK, LINK_ONLY, NO_FILE]));
+  const r = row("t3");
+  const chip = r.querySelector(".wt-link");
+  assert.ok(chip, "the row of the todo with `link` carries the chip");
+  assert.equal(chip!.tagName, "A", "an ordinary anchor");
+  assert.ok(chip!.classList.contains("url-link"), "the URL anchors' class: the pane's URL opener serves it");
+  assert.equal(chip!.getAttribute("href"), LINK);
+  assert.equal(chip!.textContent, "example-org/notes-api#398", "the label: the pull request's owner/repo#N (url-links.ts urlChipLabel; the pill cuts a long label from the end, and this keeps the number in view)");
+  assert.equal(chip!.title, LINK, "the whole address on hover");
+  assert.equal((chip as any).target, "_blank");
+  assert.equal((chip as any).rel, "noopener noreferrer");
+  assert.equal(chip!.dataset.act, undefined, "no data-act: never the list delegate's openpath");
+  assert.ok(!chip!.classList.contains("file-uri-link"), "not a path link");
+  const line = r.querySelector(".ut-line")!;
+  const names = line.children.map((c) => (c.classList.contains("wt-link") ? "wt-link" : c.classList.contains("wt-file") ? "wt-file" : c.className.split(" ")[0]));
+  assert.deepEqual(names, ["wt-sess", "ut-text", "wt-file", "wt-link", "wt-age", "ut-btn", "ut-btn"], "session, text, the file chip, the link chip, then the age and the buttons");
+  assert.equal((r.querySelector(".ut-reply") as any)._utlink, LINK, "the Reply button rides the address to the modal");
+  // a link without a file: the link chip alone; an address that is not a pull request reads as its host and path
+  // (two segments here, so whole), its scheme and trailing slash dropped
+  const r4 = row("t4");
+  assert.equal(r4.querySelector(".wt-file"), null);
+  assert.equal(r4.querySelector(".wt-link")!.textContent, "example.invalid/notes-api/design");
+  // no link: no chip, an empty ride
+  assert.equal(row("t2").querySelector(".wt-link"), null);
+  assert.equal((row("t2").querySelector(".ut-reply") as any)._utlink, "");
+});
+
+test("a click on the link chip goes to the URL opener (openLink to the host here, where the page has no http origin), not the list delegate: no fold, no viewFile", async () => {
+  await dispatch(frame([WITH_LINK, NO_FILE]));
+  posted.length = 0; shellPosts.length = 0;
+  const r = row("t3");
+  const chip = r.querySelector(".wt-link")!;
+  const detail = r.querySelector(".ut-detail")!;
+  assert.ok(!detail.classList.contains("open"), "the fold is closed before the click");
+  chip.dispatch("pointerdown"); chip.dispatch("pointerup");
+  chip.click();
+  win.dispatchEvent(new Event("pointerup"));   // the window's release, which the stand-in's bubbling never reaches: the list holds render() while pressed
+  assert.deepEqual(posted.filter((m) => m.type === "openLink"), [{ type: "openLink", href: LINK }], "the host's openExternal takes it");
+  assert.deepEqual(viewFiles(), [], "no file opened: the chip is not a path link");
+  assert.ok(!detail.classList.contains("open"), "the click was spent at the capture phase: uttoggle never folded the row");
+});
+
+test("a URL in a todo's TEXT is an anchor as typed (the trailing period outside), and the file chip beside it is untouched", async () => {
+  const url = "https://example.invalid/notes-api/pull/12";
+  await dispatch(frame([{ id: "t5", text: "Approve " + url + ".", createdT: T0 - 10, file: FILE }, NO_FILE]));
+  const r = row("t5");
+  const txt = r.querySelector(".ut-text")!;
+  const a = txt.querySelector("a.url-link");
+  assert.ok(a, "the URL in the text is an anchor");
+  assert.equal(a!.textContent, url, "as typed, not shortened");
+  assert.equal(a!.getAttribute("href"), url);
+  assert.equal((a as any).target, "_blank");
+  assert.equal(txt.textContent, "Approve " + url + ".", "the text reads exactly as written; the period is outside the link");
+  assert.equal(r.querySelector(".wt-file")!.textContent, "design.md", "the file chip is still the file's");
+  assert.equal(r.querySelectorAll(".file-uri-link").length, 1, "the chip is the only path link: nothing in the URL was read as a path");
+  posted.length = 0;
+  a!.dispatch("pointerdown"); a!.dispatch("pointerup"); a!.click();
+  win.dispatchEvent(new Event("pointerup"));
+  assert.deepEqual(posted.filter((m) => m.type === "openLink"), [{ type: "openLink", href: url }]);
+});
+
+test("Reply on a todo with a link: the modal shows the file chip and then the link chip under the quoted line", async () => {
+  await dispatch(frame([WITH_LINK, NO_FILE]));
+  (row("t3").querySelector(".ut-reply") as El).click();
+  const modal = doc.getElementById("ut-reply-prompt");
+  assert.ok(modal, "the Reply modal");
+  const box = modal!.querySelector(".confirm-box")!;
+  const kindsOf = box.children.map((c) => (c.classList.contains("wt-link") ? "wt-link" : c.classList.contains("wt-file") ? "wt-file" : c.className.split(" ")[0]));
+  assert.deepEqual(kindsOf, ["confirm-title", "confirm-detail", "wt-file", "wt-link", "ut-detail", "ut-reply-input", "confirm-actions"]);
+  const chip = box.querySelector(".wt-link")!;
+  assert.equal(chip.getAttribute("href"), LINK);
+  assert.equal(chip.title, LINK);
+  assert.equal(chip.textContent, "example-org/notes-api#398", "the same label as the row's; the modal shows it whole");
+  modal!.remove();
+});
+
+test("source pins: the link rides the frame's rows and the Reply button, the chip is url-links.ts's anchor in the pane's dress, and the pane installs the URL opener", () => {
+  assert.match(WAITING, /import \{ linkifyUrls, urlChip, installUrlLinkOpener \} from "\.\/url-links";/);
+  assert.match(WAITING, /installUrlLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);/);
+  assert.match(WAITING, /function linkChip\(link: string\): HTMLElement \{\n\s*return urlChip\(link, "wt-link"\);\n\}/);
+  assert.match(WAITING, /if \(w\.todo\.link\) line\.appendChild\(linkChip\(w\.todo\.link\)\);/);
+  assert.ok(WAITING.indexOf("line.appendChild(fileChip(w.todo.file, w.sid))") < WAITING.indexOf("line.appendChild(linkChip(w.todo.link))"), "the file chip first, then the link chip");
+  assert.match(WAITING, /\(reply as any\)\._utlink = w\.todo\.link \|\| "";/);
+  assert.match(WAITING, /showReply\(sid, tid, \(\(x as any\)\._uttext as string\) \|\| "", \(\(x as any\)\._utdetail as string\) \|\| "", \(\(x as any\)\._utfile as string\) \|\| "", \(\(x as any\)\._utlink as string\) \|\| ""\);/);
+  assert.match(WAITING, /const lchip = todoLink \? linkChip\(todoLink\) : null;/);
+  assert.match(WAITING, /link: typeof t\.link === "string" && t\.link \? t\.link : undefined/, "the frame's field rides through as given, or not at all");
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "waiting-pane.css"), "utf8");
+  assert.ok(CSS.includes(".wt-link,.wt-file{"), "the link chip shares the file chip's rule");
+  assert.ok(CSS.includes("a.wt-link{color:var(--accent,#9cd2ff);text-decoration:none}"), "and wears the accent as an anchor on every page");
+  assert.ok(CSS.includes("#ut-reply-prompt .wt-link,#ut-reply-prompt .wt-file{"), "and its place in the modal");
 });

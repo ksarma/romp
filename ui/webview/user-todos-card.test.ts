@@ -18,7 +18,7 @@ test("the todo ChatEvent and the session payload both carry the user todos", () 
   assert.match(RENDER, /kind: "todo"; tasks: TodoTask\[\]; userTodos\?: UserTodo\[\]; error\?: string/);
   // `file` joined 2026-09-07 (the todo-file follow-on): the absolute path the kernel filed the todo
   // against, optional like detail — render-todo-file-chip.test.ts pins what the row does with it
-  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number; file\?: string \}/);
+  assert.match(RENDER, /interface UserTodo \{ id: string; text: string; detail\?: string; createdT\?: number; file\?: string; link\?: string \}/);   // link: the address the todo carries (2026-09-08)
   assert.match(RENDER, /userTodos\?: UserTodo\[\];/);
 });
 
@@ -132,7 +132,7 @@ test("reply opens a modal (outside the rebuilt transcript) and posts one answer+
   // user-todo-detail-hint.test.ts pins what the modal does with it; todoFile — the file the todo
   // names, shown as a chip on the quoted line — joined 2026-09-07; render-todo-file-chip.test.ts
   // pins the chip)
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\)/);
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = "", todoLink = ""\)/);
   assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "userTodoAnswer", id: sid, todoId, text \}\)/);
 });
 
