@@ -20,8 +20,10 @@ Two changes at the kernel's door, both pinned here through the real WS dispatche
 The whole-blob `setTimelineViews` stays for lens and order edits, with the guard unchanged (its
 stderr and sync-notice paths still fire) plus the ack. Frames pushed to other clients are unchanged.
 Synthetic sids only."""
+import abc
 import contextlib
 import errno
+import functools
 import inspect
 import io
 import json
@@ -45,8 +47,9 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # OwnStateRoot's roster walk enforces that by running the setUp of every unittest.TestCase subclass in the
 # module's namespace (what pytest collects from it, defined here or imported), not by reading two of them.
 # Convention: a test in this module is a method on a _Wire subclass, or on a TestCase whose setUp calls
-# _own_state itself. A pytest-style test (a Test* class that is no TestCase, a module-level test function)
-# would run with no state root at all, so the walk refuses the module when one appears.
+# _own_state itself. Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level
+# test* callable) is refused by the walk whether or not pytest would run it: a test of that shape would run
+# with no state root at all, and a helper of that shape is misnamed.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -220,6 +223,82 @@ class OwnStateRoot(_Wire):
         km._VIEWS_RESTAMP_ERR[0] = snapshot["_VIEWS_RESTAMP_ERR[0]"]
         km._sync_notice = snapshot["_sync_notice"]
 
+    # Everything else bound in the module is judged by NAME, and deliberately STRICTER than pytest's collection
+    # (_pytest/python.py with its default python_classes and python_functions; the repo sets neither): refused
+    # is anything pytest-shaped, a class named Test* that is no TestCase or a module-level callable named test*,
+    # or either opting in with __test__ = True, minus abstract classes and anything opting out with
+    # __test__ = False. That is a superset of what pytest collects: it also refuses a Test* class that defines
+    # or inherits __init__ or __new__ (pytest warns and skips it), a test*-named callable that is not a function
+    # (pytest warns and skips it too), and a Test* class with no test-prefixed method (pytest yields nothing
+    # from it). Refusing the superset means a helper never has to be argued about: a pytest-shaped name here is
+    # either a test with no state root or a misnamed helper, and either is fixed at its name. A helper class
+    # with a test-named method is not pytest-shaped, so it is not refused. Kept as a function of the namespace so
+    # the rule is pinned on a namespace built in a test (the walk itself refuses one bound at module level).
+    @staticmethod
+    def _pytest_shaped(namespace):
+        def shaped(name, obj, prefix):
+            return ((name.startswith(prefix) or getattr(obj, "__test__", False) is True)
+                    and bool(getattr(obj, "__test__", True)))
+        return sorted(
+            name for name, obj in namespace.items()
+            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase) and not inspect.isabstract(obj)
+                and shaped(name, obj, "Test"))
+            or (not inspect.isclass(obj) and callable(obj) and shaped(name, obj, "test")))
+
+    def test_the_guard_refuses_by_name_and_is_stricter_than_pytests_collection(self):
+        """The rule the walk applies, on a namespace built here. Refused: what pytest collects (a Test* class
+        with a test method, a test* function, a class opting in with __test__ = True, and a test*-named
+        functools.partial, which pytest unwraps and runs) and the three shapes pytest warns about or collects
+        nothing from (a Test* class with an __init__ or __new__, own or inherited; a test*-named callable that
+        is not a function; a Test* class with no test-prefixed method). Not refused: a TestCase (the roster
+        covers it), a helper class with a test-named method, a mixin, a name opting out with __test__ = False,
+        an abstract Test* class and a non-callable test* binding."""
+        class TestBare:
+            def test_x(self): pass
+        def test_bare_fn(): pass
+        class Plain:
+            __test__ = True
+            def test_x(self): pass
+        class TestWithInit:
+            def __init__(self): pass
+            def test_x(self): pass
+        class TestWithNew:
+            def __new__(cls): return object.__new__(cls)
+            def test_x(self): pass
+        class _HasInit:
+            def __init__(self): pass
+        class TestInheritedInit(_HasInit):
+            def test_x(self): pass
+        class _Callable:
+            def __call__(self): pass
+        class TestNoMethods:
+            def check(self): pass
+        class TestCased(_Wire):
+            def test_x(self): pass
+        class HelperThing:
+            def test_x(self): pass
+        class SharedChecks:
+            def test_shared(self): pass
+        class TestOff:
+            __test__ = False
+            def test_x(self): pass
+        def test_off_fn(): pass
+        test_off_fn.__test__ = False
+        class TestAbstract(abc.ABC):
+            @abc.abstractmethod
+            def test_x(self): pass
+        namespace = {
+            "TestBare": TestBare, "test_bare_fn": test_bare_fn, "Plain": Plain,
+            "test_partial_fn": functools.partial(test_bare_fn),
+            "TestWithInit": TestWithInit, "TestWithNew": TestWithNew, "TestInheritedInit": TestInheritedInit,
+            "test_callable_obj": _Callable(), "TestNoMethods": TestNoMethods,
+            "TestCased": TestCased, "HelperThing": HelperThing, "SharedChecks": SharedChecks,
+            "TestOff": TestOff, "test_off_fn": test_off_fn, "TestAbstract": TestAbstract, "test_data": 3,
+        }
+        self.assertEqual(self._pytest_shaped(namespace),
+                         ["Plain", "TestBare", "TestInheritedInit", "TestNoMethods", "TestWithInit", "TestWithNew",
+                          "test_bare_fn", "test_callable_obj", "test_partial_fn"])
+
     def test_every_class_in_the_module_binds_its_own_root(self):
         """Executed, not read from source: every unittest.TestCase subclass in this module's namespace (what
         pytest collects from it, defined here or imported) gets an instance built on one of its test names,
@@ -228,10 +307,11 @@ class OwnStateRoot(_Wire):
         the root, and leave the kernel globals a setUp assigns as the walk found them. A class whose setUp
         stopped calling _own_state writes under the shared root again, the shape this module failed in
         after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk.
-        A pytest-style test (a Test* class that is no TestCase, a module-level test function; pytest's own
-        collection rule, so a helper class with a test-named method is not one, and a name pytest skips over
-        __test__ = False is not one either) would run with no state root at all: the walk refuses the module
-        when one appears, naming it."""
+        Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level test* callable,
+        or either opting in with __test__ = True; not a helper class with a test-named method, and not a name
+        opting out with __test__ = False) is refused, naming it. That guard is deliberately stricter than
+        pytest's collection: it refuses the shapes pytest would warn about or collect nothing from too, so a
+        helper never has to be argued about (_pytest_shaped above)."""
         module = sys.modules[__name__]
         namespace = vars(module)
         # pytest collects every TestCase subclass bound in the module, imported names included, and skips
@@ -242,21 +322,11 @@ class OwnStateRoot(_Wire):
                   if issubclass(cls, unittest.TestCase) and cls is not unittest.TestCase
                   and not inspect.isabstract(cls) and getattr(cls, "__test__", True)]
 
-        # pytest's rule for everything else bound in the module (_pytest/python.py with its default
-        # python_classes and python_functions; the repo sets neither): a class named Test* or a module-level
-        # callable named test*, or either opting in with __test__ = True, minus abstract classes and anything
-        # opting out with __test__ = False. A helper class with a test-named method is not collected, so it is
-        # not refused.
-        def collected(name, obj, prefix):
-            return ((name.startswith(prefix) or getattr(obj, "__test__", False) is True)
-                    and bool(getattr(obj, "__test__", True)))
-        pytest_style = sorted(
-            name for name, obj in namespace.items()
-            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase) and not inspect.isabstract(obj)
-                and collected(name, obj, "Test"))
-            or (not inspect.isclass(obj) and callable(obj) and collected(name, obj, "test")))
-        self.assertFalse(pytest_style, "pytest-style tests run with no state root; make them _Wire subclasses: %s"
-                         % pytest_style)
+        pytest_shaped = self._pytest_shaped(namespace)
+        self.assertFalse(pytest_shaped, "pytest-shaped by name (a Test* class that is no TestCase, or a test* "
+                         "callable): a test of that shape runs here with no state root, and a helper of that "
+                         "shape is misnamed; rename it so it is not pytest-shaped, or make it a _Wire subclass: "
+                         "%s" % pytest_shaped)
         stale = (self.EXEMPT | self.BASES) - set(roster)
         self.assertFalse(stale, "EXEMPT and BASES name TestCases in this module's namespace; not here (moved out of "
                          "the module, or no longer a TestCase): %s" % sorted(c.__name__ for c in stale))
