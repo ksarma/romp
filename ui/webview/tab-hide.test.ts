@@ -389,10 +389,11 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
   // THE MENU DOOR (the user 2026-09-09): the tab's right-click menu hides too; the paragraph says where the row is and is not
-  assert.match(flat, /You can also hide a session from its tab: right-click the tab and pick \*\*Hide tab\*\*\. The line under the label names the group the session hides in and where to show it again: the group's view, where its row has the \*\*Show\*\* button\. Which click opens that view depends on the fold: an open group's count opens the view and leaves the group open; a folded group's header opens the group and the view together\. While the \*\*Tags\*\* flyout is open, the row follows the copy you right-clicked\. Moving it to another group changes the group the line names\. Removing that group's tag takes the row away, unless the session is left under exactly one other tag, whose group the line then names: under two or more, the menu cannot tell which copy you mean\. While the row is away, adding a tag brings it back for that group, unless the copy's tag is still being created: an add then keeps the copy under the pending tag, and the row stays away until that tag exists\. A removal that leaves one tag brings it back for that one\. Removing one of the session's other tags leaves the line alone\./, "round 1: the sub-line no longer promises a +1 (wrong with another member hidden) or an open group (a copy shown through a fold hides at once); round 2: the way back names the view and the guide gives the click per fold state (a folded header's click opens the group AND shows the view, so 'open the group and click its count' closed the view on its second step), and the line follows the copy through the flyout; round 3: the sentence states the rule the code runs (round 2's said the row went once the session was in no group, which the copy-scoped code never did), the one-holder return and the add included; round 4: an add under a tag still being created keeps the pending claim, so the row stays away until the tag exists (R5b executes it)");
+  assert.match(flat, /You can also hide a session from its tab: right-click the tab and pick \*\*Hide tab\*\*\. The line under the label names the group the session hides in and where to show it again: the group's view, where its row has the \*\*Show\*\* button\. Which click opens that view depends on the fold: an open group's count opens the view and leaves the group open; a folded group's header opens the group and the view together\. While the menu is open, the row follows the copy you right-clicked, through your edits in the \*\*Tags\*\* flyout and through changes that arrive from elsewhere \(another pane, another dashboard\); a tag renamed meanwhile keeps the row, under its new name\. Moving it to another group changes the group the line names\. Removing that group's tag takes the row away, unless the session is left under exactly one other tag, whose group the line then names: under two or more, the menu cannot tell which copy you mean\. While the row is away, adding a tag brings it back for that group, unless the copy's tag is still being created: an add then keeps the copy under the pending tag, and the row stays away until that tag exists\. A removal that leaves one tag brings it back for that one\. Removing one of the session's other tags leaves the line alone\./, "round 1: the sub-line no longer promises a +1 (wrong with another member hidden) or an open group (a copy shown through a fold hides at once); round 2: the way back names the view and the guide gives the click per fold state (a folded header's click opens the group AND shows the view, so 'open the group and click its count' closed the view on its second step), and the line follows the copy through the flyout; round 3: the sentence states the rule the code runs (round 2's said the row went once the session was in no group, which the copy-scoped code never did), the one-holder return and the add included; round 4: an add under a tag still being created keeps the pending claim, so the row stays away until the tag exists (R5b executes it), and the row follows the copy through a views arrival too, a rename included (THE MENU FOLLOWS THE PUSH and A RENAME PUSHED WHILE THE MENU IS OPEN execute it), so the sentence is scoped to the open menu and not to the flyout");
+  assert.doesNotMatch(flat, /While the \*\*Tags\*\* flyout is open, the row follows/, "round 4: the flyout is no longer the only path the row follows");
   assert.doesNotMatch(flat, /once the session is in no group, the row goes away/, "round 3: the sentence the code did not implement is gone");
-  assert.match(flat, /The menu has \*\*Hide tab\*\* only while the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip, on a phone, or for the untagged sessions after the divider\. A tag that is still being created \(its row under \*\*Tags\*\* says creating\) has no \*\*Hide tab\*\* yet; the row is there the next time you open the menu, once the tag exists\. A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\./, "round 1: the whole condition (the untagged sessions and the create in flight had no row and no sentence); round 3: the row appears on the next open, not a moment later (nothing in the open menu refreshes it on the create's ack, and the menu subscribes to no views event, so the guide says what happens)");
-  assert.doesNotMatch(flat, /it comes a moment later/, "round 3: no promise the code does not keep");
+  assert.match(flat, /The menu has \*\*Hide tab\*\* only while the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip, on a phone, or for the untagged sessions after the divider\. A tag that is still being created \(its row under \*\*Tags\*\* says creating\) has no \*\*Hide tab\*\* yet; the row appears once the tag exists\. A hidden session has no tab to right-click, so this view's \*\*Show\*\* button puts it back\./, "round 1: the whole condition (the untagged sessions and the create in flight had no row and no sentence); round 3: the row appeared on the next open, since nothing in the open menu received the create's ack; round 4: the ack runs the open menu's views hook, so the row appears once the tag exists (N5 of the rename test executes it) and the next-open clause is gone");
+  assert.doesNotMatch(flat, /it comes a moment later|the next time you open the menu/, "round 3: no promise the code does not keep; round 4: no wait the code no longer imposes");
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
   assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count shows two numbers, \*\*6\+2\*\* for six on the strip and two hidden \(the tooltip spells it out\)\./, "the compact count (headWords, compactCount; the user 2026-09-08: the words were too wide a head), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
@@ -410,7 +411,8 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(ref, /which sessions are hidden inside their group \(\*\*Hide\*\*, in the section's at-a-glance view\)/, "the guide's name for the surface (round 1: \"the group view\" appeared nowhere else)");
   assert.doesNotMatch(REF, /group view/);
   assert.match(ref, /The tab's right-click menu writes the same hide entry: \*\*Hide tab\*\* on a shown copy, \*\*Show tab\*\* on a hidden one \(a hidden copy has no tab on the strip; the way back is the view's \*\*Show\*\*, and the group's count opens the view while the group is open\)\./, "the menu door (the user 2026-09-09); round 1: the way back names the click that reaches the view");
-  assert.match(ref, /The row is present only while the tabs are grouped by tag and the right-clicked copy is in a group whose tag the kernel has already created \(a tag still being created has no row until the kernel answers and the menu is next opened\); on the flat strip, on the phone layout and for the untagged sessions after the divider, where hides do not apply, the menu has no such row\./, "round 1: the whole condition the code enforces; round 3: the row waits for the next open, as the guide says");
+  assert.match(ref, /The row is present only while the tabs are grouped by tag and the right-clicked copy is in a group whose tag the kernel has already created \(a tag still being created has no row until the kernel answers\); on the flat strip, on the phone layout and for the untagged sessions after the divider, where hides do not apply, the menu has no such row\./, "round 1: the whole condition the code enforces; round 3: the row waited for the next open; round 4: the ack re-dresses the open menu, so the row is there when the kernel answers, as the guide says");
+  assert.doesNotMatch(ref, /the menu is next opened/, "round 4: no next-open wait");
   assert.match(ref, /is dropped at the next pin or hide change once the session has left the group or closed; a fold or an open carries it as it is\./, "the prune rule as it is: the pin and hide writes prune, the fold writes do not (round 1)");
   assert.match(ref, /A key in the store that this build does not know is carried through its writes unchanged\./);
   assert.match(ref, /Folding or opening a group never changes which of its sessions are hidden\. A store written before hiding existed reads as nothing hidden\./);
@@ -583,7 +585,7 @@ class FakeEl {
   icon() { return this.all().find((n) => n.has("ctx-icon")); }
 }
 type MenuHooks = { views: unknown; known: string[]; sessions: Map<string, unknown>; writes: TabGroupsState[]; dismissed: number; renders: number; flags: Array<[string, string, boolean]>; mods: Record<string, unknown>; phone?: boolean; win?: { w: number; h: number } };
-type MenuApi = { open: (id: string, copy?: string, at?: { x: number; y: number }) => FakeEl; at: () => { x: number; y: number } | null };
+type MenuApi = { open: (id: string, copy?: string, at?: { x: number; y: number }) => FakeEl; at: () => { x: number; y: number } | null; push: (views: unknown) => void };
 function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
   const a = RENDER.indexOf("function showTabMenu(e: MouseEvent, id: string, copy?: string) {");
   const end = RENDER.indexOf("seatMenu(e.clientX, e.clientY);", a);
@@ -598,13 +600,13 @@ function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
     const ctxIcon = (kind, off) => { const sp = new FakeEl("span", "ctx-icon" + (off ? " off" : "")); sp.dataset.kind = kind; return sp; };
     const sessions = H.sessions, tabMeta = new Map();
     const paletteColors = [];
-    const dismissTabMenu = () => { H.dismissed++; };
+    const dismissTabMenu = () => { H.dismissed++; tabMenuViewsHook = () => {}; };   // as render.ts's: a closed menu's views hook is cleared with it (pinned in the menu door test)
     const closeEmojiPrompt = () => {};
     const setSessionFlag = (id, k, v) => { H.flags.push([id, k, v]); };
     const setSessionColor = () => {}, startTabRename = () => {}, showMovePrompt = () => {}, showEmojiPrompt = () => {};
     const billingSubText = () => "";
     const vscodeApi = null;
-    let pendingSessionViews = null, tagsFlyNewInput = null;
+    let pendingSessionViews = null, tagsFlyNewInput = null, tabMenuViewsHook = () => {};   // the open menu's views hook (round 4): showTabMenu sets it, the arrival paths call it
     const renderTabs = () => { H.renders++; };
     // the flyout's edits post an optimistic blob the real postTagEdit holds (holdViews) and effViews reads back: held here the same way
     const postTagEdit = (nv) => { H.views = nv; }, syncNewTagInput = () => {}, createInFlight = () => false, viewsWrites = [];
@@ -622,7 +624,9 @@ function liftShowTabMenu(): (hooks: MenuHooks) => MenuApi {
     let ctxMenuEl = null, ctxMenuAt = null;
   `;
   const epilogue = `
-    return { open: (id, copy, at) => { showTabMenu({ clientX: at ? at.x : 10, clientY: at ? at.y : 10 }, id, copy); return ctxMenuEl; }, at: () => ctxMenuAt };
+    return { open: (id, copy, at) => { showTabMenu({ clientX: at ? at.x : 10, clientY: at ? at.y : 10 }, id, copy); return ctxMenuEl; }, at: () => ctxMenuAt,
+             // a views arrival as the tabOrder frame handler and onViewsAck make it: the blob held (captureViews / takeViews, which effViews reads), then the hook
+             push: (views) => { H.views = views; tabMenuViewsHook(); } };
   `;
   return new Function("HOOKS", prelude + js + epilogue) as (hooks: MenuHooks) => MenuApi;
 }
@@ -740,26 +744,43 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   const MENU = RENDER.slice(at, RENDER.indexOf("document.body.appendChild(menu);", at));
   // the home computation, hoisted: ONE bare readTabGroups().on read (tab-groups.test pins the count at two in all of render.ts), the
   // copy's section tracked (round 2: copyNow, which the move writes; round 3: "" is no copy, an add from no group claims the copy, and
-  // the resolution is the copy's own group, else the one remaining holder, else nothing), and three callers
-  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*let copyNow: string \| undefined = copy \|\| undefined;\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*let home0 = copyNow !== undefined \? held\.find\(\(g\) => g\.name === copyNow\) : undefined;\s*\n\s*if \(!home0 && held\.length === 1 && !held\[0\]\.pending\) \{ home0 = held\[0\]; copyNow = home0\.name; \}[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};/);
+  // the resolution is the copy's own group, else the one remaining holder, else nothing; round 4: the copy is a SectionRef, its tag's
+  // local id and name, matched by the id first and the name second, and every resolution latches what it found), and three callers
+  assert.match(MENU, /const unionFor = \(\) => viewTagUnion\(effViews\(\)\);\s*\n\s*const holding = \(\) => unionFor\(\)\.filter\(\(g\) => g\.members\.includes\(id\)\);\s*\n\s*const refOf = \(name: string\): SectionRef => \{ const g = unionFor\(\)\.find\(\(u\) => u\.name === name\); return g \? sectionRef\(g\) : \{ name, localId: null \}; \};[^\n]*\n\s*let copyNow: SectionRef \| undefined = copy \? refOf\(copy\) : undefined;\s*\n\s*const heldCopy = \(held: TagUnion\[\]\): TagUnion \| undefined => \{\s*\n\s*const c = copyNow;\s*\n\s*if \(!c\) return undefined;\s*\n\s*return \(c\.localId !== null \? held\.find\(\(g\) => g\.localId === c\.localId\) : undefined\) \?\? held\.find\(\(g\) => g\.name === c\.name\);\s*\n\s*\};\s*\n\s*const homeNow = \(\): TagUnion \| undefined => \{\s*\n\s*if \(!readTabGroups\(\)\.on\) return undefined;\s*\n\s*const held = holding\(\);\s*\n\s*let home0 = heldCopy\(held\);\s*\n\s*if \(!home0 && held\.length === 1 && !held\[0\]\.pending\) home0 = held\[0\];[^\n]*\n\s*if \(home0\) copyNow = sectionRef\(home0\);[^\n]*\n\s*return home0 && !home0\.pending \? home0 : undefined;\s*\n\s*\};\s*\n\s*let refreshHideRow = \(\) => \{\};[^\n]*\n\s*let refreshTags = \(\) => \{\};/,
+    "the copy as a section ref (round 4): refOf resolves a name to its union's ref, or the name alone for a tag not yet created; heldCopy matches the id first (a pushed rename keeps the copy), else the name (the ack replaces a placeholder id; a remote-only group has none); homeNow latches every resolution (the one remaining holder, the ack's id, the rename's name)");
   assert.equal(MENU.split("homeNow()").length - 1, 3, "the row's refresh, its click's (live, round 1) and the flyout's per-build read");
   assert.equal(MENU.split("readTabGroups().on").length - 1, 1, "one bare read in the menu, inside homeNow");
-  assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 8, "declared, read twice and written once by homeNow (round 4: the one remaining holder becomes the copy), written by the move, and read twice and written once by claimIfLoose (round 3): a remove leaves it, an add from no group claims it");
-  assert.match(MENU, /else postUnionEdits\(nv, a, r\);\s*\n\s*copyNow = to\.name;/, "the move writes the destination, whichever wire carried it");
+  assert.equal(MENU.replace(/\/\/[^\n]*/g, "").split("copyNow").length - 1, 5, "declared, read once by heldCopy (the one matcher, which homeNow and claimIfLoose share) and written by homeNow's latch (round 4), by the move and by claimIfLoose: a remove leaves it, an add from no group claims it");
+  assert.match(MENU, /else postUnionEdits\(nv, a, r\);\s*\n\s*copyNow = sectionRef\(to\);/, "the move writes the destination's ref, whichever wire carried it");
   // round 3: the claim, one helper, read before the edit, on the three adds a copy with no group can make (the "+ <name>" row, an
-  // existing name typed, a new tag); the "+" beside a Move to row (a copy with a group) never claims
-  assert.match(MENU, /const claimIfLoose = \(name: string\) => \{ if \(copyNow === undefined \|\| !holding\(\)\.some\(\(g\) => g\.name === copyNow\)\) copyNow = name; \};/);
+  // existing name typed, a new tag); the "+" beside a Move to row (a copy with a group) never claims; round 4: the claim is the
+  // destination's ref through refOf, so a tag not yet created is claimed by its name alone until the ack's id lands
+  assert.match(MENU, /const claimIfLoose = \(name: string\) => \{ if \(!heldCopy\(holding\(\)\)\) copyNow = refOf\(name\); \};/);
   assert.equal(MENU.split("claimIfLoose(").length - 1, 3, "three adds claim");
   assert.match(MENU, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);\s*\n\s*row\.appendChild\(bodyE\);\s*\n\s*row\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); claimIfLoose\(g\.name\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the no-group row: the add is the move");
   assert.match(MENU, /if \(existing\) \{ claimIfLoose\(existing\.name\); editUnion\(existing, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); return; \}/, "an existing name typed");
-  assert.match(MENU, /delete nv\.groups;\s*\n\s*claimIfLoose\(name\);[^\n]*\n\s*\/\/ ONE targeted create/, "a new tag: the copy goes under it (no row until the ack and the next open)");
+  assert.match(MENU, /delete nv\.groups;\s*\n\s*claimIfLoose\(name\);[^\n]*\n\s*\/\/ ONE targeted create/, "a new tag: the copy goes under it (no row until the ack, which re-dresses the menu through the views hook)");
+  // round 4: THE OPEN MENU FOLLOWS A VIEWS ARRIVAL. One module-level hook, set once the menu is on the page (after the ctxMenuEl
+  // assignment, before the seat), cleared by dismissTabMenu beside the flyout's input, called by the tabOrder frame handler after the
+  // strip is applied and by onViewsAck after the input's re-arm; it runs the Hide tab row's refresh and the Tags block's refresh (the
+  // sub-line, then the open flyout's rebuild, gated on what its rows show and carrying the typed text and the focus across)
+  assert.match(RENDER, /\nlet tabMenuViewsHook: \(\) => void = \(\) => \{\};\s*\nfunction dismissTabMenu\(\) \{\s*\n\s*ctxMenuEl\?\.remove\(\);\s*\n\s*ctxMenuEl = null;\s*\n\s*tagsFlyNewInput = null;\s*\n\s*tabMenuViewsHook = \(\) => \{\};\s*\n\}/, "declared beside the menu's node; a closed menu's hook is a no-op");
+  assert.match(RENDER, /captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, [^\n]*\);\s*\n\s*tabMenuViewsHook\(\);/, "the tabOrder frame handler calls it once the blob is held and the strip applied");
+  assert.match(RENDER, /syncNewTagInput\(\);[^\n]*\n\s*tabMenuViewsHook\(\);[^\n]*\n\s*renderTabs\(\);\s*\n\}/, "onViewsAck calls it after the input's re-arm (a create's ack gives a claimed copy its row)");
+  assert.equal(RENDER.split("tabMenuViewsHook()").length - 1, 2, "two callers, the two views-arrival paths; no timer, no other caller");
+  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = \(\) => \{ refreshHideRow\(\); refreshTags\(\); \};[^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "set once the menu is on the page, before the seat: the row's refresh and the Tags block's");
+  assert.equal(RENDER.split("tabMenuViewsHook = ").length - 1, 2, "assigned by showTabMenu and cleared by dismissTabMenu; nowhere else (the declaration reads `let tabMenuViewsHook:`)");
+  assert.match(MENU, /sb\.textContent = subText\(\);\s*\n(?:\s*\/\/[^\n]*\n)+\s*let rebuildFly = \(\) => \{\};\s*\n\s*refreshTags = \(\) => \{ sb\.textContent = subText\(\); rebuildFly\(\); \};/, "the Tags block's refresh: the sub-line re-read, then the flyout's rebuild (a no-op while it is closed)");
+  assert.match(MENU, /const flySig = \(\) => JSON\.stringify\(unionFor\(\)\.map\(\(g\) => \[g\.name, g\.localId, g\.color, !!g\.pending, g\.members\.includes\(id\)\]\)\);\s*\n\s*let builtSig = "";\s*\n\s*const build = \(\) => \{\s*\n\s*sub\.replaceChildren\(\);\s*\n\s*builtSig = flySig\(\);/, "what the rows show, stamped at every build");
+  assert.match(MENU, /reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};\s*\n(?:\s*\/\/[^\n]*\n)+\s*rebuildFly = \(\) => \{\s*\n\s*if \(!sub\.isConnected \|\| flySig\(\) === builtSig\) return;\s*\n\s*const was = tagsFlyNewInput, typed = was \? was\.value : "", focused = !!was && document\.activeElement === was;\s*\n\s*build\(\);\s*\n\s*if \(tagsFlyNewInput\) \{ tagsFlyNewInput\.value = typed; if \(focused\) tagsFlyNewInput\.focus\(\); \}\s*\n\s*\};/, "the rebuild: only while the flyout is on the menu and the blob changed what the rows show; the typed text and the focus carry across (the input is a new node each build)");
+  assert.match(RENDER, /type TabGroupsState, type SectionRef \} from "\.\/tab-groups";/, "SectionRef reaches render.ts");
   assert.match(MENU, /plus\.addEventListener\("click", \(e2\) => \{ e2\.stopPropagation\(\); editUnion\(g, \{ add: \[id\] \}\); build\(\); sb\.textContent = subText\(\); \}\);/, "the + beside a Move to row adds without a claim (the copy has a group)");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
   assert.match(MENU, /let corner: \{ x: number; y: number \} \| null = null;\s*\n\s*const seatMenu = \(x: number, y: number\) => \{\s*\n\s*const r = menu\.getBoundingClientRect\(\);\s*\n\s*const mx = Math\.max\(0, Math\.min\(x, window\.innerWidth - r\.width - 4\)\);\s*\n\s*const my = Math\.max\(0, Math\.min\(y, window\.innerHeight - r\.height - 4\)\);\s*\n\s*menu\.style\.left = mx \+ "px";\s*\n\s*menu\.style\.top = my \+ "px";\s*\n\s*ctxMenuAt = \{ x: mx, y: my \};[^\n]*\n\s*corner = ctxMenuAt;\s*\n\s*\};\s*\n\s*let reseatFly = \(\) => \{\};[^\n]*\n\s*const reseat = \(\) => \{ if \(!corner\) return; seatMenu\(corner\.x, corner\.y\); reseatFly\(\); \};/);
   assert.equal(MENU.split("seatMenu(").length - 1, 1, "inside the menu's build the seat runs from the refresh alone");
-  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "and once at the cursor when the menu is on the page");
+  assert.match(RENDER, /document\.body\.appendChild\(menu\);\s*\n\s*ctxMenuEl = menu;\s*\n\s*tabMenuViewsHook = [^\n]*\n\s*seatMenu\(e\.clientX, e\.clientY\);[^\n]*\n\}/, "and once at the cursor when the menu is on the page (round 4: the views hook is set just before it)");
   assert.match(MENU, /menu\.appendChild\(sub\);\s*\n(?:\s*\/\/[^\n]*\n)+\s*const place = \(\) => \{\s*\n\s*const ir = tagsItem\.getBoundingClientRect\(\);\s*\n\s*const sr = sub\.getBoundingClientRect\(\);\s*\n\s*if \(ir\.right \+ 2 \+ sr\.width <= window\.innerWidth - 8\) sub\.style\.left = Math\.round\(ir\.right \+ 2\) \+ "px";\s*\n\s*else sub\.style\.left = Math\.max\(8, Math\.round\(ir\.left\) - sr\.width - 2\) \+ "px";\s*\n\s*sub\.style\.top = Math\.max\(0, Math\.min\(ir\.top, window\.innerHeight - sr\.height - 4\)\) \+ "px";\s*\n\s*\};\s*\n\s*place\(\);\s*\n\s*reseatFly = \(\) => \{ if \(sub\.isConnected\) place\(\); \};/, "the flyout's placement is one closure, run at open and on every reseat while the flyout is on the menu (the side rule and the clamp as they were)");
   assert.equal(MENU.split("sub.style.top = ").length - 1, 2, "the flyouts' tops: Billing's at open, the Tags flyout's in place()");
   const hideAt = MENU.indexOf('"ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"');
@@ -779,7 +800,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.match(MENU, /\{\s*\n\s*const row = el\("div", "ctx-item ctx-item-toggle ctx-item-hide ctx-sub-capped"\);[^\n]*\n\s*let hidden = false;[^\n]*\n\s*let shown: ReturnType<typeof sectionRef> \| null = null;[^\n]*\n\s*refreshHideRow = \(\) => \{\s*\n\s*const home = phoneLayout\(\) \? undefined : homeNow\(\);\s*\n\s*if \(!home\) \{ row\.remove\(\); reseat\(\); shown = null; return; \}\s*\n\s*shown = sectionRef\(home\);\s*\n\s*hidden = isHidden\(tabGroups\(\), shown, id\);\s*\n\s*dressToggle\(row, "tab", hidden,\s*\n\s*hidden \? "Show tab" : "Hide tab",\s*\n\s*hidden \? `back on the strip in \$\{home\.name\}` : `hidden in \$\{home\.name\}; to show it, open the group's view`\);\s*\n\s*if \(!row\.parentNode\) bellItem\.after\(row\);\s*\n\s*reseat\(\);\s*\n\s*\};\s*\n\s*row\.addEventListener\("click", \(ev\) => \{\s*\n\s*ev\.stopPropagation\(\); dismissTabMenu\(\);\s*\n\s*const now = homeNow\(\);\s*\n\s*if \(!now\) return;\s*\n\s*const sec = sectionRef\(now\), st = tabGroups\(\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!shown \|\| \(sec\.localId !== shown\.localId && sec\.name !== shown\.name\)\) \{ refreshHideRow\(\); return; \}\s*\n\s*if \(isHidden\(st, sec, id\) === !hidden\) return;\s*\n\s*writeTabGroupsPruned\(setHidden\(st, sec, id, !hidden\)\);\s*\n\s*\}\);\s*\n\s*refreshHideRow\(\);\s*\n\s*\}/);
   assert.equal(MENU.split("phoneLayout()").length - 1, 1, "the gate is read once, in the refresh (the flyout's home read is untouched)");
   assert.match(MENU, /sub\.appendChild\(nrow\);\s*\n\s*refreshHideRow\(\);/, "the flyout's build ends with the refresh: every edit path there (a move, a remove, a +, a new or an existing tag) rebuilds the flyout");
-  assert.equal(MENU.split("refreshHideRow()").length - 1, 3, "called at build, at the end of the flyout's build, and by the click that found the resolution moved off the copy the row named (round 4); no timer, no other caller");
+  assert.equal(MENU.split("refreshHideRow()").length - 1, 3, "called at build, at the end of the flyout's build, and by the click that found the resolution moved off the copy the row named (round 4); the views hook that also calls it is set past the menu's build (pinned above); no timer, no other caller");
   assert.equal(MENU.split("reseat()").length - 1, 2, "the refresh's two exits seat again; no other caller, no timer");
   const bellAt = MENU.indexOf('toggle("bell"'), billingAt = MENU.indexOf("// Billing submenu"), tagsAt = MENU.indexOf('l.textContent = "Tags"');
   assert.ok(bellAt > 0 && hideAt > bellAt && billingAt > hideAt && tagsAt > billingAt, "after the bell, before Billing and Tags");
@@ -794,6 +815,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   const homeComment = MENU.slice(MENU.indexOf("// THE RIGHT-CLICKED COPY'S HOME SECTION, TRACKED."), MENU.indexOf("const unionFor = "));
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /The resolution \(round 3\): the named copy's own group while it still holds the session; else the session's ONE remaining holder, the unambiguous case \(an x on the copy's tag on a two-tag session leaves one copy; a caller naming no copy on a one-tag session has one\), and that holder BECOMES the copy \(round 4: copyNow is latched to it at the resolution, so claimIfLoose, the "\+" beside a Move to row and a name typed all speak for the same copy, and an add from there is an add that keeps the row;[^)]*\); else nothing, so with two or more other holders there is no copy to hide, move or pin/, "the resolution is stated where the computation is (round 3: the one-holder return, the ambiguous case; round 4: the holder becomes the copy)");
   assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /a tab in the untagged trail carries "" there, which names no group, so it reads as no copy/, "the trail caller is described as it is (round 3: the comment had said the flat strip names none)");
+  assert.match(homeComment.replace(/\s*\n\s*\/\/\s?/g, " "), /THE COPY IS A SECTION REF \(round 4\): copyNow holds the copy's tag as a pin addresses its section \(tab-groups\.ts SectionRef: the local tag's id when the frame carries one, and its name\), and a held union is the copy's by the id first, else by the name\..*a union only remote hosts' tags make has no local id \(so a rename of a remote-only group loses the copy, the one limit\)\. Not either alone: a rename beside a new tag under the old name would match two unions\. Every resolution latches what it found, so the id follows the ack and the name follows the rename\./, "round 4: the tracking is stated where it is computed, its limit included");
   assert.ok(!homeComment.includes("\u2014"));
   // the glyph: a new ctxIcon kind, a tab on the strip's baseline, slashed by the helper's own `off` when hidden
   assert.match(RENDER, /function ctxIcon\(kind: "feed" \| "mail" \| "bell" \| "bill" \| "folder" \| "tag" \| "pencil" \| "smile" \| "tab", off: boolean\): HTMLElement \{/);
@@ -1134,8 +1156,8 @@ test("executed: THE COPY'S TAG REMOVED inside the menu (menu review rounds 2 and
     fly.children.find((it) => it.label() === "Move to archived")!.all().find((n) => n.has("ctx-tag-plus"))!.click();
     assert.deepEqual(viewTagUnion(hooks.views as typeof V).filter((g) => g.members.includes("loose")).map((g) => g.name), ["infra", "archived"]);
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "a second tag added: the copy stayed in infra");
-    // R5b: a NEW tag typed for the trail's copy claims it too: the copy is under the pending tag (no row until the ack and the next
-    // open, as the guide says), and a "+ archived" after it adds without moving the claim, so the row stays away
+    // R5b: a NEW tag typed for the trail's copy claims it too: the copy is under the pending tag (no row until the ack, which re-dresses
+    // the menu: N5 of the rename test), and a "+ archived" after it adds without moving the claim, so the row stays away
     hooks.views = V;
     menu = api.open("loose", "");
     fly = flyOf(menu);
@@ -1203,6 +1225,171 @@ test("executed: THE COPY'S TAG REMOVED inside the menu (menu review rounds 2 and
     assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "(5) no copy named, one holder, then the + beside Move to archived: the holder became the copy, the add is an add, the row stays");
     assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while infra is folded");
     assert.equal(hooks.writes.length, 0, "no hide written by (2) to (5)");
+  });
+});
+
+test("executed: THE MENU FOLLOWS THE PUSH (menu review round 4). A views arrival while the menu is open re-dresses it in the same event: the copy's tag pushed off a two-tag session leaves the row naming the one holder left, the Tags row's sub-line and the flyout's rows follow, nothing is written, and the click then hides the copy the row names and no other; pushed out of every group, the row leaves and the click writes nothing; a frame that changed nothing the flyout shows leaves its rows and the typed text alone, and one that did carries the text across the rebuild", () => {
+  // before: refreshHideRow ran at build and from the flyout's own edits only; the tabOrder frame handler and onViewsAck reached
+  // neither, so a push that took infra off api (under infra and archived) left the row reading infra while the click's resolution
+  // had moved to archived (0d39f5a8's guard then wrote nothing: C4 in THE CLICK IS LIVE, which still executes the arrival without
+  // the hook). Now the arrival runs tabMenuViewsHook: the row's refresh, the Tags row's sub-line, and the flyout's rows when the
+  // frame changed what they show
+  const hooks = menuHooks();
+  const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
+  const tagsSub = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-tags"))!.sub();
+  const joinRows = (fly: FakeEl) => fly.children.filter((it) => it.label()?.startsWith("+ ") || it.label()?.startsWith("Move to ")).map((it) => it.label());
+  const pinRow = (fly: FakeEl) => fly.children.find((it) => it.has("ctx-item-pin"));
+  const inputOf = (fly: FakeEl) => fly.all().find((n) => n.has("ctx-tag-input"))!;
+  const sameNodes = (a: FakeEl[], b: FakeEl[]) => a.length === b.length && a.every((n, i) => n === b[i]);
+  withStore(() => {
+    const api = liftShowTabMenu()(hooks);
+    // P1: api under infra and archived, the menu on the infra copy, the flyout open; the push takes infra off api
+    hooks.views = V_API_BOTH;
+    let menu = api.open("api", "infra");
+    let fly = flyOf(menu);
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"));
+    assert.equal(tagsSub(menu), "infra · archived");
+    api.push({ ...V_API_BOTH, tags: [{ ...V_API_BOTH.tags[0], members: ["web", "tests"] }, V_API_BOTH.tags[1]], seq: 5 });
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("archived"), "the push re-dressed the row for the one holder left (before: it read infra until a flyout edit or the click)");
+    assert.equal(tagsSub(menu), "archived", "the Tags row's sub-line follows");
+    assert.deepEqual(joinRows(fly), ["Move to infra"], "the flyout's rows follow: infra is a move again");
+    assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while archived is folded", "and the pin row speaks for the copy the menu now speaks for");
+    assert.equal(hooks.writes.length, 0, "the push wrote nothing");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "archived", id: "g2" }]], "the click hides the copy the row names, and no other");
+    writeTabGroups(d);
+    // P2: web under infra alone, the flyout open; the push takes web out of every group: the row leaves, the Tags row says none, the
+    // flyout offers + rows and no pin row; a click on the row that left writes nothing
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const row = rowOf(menu)!;
+    api.push({ ...V, tags: [{ ...V.tags[0], members: ["api", "tests"] }, V.tags[1]], seq: 4 });
+    assert.equal(rowOf(menu), undefined, "no group left: the row left the menu");
+    assert.ok(tagsSub(menu)!.startsWith("none yet"), "the Tags row says so");
+    assert.deepEqual(joinRows(fly), ["+ infra", "+ archived"]);
+    assert.equal(pinRow(fly), undefined);
+    row.click();
+    assert.equal(hooks.writes.length, 0, "nothing to hide, nothing written");
+    // P3: a frame that changed nothing the flyout shows (another session left archived; the seq bumped): the rows are the same nodes
+    // and the text typed into New tag… stands (the ack path's rule: never a rebuild that throws typed text away)
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    fly = flyOf(menu);
+    const rowsBefore = fly.children.slice();
+    inputOf(fly).value = "qa-";
+    api.push({ ...V, tags: [V.tags[0], { ...V.tags[1], members: ["old1"] }], seq: 4 });
+    assert.ok(sameNodes(fly.children, rowsBefore), "not rebuilt: the same row nodes");
+    assert.equal(inputOf(fly).value, "qa-", "the typed text stands");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"), "the row re-read and unchanged");
+    // P4: a frame that changed what the flyout shows (a third tag appeared) while text is typed: rebuilt, the text carried across
+    api.push({ ...V, tags: [...V.tags, { id: "g6", name: "draft", color: "#f0f", members: [] as string[] }], seq: 5 });
+    assert.ok(!sameNodes(fly.children, rowsBefore), "rebuilt");
+    assert.deepEqual(joinRows(fly), ["Move to archived", "Move to draft"], "the new tag's row is there");
+    assert.equal(inputOf(fly).value, "qa-", "the typed text carried across the rebuild");
+    assert.equal(hooks.writes.length, 0);
+    // P5: after the menu is dismissed, a push touches nothing: the hook is cleared with the menu (the real dismissTabMenu is pinned to
+    // clear it; the stub here mirrors that line)
+    const d0 = hooks.dismissed;
+    rowOf(menu)!.click();
+    assert.equal(hooks.dismissed, d0 + 1);
+    const wordsAfterClick = rowOf(menu)!.sub();
+    api.push({ ...V, tags: [{ ...V.tags[0], members: ["api", "tests"] }, V.tags[1]], seq: 6 });
+    assert.equal(rowOf(menu)!.sub(), wordsAfterClick, "a closed menu is not re-dressed");
+  });
+});
+
+test("executed: A RENAME PUSHED WHILE THE MENU IS OPEN (menu review round 4). The copy is tracked as a section ref (its tag's local id and name), so a rename of its tag pushed while the menu is open keeps the row on the same copy: the row names the new name, the Hide click writes for that tag under it, and the flyout keeps its Move to and Show when folded rows; the same on a one-tag session, by the id alone when the row was not re-dressed, and with a new tag under the old name beside the rename; the other tag renamed leaves the row; a tag claimed at its create resolves through the ack that replaces its placeholder id; a remote-only group's rename loses the copy (name-matched: the one limit)", () => {
+  // before: copyNow was the tag's NAME, so a pushed rename (same id, new name) on a session under two tags made homeNow find no held
+  // union of that name, and the fallback did not apply (two holders): the click dismissed and wrote nothing, and the flyout's next
+  // build had no Move to and no Show when folded rows. On a one-tag session the fallback hid the defect
+  const hooks = menuHooks();
+  const rowOf = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-hide"));
+  const tagsSub = (menu: FakeEl) => menu.children.find((it) => it.has("ctx-item-tags"))!.sub();
+  const joinRows = (fly: FakeEl) => fly.children.filter((it) => it.label()?.startsWith("+ ") || it.label()?.startsWith("Move to ")).map((it) => it.label());
+  const pinRow = (fly: FakeEl) => fly.children.find((it) => it.has("ctx-item-pin"));
+  const typeName = (fly: FakeEl, name: string) => { const inp = fly.all().find((n) => n.has("ctx-tag-input"))!; inp.value = name; for (const fn of inp.listeners.keydown || []) fn({ key: "Enter" }); };
+  const renamed = (views: typeof V, i: number, name: string, seq: number) => ({ ...views, tags: views.tags.map((t, k) => (k === i ? { ...t, name } : t)), seq });
+  /** api under infra and archived, and an empty qa to move to */
+  const V_API_BOTH_QA = { ...V_API_BOTH, tags: [...V_API_BOTH.tags, { id: "g5", name: "qa", color: "#7aa2f7", members: [] as string[] }], seq: 6 };
+  withStore(() => {
+    const api = liftShowTabMenu()(hooks);
+    // N1: the menu on api's infra copy, the flyout open; the push renames infra to platform (g1 keeps its id)
+    hooks.views = V_API_BOTH_QA;
+    let menu = api.open("api", "infra");
+    let fly = flyOf(menu);
+    assert.deepEqual(joinRows(fly), ["Move to qa"]);
+    api.push(renamed(V_API_BOTH_QA, 0, "platform", 7));
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("platform"), "the row follows the rename (before: the copy was lost, the row stale)");
+    assert.equal(tagsSub(menu), "platform · archived");
+    assert.deepEqual(joinRows(fly), ["Move to qa"], "the flyout keeps its Move to rows (before: '+ qa', no copy to move)");
+    assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while platform is folded", "and its Show when folded row, under the new name");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "platform", id: "g1" }]], "the click hides the same copy under its new name (before: dismissed, nothing written)");
+    writeTabGroups(d);
+    // N1b: the same rename arriving WITHOUT the hook (the blob set directly, the row not re-dressed, as C4 does): the click still writes
+    // for the same tag, by its id (the write guard matches the id where the name changed)
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    hooks.views = renamed(V_API_BOTH_QA, 0, "platform", 8);
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "platform", id: "g1" }]], "the same tag, by its id");
+    writeTabGroups(d);
+    // N2: the one-tag control: web under infra alone, the rename pushed
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("web", "infra");
+    api.push(renamed(V, 0, "platform", 4));
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("platform"));
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "web", name: "platform", id: "g1" }]]);
+    writeTabGroups(d);
+    // N3: the rename beside a NEW tag under the old name, holding the session too: the copy is the renamed tag, by its id, never the new
+    // infra (a name-first or either-or match would take the new tag)
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    const V_N3 = renamed(V_API_BOTH_QA, 0, "platform", 9);
+    api.push({ ...V_N3, tags: [...V_N3.tags, { id: "g9", name: "infra", color: "#abcabc", members: ["api"] }] });
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("platform"), "the id decides where the name would match the new tag");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "platform", id: "g1" }]]);
+    writeTabGroups(d);
+    // N4: the OTHER tag renamed leaves the row as it was
+    hooks.views = V_API_BOTH_QA; hooks.writes = [];
+    menu = api.open("api", "infra");
+    api.push(renamed(V_API_BOTH_QA, 1, "old", 10));
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("infra"));
+    assert.equal(tagsSub(menu), "infra · old");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "api", name: "infra", id: "g1" }]]);
+    writeTabGroups(d);
+    // N5: a tag claimed at its create. The trail's copy types a new tag: the claim carries the name alone, the optimistic union wears the
+    // placeholder id, no row while pending; the ack's blob carries the tag's real id and the hook gives the row (round 3's docs had said
+    // the next open), and the click writes that id
+    hooks.views = V; hooks.writes = [];
+    menu = api.open("loose", "");
+    fly = flyOf(menu);
+    typeName(fly, "qa");
+    assert.equal(rowOf(menu), undefined, "pending: no row");
+    const pendingId = viewTagUnion(hooks.views as typeof V).find((g) => g.name === "qa")!.localId!;
+    assert.match(pendingId, /^pending-/);
+    const held = hooks.views as typeof V;
+    api.push({ ...held, tags: held.tags.map((t) => (t.id === pendingId ? { ...t, id: "g7" } : t)), seq: 5 });
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("qa"), "the ack gave the claimed copy its row");
+    assert.equal(menu.children.indexOf(rowOf(menu)!), menu.children.findIndex((it) => it.label() === "Notify me") + 1, "directly after Notify me");
+    assert.deepEqual(joinRows(fly), ["Move to infra", "Move to archived"]);
+    assert.equal(pinRow(fly)?.sub(), "keep this tab on the strip while qa is folded");
+    rowOf(menu)!.click();
+    assert.deepEqual(hooks.writes.map((w) => w.hidden), [[{ sid: "loose", name: "qa", id: "g7" }]], "the id followed the ack");
+    writeTabGroups(d);
+    // N6: a REMOTE-ONLY group has no local id (a remote tag's id is never stored), so its copy is name-matched, and a rename pushed for
+    // it on a two-holder session loses the copy: the row leaves, nothing written. The limit the homeNow comment names
+    const V_REMOTE = { ...V, remoteTags: [{ id: "TESTHOST:r1", host: "TESTHOST", name: "ops", color: "#123456", members: ["web"] }], seq: 4 };
+    hooks.views = V_REMOTE; hooks.writes = [];
+    menu = api.open("web", "ops");
+    assert.equal(rowOf(menu)?.sub(), HIDE_SUB("ops"), "a remote-only group's copy has its row, by name");
+    api.push({ ...V_REMOTE, remoteTags: [{ ...V_REMOTE.remoteTags[0], name: "ops2" }], seq: 5 });
+    assert.equal(rowOf(menu), undefined, "renamed remotely: no id to follow, two holders left, no row");
+    assert.equal(hooks.writes.length, 0);
   });
 });
 

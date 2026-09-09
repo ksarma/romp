@@ -38,7 +38,7 @@ import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
-         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
+         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
 import { tabStateClass, tabDotClass, tabDotTitle, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
@@ -875,11 +875,15 @@ function onViewsAck(m: ViewsAck) {
   if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
   if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
   syncNewTagInput();                       // a create's ack re-arms the flyout's New tag… input in place
+  tabMenuViewsHook();                      // and the open tab menu re-dresses for the ack's blob (a create's ack gives a claimed copy its row)
   renderTabs();
 }
 // The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
 // (the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
 // place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
+// (The open menu's views hook, tabMenuViewsHook, rebuilds the flyout only when an arrival changed
+// what its rows show, and carries the typed text and the focus across that rebuild: round 4 of the
+// tab menu review.)
 let tagsFlyNewInput: HTMLInputElement | null = null;
 function syncNewTagInput() {
   if (!tagsFlyNewInput) return;
@@ -6342,10 +6346,17 @@ function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): 
 // outside click, Escape, scroll, or losing window focus.
 let ctxMenuEl: HTMLElement | null = null;
 let ctxMenuAt: { x: number; y: number } | null = null;   // the tab menu's last (clamped) corner: where its emoji picker opens
+// THE OPEN MENU FOLLOWS A VIEWS ARRIVAL (round 4 of the tab menu review): a tabOrder frame or an ack that lands while the tab
+// menu is open runs this, and the menu re-dresses for the blob it carried (the Hide tab row's refresh, the Tags row's sub-line,
+// and the Tags flyout's rows when the frame changed what they show), the same path the flyout's own edits take. showTabMenu
+// sets it once its menu is on the page; dismissTabMenu clears it, so it is a no-op while no menu is open. Before it, a push
+// that took the copy's tag off the session left the row naming a group the copy had left.
+let tabMenuViewsHook: () => void = () => {};
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
   tagsFlyNewInput = null;
+  tabMenuViewsHook = () => {};
 }
 
 // Right-clicking a SELECTION in the transcript pops a small menu with Reply (quote
@@ -6590,17 +6601,33 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // the drag order), and the Hide tab row leaves while the flyout's rows read "+ <name>" (add without moving) until an
   // add gives the copy a group again or the holders are down to one. None while Group tabs by tag is off or the
   // resolved tag's create is still in flight (no id to address).
+  // THE COPY IS A SECTION REF (round 4): copyNow holds the copy's tag as a pin addresses its section (tab-groups.ts SectionRef:
+  // the local tag's id when the frame carries one, and its name), and a held union is the copy's by the id first, else by the
+  // name. The id keeps the copy through a rename pushed while the menu is open (the same tag under a new name; before, the
+  // name-matched copy was lost on a session under two tags, and the click wrote nothing while the row still read the old
+  // name); the name carries it where the id cannot: a tag claimed at its create wears the placeholder id the ack replaces,
+  // and a union only remote hosts' tags make has no local id (so a rename of a remote-only group loses the copy, the one
+  // limit). Not either alone: a rename beside a new tag under the old name would match two unions. Every resolution latches
+  // what it found, so the id follows the ack and the name follows the rename.
   const unionFor = () => viewTagUnion(effViews());
   const holding = () => unionFor().filter((g) => g.members.includes(id));
-  let copyNow: string | undefined = copy || undefined;
+  const refOf = (name: string): SectionRef => { const g = unionFor().find((u) => u.name === name); return g ? sectionRef(g) : { name, localId: null }; };   // a tag not yet created: its name alone
+  let copyNow: SectionRef | undefined = copy ? refOf(copy) : undefined;
+  const heldCopy = (held: TagUnion[]): TagUnion | undefined => {
+    const c = copyNow;
+    if (!c) return undefined;
+    return (c.localId !== null ? held.find((g) => g.localId === c.localId) : undefined) ?? held.find((g) => g.name === c.name);
+  };
   const homeNow = (): TagUnion | undefined => {
     if (!readTabGroups().on) return undefined;
     const held = holding();
-    let home0 = copyNow !== undefined ? held.find((g) => g.name === copyNow) : undefined;
-    if (!home0 && held.length === 1 && !held[0].pending) { home0 = held[0]; copyNow = home0.name; }   // the one remaining holder BECOMES the copy (round 4)
+    let home0 = heldCopy(held);
+    if (!home0 && held.length === 1 && !held[0].pending) home0 = held[0];   // the one remaining holder BECOMES the copy (round 4)
+    if (home0) copyNow = sectionRef(home0);   // latched: the holder that became the copy, the ack's id for a tag claimed at its create, a pushed rename's name
     return home0 && !home0.pending ? home0 : undefined;
   };
   let refreshHideRow = () => {};   // the Hide tab row's refresh, assigned below; the Tags flyout calls it after each of its writes
+  let refreshTags = () => {};      // the Tags row's sub-line and the open flyout's rows on a views arrival, assigned in the Tags block (round 4)
   // THE MENU'S SEAT (round 3): the menu sits at the cursor, clamped inside the pane (seatMenu, called once the menu is on
   // the page), and the Tags flyout beside the Tags row (place, in openTagsFly). The Hide tab row's refresh can take a
   // row out of the menu or put one back above the Tags row, and the flyout's rows change with every write, so the
@@ -6636,12 +6663,15 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // copy, Show tab on a hidden one) and seats it after Notify me, or takes it off the menu while the copy
   // has no section; the Tags flyout calls the refresh after each of its writes (a move, a remove, an add),
   // since those leave this menu open with the copy elsewhere, so the words never name a group the copy has
-  // left (event-keyed on the write, no timer), and the refresh ends by seating the menu and the open flyout
+  // left (event-keyed on the write, no timer), and a views arrival while the menu is open runs it too (round 4:
+  // tabMenuViewsHook, set at the end of this build, so a push that takes the copy's tag off the session, renames
+  // it or answers its create re-dresses the row in the same event; before, the row kept naming a group the copy
+  // had left), and the refresh ends by seating the menu and the open flyout
   // again (reseat, above), since the row's coming or going moves what stands below it. The click resolves the
   // section once more and SETS the state the row promised, the pin row's idiom, for the copy the row NAMED
-  // and no other (round 4: a views push between the refresh and the click that takes the copy's tag off the
-  // session moves the resolution to the one other holder, and the click then re-dresses the row and writes
-  // nothing rather than hide a copy the user never touched): a copy already in that
+  // and no other (round 4: a resolution at the click that names a copy the row did not, which the hook leaves
+  // only to a change between the last arrival and the click, re-dresses the row and writes nothing rather than
+  // hide a copy the user never touched; the same tag under a new name is the same copy, by its id): a copy already in that
   // state where it now sits (another pane hid it there) is left as it is, never flipped back. No home at
   // click time (moved out of every group, or the strip flattened in another pane): the click dismisses and
   // writes nothing. No kernel round trip: nothing to acknowledge, no pending state, no timer. This reverses the earlier ruling that the pane
@@ -6669,8 +6699,9 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const now = homeNow();
       if (!now) return;
       const sec = sectionRef(now), st = tabGroups();
-      // the copy the row named, or nothing (round 4): a views push between the refresh and the click can move the resolution to
-      // the one other holder (the copy's tag removed from the session), and a hide there would be of a copy the user never touched
+      // the copy the row named, or nothing (round 4): a views arrival re-dresses the row (tabMenuViewsHook), so the resolution at the
+      // click names the row's copy unless something moved it since the last arrival; a hide of any other copy would be of one the
+      // user never touched. The same tag under a new name matches by its id
       if (!shown || (sec.localId !== shown.localId && sec.name !== shown.name)) { refreshHideRow(); return; }
       if (isHidden(st, sec, id) === !hidden) return;
       writeTabGroupsPruned(setHidden(st, sec, id, !hidden));
@@ -6745,6 +6776,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const sb = el("span", "ctx-item-sub");
     const subText = () => { const names = holding().map((g) => g.name); return names.length ? names.join(" · ") : "none yet — tag it to organize and dispatch"; };
     sb.textContent = subText();
+    // A VIEWS ARRIVAL while this menu is open (round 4; tabMenuViewsHook): the sub-line re-reads the names, and the flyout, while
+    // open, rebuilds its rows when the frame changed what they show (rebuildFly, assigned in openTagsFly; a no-op while it is closed)
+    let rebuildFly = () => {};
+    refreshTags = () => { sb.textContent = subText(); rebuildFly(); };
     bodyEl.appendChild(sb);
     tagsItem.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tagsItem.appendChild(caret);
@@ -6823,14 +6858,15 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (add && rem && a.ops.length === 1 && r.ops.length === 1)
         postUnionEdits(nv, { ops: [{ op: "move", tid_from: rem.tid, tid_to: add.tid, sid: id }], mirrored: a.mirrored || r.mirrored });
       else postUnionEdits(nv, a, r);
-      copyNow = to.name;   // the copy sits in `to` now: the Hide tab row's refresh and this flyout's next build speak for it there
+      copyNow = sectionRef(to);   // the copy sits in `to` now: the Hide tab row's refresh and this flyout's next build speak for it there
     };
     // an add from a copy with no group is the move (the "+ <name>" rows below): a copy whose own tag no longer holds
     // the session, after an x on it or the untagged trail's copy, which named none, is claimed by the tag the add puts
     // it under, so the Hide tab row and this flyout's next build speak for it there (round 3: the menu went inert for
     // the copy the add had just made); a copy whose tag still holds the session (its create in flight, or grouping off)
-    // keeps its claim, and the add is an add. Read before the edit; the "+" beside a Move to row never gets here
-    const claimIfLoose = (name: string) => { if (copyNow === undefined || !holding().some((g) => g.name === copyNow)) copyNow = name; };
+    // keeps its claim, and the add is an add. Read before the edit; the "+" beside a Move to row never gets here. The claim is the
+    // destination's section ref (refOf: a tag not yet created has its name alone until the ack's blob gives it an id)
+    const claimIfLoose = (name: string) => { if (!heldCopy(holding())) copyNow = refOf(name); };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
     // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
@@ -6849,8 +6885,14 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
+      // what these rows show, as one string (round 4): each union's name, id, colour, pending state and hold on this session. A
+      // views arrival rebuilds the flyout only when it changed (rebuildFly, below): a frame that changed nothing here leaves the
+      // rows and the text typed into New tag… alone, and one that did carries the text across the rebuild
+      const flySig = () => JSON.stringify(unionFor().map((g) => [g.name, g.localId, g.color, !!g.pending, g.members.includes(id)]));
+      let builtSig = "";
       const build = () => {
         sub.replaceChildren();
+        builtSig = flySig();   // the blob these rows are built from
         for (const g of holding()) {                             // one chip per NAME — never a host prefix
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
@@ -6958,7 +7000,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
           const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
           nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
-          claimIfLoose(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack and the next open)
+          claimIfLoose(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
           // ONE targeted create carrying the session — the tag and its first member land together
           postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
@@ -6996,6 +7038,14 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       };
       place();
       reseatFly = () => { if (sub.isConnected) place(); };
+      // the views arrival's rebuild (refreshTags runs it after the Tags row's sub-line): only while this flyout is on the menu and
+      // the blob changed what the rows show; the New tag… input is a new node each build, so its text and focus carry across
+      rebuildFly = () => {
+        if (!sub.isConnected || flySig() === builtSig) return;
+        const was = tagsFlyNewInput, typed = was ? was.value : "", focused = !!was && document.activeElement === was;
+        build();
+        if (tagsFlyNewInput) { tagsFlyNewInput.value = typed; if (focused) tagsFlyNewInput.focus(); }
+      };
       if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
       // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
       sub.addEventListener("pointerenter", cancelHoverTimers);
@@ -7048,6 +7098,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   }
   document.body.appendChild(menu);
   ctxMenuEl = menu;
+  tabMenuViewsHook = () => { refreshHideRow(); refreshTags(); };   // a views arrival while this menu is open re-dresses it (round 4); dismissTabMenu clears the hook
   seatMenu(e.clientX, e.clientY);   // at the cursor, clamped so it never overflows the pane
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires
@@ -16510,6 +16561,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     if (typeof m.selfHost === "string" && m.selfHost) adoptSelfHost(m.selfHost);   // the LOCAL kernel's own name: federation puts only its own on the merged frame
     captureViews(m.views || null);
     applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined }, m.live);
+    tabMenuViewsHook();   // the open tab menu re-dresses for the blob this frame carried (round 4 of the tab menu review)
   }
   else if (m.type === "renamed" && m.id && typeof m.name === "string") {
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
