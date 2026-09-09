@@ -6940,7 +6940,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       // focus, undo stack and IME composition with no restore code (round 4 built a new input on every build and copied the value and
       // the focus back, which put the caret at the end and collapsed a selection). The rows above it are rebuilt in front of it (add),
       // and the foot below it, Configure tags…, stays too (before, replaceChildren swept the foot on every rebuild after the first).
-      // New tag… — an inline input, never a native prompt (the menus vocabulary)
+      // New tag…, an inline input, never a native prompt (the menus vocabulary)
       const nrow = el("div", "ctx-item ctx-item-newtag");
       const inp = el("input", "ctx-tag-input") as HTMLInputElement;
       inp.placeholder = "New tag…"; inp.maxLength = 40;
@@ -6956,13 +6956,13 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
         const used = new Set(viewTags(nv).map((t) => t.color));
         const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
         // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
-        // blob (which carries it) replaces this copy — no client-minted id can collide with a
+        // blob (which carries it) replaces this copy, so no client-minted id can collide with a
         // store it has not read (the legacy path re-ids it: postTagEdit)
         const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
         nv.tags = viewTags(nv).concat([tg]);
         delete nv.groups;
         aimAdd(name);   // a copy with no group goes under the new tag: the menu speaks for it there (no row until the ack, which re-dresses the menu)
-        // ONE targeted create carrying the session — the tag and its first member land together
+        // ONE targeted create carrying the session: the tag and its first member land together
         postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
         build(); sb.textContent = subText();
       });
@@ -17940,8 +17940,8 @@ window.addEventListener("storage", (e) => {
     setActive(sid);
   } catch { /* malformed echo — the kernel frame corrects momentarily */ }
 });
-// TAB SECTIONS state (tab-groups.ts): a fold/open, a hide or show, a pin, or the "Group tabs by tag" switch — from this
-// window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip, and re-dresses the open tab menu
+// TAB SECTIONS state (tab-groups.ts): a fold/open, a hide or show, a pin, or the "Group tabs by tag" switch, from this
+// window (the CustomEvent) or a sibling pane (the storage event), re-renders the strip, and re-dresses the open tab menu
 // (viewsChanged, round 5 of the tab menu review: another pane's Hide flips the row to Show tab; grouping off takes it away).
 // The CustomEvent is dispatched inside writeTabGroups, so a write from the menu's own rows runs the hook before the row's
 // own rebuild: the Hide tab row's write comes after its dismissal (the hook is cleared), and the pin row's changes nothing
