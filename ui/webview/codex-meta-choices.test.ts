@@ -261,7 +261,7 @@ class FakeEl {
   querySelector(sel: string): FakeEl | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
-// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaAnchor`, `closeMetaMenu`,
+// The menu's world: the loader, `el`, `metaDots`, `metaButton`, `metaTip`, `metaAnchor`, `closeMetaMenu`,
 // `toggleMetaMenu` and `liveSession` lifted from render.ts, over the stand-in and stubs for what they read
 // of the rest of the module (the session map, the skeleton set, the thread helpers, the pick memory, the
 // vscode bridge, the tints). The chat's status read goes through render.ts's own `liveSession` (upstream's
@@ -291,6 +291,7 @@ function liftMenu(opts: { thread?: { th: unknown; status: any } } = {}) {
     slice("function metaDots(): HTMLElement {"),
     slice("const MODEL_CHOICES: {", "function loadModelChoices(): void {"),
     slice("function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {"),
+    slice("function metaTip(kind: MetaKind): string {"),   // the badge's plain tip, which metaButton takes from the helper syncMetaControls swaps against badgeHeldTip (2026-09-09)
     slice("let metaMenuEl: HTMLElement | null = null;", "function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null) {"),
     "return { metaButton, toggleMetaMenu, closeMetaMenu, loadModelChoices, CODEX_MODEL_CHOICES,",
     "  get menu() { return metaMenuEl; }, set active(id) { activeId = id; }, get error() { return CODEX_MODELS_ERROR; } };",

@@ -15,8 +15,11 @@ test("Status carries the server-driven modelPending flag", () => {
 });
 
 test("syncMetaControls renders dots for a pending model, driven by the server flag (+ local click heuristic)", () => {
-  // model + effort both drive dots now (effort reconnects to apply); the model clause is still present
-  assert.match(RENDER, /const pending = \(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)\s*\n\s*\|\| isMetaPending\(kind, st\);/);
+  // model + effort both drive dots now (effort reconnects to apply); the model clause is still present. The one
+  // gate in front of them: a kind whose pick is HELD for the session's live work (st.pickHeld, 2026-09-09) shows
+  // the running value with a mark and no dots (effort-switch-pending.test.ts pins that branch). A model pick
+  // is never held (it resolves live, no reconnect), so for the model badge the server flag alone decides
+  assert.match(RENDER, /const held = !!st\.pickHeld && st\.pickHeld\.surfaces\.includes\(kind\);\s*\n\s*const pending = !held && \(\(kind === "model" && !!st\.modelPending\) \|\| \(kind === "effort" && !!st\.effortPending\)\s*\n\s*\|\| isMetaPending\(kind, st\)\);/);
   assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // billing moved to the tab menu (2026-08-09)
   assert.match(RENDER, /if \(!label\.querySelector\("\.meta-dots"\)\) label\.replaceChildren\(metaDots\(\)\);/);
 });

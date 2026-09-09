@@ -1672,7 +1672,7 @@ button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1p
 /* a pick HELD for the session's live work (2026-09-09): the label is the value the session RUNS, and this
    small accent mark beside it says a change waits; neither the dim pulse nor the loader dots, which both
    claimed a change in progress. The tip names the pick and what it waits on. */
-.meta-held-mark { font-size: 0.55em; color: var(--accent); vertical-align: super; margin-left: 2px; line-height: 1; }
+.meta-held-mark { font-size: 0.66em; color: var(--accent); vertical-align: super; margin-left: 2px; line-height: 1; }
 .meta-dots { display: inline-flex; align-items: center; gap: 3px; }
 .meta-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: inline-block; animation: meta-dots 1s ease-in-out infinite; }
 .meta-dots i:nth-child(2) { animation-delay: 0.16s; }
