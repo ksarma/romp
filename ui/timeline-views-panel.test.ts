@@ -311,10 +311,12 @@ test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap 
   assert.match(SRC, /chips\.setAttribute\('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-width:0;'\);/,
     "membership chip cells ditto");
   // re-aimed 2026-09-09 (the many-tags change's review): the sessions box gives way first when height
-  // runs out (the thousandfold flex-shrink) and never below four rows; past that floor the tag table and
+  // runs out (the thousandfold flex-shrink) and never below its floor, min(live, 4) rows at the rendered
+  // row height (round 2: a fixed 96px left blank over one live session); past that floor the tag table and
   // the open matrix give way, and past THEIR floors the card scrolls rather than clip (timeline-tags-scale)
-  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;'\);/,
-    "the session rows pan within their box, which keeps at least four rows");
+  assert.match(SRC, /const gridStyle = \(floor\) => 'flex:1 1000 auto;min-height:' \+ floor \+ 'px;overflow-y:auto;';/,
+    "the session rows pan within their box, which keeps a floor under its rows");
+  assert.match(SRC, /const k = Math\.min\(liveN, 4\);/, "…four rows at most, by the live count");
 });
 
 test("federation, NAME-KEYED (user ruling 2026-08-24): one name = one row/label/union — kernels are plumbing", () => {
@@ -771,7 +773,7 @@ test("the corner grew two icon buttons and the menus split (the user 2026-08-25)
   assert.match(SRC, /item\('Configure tags…', \{ dim: true \}\)/, "one management entry");
   assert.ok(!/item\('New tag…', \{ dim: true \}\)/.test(SRC), "New tag left the menu…");
   assert.match(SRC, /text: '\+ New tag'/,
-    "…and lives in the tag TABLE's final row (the 18:17 revision — the bulk-bar copy died)");
+    "…and lives in the row under the tag table, outside its scroll (the 18:17 revision put it in the table's final row; the bulk-bar copy died)");
   assert.match(SRC, /apply\(lensToggle\(lens, \{ tag: g\.name \}\), false\)/,
     "tag rows TOGGLE and the menu stays open (repaint in place)");
   assert.match(SRC, /apply\(\{ all: true \}, true\)/, "All is a plain pick and closes");
@@ -789,8 +791,9 @@ test("dialog polish + reachable tag management (the user 2026-08-25)", () => {
   // the dialog reads at the page's 13px form scale (the menu 12px was the too-small complaint)
   assert.match(SRC, /padding:22px 26px;font-size:13px;'/,
     "the 13px form scale rides the card's own declarations (after MENU_STYLE, whose 4px padding they beat)");
-  // the session table scrolls WITHIN the modal; chrome stays put (its floor since 2026-09-09: four rows)
-  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;'\)/);
+  // the session table scrolls WITHIN the modal; chrome stays put (its floor since 2026-09-09: up to four rows, measured)
+  assert.match(SRC, /gridBox\.setAttribute\('style', gridStyle\(0\)\);/);
+  assert.match(SRC, /gridBox\.setAttribute\('style', gridStyle\(k && sessRowH \? Math\.round\(\(k \* sessRowH \+ \(k - 1\) \* 3\) \* 100\) \/ 100 : 0\)\);/);
   // [+] is a rounded RECTANGLE in its own column between name and tags
   assert.match(SRC, /padding:1px 7px;'\n\s*\+ 'border-radius:5px;/, "the standard button anatomy, not a circle");
   assert.ok(!/width:17px;height:17px;'\n?\s*\+ 'border-radius:50%/.test(SRC), "the circle plus is gone");

@@ -4329,6 +4329,16 @@ class TimelinePanel {
     };
     // the tag table of the LAST build, read for its scroll before the rebuild tears it down (in build)
     let tgridEl = null;
+    // the two floors, set by build once its rows are laid out (see each box's style), and the session row
+    // height the last build measured (kept across repaints: a query that hides every row has none to measure)
+    let tgridFloor = () => {}, gridFloor = () => {}, sessRowH = 0;
+    // a grid row's rendered height: the tallest of its cells (align-items:center seats them in one track);
+    // 0 when nothing is laid out
+    const rowHeight = (cells) => {
+      let top = Infinity, bottom = -Infinity;
+      for (const c of cells) { const r = c.getBoundingClientRect(); top = Math.min(top, r.top); bottom = Math.max(bottom, r.bottom); }
+      return cells.length && bottom > top ? bottom - top : 0;
+    };
     // a scroll under the open colour popover (the tag table's, or the card's on a short page) moves its
     // dot away: the popover closes rather than float; a scroll event that moved nothing (the repaint's
     // scroll restore) leaves it where it is (review find, 2026-09-09)
@@ -4372,7 +4382,7 @@ class TimelinePanel {
       // the actions: delete | rename | the color. The user's rationale: it reads clearly as
       // deleting/renaming THE TAG. All at the dialog's own scale (the few-sizes rule); remote-
       // homed tags still ride the v1 editTag route with its loud refusals. [+ New tag] is the
-      // table's FINAL ROW.
+      // card's row UNDER the table, outside its scroll (since 2026-09-09; it was the table's final row).
       {
         const capT = card.createDiv();
         capT.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 0;');
@@ -4387,15 +4397,29 @@ class TimelinePanel {
         // up to a share of the viewport (TAG_TABLE_CAP) and scrolls within itself past that. When height
         // runs out the sessions box gives way first (its flex-shrink is a thousandfold, so a table that
         // fits is never squeezed while the sessions have room) but never below its floor of four rows;
-        // at that floor the table and the open filter matrix give way, the table down to about three
-        // rows (a floor sized to its rows, under their measured height, so a short table never shows
-        // blank space); and when the floors together outgrow the card, the card scrolls (overflow-y:auto)
-        // instead of clipping. The padding is room inside the clip for the pills' and the dots' rings
-        // (a scroll container clips its descendants' outlines); the negative margins keep the layout put.
+        // at that floor the table and the open filter matrix give way, the table down to three rows;
+        // and when the floors together outgrow the card, the card scrolls (overflow-y:auto) instead of
+        // clipping. The padding is room inside the clip for the pills' and the dots' rings (a scroll
+        // container clips its descendants' outlines); the negative margins keep the layout put.
+        // THE FLOOR is measured, not a constant (review round 2, 2026-09-09: a 22px-a-row constant left 6px
+        // of blank under one tag and cut the third of three rows by 7px, the row height being the font's):
+        // a table of at most three rows does not shrink at all (its natural height IS its rows: no blank,
+        // no scroll), and a taller one may shrink to three rows at its first row's rendered height, set
+        // once the rows are laid out (tgridFloor, at the end of build); no rows, no box and no padding.
         const rowsN = viewTagUnion(v).length;
-        tgrid.setAttribute('style', 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
-          + 'column-gap:14px;row-gap:4px;align-items:center;padding:4px 0 4px 4px;margin:-2px 0 2px -4px;'
-          + 'flex:0 1 auto;min-height:' + (Math.min(rowsN, 3) * 22 + 8) + 'px;max-height:' + TAG_TABLE_CAP + ';overflow-y:auto;');
+        const tgridStyle = (floor) => 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
+          + 'column-gap:14px;row-gap:4px;align-items:center;'
+          + (rowsN ? 'padding:4px 0 4px 4px;margin:-2px 0 2px -4px;' : 'padding:0;margin:0;')
+          + (rowsN > 3 ? 'flex:0 1 auto;min-height:' + floor + 'px;' : 'flex:0 0 auto;')
+          + 'max-height:' + TAG_TABLE_CAP + ';overflow-y:auto;';
+        tgrid.setAttribute('style', tgridStyle(0));
+        tgridFloor = () => {
+          if (rowsN <= 3) return;
+          const cells = Array.from(tgrid.children).filter((c) => c._tname);
+          const kids = Array.from(tgrid.children);
+          const h = rowHeight(kids.slice(kids.indexOf(cells[0]), kids.indexOf(cells[1])));
+          if (h > 0) tgrid.setAttribute('style', tgridStyle(Math.round((3 * h + 2 * 4) * 100) / 100));
+        };
         tgrid.addEventListener('scroll', scrolledUnderPop, { passive: true });
         // `held`: the reason a gesture cannot be honoured here; the action renders disabled (dim, no
         // pointer, aria-disabled) wearing that reason as its tooltip, in place of a click that could
@@ -4444,16 +4468,31 @@ class TimelinePanel {
               try { pillCell.setPointerCapture(e.pointerId); } catch (e2) {}
               pillCell.style.opacity = '0.45';
               const clearCues = () => cells.forEach((c) => { c.style.borderTop = ''; c.style.borderBottom = ''; });
-              const onMove = (ev) => {
-                // only rows inside the table's visible box take the cue and the drop (review find,
-                // 2026-09-09: the table scrolls now, and a pointer past its edge ranked a row the user
-                // could not see, so the drop landed where no cue was drawn); the rects are live, so a
-                // wheel over the table mid-drag scrolls further rows into reach
+              // THE CANDIDATES are the rows whose whole box, plus the 2px the cue adds, lies inside the
+              // table's visible box (the table scrolls now; review 2026-09-09, then round 2 with real
+              // pointer events: a row whose centre was inside the box but whose bottom edge was under the
+              // clip took the cue and the drop while the cue, a border on that very edge, painted under the
+              // clip, invisible). The held row itself counts as a candidate while any of it shows, so
+              // dragging a row cut by the edge past that edge leaves it where it is rather than ranking
+              // the whole row above it and moving it AGAINST the gesture. A cue already on a cell sits
+              // inside that cell's rect, so it is measured back out and the cell is judged as the bare
+              // row; otherwise the cue could flap between two rows at the edge. The rects are live, and
+              // the ranking re-runs with the last pointer y on the table's scroll (a wheel mid-drag fires
+              // no pointermove), so the rows scrolled into view take the cue and the drop; the drop itself
+              // re-ranks when the table has scrolled since the grab, for a scroll whose event has not
+              // landed yet.
+              let lastY = e.clientY;
+              const top0 = tgrid.scrollTop;
+              const rank = (y) => {
+                if (typeof y !== 'number') return;
                 const box = tgrid.getBoundingClientRect();
-                const shown = cells.map((c, i) => { const r = c.getBoundingClientRect(); return { i, y: (r.top + r.bottom) / 2 }; })
-                  .filter((p) => p.y >= box.top && p.y <= box.bottom);
+                const shown = cells.map((c, i) => {
+                  const r = c.getBoundingClientRect();
+                  const top = r.top + (c.style.borderTop ? 2 : 0), bottom = r.bottom - (c.style.borderBottom ? 2 : 0);
+                  return { i, y: (top + bottom) / 2, whole: top >= box.top && bottom + 2 <= box.bottom, seen: bottom > box.top && top < box.bottom };
+                }).filter((p) => p.whole || (p.i === fromIdx && p.seen));
                 if (!shown.length) return;
-                const hit = shown.find((p) => ev.clientY < p.y);
+                const hit = shown.find((p) => y < p.y);
                 const idx = hit ? hit.i : shown[shown.length - 1].i;
                 if (idx !== toIdx) {
                   toIdx = idx;
@@ -4461,10 +4500,14 @@ class TimelinePanel {
                   if (toIdx !== fromIdx) cells[toIdx].style[toIdx > fromIdx ? 'borderBottom' : 'borderTop'] = '2px solid #9cd2ff';
                 }
               };
+              const onMove = (ev) => { lastY = ev.clientY; rank(lastY); };
+              const onScroll = () => rank(lastY);
               const onUp = () => {
+                if (tgrid.scrollTop !== top0) rank(lastY);
                 pillCell.removeEventListener('pointermove', onMove);
                 pillCell.removeEventListener('pointerup', onUp);
                 pillCell.removeEventListener('pointercancel', onUp);
+                tgrid.removeEventListener('scroll', onScroll);
                 pillCell.style.opacity = '';
                 clearCues();
                 if (toIdx === fromIdx) return;
@@ -4479,6 +4522,7 @@ class TimelinePanel {
               pillCell.addEventListener('pointermove', onMove);
               pillCell.addEventListener('pointerup', onUp);
               pillCell.addEventListener('pointercancel', onUp);
+              tgrid.addEventListener('scroll', onScroll, { passive: true });
             });
           }
           if (this._tagEditorFor === unionKey(tg) && editable) {
@@ -4786,8 +4830,25 @@ class TimelinePanel {
       // bulk bar stay put; only the session rows pan (the .cmt-msgs overflow idiom family)
       // it gives way FIRST when height runs out (the thousandfold flex-shrink: a tag table that fits is
       // never squeezed while the sessions have room) and never below four rows, its floor: past it the
-      // tag table and the open matrix give way, and past their floors the card scrolls (review, 2026-09-09)
-      gridBox.setAttribute('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;');
+      // tag table and the open matrix give way, and past their floors the card scrolls (review, 2026-09-09).
+      // The floor is sized under the rows there are: min(live, 4) rows at the first row's rendered height
+      // (review round 2: a fixed 96px held 74px of blank over one live session), set at the end of build
+      // (gridFloor). The LIVE count, not the search hits, so typing in the search box never resizes the
+      // box; a build whose query hides every row keeps the row height the last one measured.
+      const liveN = ((this.data && this.data.sessions) || []).filter((s) => s.live).length;
+      const gridStyle = (floor) => 'flex:1 1000 auto;min-height:' + floor + 'px;overflow-y:auto;';
+      gridBox.setAttribute('style', gridStyle(0));
+      gridFloor = () => {
+        const k = Math.min(liveN, 4);
+        const grid = gridBox.children[0];
+        const kids = grid ? Array.from(grid.children).filter((c) => !String(c.getAttribute('style') || '').startsWith('grid-column:1 / -1;')) : [];
+        const names = kids.filter((c) => c._sid);
+        if (names.length) {
+          const h = rowHeight(kids.slice(kids.indexOf(names[0]), names[1] ? kids.indexOf(names[1]) : kids.length));
+          if (h > 0) sessRowH = h;
+        }
+        gridBox.setAttribute('style', gridStyle(k && sessRowH ? Math.round((k * sessRowH + (k - 1) * 3) * 100) / 100 : 0));
+      };
       const renderRows = () => {
         gridBox.textContent = '';
         const needle = query.trim().toLowerCase();
@@ -4885,6 +4946,9 @@ class TimelinePanel {
       renderRows();
       // a repaint mid-typing keeps the search box live: re-focus with the caret at the end
       if (query) { q.focus(); try { q.setSelectionRange(q.value.length, q.value.length); } catch (e) {} }
+      // the floors, off the rendered rows now that they are laid out (the card is in a document from its
+      // first line: document.body.createDiv appends it), before the scroll restore reads the final height
+      tgridFloor(); gridFloor();
       // the tag table's scroll, restored now that the card is complete and the table has its final
       // height (written earlier it lands against a taller table and clamps low); a table that no longer
       // scrolls clamps it to 0 itself

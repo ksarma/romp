@@ -39,8 +39,16 @@ function makeNode(tag: string): any {
     removeChild(c: any) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; },
     get firstChild() { return this.children[0] || null; },
     remove() { if (n.parentNode) n.parentNode.removeChild(n); },
-    _listeners: {} as any,
-    addEventListener(t: string, fn: any) { n._listeners[t] = fn; }, removeEventListener(t: string) { delete n._listeners[t]; },
+    // `_listeners[t]` is the listener added LAST and still registered; removal is by function, so a listener
+    // hung under another for a while (the drag's scroll re-rank under the popover's scroll closer) gives the
+    // slot back to the one that stays when it comes down
+    _listeners: {} as any, _stacks: {} as any,
+    addEventListener(t: string, fn: any) { (n._stacks[t] = n._stacks[t] || []).push(fn); n._listeners[t] = fn; },
+    removeEventListener(t: string, fn?: any) {
+      const a = n._stacks[t] || []; const i = fn ? a.indexOf(fn) : a.length - 1;
+      if (i >= 0) a.splice(i, 1);
+      if (a.length) n._listeners[t] = a[a.length - 1]; else delete n._listeners[t];
+    },
     setPointerCapture() {}, releasePointerCapture() {},
     querySelector() { return null; }, querySelectorAll() { return []; },
     // geometry is a test input: a node's own `_rect`, else the module-level `g.__rectOf(node)` hook (so a
@@ -204,15 +212,17 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
   assert.equal(walk(panel._viewsDialog).filter((n) => n.textContent === "delete").length, 3);
   assert.equal(walk(panel._viewsDialog).filter((n) => n.textContent === "rename").length, 3);
   // THE HEIGHT BUDGET (review, 2026-09-09): the table caps its share and scrolls within itself, gives way
-  // only once the sessions are at their floor, and keeps a floor of its own sized UNDER its rows (three
-  // rows here: 3 x 22 + 8), with room inside the clip for the rings; the card scrolls past the floors
+  // only once the sessions are at their floor, and keeps a floor of its own (three rows here, so it does not
+  // shrink at all: its natural height is its rows), with room inside the clip for the rings; the card
+  // scrolls past the floors. The floors' arithmetic is the next test's.
   const tgrid = tgridOf(panel);
   assert.ok(tgrid, "the tag table");
   assert.ok(styleOf(tgrid).includes("padding:4px 0 4px 4px;margin:-2px 0 2px -4px;"), "room inside the scroll clip for the pills' and dots' rings, the layout unmoved");
-  assert.ok(styleOf(tgrid).includes("flex:0 1 auto;min-height:74px;max-height:30vh;overflow-y:auto;"), "capped at 30vh, scrolling within, a floor under three rows: " + styleOf(tgrid));
+  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:30vh;overflow-y:auto;"), "capped at 30vh, scrolling within, three rows never shrinking: " + styleOf(tgrid));
+  assert.ok(!styleOf(tgrid).includes("min-height"), "three rows need no floor under them: their natural height is the floor");
   assert.ok(tgrid._listeners.scroll, "the table's scroll is listened to (it closes the popover when the dot moves)");
-  const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n) === "flex:1 1000 auto;min-height:96px;overflow-y:auto;");
-  assert.ok(gridBox, "the sessions box gives way first (the thousandfold shrink) and never below four rows");
+  const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n).startsWith("flex:1 1000 auto;min-height:") && styleOf(n).endsWith("px;overflow-y:auto;"));
+  assert.ok(gridBox, "the sessions box gives way first (the thousandfold shrink) down to a floor under its rows");
   const card = cardOf(panel);
   assert.ok(styleOf(card).includes("max-height:90vh;overflow-y:auto;overflow-x:hidden;"), "the card scrolls as a whole past the floors instead of clipping");
   assert.ok(card._listeners.scroll, "...and its scroll is listened to as well");
@@ -224,11 +234,77 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
   same(card.children[card.children.indexOf(tgrid) + 1], nt.parentNode, "directly under the table");
   assert.ok(styleOf(nt.parentNode).startsWith("flex:0 0 auto;"), "a fixed row of the card: it never scrolls away");
   panel._closeViewsDialog();
-  // one tag: the floor is one row's worth, so a short table never shows blank space under its row
-  const one = copy(THREE); one.tags = one.tags.slice(0, 1);
-  const p1 = openDialog(one);
-  assert.ok(styleOf(tgridOf(p1)).includes("min-height:30px;"), "one row: 1 x 22 + 8");
-  p1._closeViewsDialog();
+});
+
+// the sessions grid, by its own style signature (the row cells' parent)
+const GRID_PRE = "display:grid;grid-template-columns:max-content max-content 1fr;";
+const gridOf = (panel: any) => walk(panel._viewsDialog).find((n) => styleOf(n).startsWith(GRID_PRE));
+const gridBoxOf = (panel: any) => gridOf(panel).parentNode;
+
+test("executed: the floors are measured off the rendered rows: a table of at most three rows keeps its natural height, a taller one three rows' worth; the sessions box min(live, 4) rows, by the live count and not the search hits", () => {
+  // review round 2 (2026-09-09): a constant per row (22px, 24px) is not the row height, which is the font's:
+  // one tag showed 6px of blank under its row, three rows at the floor lost 7px of the third, one live
+  // session sat in a 96px box. GEOMETRY IS A TEST INPUT here: tag rows lay out 24px tall (row-gap 4),
+  // session rows 18px (row-gap 3), every cell of a row seated in its track
+  g.__rectOf = (n: any) => {
+    const par = n.parentNode ? styleOf(n.parentNode) : "";
+    if (par.startsWith(TGRID_PRE)) return { left: 0, top: 100, right: 200, bottom: 124, width: 200, height: 24 };
+    if (par.startsWith(GRID_PRE)) return { left: 0, top: 300, right: 200, bottom: 318, width: 200, height: 18 };
+    return null;
+  };
+  try {
+    // thirty tags: three rows' worth, 3 x 24 + 2 x 4, and the table may shrink to it
+    const p30 = openDialog(THIRTY, FORTY_SESSIONS);
+    assert.ok(styleOf(tgridOf(p30)).includes("flex:0 1 auto;min-height:80px;max-height:30vh;"), "thirty rows: a floor of three at the rendered height: " + styleOf(tgridOf(p30)));
+    // forty live sessions: four rows' worth, 4 x 18 + 3 x 3
+    assert.equal(styleOf(gridBoxOf(p30)), "flex:1 1000 auto;min-height:81px;overflow-y:auto;", "forty live: a floor of four rows at the rendered height");
+    // typing a query that hides most rows, or every row, leaves the box as it was: the floor follows the live
+    // count, not the hits, so the box never resizes under the user's typing
+    const q = walk(p30._viewsDialog).find((n) => n.tag === "input" && n.placeholder === "search name or host…");
+    q.value = "job-01"; q._listeners.input();
+    assert.equal(walk(p30._viewsDialog).filter((n) => n._sid).length, 1, "one hit");
+    assert.equal(styleOf(gridBoxOf(p30)), "flex:1 1000 auto;min-height:81px;overflow-y:auto;", "one hit shown, the floor unchanged");
+    q.value = "nothing-here"; q._listeners.input();
+    assert.equal(walk(p30._viewsDialog).filter((n) => n._sid).length, 0, "no hit");
+    assert.equal(styleOf(gridBoxOf(p30)), "flex:1 1000 auto;min-height:81px;overflow-y:auto;", "no hit shown, the floor unchanged");
+    // a repaint with that query set has no row to measure: the row height the last build measured serves
+    p30._viewsDialogBuild();
+    assert.equal(walk(p30._viewsDialog).filter((n) => n._sid).length, 0, "the query survived the repaint, still no hit");
+    assert.equal(styleOf(gridBoxOf(p30)), "flex:1 1000 auto;min-height:81px;overflow-y:auto;", "a repaint with every row hidden keeps the four-row floor");
+    p30._closeViewsDialog();
+    // four tags: the first count that can shrink, to three rows' worth
+    const four = copy(THREE); four.tags = four.tags.concat([{ id: "g4", name: "delta", color: "#F7768E", members: [], mtime: 100 }]);
+    const p4 = openDialog(four);
+    assert.ok(styleOf(tgridOf(p4)).includes("flex:0 1 auto;min-height:80px;"), "four rows may shrink to three: " + styleOf(tgridOf(p4)));
+    p4._closeViewsDialog();
+    // three, one and no tags: the natural height, no floor to be off by; no tags, no box at all
+    for (const [n, label] of [[3, "three"], [1, "one"]] as Array<[number, string]>) {
+      const v = copy(THREE); v.tags = v.tags.slice(0, n);
+      const p = openDialog(v);
+      const st = styleOf(tgridOf(p));
+      assert.ok(st.includes("padding:4px 0 4px 4px;margin:-2px 0 2px -4px;flex:0 0 auto;max-height:30vh;"), label + ": natural height, no shrink: " + st);
+      assert.ok(!st.includes("min-height"), label + ": no floor");
+      p._closeViewsDialog();
+    }
+    const none = copy(THREE); none.tags = []; none.actives = { chat: { all: true }, timeline: { all: true }, outline: { none: true } };
+    const p0 = openDialog(none);
+    assert.ok(styleOf(tgridOf(p0)).includes("padding:0;margin:0;flex:0 0 auto;"), "no tags: no padding, so no empty box between the caption and New tag: " + styleOf(tgridOf(p0)));
+    assert.equal(walk(p0._viewsDialog).filter((n) => n._tname).length, 0);
+    assert.ok(walk(p0._viewsDialog).some((n) => n.textContent === "+ New tag"), "New tag is still offered");
+    p0._closeViewsDialog();
+    // the sessions floor by the live count: none live, one, three, four, five
+    const live = (k: number, total = k) => Array.from({ length: total }, (_, i) => Object.assign(sess("s" + (i + 1), "job-" + (i + 1), PALETTE[i]), { live: i < k }));
+    const floors: Array<[number, number, string]> = [[0, 0, "no sessions"], [1, 18, "one live"], [3, 60, "three live"], [4, 81, "four live"], [5, 81, "five live: four rows, the rest scroll"]];
+    for (const [k, px, label] of floors) {
+      const p = openDialog(THREE, live(k));
+      assert.equal(styleOf(gridBoxOf(p)), "flex:1 1000 auto;min-height:" + px + "px;overflow-y:auto;", label);
+      assert.equal(walk(p._viewsDialog).filter((n) => n._sid).length, k, label + ": the rows");
+      p._closeViewsDialog();
+    }
+    const pd = openDialog(THREE, live(0, 2));
+    assert.equal(styleOf(gridBoxOf(pd)), "flex:1 1000 auto;min-height:0px;overflow-y:auto;", "two sessions, none live: no row, no floor");
+    pd._closeViewsDialog();
+  } finally { g.__rectOf = null; }
 });
 
 test("executed: the dot opens the palette as a popover beside the dialog, the current swatch marked apart from the focus ring and focused", () => {
@@ -581,38 +657,95 @@ test("executed: the tag table's scroll survives a repaint, and is dropped when t
   panel._closeViewsDialog();
 });
 
-test("executed: a tag dragged past the table's visible edge drops on the last VISIBLE row, never on a hidden one", () => {
-  // the drop math ranks rows by their live rects; rows scrolled out of the capped table are not candidates
-  // (review find, 2026-09-09: the cue was drawn where the user could not see it and the drop wrote it)
+test("executed: a tag dragged past the table's edge drops on the last WHOLE row: a row cut by the clip, or without room for its cue, takes neither the cue nor the drop; a wheel mid-drag re-ranks", () => {
+  // the drop math ranks rows by their live rects, and only rows whose whole box plus the 2px cue lies inside
+  // the table's box are candidates (review 2026-09-09: the cue was drawn where the user could not see it and
+  // the drop wrote it; round 2, with real pointer events: the centre rule still let a row whose bottom edge
+  // was under the clip take the cue, which painted under the clip). Rows 24px tall at a 28px pitch (row i at
+  // 28i..28i+24, centre 28i+12, i the row's place in the table as drawn), scrolled by `scroll`; the table's
+  // box runs 0..`boxBottom`.
   const panel = openDialog(THIRTY, FORTY_SESSIONS);
-  const cells = walk(panel._viewsDialog).filter((n) => n._tname);
-  assert.equal(cells.length, 30);
-  // the table's visible box holds rows 0..6 (28px pitch, centres at 12 + 28i: row 6 at 180, row 7 at 208)
+  let scroll = 0, boxBottom = 200;
   g.__rectOf = (n: any) => {
-    if (n._tname) { const i = NAMES30.indexOf(n._tname); return { left: 0, top: i * 28, right: 200, bottom: i * 28 + 24, width: 200, height: 24 }; }
-    if (styleOf(n).startsWith(TGRID_PRE)) return { left: 0, top: 0, right: 800, bottom: 200, width: 800, height: 200 };
+    if (n._tname) { const i = n.parentNode.children.filter((c: any) => c._tname).indexOf(n); return { left: 0, top: i * 28 - scroll, right: 200, bottom: i * 28 + 24 - scroll, width: 200, height: 24 }; }
+    if (styleOf(n).startsWith(TGRID_PRE)) return { left: 0, top: 0, right: 800, bottom: boxBottom, width: 800, height: boxBottom };
     return null;
   };
-  try {
-    const from = cells[0];
-    from._listeners.pointerdown({ preventDefault() {}, pointerId: 1 });
-    from._listeners.pointermove({ clientY: 500 });   // far below the table's bottom edge
-    assert.equal(cells[6].style.borderBottom, "2px solid #9cd2ff", "the cue sits on the last visible row");
-    assert.ok(cells.slice(7).every((c) => !c.style.borderTop && !c.style.borderBottom), "no cue on a hidden row");
+  const cells = () => walk(panel._viewsDialog).filter((n) => n._tname);
+  const order = () => cells().map((c) => c._tname);
+  const cued = () => cells().map((c, i) => (c.style.borderTop || c.style.borderBottom ? i + (c.style.borderTop ? "top" : "bottom") : "")).filter(Boolean);
+  const writes = () => posted.filter((p) => p.kind === "views");
+  const lastWrite = () => writes()[writes().length - 1].v.tagOrder;
+  // grab `name`, move through `ys`, run `mid` with the grab still held (the table and its scroll listener of
+  // the moment in hand), drop; every drag hangs its own scroll listener on the table and takes it down with
+  // the drop, leaving the popover's closer in place
+  const drag = (name: string, ys: number[], mid?: (t: any) => void) => {
+    const t = tgridOf(panel), closer = t._listeners.scroll;
+    const from = cells().find((c) => c._tname === name);
+    from._listeners.pointerdown({ preventDefault() {}, pointerId: 1, clientY: 0 });
+    assert.ok(t._listeners.scroll !== closer, "the drag listens to the table's scroll while it lasts");
+    for (const y of ys) from._listeners.pointermove({ clientY: y });
+    if (mid) mid(t);
     from._listeners.pointerup();
-    const w = posted.filter((p) => p.kind === "views");
-    assert.equal(w.length, 1, "one order write");
-    assert.equal(w[0].v.tagOrder.indexOf("t01"), 6, "t01 landed after the last visible row, not at the table's end");
-    assert.deepEqual(w[0].v.tagOrder.slice(0, 8), ["t02", "t03", "t04", "t05", "t06", "t07", "t01", "t08"]);
-    // a pointer above the table ranks the first visible row (here: back where it started, so no write)
-    const cells2 = walk(panel._viewsDialog).filter((n) => n._tname);
-    const from2 = cells2.find((c) => c._tname === "t04");
-    from2._listeners.pointerdown({ preventDefault() {}, pointerId: 2 });
-    from2._listeners.pointermove({ clientY: -80 });
-    assert.equal(cells2[0].style.borderTop, "2px solid #9cd2ff", "the cue sits on the first visible row");
-    from2._listeners.pointerup();
-    assert.equal(posted.filter((p) => p.kind === "views").length, 2);
-    assert.equal(posted.filter((p) => p.kind === "views")[1].v.tagOrder.indexOf("t04"), 0);
+    same(t._listeners.scroll, closer, "the drag's scroll listener came down with the drop; the popover's closer stays");
+    assert.deepEqual(cued(), [], "no cue left behind");
+  };
+  try {
+    assert.equal(cells().length, 30);
+    // box 0..200 holds rows 0..6 whole (row 6 at 168..192, its cue to 194): a pointer far below lands after row 6
+    drag("t01", [500], () => assert.deepEqual(cued(), ["6bottom"], "the cue sits on the last whole row"));
+    assert.equal(writes().length, 1, "one order write");
+    assert.equal(lastWrite().indexOf("t01"), 6, "t01 landed after the last whole row, not at the table's end");
+    assert.deepEqual(lastWrite().slice(0, 8), ["t02", "t03", "t04", "t05", "t06", "t07", "t01", "t08"]);
+    assert.deepEqual(order().slice(0, 8), ["t02", "t03", "t04", "t05", "t06", "t07", "t01", "t08"], "the table repainted in the new order");
+    // box 0..190: row 6 (168..192) straddles the bottom edge with its centre (180) inside. The old centre rule
+    // gave it the cue, a border on its bottom edge, 2px under the clip. Held and dragged down past the edge, it
+    // stays where it is (no write: the rows below are out of sight, and the whole row above is not what the
+    // gesture said); dragged onto by another row, it takes neither the cue nor the drop, row 5 does
+    boxBottom = 190;
+    drag("t01", [500], () => assert.deepEqual(cued(), [], "the held row, cut by the edge, is its own place: no cue"));
+    assert.equal(writes().length, 1, "…and no write");
+    drag("t02", [500], () => assert.deepEqual(cued(), ["5bottom"], "the straddling row is no candidate: the cue sits on the last whole row"));
+    assert.equal(writes().length, 2);
+    assert.equal(lastWrite().indexOf("t02"), 5, "the drop lands where the cue was drawn");
+    assert.deepEqual(order().slice(0, 8), ["t03", "t04", "t05", "t06", "t07", "t02", "t01", "t08"]);
+    // box 0..193: row 6 is inside the box but the 2px its cue adds under its edge is not: row 5 again
+    boxBottom = 193;
+    drag("t03", [500], () => assert.deepEqual(cued(), ["5bottom"], "a row without room for its cue is no candidate"));
+    assert.equal(writes().length, 3);
+    assert.equal(lastWrite().indexOf("t03"), 5);
+    assert.deepEqual(order().slice(0, 8), ["t04", "t05", "t06", "t07", "t02", "t03", "t01", "t08"]);
+    // the top edge: the table scrolled 10px (row 0 at -10..14, cut by the clip): a pointer above the table
+    // lands on row 1's top edge, whole, not on row 0's, under the clip
+    boxBottom = 200; scroll = 10;
+    drag("t07", [-80], () => assert.deepEqual(cued(), ["1top"], "the cue sits on the first whole row"));
+    assert.equal(writes().length, 4);
+    assert.equal(lastWrite().indexOf("t07"), 1, "…and the drop lands there");
+    assert.deepEqual(order().slice(0, 8), ["t04", "t07", "t05", "t06", "t02", "t03", "t01", "t08"]);
+    // a wheel mid-drag: a scroll fires no pointermove, so the table's scroll re-ranks with the last pointer y.
+    // The pointer at y 100 ranks row 4 (centre 124, the first past 100); the table scrolls 200 and row 11
+    // (centre 120 now) is the row under the pointer; the cue and the drop follow it
+    scroll = 0;
+    drag("t04", [100], (t) => {
+      assert.deepEqual(cued(), ["4bottom"], "before the wheel: the row under the pointer");
+      scroll = 200; t._listeners.scroll();
+      assert.deepEqual(cued(), ["11bottom"], "after the wheel: the row now under the pointer");
+    });
+    assert.equal(writes().length, 5);
+    assert.equal(lastWrite().indexOf("t04"), 11, "the drop follows the rows the wheel brought under the pointer");
+    assert.equal(order()[11], "t04");
+    // a scroll whose event has not landed by the drop (they arrive a frame late): the table's scrollTop says the
+    // rows moved, so the drop re-ranks on the live rects
+    scroll = 0;
+    drag("t07", [100], (t) => {
+      assert.deepEqual(cued(), ["4bottom"]);
+      scroll = 200; t.scrollTop = 200;   // the rows moved, no scroll event yet
+    });
+    assert.equal(writes().length, 6);
+    assert.equal(lastWrite().indexOf("t07"), 11, "the drop read the live rows");
+    // a grab and a release with no move and no scroll writes nothing (a click on the pill)
+    drag("t05", []);
+    assert.equal(writes().length, 6, "no move, no scroll: no write");
   } finally { g.__rectOf = null; }
   panel._closeViewsDialog();
 });
@@ -709,7 +842,7 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   const nt = walk(dlg).find((n) => n.textContent === "+ New tag");
   assert.ok(nt, "the New tag row");
   assert.ok(!walk(tgridOf(panel)).includes(nt), "...under the table, not inside its scroll");
-  assert.ok(styleOf(tgridOf(panel)).includes("min-height:74px;"), "the table's floor stays three rows however many there are");
+  assert.ok(/flex:0 1 auto;min-height:\d+px;/.test(styleOf(tgridOf(panel))), "the table's floor stays three rows however many there are (the floors test has the arithmetic): " + styleOf(tgridOf(panel)));
   // folded filters: four lines, the long one cut
   const lines = paneLines(panel);
   assert.equal(lines.Chat.children[1].textContent, "t01, t02, t03, t04, t05, t06 +24 more");
