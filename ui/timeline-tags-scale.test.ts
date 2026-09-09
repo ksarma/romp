@@ -4,14 +4,23 @@
 // Now a tag row is one line (pill, delete, rename, ONE colour dot), the palette opens on demand as a
 // popover anchored to the dot, the filters fold to one summary line per pane (open on the caption's
 // caret, remembered for the page), the tag table caps its height and scrolls within itself, and the
-// sessions table takes the rest. EXECUTED over the house fake-DOM shim with the real TimelinePanel: the
-// dialog is opened, the dot clicked, a swatch picked, and the posted write is the one the inline
-// swatches posted. Synthetic ids and names only.
+// sessions table takes the rest. The review of 2026-09-09 added: the popover placed in the dot's own
+// document and closing when its dot moves (a scroll under it, a resize) or when focus leaves it (Tab,
+// focusout), the current swatch marked apart from the focus ring, the table's scroll surviving a repaint,
+// a drag past the table's edge landing only on a visible row, the folded summary naming only tags that
+// exist, [+ New tag] under the table rather than inside its scroll, a held dot taking no click, and the
+// pick re-resolving its tag by union key. EXECUTED over the house fake-DOM shim with the real
+// TimelinePanel: the dialog is opened, the dot clicked, a swatch picked, and the posted write is the one
+// the inline swatches posted. Synthetic ids and names only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 
+// NEVER assert.equal / notEqual / deepEqual two shim nodes (or a node against null): on failure node's
+// assert appends an actual/expected diff that walks the node graph, and the parentNode/children cycles
+// make that walk grow without bound (a 30 GB stall and a nameless kill, review find 2026-09-09). Compare
+// identity with `same(a, b, msg)` below, or compare a projection (keys, text, attributes).
 function makeNode(tag: string): any {
   const n: any = {
     tag, _attrs: {}, children: [] as any[], style: {}, dataset: {}, _text: "", parentNode: null, value: "",
@@ -34,7 +43,14 @@ function makeNode(tag: string): any {
     addEventListener(t: string, fn: any) { n._listeners[t] = fn; }, removeEventListener(t: string) { delete n._listeners[t]; },
     setPointerCapture() {}, releasePointerCapture() {},
     querySelector() { return null; }, querySelectorAll() { return []; },
-    getBoundingClientRect() { return n._rect || { width: 200, height: 20, left: 0, top: 0, right: 200, bottom: 20 }; },
+    // geometry is a test input: a node's own `_rect`, else the module-level `g.__rectOf(node)` hook (so a
+    // test can move a dot or a row without holding the node the rebuild will create), else one flat rect
+    getBoundingClientRect() { return n._rect || (g.__rectOf ? g.__rectOf(n) : null) || { width: 200, height: 20, left: 0, top: 0, right: 200, bottom: 20 }; },
+    // scrollTop clamps to `g.__scrollMax` (Infinity unless a test says the box no longer scrolls), as a
+    // browser clamps a write on a box whose content fits
+    _scrollTop: 0,
+    get scrollTop() { return this._scrollTop; },
+    set scrollTop(v: any) { const max = g.__scrollMax == null ? Infinity : g.__scrollMax; this._scrollTop = Math.max(0, Math.min(Number(v) || 0, max)); },
     closest() { return null; },
     // focus is OBSERVABLE: it records the active element on the fake document (the popover focuses the
     // current swatch on open and the dot again on close)
@@ -61,7 +77,10 @@ g.localStorage = { getItem: (k: string) => (k in stored ? stored[k] : null), set
 g.getComputedStyle = () => ({ backgroundColor: "rgb(30,30,30)", fontFamily: "sans-serif" });
 g.requestAnimationFrame = () => 0;
 g.setTimeout = (fn: any) => { try { fn(); } catch { /* focus on a fake node */ } return 0; };
-g.addEventListener = () => {}; g.removeEventListener = () => {};
+// the window's listeners are RECORDED (the popover hangs a resize closer on its window and takes it down on close)
+const winListeners: Record<string, any[]> = {};
+g.addEventListener = (t: string, fn: any) => { (winListeners[t] = winListeners[t] || []).push(fn); };
+g.removeEventListener = (t: string, fn: any) => { const a = winListeners[t] || []; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); };
 g.matchMedia = () => ({ matches: false, addEventListener() {}, addListener() {} });
 g.window = g;
 g.innerWidth = 1400; g.innerHeight = 1300;
@@ -101,6 +120,8 @@ const THIRTY = {
   tags: NAMES30.map((name, i) => ({ id: "g" + (i + 1), name, color: PALETTE[i % PALETTE.length], members: i < 20 ? ["s" + (i + 1)] : [], mtime: 100 })),
 };
 const FORTY_SESSIONS = Array.from({ length: 40 }, (_, i) => sess("s" + (i + 1), "job-" + String(i + 1).padStart(2, "0"), PALETTE[i % PALETTE.length]));
+// a remote half of "beta", homed on another kernel (tagorder-drag's fixture shape)
+const REMOTE_BETA = { id: "TESTHOST-A:r1", host: "TESTHOST-A", name: "beta", color: "#7aa2f7", members: ["m1"] };
 
 function drawnPanel(views: any, sessions: any[]): any {
   posted.length = 0;
@@ -112,12 +133,18 @@ function drawnPanel(views: any, sessions: any[]): any {
 function walk(x: any, out: any[] = []): any[] { for (const c of x.children || []) { out.push(c); walk(c, out); } return out; }
 const textOf = (n: any): string => (n.textContent || "") + (n.children || []).map(textOf).join("");
 const styleOf = (n: any): string => String(n._attrs.style || "");
+// node identity, never assert.equal (see the shim's note)
+const same = (a: any, b: any, msg: string) => assert.ok(a === b, msg);
 const dots = (panel: any) => walk(panel._viewsDialog).filter((n) => n.dataset.tagDot);
 const dotFor = (panel: any, key: string) => dots(panel).find((n) => n.dataset.tagDot === key);
 const swatches = (pop: any) => walk(pop).filter((n) => n._attrs.role === "radio");
-// the popovers in the HOST document (the dialog's own body), beside the dialog rather than in it
+// the popovers in the HOST document (the dialog's own body), beside the dialog rather than in it, by key
 const popsInBody = () => g.document.body.children.filter((n: any) => n._attrs.role === "dialog");
+const popKeys = () => popsInBody().map((p: any) => p._key);
 const caption = (panel: any) => walk(panel._viewsDialog).find((n) => String(n.textContent).startsWith("pane filters"));
+const TGRID_PRE = "display:grid;grid-template-columns:max-content max-content max-content 1fr;";
+const tgridOf = (panel: any) => walk(panel._viewsDialog).find((n) => styleOf(n).startsWith(TGRID_PRE));
+const cardOf = (panel: any) => panel._viewsDialog.children[0];
 // the filter pills by their own style signature (the session rows' tag chips share the radius, not the padding)
 const chips = (panel: any) => walk(panel._viewsDialog).filter((n) => styleOf(n).startsWith("cursor:pointer;padding:1px 8px;border-radius:9px;font-size:0.82em;"));
 // the folded summary: the pane label's row, [label, summary]
@@ -137,21 +164,26 @@ function openDialog(views: any = THREE, sessions: any[] = THREE_SESSIONS) {
   return panel;
 }
 
-test("executed: lensSummary says what a pane shows, in the user's tag order, cut with a count when long", () => {
+test("executed: lensSummary says what a pane shows, in the user's tag order, only tags that exist, cut with a count when long", () => {
   const order = ["alpha", "beta", "gamma"];
   assert.equal(lensSummary({ all: true }, order), "All");
   assert.equal(lensSummary(null, order), "All", "no lens yet reads as All, like lensAll");
   assert.equal(lensSummary({ none: true }, order), "no tags");
   assert.equal(lensSummary({ tags: ["gamma", "alpha"] }, order), "alpha, gamma", "the USER'S order, not the order the chips were clicked in");
   assert.equal(lensSummary({ tags: ["beta"], none: true }, order), "beta, no tags", "'no tags' last, as lensLabel puts it");
-  assert.equal(lensSummary({ tags: ["zeta", "alpha"] }, order), "alpha, zeta", "a name the union no longer lists sorts last");
+  // a name the union no longer lists (a rename or a delete left it in the lens) is not claimed: the open
+  // matrix draws no chip for it, so the two forms agree (review find, 2026-09-09)
+  assert.equal(lensSummary({ tags: ["zeta", "alpha"] }, order), "alpha", "a name the union no longer lists is left out");
+  assert.equal(lensSummary({ tags: ["zeta"] }, order), "none of the tags here", "a lens left with nothing says so: the pane shows nothing");
+  assert.equal(lensSummary({ tags: ["zeta"], none: true }, order), "no tags", "'no tags' still counts");
+  assert.equal(lensSummary({ tags: ["zeta", "alpha"] }), "zeta, alpha", "without an order there is nothing to filter by: every name, as given");
   assert.equal(lensSummary({ tags: NAMES30.slice().reverse() }, NAMES30), "t01, t02, t03, t04, t05, t06 +24 more", "six names, then the count");
   assert.equal(lensSummary({ tags: NAMES30.slice(0, 6) }, NAMES30), "t01, t02, t03, t04, t05, t06", "six is not long");
   assert.equal(lensSummary({ tags: NAMES30.slice(0, 7) }, NAMES30, 3), "t01, t02, t03 +4 more", "the cut is a parameter");
   assert.equal(lensSummary({ tags: NAMES30.slice().reverse() }, NAMES30, Infinity), NAMES30.join(", "), "Infinity: the full list (the hover)");
 });
 
-test("executed: a tag row is one line: the pill, delete, rename and ONE colour dot; no inline swatches anywhere", () => {
+test("executed: a tag row is one line: the pill, delete, rename and ONE colour dot; no inline swatches anywhere; the height budget's boxes", () => {
   const panel = openDialog();
   const ds = dots(panel);
   assert.deepEqual(ds.map((d) => d.dataset.tagDot), ["g1", "g2", "g3"], "one dot per tag row, keyed by the tag");
@@ -164,29 +196,48 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
     assert.ok(String(d._attrs.title).includes(tg.name), "the hover names the tag");
   }
   assert.equal(walk(panel._viewsDialog).filter((n) => n._attrs.role === "radio").length, 0, "no swatch in any row");
-  assert.equal(popsInBody().length, 0, "…and no popover until a dot is clicked");
+  assert.equal(popsInBody().length, 0, "...and no popover until a dot is clicked");
   // the row still drags to reorder (the pill cell keeps its handle) and still offers delete and rename
   const cells = walk(panel._viewsDialog).filter((n) => n._tname);
   assert.deepEqual(cells.map((c) => c._tname), ["alpha", "beta", "gamma"]);
   assert.ok(cells.every((c) => c._listeners.pointerdown), "the reorder drag stays on the pill");
   assert.equal(walk(panel._viewsDialog).filter((n) => n.textContent === "delete").length, 3);
   assert.equal(walk(panel._viewsDialog).filter((n) => n.textContent === "rename").length, 3);
-  // the table caps its height and scrolls within itself; the sessions table keeps the flex share
-  const tgrid = walk(panel._viewsDialog).find((n) => styleOf(n).startsWith("display:grid;grid-template-columns:max-content max-content max-content 1fr;"));
+  // THE HEIGHT BUDGET (review, 2026-09-09): the table caps its share and scrolls within itself, gives way
+  // only once the sessions are at their floor, and keeps a floor of its own sized UNDER its rows (three
+  // rows here: 3 x 22 + 8), with room inside the clip for the rings; the card scrolls past the floors
+  const tgrid = tgridOf(panel);
   assert.ok(tgrid, "the tag table");
-  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:35vh;overflow-y:auto;"), "capped, scrolling within, never shrinking below the cap");
-  const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n) === "flex:1 1 auto;min-height:0;overflow-y:auto;");
-  assert.ok(gridBox, "the sessions table owns the rest of the height and its own scroll");
+  assert.ok(styleOf(tgrid).includes("padding:4px 0 4px 4px;margin:-2px 0 2px -4px;"), "room inside the scroll clip for the pills' and dots' rings, the layout unmoved");
+  assert.ok(styleOf(tgrid).includes("flex:0 1 auto;min-height:74px;max-height:30vh;overflow-y:auto;"), "capped at 30vh, scrolling within, a floor under three rows: " + styleOf(tgrid));
+  assert.ok(tgrid._listeners.scroll, "the table's scroll is listened to (it closes the popover when the dot moves)");
+  const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n) === "flex:1 1000 auto;min-height:96px;overflow-y:auto;");
+  assert.ok(gridBox, "the sessions box gives way first (the thousandfold shrink) and never below four rows");
+  const card = cardOf(panel);
+  assert.ok(styleOf(card).includes("max-height:90vh;overflow-y:auto;overflow-x:hidden;"), "the card scrolls as a whole past the floors instead of clipping");
+  assert.ok(card._listeners.scroll, "...and its scroll is listened to as well");
+  // [+ New tag] is the card's own child UNDER the table, never a row inside its scroll (review find F6)
+  const nt = walk(panel._viewsDialog).find((n) => n.textContent === "+ New tag");
+  assert.ok(nt, "the New tag row");
+  same(nt.parentNode.parentNode, card, "the row hangs on the card...");
+  assert.ok(!walk(tgrid).includes(nt), "...not in the table");
+  same(card.children[card.children.indexOf(tgrid) + 1], nt.parentNode, "directly under the table");
+  assert.ok(styleOf(nt.parentNode).startsWith("flex:0 0 auto;"), "a fixed row of the card: it never scrolls away");
   panel._closeViewsDialog();
+  // one tag: the floor is one row's worth, so a short table never shows blank space under its row
+  const one = copy(THREE); one.tags = one.tags.slice(0, 1);
+  const p1 = openDialog(one);
+  assert.ok(styleOf(tgridOf(p1)).includes("min-height:30px;"), "one row: 1 x 22 + 8");
+  p1._closeViewsDialog();
 });
 
-test("executed: the dot opens the palette as a popover beside the dialog, the current swatch marked and focused", () => {
+test("executed: the dot opens the palette as a popover beside the dialog, the current swatch marked apart from the focus ring and focused", () => {
   const panel = openDialog();
   const dot = dotFor(panel, "g2");
   dot._listeners.click();
   const pop = panel._tagColorPop;
   assert.ok(pop, "the popover is open");
-  assert.deepEqual(popsInBody(), [pop], "it lives in the host document beside the dialog, not inside the card");
+  assert.deepEqual(popKeys(), ["g2"], "it lives in the host document beside the dialog, not inside the card");
   assert.ok(styleOf(pop).startsWith("position:fixed;z-index:1003;"), "one layer above the dialog's backdrop (1002)");
   assert.ok(styleOf(pop).includes("font:12px/1.4"), "the shared menu vocabulary");
   assert.equal(pop._key, "g2");
@@ -196,11 +247,18 @@ test("executed: the dot opens the palette as a popover beside the dialog, the cu
   assert.deepEqual(sws.map((s) => s._attrs["aria-label"]), PALETTE, "the kernel's palette, in its order");
   const cur = sws.filter((s) => s._attrs["aria-checked"] === "true");
   assert.equal(cur.length, 1, "exactly one current swatch");
-  assert.ok(styleOf(cur[0]).includes("background:#4EC9B0;"), "…the tag's colour");
-  assert.ok(styleOf(cur[0]).includes("outline:2px solid"), "…ringed");
-  assert.equal(g.document.activeElement, cur[0], "…and focused on open");
+  assert.ok(styleOf(cur[0]).includes("background:#4EC9B0;"), "...the tag's colour");
+  // the current mark is an INNER ring (box-shadow), and no swatch sets an outline: the outline is the
+  // browser's focus ring, so focus on open (which lands here) reads apart from "current" (review, 2026-09-09)
+  assert.ok(styleOf(cur[0]).includes("box-shadow:inset 0 0 0 2px #4EC9B0,inset 0 0 0 4px "), "...ringed inside, in the menu text colour: " + styleOf(cur[0]));
+  assert.ok(sws.every((s) => !styleOf(s).includes("outline")), "no swatch replaces the browser's focus outline");
+  assert.ok(sws.filter((s) => s !== cur[0]).every((s) => !styleOf(s).includes("box-shadow")), "only the current swatch wears the ring");
+  same(g.document.activeElement, cur[0], "...and focused on open");
   assert.deepEqual(sws.map((s) => s._attrs.tabindex), PALETTE.map((c) => (c === "#4EC9B0" ? "0" : "-1")), "one tab stop, on the current swatch");
   assert.ok(styleOf(walk(pop).find((n) => n._attrs.role === "radiogroup")).includes("grid-template-columns:repeat(6,18px)"), "twelve swatches in two balanced rows of six (T164)");
+  // placed by the dot's rect in the dot's own document: below it (the flat shim rect: bottom 20, +4)
+  assert.equal(pop.style.top, "24px"); assert.equal(pop.style.left, "6px");
+  assert.deepEqual(pop._anchorAt, { left: 0, top: 0 }, "the dot's place is recorded, so a scroll can tell a moved dot from one that stayed");
   panel._closeViewsDialog();
 });
 
@@ -219,18 +277,18 @@ test("executed: a pick posts the SAME recolor the inline swatch posted, closes t
   // the optimistic copy shows the colour at once, held until the ack
   assert.ok(panel._pendingViews, "the optimistic copy is pending");
   assert.equal(panel._curViews().tags.find((t: any) => t.id === "g1").color, "#54B204");
-  assert.equal(panel._tagColorPop, null, "the popover closed on the pick");
+  same(panel._tagColorPop, null, "the popover closed on the pick");
   assert.equal(popsInBody().length, 0);
   // the dialog repainted: a fresh dot wearing the new colour, focused
   const dot2 = dotFor(panel, "g1");
   assert.ok(dot2 && dot2 !== dot, "the row was rebuilt");
   assert.ok(styleOf(dot2).includes("background:#54B204;"), "the dot wears the picked colour");
-  assert.equal(g.document.activeElement, dot2, "focus is back on the dot, not lost in the removed popover");
+  same(g.document.activeElement, dot2, "focus is back on the dot, not lost in the removed popover");
   assert.equal(dot2._attrs["aria-expanded"], "false");
   // the ack settles it exactly as before
   const S1 = copy(THREE); S1.seq = 1001; S1.at = 113; S1.tags[0].color = "#54B204"; S1.tags[0].mtime = 113;
   panel.viewsAck({ type: "tagEditAck", writeId: ops[0].writeId, ok: true, seq: 1001, tid: "g1", views: copy(S1) });
-  assert.equal(panel._pendingViews, null, "the ack clears the optimistic copy");
+  same(panel._pendingViews, null, "the ack clears the optimistic copy");
   assert.equal(panel._curViews().tags[0].color, "#54B204");
   // a REFUSED pick reverts and says why, in the dialog
   dotFor(panel, "g1")._listeners.click();
@@ -240,12 +298,67 @@ test("executed: a pick posts the SAME recolor the inline swatch posted, closes t
   panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[1].writeId, ok: false, error: why, tid: "g1", seq: 1001, views: copy(S1) });
   assert.equal(panel._curViews().tags[0].color, "#54B204", "the refused copy is dropped at once");
   assert.ok(styleOf(dotFor(panel, "g1")).includes("background:#54B204;"), "the dot shows the store's truth");
-  const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("\u26A0 "));
-  assert.ok(shown && shown.startsWith("\u26A0 " + why), "the refusal shows in the dialog");
+  const shown = walk(panel._viewsDialog).map(textOf).find((s) => s.startsWith("⚠ "));
+  assert.ok(shown && shown.startsWith("⚠ " + why), "the refusal shows in the dialog");
   panel._closeViewsDialog();
 });
 
-test("executed: keyboard: Enter or Space on the dot opens; Space on a swatch picks; the arrows move the tab stop", () => {
+test("executed: the pick re-resolves its tag by union key: a rename and a remote half landing while the popover is open are honoured by the pick", () => {
+  // the popover holds the union object as it was on open; a repaint in between rebuilds the unions, and
+  // a pick on the stale copy would skip a remote half that joined meanwhile (its fan-out reads g.remotes)
+  const panel = openDialog();
+  dotFor(panel, "g2")._listeners.click();
+  assert.equal(panel._tagColorPop._key, "g2");
+  const remoteCalls: any[] = [];
+  g.__rompTimelineEditTag = (m: any) => remoteCalls.push(m);   // the remote bridge appears (the shell's)
+  try {
+    // the frame: beta renamed to beta2 AND homed on a second kernel too; the dialog repaints on it
+    const F = copy(THREE); F.seq = 1001; F.tags[1].name = "beta2";
+    F.remoteTags = [Object.assign({}, REMOTE_BETA, { name: "beta2", color: "#4EC9B0" })];
+    panel.update({ now, sessions: THREE_SESSIONS, views: F });
+    panel._viewsDialogBuild();
+    assert.ok(panel._tagColorPop && panel._tagColorPop._key === "g2", "the popover survived the repaint on the same key");
+    assert.deepEqual(viewTagUnion(panel._curViews()).find((u: any) => u.localId === "g2").remotes.map((r: any) => r.host), ["TESTHOST-A"], "the union now has a remote half");
+    swatches(panel._tagColorPop).find((s) => s._attrs["aria-label"] === "#54B204")._listeners.click();
+    // the remote half is recoloured through the bridge, under the CURRENT name...
+    assert.equal(remoteCalls.length, 1, "the pick reached the half that joined while the popover was open (a stale copy would have skipped it)");
+    assert.deepEqual([remoteCalls[0].host, remoteCalls[0].name, remoteCalls[0].color, remoteCalls[0].rename, remoteCalls[0].delete], ["TESTHOST-A", "beta2", "#54B204", undefined, false]);
+    // ...and the local half by its tid, as before
+    const ops = tagOps();
+    assert.equal(ops.length, 1);
+    assert.deepEqual([ops[0].op, ops[0].tid, ops[0].color], ["recolor", "g2", "#54B204"]);
+    same(panel._tagColorPop, null, "closed on the pick");
+  } finally { delete g.__rompTimelineEditTag; }
+  panel._closeViewsDialog();
+});
+
+test("executed: a held dot (a remote half this host cannot reach, no bridge) wears the reason, is inert, and takes no click; its neighbour still opens", () => {
+  // no __rompTimelineEditTag on the fake window: _remoteBridge() is false, as in an Obsidian panel
+  assert.equal(typeof g.__rompTimelineEditTag, "undefined");
+  const V = copy(THREE); V.remoteTags = [copy(REMOTE_BETA)];
+  const panel = openDialog(V);
+  assert.equal(panel._remoteBridge(), false);
+  const held = dotFor(panel, "g2");
+  assert.ok(held, "beta's dot renders (dim), keyed by its local id");
+  assert.equal(held._attrs["aria-disabled"], "true");
+  assert.equal(held._attrs.title, panel._unreachableText(["TESTHOST-A"], true), "the refusal is its tooltip");
+  assert.equal(held._attrs.tabindex, undefined, "not a tab stop");
+  assert.equal(held._attrs["aria-haspopup"], undefined);
+  assert.ok(styleOf(held).includes("cursor:default;opacity:0.35;"), "dim, no pointer");
+  assert.equal(held._listeners.click, undefined, "no click opener");
+  assert.equal(held._listeners.keydown, undefined, "no keyboard opener");
+  assert.equal(popsInBody().length, 0);
+  // the same dialog's alpha (local only) is untouched by the held row
+  const live = dotFor(panel, "g1");
+  assert.equal(live._attrs.tabindex, "0");
+  live._listeners.click();
+  assert.deepEqual(popKeys(), ["g1"], "alpha's dot opens its popover");
+  assert.equal(tagOps().length, 0, "nothing was posted by any of this");
+  panel._closeViewsDialog();
+  assert.equal(popsInBody().length, 0);
+});
+
+test("executed: keyboard: Enter or Space on the dot opens; Space on a swatch picks; the arrows move the tab stop; Tab leaves like Escape", () => {
   const panel = openDialog();
   const dot = dotFor(panel, "g3");
   let prevented = 0;
@@ -253,23 +366,54 @@ test("executed: keyboard: Enter or Space on the dot opens; Space on a swatch pic
   assert.ok(panel._tagColorPop, "Enter opens");
   assert.equal(prevented, 1);
   dot._listeners.keydown({ key: " ", preventDefault() { prevented++; } });
-  assert.equal(panel._tagColorPop, null, "Space on the dot while its popover is open toggles it shut");
+  same(panel._tagColorPop, null, "Space on the dot while its popover is open toggles it shut");
   dot._listeners.keydown({ key: " ", preventDefault() { prevented++; } });
-  assert.ok(panel._tagColorPop, "…and opens it again");
+  assert.ok(panel._tagColorPop, "...and opens it again");
   const sws = swatches(panel._tagColorPop);
   const curIdx = PALETTE.indexOf("#E0AF68");
-  assert.equal(g.document.activeElement, sws[curIdx], "the current swatch has focus");
+  same(g.document.activeElement, sws[curIdx], "the current swatch has focus");
   sws[curIdx]._listeners.keydown({ key: "ArrowRight", preventDefault() {} });
-  assert.equal(g.document.activeElement, sws[curIdx + 1], "ArrowRight moves focus");
+  same(g.document.activeElement, sws[curIdx + 1], "ArrowRight moves focus");
   assert.equal(sws[curIdx + 1]._attrs.tabindex, "0"); assert.equal(sws[curIdx]._attrs.tabindex, "-1");
   sws[curIdx + 1]._listeners.keydown({ key: "ArrowDown", preventDefault() {} });
-  assert.equal(g.document.activeElement, sws[Math.min(11, curIdx + 7)], "ArrowDown moves a row (six per row)");
-  sws[curIdx + 1]._listeners.keydown({ key: "Tab", preventDefault() { prevented = -1; } });
+  same(g.document.activeElement, sws[Math.min(11, curIdx + 7)], "ArrowDown moves a row (six per row)");
+  sws[curIdx + 1]._listeners.keydown({ key: "Home", preventDefault() { prevented = -1; } });
   assert.notEqual(prevented, -1, "other keys pass through");
-  sws[1]._listeners.keydown({ key: " ", preventDefault() {} });
+  // Tab (either direction) leaves the palette the way Escape does: closed, focus back on the dot, which is
+  // the tab stop before and after it; left alone it moved focus to the body with the palette still open
+  // (review find, 2026-09-09)
+  sws[curIdx + 1]._listeners.keydown({ key: "Tab", preventDefault() { prevented = -2; } });
+  assert.equal(prevented, -2, "Tab is taken");
+  same(panel._tagColorPop, null, "...the popover closed");
+  same(g.document.activeElement, dot, "...and focus is on the dot");
+  assert.equal(dot._attrs["aria-expanded"], "false");
+  dot._listeners.keydown({ key: " ", preventDefault() {} });
+  swatches(panel._tagColorPop)[1]._listeners.keydown({ key: " ", preventDefault() {} });
   const ops = tagOps();
   assert.deepEqual([ops[0].op, ops[0].tid, ops[0].color], ["recolor", "g3", PALETTE[1]], "Space picks");
-  assert.equal(panel._tagColorPop, null);
+  same(panel._tagColorPop, null, "closed on the pick");
+  panel._closeViewsDialog();
+});
+
+test("executed: focus leaving the popover for another element closes it; a move within it, to its dot, or to nothing leaves it open", () => {
+  const panel = openDialog();
+  const dot = dotFor(panel, "g2");
+  dot._listeners.click();
+  const pop = panel._tagColorPop;
+  assert.ok(pop._listeners.focusout, "the popover watches its focus");
+  const sws = swatches(pop);
+  pop._listeners.focusout({ relatedTarget: null });
+  assert.ok(panel._tagColorPop, "focus to nothing (the window losing focus) leaves it open");
+  pop._listeners.focusout({ relatedTarget: sws[3] });
+  assert.ok(panel._tagColorPop, "a move within the popover (the arrows) leaves it open");
+  pop._listeners.focusout({ relatedTarget: dot });
+  assert.ok(panel._tagColorPop, "a move to its own dot leaves it open (the dot's click toggles)");
+  const search = walk(panel._viewsDialog).find((n) => n.tag === "input" && n.placeholder === "search name or host…");
+  pop._listeners.focusout({ relatedTarget: search });
+  same(panel._tagColorPop, null, "focus that left for another element closes it");
+  assert.equal(popsInBody().length, 0);
+  assert.equal(dot._attrs["aria-expanded"], "false");
+  same(g.document.activeElement, sws.find((s) => s._attrs["aria-checked"] === "true"), "...without pulling focus back (it went where the user sent it)");
   panel._closeViewsDialog();
 });
 
@@ -279,14 +423,14 @@ test("executed: Escape closes the popover first (focus back on the dot) and the 
   dot._listeners.click();
   assert.ok(panel._tagColorPop);
   panel._viewsDialogKey.fn({ key: "Escape" });
-  assert.equal(panel._tagColorPop, null, "the popover closed");
+  same(panel._tagColorPop, null, "the popover closed");
   assert.equal(popsInBody().length, 0);
   assert.ok(panel._viewsDialog, "the dialog is still open");
-  assert.equal(g.document.activeElement, dot, "focus returned to the dot");
+  same(g.document.activeElement, dot, "focus returned to the dot");
   assert.equal(dot._attrs["aria-expanded"], "false");
   assert.equal(tagOps().length, 0, "nothing was written");
   panel._viewsDialogKey.fn({ key: "Escape" });
-  assert.equal(panel._viewsDialog, null, "the second Escape closes the dialog");
+  same(panel._viewsDialog, null, "the second Escape closes the dialog");
 });
 
 test("executed: a press anywhere on the dialog outside the popover closes it; a press on its own dot leaves the toggle to the click; the backdrop closes both", () => {
@@ -297,20 +441,20 @@ test("executed: a press anywhere on the dialog outside the popover closes it; a 
   dot._listeners.click();
   assert.ok(panel._tagColorPop);
   back._listeners.pointerdown({ target: card });
-  assert.equal(panel._tagColorPop, null, "a press on the card (outside the popover) closes it");
-  assert.ok(panel._viewsDialog, "…and the dialog stays");
+  same(panel._tagColorPop, null, "a press on the card (outside the popover) closes it");
+  assert.ok(panel._viewsDialog, "...and the dialog stays");
   // the dot's own press: the popover stays for the click, which toggles it shut (no close-then-reopen)
   dot._listeners.click();
   assert.ok(panel._tagColorPop);
   back._listeners.pointerdown({ target: dot });
   assert.ok(panel._tagColorPop, "the anchor's press does not close it");
   dot._listeners.click();
-  assert.equal(panel._tagColorPop, null, "…the click does");
+  same(panel._tagColorPop, null, "...the click does");
   // the backdrop: dialog and popover go together
   dot._listeners.click();
   back._listeners.pointerdown({ target: back });
-  assert.equal(panel._viewsDialog, null, "the backdrop press closes the dialog");
-  assert.equal(panel._tagColorPop, null, "…and the popover with it");
+  same(panel._viewsDialog, null, "the backdrop press closes the dialog");
+  same(panel._tagColorPop, null, "...and the popover with it");
   assert.equal(popsInBody().length, 0, "nothing is left in the host document");
 });
 
@@ -319,44 +463,166 @@ test("executed: one popover at a time; closing the dialog any other way removes 
   dotFor(panel, "g1")._listeners.click();
   const first = panel._tagColorPop;
   dotFor(panel, "g2")._listeners.click();
-  assert.notEqual(panel._tagColorPop, first, "the second dot's popover replaced the first");
+  assert.ok(panel._tagColorPop !== first, "the second dot's popover replaced the first");
   assert.equal(panel._tagColorPop._key, "g2");
-  assert.deepEqual(popsInBody(), [panel._tagColorPop], "exactly one popover in the host document");
+  assert.deepEqual(popKeys(), ["g2"], "exactly one popover in the host document");
   assert.equal(dotFor(panel, "g1")._attrs["aria-expanded"], "false");
   assert.equal(dotFor(panel, "g2")._attrs["aria-expanded"], "true");
   panel._closeViewsDialog();
-  assert.equal(panel._tagColorPop, null);
+  same(panel._tagColorPop, null, "closed with the dialog");
   assert.equal(popsInBody().length, 0);
 });
 
-test("executed: a repaint keeps the popover on its row (the anchor re-pointed) and closes it when the row is gone", () => {
+test("executed: a scroll under the popover that moves its dot closes it; one that moved nothing leaves it; a resize closes it and takes its listener down", () => {
+  const panel = openDialog(THIRTY, FORTY_SESSIONS);
+  const tgrid = tgridOf(panel);
+  const resizeBefore = (winListeners.resize || []).length;
+  dotFor(panel, "g2")._listeners.click();
+  const pop = panel._tagColorPop;
+  assert.ok(pop);
+  const added = winListeners.resize.slice(resizeBefore);
+  assert.equal(added.length, 1, "the popover hung ONE resize closer on its window");
+  // the repaint's scroll restore fires a scroll event that moved nothing: the popover stays
+  tgrid._listeners.scroll();
+  same(panel._tagColorPop, pop, "a scroll event with the dot where it was leaves the popover");
+  // the user scrolls the table: the dot moves under the popover, which closes rather than float
+  g.__rectOf = (n: any) => (n.dataset && n.dataset.tagDot === "g2" ? { left: 0, top: -150, right: 14, bottom: -136, width: 14, height: 14 } : null);
+  try {
+    tgrid._listeners.scroll();
+    same(panel._tagColorPop, null, "the dot moved: closed");
+    assert.equal(popsInBody().length, 0);
+    assert.ok(!winListeners.resize.includes(added[0]), "...and the resize closer came down with it");
+    assert.equal(dotFor(panel, "g2")._attrs["aria-expanded"], "false");
+  } finally { g.__rectOf = null; }
+  // the card's own scroll (a short page scrolls the card as a whole) does the same
+  dotFor(panel, "g5")._listeners.click();
+  const card = cardOf(panel);
+  g.__rectOf = (n: any) => (n.dataset && n.dataset.tagDot === "g5" ? { left: 0, top: 80, right: 14, bottom: 94, width: 14, height: 14 } : null);
+  try { card._listeners.scroll(); same(panel._tagColorPop, null, "the card scrolled the dot away: closed"); } finally { g.__rectOf = null; }
+  // a resize re-centres the card: the popover closes through its own listener, which then comes down
+  dotFor(panel, "g7")._listeners.click();
+  const fn = winListeners.resize[winListeners.resize.length - 1];
+  assert.ok(fn && !added.includes(fn), "a fresh resize closer for the fresh popover");
+  fn();
+  same(panel._tagColorPop, null, "closed on resize");
+  assert.ok(!winListeners.resize.includes(fn), "the listener is gone");
+  assert.equal(winListeners.resize.length, resizeBefore, "no listener leaked across three opens");
+  panel._closeViewsDialog();
+});
+
+test("executed: a repaint keeps the popover on its row, re-placed under the rebuilt dot, and closes it when the row is gone or scrolled out of the table", () => {
   const panel = openDialog();
   const dot = dotFor(panel, "g2");
   dot._listeners.click();
   const pop = panel._tagColorPop;
-  // a refusal for ANOTHER row repaints the dialog: the popover stays, hung on the rebuilt dot
-  panel._editTagUnion(viewTagUnion(panel._curViews()).find((u: any) => u.name === "alpha"), { color: "#1EA1EB" });
-  panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: false, error: "no", tid: "g1", seq: 1000, views: copy(THREE) });
-  assert.equal(panel._tagColorPop, pop, "the popover survived the repaint");
-  const dot2 = dotFor(panel, "g2");
-  assert.notEqual(dot2, dot, "the dialog was rebuilt");
-  assert.equal(panel._tagColorAnchor, dot2, "…and the popover hangs on the new dot");
-  assert.equal(dot2._attrs["aria-expanded"], "true", "which knows it is open");
+  assert.equal(pop.style.top, "24px");
+  // a refusal for ANOTHER row repaints the dialog; the rows have moved (a notice sits above the table now):
+  // the popover stays, hung on the rebuilt dot at its NEW place
+  g.__rectOf = (n: any) => {
+    if (n.dataset && n.dataset.tagDot === "g2") return { left: 100, top: 300, right: 114, bottom: 314, width: 14, height: 14 };
+    if (styleOf(n).startsWith(TGRID_PRE)) return { left: 0, top: 0, right: 800, bottom: 400, width: 800, height: 400 };   // the table's box holds the row
+    return null;
+  };
+  try {
+    panel._editTagUnion(viewTagUnion(panel._curViews()).find((u: any) => u.name === "alpha"), { color: "#1EA1EB" });
+    panel.viewsAck({ type: "tagEditAck", writeId: tagOps()[0].writeId, ok: false, error: "no", tid: "g1", seq: 1000, views: copy(THREE) });
+    same(panel._tagColorPop, pop, "the popover survived the repaint");
+    const dot2 = dotFor(panel, "g2");
+    assert.ok(dot2 !== dot, "the dialog was rebuilt");
+    same(panel._tagColorAnchor, dot2, "...and the popover hangs on the new dot");
+    assert.equal(dot2._attrs["aria-expanded"], "true", "which knows it is open");
+    assert.equal(pop.style.left, "100px"); assert.equal(pop.style.top, "318px");
+    assert.deepEqual(pop._anchorAt, { left: 100, top: 300 }, "placed by the new dot's rect, which is now the recorded place");
+  } finally { g.__rectOf = null; }
+  // a repaint whose rebuilt dot lies outside the table's visible box (its row scrolled out) closes it
+  g.__rectOf = (n: any) => {
+    if (n.dataset && n.dataset.tagDot === "g2") return { left: 0, top: 900, right: 14, bottom: 914, width: 14, height: 14 };
+    if (styleOf(n).startsWith(TGRID_PRE)) return { left: 0, top: 100, right: 800, bottom: 400, width: 800, height: 300 };
+    return null;
+  };
+  try {
+    panel._viewsDialogBuild();
+    same(panel._tagColorPop, null, "the dot is not in the table's visible box: nothing to hang on, closed");
+    assert.equal(popsInBody().length, 0);
+  } finally { g.__rectOf = null; }
   // the tag deleted elsewhere: the frame that drops it, and the repaint that follows, close the popover with the row
+  dotFor(panel, "g2")._listeners.click();
+  assert.ok(panel._tagColorPop);
   const gone = copy(THREE); gone.seq = 1002; gone.tags.splice(1, 1);
   panel.update({ now, sessions: THREE_SESSIONS, views: gone });
   assert.equal(panel._curViews().tags.length, 2, "the frame was adopted");
   panel._viewsDialogBuild();
-  assert.equal(panel._tagColorPop, null, "no row, no popover");
+  same(panel._tagColorPop, null, "no row, no popover");
   panel._closeViewsDialog();
 });
 
-test("executed: pane filters render FOLDED, one summary line per pane in the user's tag order; the caret opens the matrix; the choice holds for the page", () => {
+test("executed: the tag table's scroll survives a repaint, and is dropped when the table no longer scrolls", () => {
+  const panel = openDialog(THIRTY, FORTY_SESSIONS);
+  const tgrid = tgridOf(panel);
+  tgrid.scrollTop = 150;
+  assert.equal(tgrid.scrollTop, 150);
+  // a repaint from anywhere (a delete, a rename toggle, an ack, a peer's edit): the new table starts where the old one was
+  panel._viewsDialogBuild();
+  const tgrid2 = tgridOf(panel);
+  assert.ok(tgrid2 !== tgrid, "the table was rebuilt");
+  assert.equal(tgrid2.scrollTop, 150, "...at the same scroll");
+  // a colour pick repaints too: the offset holds through it
+  dotFor(panel, "g20")._listeners.click();
+  swatches(panel._tagColorPop)[0]._listeners.click();
+  assert.equal(tgridOf(panel).scrollTop, 150, "a pick keeps the user where they were working");
+  // the table no longer scrolls (a browser clamps the write): the offset is dropped
+  g.__scrollMax = 0;
+  try {
+    panel._viewsDialogBuild();
+    assert.equal(tgridOf(panel).scrollTop, 0, "nothing to scroll, nothing kept");
+  } finally { g.__scrollMax = undefined; }
+  panel._viewsDialogBuild();
+  assert.equal(tgridOf(panel).scrollTop, 0, "and it stays dropped: the offset is read off the live table, not remembered elsewhere");
+  panel._closeViewsDialog();
+});
+
+test("executed: a tag dragged past the table's visible edge drops on the last VISIBLE row, never on a hidden one", () => {
+  // the drop math ranks rows by their live rects; rows scrolled out of the capped table are not candidates
+  // (review find, 2026-09-09: the cue was drawn where the user could not see it and the drop wrote it)
+  const panel = openDialog(THIRTY, FORTY_SESSIONS);
+  const cells = walk(panel._viewsDialog).filter((n) => n._tname);
+  assert.equal(cells.length, 30);
+  // the table's visible box holds rows 0..6 (28px pitch, centres at 12 + 28i: row 6 at 180, row 7 at 208)
+  g.__rectOf = (n: any) => {
+    if (n._tname) { const i = NAMES30.indexOf(n._tname); return { left: 0, top: i * 28, right: 200, bottom: i * 28 + 24, width: 200, height: 24 }; }
+    if (styleOf(n).startsWith(TGRID_PRE)) return { left: 0, top: 0, right: 800, bottom: 200, width: 800, height: 200 };
+    return null;
+  };
+  try {
+    const from = cells[0];
+    from._listeners.pointerdown({ preventDefault() {}, pointerId: 1 });
+    from._listeners.pointermove({ clientY: 500 });   // far below the table's bottom edge
+    assert.equal(cells[6].style.borderBottom, "2px solid #9cd2ff", "the cue sits on the last visible row");
+    assert.ok(cells.slice(7).every((c) => !c.style.borderTop && !c.style.borderBottom), "no cue on a hidden row");
+    from._listeners.pointerup();
+    const w = posted.filter((p) => p.kind === "views");
+    assert.equal(w.length, 1, "one order write");
+    assert.equal(w[0].v.tagOrder.indexOf("t01"), 6, "t01 landed after the last visible row, not at the table's end");
+    assert.deepEqual(w[0].v.tagOrder.slice(0, 8), ["t02", "t03", "t04", "t05", "t06", "t07", "t01", "t08"]);
+    // a pointer above the table ranks the first visible row (here: back where it started, so no write)
+    const cells2 = walk(panel._viewsDialog).filter((n) => n._tname);
+    const from2 = cells2.find((c) => c._tname === "t04");
+    from2._listeners.pointerdown({ preventDefault() {}, pointerId: 2 });
+    from2._listeners.pointermove({ clientY: -80 });
+    assert.equal(cells2[0].style.borderTop, "2px solid #9cd2ff", "the cue sits on the first visible row");
+    from2._listeners.pointerup();
+    assert.equal(posted.filter((p) => p.kind === "views").length, 2);
+    assert.equal(posted.filter((p) => p.kind === "views")[1].v.tagOrder.indexOf("t04"), 0);
+  } finally { g.__rectOf = null; }
+  panel._closeViewsDialog();
+});
+
+test("executed: pane filters render FOLDED, one summary line per pane in the user's tag order; the caret opens the matrix in its own bounded cell; the choice holds for the page", () => {
   stored["romp:feedTags-set"] = JSON.stringify({ lens: { tags: ["beta"], none: true }, t: 1 });
   const panel = openDialog();
   const cap = caption(panel);
   assert.ok(cap, "the section caption");
-  assert.ok(cap.textContent.endsWith(" \u25B8"), "folded: a right-pointing caret");
+  assert.ok(cap.textContent.endsWith(" ▸"), "folded: a right-pointing caret");
   assert.equal(cap._attrs["aria-expanded"], "false");
   assert.equal(cap._attrs.role, "button"); assert.equal(cap._attrs.tabindex, "0");
   let lines = paneLines(panel);
@@ -368,13 +634,22 @@ test("executed: pane filters render FOLDED, one summary line per pane in the use
   assert.equal(summary("Feed"), "beta, no tags", "the feed row reads its echo");
   assert.equal(lines.Chat.children[1]._attrs.title, "alpha, gamma", "the hover carries the full list");
   assert.equal(chips(panel).length, 0, "no chip while folded");
-  // the caret opens the matrix: five rows of All / no tags / every tag
+  const card = cardOf(panel);
+  assert.ok(Object.values(lines).every((row: any) => row.parentNode === card), "folded, the lines are the card's own fixed rows");
+  // the caret opens the matrix: five rows of All / no tags / every tag, in a cell of their own that keeps a
+  // bounded share and scrolls within it (review find, 2026-09-09: with thirty tags the open matrix pushed
+  // the sessions off the card at 800px)
   cap._listeners.click();
   const cap2 = caption(panel);
-  assert.ok(cap2.textContent.endsWith(" \u25BE"), "open: a down-pointing caret");
+  assert.ok(cap2.textContent.endsWith(" ▾"), "open: a down-pointing caret");
   assert.equal(cap2._attrs["aria-expanded"], "true");
   lines = paneLines(panel);
   assert.deepEqual(Object.keys(lines), ["All surfaces", "Chat", "Sessions", "Outline", "Feed"]);
+  const mbox = lines["All surfaces"].parentNode;
+  assert.ok(Object.values(lines).every((row: any) => row.parentNode === mbox), "the five rows share one cell");
+  assert.equal(mbox.children.length, 5);
+  same(mbox.parentNode, cardOf(panel), "the cell is the card's flex child");
+  assert.equal(styleOf(mbox), "flex:0 1 auto;min-height:52px;max-height:25vh;overflow-y:auto;overflow-x:hidden;", "bounded, scrolling within, giving way past the sessions' floor, keeping two lines");
   assert.equal(chips(panel).length, 5 * (2 + 3), "All, no tags and three tags on each of five rows");
   assert.ok(walk(panel._viewsDialog).some((n) => n.textContent === "(mixed)"), "the panes differ, so the bulk row says so");
   const cell = lines.Chat.children[1];
@@ -389,14 +664,40 @@ test("executed: pane filters render FOLDED, one summary line per pane in the use
   // the choice holds for the page: a fresh open finds the matrix open
   panel._closeViewsDialog();
   panel._openViewsDialog(null);
-  assert.ok(caption(panel).textContent.endsWith(" \u25BE"), "still open on the next open");
+  assert.ok(caption(panel).textContent.endsWith(" ▾"), "still open on the next open");
   assert.equal(chips(panel).length, 25);
   // Enter on the caption folds it back (and leaves the module default for the tests that follow)
   caption(panel)._listeners.keydown({ key: "Enter", preventDefault() {} });
-  assert.ok(caption(panel).textContent.endsWith(" \u25B8"));
+  assert.ok(caption(panel).textContent.endsWith(" ▸"));
   assert.equal(chips(panel).length, 0);
   panel._closeViewsDialog();
   delete stored["romp:feedTags-set"];
+});
+
+test("executed: the folded summary names only tags that exist; a lens left with none says so, and the hover names what it still carries", () => {
+  // the kernel keeps unknown names in a lens by design, and a rename or a delete rewrites no lens: the
+  // folded line used to list the old name as a live filter while the open matrix had no chip for it
+  const V = copy(THREE);
+  V.actives = { chat: { tags: ["zeta", "alpha"] }, timeline: { tags: ["zeta"] }, outline: { tags: ["zeta"], none: true } };
+  const panel = openDialog(V);
+  const lines = paneLines(panel);
+  const line = (k: string) => lines[k].children[1];
+  assert.equal(line("Chat").textContent, "alpha", "the gone name is left out");
+  assert.equal(line("Chat")._attrs.title, "alpha; the filter also names zeta, and no tag here has that name now", "the hover says what the filter still carries");
+  assert.equal(line("Sessions").textContent, "none of the tags here", "a lens naming only gone tags says so (the pane shows nothing)");
+  assert.equal(line("Sessions")._attrs.title, "none of the tags here; the filter also names zeta, and no tag here has that name now");
+  assert.equal(line("Outline").textContent, "no tags", "'no tags' still counts");
+  assert.equal(line("Feed").textContent, "All", "an untouched pane");
+  assert.equal(line("Feed")._attrs.title, "All", "...with nothing to add");
+  // open, the matrix shows the same: no chip for zeta, alpha selected on Chat, nothing selected on Sessions
+  caption(panel)._listeners.click();
+  const open = paneLines(panel);
+  const sel = (k: string) => open[k].children[1].children.filter((c: any) => styleOf(c).includes("font-weight:650;")).map((c: any) => c.textContent);
+  assert.deepEqual(sel("Chat"), ["alpha"]);
+  assert.deepEqual(sel("Sessions"), [], "nothing selected: the same emptiness the folded line reports");
+  assert.ok(!walk(panel._viewsDialog).some((n) => n.textContent === "zeta"), "no chip anywhere for the gone name");
+  caption(panel)._listeners.click();
+  panel._closeViewsDialog();
 });
 
 test("executed: thirty tags and forty sessions: every row, every chip and the sessions section render; the summary cuts with a count", () => {
@@ -405,7 +706,10 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   assert.deepEqual(walk(dlg).filter((n) => n._tname).map((n) => n._tname), NAMES30, "thirty one-line tag rows, in order");
   assert.equal(dots(panel).length, 30, "one dot each");
   assert.equal(walk(dlg).filter((n) => n._attrs.role === "radio").length, 0, "and not a swatch among them (360 before)");
-  assert.ok(walk(dlg).some((n) => n.textContent === "+ New tag"), "the table's final row");
+  const nt = walk(dlg).find((n) => n.textContent === "+ New tag");
+  assert.ok(nt, "the New tag row");
+  assert.ok(!walk(tgridOf(panel)).includes(nt), "...under the table, not inside its scroll");
+  assert.ok(styleOf(tgridOf(panel)).includes("min-height:74px;"), "the table's floor stays three rows however many there are");
   // folded filters: four lines, the long one cut
   const lines = paneLines(panel);
   assert.equal(lines.Chat.children[1].textContent, "t01, t02, t03, t04, t05, t06 +24 more");
@@ -417,7 +721,7 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   caption(panel)._listeners.click();
   assert.equal(chips(panel).length, 0);
   // the sessions section: search, tag all, and every live session
-  assert.ok(walk(dlg).some((n) => n.tag === "input" && n.placeholder === "search name or host\u2026"), "the search box");
+  assert.ok(walk(dlg).some((n) => n.tag === "input" && n.placeholder === "search name or host…"), "the search box");
   assert.ok(walk(dlg).some((n) => n.textContent === "tag all"), "tag all");
   assert.equal(walk(dlg).filter((n) => n._sid).length, 40, "forty session rows");
   // the popover works on the last row too

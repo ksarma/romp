@@ -287,12 +287,16 @@ function lensLabel(l) {
 // matrix fill the dialog): All, no tags, or the tag names the lens shows in the USER'S tag order
 // (`order`, the union's, not the order the chips were clicked in), 'no tags' last as lensLabel puts
 // it, cut with a count past `max` names (six by default; Infinity for the full list a hover shows).
+// Only names the union lists (`order`, when given) count: a rename or a delete leaves the old name in
+// the lens (the kernel keeps unknown names by design), and a name the open matrix draws no chip for is
+// not one the folded line should claim either (review find, 2026-09-09). A lens left with none says so.
 function lensSummary(l, order, max) {
   if (lensAll(l)) return 'All';
   const idx = new Map((order || []).map((n, i) => [n, i]));
-  const at = (n) => (idx.has(n) ? idx.get(n) : idx.size);   // a name the union no longer lists sorts last
-  const parts = (l.tags || []).slice().sort((a, b) => at(a) - at(b));
+  const at = (n) => (idx.has(n) ? idx.get(n) : idx.size);
+  const parts = (l.tags || []).filter((n) => !order || idx.has(n)).sort((a, b) => at(a) - at(b));
   if (l.none) parts.push('no tags');
+  if (!parts.length) return 'none of the tags here';
   const cap = max || 6;
   if (parts.length <= cap) return parts.join(', ');
   return parts.slice(0, cap).join(', ') + ' +' + (parts.length - cap) + ' more';
@@ -301,6 +305,16 @@ function lensSummary(l, order, max) {
 // page lifetime (a module variable, the way modelChoicesRev does), not per open, so a user who opened
 // the matrix finds it open on the next look and one who left it folded is not shown it again.
 let paneFiltersOpen = false;
+// The tag table's share of the viewport in the Sessions & tags dialog: its natural height up to this,
+// scrolling within itself past it (the height budget is described where the table is built). 30vh over
+// 35vh (measured in Chromium at 1600 wide, thirty tags, forty sessions, filters folded; tag rows shown /
+// session rows shown): 1300px 14/18 against 16/16, 800px 8/7 against 10/5, 700px 7/4 against 8/4. The
+// sessions are the working area, so the two tag rows go; the one cost is that ten tags scroll at 800px
+// (8 of 10 shown) where 35vh showed all ten.
+const TAG_TABLE_CAP = '30vh';
+// The open pane-filter matrix's share: bounded and scrolling within itself, so many tags cannot push
+// the sessions off the card.
+const MATRIX_CAP = '25vh';
 // THIS surface's lens: the timeline keys on actives.timeline (per-surface selections, the user
 // 2026-08-25). A pre-lens blob (an older kernel, a client-held legacy shape) derives its lens from
 // the legacy scalar EXACTLY as the kernel normalizer seeds it — behavior migrates, not just shape:
@@ -905,7 +919,9 @@ function menuTop(anchor, menuH, viewH) {
   const below = anchor.bottom + 4;
   if (below + menuH <= viewH - 6) return below;
   const above = anchor.top - 4 - menuH;
-  if (above >= 6) return above;
+  // above must ALSO end on screen: an anchor rect that sits below the viewport (one translated into
+  // the wrong document, review find 2026-09-09) passed the >= 6 check and put the menu off the bottom
+  if (above >= 6 && above + menuH <= viewH - 6) return above;
   return Math.max(6, viewH - 6 - menuH);
 }
 // Translate a pane-local anchor rect into a host document's coordinates by summing the intervening
@@ -3008,7 +3024,17 @@ class TimelinePanel {
   // flip fix). The anchor rect is translated by the intervening iframes' offsets, moveTip-style. A
   // cross-origin parent (the VS Code webview) throws on frameElement access → fall back to our own
   // pane, which is exactly the pre-host behavior.
-  _menuHost(anchorRect) {
+  //
+  // `anchorEl` (optional): the anchor node. One that already lives in ANOTHER document needs no
+  // translation: the Sessions & tags dialog is adopted into the host document when it opens, so a
+  // node inside it, the colour dot the popover hangs on, measures in host coordinates already, and
+  // translating its rect again put the popover an iframe offset away from the dot, below the viewport
+  // in the web shell's bottom band (review find, 2026-09-09).
+  _menuHost(anchorRect, anchorEl) {
+    const own = anchorEl && anchorEl.ownerDocument;
+    if (own && own !== document) {
+      try { return { win: own.defaultView || window, doc: own, rect: anchorRect }; } catch (e) { /* fall through to the frame walk */ }
+    }
     if (this._tipWin && this._tipWin !== window) {
       try {
         const frames = [];
@@ -3996,8 +4022,11 @@ class TimelinePanel {
   // a refusal behave exactly as before. One popover at a time: opening another closes this one, and
   // the dot toggles its own shut. It closes on the pick, on Escape (the dialog's key hook, which then
   // leaves the dialog open) and on a press anywhere else on the dialog (the backdrop's pointerdown).
-  // It lives in the host document beside the dialog, one z-index above it, placed like the menus:
-  // below the dot, flipped above when below cannot hold it.
+  // It lives in the dot's own document beside the dialog, one z-index above it, placed like the
+  // menus: below the dot, flipped above when below cannot hold it (_placeTagColorPop). It closes
+  // rather than float when its dot moves under it: the tag table's scroll and the card's (build),
+  // and the host window's resize; a repaint that rebuilt the row re-places it on the new dot. Tab
+  // leaves it the way Escape does, and focus moving to another element closes it (review, 2026-09-09).
   _openTagColorPop(tg, anchorEl) {
     const key = unionKey(tg);
     const reopen = !!(this._tagColorPop && this._tagColorPop._key === key);
@@ -4025,8 +4054,12 @@ class TimelinePanel {
       sw.setAttribute('aria-checked', cur ? 'true' : 'false');
       sw.setAttribute('aria-label', c);
       sw.setAttribute('tabindex', cur || (!known && i === 0) ? '0' : '-1');   // one tab stop; the arrows move it
+      // the current swatch wears an INNER ring (two inset shadows: the colour's own edge, then the ring),
+      // never an outline: an inline outline replaced the browser's focus ring, so focus on open (which
+      // lands on this very swatch) was indistinguishable from "current" (review find, 2026-09-09). The
+      // focus ring stays the browser's :focus-visible outline, outside the swatch.
       sw.setAttribute('style', 'display:inline-block;width:18px;height:18px;border-radius:50%;cursor:pointer;background:' + c + ';'
-        + (cur ? 'outline:2px solid ' + MENU_FG + ';outline-offset:1px;' : 'opacity:0.7;'));
+        + (cur ? 'box-shadow:inset 0 0 0 2px ' + c + ',inset 0 0 0 4px ' + MENU_FG + ';' : 'opacity:0.7;'));
       if (!cur) {
         sw.addEventListener('mouseenter', () => { sw.style.opacity = '1'; });
         sw.addEventListener('mouseleave', () => { sw.style.opacity = '0.7'; });
@@ -4043,6 +4076,10 @@ class TimelinePanel {
       sw.addEventListener('click', pick);
       sw.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); return; }
+        // Tab (either direction) leaves the palette the way Escape does: closed, focus back on the dot,
+        // which is the tab stop before and after it. Left alone, Tab moved focus out to the body and
+        // left the palette open with nothing focused inside it (review find, 2026-09-09).
+        if (e.key === 'Tab') { e.preventDefault(); this._closeTagColorPop(true); return; }
         const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowDown' ? cols : e.key === 'ArrowUp' ? -cols : 0;
         if (!step) return;
         e.preventDefault();
@@ -4052,13 +4089,21 @@ class TimelinePanel {
       });
       sws.push(sw);
     });
-    const h = this._menuHost(anchorEl.getBoundingClientRect());
-    h.doc.body.appendChild(pop);
-    const w = pop.offsetWidth || cols * 26 + 16;
-    pop.style.left = Math.max(6, Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - w - 6)) + 'px';
-    pop.style.top = Math.round(menuTop(h.rect, pop.offsetHeight || 0, h.win.innerHeight || 9999)) + 'px';
+    // focus that moved to another element outside the popover (not its dot, whose click toggles) closes
+    // it; a move within it (the arrows) or to nothing at all (the window losing focus) leaves it open
+    pop.addEventListener('focusout', (e) => {
+      const to = e.relatedTarget;
+      if (!to || this._tagColorPop !== pop || to === this._tagColorAnchor) return;
+      for (let n = to; n; n = n.parentNode) if (n === pop) return;
+      this._closeTagColorPop();
+    });
+    pop._minW = cols * 26 + 16;   // the width to clamp by before the first layout
     this._tagColorPop = pop;
     this._tagColorAnchor = anchorEl;
+    const h = this._placeTagColorPop(anchorEl);
+    // a resize re-centres the card and moves the dot with it: the popover closes rather than float
+    const onResize = () => this._closeTagColorPop();
+    try { h.win.addEventListener('resize', onResize); pop._resize = { win: h.win, fn: onResize }; } catch (e) {}
     try { anchorEl.setAttribute('aria-expanded', 'true'); } catch (e) {}
     const first = sws.find((s2) => s2.getAttribute('aria-checked') === 'true') || sws[0];
     setTimeout(() => { try { first.focus(); } catch (e) {} }, 0);
@@ -4068,9 +4113,33 @@ class TimelinePanel {
   _closeTagColorPop(refocus) {
     const pop = this._tagColorPop;
     if (!pop) return;
+    if (pop._resize) { try { pop._resize.win.removeEventListener('resize', pop._resize.fn); } catch (e) {} }
     pop.remove(); this._tagColorPop = null;
     const a = this._tagColorAnchor; this._tagColorAnchor = null;
     if (a) { try { a.setAttribute('aria-expanded', 'false'); if (refocus) a.focus(); } catch (e) {} }
+  }
+  // Place the open popover by its dot, in the dot's own document (_menuHost with the element, so a
+  // dot inside the host-adopted dialog is not translated a second time): on open, and again after a
+  // repaint rebuilt the row, whose place can change (a notice inserted above the table, a row added
+  // or removed above it). Records the dot's rect so the scroll listeners can tell a dot that moved
+  // (_tagColorPopMoved) from a scroll event that moved nothing (the repaint's scroll restore).
+  _placeTagColorPop(anchorEl) {
+    const pop = this._tagColorPop;
+    if (!pop) return null;
+    const rect = anchorEl.getBoundingClientRect();
+    const h = this._menuHost(rect, anchorEl);
+    if (pop.parentNode !== h.doc.body) h.doc.body.appendChild(pop);
+    const w = pop.offsetWidth || pop._minW || 0;
+    pop.style.left = Math.max(6, Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - w - 6)) + 'px';
+    pop.style.top = Math.round(menuTop(h.rect, pop.offsetHeight || 0, h.win.innerHeight || 9999)) + 'px';
+    pop._anchorAt = { left: rect.left, top: rect.top };
+    return h;
+  }
+  _tagColorPopMoved() {
+    const pop = this._tagColorPop, a = this._tagColorAnchor;
+    if (!pop || !a || !pop._anchorAt) return false;
+    const r = a.getBoundingClientRect();
+    return Math.abs(r.left - pop._anchorAt.left) > 0.5 || Math.abs(r.top - pop._anchorAt.top) > 0.5;
   }
 
   _openViewsMenu(anchorEl) {
@@ -4237,8 +4306,11 @@ class TimelinePanel {
     // MENU padding (4px), and in one style string the later declaration wins — with the paddings
     // stated first the dialog had been rendering 4px edges all along, which IS the claustrophobia
     // the user reported (2026-08-25); the 14px/22px in the source never applied.
+    // ...and it SCROLLS as a whole, never clips, when a page is shorter than its minimum content (the
+    // floors below: the sessions' four rows, the tag table's, the open matrix's), so nothing is ever out
+    // of reach (a phone held sideways clipped the search box and tag all, review find 2026-09-09).
     card.setAttribute('style', MENU_STYLE + 'box-sizing:border-box;width:min(1200px,90vw);max-height:90vh;'
-      + 'overflow:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;');
+      + 'overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;');
     card.addEventListener('click', (e) => e.stopPropagation());
     // the open [+] menu's key rides the INSTANCE (this._tagAddFor: sid, or '*' for the bulk bar)
     // so the shared join builder can close it from either surface — the dialog or the lane gear
@@ -4255,6 +4327,13 @@ class TimelinePanel {
         return [pre.toLowerCase(), s.name.slice(pre.length)];
       return [null, s.name || String(s.id || '').slice(0, 8)];
     };
+    // the tag table of the LAST build, read for its scroll before the rebuild tears it down (in build)
+    let tgridEl = null;
+    // a scroll under the open colour popover (the tag table's, or the card's on a short page) moves its
+    // dot away: the popover closes rather than float; a scroll event that moved nothing (the repaint's
+    // scroll restore) leaves it where it is (review find, 2026-09-09)
+    const scrolledUnderPop = () => { if (this._tagColorPopMoved()) this._closeTagColorPop(); };
+    card.addEventListener('scroll', scrolledUnderPop, { passive: true });
     const build = () => {
       // the open rename input's text and caret, read from the live element before it is torn down —
       // the `input` listener keeps the text current, but the caret can move without one (arrow keys)
@@ -4264,6 +4343,10 @@ class TimelinePanel {
         if (typeof live.selectionStart === 'number') { this._tagRenameDraft.selStart = live.selectionStart; this._tagRenameDraft.selEnd = live.selectionEnd; }
       }
       this._tagRenameInput = null;
+      // the tag table's scroll survives the repaint (a colour pick, an ack, a peer's edit snapped it to
+      // the top; review find 2026-09-09): read off the live table now, restored once the card is complete
+      const tgridTop = tgridEl ? (tgridEl.scrollTop || 0) : 0;
+      tgridEl = null;
       card.textContent = '';
       const v = this._curViews();
       // NAME-KEYED (user ruling 2026-08-24): whichever store's id opened this, the header is the
@@ -4298,12 +4381,22 @@ class TimelinePanel {
         ct.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
         capT.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
         const tgrid = card.createDiv();
-        // the table keeps its natural height up to a share of the viewport and scrolls within itself
-        // past that (the user 2026-09-09: with many tags the sections above the sessions took the
-        // page); it does not shrink below the share, so the sessions table (flex:1) takes what is left
+        tgridEl = tgrid;
+        // THE HEIGHT BUDGET (the user 2026-09-09: with many tags the sections above the sessions took
+        // the page; the review's 800px and 700px pages, 2026-09-09). The table keeps its natural height
+        // up to a share of the viewport (TAG_TABLE_CAP) and scrolls within itself past that. When height
+        // runs out the sessions box gives way first (its flex-shrink is a thousandfold, so a table that
+        // fits is never squeezed while the sessions have room) but never below its floor of four rows;
+        // at that floor the table and the open filter matrix give way, the table down to about three
+        // rows (a floor sized to its rows, under their measured height, so a short table never shows
+        // blank space); and when the floors together outgrow the card, the card scrolls (overflow-y:auto)
+        // instead of clipping. The padding is room inside the clip for the pills' and the dots' rings
+        // (a scroll container clips its descendants' outlines); the negative margins keep the layout put.
+        const rowsN = viewTagUnion(v).length;
         tgrid.setAttribute('style', 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
-          + 'column-gap:14px;row-gap:4px;align-items:center;margin:2px 0 6px;'
-          + 'flex:0 0 auto;max-height:35vh;overflow-y:auto;');
+          + 'column-gap:14px;row-gap:4px;align-items:center;padding:4px 0 4px 4px;margin:-2px 0 2px -4px;'
+          + 'flex:0 1 auto;min-height:' + (Math.min(rowsN, 3) * 22 + 8) + 'px;max-height:' + TAG_TABLE_CAP + ';overflow-y:auto;');
+        tgrid.addEventListener('scroll', scrolledUnderPop, { passive: true });
         // `held`: the reason a gesture cannot be honoured here; the action renders disabled (dim, no
         // pointer, aria-disabled) wearing that reason as its tooltip, in place of a click that could
         // only end in the refusal notice (review find, 2026-09-08)
@@ -4352,9 +4445,16 @@ class TimelinePanel {
               pillCell.style.opacity = '0.45';
               const clearCues = () => cells.forEach((c) => { c.style.borderTop = ''; c.style.borderBottom = ''; });
               const onMove = (ev) => {
-                const ys = cells.map((c) => { const r = c.getBoundingClientRect(); return (r.top + r.bottom) / 2; });
-                let idx = ys.findIndex((y) => ev.clientY < y);
-                if (idx < 0) idx = cells.length - 1;
+                // only rows inside the table's visible box take the cue and the drop (review find,
+                // 2026-09-09: the table scrolls now, and a pointer past its edge ranked a row the user
+                // could not see, so the drop landed where no cue was drawn); the rects are live, so a
+                // wheel over the table mid-drag scrolls further rows into reach
+                const box = tgrid.getBoundingClientRect();
+                const shown = cells.map((c, i) => { const r = c.getBoundingClientRect(); return { i, y: (r.top + r.bottom) / 2 }; })
+                  .filter((p) => p.y >= box.top && p.y <= box.bottom);
+                if (!shown.length) return;
+                const hit = shown.find((p) => ev.clientY < p.y);
+                const idx = hit ? hit.i : shown[shown.length - 1].i;
                 if (idx !== toIdx) {
                   toIdx = idx;
                   clearCues();
@@ -4495,11 +4595,13 @@ class TimelinePanel {
         }
         // a repaint that dropped the popover's row (its tag deleted from another surface) closes it
         if (this._tagColorPop && !viewTagUnion(v).some((tg) => unionKey(tg) === this._tagColorPop._key)) this._closeTagColorPop();
-        // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
-        // the row reads "creating…" and takes no click (the 2026-09-05 review: a second
-        // click before the ack made a second tag); the ack's repaint brings the button back.
-        const ntRow = tgrid.createDiv();
-        ntRow.setAttribute('style', 'grid-column:1 / -1;');
+        // [+ New tag]: the row under the table, at the dialog's own scale, its own flex child rather than the
+        // table's last row, so it never scrolls under the table's fold (with ten tags at 800px the cap
+        // held exactly the ten rows and hid it, review find 2026-09-09). While a create is in flight the
+        // row reads "creating…" and takes no click (the 2026-09-05 review: a second click before the ack
+        // made a second tag); the ack's repaint brings the button back.
+        const ntRow = card.createDiv();
+        ntRow.setAttribute('style', 'flex:0 0 auto;margin:0 0 6px;');
         if (this._createInFlight()) {
           const busy = ntRow.createSpan({ text: 'creating…' });
           busy.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
@@ -4586,8 +4688,8 @@ class TimelinePanel {
           build();
         };
         const rows = [['All surfaces', '*'], ['Chat', 'chat'], ['Sessions', 'timeline'], ['Outline', 'outline'], ['Feed', 'feed']];
-        const paneRow = (label, key) => {   // the label column both forms share, so folding moves nothing sideways
-          const row = card.createDiv();
+        const paneRow = (label, key, parent) => {   // the label column both forms share, so folding moves nothing sideways
+          const row = (parent || card).createDiv();
           row.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 0;');
           const lb = row.createSpan({ text: label });
           lb.setAttribute('style', 'flex:0 0 88px;font-size:0.82em;opacity:0.6;font-style:italic;');
@@ -4604,11 +4706,20 @@ class TimelinePanel {
             const lens = lensFor(key);
             const sm = row.createSpan({ text: lensSummary(lens, order) });
             sm.setAttribute('style', 'font-size:0.82em;opacity:0.85;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;');
-            sm.setAttribute('title', lensSummary(lens, order, Infinity));
+            // the hover: the full list, plus the names the lens still carries that no tag here answers to
+            // (a rename or a delete leaves them behind; the open matrix draws no chip for them)
+            const gone = lens && !lensAll(lens) ? (lens.tags || []).filter((n) => order.indexOf(n) < 0) : [];
+            sm.setAttribute('title', lensSummary(lens, order, Infinity) + (!gone.length ? ''
+              : '; the filter also names ' + gone.join(', ') + ', and no tag here has ' + (gone.length > 1 ? 'those names' : 'that name') + ' now'));
           }
         } else {
+          // OPEN: the five rows in a cell of their own, bounded (MATRIX_CAP) and scrolling within itself,
+          // so thirty tags cannot push the sessions off the card (review find, 2026-09-09); it gives way
+          // with the tag table once the sessions are at their floor, and keeps two lines of its own
+          const mbox = card.createDiv();
+          mbox.setAttribute('style', 'flex:0 1 auto;min-height:52px;max-height:' + MATRIX_CAP + ';overflow-y:auto;overflow-x:hidden;');
           for (const [label, key] of rows) {
-            const row = paneRow(label, key);
+            const row = paneRow(label, key, mbox);
             // the chips wrap inside their own cell, so a long row's second line starts under the first
             // chip, not under the pane label (thirty tags wrap by design, not under pressure)
             const cell = row.createDiv();
@@ -4673,7 +4784,10 @@ class TimelinePanel {
       const gridBox = card.createDiv();
       // the TABLE scrolls within the modal (the user 2026-08-25) — header, scope, tags, and the
       // bulk bar stay put; only the session rows pan (the .cmt-msgs overflow idiom family)
-      gridBox.setAttribute('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;');
+      // it gives way FIRST when height runs out (the thousandfold flex-shrink: a tag table that fits is
+      // never squeezed while the sessions have room) and never below four rows, its floor: past it the
+      // tag table and the open matrix give way, and past their floors the card scrolls (review, 2026-09-09)
+      gridBox.setAttribute('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;');
       const renderRows = () => {
         gridBox.textContent = '';
         const needle = query.trim().toLowerCase();
@@ -4771,6 +4885,16 @@ class TimelinePanel {
       renderRows();
       // a repaint mid-typing keeps the search box live: re-focus with the caret at the end
       if (query) { q.focus(); try { q.setSelectionRange(q.value.length, q.value.length); } catch (e) {} }
+      // the tag table's scroll, restored now that the card is complete and the table has its final
+      // height (written earlier it lands against a taller table and clamps low); a table that no longer
+      // scrolls clamps it to 0 itself
+      if (tgridTop && tgridEl) tgridEl.scrollTop = tgridTop;
+      // the colour popover survived the repaint on a rebuilt dot: hang it on the dot's new place, or
+      // close it when the row is no longer inside the table's visible box (nothing on screen to hang on)
+      if (this._tagColorPop && this._tagColorAnchor && tgridEl) {
+        const r = this._tagColorAnchor.getBoundingClientRect(), b = tgridEl.getBoundingClientRect();
+        if (r.bottom > b.top && r.top < b.bottom) this._placeTagColorPop(this._tagColorAnchor); else this._closeTagColorPop();
+      }
     };
     build();
     this._viewsDialogBuild = build;   // tagEditFailed repaints the open dialog with the refusal

@@ -298,7 +298,9 @@ test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap 
   // the card declarations come AFTER MENU_STYLE: the menu spec opens with ITS padding (4px), and
   // in one style string the later declaration wins — stated first, the dialog's padding had been
   // silently 4px all along (found by headless computed-style measurement, 2026-08-25)
-  assert.match(SRC, /MENU_STYLE \+ 'box-sizing:border-box;width:min\(1200px,90vw\);max-height:90vh;'\s*\n\s*\+ 'overflow:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;'/,
+  // re-aimed 2026-09-09 (the many-tags change's review): the card scrolls as a whole, never clips,
+  // when a page is shorter than its sections' floors (a phone held sideways clipped the search box)
+  assert.match(SRC, /MENU_STYLE \+ 'box-sizing:border-box;width:min\(1200px,90vw\);max-height:90vh;'\s*\n\s*\+ 'overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;'/,
     "the card's screen-sized border-box footprint + edge padding, declared after the menu spec");
   // wrap stays GRACEFUL, not needless: the wide card lays the rows out on their lines; these
   // containers wrap only when the window genuinely narrows. Re-aimed 2026-09-09 (the many-tags
@@ -308,8 +310,11 @@ test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap 
     "the five filter rows' chips wrap within their own cell");
   assert.match(SRC, /chips\.setAttribute\('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-width:0;'\);/,
     "membership chip cells ditto");
-  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;'\);/,
-    "only the session rows pan when height runs out — the card itself never scrolls whole");
+  // re-aimed 2026-09-09 (the many-tags change's review): the sessions box gives way first when height
+  // runs out (the thousandfold flex-shrink) and never below four rows; past that floor the tag table and
+  // the open matrix give way, and past THEIR floors the card scrolls rather than clip (timeline-tags-scale)
+  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;'\);/,
+    "the session rows pan within their box, which keeps at least four rows");
 });
 
 test("federation, NAME-KEYED (user ruling 2026-08-24): one name = one row/label/union — kernels are plumbing", () => {
@@ -784,8 +789,8 @@ test("dialog polish + reachable tag management (the user 2026-08-25)", () => {
   // the dialog reads at the page's 13px form scale (the menu 12px was the too-small complaint)
   assert.match(SRC, /padding:22px 26px;font-size:13px;'/,
     "the 13px form scale rides the card's own declarations (after MENU_STYLE, whose 4px padding they beat)");
-  // the session table scrolls WITHIN the modal — chrome stays put
-  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;'\)/);
+  // the session table scrolls WITHIN the modal; chrome stays put (its floor since 2026-09-09: four rows)
+  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1000 auto;min-height:96px;overflow-y:auto;'\)/);
   // [+] is a rounded RECTANGLE in its own column between name and tags
   assert.match(SRC, /padding:1px 7px;'\n\s*\+ 'border-radius:5px;/, "the standard button anatomy, not a circle");
   assert.ok(!/width:17px;height:17px;'\n?\s*\+ 'border-radius:50%/.test(SRC), "the circle plus is gone");
@@ -802,15 +807,16 @@ test("the dialog redesign: tag TABLE with delete/rename/color actions, five filt
   // TAGS: a TABLE (the user's revision of the chip cloud) — each row the tag pill at normal size
   // with NO ✕ on it, then delete | rename | the colour dot as their own columns (the dot opens the
   // palette as a popover since 2026-09-09, timeline-tags-scale.test.ts); delete wears the
-  // destructive convention (dim at rest, red on hover); [+ New tag] is the table's FINAL row
+  // destructive convention (dim at rest, red on hover); [+ New tag] is the row UNDER the table (its own
+  // flex child since 2026-09-09, so the table's fold never hides it)
   assert.match(SRC, /grid-template-columns:max-content max-content max-content 1fr;/, "the tag table's four columns");
   assert.match(SRC, /the tag itself: the normal pill, NO ✕ — actions live beside it, never on it/);
   assert.match(SRC, /this\._tagEditorFor = this\._tagEditorFor === unionKey\(tg\) \? null : unionKey\(tg\);/,
     "rename toggles the pill into an input — keyed by the union's stable id, which survives the rename it makes");
   assert.match(SRC, /d\.style\.color = '#F85B5A'/, "delete goes red on hover — destructive, unlike membership ✕");
   assert.match(SRC, /DELETE the tag/, "the hover says what delete does");
-  assert.match(SRC, /text: '\+ New tag'/, "creation is the table's final row");
-  assert.match(SRC, /grid-column:1 \/ -1;/, "…spanning the table's full width");
+  assert.match(SRC, /text: '\+ New tag'/, "creation is the row under the table");
+  assert.match(SRC, /const ntRow = card\.createDiv\(\);/, "…its own flex child, outside the table's scroll");
   // FILTERS: five rows — All surfaces / Chat / Sessions / Outline / Feed (the pane names), each
   // the full lens vocabulary as pills editing ONLY its surface; All-surfaces fans to all four
   assert.match(SRC, /\[\['All surfaces', '\*'\], \['Chat', 'chat'\], \['Sessions', 'timeline'\], \['Outline', 'outline'\], \['Feed', 'feed'\]\]/);
