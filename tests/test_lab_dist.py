@@ -11,11 +11,12 @@ does (holding the staging window open long enough to matter):
   3. a marker that names the current inputs skips the build; a changed input, a removed dist, a dependency
      change, a build by another command or a change of build command rebuilds; the marker records the key
      computed BEFORE the build, so a source edited mid-build is caught by the next call;
-  4. the inputs are derived from esbuild.js by a rule that reads no array, object, string or comment: every
-     path-shaped token naming a path on disk inside the checkout, quoted or not, in code or in a comment,
-     contributes its top-level tree (a token naming nothing on disk contributes nothing; a stray quote
-     before a path hides nothing; an existing path outside the checkout is an error; a top-level file is
-     keyed as one file; then the trees their relative imports reach, one executed test per import shape the scan
+  4. the inputs are derived from esbuild.js by a rule that reads no array or object: every path-shaped token
+     (quoted or not, in code or in a comment) and every quoted string literal (any characters) is a candidate,
+     and a candidate naming a path on disk inside the checkout contributes its top-level tree (one naming
+     nothing on disk contributes nothing; a stray quote before a path hides nothing; a quoted path holding
+     a space or an @ is keyed; an existing path outside the checkout is an error; a top-level file is keyed
+     as one file; then the trees their relative imports reach, one executed test per import shape the scan
      follows), the dist being built is left out at the top level only, and on the real config the
      derivation yields the kernel's trees (tests/test_kernel_bundle_staleness.py pins file-level parity);
   5. a build that fails skips the caller (the served labs' standing behaviour) and leaves no marker; a
@@ -392,9 +393,9 @@ class MarkerKeysOnInputs(_Checkout):
 
 class InputsDeriveFromEsbuild(unittest.TestCase):
     """The keyed trees come from esbuild.js, never from a list kept here: the top-level tree of every
-    path-shaped token in the config that names a path on disk, quoted or not, then the trees their relative
-    imports reach. The checkout is `base/checkout`, so a path OUTSIDE the checkout can exist inside the
-    cleaned temp dir."""
+    path-shaped token and every quoted string literal in the config that names a path on disk, then the
+    trees their relative imports reach. The checkout is `base/checkout`, so a path OUTSIDE the checkout can
+    exist inside the cleaned temp dir."""
 
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="lab-dist-inputs-")
@@ -437,7 +438,7 @@ function testBuild() { const entries = []; return { entryPoints: entries, outdir
         return [(os.path.relpath(p, self.root), r) for p, r in pairs]
 
     def roots(self):
-        """The trees the config's literals name, before the import follow, relative to the checkout."""
+        """The trees the config's tokens and literals name, before the import follow, relative to the checkout."""
         return [os.path.relpath(p, self.root) for p in lab_dist.esbuild_roots(self.root, self.ext)]
 
     def imports_of(self, name, text):
@@ -480,9 +481,10 @@ const extension = { entryPoints: ["src/extension.ts"] };
 ''')
         self.assertEqual(self.roots(), ["data", "ext"])
 
-    # The scan reads path-shaped tokens, not quoted literals, so the quotes on a line need not balance. Each
-    # test below puts a stray quote (or none at all) before a real path on the same line; a quote-balanced scan
-    # opened a literal at the stray quote that swallowed the path and dropped its tree in silence.
+    # The token scan reads path-shaped tokens whatever the quoting, so the quotes on a line need not balance for
+    # a path made of token characters. Each test below puts a stray quote (or none at all) before a real path on
+    # the same line; a scan of quoted literals alone opened a literal at the stray quote that swallowed the path
+    # and dropped its tree in silence.
     def test_an_apostrophe_in_a_comment_before_a_path_hides_nothing(self):
         _write(self.config, '''
 const webview = { entryPoints: [
@@ -506,6 +508,22 @@ const m = /^Could not resolve "([^"]+)"/.exec(text); const entries = ["../tools/
 const entries = [`../tools/extra/thing.ts`, "src/extension.ts"];
 ''')
         self.assertEqual(self.roots(), ["ext", "tools"])
+
+    # The literal scan reads the path the token scan cuts: a quoted path holding a character outside the token
+    # class is one literal but several tokens, none naming the path. Each config below names its tree ONLY through
+    # such a path (the setUp config names ui through other tokens, which would mask a drop), and the tree must be
+    # keyed. A scan of tokens alone dropped both trees in silence.
+    def test_a_quoted_path_with_a_space_inside_a_component_is_keyed(self):
+        _write(os.path.join(self.root, "ui", "web view", "render.ts"), "export const s = 1;\n")
+        _write(self.config, 'const x = { entryPoints: ["../ui/web view/render.ts", "src/extension.ts"] };\n')
+        self.assertEqual(self.roots(), ["ext", "ui"],
+                         "the tokens are `../ui/web` and `view/render.ts`, neither on disk; the literal is the path")
+
+    def test_a_quoted_path_with_an_at_sign_inside_a_component_is_keyed(self):
+        _write(os.path.join(self.root, "lib@2", "entry.ts"), "export const v = 2;\n")
+        _write(self.config, "const x = { entryPoints: ['../lib@2/entry.ts', \"src/extension.ts\"] };\n")
+        self.assertEqual(self.roots(), ["ext", "lib@2"],
+                         "the tokens are `../lib` and `2/entry.ts`, neither on disk; the literal is the path")
 
     def test_a_top_level_file_the_config_names_is_keyed_as_one_file(self):
         """A path whose top-level tree is a FILE (root/top.js) is keyed as that one file, not walked: it is
@@ -609,8 +627,8 @@ const x = { entryPoints: ["src/extension.ts", ...more, shared, `${dir}/${name}.t
         self.assertIn("names no path inside the checkout", str(cm.exception))
 
     def test_the_real_config_derives_the_kernel_trees(self):
-        """On this checkout: the config's literals name ui/ and vscode-extension/ (the object-form entry under
-        node_modules is a dependency), the import follow adds vendor/, and the three are the trees the
+        """On this checkout: the config's tokens and literals name ui/ and vscode-extension/ (the object-form
+        entry under node_modules is a dependency), the import follow adds vendor/, and the three are the trees the
         kernel's _bundle_inputs reads (file-level parity, the guard against under-approximation, is pinned
         in tests/test_kernel_bundle_staleness.py, where the kernel is already loaded); the config and
         package files are keyed, the lock file is content-keyed instead, and nothing under the extension's
