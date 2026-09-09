@@ -1060,7 +1060,9 @@ class Panel {
   // mark whatever stands above it, the cards above moved up by the least that clears it. Before it, a tall change card above
   // a comment pushed the comment's card a viewport below its highlight, and the click on the highlight scrolled the
   // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
-  // (placeCards), when the layout ends (layoutOff: the fold, edit mode, the panel's close) and with the panel (dispose).
+  // (placeCards), by a pass in the list layout (the same: a mark or a head clicked there writes one, and the list has no
+  // pass to spend it on — the 2026-09-08 review), when the layout ends (layoutOff: the fold, edit mode, the panel's close)
+  // and with the panel (dispose).
   focusCard: string | null = null;
   // Show more (the same follow-on): the cards whose long parts — a change's old and new text, a long comment, a long run of
   // turns — show whole in the margin layout, where the sheet otherwise folds each to about eight lines (clipCards); keyed
@@ -3065,7 +3067,15 @@ class Panel {
     const margin = this.marginMode();
     const flipped = margin !== this.margin;
     if (flipped) root.classList.toggle("fc-margin", margin);
-    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (!margin) {
+      // the list layout has no focus: a mark or a head clicked in it writes one (showCard, installLayout), and a pass here
+      // spends nothing on it — but the flip to the margin layout would have, laying the whole margin on a card no gesture
+      // named THERE and centering nothing (a resize is not a click), the cards above it moved from their marks (the
+      // 2026-09-08 review). The focus is a click's, made in the margin layout.
+      this.focusCard = null;
+      if (flipped) { this.layoutOff(); if (!fromRender) this.render(); }
+      return;
+    }
     if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
     const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
     const body = this.ctx.body(), track = this.sections.cards;
@@ -3175,7 +3185,7 @@ class Panel {
    *  content is taller than its box), marks them for the fade (`data-clipped`) and shows the card's Show more row, rendered
    *  hidden, so a card with nothing cut offers no toggle. A card in `openBodies` wears `fc-more`: no cap, no fade, and the
    *  row reads Show less. Run before the cards' heights are measured, since the row is part of the height. The list layout
-   *  runs no pass and caps nothing: the rows stay hidden there. */
+   *  runs no pass and caps nothing: the rows stay hidden there. A run of turns is cut at its START, not its end (keepEnd). */
   private clipCards(kids: HTMLElement[]): void {
     for (const card of kids) {
       if (!card.classList.contains("fc-card") || !card.dataset.id) continue;
@@ -3186,9 +3196,20 @@ class Panel {
       for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {
         const over = !open && part.scrollHeight > part.clientHeight + 1;
         if (over) { part.dataset.clipped = "1"; cut = true; } else delete part.dataset.clipped;
+        if (part.classList.contains("fc-replies")) this.keepEnd(part, over);
       }
       row.hidden = !(open || cut);
     }
+  }
+  /** A folded run of turns shows its END. The turns stand in `ts` order (renderTurns), so the newest — the session's latest
+   *  answer, the turn the person re-engages for, the one a reply box under the run answers — is the LAST row, and a cap that
+   *  kept the first eight lines showed the oldest turns and hid it behind Show more (the 2026-09-08 review). The cut part is
+   *  scrolled to its end (an `overflow: hidden` box scrolls by script, and a fresh render's box starts at 0, so every pass
+   *  writes it); the sheets put its fade at its FIRST lines, where the cut is (`.fc-replies.fc-clip[data-clipped]`, against
+   *  the last-lines fade of every other cut part). A part not cut stands at its start. */
+  private keepEnd(part: HTMLElement, cut: boolean): void {
+    if (cut) part.scrollTop = part.scrollHeight;
+    else if (part.scrollTop) part.scrollTop = 0;
   }
   /** The Show more / Show less row at an open card's foot (clipCards): a button through the delegate root (fcclip, with the
    *  delegate's flash), hidden until the pass finds a part cut. */
@@ -3501,8 +3522,13 @@ class Panel {
     // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
     // card would not stand, and the track's scroll is the body's (showComposer)
     const moved = typing && this.composerBox.parentElement !== home;
-    if (keep) this.refocus(keep, want);
+    if (keep) this.refocus(keep, want, false);
     this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    // a control the pass SHOWS — the Show more row, rendered hidden and unhidden by clipCards — took no focus before it
+    // (focus() on an element not rendered is a no-op), so the keyboard is put back once more; a no-op when the first
+    // refocus landed it (the 2026-09-08 review: Enter on Show more left the keyboard on the body, and so did any re-render
+    // while the keyboard was on the toggle)
+    if (keep) this.refocus(keep, want, true);
     if (moved) this.showComposer();
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
@@ -3603,16 +3629,24 @@ class Panel {
     }
     return null;
   }
-  private refocus(k: FocusKey, want: FocusKey | null): void {
-    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input): nothing to mend
+  /** `settled`: whether the margin pass has run on the fresh list. render calls this before the pass (so a place kept by
+   *  index, k.at, names the card it named before the rebuild: cardsInOrder) and again after it, for a control the pass
+   *  shows — the Show more row (clipRow renders it hidden; clipCards unhides it) — which focus() cannot land on until then.
+   *  A control found and enabled that takes no focus is therefore left for the second call before the pass, and treated
+   *  as gone after it (the list layout, where the row stays hidden: the keyboard goes to the nearest place, not the body). */
+  private refocus(k: FocusKey, want: FocusKey | null, settled: boolean): void {
+    if (!this.root || this.root.contains(document.activeElement)) return;   // still focused (the input; the call before the pass landed it): nothing to mend
     const enabled = (n: HTMLElement | null): HTMLElement | null => (n && !(n as HTMLButtonElement).disabled ? n : null);
+    // focus a control and say whether it took: an element not rendered (a hidden row's button) ignores focus()
+    const take = (n: HTMLElement): boolean => { n.focus({ preventScroll: true }); return document.activeElement === n; };
     const w = want ? enabled(this.findControl(want)) : null;
-    if (w) { w.focus({ preventScroll: true }); return; }   // the button that was busy is back: the keyboard returns to it
+    if (w && (take(w) || !settled)) return;             // the button that was busy is back: the keyboard returns to it — after the pass, if it is not shown yet
     const n = this.findControl(k);
-    if (enabled(n)) { n!.focus({ preventScroll: true }); return; }
-    // disabled, or gone. A control of the cards list (the change cards, the foot): the nearest place, remembering the
-    // control still to come back to — this one, or the wanted one. Elsewhere (the head row's confirms), a control the
-    // rebuild removed lets the focus fall to the body, quietly: there is no place of its own to stand in for it.
+    if (enabled(n) && (take(n!) || !settled)) return;
+    // disabled, gone, or not shown once the pass has run. A control of the cards list (the change cards, the foot): the
+    // nearest place, remembering the control still to come back to — this one, or the wanted one. Elsewhere (the head row's
+    // confirms), a control the rebuild removed lets the focus fall to the body, quietly: there is no place of its own to
+    // stand in for it.
     if (typeof k.at !== "number") return;
     const pending = n ? k : want && this.findControl(want) ? want : null;
     const at = this.focusNear(k);

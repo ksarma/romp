@@ -4223,9 +4223,13 @@ body.filebrowse-open { overflow: hidden; }
    change's old and new text, a comment's body, a run of turns (.fc-clip) — is capped at eight of its own lines (lh: the
    part's line height) and clipped, its last lines fading out where the pass found the cap cut the content (data-clipped;
    a mask, so the fade is the same over a turn's wash as over the card), and the card's foot offers Show more; a card the
-   person opened whole (fc-more) has no cap. The list layout shows every part whole, and the row stays hidden there. */
+   person opened whole (fc-more) has no cap. A run of turns (.fc-replies) is cut at its START instead (the follow-on's review,
+   2026-09-08): the turns stand oldest first, so a cap that kept the first lines hid the newest — the session's latest answer,
+   the turn a reply box under the run answers — behind Show more; the pass scrolls a cut run to its end (keepEnd), and its
+   fade goes to its first lines. The list layout shows every part whole, and the row stays hidden there. */
 .fc-margin .fc-card:not(.fc-more) .fc-clip { max-height: 8lh; overflow: hidden; }
 .fc-margin .fc-card:not(.fc-more) .fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent); mask-image: linear-gradient(to bottom, black 65%, transparent); }
+.fc-margin .fc-card:not(.fc-more) .fc-replies.fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to top, black 65%, transparent); mask-image: linear-gradient(to top, black 65%, transparent); }
 .fc-clip-row { display: flex; }
 .fc-clip-row[hidden] { display: none; }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff

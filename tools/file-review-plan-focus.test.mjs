@@ -58,7 +58,13 @@ test('the focus as stated is the code\'s: set before the render, given to the ru
   assert.ok(note.includes('moved UP from the focus, each by the least that puts its end a gap above the card under it'));
   assert.ok(layout.includes('let ceiling = focusTop - gap;') && layout.includes('const top = Math.min(tops.get(it) as number, ceiling - it.height);') && layout.includes('ceiling = top - gap;'));
   assert.ok(note.includes('the loose group joins that chain when the moved cards reach it'));
-  assert.ok(layout.includes('for (const it of [...above.slice().reverse(), ...loose.slice().reverse()])'), 'the chain runs up through the cards above and then the loose group');
+  assert.ok(layout.includes('for (const it of above.slice().reverse()) {'), 'the chain runs up through the cards above');
+  assert.ok(layout.includes('let keep = loose.length, shift = 0;'), 'and then the loose group, as one');
+  // the review (2026-09-08): no card past the track's start — the cards the chain cannot fit go below the focus
+  assert.ok(note.includes('No card is moved past the start (the review, 2026-09-08)'));
+  assert.ok(layout.includes('if (top < 0) { spilled.add(it); continue; }'), 'a card the chain would move past the start is set aside');
+  assert.ok(layout.includes('for (const it of above) if (spilled.has(it)) put(it, Math.max(it.desired as number, floor));'), 'and laid below the focus, the marked ones first');
+  assert.ok(layout.includes('for (const it of loose) if (spilled.has(it)) put(it, floor);'), 'then the loose ones');
   assert.ok(note.includes('Without a focus the rule is unchanged'));
   assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const { it } of marked) put(it, Math.max(it.desired as number, floor));'), 'the old rule, verbatim, without a focus');
   assert.ok(note.includes('`focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus changed'));
@@ -68,6 +74,9 @@ test('the focus as stated is the code\'s: set before the render, given to the ru
   assert.ok(panel.includes('if (!wasOpen) this.focusCard = x.dataset.id;'), 'the head-click listener sets the focus for a card that opens');
   assert.ok(note.includes('The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout ends (`layoutOff`: the fold to the list, edit mode, the panel\'s close) and with the panel (`dispose`)'));
   assert.ok(panel.includes('if (this.focusCard !== null && !nodes.has(this.focusCard)) this.focusCard = null;'));
+  // the review (2026-09-08): a pass in the list layout clears a focus a click there wrote
+  assert.ok(note.includes('and a pass in the list layout clears one too (the review, 2026-09-08'));
+  assert.ok(/if \(!margin\) \{\n(?:\s*\/\/[^\n]*\n)*\s*this\.focusCard = null;\n\s*if \(flipped\) \{ this\.layoutOff\(\);/.test(panel), 'the list branch of placeCards clears it before it returns');
   assert.ok(/private layoutOff\(\): void \{[\s\S]*?this\.focusCard = null;[\s\S]*?\n  \}/.test(panel));
   assert.ok(/dispose\(\): void \{[\s\S]*?if \(this\.margin\) this\.layoutOff\(\);\n\s*this\.focusCard = null;/.test(panel));
 });
@@ -87,15 +96,22 @@ test('the leader down, the centering fallback and the fold are as stated, in the
   assert.ok(note.includes('Show more makes the card the focus and centers its mark, as opening a card does'));
   assert.ok(panel.includes('else { this.openBodies.add(key); this.focusCard = key; this.expandIntent = { key, wasOpen: false }; }'));
   assert.ok(note.includes('The list layout caps nothing'));
+  // the review (2026-09-08): a run of turns cut at its start, and the keyboard held on the toggle
+  assert.ok(note.includes('a run of turns cut at its START instead, scrolled to its last row with the sheets\' fade at its first lines (`keepEnd`'));
+  assert.ok(panel.includes('if (part.classList.contains("fc-replies")) this.keepEnd(part, over);'));
+  assert.ok(note.includes('The keyboard stays on Show more and Show less (the review, 2026-09-08)'));
+  assert.ok(/if \(keep\) this\.refocus\(keep, want, false\);\n\s*this\.afterRender\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(keep\) this\.refocus\(keep, want, true\);/.test(panel), 'render refocuses before the pass and once more after it');
   for (const [name, css] of sheets) {
     assert.ok(css.includes('.fc-margin .fc-card:not(.fc-more) .fc-clip { max-height: 8lh; overflow: hidden; }'), name + ': the cap under fc-margin alone');
     assert.ok(css.includes('.fc-margin .fc-card[data-pulled]::after {'), name + ': the leader down');
+    assert.ok(css.includes('.fc-margin .fc-card:not(.fc-more) .fc-replies.fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to top, black 65%, transparent); mask-image: linear-gradient(to top, black 65%, transparent); }'), name + ': the cut run\'s fade at its first lines');
   }
 });
 
 test('the modules the paragraph and the Tests bullet name exist, and hold the pins the plan credits them with', () => {
   const named = new Set([...testFiles(note), ...testFiles(bullet)]);
-  for (const f of ['ui/webview/card-layout.test.ts', 'ui/webview/file-comments-focus.test.ts', 'ui/webview/file-comments-focus-browser.test.ts', 'tests/test_guide_files_focus.py', 'tools/file-review-plan-focus.test.mjs']) {
+  for (const f of ['ui/webview/card-layout.test.ts', 'ui/webview/file-comments-focus.test.ts', 'ui/webview/file-comments-focus-browser.test.ts', 'tests/test_guide_files_focus.py', 'tools/file-review-plan-focus.test.mjs',
+    'ui/webview/card-layout-reach.test.ts', 'ui/webview/file-comments-focus-review.test.ts', 'tests/test_guide_files_focus_scope.py', 'tools/file-review-plan-focus-review.test.mjs']) {
     assert.ok(named.has(f), 'the paragraph and the bullet name ' + f);
     assert.ok(fs.existsSync(path.join(REPO, f)), f + ' exists');
   }
@@ -103,11 +119,20 @@ test('the modules the paragraph and the Tests bullet name exist, and hold the pi
   assert.ok(unit.includes('test("the focus: a tall card above a passage no longer pushes the passage\'s card down'));
   assert.ok(unit.includes('test("the focus and the loose group:'));
   assert.ok(unit.includes('test("the focus: no focus, a focus with no mark and an unknown focus each give the old result'));
+  const reach = read('ui', 'webview', 'card-layout-reach.test.ts');
+  assert.ok(reach.includes('test("the review\'s scene: a whole-file comment and a comment on the first paragraph'));
+  assert.ok(reach.includes('test("every card the focus rule places stands at or below the track\'s start'));
   const driven = read('ui', 'webview', 'file-comments-focus.test.ts');
   assert.ok(driven.includes('test("a tall open change card above a comment: clicking the comment\'s highlight makes its card the focus'));
   assert.ok(driven.includes('test("the focus clears when the list no longer holds its card'));
   assert.ok(driven.includes('test("the focus clears on the fold to the list layout'));
   assert.ok(driven.includes('test("in the margin layout a long part is clipped'));
+  assert.ok(driven.includes('test("a fold of a card that is NOT the focus moves nothing'));
+  assert.ok(driven.includes('test("the comment card\'s fold (renderCard\'s fc-more, apart from the change card\'s)'));
+  const review = read('ui', 'webview', 'file-comments-focus-review.test.ts');
+  assert.ok(review.includes('test("a mark clicked in the list layout does not anchor the margin layout when the columns come back'));
+  assert.ok(review.includes('test("the keyboard stays on Show more:'));
+  assert.ok(review.includes('test("a folded run of turns shows its end:'));
   const browser = read('ui', 'webview', 'file-comments-focus-browser.test.ts');
   assert.ok(browser.includes('for (const name of ["chromium", "firefox"])'));
   assert.ok(browser.includes('near(s.cards.c!.top, s.marks.c!.top, "the comment\'s card is level with its highlight (the defect: it sat a viewport below)");'));

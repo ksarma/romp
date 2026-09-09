@@ -1142,9 +1142,11 @@ The margin-layout follow-on (2026-09-07), panel side. The user, after walking th
 move with the window when possible, each trying to stay centered near the place in the text it was left as the reader
 scrolls, at least for markdown. The layout is the build's reading of that ask: comment cards that follow the text,
 laid out as margin-aligned cards the way document editors lay out comments, each card's top level with its passage
-rather than centered on it, overlapping cards pushed down in order and never up, and the passage centered only on a
-click. The build described the design to the user as the work began, so the user could redirect it early if it was not
-what the ask meant; the user has not yet said whether it is. Built: beside the body the aside wears the margin layout
+rather than centered on it, overlapping cards pushed down in order and never up (as first built; the focus follow-on,
+2026-09-08, below, holds the card the person last acted on at its mark and moves the cards above it up), and the
+passage centered only on a click. The build described the design to the user as the work began, so the user could
+redirect it early if it was not what the ask meant; the user has not yet said whether it is. Built: beside the body the
+aside wears the margin layout
 (`fc-margin`). The head and the composer sit at the top; Accept all · Reject all (moved out of the list), Send and the
 Log at the bottom, fixed in place while the track scrolls though not in size (the yield rule, below); the cards
 section between them is a track whose scroll is locked to the body's (each scroller's scroll event writes its position
@@ -1176,10 +1178,13 @@ the top of the text, and the reload's loader and the fold that says why a painte
 Every card is absolutely positioned at its mark's top in the body's content, less the header's height the track begins
 under: a comment highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are
 laid by that top (ties by the list's order) and each takes the larger of it and the previous card's bottom plus the
-gap, so cards never overlap and only ever move down from their marks; a pushed card draws a dashed leader up the
-gutter to its mark's height. Cards with no mark — a whole-file comment, a detached anchor, a change the view does not
+gap, so cards never overlap and, without a focus, only ever move down from their marks (with one — the card the person
+last acted on, which holds its mark — the cards above it move up, past their own marks where they must: the focus
+follow-on, 2026-09-08, below); a pushed card draws a dashed leader up the gutter to its mark's height, and a card the
+focus moved up one down. Cards with no mark — a whole-file comment, a detached anchor, a change the view does not
 paint, a region whose figure has not loaded — are the loose group at the top of the track, in the list's order, and
-the placed cards begin below it. The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies
+the placed cards begin below it (a focus can move the group up from there; the focus follow-on says how). The pure
+rule is `card-layout.ts` (`layoutCards`); the panel measures and applies
 (`placeCards`) after every render, on the body's, the row's, the track's and the cards' resizes, on the body's
 content's resize (`watchContent`: the body is a flex-sized scroller whose box does not change when its content
 reflows, as when a `<details>` block opens, so its element children join the size observer each pass), on a figure's
@@ -1293,36 +1298,68 @@ clicked, a card opened by its head, a reference link followed, a Show more, the 
 `layoutCards` takes it as its third argument. The focused card sits exactly at its mark (clamped to the top inset when
 the mark is under the header, as any first card is); the cards above it, by desired top, are laid by the push-down rule
 first and then moved UP from the focus, each by the least that puts its end a gap above the card under it, so a card the
-focused card never met stays where it was; the loose group joins that chain when the moved cards reach it, moving up by
-the same minimum, to the track's start and past it only when the cards above the focus do not fit between the start and
-the focus (the focused card wins; a card moved past the start cannot be scrolled to, and the centering keeps the
-focused card in view); the cards below follow the push-down rule from its end as before. Without a focus the rule is
+focused card never met stays where it was; the loose group joins that chain when the moved cards reach it, moving up as
+one by the same minimum, as far as the track's start. No card is moved past the start (the review, 2026-09-08). As first
+built the chain ran past it when the cards above the focus did not fit between the start and the focus, on the reading
+that the focused card wins and the centering keeps it in view — but a card at a negative top could be neither read nor
+reached: the track cannot scroll there, a card's head is its only control, a loose card has no mark to click, and the
+placement held until another gesture changed the focus, so a whole-file comment's card vanished on a click on the first
+paragraph's highlight while the header still counted it. A card the chain would move past the start is laid below the
+focused card instead, by the push-down rule from its end and ahead of the cards whose marks are below the focus — the
+marked ones first, each wearing the leader up to its mark as any pushed card does, then the loose ones in the list's
+order; the room above the focus stays for the cards further up the chain, so a small card above a tall one that did not
+fit keeps its place, and of the loose group the cards at its end go below until the rest fit, so the group's head keeps
+its place at the start. The cards below the focus follow the push-down rule from the end of the last card so displaced,
+as ever from a card's end. Without a focus the rule is
 unchanged. A card the focus moved up past its own mark draws its leader down the gutter (`data-pulled`, `--fc-pull`),
 as a pushed card draws one up. The focus is set before the render whose pass lays the card (`showCard`; the head-click
 listener in `installLayout`; `focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus
 changed), and the mark is then centered (`centerOn`) so the mark and its card sit together mid-view; the least-scroll
 fallback stays for a focused card taller than the track, where the mark's top stays in view and the head is cut by the
 excess alone. The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
-ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`). Tall cards fold:
+ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`); and a pass in the
+list layout clears one too (the review, 2026-09-08: a mark or a head clicked in the list wrote a focus the list had no
+pass to spend, and the flip to the margin layout — a resize, not a click — anchored on it with nothing centered, the
+cards above it moved from their marks). Tall cards fold:
 in the margin layout a change card's old and new text, a comment's body and a run of turns wear `fc-clip`, and the
 sheets cap each at eight of its lines (`8lh`), the last lines fading (a mask) where the pass found the cap cut the
-content (`clipCards`: `data-clipped`, read before the cards' heights, since the fold changes them); the card's foot
+content (`clipCards`: `data-clipped`, read before the cards' heights, since the fold changes them) — a run of turns cut
+at its START instead, scrolled to its last row with the sheets' fade at its first lines (`keepEnd`; the review,
+2026-09-08: the turns stand oldest first, so the cap hid the newest, the session's latest answer and the turn a reply
+box under the run answers, behind Show more); the card's foot
 then offers Show more (`fcclip`, a `fileview-btn` through the delegate root, hidden as rendered until the pass finds a
 part cut), Show less once open, keyed like the expand state (`openBodies`; the card wears `fc-more`) so the choice
 survives a re-render; Show more makes the card the focus and centers its mark, as opening a card does. The list layout
-caps nothing. Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused
-card, the cards above shifting only as needed, the cards below unchanged, the loose group joining the chain and
-passing the start only when the cards do not fit, and no focus, a loose focus and an unknown focus giving the old
-result), `file-comments-focus.test.ts` (the panel over the review stand-in: the focus set by a highlight click, a
+caps nothing. The keyboard stays on Show more and Show less (the review, 2026-09-08): the row is rendered hidden and the
+pass shows it, so `render`'s refocus before the pass could not land on the fresh toggle — focus() on an element not
+rendered is a no-op — and the keyboard fell to the body when the toggle was pressed, and on any re-render while it was
+on the toggle; `render` refocuses once more after the pass (`refocus`, `settled`), and where the row stays hidden (the
+list layout) the keyboard goes to the card's head, the toggle remembered and taken back by the next render that shows
+it. Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused card, the
+cards above shifting only as needed, the cards below unchanged, the loose group joining the chain as far as the start,
+and no focus, a loose focus and an unknown focus giving the old result), `file-comments-focus.test.ts` (the panel over
+the review stand-in: the focus set by a highlight click, a
 change mark, a head click that opens, a reference link and Show more, passed to the pass and laying the card level with
-a tall card above moved up; cleared when the card is gone from the status and on the fold; a tall part clipped in the
-margin and not in the list; Show more and Show less, surviving a re-render), `file-comments-focus-browser.test.ts`
+a tall card above moved up; not set by a fold, of the focus or of another card; cleared when the card is gone from the
+status and on the fold; the leader down; a tall part clipped in the margin and not in the list, of a change card and of
+a comment card — a long body, a run of turns; Show more and Show less, surviving a re-render, Show more centering the
+mark), `file-comments-focus-browser.test.ts`
 (Chromium and Firefox over a rendered body with a replaced paragraph's tall change card open above a comment: the
 comment's card level with its highlight within a pixel and both in view after the click — which the panel before the
 fix failed, the card a viewport below — the change card moved up and folded to eight lines with Show more, Show more
 opening it whole as the focus, Show less, and the narrow fold clipping nothing), `tests/test_guide_files_focus.py` (the
 guide's sentence held to the panel and the sheets) and `tools/file-review-plan-focus.test.mjs` (this paragraph held to
-the panel, the layout, the sheets and the modules it names).
+the panel, the layout, the sheets and the modules it names); from the review (2026-09-08), `card-layout-reach.test.ts`
+(no card past the start: the review's scene, a tall card the chain cannot fit laid below the focus with its leader up,
+the room above kept for the cards further up, the loose group's end going below in the list's order, and a grid of
+fixtures with every card at or below the start), `file-comments-focus-review.test.ts` (the panel over the stand-in with
+a focus() that lands only on a rendered element: a mark or a head clicked in the list layout anchoring nothing when the
+columns come back, the keyboard held on Show more and Show less across a press and a re-render and sent to the card's
+head where the row stays hidden, a folded run of turns scrolled to its end), `tests/test_guide_files_focus_scope.py`
+(the guide's sentence scoped to the panel beside the file, with the list under a narrow column showing a long card
+whole) and `tools/file-review-plan-focus-review.test.mjs` (the margin note's rule qualified by the focus and pointing
+here, the Docs section's record of the guide's sentence and the Open question's loose group, each held to the layout,
+the panel, the sheets and the guide).
 
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
@@ -2042,7 +2079,16 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   and Firefox (the comment's card level with its highlight after the click, the tall change card above
   moved up and folded with Show more, the narrow fold clipping nothing); `tests/test_guide_files_focus.py`
   holds the guide's sentence to the panel and the sheets; `tools/file-review-plan-focus.test.mjs` holds the
-  follow-on's paragraph to the code and the modules it names.
+  follow-on's paragraph to the code and the modules it names. From the follow-on's review (2026-09-08):
+  `card-layout-reach.test.ts` (no card past the track's start: the cards the chain cannot fit above the focus
+  laid below it, the loose group's end going below in the list's order, a grid of fixtures with every card at
+  or below the start); `file-comments-focus-review.test.ts` (the stand-in with a focus() that lands only on a
+  rendered element: a focus written in the list layout anchoring nothing when the columns come back, the
+  keyboard held on Show more and Show less across a press and a re-render, a folded run of turns at its end);
+  `tests/test_guide_files_focus_scope.py` (the guide's sentence scoped to the panel beside the file);
+  `tools/file-review-plan-focus-review.test.mjs` holds the margin note's rule, qualified by the focus, the Docs
+  section's record of the guide's sentence and the Open question's loose group to the layout, the panel, the
+  sheets and the guide.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
@@ -2123,7 +2169,10 @@ look when the action is missing (and, from the todo-file follow-on, that a Send 
 that named the file however the file was opened); with the margin-layout follow-on (2026-09-07) it says that beside
 the file each card sits level with the passage it is about and scrolls with the text, and that a
 narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds the sentence to the
-panel and both sheets). `docs/reference.md`, under install-time switches, notes the
+panel and both sheets); with the focus follow-on (2026-09-08), that the card you click sits level with its
+passage whatever stands above it and that a long card folds to a few lines with Show more at its foot
+(`tests/test_guide_files_focus.py` holds the sentence to the panel, the layout rule and the sheets).
+`docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
@@ -2276,7 +2325,11 @@ of view for a reader anywhere but the top of the text; the follow-on's third rev
 proposed a pinned band between the composer and the track for those cards, in the list's order, with
 its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than
 landing with the review's fixes (the save's scroll, `showLoose`, already brings a whole-file comment's
-card into view).
+card into view). The focus follow-on (2026-09-08) adds to the question: the group joins the chain of cards
+a focus moves up, as far as the track's start, and the cards at its end that do not fit above the focused
+card are laid below it — so a focus near the top of the text can put a whole-file comment's card under the
+focused card rather than at the top (as first built the group was moved above the start, where no scroll
+reaches it; the follow-on's review put every card at or below the start).
 
 ## Upstream
 

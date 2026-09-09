@@ -2,11 +2,15 @@
 // the review stand-in (file-comments-margin-fixes.test.ts's: clamped scroll positions, a footer under the track, room for
 // an open card): the panel's FOCUS — the card the person last acted on, which the pass anchors the layout on (card-layout.ts)
 // so that it sits level with its mark and the cards above it move up out of the way — set by a highlight click, a change
-// mark, a head click that opens a card, a reference link and Show more; cleared when the card leaves the status and when
-// the layout folds to the list; the leader a card moved up past its mark draws down to it; and the fold of a tall card (a
-// long part clipped in the margin layout with Show more at the card's foot, the choice keyed so it survives a re-render,
-// nothing clipped in the list). The numbers a real engine measures are file-comments-focus-browser.test.ts. Synthetic
-// fixtures only: the notes-api world, placeholder ids.
+// mark, a head click that opens a card, a reference link and Show more (which also centers the mark, as opening a card
+// does); NOT by a fold, which moves nothing, of the focus or of any other card; cleared when the card leaves the status
+// and when the layout folds to the list; the leader a card moved up past its mark draws down to it; a card the chain
+// cannot fit above the focus laid below it, never past the track's start (the follow-on's review, 2026-09-08;
+// card-layout-reach.test.ts has the rule); and the fold of a
+// tall card (a long part clipped in the margin layout with Show more at the card's foot — a change's old and new text, a
+// comment's body, a run of turns — the choice keyed so it survives a re-render, nothing clipped in the list). The numbers
+// a real engine measures are file-comments-focus-browser.test.ts. Synthetic fixtures only: the notes-api world,
+// placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -272,7 +276,8 @@ const T0 = 1757145600000;
 const QUOTE = "shipping the cache in v1.2";
 // one logical line per row of the Raw view, each ROW px tall in the measurement table. Row 3 is a long paragraph the
 // session inserted whole (the change whose card is TALL open: its text is a long part, folded in the margin layout); row
-// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph
+// 5 holds the passage comment under it; blank rows between the later lines make each its own paragraph, and rows 7 and 9
+// carry the essay and the thread when the comment-fold test puts them in the store
 const LONG = "The api session rewrote the findings as one long paragraph about the cache, the latency budget, the plan for the next release and the reasons the team settled on it, going on for several sentences more than the one line it replaced, so that its card shows far more text than fits beside the passage.";
 const LINES = ["# Report", "", "## Findings", LONG, "", "We recommend " + QUOTE + ".", "", "More text here."];
 for (let i = 8; i < 33; i++) LINES.push(i % 2 ? "Line " + i + " of the report." : "");
@@ -292,6 +297,30 @@ const closing: StoreComment = {   // row 33, the last line
   id: (T0 + 5000) + "-9", author: "you", ts: T0 + 5000, body: "End on the recommendation, not on this.",
   anchor: { quote: "The closing line of the report", prefix: "", suffix: "." }, replies: [], resolved: false,
 };
+// two comments with long parts of their own, for the comment card's fold (renderCard's fc-more is not renderChange's): the
+// essay's BODY runs past the cap, and the thread's short body carries a RUN OF TURNS that does. Only the comment-fold test
+// puts them in the store (withLong), so the other tests' numbers stand
+const LONG_BODY = "This paragraph needs the numbers behind it: the latency budget it cites, the cache hit rate the api session measured, the release the plan names and the reasons the team settled on it, each with a pointer to where a reader can check it, or the claim reads as opinion.";
+const essay: StoreComment = {   // row 7
+  id: (T0 + 7000) + "-7", author: "you", ts: T0 + 7000, body: LONG_BODY,
+  anchor: { quote: "More text here", prefix: "", suffix: "." }, replies: [], resolved: false,
+};
+const thread: StoreComment = {   // row 9
+  id: (T0 + 9000) + "-9", author: "you", ts: T0 + 9000, body: "Is this line still current?",
+  anchor: { quote: "Line 9 of the report", prefix: "", suffix: "." }, resolved: false,
+  replies: [
+    { author: "api", ts: T0 + 9100, body: "It is: the numbers came from the run on the release branch, not the draft's." },
+    { author: "you", ts: T0 + 9200, body: "Then say so in the line itself, with the branch and the date of the run." },
+    { author: "api", ts: T0 + 9300, body: "Done in the next revision; the branch and the date are in the sentence now." },
+  ],
+};
+// a second comment on row 5, later than the passage's, on the words before QUOTE. Only the leader test puts it in the store
+// (withRec): two cards want the same top, so the later one is pushed under the first — and as the focus it holds the top and
+// moves the first UP past its mark, the case the leader down is drawn for
+const rec: StoreComment = {
+  id: (T0 + 1000) + "-5", author: "you", ts: T0 + 1000, body: "Recommend, or require?",
+  anchor: { quote: "We recommend", prefix: "", suffix: " " + QUOTE }, replies: [], resolved: false,
+};
 const LONG_AT = DOC.indexOf(LONG);
 const hunk: Hunk = { id: "h1", author: "api", ts: T0 - 30000, kind: "ins", curFrom: LONG_AT, curTo: LONG_AT + LONG.length, baseFrom: LONG_AT, baseTo: LONG_AT, oldText: "", newText: LONG, anchor: null };   // row 3
 const CHG = "chg:h1";
@@ -305,13 +334,18 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
+/** The status with the later comment on row 5 in the store too (the leader test). */
+const withRec = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, rec] }, storeMtimeNs });
+/** The status with the essay and the thread in the store too (the comment-fold test). */
+const withLong = (storeMtimeNs: string): Status => status({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [whole, findings, passage, closing, essay, thread] }, storeMtimeNs });
 
 // ── the viewer stand-in: the body row, the seam as closures, a measurement table ───────────────────
 // Geometry: the body's box is at viewport y=100, BODY_VIEW tall; the header stands OFFSET tall above the track and the
 // footer FOOTER tall below it, so the track's box is TRACK tall; row i's text sits at 100 + ROW·i − scrollTop; a card is
-// CARD tall closed and OPEN tall open — except the change card, whose long part makes it TALL open and folded (eight lines
-// of it) and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of
-// content in a box of PART_CAP until its card wears fc-more; a short part fits its box.
+// CARD tall closed and OPEN tall open — except a card with a long part (the change card's old and new text; the essay's
+// body and the thread's run of turns, in the comment-fold test), which is TALL open and folded (eight lines of the part)
+// and WHOLE once Show more is pressed. A long part (LONG_PART: more than 200 characters) measures PART_ALL of content in
+// a box of PART_CAP until its card wears fc-more — the table's reading of the sheet's cap; a short part fits its box.
 const ROW = 60, OFFSET = 60, FOOTER = 40, CARD = 40, OPEN = 120, TALL = 200, WHOLE = 400, BODY_VIEW = 260, TRACK = BODY_VIEW - OFFSET - FOOTER;   // TRACK 160
 const PART_ALL = 400, PART_CAP = 100, LONG_PART = 200;
 type World = {
@@ -369,7 +403,7 @@ function textWorld(): World {
     if (el.classList.contains("fc-sec-cards")) return R(400, 100 + OFFSET, 340, TRACK);
     if (el.classList.contains("fc-card")) {
       const open = el.classList.contains("open");
-      const h = !open ? CARD : el.dataset.id === CHG ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
+      const h = !open ? CARD : el.querySelectorAll(".fc-clip").some(isLongPart) ? (el.classList.contains("fc-more") ? WHOLE : TALL) : OPEN;
       return R(412, 0, 316, h);
     }
     if (el.classList.contains("fc-hl") || el.classList.contains("fc-ins") || el.classList.contains("fc-del")) {
@@ -473,15 +507,21 @@ test("a tall open change card above a comment: clicking the comment's highlight 
   assert.equal(box.top, mark.top, "and the two are level");
   // the cards below the focus follow the push-down rule from its end, as before
   assert.equal(w.top(closing.id), desired(33), "a card far below is untouched");
-  // the heading's card (row 2) had to give way to the moved change card, and the loose card at the top of the track to it:
-  // the chain runs up through the loose group and past the track's start, since the focused card wins
-  assert.equal(w.top(findings.id), LIFTED - CARD - 8, "the heading's card cleared the moved change card");
-  assert.equal(w.top(whole.id), LIFTED - CARD - 8 - CARD - 8, "the loose card moved up with it, past the track's start");
+  // the heading's card (row 2) had to clear the moved change card and has no room to above it (its top would be past the
+  // track's start, where no scroll reaches a card): it stands below the focused card instead, by the push-down rule from
+  // the focus's end and wearing the leader up to its mark; the loose card at the top of the track, with no room left
+  // either, follows it (card-layout.ts: no card past the start — the focus follow-on's review, 2026-09-08)
+  assert.ok(LIFTED - CARD - 8 < 0, "the fixture: the heading's card does not fit between the start and the moved change card");
+  assert.equal(w.top(findings.id), desired(5) + OPEN + 8, "the heading's card below the focused card, not past the start");
+  assert.equal(w.card(findings.id)!.dataset.pushed, "1", "a leader up to its mark");
+  assert.equal(w.top(whole.id), desired(5) + OPEN + 8 + CARD + 8, "the loose card after it");
+  assert.equal(w.card(whole.id)!.dataset.pushed, undefined, "a loose card is never pushed");
   w.close();
 });
 
 test("the focus follows the person: a head click that opens a card, a reference link and Show more each make that card the focus; a fold (a head click on an open card, Show less) moves nothing", async (t) => {
   const { w } = await open(t, textWorld());
+  const body = w.body, track = w.track();
   markOf(w, CHG).click(); await tick();                // the change card open, the focus
   assert.equal(w.top(passage.id), PUSHED);
   // a head click that opens
@@ -503,38 +543,79 @@ test("the focus follows the person: a head click that opens a card, a reference 
   actIn(w.card(passage.id)!, "fcgoto")!.click();
   assert.equal(w.top(passage.id), desired(5));
   assert.equal(w.top(CHG), LIFTED);
-  // Show more on the change card: the card the focus, WHOLE tall, level; the passage's card under it
+  // Show more on the change card: the card the focus, WHOLE tall, level; the passage's card under it; and its mark
+  // centered, as opening a card by its head is (fcclip sets expandIntent, afterRender centers) — the whole card is taller
+  // than the track, so centerOn's fallback: the least scroll that keeps the mark's top in view, a gap under the body's top,
+  // with the head cut by the excess. From the top first, so that the centering shows against it, and its absence too
   const f = foldOf(w, CHG);
   assert.equal(f.hidden, false, "the folded change card offers Show more");
+  body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));
   f.row!.querySelector("button")!.click(); await tick();
   assert.equal(w.top(CHG), desired(3), "Show more makes the card the focus");
   assert.equal(w.card(CHG)!.getBoundingClientRect().height, WHOLE);
   assert.equal(w.top(passage.id), desired(3) + WHOLE + 8, "the passage's card under the whole card");
-  // Show less: a fold; the focus stays on the change card
+  const markY = desired(3) + OFFSET, showWhole = desired(3) + WHOLE + 8 - TRACK, markGap = markY - 8;
+  assert.ok(showWhole > markGap && markGap > markY - BODY_VIEW / 2, "the fixture: the whole card's end needs more scroll than keeps the mark's top in view, and that more than centers the mark");
+  assert.equal(body.scrollTop, markGap, "Show more centered its mark: the whole card is taller than the track, so the mark's top a gap under the body's top (before: 0, the text where it was)");
+  assert.equal(track.scrollTop, markGap, "the track came along");
+  assert.equal(markOf(w, CHG).getBoundingClientRect().top, BODY_BOX.top + 8, "the mark is a gap under the body's top edge");
+  assert.equal(cardBox(w, CHG).top, BODY_BOX.top + 8, "and the card level with it, its head cut by the track's header");
+  // Show less: a fold; the focus stays on the change card, and the text does not move
   foldOf(w, CHG).row!.querySelector("button")!.click(); await tick();
   assert.equal(w.top(CHG), desired(3));
   assert.equal(w.top(passage.id), PUSHED);
+  assert.equal(body.scrollTop, markGap, "a fold scrolls nothing");
+  assert.equal(track.scrollTop, markGap);
+  w.close();
+});
+
+test("a fold of a card that is NOT the focus moves nothing: with the change card the focus and the passage's card open under it, a head click that folds the passage's card leaves the change card at its mark, the folded card under it and the text where it was", async (t) => {
+  const { w } = await open(t, textWorld());
+  const body = w.body, track = w.track();
+  headOf(w, passage.id).click(); await tick();         // the passage's card opened by its head: the focus
+  assert.equal(w.top(passage.id), desired(5));
+  markOf(w, CHG).click(); await tick();                // the change mark: its card the focus, TALL at its mark; the open passage card pushed under it
+  assert.equal(w.top(CHG), desired(3));
+  assert.equal(w.top(passage.id), PUSHED);
+  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
+  assert.ok(w.card(passage.id)!.classList.contains("open"), "the passage's card is open and not the focus");
+  const bodyAt = body.scrollTop, trackAt = track.scrollTop;
+  assert.ok(bodyAt > 0, "the fixture: the change mark's click scrolled the text, so a scroll on the fold would show against it");
+  // the fold, by the head: a dismissal, not an act on the card — the head-click listener leaves the focus where it is
+  headOf(w, passage.id).click(); await tick();
+  assert.ok(!w.card(passage.id)!.classList.contains("open"), "folded");
+  assert.equal(w.top(CHG), desired(3), "the change card is still the focus, level with its mark (a fold that took the focus would lift it to " + LIFTED + ")");
+  assert.equal(w.top(passage.id), PUSHED, "the folded card stays under it (a fold that took the focus would lay it at " + desired(5) + ")");
+  assert.equal(w.card(passage.id)!.dataset.pushed, "1");
+  assert.equal(body.scrollTop, bodyAt, "the text did not move");
+  assert.equal(track.scrollTop, trackAt, "nor the track");
   w.close();
 });
 
 test("the leader of a card moved up past its own mark runs DOWN to the mark's height (data-pulled, --fc-pull), as a pushed card's runs up", async (t) => {
-  const { w } = await open(t, textWorld());
-  markOf(w, CHG).click(); await tick();                // the change card open (TALL) at row 3, the findings card at row 2 above it
-  assert.equal(w.top(findings.id), desired(2), "the heading's card is level: nothing above it");
-  markOf(w, passage.id).click(); await tick();         // the passage the focus: the change card to LIFTED, and the findings card must clear it
-  const up = LIFTED - CARD - 8;                        // -16: above the track's start, since the focused card wins
-  assert.equal(w.top(findings.id), up, "the findings card moved up past the start");
-  const pull = desired(2) - (up + CARD);               // its mark is 36px under its end
-  assert.equal(w.card(findings.id)!.dataset.pulled, "1", "a leader down to its mark");
-  assert.equal(w.card(findings.id)!.style.getPropertyValue("--fc-pull"), pull + "px");
-  assert.equal(w.card(findings.id)!.dataset.pushed, undefined, "no leader up");
-  assert.equal(w.card(CHG)!.dataset.pulled, undefined, "the change card's mark is inside its box: no leader");
-  // the focus leaves: the findings card is level again and the leader is gone
-  headOf(w, CHG).click(); await tick();                // a fold: the focus stays on the passage...
-  actIn(w.card(CHG)!, "fcgoto")!.click();              // ...until the change card's reference makes it the focus
-  assert.equal(w.top(findings.id), desired(2));
-  assert.equal(w.card(findings.id)!.dataset.pulled, undefined);
-  assert.equal(w.card(findings.id)!.style.getPropertyValue("--fc-pull"), "");
+  const { w } = await open(t, textWorld(), withRec("1757145600000000002"));
+  // two cards want row 5's top: the passage's card takes it, and the later comment's is pushed under it with the leader up
+  assert.equal(w.top(passage.id), desired(5), "the passage's card is level: nothing above it");
+  assert.equal(w.top(rec.id), desired(5) + CARD + 8, "the later card under it");
+  assert.equal(w.card(rec.id)!.dataset.pushed, "1", "a leader up to the shared mark");
+  markOf(w, rec.id).click(); await tick();             // the later comment the focus: it holds the top, and the passage's card must clear it
+  assert.equal(w.top(rec.id), desired(5), "the focus: level with its highlight");
+  const up = desired(5) - 8 - CARD;                    // 192: the passage's card ends a gap above the focused card, and so above its own mark
+  assert.ok(up >= 0, "the fixture: the moved card stands inside the track (a card the chain would move past the start goes below the focus instead: card-layout-reach.test.ts)");
+  assert.equal(w.top(passage.id), up, "the passage's card moved up past its mark");
+  const pull = desired(5) - (up + CARD);               // 8: its mark is a gap under its end
+  assert.equal(w.card(passage.id)!.dataset.pulled, "1", "a leader down to its mark");
+  assert.equal(w.card(passage.id)!.style.getPropertyValue("--fc-pull"), pull + "px");
+  assert.equal(w.card(passage.id)!.dataset.pushed, undefined, "no leader up");
+  assert.equal(w.card(rec.id)!.dataset.pulled, undefined, "the focused card is level: no leader");
+  assert.equal(w.card(rec.id)!.dataset.pushed, undefined);
+  // the focus leaves: the passage's card is level again and the leader is gone, the later card pushed under it as before
+  markOf(w, passage.id).click(); await tick();         // the passage's highlight makes its card the focus, and opens it
+  assert.equal(w.top(passage.id), desired(5));
+  assert.equal(w.card(passage.id)!.dataset.pulled, undefined);
+  assert.equal(w.card(passage.id)!.style.getPropertyValue("--fc-pull"), "");
+  assert.equal(w.top(rec.id), desired(5) + OPEN + 8, "the later card under the open passage card");
+  assert.equal(w.card(rec.id)!.dataset.pushed, "1");
   w.close();
 });
 
@@ -575,7 +656,7 @@ test("the focus clears on the fold to the list layout: the columns come back wit
 // ── the fold of a tall card ───────────────────────────────────────────────────────────────────────
 
 test("in the margin layout a long part is clipped: the pass marks it cut and shows Show more at the card's foot; a card whose parts fit offers no toggle; Show more shows the part whole and reads Show less, keyed so a re-render keeps it; Show less folds it again", async (t) => {
-  const { w, ok } = await open(t, textWorld());
+  const { w } = await open(t, textWorld());
   assert.equal(foldOf(w, CHG).row, null, "a closed card has no parts and no row");
   markOf(w, CHG).click(); await tick();
   let f = foldOf(w, CHG);
@@ -598,8 +679,8 @@ test("in the margin layout a long part is clipped: the pass marks it cut and sho
   assert.deepEqual(f.clipped, [], "no fade");
   assert.equal(f.hidden, false); assert.equal(f.label, "Show less");
   assert.equal(f.row!.querySelector("button")!.getAttribute("aria-expanded"), "true");
-  // a re-render (a status) keeps the choice
-  await ok(status({ storeMtimeNs: "1757145600000000007" }));
+  // a re-render keeps the choice: the viewer repainted (a reload, a mode switch), which runs the same render a status does
+  w.repaint(); await tick();
   f = foldOf(w, CHG);
   assert.equal(f.more, true, "kept across the re-render"); assert.equal(f.label, "Show less");
   // Show less
@@ -623,6 +704,70 @@ test("the list layout clips nothing: after the fold the rows are hidden and no p
   f = foldOf(w, CHG);
   assert.deepEqual(f.clipped, ["fc-body fc-diff fc-clip"], "folded again in the margin");
   assert.equal(f.hidden, false);
+  w.close();
+});
+
+test("the comment card's fold (renderCard's fc-more, apart from the change card's): a body and a run of turns longer than the cap are cut and offer Show more; Show more lifts the cap — the card wears fc-more, the part's box is its content, the card is WHOLE and the card under it yields — and makes the card the focus, its mark centered; a status keeps it; Show less folds it again", async (t) => {
+  const { w } = await open(t, textWorld(), withLong("1757145600000000002"));
+  const body = w.body, track = w.track();
+  assert.ok(LONG_BODY.length > LONG_PART && thread.replies!.map((r) => r.body!).join("").length > LONG_PART && thread.body.length <= LONG_PART, "the fixture: the essay's body and the thread's run of turns are long parts; the thread's body is not");
+  assert.equal(w.top(essay.id), desired(7)); assert.equal(w.top(thread.id), desired(9));
+  const partOf = (key: string, cls: string): El => w.card(key)!.querySelectorAll(".fc-clip").find((p) => p.className === cls)!;
+  // the essay's body: opened by its head, the card is TALL and folded, its body cut at the cap
+  headOf(w, essay.id).click(); await tick();
+  let f = foldOf(w, essay.id);
+  assert.equal(f.parts, 1, "the body is the card's one part");
+  assert.deepEqual(f.clipped, ["fc-body fc-clip"], "the pass found the cap cut the body");
+  assert.equal(f.hidden, false); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
+  assert.equal(partOf(essay.id, "fc-body fc-clip").clientHeight, PART_CAP, "the body's box is the cap");
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
+  assert.equal(w.top(thread.id), desired(7) + TALL + 8, "the thread's card under the folded card");
+  // Show more: the card wears fc-more, so the sheet lifts the cap (the table: the part's box is its content), the card is
+  // WHOLE and the thread's card yields by that much; the card is the focus and its mark is centered — taller than the
+  // track, so the fallback: the mark's top a gap under the body's top. From the top first, so that the centering shows
+  body.scrollTop = 0; body.dispatchEvent(new Ev("scroll"));
+  f.row!.querySelector("button")!.click(); await tick();
+  f = foldOf(w, essay.id);
+  assert.equal(f.more, true, "the card wears fc-more (without it the sheet still cuts the body at eight lines, under a button reading Show less)");
+  assert.deepEqual(f.clipped, [], "no fade"); assert.equal(f.hidden, false); assert.equal(f.label, "Show less");
+  assert.equal(f.row!.querySelector("button")!.getAttribute("aria-expanded"), "true");
+  const bodyPart = partOf(essay.id, "fc-body fc-clip");
+  assert.equal(bodyPart.clientHeight, bodyPart.scrollHeight, "the body's box is its content: the cap is lifted");
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, WHOLE);
+  assert.equal(w.top(essay.id), desired(7), "the focus: level with its highlight");
+  assert.equal(w.top(thread.id), desired(7) + WHOLE + 8, "the thread's card under the whole card");
+  const markGap = desired(7) + OFFSET - 8;
+  assert.ok(desired(7) + WHOLE + 8 - TRACK > markGap, "the fixture: the whole card's end needs more scroll than keeps the mark's top in view");
+  assert.equal(body.scrollTop, markGap, "Show more centered the mark: the least-scroll fallback for a card taller than the track (before: 0)");
+  assert.equal(track.scrollTop, markGap, "the track came along");
+  // a re-render keeps the choice: the viewer repainted (a reload, a mode switch), which runs the same render a status does
+  w.repaint(); await tick();
+  f = foldOf(w, essay.id);
+  assert.equal(f.more, true, "kept across the re-render"); assert.equal(f.label, "Show less");
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, WHOLE);
+  // Show less: folded again, and the text does not move
+  f.row!.querySelector("button")!.click(); await tick();
+  f = foldOf(w, essay.id);
+  assert.equal(f.more, false); assert.deepEqual(f.clipped, ["fc-body fc-clip"]); assert.equal(f.label, "Show more");
+  assert.equal(partOf(essay.id, "fc-body fc-clip").clientHeight, PART_CAP, "capped again");
+  assert.equal(w.card(essay.id)!.getBoundingClientRect().height, TALL);
+  assert.equal(w.top(thread.id), desired(7) + TALL + 8);
+  assert.equal(body.scrollTop, markGap, "a fold scrolls nothing");
+  // the thread's run of turns: its short body fits; the run is the part the cap cuts
+  headOf(w, essay.id).click(); await tick();           // the essay folded by its head, out of the thread's way
+  headOf(w, thread.id).click(); await tick();
+  f = foldOf(w, thread.id);
+  assert.equal(f.parts, 2, "the body and the run of turns");
+  assert.deepEqual(f.clipped, ["fc-replies fc-clip"], "the run is cut; the short body is not");
+  assert.equal(f.hidden, false); assert.equal(f.label, "Show more"); assert.equal(f.more, false);
+  assert.equal(partOf(thread.id, "fc-replies fc-clip").clientHeight, PART_CAP);
+  assert.equal(w.card(thread.id)!.getBoundingClientRect().height, TALL);
+  f.row!.querySelector("button")!.click(); await tick();
+  f = foldOf(w, thread.id);
+  assert.equal(f.more, true, "the card wears fc-more"); assert.deepEqual(f.clipped, []); assert.equal(f.label, "Show less");
+  const run = partOf(thread.id, "fc-replies fc-clip");
+  assert.equal(run.clientHeight, run.scrollHeight, "the run's box is its content");
+  assert.equal(w.card(thread.id)!.getBoundingClientRect().height, WHOLE);
   w.close();
 });
 

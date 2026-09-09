@@ -308,13 +308,23 @@ for (const name of ["chromium", "firefox"]) {
       assert.ok(s.cards.c3.height + 8 <= s.trackHeight, "the fixture: the card with its reply fits the track: " + s.cards.c3.height);
       assert.ok(s.marks.c3!.top >= s.bodyBox.top - 1 && s.marks.c3!.bottom <= s.bodyBox.bottom + 1, "the mark is in the body's box: " + JSON.stringify(s.marks.c3) + " in " + JSON.stringify(s.bodyBox));
       assert.ok(wholeIn(s.cards.c3, s.trackBox), "the card is whole in the track's box: " + JSON.stringify(s.cards.c3) + " in " + JSON.stringify(s.trackBox));
-      // level with its mark — or, where the loose group above it (the whole-file cards, at the top of the track) reaches past
-      // the mark, pushed down to the group's end and wearing the leader (card-layout.ts). Paragraph 3's mark is one line under
-      // that reach: the head is a row taller since Show changes inline joined its button row (the file has a change, and three
-      // buttons wrap at 340px), so the track begins that much lower and the card's desired top falls inside the group
-      const floor = s.cards.fresh.bottom + 8;
-      near(s.cards.c3.top, Math.max(s.marks.c3!.top, floor), "and level with its mark, or pushed to the loose group's end");
-      if (floor > s.marks.c3!.top) { assert.equal(s.cards.c3.pushed, "1", "pushed by the loose group"); near(parseFloat(s.cards.c3.leader), floor - s.marks.c3!.top, "the leader spans the push", 1); }
+      // level with its mark: the card the save landed in is the focus (scrollToSaved → scrollCard → focusOn; the focus
+      // follow-on, 2026-09-08), held at its mark whatever stands above it. The loose group (the whole-file cards, at the top
+      // of the track) reaches past the mark here — the head is a row taller since Show changes inline joined its button row
+      // (the file has a change, and three buttons wrap at 340px), so the track begins that much lower and the card's
+      // desired top falls inside the group — and the group is never moved past the track's start: the cards at its end
+      // that do not fit above the focused card are laid below it, in the list's order (card-layout.ts; the follow-on's
+      // review, 2026-09-08; before it the card was pushed to the group's end and wore the leader)
+      near(s.cards.c3.top, s.marks.c3!.top, "and level with its mark: the focus");
+      assert.equal(s.cards.c3.pushed, null, "the focused card is not pushed");
+      const start = s.trackBox.top - s.trackScroll;   // the track's content start, in the viewport
+      for (const k of ["whole", "fresh"]) {
+        const loose = s.cards[k]!;
+        assert.ok(loose.top >= start - 1, k + " stands at or below the track's start (" + start + "): " + JSON.stringify(loose));
+        assert.ok(loose.bottom + 8 <= s.cards.c3.top + 1 || loose.top + 1 >= s.cards.c3.bottom + 8, k + " is clear of the focused card: " + JSON.stringify(loose) + " vs " + JSON.stringify(s.cards.c3));
+      }
+      assert.ok(s.cards.whole.top < s.cards.c3.top, "the group's head keeps its place at the top of the track");
+      if (s.cards.fresh.top > s.cards.c3.top) near(s.cards.fresh.top, s.cards.c3.bottom + 8, "the group's end, with no room above the focused card, follows it");
       near(s.trackScroll, s.bodyScroll, "the track came along", 1);
     });
   });

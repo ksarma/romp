@@ -70,15 +70,21 @@ test("a mark above the track's origin (desired negative: the header stands over 
 // ── the focus (the focus follow-on, 2026-09-08): the focused card at its mark, the cards above moved up only as needed ──
 
 test("the focus: a tall card above a passage no longer pushes the passage's card down — the focused card sits at its mark, and the tall card moves up by the least that clears it", () => {
-  const items = [{ key: "tall", desired: 100, height: 500 }, { key: "c", desired: 300, height: 60 }];
+  const items = [{ key: "tall", desired: 100, height: 500 }, { key: "c", desired: 600, height: 60 }];
   const plain = layoutCards(items, 8);
-  assert.deepEqual(tops(plain), { tall: 100, c: 608 }, "without a focus the push-down rule: the comment's card a full card below its mark");
+  assert.deepEqual(tops(plain), { tall: 100, c: 608 }, "without a focus the push-down rule: the comment's card a card's height below its mark");
   const r = layoutCards(items, 8, "c");
-  assert.deepEqual(tops(r), { tall: -208, c: 300 });
+  assert.deepEqual(tops(r), { tall: 92, c: 600 });
   assert.equal(r.placed.find((p) => p.key === "c")!.pushed, 0, "the focused card is level");
-  assert.equal(r.placed.find((p) => p.key === "tall")!.pushed, -308, "the moved card's push is negative: how far above its mark it sits");
+  assert.equal(r.placed.find((p) => p.key === "tall")!.pushed, -8, "the moved card's push is negative: how far above its mark it sits");
   assert.deepEqual(r.placed.map((p) => p.key), ["tall", "c"], "placement order is still top to bottom");
-  assert.equal(r.bottom, 360);
+  assert.equal(r.bottom, 660);
+  // the tall card moves up only as far as the track's start lets it: where the focused card's mark is nearer the start than
+  // the tall card is tall, the card goes BELOW the focused card instead of past the start (the follow-on's review,
+  // 2026-09-08; card-layout-reach.test.ts has the rule's cases)
+  const near = layoutCards([{ key: "tall", desired: 100, height: 500 }, { key: "c", desired: 300, height: 60 }], 8, "c");
+  assert.deepEqual(tops(near), { c: 300, tall: 368 }, "(as first built: tall at -208, its head 208px above the start)");
+  assert.ok(near.placed.every((p) => p.top >= 0), "no card past the start");
 });
 
 test("the focus: cards above shift up only as much as needed — a card clear of the focused card stays put, a pushed one keeps its push where it fits", () => {
@@ -104,22 +110,27 @@ test("the focus: the cards below it are laid as always — the push-down rule fr
   assert.deepEqual(tops(plain), tops(r), "the first card as the focus is the old result: nothing stands above it");
 });
 
-test("the focus and the loose group: the group stays at the top until the moved cards reach it, then moves up with them to the track's start — and past it only when the cards above the focus do not fit", () => {
+test("the focus and the loose group: the group stays at the top until the moved cards reach it, then moves up with them as far as the track's start — never past it: a card the chain cannot fit above the focus goes below it", () => {
   const loose = [{ key: "whole", desired: null, height: 30 }, { key: "detached", desired: null, height: 30 }];   // 8..38, 46..76; the marked cards begin at 84
   // the focus far below: the group stays
   const far = layoutCards([...loose, { key: "a", desired: 100, height: 40 }, { key: "f", desired: 400, height: 40 }], 8, "f");
   assert.deepEqual(tops(far), { whole: 8, detached: 46, a: 100, f: 400 });
-  // a (100..140) meets f at 120: a moves up to 72, which reaches the group's end (76 + gap): the group moves up by the same 12
-  const met = layoutCards([...loose, { key: "a", desired: 100, height: 40 }, { key: "f", desired: 120, height: 40 }], 8, "f");
-  assert.deepEqual(tops(met), { whole: -4, detached: 34, a: 72, f: 120 }, "the group and a move up together; the first loose card passes the track's start by the 4px the chain needs");
   // room for the chain at the start: a (100..140) meets f at 130: a to 82, the group's end 76 + 8 = 84 > 82: the group moves up 2, to 6
   const room = layoutCards([...loose, { key: "a", desired: 100, height: 40 }, { key: "f", desired: 130, height: 40 }], 8, "f");
   assert.deepEqual(tops(room), { whole: 6, detached: 44, a: 82, f: 130 });
-  // a tall card above the focus: the cards above are stacked upward from the focus and the topmost starts above 0 (the focused card wins)
+  // a (100..140) meets f at 120: a moves up to 72, which reaches the group's end (76 + gap) and asks it for 12 — 4 more than the
+  // start allows. The group is not moved past the start (the follow-on's review, 2026-09-08: a card at a negative top could be
+  // neither read nor reached): the card at its end goes below the focused card, in the list's order, and the rest stays
+  const met = layoutCards([...loose, { key: "a", desired: 100, height: 40 }, { key: "f", desired: 120, height: 40 }], 8, "f");
+  assert.deepEqual(tops(met), { whole: 8, a: 72, f: 120, detached: 168 }, "(as first built: whole at -4, past the start)");
+  assert.deepEqual(met.placed.map((p) => p.key), ["whole", "a", "f", "detached"], "placement order is top to bottom, the displaced card after the focus");
+  // a tall card above the focus that the start leaves no room for: it goes below the focused card, wearing the leader up to
+  // its mark, and the group above never moved
   const tall = layoutCards([...loose, { key: "a", desired: 100, height: 300 }, { key: "f", desired: 120, height: 40 }], 8, "f");
-  assert.deepEqual(tops(tall), { whole: -264, detached: -226, a: -188, f: 120 });
+  assert.deepEqual(tops(tall), { whole: 8, detached: 46, f: 120, a: 168 }, "(as first built: -264, -226, -188 — three cards above the start)");
+  assert.equal(tall.placed.find((p) => p.key === "a")!.pushed, 68, "the displaced card's leader up to its mark");
   assert.deepEqual(tall.placed.filter((p) => p.desired === null).map((p) => p.pushed), [0, 0], "a loose card is never 'pushed', moved or not");
-  assert.deepEqual(tall.placed.map((p) => p.key), ["whole", "detached", "a", "f"], "placement order: the group, the cards above, the focus");
+  assert.deepEqual(tall.placed.map((p) => p.key), ["whole", "detached", "f", "a"], "placement order: the group, the focus, the card it displaced");
 });
 
 test("the focus: no focus, a focus with no mark and an unknown focus each give the old result; a focused mark under the header is clamped to the top inset like any first card", () => {
