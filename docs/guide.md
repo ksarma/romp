@@ -170,8 +170,9 @@ and moves its row under a **Hidden (N)** fold at the foot of the view, one click
 **Show** button puts the tab back at once. Hiding is separate from folding: fold the group and
 open it again, and the hidden sessions stay hidden while the rest come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
-when one of them needs you), and its count says how many are hidden. When a hidden session needs
-you, the fold's head says so in red before you open it, and its row says **needs you**. While the
+when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
+hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
+red before you open it, and its row says **needs you**. While the
 group is open, its count opens this view without folding the group, so hiding a session never needs
 a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
 the flag opens the group, as before. While this view shows an open group, its count, dot and flag take

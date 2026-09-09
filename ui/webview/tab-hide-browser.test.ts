@@ -14,7 +14,8 @@
 //     words say the sessions are shown below, and a click puts the transcript back with nothing written, whether or
 //     not the header holds the tab being read; the pip and the flag on that header do the same, their phrases kept;
 //   - a repeat click (the platform's count) acts on nothing and shows no acknowledgement pulse (round 2);
-//   - the open header over a hidden member wears "1 hidden" as a button, and a click on it, on the pip or on the
+//   - the open header over a hidden member wears the compact "2+1" as a button (two tabs on the strip, one hidden;
+//     the user 2026-09-08), and a click on it, on the pip or on the
 //     flag shows the pane and leaves the fold and the strip as they were; Show from that pane puts the tab back on
 //     the strip at once, the group still open; the flag on a FOLDED header still opens the group;
 //   - a double-click on Hide hides one session, not two (the platform's click count);
@@ -316,7 +317,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, s.snapView, s.paneShown, h.snapShown], [["web", "tests"], "0", "infra", true, true]);
     // the header's click showed the section, so the count is the way back (round 3), its words led by its visible text
-    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["1 hidden", "BUTTON", "show-transcript", sectionDoorTitle(1, 3, true)]);
+    assert.deepEqual([h.count, h.countTag, h.countAct, h.countTitle], ["2+1", "BUTTON", "show-transcript", sectionDoorTitle(1, 3, true)], "the compact count (the user 2026-09-08: the words took too much of the strip)");
     assert.ok(h.countTitle!.startsWith(h.count!), "label in name (round 2): the door's words lead with its visible text");
     assert.ok(h.label!.startsWith("infra, 3 sessions, 1 hidden"), h.label!);
 

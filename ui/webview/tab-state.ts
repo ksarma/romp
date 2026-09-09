@@ -123,10 +123,29 @@ export function doorClick(shown: boolean): string {
   return shown ? BACK_TO_TRANSCRIPT_CLICK : SHOW_GROUP_CLICK;
 }
 
+/** AN OPEN HEADER'S COUNT over members hidden inside the section, in its compact form: `<shown>+<hidden>`, the tabs
+ *  on the strip and the hidden members ("6+2" for eight members with two hidden; "0+3" when every member is hidden).
+ *  Round 1 of the tabhide review (2026-09-08) had the count say how many are hidden, in words, because the bare total
+ *  beside two tabs read as a wrong number; the same day the user, who runs a dozen tag groups, found those words too
+ *  wide a head for a strip that full. The compact form keeps the honesty, its first number the tabs beside it, and is
+ *  as narrow as a plain count. One source for the header's count (tab-groups.ts headWords) and the door's words
+ *  (sectionDoorTitle), which lead with it. Nothing hidden: the total, as before. */
+export function compactCount(total: number, hidden: number): string {
+  return hidden > 0 ? `${total - hidden}+${hidden}` : String(total);
+}
+
+/** The compact count spelled out, for a hover or a spoken name: "2 on the strip and 1 hidden"; "none on the strip and
+ *  3 hidden" when every member is hidden. */
+export function stripAndHidden(total: number, hidden: number): string {
+  const shown = total - hidden;
+  return `${shown === 0 ? "none" : shown} on the strip and ${hidden} hidden`;
+}
+
 /** EVERY OPEN header's count, as the button it is there (render.ts makeGroupHead): what a reader hears and the
- *  hover. The words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count: "K hidden" over hidden members, the
- *  total otherwise), so the name a voice control hears contains the label it sees (round 2 of the tabhide
- *  review). Over hidden members the click shows the group's sessions in the pane; with nothing hidden they are
+ *  hover. The words LEAD WITH THE COUNT'S VISIBLE TEXT (headWords' count: the compact "S+K" over hidden members,
+ *  compactCount; the total otherwise), so the name a voice control hears contains the label it sees (round 2 of the
+ *  tabhide review); over hidden members the count is then spelled out (stripAndHidden), since "2+1" alone names no
+ *  unit. Over hidden members the click shows the group's sessions in the pane; with nothing hidden they are
  *  all on the strip already, so the words say what the pane is for instead (round 2: the door existed only once
  *  something was hidden, and the first hide of a group went through the header's click, which folds the group
  *  over its reader). The fold's own words for the hidden members are hiddenFoldWords (tab-snapshot.ts).
@@ -134,12 +153,13 @@ export function doorClick(shown: boolean): string {
  *  still promised the pane), the door mirrors the header's way back: the words say the sessions are shown below and
  *  the click goes back to the transcript (BACK_TO_TRANSCRIPT_CLICK), still led by the visible count. */
 export function sectionDoorTitle(hidden: number, total: number, shown = false): string {
+  const over = () => `${compactCount(total, hidden)}: ${stripAndHidden(total, hidden)} while this group is open`;
   if (shown) {
-    const lead = hidden > 0 ? `${hidden} hidden from the strip while this group is open; the group's sessions are shown below`
+    const lead = hidden > 0 ? `${over()}; the group's sessions are shown below`
                             : `${total} session${total === 1 ? "" : "s"}, shown below`;
     return `${lead}; ${doorClick(true)}`;
   }
-  if (hidden > 0) return `${hidden} hidden from the strip while this group is open; ${doorClick(false)}`;
+  if (hidden > 0) return `${over()}; ${doorClick(false)}`;
   return total === 1 ? "1 session; click to see it at a glance and hide it from the strip"
                      : `${total} sessions; click to see them at a glance and hide any from the strip`;
 }

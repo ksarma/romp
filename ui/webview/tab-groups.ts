@@ -18,7 +18,7 @@
 // pattern) so the rule executes in node tests; render.ts paints it.
 import { SessionViews, TagUnion, viewTags, viewTagUnion } from "./session-views";
 import { hostOf } from "./host-prefix";
-import { BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
+import { BACK_TO_TRANSCRIPT_CLICK, compactCount, stripAndHidden } from "./tab-state";
 
 export const TABGROUPS_KEY = "romp:tabgroups";
 export const TABGROUPS_EVENT = "romp-tabgroups";
@@ -647,13 +647,18 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     // what the pane already shows (round 4 of the tabhide review: "and see its sessions at a glance" stood beside
     // a count that read "shown below")
     const click = back ? BACK_TO_TRANSCRIPT_CLICK : shown ? "click to fold this group" : "click to fold this group and see its sessions at a glance";
-    // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count says how many
-    // are off the strip ("1 hidden" beside two tabs), the total moves to the words. Round 1 of the review: the
-    // count stayed the total, so "3" beside two tabs read as a wrong number, and the guide had promised the
-    // count would say how many are hidden. Nothing hidden: the total, as before.
+    // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count is the compact
+    // `<shown>+<hidden>` (tab-state.ts compactCount: "2+1" beside two tabs, the tabs on the strip and the hidden
+    // members), the total moves to the words. Round 1 of the review: the count stayed the total, so "3" beside two
+    // tabs read as a wrong number, and the guide had promised the count would say how many are hidden; it then said
+    // so in words ("1 hidden"), which the user, running a dozen tag groups, found too wide a head for a strip that
+    // full (2026-09-08). The compact form keeps the first number matching the tabs on the strip and gives the room
+    // back; the title spells the form out (stripAndHidden) and the spoken label keeps the full words. Nothing
+    // hidden: the total, as before.
     const hid = hidden > 0 ? `, ${hidden} hidden` : "";
-    return { count: hidden > 0 ? `${hidden} hidden` : String(total), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
-             title: `${name} — ${n(total)}${hid}${reading}; ${click}; drag to reorder the groups` };
+    const spelled = hidden > 0 ? `, ${stripAndHidden(total, hidden)}` : "";
+    return { count: compactCount(total, hidden), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
+             title: `${name} — ${n(total)}${spelled}${reading}; ${click}; drag to reorder the groups` };
   }
   // folded and `shown`: the header's click just folded the section and put its sessions in the pane (render.ts
   // toggle-group sets snapView on a fold too), so the click opens it and the title says that alone (round 4 of the
