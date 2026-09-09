@@ -15,7 +15,10 @@
 // them, the answer for a node under another surface; now an endpoint inside a formula's glyphs is the formula touched
 // ("touches a formula", the Raw view offered at the formula's line), an endpoint at a formula's edge that selects none of
 // it maps the prose beside it, and an endpoint inside another control stands at the control's edge, so the triple-clicked
-// definition maps its words. Read with real KaTeX glyph nodes and with real mouse gestures. Skips LOUDLY without a
+// definition maps its words. Read with real KaTeX glyph nodes and with real mouse gestures. Third (the review's round 2), the
+// highlight a comment across a formula paints: paintRendered wrapped the text nodes either side of the `.katex` root and nothing
+// else, so the passage `Inline $x^2$ math and` showed two ringed boxes with the rendered formula bare between them; now the
+// formula goes under one mark with the words beside it, and the panel's unpaint gives the paragraph back. Skips LOUDLY without a
 // playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST
 // paths, a placeholder sid.
 import { test } from "node:test";
@@ -67,7 +70,7 @@ const BUILD = { bundle: true, write: false, format: "iife", platform: "browser",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
 /** The Files pane's bundle plus the anchor map's and the reader's place's exports, one module instance, for the reads over the page's own box. */
 function filesBundle(): string {
-  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, readPlace };\n';
+  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, readPlace };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
@@ -204,6 +207,44 @@ function readLiveSelection(source: string) {
   };
   return { text: s.toString(), anchor: where(s.anchorNode), anchorOffset: s.anchorOffset, focus: where(s.focusNode), result: probe.mapRenderedSelection(s, md, source) as MapOut };
 }
+/** The highlight over `Inline $x^2$ math and`, painted as the panel paints a comment's (paintRendered with the panel's class and
+ *  data) over a real selection made across the formula: the marks, their children, their boxes and the wash; the map over the
+ *  painted paragraph; then the panel's unpaint (file-comments.ts: every child of a mark back in its place, the parent normalized)
+ *  and the paragraph after it; then the ranges a comment made in the Raw view carries (the formula at an edge, the formula alone). */
+function readPaint(source: string) {
+  const probe = (window as any).__rompProbe;
+  const md = document.querySelector("#romp-fileview .fileview-md") as HTMLElement;
+  const p = (Array.from(md.querySelectorAll(":scope > p")) as HTMLElement[]).find((x) => (x.textContent || "").startsWith("Inline "))!;
+  const texts = (root: Node): Text[] => { const out: Text[] = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) out.push(n as Text); return out; };
+  const shape = (n: Node): string[] => Array.from(n.childNodes).map((c) => c.nodeType === 3 ? "#text(" + (c as Text).data + ")" : (c as Element).tagName + "." + String((c as Element).className).split(" ")[0]);
+  const box = (el: Element) => { const b = el.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height) }; };
+  const unpaint = () => { for (const m of Array.from(md.querySelectorAll("mark"))) { const par = m.parentNode!; while (m.firstChild) par.insertBefore(m.firstChild, m); par.removeChild(m); par.normalize(); } };
+  const mapAcross = (): MapOut => {
+    const first = texts(p).find((t) => t.data.startsWith("Inline"))!, last = texts(p).find((t) => t.data.includes(" math and"))!;
+    const s = window.getSelection()!; s.removeAllRanges();
+    const r = document.createRange(); r.setStart(first, 0); r.setEnd(last, last.data.indexOf(" math and") + " math and".length); s.addRange(r);
+    const m = probe.mapRenderedSelection(s, md, source); s.removeAllRanges(); return m;
+  };
+  const katex = p.querySelector(".katex") as HTMLElement;
+  const katexBefore = box(katex);
+  const mapped = mapAcross();
+  const marks = (probe.paintRendered(md, source, mapped.range, "fc-hl", { act: "fcopen", id: "c6" }) || []) as HTMLElement[];
+  const across = {
+    marks: marks.map((m) => ({ shape: shape(m), box: box(m), act: m.dataset.act, id: m.dataset.id, bg: getComputedStyle(m).backgroundColor, shadow: getComputedStyle(m).boxShadow })),
+    paragraph: shape(p), katexInMark: !!marks.length && katex.closest(".fc-hl") === marks[0], katexBox: box(katex), katexBefore,
+    mappedPainted: mapAcross(),
+  };
+  unpaint();
+  const after = { paragraph: shape(p), mapped: mapAcross(), katexBox: box(katex) };
+  const raw: Record<string, string[][]> = {};
+  for (const text of ["$x^2$ math and", "Inline $x^2$", "$x^2$"]) {
+    const i = source.indexOf(text);
+    const ms = (probe.paintRendered(md, source, { start: i, end: i + text.length }, "fc-presel") || []) as HTMLElement[];
+    raw[text] = ms.map((m) => shape(m));
+    unpaint();
+  }
+  return { mapped: { ok: mapped.ok, quote: mapped.quote, range: mapped.range }, across, after, raw, final: shape(p) };
+}
 /** The reader's place at the body's top edge: readPlace's start, and the top-visible block (Rendered) or row (Raw) and its offset from the edge. */
 function readTop(source: string) {
   const probe = (window as any).__rompProbe;
@@ -330,6 +371,31 @@ test("a selection endpoint inside a control over the real DOM: inside a formula'
     assert.match(drag.anchor, /katex/, "the drag anchored inside the formula: " + drag.anchor);
     assert.deepEqual([drag.result.ok, drag.result.reason], [false, "This selection touches a formula; comment on it from the Raw view."], JSON.stringify(drag.result));
     assert.equal(drag.result.blockStartLine, formulaLine);
+    assert.deepEqual(errors, [], "no page errors");
+    await page.context().close();
+  });
+});
+
+test("a comment across an inline formula over the real Files bundle is ONE highlight holding the KaTeX root (before: two marks with the formula bare between them), the wash behind the formula, the map unchanged over the painted paragraph, the paragraph given back by the panel's unpaint, and a Raw-made range at or on the formula highlights it", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openFile(browser, filesBundle(), DIR + "report.md", { width: 900, height: 900 });
+    const src = OBSIDIAN;
+    const r = await page.evaluate(readPaint, src);
+    assert.equal(r.mapped.ok, true, JSON.stringify(r.mapped)); assert.equal(r.mapped.quote, "Inline $x^2$ math and");
+    assert.equal(r.across.marks.length, 1, "one mark: " + JSON.stringify(r.across.marks.map((m: any) => m.shape)));
+    const m = r.across.marks[0];
+    assert.deepEqual(m.shape, ["#text(Inline )", "SPAN.katex", "#text( math and)"], "the formula under the mark with the words beside it");
+    assert.deepEqual(r.across.paragraph, ["MARK.fc-hl", "#text( display:)"]);
+    assert.deepEqual([m.act, m.id], ["fcopen", "c6"], "the panel's data on the mark: a click on the formula opens the card");
+    assert.equal(r.across.katexInMark, true, "the .katex root's closest .fc-hl is the mark");
+    assert.ok(m.box.left <= r.across.katexBox.left && m.box.right >= r.across.katexBox.right, "the mark's box spans the formula: " + JSON.stringify([m.box, r.across.katexBox]));
+    assert.ok(Math.abs(r.across.katexBox.width - r.across.katexBefore.width) <= 1, "KaTeX's layout is unchanged under the mark: " + JSON.stringify([r.across.katexBefore, r.across.katexBox]));
+    assert.notEqual(m.bg, "rgba(0, 0, 0, 0)", "the wash is painted: " + m.bg); assert.notEqual(m.shadow, "none", "the ring is painted");
+    assert.deepEqual(r.across.mappedPainted.range, r.mapped.range, "the map over the painted paragraph reads the same range: " + JSON.stringify(r.across.mappedPainted));
+    assert.deepEqual(r.after.paragraph, ["#text(Inline )", "SPAN.katex", "#text( math and display:)"], "unpainted: the paragraph as rendered");
+    assert.deepEqual(r.after.mapped.range, r.mapped.range, JSON.stringify(r.after.mapped));
+    assert.deepEqual(r.raw, { "$x^2$ math and": [["SPAN.katex", "#text( math and)"]], "Inline $x^2$": [["#text(Inline )", "SPAN.katex"]], "$x^2$": [["SPAN.katex"]] }, "a Raw-made range at the formula's edge or on the formula alone highlights the formula (before: the words alone, or nothing)");
+    assert.deepEqual(r.final, ["#text(Inline )", "SPAN.katex", "#text( math and display:)"]);
     assert.deepEqual(errors, [], "no page errors");
     await page.context().close();
   });

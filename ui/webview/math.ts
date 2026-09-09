@@ -41,6 +41,7 @@
 // escape tokenizer consumes both characters before any math rule sees the $.
 import katex from "katex";
 import type { TokenizerAndRendererExtension, Tokens } from "marked";
+import { frameOf, memoBlockStart, type Frame } from "./md-block-start";
 
 type MathToken = Tokens.Generic & { text: string; display: boolean };
 
@@ -304,9 +305,41 @@ const INLINE_DOLLAR = new RegExp(
 
 // Block-level display math: a $$ .. $$ or \[ .. \] paragraph of its own, so multi-line
 // formulas never reach markdown's block rules (a "- " or "#" line inside a formula would
-// otherwise be carved into a list or heading before the inline pass could see it).
-const BLOCK_DOLLARS = /^ {0,3}\$\$([\s\S]+?)\$\$ *(?:\n+|$)/;
-const BLOCK_BRACKET = /^ {0,3}\\\[([\s\S]+?)\\\] *(?:\n+|$)/;
+// otherwise be carved into a list or heading before the inline pass could see it). The block the
+// tokenizer accepts is `^ {0,3}\$\$([\s\S]+?)\$\$ *(?:\n+|$)` or its `\[ .. \]` twin with non-blank
+// content: an opener at a line start after up to three spaces, then the FIRST closer of the same
+// family (`$$`, or `\]`, then spaces, then a line end or the end of the text) at least one character
+// on, then the line's newlines. It is read in two steps below (the opener, then a search for the
+// closer) rather than by that regex, so the closer search can be shared with the `start` hint and
+// remembered per lexer frame: the lazy regex scanned to the end of the note at every block start
+// that opened with `$$` and never closed, once per such paragraph (a note of 8,000 `$$5 and $$10`
+// lines: 680 ms of lex with no hint at all, measured 2026-09-09).
+const BLOCK_OPEN = /^ {0,3}(?:\$\$|\\\[)/;
+const CLOSERS = [/\$\$ *(?=\n|$)/g, /\\\] *(?=\n|$)/g];   // by family: 0 for `$$`, 1 for `\[`
+
+/** What a lexer frame remembers of the closer search, per family: true while a closer may still lie ahead, false once
+ *  a search from some position found none. Sound for the rest of the frame because every later search in it starts at
+ *  or after that position: within a frame the source only shrinks from the front, the hint visits candidate lines in
+ *  order from the first one in its source, and a block start the tokenizer is tried at is a later candidate line
+ *  (md-block-start.ts says why the frame's sources are suffixes of one another). Without a frame (a hint or tokenizer
+ *  called outside a lex) the memo lives for one call. */
+type ClosersLeft = [boolean, boolean];
+const CLOSERS_LEFT = Symbol("mathBlock closers left");
+function closersLeft(frame: Frame | undefined): ClosersLeft {
+  if (!frame) return [true, true];
+  let left = frame.get(CLOSERS_LEFT) as ClosersLeft | undefined;
+  if (!left) { left = [true, true]; frame.set(CLOSERS_LEFT, left); }
+  return left;
+}
+/** The first closer of `family` at or after `from`, or null when none is left, which `left` then records. */
+function nextCloser(src: string, family: number, from: number, left: ClosersLeft): RegExpExecArray | null {
+  if (!left[family]) return null;
+  const re = CLOSERS[family];
+  re.lastIndex = from;
+  const m = re.exec(src);
+  if (!m) left[family] = false;
+  return m;
+}
 
 function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -321,38 +354,53 @@ export function mathPlaceholder(tex: string, display: boolean, block: boolean): 
 }
 
 /** The display block at the start of `src`, if the block tokenizer accepts one there: either delimiter pair with
- *  non-blank content. One reading for the tokenizer and for the `start` hint below, so the hint never names a position
- *  the tokenizer then rejects. */
-function blockMath(src: string): RegExpExecArray | null {
-  const m = BLOCK_DOLLARS.exec(src) || BLOCK_BRACKET.exec(src);
-  return m && m[1].trim() ? m : null;
+ *  non-blank content, read as the comment on BLOCK_OPEN says. `left` is the frame's closer memo (closersLeft). One
+ *  reading for the tokenizer and for the `start` hint below, so the hint never names a position the tokenizer then
+ *  rejects. */
+function blockMath(src: string, left: ClosersLeft): { raw: string; text: string } | null {
+  const o = BLOCK_OPEN.exec(src);
+  if (!o) return null;
+  const content = o[0].length;                                   // the content starts after the two-character opener
+  const family = src.charCodeAt(content - 2) === 36 ? 0 : 1;    // "$" opens the dollar family, "\" the bracket family
+  const cm = nextCloser(src, family, content + 1, left);        // at least one character of content before the closer
+  if (!cm) return null;
+  const text = src.slice(content, cm.index).trim();
+  if (!text) return null;
+  let end = cm.index + cm[0].length;                            // the closer and its trailing spaces, then the newlines
+  while (src.charCodeAt(end) === 10) end++;
+  return { raw: src.slice(0, end), text };
 }
 /** Where the next line begins that the block tokenizer (blockMath) would accept: the index of the "\n" before it, or
- *  -1. A candidate line is one that opens with `$$` or `\[` after up to three spaces; the tokenizer accepts it when a
- *  closer of the same family (`$$`, or `\]`, then spaces, then a line end or the end of the text) stands somewhere after
- *  the opener with content between them that is not blank, and its lazy match takes the FIRST such closer. So each
- *  candidate is judged against the first closer after its opener, which is searched for once per family and reused
- *  while it still lies past the opener at hand (the closers are in order: a later opener's first closer is the same one
- *  or a later one), and a family with no closer left rejects every later candidate without a search. One pass over
- *  `src` per call, where running the block regex at each candidate scanned to the end of the note for every candidate
- *  without a closer (a note of `$$5 and $$10` lines: 13 s for 1,500 paragraphs, measured 2026-09-09). */
+ *  -1. A candidate line is one that opens with `$$` or `\[` after up to three spaces; the tokenizer accepts it when the
+ *  first closer of the same family after the opener has content before it that is not blank. So each candidate is
+ *  judged against the first closer after its opener, which is searched for once per family and reused while it still
+ *  lies past the opener at hand (the closers are in order: a later opener's first closer is the same one or a later
+ *  one), and a family with no closer left rejects every later candidate without a search; once both families are out
+ *  of closers the answer is none. `left` carries that "no closer left" across the frame's calls. Before any regex runs,
+ *  indexOf asks whether either opener occurs at all and where the first one is: most paragraphs are followed by no
+ *  opener, and indexOf is the cheapest scan there is, where a regex alternation over the same text cost ten times as
+ *  much (the review's measurements are in md-block-start.ts). One pass over `src` per call at most, and with the
+ *  frame's memo (mathBlock.start below) one pass per accepted block per frame. */
 const NEXT_BLOCK_LINE = /\n(?= {0,3}(?:\$\$|\\\[))/g;
-const CLOSERS = [/\$\$ *(?=\n|$)/g, /\\\] *(?=\n|$)/g];   // by family: 0 for `$$`, 1 for `\[`
-function nextBlockMath(src: string): number {
-  NEXT_BLOCK_LINE.lastIndex = 0;
-  const closer = [-2, -2];   // per family: the first closer found so far; -1 once a search found none, -2 before any search
+function nextBlockMath(src: string, left: ClosersLeft): number {
+  const d = left[0] ? src.indexOf("$$") : -1;                   // a family out of closers has no candidate worth a look
+  const b = left[1] ? src.indexOf("\\[") : -1;
+  if (d < 0 && b < 0) return -1;
+  const first = d < 0 ? b : b < 0 ? d : Math.min(d, b);
+  NEXT_BLOCK_LINE.lastIndex = first > 4 ? first - 4 : 0;        // a candidate's "\n" is at most four characters before its opener
+  const closer = [d < 0 ? -1 : -2, b < 0 ? -1 : -2];            // per family: the first closer found so far; -1 once none is left, -2 before any search
   for (let m = NEXT_BLOCK_LINE.exec(src); m; m = NEXT_BLOCK_LINE.exec(src)) {
     let open = m.index + 1;
     while (src.charCodeAt(open) === 32) open++;
-    const family = src.charCodeAt(open) === 36 ? 0 : 1;   // "$" opens the dollar family, "\" the bracket family
-    const content = open + 2;                             // the content starts after the two-character opener
+    const family = src.charCodeAt(open) === 36 ? 0 : 1;
+    const content = open + 2;
     let c = closer[family];
-    if (c !== -1 && c < content + 1) {                    // the memo lies before this opener's content: search again
-      CLOSERS[family].lastIndex = content + 1;            // at least one character of content before the closer
-      const cm = CLOSERS[family].exec(src);
+    if (c !== -1 && c < content + 1) {                          // the memo lies before this opener's content: search again
+      const cm = nextCloser(src, family, content + 1, left);
       c = closer[family] = cm ? cm.index : -1;
     }
-    if (c >= 0 && src.slice(content, c).trim()) return m.index;
+    if (c === -1) { if (closer[1 - family] === -1) return -1; continue; }
+    if (src.slice(content, c).trim()) return m.index;
   }
   return -1;
 }
@@ -370,14 +418,16 @@ export const mathBlock: TokenizerAndRendererExtension = {
   // end of the note and seated the reader's place wrong (the Slice 4 review, round 1). And the string's own start is
   // never a line start (it is one character into a line), so a match there made `A $$x$$` a paragraph "A" and a
   // display block " $$x$$": only a position after "\n" counts. md-config-math-block-start.test.ts executes both.
-  start(src: string) {
-    const at = nextBlockMath(src);
-    return at >= 0 ? at : undefined;
-  },
-  tokenizer(src: string) {
-    const m = blockMath(src);
+  // The lexer calls the hint before EVERY paragraph, on the whole remaining source, so the hint is memoised per lexer
+  // frame (md-block-start.ts): nextBlockMath returns the first accepted line, and that answer holds for every later
+  // paragraph of the frame until the line is consumed. md-config-block-start-memo.test.ts holds the memoised lex
+  // equal to the plain one and the lex linear in the paragraph count (round 2 of the review: 8,000 one-line
+  // paragraphs lexed in 1.3 s, a 200 KB reply took twice the base's time, from the hints alone).
+  start: memoBlockStart((src, frame) => nextBlockMath(src, closersLeft(frame))),
+  tokenizer(this: { lexer?: unknown } | undefined, src: string) {
+    const m = blockMath(src, closersLeft(frameOf(this && this.lexer)));
     if (!m) return undefined;
-    return { type: "mathBlock", raw: m[0], text: m[1].trim(), display: true } as MathToken;
+    return { type: "mathBlock", raw: m.raw, text: m.text, display: true } as MathToken;
   },
   renderer(token) {
     return mathPlaceholder((token as MathToken).text, true, true);

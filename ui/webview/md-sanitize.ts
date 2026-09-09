@@ -50,10 +50,10 @@
 // strip, so the math extensions emit an inert placeholder and KaTeX is rendered into it on the sanitized
 // DOM afterwards (math.ts renderMathPlaceholders), as a POST-PASS this module runs at the end of sanitizeMd
 // for every caller: the module that installs the math grammar (md-config.ts) registers the fill at load
-// (registerMdPostPass), so the chat's md() and userMd() and the viewer's mdBlock, when it runs inside the
-// chat page whose marked singleton carries that grammar, all render math, and a bundle without the grammar
-// (files.js, feed.js) never sees the pass or KaTeX. A renderer romp itself runs never goes through the
-// sanitizer; only what an author wrote does.
+// (registerMdPostPass), and every bundle that hosts the chat or the viewer (render.js, files.js, feed.js)
+// imports that module, so the chat's md() and userMd() and the viewer's mdBlock render math on every surface
+// (Slice 4 of plans/markdown-viewer.md; before it files.js and feed.js had neither the grammar nor the pass
+// nor the library). A renderer romp itself runs never goes through the sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent } from "dompurify";
 

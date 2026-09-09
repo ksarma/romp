@@ -114,18 +114,39 @@ test("the hint agrees with the tokenizer at every candidate: the one-pass closer
   assert.ok(checked > 20000 && accepted > 1000 && accepted < checked - 1000, `the corpus exercises both answers: ${accepted} accepted of ${checked}`);
 });
 
-test("a note of candidate lines the tokenizer rejects lexes in linear time: the hint never rescans the note per candidate", () => {
-  // 1,500 paragraphs whose second line opens with `$$` and never closes took 13 s with the block regex run at every
-  // candidate (each scan to the end of the note); the one-pass hint lexes the same note in the time of plain prose.
+test("a note of candidate lines the tokenizer rejects lexes in the time of plain prose: the hint scans once per call, not once per candidate", () => {
+  // What this bounds: the hint's own cost per call. A first cut of nextBlockMath ran the block tokenizer at every
+  // candidate, each run scanning to the end of the note, and lexed 1,500 paragraphs whose second line opens with `$$`
+  // and never closes in 13 s (round 1 of the Slice 4 review; it never shipped). The one-pass hint lexes the same note in
+  // about three times the time of plain prose, and one call over a whole note of 8,000 such paragraphs costs under a
+  // millisecond where the first cut cost hundreds. What it does NOT bound: marked calls every block start hint once per
+  // top-level paragraph on the source that remains (marked.esm.js, the paragraph branch of blockTokens), so the whole
+  // lex grows as the square of the paragraph count with any hint that scans the remainder, this one included: 8,000
+  // paragraphs lexed in 1.1 s plain and 3.7 s on this note against 21 ms with no hints (measured 2026-09-09). A hint
+  // that is linear over the whole lex needs a memo that survives across calls; until one lands, this test says nothing
+  // about it. The hint that shipped before round 1, a bare regex match, was faster than this one and wrong (tests 1 to
+  // 3 fail on it); this test does not tell those two apart and is not meant to. Each timing is the smallest of three
+  // runs, so one stall cannot fail a correct build; the bounds leave room for a loaded machine and are not benchmarks:
+  // the first cut was two orders of magnitude over both.
+  const fastest = (f: () => number): { ms: number; got: number } => {
+    let got = 0; const runs: number[] = [];
+    for (let i = 0; i < 3; i++) { const t0 = process.hrtime.bigint(); got = f(); runs.push(Number(process.hrtime.bigint() - t0) / 1e6); }
+    return { ms: Math.min(...runs), got };
+  };
   const N = 1500;
-  const t0 = process.hrtime.bigint();
-  const plain = Lexer.lex("Line one\nline two here.\n\n".repeat(N)).length;
-  const t1 = process.hrtime.bigint();
-  const prices = Lexer.lex("Line one\n$$5 and $$10 are prices.\n\n".repeat(N)).length;
-  const brackets = Lexer.lex("Line one\n\\[TODO\\] fix this.\n\n".repeat(N)).length;
-  const t2 = process.hrtime.bigint();
-  assert.equal(plain, N * 2); assert.equal(prices, N * 2); assert.equal(brackets, N * 2);
-  const plainMs = Number(t1 - t0) / 1e6, candidatesMs = Number(t2 - t1) / 2e6;
-  // a bound with room for a loaded machine, not a benchmark: the failing shape was two orders of magnitude over prose
-  assert.ok(candidatesMs < Math.max(1000, plainMs * 8), `a note of rejected candidates took ${candidatesMs.toFixed(0)} ms per 1,500 paragraphs against ${plainMs.toFixed(0)} ms for prose`);
+  const plain = fastest(() => Lexer.lex("Line one\nline two here.\n\n".repeat(N)).length);
+  const prices = fastest(() => Lexer.lex("Line one\n$$5 and $$10 are prices.\n\n".repeat(N)).length);
+  const brackets = fastest(() => Lexer.lex("Line one\n\\[TODO\\] fix this.\n\n".repeat(N)).length);
+  assert.equal(plain.got, N * 2); assert.equal(prices.got, N * 2); assert.equal(brackets.got, N * 2);
+  const candidatesMs = Math.max(prices.ms, brackets.ms);
+  assert.ok(candidatesMs < Math.max(1000, plain.ms * 8), `a note of rejected candidates took ${candidatesMs.toFixed(0)} ms per 1,500 paragraphs against ${plain.ms.toFixed(0)} ms for prose`);
+  // the hint alone, one call over the whole note less its first character, as marked passes it: 8,000 candidates with
+  // no closer, so a hint that scans to the end of the note per candidate pays for every one of them
+  const big = 8000;
+  for (const [why, para] of [["two prices", "Line one\n$$5 and $$10 are prices.\n\n"], ["an escaped bracket line", "Line one\n\\[TODO\\] fix this.\n\n"]] as const) {
+    const note = para.repeat(big).slice(1);
+    const call = fastest(() => hint(note) ?? -1);
+    assert.equal(call.got, -1, why + ": no line of the note is a display block");
+    assert.ok(call.ms < 100, `${why}: one call of the hint over ${big.toLocaleString("en-US")} rejected candidates took ${call.ms.toFixed(1)} ms`);
+  }
 });

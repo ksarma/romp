@@ -8,7 +8,7 @@
 // parts no stand-in can stand in for: the comments panel's region layer wraps THE picture inside the placeholder and the
 // click leaves it standing around the loaded picture; Enter on a focused placeholder loads it; a re-open of the file keeps
 // a loaded host loaded; a change to the gear's list in another tab (the storage event, here the same-document event)
-// re-judges the open document in place; an emptied list gates github.com too; and a URL document allows its own host
+// re-judges the open document's placeholders in place; an emptied list gates github.com too; and a URL document allows its own host
 // beside the list, which shows on a figure of that hostname under another scheme or port (another origin, so only the
 // arm lets it through). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
 // Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.

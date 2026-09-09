@@ -10,6 +10,20 @@
 // filter primitive before this code runs, so no feImage fetches or gates in the product (measured 2026-09-09 over the
 // real sanitizeMd); file-view-figures-absolute.test.ts pins both the arm and the profile.
 //
+// An inline svg fetches through its PAINT references too (review of Slice 4, round 2: measured over the real Files bundle
+// and as a URL document, no placeholder, no click): `fill`, `stroke`, `filter`, `clip-path`, `mask`, `marker-start`,
+// `marker-mid` and `marker-end` are presentation attributes whose value is CSS, and a `url(https://host/p.svg#p)` in any
+// of them, on the `<svg>` itself or on any element inside it, makes the browser request that document the moment the svg
+// renders (a `<mask>` reads the whole CSS shorthand, so `image-set("https://host/a.png" 1x)` fetches there as well). The
+// sanitizer keeps all eight (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only
+// style hook reads the `style` attribute alone. So the gate reads them as fetching attributes of the svg (paintRefs), with
+// a tokenizer that follows CSS Syntax's: comments skipped, escapes decoded (`\75 rl(` is `url(` to the browser, and
+// `github.com\40 evil.test` is `github.com@evil.test`, so a reading of the text as written judged an allowed host
+// while the browser fetched another), a url token or a quoted string, in whatever function; every string is judged,
+// since gating a value the browser would have ignored costs one click and missing one it reads costs a request. The
+// same attributes on an HTML element fetch nothing and are not read. rewriteFigureSrcs (file-view.ts) reads figureRefs
+// alone and leaves a paint reference as written: a relative `url(p.svg#p)` is not a figure of the file's folder.
+//
 // The allowed hosts are the gear's `figureHosts` setting (settings.ts: github.com and its image hosts, localhost
 // and 127.0.0.1 by default), plus the page's own origin and the kernel's (the /file route and its /remote relay,
 // which every local figure goes through: rewriteFigureSrcs in file-view.ts), plus the hosts the person loaded in
@@ -21,7 +35,7 @@
 // The gate runs on the SANITIZED DOM, after rewriteFigureSrcs, never on marked's HTML: it wraps the media element
 // (an img, a video, an audio, a picture or an inline svg; a `<source>` or a `<track>` is gated through its parent)
 // in a `span.fv-gate` placeholder and moves every attribute that fetches (`src`, `srcset`, `poster`, an SVG image's
-// `href`) to `data-fv-gated-<name>`, so nothing leaves the page while gated and the element itself is kept, as the
+// `href`, an svg's paint references) to `data-fv-gated-<name>`, so nothing leaves the page while gated and the element itself is kept, as the
 // comments panel's regions layer expects (it wraps THE img). `data-fv-src` moves aside too: the attribute means
 // "this viewer rewrote this src to /file", and while gated there is no src to pair an embed with. A data-*
 // attribute set here is fine: the sanitizer's ALLOW_DATA_ATTR: false applies during DOMPurify only, and the
@@ -45,9 +59,13 @@ export const LABEL_MARK = "data-fv-label";
 const GATED_PREFIX = "data-fv-gated-";
 
 // ── the attributes a figure fetches ──────────────────────────────────────────────────────────────────
+/** The presentation attributes of an inline svg whose CSS value can name a document to fetch (see the header). */
+export const PAINT_ATTRS = ["fill", "stroke", "filter", "clip-path", "mask", "marker-start", "marker-mid", "marker-end"] as const;
+export type PaintAttr = typeof PAINT_ATTRS[number];
 /** One attribute under a root that names something the browser fetches for a picture or a clip. `attr` is the
- *  attribute's own name (`xlink:href` for SVG 1.1's spelling, read through the XLink namespace). */
-export type FigureRef = { el: Element; attr: "src" | "srcset" | "poster" | "href" | "xlink:href"; value: string };
+ *  attribute's own name (`xlink:href` for SVG 1.1's spelling, read through the XLink namespace; a PaintAttr for an
+ *  svg's paint reference, whose URLs cssUrls reads out of the value). */
+export type FigureRef = { el: Element; attr: "src" | "srcset" | "poster" | "href" | "xlink:href" | PaintAttr; value: string };
 /** The elements that fetch, by tag, and what they fetch through. `image` and `feImage` are SVG's (an inline svg's
  *  picture, and a filter's), matched by their own case since a type selector is case-sensitive for a non-HTML element.
  *  feImage is a guard for a wider profile: the sanitizer drops it today (see the header). */
@@ -69,6 +87,94 @@ export function figureRefs(root: ParentNode): FigureRef[] {
       const value = attr === "xlink:href" ? el.getAttributeNS(XLINK_NS, "href") : el.getAttribute(attr);
       if (value) out.push({ el, attr, value });
     }
+  }
+  return out;
+}
+
+// ── an svg's paint references ────────────────────────────────────────────────────────────────────────
+const PAINT_SEL = PAINT_ATTRS.map((a) => "[" + a + "]").join(", ");
+const isSvg = (el: Element): boolean => typeof el.tagName === "string" && tagOf(el) === "svg";
+/** Every paint attribute naming a URL under `root`, on an svg or inside one (the root itself included when it is an
+ *  svg), in document order. The same attribute on an HTML element fetches nothing and is not a ref. */
+export function paintRefs(root: ParentNode): FigureRef[] {
+  const out: FigureRef[] = [];
+  const self = root as Element;
+  const nodes: Element[] = isSvg(self) ? [self] : [];
+  root.querySelectorAll(isSvg(self) ? PAINT_SEL : "svg, svg *").forEach((el) => { nodes.push(el); });
+  for (const el of nodes) {
+    for (const attr of PAINT_ATTRS) {
+      const value = el.getAttribute(attr);
+      if (value && cssUrls(value).length) out.push({ el, attr, value });
+    }
+  }
+  return out;
+}
+/** Every fetching attribute the gate judges under a media root: figureRefs and, for an svg, paintRefs. */
+export function gateRefs(root: ParentNode): FigureRef[] { return figureRefs(root).concat(paintRefs(root)); }
+
+/** CSS's whitespace: a space, a tab, a newline (CR and FF are newlines after CSS's preprocessing). */
+const CSS_WS = /[ \t\n\r\f]/;
+const CSS_HEX = /[0-9a-fA-F]/;
+/** A name code point: a letter, a digit, `_`, `-`, or any non-ASCII code point. */
+const CSS_NAME = /[A-Za-z0-9_\-\u0080-\uffff]/;
+/** One CSS escape, `i` at the code point after the backslash: the code point it stands for and the index after it. Up to
+ *  six hex digits, with one whitespace after them consumed; any other code point stands for itself; a backslash at the
+ *  end of the value is U+FFFD. */
+function cssEscape(s: string, i: number): [string, number] {
+  if (i >= s.length) return ["\ufffd", i];
+  if (!CSS_HEX.test(s[i])) return [s[i], i + 1];
+  let j = i;
+  while (j < s.length && j - i < 6 && CSS_HEX.test(s[j])) j++;
+  const cp = parseInt(s.slice(i, j), 16);
+  if (j < s.length && CSS_WS.test(s[j])) j++;
+  return [cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? "\ufffd" : String.fromCodePoint(cp), j];
+}
+/** Every URL a CSS-valued attribute names, as CSS Syntax's tokenizer reads it: the url tokens (`url(` and an unquoted URL
+ *  run to the `)` or to whitespace) and every quoted string (the `url("...")` form, an `image-set("...")` candidate, any
+ *  other function's argument alike), with comments skipped and escapes decoded in function names, URLs and strings (so
+ *  `\75 rl(` is `url(` and `github.com\40 evil.test` is `github.com@evil.test`, as the browser reads them). Judged on
+ *  purpose beyond what the browser fetches: a string in a function that takes none, and a url token the browser refuses
+ *  (a quote, a paren or inner whitespace before its `)`, read to that point). Gating such a value costs one click;
+ *  missing a value the browser reads costs a request (measured 2026-09-09: every spelling above fetched). */
+export function cssUrls(value: string): string[] {
+  const out: string[] = [];
+  const n = value.length;
+  let i = 0;
+  while (i < n) {
+    const c = value[i];
+    if (c === "/" && value[i + 1] === "*") { const e = value.indexOf("*/", i + 2); i = e < 0 ? n : e + 2; continue; }
+    if (c === '"' || c === "'") {
+      let str = "";
+      i++;
+      while (i < n && value[i] !== c && value[i] !== "\n") {
+        if (value[i] !== "\\") { str += value[i++]; continue; }
+        if (value[i + 1] === "\n") { i += 2; continue; }        // a backslash before a newline continues the string
+        const [ch, j] = cssEscape(value, i + 1); str += ch; i = j;
+      }
+      if (i < n && value[i] === c) i++;
+      if (str) out.push(str);
+      continue;
+    }
+    if (c === "\\" || CSS_NAME.test(c)) {
+      let name = "";
+      while (i < n && (value[i] === "\\" || CSS_NAME.test(value[i]))) {
+        if (value[i] !== "\\") { name += value[i++]; continue; }
+        const [ch, j] = cssEscape(value, i + 1); name += ch; i = j;
+      }
+      if (value[i] !== "(") continue;
+      i++;                                                        // a function: its arguments run through this loop
+      if (name.toLowerCase() !== "url") continue;
+      while (i < n && CSS_WS.test(value[i])) i++;
+      if (value[i] === '"' || value[i] === "'") continue;         // url("..."): the string arm reads it
+      let url = "";
+      while (i < n && value[i] !== ")" && !CSS_WS.test(value[i]) && value[i] !== '"' && value[i] !== "'" && value[i] !== "(") {
+        if (value[i] !== "\\") { url += value[i++]; continue; }
+        const [ch, j] = cssEscape(value, i + 1); url += ch; i = j;
+      }
+      if (url) out.push(url);
+      continue;
+    }
+    i++;
   }
   return out;
 }
@@ -132,9 +238,12 @@ function spellSrcsets(el: Element): void {
     if (plain !== ref.value) ref.el.setAttribute("srcset", plain);
   }
 }
-/** The URLs one fetching attribute names: a srcset's candidates, else the value itself. */
+/** The URLs one fetching attribute names: a srcset's candidates, a paint reference's url tokens and strings, else the
+ *  value itself. */
 export function refUrls(ref: FigureRef): string[] {
-  return ref.attr === "srcset" ? parseSrcset(ref.value).map((c) => c.url) : [ref.value];
+  if (ref.attr === "srcset") return parseSrcset(ref.value).map((c) => c.url);
+  if ((PAINT_ATTRS as readonly string[]).includes(ref.attr)) return cssUrls(ref.value);
+  return [ref.value];
 }
 
 // ── which host a source fetches from ──────────────────────────────────────────────────────────────
@@ -172,10 +281,11 @@ export function allowedFigureHosts(extra: Iterable<string> = []): Set<string> {
 /** For tests: the document's loaded hosts, cleared. */
 export function forgetLoadedHosts(): void { loadedHosts.clear(); }
 
-/** The hosts, in order of first appearance, that `el` (a media root) would fetch from and `allowed` does not list. */
+/** The hosts, in order of first appearance, that `el` (a media root) would fetch from and `allowed` does not list: its
+ *  sources and, for an svg, its paint references. */
 export function unlistedHosts(el: Element, base: string, allowed: Set<string>): string[] {
   const out: string[] = [];
-  for (const ref of figureRefs(el)) {
+  for (const ref of gateRefs(el)) {
     for (const url of refUrls(ref)) {
       const h = remoteHost(url, base);
       if (h && !allowed.has(h) && !out.includes(h)) out.push(h);
@@ -226,12 +336,12 @@ function labelGate(wrap: HTMLElement, hosts: string[]): void {
   const more = hosts.length - 1;
   if (label) label.textContent = (media ? kindOf(media) : "Image") + " from " + host + (more > 0 ? " and " + more + " more host" + (more > 1 ? "s" : "") : "") + ". Click to load.";
 }
-/** Wrap one media root in the placeholder, its fetching attributes moved aside. */
+/** Wrap one media root in the placeholder, its fetching attributes (an svg's paint references included) moved aside. */
 function gate(el: Element, hosts: string[]): void {
   const doc = el.ownerDocument;
   const nodes: Element[] = [el];
   el.querySelectorAll("*").forEach((n) => { nodes.push(n); });
-  for (const ref of figureRefs(el)) {
+  for (const ref of gateRefs(el)) {
     if (ref.attr === "xlink:href") { ref.el.removeAttributeNS(XLINK_NS, "href"); ref.el.setAttribute(GATED_PREFIX + "href", ref.value); }
     else { ref.el.removeAttribute(ref.attr); ref.el.setAttribute(GATED_PREFIX + ref.attr, ref.value); }
   }

@@ -80,6 +80,7 @@ import { loadSettings, saveSettings, onExternalSettingsChange, type CommentsFilt
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
+import { revealFragmentTarget } from "./md-sanitize";   // the HTML spec's ancestor revealing steps, run on a mark inside a closed <details> before any scroll to it (revealMarks)
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered, detachedChanges,
@@ -444,6 +445,17 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
  *  the panel runs in); for a stand-in without it, the two characters a quoted value cannot hold raw. */
 function cssId(s: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
+}
+/** Whether `m` stands in content the page keeps off the screen and a scroll cannot bring on: inside a closed <details>
+ *  (below its summary, which is in view already) or under a `hidden="until-found"`. The same two conditions the HTML
+ *  spec's ancestor revealing steps act on (md-sanitize.ts revealFragmentTarget), read without changing anything. */
+function foldedAway(m: Element): boolean {
+  for (let n: Element | null = m; n; n = n.parentElement) {
+    if ((n.getAttribute("hidden") || "").toLowerCase() === "until-found") return true;
+    const p = n.parentElement;
+    if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) return true;
+  }
+  return false;
 }
 const clock = (t: number | string): string => {
   const d = new Date(t);
@@ -2964,6 +2976,7 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
+    if (this.revealMarks(key) && this.margin) this.placeCards(false);   // a fold opened: the content below it moved, and centerOn reads the placement
     if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
@@ -3023,7 +3036,28 @@ class Panel {
     row.classList.remove("fc-landing");
     row.style.background = ""; row.style.boxShadow = "";
   }
+  /** A card's marks brought out of any fold before a scroll to them. A comment on a folded callout's body (`> [!type]-`),
+   *  on the front matter (both closed <details> from plain markdown since Slice 4 of plans/markdown-viewer.md) or on prose
+   *  inside an author's own <details> paints inside the fold: the browser lays the hidden content out on a forced read, so
+   *  the mark HAS a box (the margin pass placed its card level with a phantom) but nothing of it shows, and centerOn or
+   *  scrollIntoView brought a shut fold to the center with no highlight anywhere, the card saying nothing of it (the
+   *  Slice 4 review). The HTML spec's ancestor revealing steps, which the browser's own fragment navigation runs and
+   *  scrollIntoView does not, open every closed details on the way up and drop a `hidden="until-found"`
+   *  (revealFragmentTarget, what the viewer's `#` landing runs). Returns whether anything opened: in the margin layout the
+   *  caller then re-runs the pass at once, since the fold's opening moved every mark below it and centerOn reads the
+   *  placement, not the DOM. The panel's OWN marks only (ownMarks), as every scroll to a mark reads them. */
+  private revealMarks(key: string): boolean {
+    const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let opened = false;
+    for (const m of this.ownMarks(act, id)) {
+      if (!foldedAway(m)) continue;
+      revealFragmentTarget(m);
+      opened = true;
+    }
+    return opened;
+  }
   scrollCard(id: string): void {
+    if (this.margin && this.revealMarks(id)) this.placeCards(false);   // the margin layout scrolls to the mark: a fold around it opens first, and the pass reads the moved content
     if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
@@ -3070,11 +3104,15 @@ class Panel {
   }
   /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
    *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
-   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. */
+   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. A mark inside a closed
+   *  <details> is brought out of it BEFORE the pass (revealMarks): the centering is a scroll to the mark, and the pass
+   *  must measure the content as the opened fold lays it out. */
   private afterRender(): void {
-    this.placeCards(true);
     const intent = this.expandIntent; this.expandIntent = null;
-    if (intent && this.margin && !intent.wasOpen && this.openCards.has(intent.key)) this.centerOn(intent.key);
+    const opening = intent !== null && !intent.wasOpen && this.openCards.has(intent.key);
+    if (opening && this.margin) this.revealMarks(intent!.key);
+    this.placeCards(true);
+    if (opening && this.margin) this.centerOn(intent!.key);
   }
   /** The margin pass: card-layout.ts decides, this measures and applies. The mode first — a change toggles the
    *  sheet's `fc-margin`, and the margin layout ending OUTSIDE a render re-renders, since the rows stand in the

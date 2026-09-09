@@ -110,6 +110,13 @@
                        in styles.css, so the "filled yellow so the stall is noticed" chip rendered as a quiet
                        white outline (background→transparent, border→currentColor, the user 2026-07-25).
                        feed-css-vars.test.ts now holds the whole file to "define it here or carry a fallback". */
+  /* the AWAITING green and the COMPACTING teal, mirroring styles.css: the viewer's tip and important callouts
+     (.md-callout-tip, .md-callout-important, Slice 4 of plans/markdown-viewer.md) tint through them, and the
+     same trap again: they stood in the light block alone, so on the two dark themes the callout's --callout was
+     invalid and its rail, wash and title tint fell away (the review round 2). feed-css-vars.test.ts now reads
+     the sheet with the light block cut out, so a light-only token fails there. */
+  --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
+  --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
 
   /* Card background + border are set inline per card (the hawaii recency tint).
      These neutral tokens are for the chrome that frames them (header, detail box,
@@ -743,7 +750,8 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    snug against the name (~3px), not floating ~11px away (the user 2026-06-10) */
 .fwork-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #e0b020; vertical-align: middle; margin-right: -3px; }
 /* idle-but-awaiting background work → the same dot in the romp brand green, matching the chat chip's
-   Awaiting color (--st-awaitbg-bg in styles.css; hex here because the feed page loads only this file) */
+   Awaiting color (the value of --st-awaitbg-bg, which this :root defines too since Slice 4 of plans/markdown-viewer.md;
+   the literal stays because awaiting-state.test.ts pins the rule's text, the same green in both themes) */
 .fwork-dot.await { background: #54B204; }
 /* state UNKNOWN (the kernel listed the session but could not read its live state) → an explicit gray
    ring, the same "can't see it" gray the network strip's detached-host dot uses — fail loudly, never
@@ -2475,7 +2483,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md, .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6, .fileview-md strong,
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
-  .fileview-md .katex-error { --math-err: black; }
+  .fileview-md { --math-err: black; }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
   .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }

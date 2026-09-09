@@ -458,13 +458,18 @@ host name per entry, exact (`github.com` does not cover `gist.github.com`), and 
 `objects.githubusercontent.com`, `private-user-images.githubusercontent.com`,
 `github.githubassets.com`, `localhost` and `127.0.0.1`. The kernel's own address, which
 every figure stored beside the file loads through, needs no entry; a `data:` image makes no
-request and is never gated. An entry is read as the browser reads a host: an address pasted
-whole (`https://cdn.test/a.png`), a port (`cdn.test:8080`) or a path is stored as the host
-alone (`cdn.test`), an internationalised name in its `xn--` form and an IPv4 address without
-leading zeros, and the gear shows the stored form on its next open. A line the browser cannot
-read as a host is kept, allows nothing, and is named under the list in the gear. The setting
-reaches an open file at once: a change made in
-another tab re-judges the file where it stands. It applies to files shown in the viewer, on
+request and is never gated. An inline `<svg>` whose `fill`, `stroke`, `filter`, `clip-path`,
+`mask`, `marker-start`, `marker-mid` or `marker-end` attribute names another host with
+`url(...)` is a figure from the web too, and is gated the same way. An entry is read as the
+browser reads a host: an address pasted whole (`https://cdn.test/a.png`), a port
+(`cdn.test:8080`) or a path is stored as the host alone (`cdn.test`), an internationalised
+name in its `xn--` form and an IPv4 address without leading zeros, and the gear shows the
+stored form on its next open. A line the browser cannot read as a host is kept, allows
+nothing, and is named under the list in the gear. A change to the list, saved from this tab's
+gear or another tab's, reaches an open file without a reload: a host added to the list
+restores its boxes where the file stands. A host removed from the list takes effect at the
+file's next paint (a re-open, or a switch between Raw and Rendered); a picture already
+fetched stays on the page until then. The setting applies to files shown in the viewer, on
 every surface; a picture in a chat message is not gated.
 
 ### The tab strip's per-browser choices

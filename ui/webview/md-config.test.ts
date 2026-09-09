@@ -58,7 +58,7 @@ test("footnotes: a reference is a numbered sup link, a definition renders IN PLA
   assert.match(out, /<div class="md-footnote" id="fn-b"><a class="md-fnback" href="#fnref-b" title="Back to the text">1<\/a> <a href="https:\/\/example\.test\/def-only">https:\/\/example\.test\/def-only<\/a><\/div>/, "the URL-only definition renders (marked's def rule used to swallow it)");
   assert.ok(out.indexOf("fn-a") < out.indexOf("<p>After."), "in place, before the paragraph that follows it");
   oneRoot(html("[^1]: only a definition\n"), "div");
-  assert.match(html("[^x]: unreferenced\n"), /<span class="md-fnback" title="[^"]+">x<\/span> unreferenced/, "a definition nothing refers to shows its id, and has no back link to a reference that is not there (below)");
+  assert.match(html("[^x]: unreferenced\n"), /<span class="md-fnback" title="[^"]+">\[\^x\]:<\/span> unreferenced/, "a definition nothing refers to shows its marker as written, and has no back link to a reference that is not there (below)");
   assert.match(html("[^1]: <b>x</b> & \"y\"\n"), /id="fn-1"/);
   assert.match(html("[^a\"b]: x\n"), /id="fn-a&quot;b"/, "the id is escaped in the attribute");
 });
@@ -167,7 +167,12 @@ test("footnotes: a reference with no definition stays as written; a definition's
   const dup = html("Ref[^d].\n\n[^d]: First.\n\n[^d]: Second.\n");
   assert.equal((dup.match(/id="fn-d"/g) || []).length, 1, "one element carries the id, so #fn-d lands on the first definition");
   assert.match(dup, /<div class="md-footnote" id="fn-d"><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> First\.<\/div><div class="md-footnote"><a class="md-fnback" href="#fnref-d" title="Back to the text">1<\/a> Second\.<\/div>/, "the second keeps its class and its back link");
-  assert.equal(html("[^x]: unreferenced\n"), `<div class="md-footnote" id="fn-x"><span class="md-fnback" title="${FOOTNOTE_ORPHAN_TITLE}">x</span> unreferenced</div>`, "nothing refers to it: the label says so, with no link to a reference that is not there");
+  assert.equal(html("[^x]: unreferenced\n"), `<div class="md-footnote" id="fn-x"><span class="md-fnback" title="${FOOTNOTE_ORPHAN_TITLE}">[^x]:</span> unreferenced</div>`, "nothing refers to it: the marker as written is the label, which says so, with no link to a reference that is not there");
+  // round 2: an orphan definition's text is dressed, never changed. A regex character class an agent explains at a line start
+  // is GFM's definition shape (GitHub drops the whole block); the marker stays in view, so the reply reads as written.
+  const regex = "The pattern:\n\n[^a-z]: matches anything but a lowercase letter\n[^0-9]+: one or more non-digits";
+  assert.match(html(regex), /<div class="md-footnote" id="fn-a-z"><span class="md-fnback" title="[^"]+">\[\^a-z\]:<\/span> matches anything but a lowercase letter\n\[\^0-9\]\+: one or more non-digits<\/div>$/);
+  assert.equal(html(regex).replace(/<[^>]+>/g, ""), "The pattern:\n[^a-z]: matches anything but a lowercase letter\n[^0-9]+: one or more non-digits", "every character the author wrote is in the rendered text");
   assert.doesNotMatch(FOOTNOTE_ORPHAN_TITLE, /—|fleet/i);
   const lazy = "Ref[^1].\n\n[^1]: first\nlazy second line\n\nAfter.\n";
   assert.match(html(lazy), /<div class="md-footnote" id="fn-1"><a class="md-fnback" href="#fnref-1" title="Back to the text">1<\/a> first\nlazy second line<\/div><p>After\.<\/p>\n$/, "a lazy continuation line stays in the note, as GitHub keeps it");
@@ -206,6 +211,70 @@ test("a wikilink target with a dotted title gets `.md` unless it names a file ty
   assert.equal(live, '<p><a href="Note.v2.md">Note.v2</a> <a href="Release%20v1.0.md">Release v1.0</a> <a href="2026.09.09.md">2026.09.09</a> <a href="Node.js.md">Node.js</a> <a href="Note.v2.md#Sec">Note.v2#Sec</a> <a href="Archive.2024.md">old</a> <a class="fv-embed" href="Note.v2.md">Note.v2</a> <a href="paper.pdf">paper.pdf</a> <a href="clip.mp4">clip.mp4</a> <a href="board.canvas">board.canvas</a> <a href="song.mp3">song.mp3</a> <a href="img.PNG">img.PNG</a></p>\n',
     "a dotted note title is a note (Obsidian resolves the title to <title>.md); a target that names a type Obsidian opens keeps its extension");
   assert.doesNotMatch(WIKILINK_DEAD_TITLE, /viewer/, "the span stands in a chat reply and in a URL document, where there is no viewer to speak of");
+});
+
+// ── the 2026-09-09 review of Slice 4, round 2: the grammar's edges, continued ─────────────────────
+const escText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");   // marked's escape of a text token
+test("==mark== refuses an opener after a closing bracket, a quote or an underscore, and a closer that touches a word, so a comparison whose operand ends in ) ] ' \" or _ stays literal; a highlight still renders at a line start, after a space or an opening bracket, before punctuation, and in CJK prose", () => {
+  for (const s of [
+    "when len(a)==0 or len(b)==0 the loop exits",
+    "if x[i]==y[j] and a[0]==b[0] then merge",
+    "'a'==b and 'c'==d",
+    "\"a\"==b and \"c\"==d",
+    "f()==1 and g()==2",
+    "count(*)==0 and sum(x)==0",
+    "a_==b and c_==d",
+    "if arr.indexOf(x)==-1 or s.indexOf(y)==-1 then skip",
+  ]) {
+    assert.equal(html(s), "<p>" + escText(s) + "</p>\n", s);
+    assert.equal(userMdHtml(s), html(s), "the user's bubble agrees: " + s);
+  }
+  assert.equal(html("## Check len(a)==0 or len(b)==0"), "<h2>Check len(a)==0 or len(b)==0</h2>\n");
+  assert.equal(html("(==x==) and [==y==] ==z==."), "<p>(<mark>x</mark>) and [<mark>y</mark>] <mark>z</mark>.</p>\n", "an opening bracket before the opener, punctuation after the closer");
+  assert.equal(html("これは==重要==です"), "<p>これは<mark>重要</mark>です</p>\n", "CJK prose puts no space around a highlight: neither guard is a letter rule");
+  assert.equal(html("==high==lighted"), "<p>==high==lighted</p>\n", "a closer touching a word is a comparison's, not a highlight's");
+  assert.equal(html("a ==b==c== d"), "<p>a <mark>b==c</mark> d</p>\n", "the closer is the first `==` that touches no word");
+});
+
+test("a CommonMark link whose text is bracketed, `[[docs]](url)`, is marked's link in every kind, not a wikilink followed by a stray URL; a wikilink followed by anything marked's link rule refuses stays a wikilink", () => {
+  const src = "See [[docs]](https://example.test/docs) and [[1]](https://example.test/ref1).";
+  const want = '<p>See <a href="https://example.test/docs">[docs]</a> and <a href="https://example.test/ref1">[1]</a>.</p>\n';
+  assert.equal(html(src), want, "the chat");
+  assert.equal(userMdHtml(src), want, "the user's bubble");
+  assert.equal(fileHtml(src), want, "a file document: no path link to a docs.md that does not exist");
+  assert.equal(html("![[img.png]](https://example.test/i.png)"), '<p><img src="https://example.test/i.png" alt="[img.png]"></p>\n', "CommonMark's image with bracketed alt text, as GitHub reads it");
+  assert.equal(fileHtml("[[Note]](see also) and [[A]][[B]] and [[C]] (x)"), '<p><a href="Note.md">Note</a>(see also) and <a href="A.md">A</a><a href="B.md">B</a> and <a href="C.md">C</a> (x)</p>\n',
+    "a parenthetical marked's link rule refuses (a space in the destination), adjacent wikilinks and a space before a parenthesis keep the wikilinks");
+  assert.deepEqual((Lexer.lex(src)[0] as { tokens: Array<{ type: string }> }).tokens.map((t) => t.type).filter((t) => t !== "text"), ["link", "link"], "the anchor map's lexer sees links, not wikilinks");
+});
+
+test("a callout's body drops a tab after the marker as marked's blockquote does, so `>\\tbody` is a paragraph, not indented code; a lazy setext underline after a callout stays paragraph text, as marked's blockquote keeps it", () => {
+  const tab = "> [!note]\n>\tindented by a tab\n\nAfter.\n";
+  assert.equal(html(tab), '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note</p><p>indented by a tab</p>\n</blockquote><p>After.</p>\n');
+  assert.equal(userMdHtml(tab), html(tab));
+  const tok = Lexer.lex(tab)[0] as { raw: string; text: string };
+  tok.text.split("\n").forEach((line, i) => assert.ok(tok.raw.split("\n")[i].endsWith(line), "line " + i + " of the text is a suffix of the raw line, the shape the anchor map reads: " + JSON.stringify(line)));
+  for (const [underline, tag] of [["===", "h1"], ["--", "h2"]]) {
+    const out = html(`> [!note]\n> text\n${underline}\n\nAfter.\n`);
+    assert.equal(out, `<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note</p><p>text\n    ${underline}</p>\n</blockquote><p>After.</p>\n`, underline + ": marked's blockquote prefixes the lazy line with four spaces so it is not a setext underline");
+    assert.doesNotMatch(out, new RegExp("<" + tag + ">"));
+  }
+  assert.match(html("> [!note]\n> text\n> ===\n"), /<h1>text<\/h1>/, "a prefixed underline is the quote's own setext heading, in both");
+  assert.deepEqual(Lexer.lex("> [!note]\n> text\n===\n\nAfter.").map((t) => t.type), ["callout", "paragraph"], "one token to the blank line");
+});
+
+test("a footnote definition ends where the lexer's own paragraph would: a display formula on the next line is a block after the note, as a fence, a callout, a table or a heading already was; a line the math tokenizer rejects stays in the note", () => {
+  for (const [name, math] of [["$$", "$$\nx\n$$"], ["\\[", "\\[\nx\n\\]"], ["one-line", "$$x$$"]]) {
+    const src = `ref[^1]\n\n[^1]: text\n${math}\n\nAfter.\n`;
+    const toks = Lexer.lex(src).map((t) => [t.type, t.raw]);
+    assert.deepEqual(toks, [["paragraph", "ref[^1]"], ["space", "\n\n"], ["footnoteDef", "[^1]: text\n"], ["mathBlock", math + "\n\n"], ["paragraph", "After.\n"]], name);
+    assert.equal(toks.map((t) => t[1]).join(""), src, name + ": the tokens tile the source");
+    assert.match(html(src), /1<\/a> text<\/div><div class="md-math-display">x<\/div><p>After\.<\/p>\n$/, name + ": the formula is a display block after the note, not a span inside it");
+  }
+  const rejected = "ref[^1]\n\n[^1]: text\n$$x$$ is inline here.\n\nAfter.\n";
+  assert.deepEqual(Lexer.lex(rejected).map((t) => t.type), ["paragraph", "space", "footnoteDef", "paragraph"], "a line the block tokenizer refuses is a continuation line, as in a paragraph");
+  assert.match(html(rejected), /text\n<span class="md-math-display">x<\/span> is inline here\.<\/div>/);
+  assert.equal(Lexer.lex(rejected).map((t) => t.raw).join(""), rejected);
 });
 
 test("source: who applies the one configuration, and what it holds", () => {

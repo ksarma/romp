@@ -843,7 +843,8 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/,
+  // (the folds' restore stands between the swap and the hooks since the Slice 4 review: the hooks measure the folds as the person left them)
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*fireRendered\(\);/,
     "every text paint fires it (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,

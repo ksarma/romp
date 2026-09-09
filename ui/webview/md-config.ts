@@ -22,6 +22,7 @@
 import { marked, type MarkedExtension, type Token, type Tokens, type TokenizerAndRendererExtension } from "marked";
 import { mathBlock, mathInline, renderMathPlaceholders } from "./math";
 import { registerMdPostPass } from "./md-sanitize";
+import { memoBlockStart } from "./md-block-start";
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────────
 function escapeHtml(s: string): string {
@@ -38,6 +39,27 @@ type ParserThis = { parser: { parse(tokens: Token[]): string; parseInline(tokens
  *  would. The tokenizer is a private field in marked's types and a plain property at run time. */
 function blockRules(lexer: object): { blockquote: RegExp; paragraph: RegExp } {
   return (lexer as { tokenizer: { rules: { block: { blockquote: RegExp; paragraph: RegExp } } } }).tokenizer.rules.block;
+}
+/** marked's own inline rules, the same way: the link rule the wikilink tokenizer yields to. */
+function inlineRules(lexer: object): { link: RegExp } {
+  return (lexer as { tokenizer: { rules: { inline: { link: RegExp } } } }).tokenizer.rules.inline;
+}
+/** `src` cut where marked cuts it before reading a paragraph: at the first line a block extension's start hint names
+ *  (marked runs every registered hint on `src.slice(1)` and clips at the index plus one, so an extension's block
+ *  interrupts the paragraph although the paragraph rule knows only the built-in interrupts). marked applies the clip
+ *  only inside its own paragraph branch, so a tokenizer that borrows the paragraph rule for its extent must apply it
+ *  too, or its block runs over the display formula, the one registered block whose start the paragraph rule cannot see
+ *  (the 2026-09-09 review, round 2: a `$$` block on the line after a footnote definition was lexed as the note's text). */
+function clipAtBlockStarts(lexer: object, src: string): string {
+  const hints = (lexer as { options?: { extensions?: { startBlock?: Array<(this: { lexer: object }, s: string) => number | undefined> } } }).options?.extensions?.startBlock;
+  if (!hints || hints.length === 0) return src;
+  const tail = src.slice(1);
+  let at = Infinity;
+  for (const hint of hints) {
+    const i = hint.call({ lexer }, tail);
+    if (typeof i === "number" && i >= 0 && i < at) at = i;
+  }
+  return at < Infinity ? src.slice(0, at + 1) : src;
 }
 
 // ── strikethrough on DOUBLE tildes only ─────────────────────────────────────────────────────────────
@@ -126,12 +148,18 @@ export const frontMatter: TokenizerAndRendererExtension = {
 // when a reference is lexed the book holds every definition of the document, one inside a quote or a list item
 // included; a definition's own text is queued the same way (`lexer.inline`, as marked's paragraph queues its text), so
 // a reference in it finds a definition written later. A duplicate definition keeps its class and its back link and
-// drops the id, so `#fn-id` lands on the first; a definition nothing refers to shows its id as a label with no back
-// link, since the reference it would lead to is not there. A definition's text runs as far as marked's paragraph rule
+// drops the id, so `#fn-id` lands on the first; a definition nothing refers to shows its marker as written (`[^id]:`)
+// as a label with no back link, since the reference it would lead to is not there: the label is a control the anchor
+// map and the reader's place skip, so its text is free, and the marker keeps every character the author wrote in view
+// where the bare id ran into the text as a word (the 2026-09-09 review, round 2: a regex character class explained at a
+// line start, `[^a-z]: matches anything but a lowercase letter`, is GFM's definition shape, which GitHub drops whole;
+// here it reads as written, dressed as the orphan note it is). A definition's text runs as far as marked's paragraph rule
 // reads a paragraph: to a blank line or a line that starts another block, a lazy continuation line (GitHub's documented
 // form) or a two-space indented one (Obsidian's) included, each de-indented by up to four spaces; another definition
-// ends it. The regex before this took only four-space continuations, so a wrapped definition lost its second line to a
-// paragraph of its own.
+// ends it, and so does a line a registered block extension's start hint names (clipAtBlockStarts, the cut marked makes
+// before its own paragraph), so a display formula on the line after a definition is a block after the note, as a fence
+// or a heading there already was. The regex before this took only four-space continuations, so a wrapped definition
+// lost its second line to a paragraph of its own.
 export const FOOTNOTE_CLASS = "md-footnote";
 export const FOOTNOTE_REF_CLASS = "md-fnref";
 export const FOOTNOTE_BACK_CLASS = "md-fnback";
@@ -174,7 +202,7 @@ export const footnoteDef: TokenizerAndRendererExtension = {
   tokenizer(this: LexerThis, src: string) {
     const head = FOOTNOTE_DEF_HEAD_RE.exec(src);
     if (!head) return undefined;
-    const para = blockRules(this.lexer).paragraph.exec(src);   // the paragraph's extent from this line: lazy and indented continuation lines, to a blank line or another block
+    const para = blockRules(this.lexer).paragraph.exec(clipAtBlockStarts(this.lexer, src));   // the paragraph's extent from this line: lazy and indented continuation lines, to a blank line or another block, an extension's included
     if (!para) return undefined;
     const lines = para[0].split("\n");
     const next = lines.findIndex((l, i) => i > 0 && FOOTNOTE_DEF_HEAD_RE.test(l));   // another definition ends this one
@@ -196,7 +224,7 @@ export const footnoteDef: TokenizerAndRendererExtension = {
     const label = t.order.get(t.id);
     const idAttr = t.k === 1 ? ` id="fn-${id}"` : "";   // a duplicate definition drops the id, so #fn-id lands on the first
     const back = label === undefined
-      ? `<span class="${FOOTNOTE_BACK_CLASS}" title="${FOOTNOTE_ORPHAN_TITLE}">${id}</span>`   // nothing refers to it: no link to a reference that is not there
+      ? `<span class="${FOOTNOTE_BACK_CLASS}" title="${FOOTNOTE_ORPHAN_TITLE}">[^${id}]:</span>`   // nothing refers to it: the marker as written, no link to a reference that is not there
       : `<a class="${FOOTNOTE_BACK_CLASS}" href="#fnref-${id}" title="Back to the text">${label}</a>`;
     return `<div class="${FOOTNOTE_CLASS}"${idAttr}>${back} ${this.parser.parseInline(t.tokens)}</div>`;
   },
@@ -211,9 +239,18 @@ export const footnoteDef: TokenizerAndRendererExtension = {
 // continuation lines with no `>`, to a blank line or another block, so a callout ends exactly where the quote it
 // displaces would have (the 2026-09-09 review: a regex that took `>` lines alone cut a wrapped alert at its first
 // unprefixed line and rendered the rest as a paragraph outside the tinted block, where GitHub keeps it inside). The
-// body is de-prefixed and lexed as blocks the way marked's blockquote lexes its own. The start hint looks for a marker
-// after a newline only: marked calls it on `src.slice(1)`, so a `^` alternative fired one character into a paragraph
-// and cut `a> [!note] b` into a one-letter paragraph and a callout (the same review). Rendered as a <blockquote> so the sheets'
+// body is de-prefixed and lexed as blocks the way marked's blockquote lexes its own, its two preparations included: a
+// lazy `===` or `--` line is prefixed with four spaces first, so it is a paragraph's text and not a setext underline
+// (a `>`-prefixed one stays the quote's own heading; a `---` line is an hr, which ends the quote before it), and the
+// marker's optional space may be a tab (the 2026-09-09 review, round 2: `>\tbody` kept its tab, which the nested lex
+// expanded into indented code, and a lazy `===` made the line before it an h1 inside the callout, where the blockquote
+// kept both as text). The start hint looks for a marker after a newline only: marked calls it on `src.slice(1)`, so a
+// `^` alternative fired one character into a paragraph and cut `a> [!note] b` into a one-letter paragraph and a
+// callout (the same review). Its answer is remembered per lexer frame (md-block-start.ts memoBlockStart): marked calls
+// every block hint before EVERY paragraph on the whole remaining source, so a hint that scans the rest of the note
+// makes the lex quadratic in the paragraph count (round 2 of the review: 8,000 one-line paragraphs, 320 ms from this
+// hint alone once the math hint was memoised, 36 ms with the memo; md-config-block-start-memo.test.ts holds the
+// singleton's lex linear). Rendered as a <blockquote> so the sheets'
 // blockquote rules and the anchor map's BLOCKQUOTE tag hold; the type rides in a class (`md-callout-note`), never
 // a data attribute, since the sanitizer drops every data-* attribute (ALLOW_DATA_ATTR: false, for the reason in
 // md-sanitize.ts). The title is the author's, or the type with its first letter capitalised, as plain text.
@@ -221,7 +258,22 @@ export const CALLOUT_CLASS = "md-callout";
 export const CALLOUT_TITLE_CLASS = "md-callout-title";
 export type CalloutToken = Tokens.Generic & { kind: string; fold: "" | "+" | "-"; title: string; text: string; tokens: Token[] };
 const CALLOUT_HEAD_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+([^\n]*?))?[ \t]*$/;
-const QUOTE_PREFIX_RE = /^ {0,3}> ?/gm;
+const QUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/gm;
+const SETEXT_GUARD_RE = /\n {0,3}((?:=+|-+) *)(?=\n|$)/g;   // marked's blockquote: "precede setext continuation with 4 spaces so it isn't a setext"
+const CALLOUT_MARK_TAIL = /\n {0,3}> ?\[!$/;   // the start hint's shape, anchored at the end of the slice nextCallout hands it
+/** Where the next callout marker begins: the index of the "\n" before a line that opens `> [!` after up to three spaces,
+ *  or -1. The same answer as `/\n {0,3}> ?\[!/.exec(src)` gives (md-config-block-start-memo.test.ts holds the two equal),
+ *  read by hopping over each `[!` with indexOf and reading its line's prefix back (at most six characters: the newline,
+ *  three spaces, `>` and a space), since most paragraphs are followed by no `[!` at all and indexOf is the cheapest scan
+ *  there is. Judged from the text at and after the answer alone, which is what memoBlockStart asks of a finder. */
+function nextCallout(src: string): number {
+  for (let i = src.indexOf("[!"); i >= 0; i = src.indexOf("[!", i + 2)) {
+    const from = i > 6 ? i - 6 : 0;
+    const m = CALLOUT_MARK_TAIL.exec(src.slice(from, i + 2));
+    if (m) return from + m.index;
+  }
+  return -1;
+}
 /** The title a callout shows: the author's, else its type capitalised (`note` reads "Note", `CAUTION` "Caution"). */
 export function calloutTitle(t: { kind: string; title: string }): string {
   if (t.title) return t.title;
@@ -232,7 +284,7 @@ export const callout: TokenizerAndRendererExtension = {
   name: "callout",
   level: "block",
   childTokens: ["tokens"],
-  start(src: string) { const m = /\n {0,3}> ?\[!/.exec(src); return m ? m.index : undefined; },
+  start: memoBlockStart(nextCallout),
   tokenizer(this: LexerThis, src: string) {
     if (!/^ {0,3}> ?\[!/.test(src)) return undefined;
     const q = blockRules(this.lexer).blockquote.exec(src);
@@ -241,12 +293,14 @@ export const callout: TokenizerAndRendererExtension = {
     const nl = raw.indexOf("\n");
     const m = CALLOUT_HEAD_RE.exec(nl < 0 ? raw : raw.slice(0, nl));
     if (!m) return undefined;
-    const body = (nl < 0 ? "" : raw.slice(nl + 1)).replace(QUOTE_PREFIX_RE, "");
+    const text = raw.replace(SETEXT_GUARD_RE, "\n    $1").replace(QUOTE_PREFIX_RE, "");   // the first line is never a lazy one, so line i of text is line i of raw de-prefixed
+    const tnl = text.indexOf("\n");
+    const body = tnl < 0 ? "" : text.slice(tnl + 1);
     const top = this.lexer.state.top;
     this.lexer.state.top = true;
     const tokens = this.lexer.blockTokens(body, []);
     this.lexer.state.top = top;
-    return { type: "callout", raw, kind: m[1], fold: (m[2] || "") as "" | "+" | "-", title: m[3] || "", text: raw.replace(QUOTE_PREFIX_RE, ""), tokens } as CalloutToken;
+    return { type: "callout", raw, kind: m[1], fold: (m[2] || "") as "" | "+" | "-", title: m[3] || "", text, tokens } as CalloutToken;
   },
   renderer(this: ParserThis, token) {
     const t = token as CalloutToken;
@@ -261,21 +315,27 @@ export const callout: TokenizerAndRendererExtension = {
 // ── ==mark== ────────────────────────────────────────────────────────────────────────────────────────
 // Obsidian's highlight, rendered as <mark>. The same shape as the double-tilde rule: the opener must touch its
 // content (`a == b` in prose stays literal), so the anchor map places it by delimiter width like em and strong. And
-// the opener must not touch a word on its OUTSIDE: `==` is also the equality operator, which agents write unquoted in
-// prose (`a==b and c==d`, `a===b`), and the plain delimiter rule paired two comparisons in one sentence or heading into
-// a highlight that swallowed the text between and ate the operators (the 2026-09-09 review). So, as CommonMark's `_`
-// may not open inside a word, the run of `=` is exactly two and the character before it (the last of the token lexed
-// just before, when there is one) is not an ASCII letter, digit or `=`. ASCII on purpose: CJK prose puts no space
-// before a highlight, and a letter rule there would refuse it.
+// neither delimiter may touch a word on its OUTSIDE: `==` is also the equality operator, which agents write unquoted
+// in prose (`a==b and c==d`, `a===b`, `len(a)==0 or len(b)==0`), and the plain delimiter rule paired two comparisons in
+// one sentence or heading into a highlight that swallowed the text between and ate the operators (the 2026-09-09
+// review). So, as CommonMark's `_` may neither open nor close inside a word, the run of `=` is exactly two; the opener
+// is refused when the character before it (the last of the token lexed just before, when there is one) is an ASCII
+// letter, digit or underscore, a closing bracket or quote, or another `=`, the characters an operand ends in; and the
+// closer is refused when the character after it is an ASCII letter, digit or underscore, or another `=`, since the
+// right operand of a comparison begins with one (round 2 of the review: the opener's guard alone knew letters and
+// digits, so `len(a)==0 or len(b)==0`, `x[i]==y[j] and a[0]==b[0]`, `'a'==b and 'c'==d` and `f()==1 and g()==2` still
+// paired). The closer's guard makes a highlight that runs into a word, `==high==lighted`, literal; a comparison is the
+// far commoner shape in a reply. ASCII on purpose, both guards: CJK prose puts no space around a highlight, and a
+// letter rule there would refuse it.
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
-const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==(?!=)/;
-const WORD_END_RE = /[A-Za-z0-9=]$/;
+const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==(?![A-Za-z0-9_=])/;
+const OPERAND_END_RE = /[A-Za-z0-9_=)\]'"]$/;
 export const mark: TokenizerAndRendererExtension = {
   name: "mark",
   level: "inline",
-  start(src: string) { const m = /(?<![A-Za-z0-9=])==(?=[^\s=])/.exec(src); return m ? m.index : undefined; },
+  start(src: string) { const m = /(?<![A-Za-z0-9_=)\]'"])==(?=[^\s=])/.exec(src); return m ? m.index : undefined; },
   tokenizer(this: LexerThis, src: string, tokens: Token[]) {
-    if (tokens.length && WORD_END_RE.test(tokens[tokens.length - 1].raw)) return undefined;   // inside a word, or after another =
+    if (tokens.length && OPERAND_END_RE.test(tokens[tokens.length - 1].raw)) return undefined;   // after an operand: inside a word, after a closing bracket or quote, or after another =
     const m = MARK_RE.exec(src);
     if (!m) return undefined;
     return { type: "mark", raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) } as MarkToken;
@@ -305,7 +365,12 @@ export const mark: TokenizerAndRendererExtension = {
 // dead span shows the whole source, brackets included (`[[Note]]`, `![[img.png]]`, an R-style `matrix[[0]]` too): its
 // reader is looking at a reply or a URL document, where the alias alone read as plain text and the brackets the author
 // typed were gone (the 2026-09-09 review); the anchor map never places a dead span (a chat reply is not mapped, and
-// the URL kind keeps its place by blocks alone).
+// the URL kind keeps its place by blocks alone). Inline extensions run before every built-in inline rule, so the
+// tokenizer yields when `]]` is followed by `(` and marked's link rule reads the whole span: `[[docs]](url)` is
+// CommonMark's link with the bracketed text `[docs]` (GitHub renders it so), `![[img.png]](url)` its image, and both
+// rendered as before this module (round 2 of the review: the wikilink took `[[docs]]` and left `(url)` as prose, a dead
+// span plus an autolinked URL in a reply, and in a note a path link to a `docs.md` that does not exist). A span the link
+// rule refuses, `[[Note]](see also)`, and adjacent wikilinks, `[[A]][[B]]`, stay wikilinks.
 export const WIKILINK_CLASS = "fv-wikilink";
 export const WIKILINK_EMBED_CLASS = "fv-embed";
 export const WIKILINK_DEAD_TITLE = "Not a link that opens here: a wikilink names a file beside the one it is written in, and this text is not a file";
@@ -324,9 +389,10 @@ export const wikilink: TokenizerAndRendererExtension = {
   name: "wikilink",
   level: "inline",
   start(src: string) { const m = /!?\[\[/.exec(src); return m ? m.index : undefined; },
-  tokenizer(src: string) {
+  tokenizer(this: LexerThis, src: string) {
     const m = WIKILINK_RE.exec(src);
     if (!m) return undefined;
+    if (src.charAt(m[0].length) === "(" && inlineRules(this.lexer).link.test(src)) return undefined;   // CommonMark's `[[text]](url)`: marked's link rule reads it
     const embed = m[1] === "!";
     const inner = m[2];
     const alias = m[3] !== undefined && m[3] !== "" ? m[3] : null;

@@ -15,7 +15,9 @@
 //     escaped link labels refuse by design (the plan's list).
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
-//   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements.
+//   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
+//     inline formula whose TeX the range holds goes under the mark with the words beside it (wrapBetween), so a passage
+//     with a formula in it is one highlight and not two with the formula bare between them.
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
@@ -509,6 +511,15 @@ function wrapNode(t: DText, className: string, data?: Record<string, string>): D
   const m = makeMark((parent as DElement).ownerDocument, className, data);
   parent.insertBefore(m, t);
   m.appendChild(t);
+  return m;
+}
+/** Wrap a run of ADJACENT SIBLINGS (text nodes and inline formulas, in order) in one mark, in their parent where the first stood. */
+function wrapRun(run: DNode[], className: string, data?: Record<string, string>): DElement {
+  const parent = run[0].parentNode as DElement | null;
+  if (!parent) throw new Error("anchor-map: node has no parent");
+  const m = makeMark(parent.ownerDocument, className, data);
+  parent.insertBefore(m, run[0]);
+  for (const n of run) m.appendChild(n);
   return m;
 }
 
@@ -1328,16 +1339,104 @@ const skipBlockWs = (t: DText): boolean => {
   return !!p && isElement(p) && BLOCK_CONTAINERS.has(p.tagName.toUpperCase());
 };
 
-/** Wrap from (startNode, startOff) to (endNode, endOff) — both text positions under `root`. */
+/** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,
+ *  or the belt's code span, under a paragraph, a heading, a list item, an emphasis. Not a display formula, which is a block of
+ *  its own line: KaTeX's `.katex` inside its `.katex-display` wrapper (whose `>` selectors lay the formula out), the belt's
+ *  `code` inside a `pre`, or KaTeX's flag standing as a top-level node (under `root`). An inline mark around a block-level box
+ *  paints nothing over it, and a mark between `.katex-display` and its `.katex` breaks the layout, so a display formula is
+ *  never wrapped: a highlight over one needs a block-level treatment of its own, which nothing paints today. */
+function isInlineFormula(n: DNode, root: DNode): boolean {
+  if (!isFormula(n)) return false;
+  const p = n.parentNode;
+  return !!p && p !== root && isElement(p) && !hasClass(p, "katex-display") && p.tagName.toUpperCase() !== "PRE";
+}
+/** What a Rendered highlight is made of, document order: every text node textNodes() returns and, standing among them, every
+ *  inline formula (isInlineFormula), not looked into. */
+function highlightUnits(root: DNode): DNode[] {
+  const out: DNode[] = [];
+  const visit = (n: DNode) => {
+    if (isText(n)) { out.push(n); return; }
+    if (isControl(n)) { if (isInlineFormula(n, root)) out.push(n); return; }
+    for (let i = 0; i < n.childNodes.length; i++) visit(n.childNodes[i]);
+  };
+  visit(root);
+  return out;
+}
+/** Whether `b` is the sibling right after `a`. */
+function follows(a: DNode, b: DNode): boolean {
+  const p = a.parentNode;
+  if (!p || b.parentNode !== p) return false;
+  const kids = p.childNodes;
+  for (let i = 0; i < kids.length; i++) if (kids[i] === a) return kids[i + 1] === b;
+  return false;
+}
+/** Wrap `units` (a contiguous slice of highlightUnits, its edge text nodes already cut to the range) in marks: one mark per run
+ *  of adjacent siblings, so the text on both sides of an inline formula and the formula itself are ONE box when they stand
+ *  side by side in their paragraph, and a formula inside an emphasis goes under the emphasis's own mark with the text beside it
+ *  there. Before this each text node took a mark of its own and a formula none, so a comment across `Inline $x^2$ math and`
+ *  showed two ringed boxes with the rendered formula bare between them, and a reader could not tell from the page whether the
+ *  formula was part of the passage (the quote holds its TeX; the Slice 4 review). Whitespace-only text between block elements
+ *  is skipped as before (skipBlockWs). The panel's unpaint moves every child of a mark back in its place and normalizes the
+ *  parent (file-comments.ts), so a formula under a mark returns to where it stood. */
+function wrapRuns(units: DNode[], className: string, data?: Record<string, string>): DElement[] {
+  const marks: DElement[] = [];
+  let run: DNode[] = [];
+  // never an empty mark: a run of text alone that is all empty (an edge cut that left nothing), or the one whitespace-only
+  // node between block elements, is skipped
+  const skip = (r: DNode[]): boolean => r.every(isText) && (r.every((t) => !(t as DText).data.length) || (r.length === 1 && skipBlockWs(r[0] as DText)));
+  const flush = () => {
+    if (run.length && !skip(run)) marks.push(wrapRun(run, className, data));
+    run = [];
+  };
+  for (const u of units) {
+    if (run.length && !follows(run[run.length - 1], u)) flush();
+    run.push(u);
+  }
+  flush();
+  return marks;
+}
+/** Wrap from (startNode, startOff) to (endNode, endOff), both text positions under `root`, and with them the inline formulas
+ *  that stand between the two positions and the ones in `formulas` (the formulas whose TeX the range holds, paintRendered's
+ *  coveredFormulas): a formula before the start or after the end of the text extends the highlight to itself, and the text
+ *  between it and the passage (whitespace, since the passage's first and last characters are its first and last non-blank
+ *  ones in the range) goes under the highlight with it. */
 function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; off: number },
-                     className: string, data?: Record<string, string>): DElement[] {
-  const all = textNodes(root);
-  const i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
+                     className: string, data?: Record<string, string>, formulas: DNode[] = []): DElement[] {
+  const all = highlightUnits(root);
+  let i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
   if (i0 < 0 || i1 < 0 || i1 < i0) return [];
-  const nodes = all.slice(i0, i1 + 1);
-  let a = s.off, b = 0;
-  for (let i = 0; i < nodes.length; i++) b += i < nodes.length - 1 ? nodes[i].data.length : e.off;
-  return wrapSlices(nodes, a, b, className, data, skipBlockWs);
+  let a = s.off, b = e.off;
+  for (const f of formulas) {
+    const i = all.indexOf(f);
+    if (i < 0) continue;
+    if (i < i0) { i0 = i; a = 0; }
+    if (i > i1) { i1 = i; b = e.t.data.length; }
+  }
+  const units = all.slice(i0, i1 + 1);
+  // cut the passage's edge text nodes to the range, so every unit is wrapped whole
+  if (s.t === e.t) {
+    if (b <= a) return [];
+    let t = s.t;
+    if (a > 0) t = t.splitText(a);
+    if (b - a < t.data.length) t.splitText(b - a);
+    units[units.indexOf(s.t)] = t;
+  } else {
+    const j = units.indexOf(s.t);
+    if (a > 0) units[j] = s.t.splitText(a);
+    if (b < e.t.data.length) e.t.splitText(b);
+  }
+  return wrapRuns(units, className, data);
+}
+/** The formulas of `blk` whose TeX lies inside `range`, as elements: the k-th formula hole of the block stands for the k-th
+ *  formula element under its nodes (formulaExtra's pairing, the walk's source order being the renderer's document order);
+ *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). */
+function coveredFormulas(idx: RenderedIndex, blk: Block, range: SourceRange, out: DNode[]): void {
+  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
+  if (!holes.length) return;
+  const els: DNode[] = [];
+  for (const n of blk.dom) formulaElements(n, els);
+  if (els.length !== holes.length) return;
+  holes.forEach((h, k) => { if (nOf(idx, h.startN) >= range.start && nOf(idx, h.endN) <= range.end) out.push(els[k]); });
 }
 
 /** A string and, for each of its characters, the index in the string it was derived from: `text[i]` is
@@ -1426,8 +1525,10 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
                               data?: Record<string, string>): Element[] | null {
   const root = renderedRoot as unknown as DElement;
   const idx = renderedIndex(root, source);
-  // ── the exact path: emitted characters whose source offset lies in the range
+  // ── the exact path: emitted characters whose source offset lies in the range, and the inline formulas whose TeX does
+  //    (a formula emits no character: its hole names its span, and coveredFormulas pairs the hole with its element)
   let first: { b: number; k: number } | null = null, last: { b: number; k: number } | null = null;
+  const formulas: DNode[] = [];
   for (let b = 0; b < idx.blocks.length; b++) {
     const blk = idx.blocks[b];
     if (blk.refused !== null || !blk.dom.length) continue;
@@ -1439,12 +1540,21 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       const s = nOf(idx, p);   // one source character: emitted text is never a tab expansion or a line ending
       if (s >= range.start && s < range.end) { if (!first) first = { b, k }; last = { b, k }; }
     }
+    coveredFormulas(idx, blk, range, formulas);
   }
   if (first && last) {
     const s = nthNonWs(idx.blocks[first.b].dom[0], first.k);
     const e = nthNonWs(idx.blocks[last.b].dom[0], last.k);
     if (s && e) {
-      const marks = wrapBetween(root, s, { t: e.t, off: e.off + 1 }, className, data);
+      const marks = wrapBetween(root, s, { t: e.t, off: e.off + 1 }, className, data, formulas);
+      if (marks.length) return marks as unknown as Element[];
+    }
+  } else if (formulas.length) {
+    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight
+    const all = highlightUnits(root);
+    const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
+    if (at.length) {
+      const marks = wrapRuns(all.slice(Math.min(...at), Math.max(...at) + 1), className, data);
       if (marks.length) return marks as unknown as Element[];
     }
   }

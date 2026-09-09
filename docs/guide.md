@@ -443,7 +443,9 @@ left as written. A figure from the web loads when the file opens only if its hos
 gear's **Pictures from the web in files** list (github.com and its image hosts, `localhost` and
 `127.0.0.1` to begin with). A figure from any other host shows a box naming the host in its
 place, and makes no request until you click the box; the click loads every figure from that
-host in the file, and the host stays loaded until the page reloads. Edit the list in the gear,
+host in the file, and the host stays loaded until the page reloads. An inline `<svg>` whose
+`fill`, `stroke`, `filter`, `clip-path`, `mask` or marker attribute points at another host
+with `url(...)` is a figure from the web too, and waits behind the same box. Edit the list in the gear,
 one host per line: an address pasted whole is stored as its host alone, a line that is not a
 host name is pointed out under the list, and an emptied list loads nothing from the web without
 a click. A figure path

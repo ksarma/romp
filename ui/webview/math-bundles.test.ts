@@ -27,16 +27,29 @@ test("files.js, feed.js and render.js each bundle math.ts, md-config.ts and kate
   }
 });
 
-test("feed.css built as the webview build builds it carries KaTeX's layout classes inline and emits the fonts, as styles.css does", { timeout: 120000 }, async () => {
+// Decision 1's sheet half: feed.css imports katex/dist/katex.min.css as styles.css does, esbuild inlines the sheet and
+// emits KaTeX's woff2 fonts through the file loader under fonts/[name]-[hash] (esbuild.js webview). The plan's item 2
+// says the fonts are emitted once, under the same hashed names, and the assertions below pin both halves of that: the
+// hash is the file's content, so the two lists agree only while both sheets resolve the one KaTeX install (a feed.css
+// aimed at a second copy, a version skew under a dependency, would still pass a per-sheet count with two font sets on
+// disk); and the production build puts every entry in one esbuild call (esbuild.js buildAll), so a build of both
+// sheets together emits each font once, which the third build checks in the production shape.
+test("feed.css built as the webview build builds it carries KaTeX's layout classes inline and emits the fonts once, under the names styles.css emits", { timeout: 120000 }, async () => {
   const { webview } = pkgRequire("./esbuild.js") as { webview: Record<string, unknown> };
   const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
+  const fontsOf = (r: import("esbuild").BuildResult) =>
+    r.outputFiles!.filter((f) => /\/fonts\/KaTeX_[^/]+\.woff2$/.test(f.path)).map((f) => path.basename(f.path)).sort();
+  const names: Record<string, string[]> = {};
   for (const sheet of ["feed", "styles"]) {
     const r = await esbuild.build({ ...(webview as object), entryPoints: [`../ui/webview/${sheet}.css`], write: false, metafile: true, logLevel: "silent" });
     const css = r.outputFiles!.find((f) => f.path.endsWith(".css"))!.text;
     assert.ok(css.includes(".katex-html"), sheet + ".css inlines katex.min.css (esbuild resolves the @import through nodePaths)");
     assert.ok(!css.includes('@import "katex'), sheet + ".css leaves no @import behind for the page to fetch");
     assert.ok(Object.keys(r.metafile!.inputs).some((k) => k.endsWith("katex/dist/katex.min.css")), sheet + ".css: the KaTeX sheet is an input");
-    const fonts = r.outputFiles!.filter((f) => /\/fonts\/KaTeX_[^/]+\.woff2$/.test(f.path)).length;
-    assert.ok(fonts >= 20, sheet + ".css emits the woff2 fonts under fonts/ (the same hashed names from both sheets, so one copy on disk): " + fonts);
+    names[sheet] = fontsOf(r);
+    assert.ok(names[sheet].length >= 20, sheet + ".css emits the woff2 fonts under fonts/: " + names[sheet].length);
   }
+  assert.deepEqual(names.feed, names.styles, "feed.css and styles.css emit the same hashed font names (one KaTeX install, one set of files)");
+  const both = await esbuild.build({ ...(webview as object), entryPoints: ["../ui/webview/feed.css", "../ui/webview/styles.css"], write: false, logLevel: "silent" });
+  assert.deepEqual(fontsOf(both), names.styles, "one build of both sheets, the production shape, emits each font once");
 });

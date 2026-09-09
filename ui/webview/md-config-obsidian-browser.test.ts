@@ -175,7 +175,7 @@ test("the Files bundle renders every construct of the fixture as its element, in
     assert.deepEqual([c.fn1!.tag, c.fn1!.cls, c.fn1!.text, c.fn1!.prevHasRef], ["DIV", "md-footnote", "1 The footnote definition text.", true]);
     assert.deepEqual([c.fn1!.back.text, c.fn1!.back.href, c.fn1!.back["data-frag"], c.fn1!.back.class], ["1", "#fnref-1", "fnref-1", "md-fnback fv-frag"]);
     assert.ok(c.fn2, "the URL-only definition renders");
-    assert.equal(c.fn2!.text, "2 https://example.test/def-only");
+    assert.equal(c.fn2!.text, "[^2]: https://example.test/def-only", "nothing refers to this definition: its label is the marker as written (md-config.ts), never a number that looks like a reference's");
     assert.deepEqual([c.fn2!.link.href, c.fn2!.link.target], ["https://example.test/def-only", "_blank"]);
     // callouts: GitHub's and Obsidian's as one blockquote with a title line; the fold marker as a closed details
     assert.deepEqual(c.callouts, [

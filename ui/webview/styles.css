@@ -90,7 +90,10 @@ body.scheme-solarized-dark {
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --math-err: #ff6a6a;   /* KaTeX's flagged text (math.ts MATH_ERROR_COLOR, written into span.katex-error's inline style): KaTeX's default
                             #cc0000 read at 2.8:1 on --bg and --err reads at 3.1:1, under the 4.5:1 reading text holds; this is the sheet's own
-                            alarm red (.msg-del.armed), 5.97:1 here. Mirrored in feed.css (its own :root). */
+                            alarm red (.msg-del.armed), 5.97:1 here. Mirrored in feed.css (its own :root). Two surfaces paint another
+                            ground and re-scope it, on an ANCESTOR so it reaches both shapes KaTeX dresses (the span, and an
+                            unsupported command's glyphs inside a plain .katex root): the print block sets it black on .fileview-md,
+                            the person's bubble sets it currentColor (md-config-math-inks-browser.test.ts). */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
   --warn-on-white: #9A6A00;  /* the same heads-up, for text on a surface that is WHITE in every theme (the viewer's
@@ -2012,6 +2015,14 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    tint would not (a cream well in light). The .md form alone: the fallback exists only in sanitized markdown, so no bare
    bubble holds one. (0,3,2) outranks the code rule wherever the sheet orders them. */
 .user-bubble.md :not(pre) > code.md-math-src { color: rgba(255, 255, 255, 0.88); text-decoration-color: rgba(255, 255, 255, 0.88); }
+/* KaTeX's flagged text in YOUR bubble (span.katex-error, and an unsupported command's glyphs inside a formula that renders;
+   KaTeX writes `color: var(--math-err)` inline on both, math.ts MATH_ERROR_COLOR): the page's token is tuned to --bg, and on
+   the saturated fill it read at 1.67:1 in the dark theme and 1.28:1 in the light theme, close to invisible where the same
+   formula in a reply reads at 5.97:1 (the Slice 4 review, round 2). In the bubble the token is the bubble's own ink,
+   currentColor (#ffffff: 4.67:1 dark, 5.13:1 light), the white family of the code span and bold rules around it; the span's
+   title still carries KaTeX's message. The .md form alone, as the fallback above. md-config-math-inks-browser.test.ts reads
+   both shapes in both themes. */
+.user-bubble.md { --math-err: currentColor; }
 /* the Obsidian constructs in YOUR bubble (Slice 4 of plans/markdown-viewer.md; their shared rules sit with the viewer's
    rules, after .fileview-md hr): the ==mark== wash and a callout's tint are the page's amber and accent, muddy on the
    saturated fill, so both join the white family here: the mark as the code span's wash, the callout's rail and title as
@@ -4730,7 +4741,7 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md, .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6, .fileview-md strong,
   .fileview-md blockquote, .fileview-md a, .fileview-md a.file-uri-link, .fileview-md kbd, .fileview-md :not(pre) > code, .fileview-md pre code, .fileview-md pre code span,
   .fileview-md pre code .cl::before, .fileview-md code.md-math-src { color: black; }
-  .fileview-md .katex-error { --math-err: black; }
+  .fileview-md { --math-err: black; }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
   .fileview-md li.task-list-item input[type="checkbox"] { color-scheme: light; }
   .fileview-md :not(pre) > code, .fileview-md kbd, .fileview-md pre, .fileview-md th, .fileview-md tbody tr:nth-child(even) { background: none; }

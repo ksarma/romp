@@ -408,3 +408,102 @@ test("a selection endpoint inside another control (a footnote's back link, the f
   // nothing here says the selection reaches outside the rendered text: every endpoint was inside the rendered box
   for (const r of [triple, fromBack, labelOnly, fromHead] as MapResult[]) if (!r.ok) assert.doesNotMatch(r.reason, /reaches outside/);
 });
+
+// ── the highlight over a passage holding an inline formula (the Slice 4 review, round 2) ──
+// paintRendered wrapped the text nodes either side of a formula and nothing else, so a comment on `Inline $x^2$ math and`
+// showed two ringed boxes with the rendered formula bare between them, and a reader of the page could not tell whether the
+// formula was part of the passage (the card's quote holds the TeX; the mapping was right). Now an inline formula whose TeX
+// the range holds goes under the highlight with the words beside it, one mark per run of adjacent siblings.
+/** The panel's unpaint (file-comments.ts): every child of a mark goes back in its place and the parent is normalized. */
+function unpaintAll(root: FakeElement): void {
+  const marks: FakeElement[] = [];
+  const find = (n: FakeNode) => { for (const c of n.childNodes) if (c.nodeType === 1) { if ((c as FakeElement).tagName === "MARK") marks.push(c as FakeElement); find(c); } };
+  find(root);
+  for (const m of marks) {
+    const p = m.parentNode as FakeElement;
+    while (m.childNodes.length) p.insertBefore(m.childNodes[0], m);
+    p.removeChild(m);
+    for (let i = 0; i < p.childNodes.length; i++) {
+      const c = p.childNodes[i];
+      if (c.nodeType !== 3) continue;
+      if ((c as FakeText).data === "") { p.removeChild(c); i--; continue; }
+      while (i + 1 < p.childNodes.length && p.childNodes[i + 1].nodeType === 3) { (c as FakeText).data += (p.childNodes[i + 1] as FakeText).data; p.removeChild(p.childNodes[i + 1]); }
+    }
+  }
+}
+/** A node's children as `TAG.class` or `#text(data)`. */
+const shape = (n: FakeNode): string[] => n.childNodes.map((c) => c.nodeType === 3 ? "#text(" + (c as FakeText).data + ")" : (c as FakeElement).tagName + "." + ((c as FakeElement).getAttribute("class") || "").split(" ")[0]);
+const rangeOf = (src: string, text: string): { start: number; end: number } => { const i = src.indexOf(text); assert.ok(i >= 0, "in the source: " + text); return { start: i, end: i + text.length }; };
+/** Every MARK under root, document order. */
+const marksUnder = (root: FakeNode): FakeElement[] => { const out: FakeElement[] = []; const w = (n: FakeNode) => { for (const c of n.childNodes) if (c.nodeType === 1) { if ((c as FakeElement).tagName === "MARK") out.push(c as FakeElement); w(c); } }; w(root); return out; };
+
+test("a comment across an inline formula is ONE highlight holding the formula: the text either side and the .katex root go under one mark (before: two marks with the formula bare between them), and the panel's unpaint restores the paragraph the map reads", () => {
+  const box = buildRendered(FIX);
+  const p = topEl(box, 15);
+  assert.equal(p.tagName, "P"); assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( math and display:)"]);
+  const range = rangeOf(FIX, "Inline $x^2$ math and");
+  const marks = paintRendered(El(box), FIX, range, "fc-hl", { act: "fcopen", id: "c6" }) as unknown as FakeElement[];
+  assert.equal(marks.length, 1, "one mark: " + JSON.stringify(marks.map((m) => shape(m))));
+  assert.deepEqual(shape(marks[0]), ["#text(Inline )", "SPAN.katex", "#text( math and)"], "the formula is under the mark with the words beside it");
+  assert.deepEqual(shape(p), ["MARK.fc-hl", "#text( display:)"], "the paragraph: the mark, then the text past the range");
+  assert.deepEqual([marks[0].getAttribute("data-act"), marks[0].getAttribute("data-id")], ["fcopen", "c6"], "the panel's data rides on the mark, so a click on the formula opens the card");
+  // the marks the map does not read: a selection across the formula over the painted paragraph still maps to the same range
+  const painted = ok(mapRenderedSelection(sel(point(box, "Inline "), point(box, "math and", true)), El(box), FIX), "across the formula, painted");
+  assert.deepEqual(painted.range, range);
+  // the panel's unpaint puts the formula back beside its text nodes, and a repaint (a status refresh paints the SAME body) gives one mark again
+  unpaintAll(box);
+  assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( math and display:)"], "unpainted: the paragraph as rendered");
+  const again = paintRendered(El(box), FIX, range, "fc-hl") as unknown as FakeElement[];
+  assert.equal(again.length, 1); assert.deepEqual(shape(again[0]), ["#text(Inline )", "SPAN.katex", "#text( math and)"]);
+});
+
+test("the highlight holds an inline formula in each of the fill's three shapes (KaTeX's layout, its flag on TeX it could not parse, the belt's source), and one inside emphasis goes under the emphasis's own mark", () => {
+  for (const [name, tex, cls] of [["rendered", "\\frac{a}{b}", "SPAN.katex"], ["katex-error", "\\frac{a}{b\\BROKEN", "SPAN.katex-error"], ["md-math-src", "\\HUGE" + "x".repeat(40), "CODE.md-math-src"]] as const) {
+    const src = "Prose before $" + tex + "$ and prose after.\n\nNext para.\n";
+    const box = buildRendered(src);
+    const marks = paintRendered(El(box), src, rangeOf(src, "Prose before $" + tex + "$ and prose"), "fc-hl") as unknown as FakeElement[];
+    assert.equal(marks.length, 1, name + ": one mark: " + JSON.stringify(marks.map((m) => shape(m))));
+    assert.deepEqual(shape(marks[0]), ["#text(Prose before )", cls, "#text( and prose)"], name);
+    assert.deepEqual(shape(topEl(box, 0)), ["MARK.fc-hl", "#text( after.)"], name);
+  }
+  // a formula inside emphasis: the run inside the <strong> takes its own mark, the formula in it
+  const src = "Bold **$x$ math** and more.\n";
+  const box = buildRendered(src);
+  const strong = byClass(box, "katex").parentNode as FakeElement;
+  assert.equal(strong.tagName, "STRONG");
+  const marks = paintRendered(El(box), src, rangeOf(src, "Bold **$x$ math** and"), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(marks.map((m) => shape(m)), [["#text(Bold )"], ["SPAN.katex", "#text( math)"], ["#text( and)"]], "three runs: the paragraph's text, the emphasis's formula and text, the paragraph's text");
+  assert.deepEqual(shape(strong), ["MARK.fc-hl"]);
+});
+
+test("a range made in the Raw view that starts or ends at a formula, or holds the formula alone, highlights the formula (before: the words alone, or nothing at all)", () => {
+  for (const [text, want] of [["$x^2$ math and", ["SPAN.katex", "#text( math and)"]], ["Inline $x^2$", ["#text(Inline )", "SPAN.katex"]], ["$x^2$", ["SPAN.katex"]]] as const) {
+    const box = buildRendered(FIX);
+    const marks = paintRendered(El(box), FIX, rangeOf(FIX, text), "fc-presel") as unknown as FakeElement[] | null;
+    assert.ok(marks && marks.length === 1, text + ": one mark: " + JSON.stringify(marks && marks.map((m) => shape(m))));
+    assert.deepEqual(shape(marks![0]), want, text);
+    assert.equal(marks![0].getAttribute("class"), "fc-presel");
+  }
+});
+
+test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and no mark stands at the top level", () => {
+  const box = buildRendered(FIX);
+  const p = topEl(box, 15);
+  const before = paintRendered(El(box), FIX, rangeOf(FIX, "Inline"), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(before.map((m) => shape(m)), [["#text(Inline)"]]);
+  assert.deepEqual(shape(p), ["MARK.fc-hl", "#text( )", "SPAN.katex", "#text( math and display:)"], "the formula past the range is bare");
+  unpaintAll(box);
+  const after = paintRendered(El(box), FIX, rangeOf(FIX, "math and"), "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(after.map((m) => shape(m)), [["#text(math and)"]]);
+  assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( )", "MARK.fc-hl", "#text( display:)"]);
+  unpaintAll(box);
+  // across the display formula: prose to prose, the .katex-display block untouched (a block of its own line needs a block-level treatment, not an inline mark)
+  const s = FIX.indexOf("and display:"), e = FIX.indexOf("Para after display math.") + "Para after display math.".length;
+  const across = paintRendered(El(box), FIX, { start: s, end: e }, "fc-hl") as unknown as FakeElement[];
+  assert.deepEqual(across.map((m) => m.textContent), ["and display:", "Para after display math."]);
+  const display = topEl(box, 16);
+  assert.equal(display.getAttribute("class"), "katex-display");
+  assert.deepEqual(shape(display), ["SPAN.katex"], "the display formula's root keeps its .katex child, no mark between them");
+  for (const m of marksUnder(box)) assert.notEqual(m.parentNode, box, "no mark is a top-level node (the block pairing reads the top-level children)");
+  assert.deepEqual(box.childNodes.filter((n) => n.nodeType === 1).map((n) => (n as FakeElement).tagName).slice(15, 18), ["P", "SPAN", "P"]);
+});

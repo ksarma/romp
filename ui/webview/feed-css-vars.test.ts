@@ -24,6 +24,33 @@ test("every fallback-less var() in feed.css is defined in feed.css", () => {
     + missing.join(", "));
 });
 
+// The same rule, per THEME: a definition inside `body.theme-light { ... }` resolves only while that class is on the
+// body, so a token declared THERE alone is undefined on the two dark themes. The check above counted it as defined
+// (any `--name:` in the sheet), which is how Slice 4 of plans/markdown-viewer.md shipped the tip and important callout
+// rules naming --st-awaitbg-bg and --st-compacting-bg, both light-block-only here: in the dark themes the callout's
+// --callout went invalid at computed-value time and the rail, the wash and the title's tint fell away (the review
+// round 2). Read with the light block cut out, every bare var() must still find its definition; a light-only token
+// is a token missing from :root.
+test("every fallback-less var() used outside the light block is defined outside it (a light-only token does not resolve on the dark page)", () => {
+  const at = CSS.indexOf("\nbody.theme-light {");
+  assert.ok(at >= 0, "the light block is present");
+  const end = CSS.indexOf("\n}", at);
+  assert.ok(end > at, "the light block closes");
+  const dark = (CSS.slice(0, at) + CSS.slice(end + 2)).replace(/\/\*[\s\S]*?\*\//g, "");
+  const defined = new Set([...dark.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const bare = [...dark.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g)].map((m) => m[1]);
+  const missing = [...new Set(bare.filter((v) => !defined.has(v)))].sort();
+  assert.deepEqual(missing, [],
+    "used without a fallback and defined only under body.theme-light (define it in :root too): " + missing.join(", "));
+});
+
+test("the callout tints' status tokens resolve on the feed page in the dark themes", () => {
+  // the incident pin (Slice 4, review round 2): the two tokens the tip and important callout rules name stand in :root
+  const root = CSS.slice(CSS.indexOf(":root {"), CSS.indexOf("\n}", CSS.indexOf(":root {")));
+  assert.match(root, /--st-awaitbg-bg:\s*#54B204;/, "--st-awaitbg-bg is defined in feed.css's :root (mirrors styles.css)");
+  assert.match(root, /--st-compacting-bg:\s*#14b8a6;/, "--st-compacting-bg is defined in feed.css's :root (mirrors styles.css)");
+});
+
 test("the stall chip's working-yellow actually resolves on the feed page", () => {
   // the incident pin, so a refactor that moves the definition back out of feed.css names the victim
   assert.match(CSS, /--st-working-bg:\s*#e0b020/, "--st-working-bg is defined in feed.css (mirrors styles.css)");

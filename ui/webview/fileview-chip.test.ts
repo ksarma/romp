@@ -29,6 +29,7 @@ class El {
   set textContent(v: string) { this.childNodes = v === "" ? [] : [v]; }
   appendChild<T extends El>(c: T): T { this.childNodes.push(c); return c; }
   replaceChildren(...cs: Array<El | string>): void { this.childNodes = [...cs]; }
+  querySelector(_sel: string): El | null { return null; }   // renderBody notes the folds under .fileview-md before its early return (file-view.ts foldKeeper); a body still loading holds none
   remove(): void { this.isConnected = false; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   removeAttribute(k: string): void { this.attrs.delete(k); }

@@ -525,7 +525,8 @@ test("re-layout events: a figure's load (captured on the body), a resize of the 
 test("at source: the pass runs from render (before the click's centering) and from the frame, never from a scroll handler; the fold is the row's computed flex-direction; the layout is the pure module's", () => {
   assert.match(SRC, /import \{ layoutCards, CARD_GAP, type LayoutItem, type PlacedItem \} from "\.\/card-layout";/);
   assert.match(SRC, /if \(keep\) this\.refocus\(keep, want\);\n\s*this\.afterRender\(\);/, "render ends with the pass");
-  assert.match(SRC, /private afterRender\(\): void \{\n\s*this\.placeCards\(true\);\n\s*const intent = this\.expandIntent;/, "the pass, then the centering");
+  assert.match(SRC, /private afterRender\(\): void \{\n\s*const intent = this\.expandIntent; this\.expandIntent = null;\n\s*const opening = [^\n]*\n\s*if \(opening && this\.margin\) this\.revealMarks\(intent!\.key\);\n\s*this\.placeCards\(true\);\n\s*if \(opening && this\.margin\) this\.centerOn\(intent!\.key\);/,
+    "the reveal of a mark inside a closed details (Slice 4 of plans/markdown-viewer.md), then the pass, then the centering: the pass measures the opened fold, and the centering reads the pass");
   assert.match(SRC, /body\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("body"\)\);/);
   assert.match(SRC, /track\.addEventListener\("scroll", \(\) => this\.mirrorScroll\("track"\)\);/);
   assert.doesNotMatch(SRC, /"scroll", \(\) => this\.(scheduleLayout|placeCards)/, "no pass on scroll");

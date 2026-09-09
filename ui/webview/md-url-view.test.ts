@@ -264,18 +264,32 @@ test("EVERY exit that stops short of consuming the body aborts this open's contr
 
 // ── 5. relative references inside the rendered document ──
 
-test("mdBlock takes the document's location and rewrites relative img/src and a/href AFTER DOMPurify", () => {
+test("mdBlock takes the document's location and resolves relative figure references (every fetching attribute) and a/href AFTER DOMPurify", () => {
   assert.match(VIEW, /type MdDocLoc = \{ kind: "url"; href: string \} \| \{ kind: "file"; path: string; sid: string \| null \};/);
   assert.match(VIEW, /function mdBlock\(text: string, doc\?: MdDocLoc\): HTMLElement \{/);
   const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const rewrite = MD_FN.indexOf("resolveDocRelative(");
-  assert.ok(sanitize > -1 && rewrite > sanitize, "sanitise first; the rewrite only ever sees what DOMPurify kept");
-  // the ATTRIBUTE, never the property — .src/.href are already resolved against the page (the wrong base)
-  assert.match(MD_FN, /const src = img\.getAttribute\("src"\) \|\| "";/);
+  const figures = MD_FN.indexOf("resolveFigureRefs(box, doc.href);");
+  const links = MD_FN.indexOf("resolveDocRelative(href, doc.href)");
+  assert.ok(sanitize > -1 && figures > sanitize && links > sanitize, "sanitise first; the rewrites only ever see what DOMPurify kept");
+  // the figures: every attribute a figure fetches through (figure-gate.ts figureRefs), not img[src] alone (the Slice 4 review, round 2:
+  // a relative srcset candidate, a video's src or poster, an audio's, a source's or a track's src resolved against the PAGE and 404'd),
+  // each resolved through the executed helper against the document URL; a srcset candidate by candidate, its descriptors kept;
+  // an svg image's xlink:href folded into href as rewriteFigureSrcs folds it (md-config-url-figure-refs-browser.test.ts drives it)
+  assert.match(MD_FN, /if \(doc && doc\.kind === "url"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*resolveFigureRefs\(box, doc\.href\);/, "the URL kind's figure pass is the walk over every fetching attribute");
+  assert.doesNotMatch(MD_FN, /querySelectorAll\("img\[src\]"\)/, "no img-only arm is left in mdBlock");
+  const RF = VIEW.split("function resolveFigureRefs(root: ParentNode, base: string): void {")[1].split("\n}")[0];
+  assert.match(RF, /for \(const ref of figureRefs\(root\)\) \{/, "the gate's own walk names the attributes");
+  assert.match(RF, /const abs = resolveDocRelative\(c\.url, base\); if \(abs !== c\.url\) \{ c\.url = abs; changed = true; \}/, "each srcset candidate resolved");
+  assert.match(RF, /if \(changed\) el\.setAttribute\("srcset", serializeSrcset\(cands\)\);/, "written back with its descriptors");
+  assert.match(RF, /const abs = resolveDocRelative\(ref\.value, base\);/, "every other attribute resolved through the one helper");
+  assert.match(RF, /el\.removeAttributeNS\(XLINK_NS, "href"\);\n\s*if \(!el\.hasAttribute\("href"\)\) el\.setAttribute\("href", abs\);/, "xlink:href folded into href, href winning when both stand");
+  assert.match(RF, /if \(abs !== ref\.value\) el\.setAttribute\(ref\.attr, abs\);/);
+  assert.equal((RF.match(/resolveDocRelative\(/g) || []).length, 2, "the resolution is the pure helper's, in its two shapes (a srcset candidate, an attribute)");
+  // the ATTRIBUTE, never the property: .src/.href/.poster are already resolved against the page (the wrong base); no stamp for the panel here
+  assert.doesNotMatch(RF, /\.src\b|\.poster\b|\.href\b|innerHTML|data-fv-src/, "no property reads or writes, no string rewrite, no data-fv-src in a URL document");
   assert.match(MD_FN, /const href = linkHref\(a\);/);   // linkHref reads the href attribute (or xlink:href), never the property
   assert.doesNotMatch(MD_FN, /img\.src\b|a\.href\b/, "no property reads");
-  // URL mode: both resolve against the document URL through the executed helper
-  assert.match(MD_FN, /const abs = resolveDocRelative\(src, doc\.href\);\s*\n\s*if \(abs !== src\) img\.setAttribute\("src", abs\);/);
+  // URL mode: the links resolve against the document URL through the executed helper
   assert.match(MD_FN, /a\.setAttribute\("href", resolveDocRelative\(href, doc\.href\)\);/);
   // in-document and already-absolute anchors are left alone by the resolver
   assert.match(MD_FN, /if \(!href \|\| href\.startsWith\("#"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
@@ -390,7 +404,7 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 

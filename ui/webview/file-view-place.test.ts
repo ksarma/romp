@@ -343,8 +343,11 @@ test("seatPlace: scrolls the body by the difference between where the kept block
 // ── the order file-view.ts runs the keeper in ─────────────────────────────────────────────────────
 test("file-view.ts: the place is read before the text swap and seated after the hooks (the selection keeper's order); the width reflow seats the place read at scroll time; a text-size step reads and seats around its reflow; the URL viewer's switch seats too", () => {
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
-  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
-    "read, swap, hooks, then seat over the new text");
+  // the folds' state is restored right after the swap (foldKeeper; the Slice 4 review: every fold reverted to its authored state
+  // on each paint), before the hooks measure and before the seat, so the heights the seat reads are the ones the place was read at
+  assert.match(local, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+    "read, swap, folds, hooks, then seat over the new text");
+  assert.match(local, /folds\.note\(\);\n\s*if \(text === null \|\| editing\) return;/, "the folds are read before the editor's early return: Edit paints nothing and then takes the body itself");
   // a seat reads the place anew after it, unless the browser clamped the write (reader-place.ts seatPlaceOutcome): then the
   // place it was given stands, held while the body stands where the clamp left it, so the swap back seats the reader's own
   // passage and not the block the clamp showed (the Slice 3 review: the round trip from the end of the taller view came back
@@ -371,7 +374,7 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];
-  assert.match(url, /const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "the URL viewer reads before its swap and seats after it");
+  assert.match(url, /folds\.note\(\);[^\n]*\n\s*const kept = keptPlace\(\);[^\n]*\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n[^\n]*\n[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "the URL viewer reads the folds and the place before its swap, restores the folds and seats after it");
   // the URL viewer keeps the held place across a clamped seat as the local viewer does (the Slice 3 review, round 3: with the plain
   // seatPlace its round trip from the end of the taller view came back a paragraph early; file-view-url-place-bottom-browser.test.ts)
   assert.match(url, /const keptPlace = \(\): Place \| null => \(shownText === null \? null : heldPlace && body\.scrollTop === heldScrollTop \? heldPlace : readPlace\(body, shownText\)\);/, "the URL viewer's read hands back the held place while the body stands where the clamp left it");

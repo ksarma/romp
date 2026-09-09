@@ -1135,6 +1135,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // reveal, a width change no hook saw and the clamp; file-view-place-browser.test.ts the toggle and the drag with the
   // reader partway into a paragraph, a picture, a table, a list and a blockquote.
   let shownText: string | null = null;
+  const folds = foldKeeper(body);   // every fold's open or closed state across a paint (foldKeeper, below): noted before the swap, restored after it
   let place: Place | null = null;
   let placeWidth = -1;
   let placeScrollTop = -1;
@@ -1373,9 +1374,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       aimFrame(shown);                        // …and the frame opens on the reader's page, not page 1
       return;
     }
+    // the folds' state under the view about to go, read before the editor's early return too: Edit paints nothing here and
+    // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
+    folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     const kept = keptPlace();                   // the reader's place under the view about to go (null: the loader, or the editor, held the body)
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    folds.restore();                            // each fold as the person left it, before the hooks measure and the seat reads the heights (a Raw paint has none)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
     shownText = text;
     seat(kept);                                 // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
@@ -2318,6 +2323,7 @@ export function openUrlView(href: string): void {
   // no reload, no aside, no text-size control, so none of the local viewer's reflow bookkeeping is needed here.
   let heldPlace: Place | null = null;
   let heldScrollTop = -1;
+  const folds = foldKeeper(body);                      // the folds' state across the switch, as the local viewer keeps it (foldKeeper)
   const keptPlace = (): Place | null => (shownText === null ? null : heldPlace && body.scrollTop === heldScrollTop ? heldPlace : readPlace(body, shownText));
   const seat = (kept: Place | null) => {
     if (kept && shownText !== null && seatPlaceOutcome(body, shownText, kept).clamped) { heldPlace = kept; heldScrollTop = body.scrollTop; }
@@ -2331,10 +2337,12 @@ export function openUrlView(href: string): void {
       b.setAttribute("aria-pressed", String(on));
     }
     if (text === null) return;                         // the loader holds the body until the bytes land
+    folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
     body.replaceChildren(fmt.md === "rendered"
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     shownText = text;
     seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
@@ -2507,6 +2515,48 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
   return true;
 }
 
+// A fold's open or closed state across a paint. The front matter and a `[!type]-` or `[!type]+` callout render as a
+// <details> (md-config.ts; Slice 4 of plans/markdown-viewer.md), and so does an author's own. Every text paint rebuilds the
+// body from marked (renderBody's swap, both viewers), and a <details>' only state is the DOM, so every fold went back to
+// what the source says (`[!type]+` open, everything else closed) on the Rendered/Raw switch, on a reload's landing, on
+// the editor's take and handback and on a sibling's Reveal: a fold the person had opened to read shut again, one they had
+// closed opened again, a fold a `#` click had just revealed (scrollToFragment, above) shut on the next paint, and the block
+// under the eye changed height under the reader's place, 72px open to 39px closed (the Slice 4 review; ui/CLAUDE.md: an
+// expand's state survives re-renders). Each viewer keeps one keeper: `note` reads every fold under the rendered box, in
+// order, before the swap, and `restore` re-applies each state after it to the fold with the same class and summary text,
+// in order. For an unchanged text that is the same fold by index; for a text a reload or an edit changed it follows the
+// fold past an insertion or a removal elsewhere in the note, and a fold whose title changed, or a new one, shows as
+// authored. A Raw paint has no folds and neither reads nor writes, so the state read when the rendered view left stands
+// until it is painted again. The state moves on the person's own clicks and the `#` reveal alone: no per-paint derivation,
+// no timer (CLAUDE.md, cards move on new information). md-config-fold-state-browser.test.ts drives the gestures.
+type Fold = { key: string; open: boolean };
+function foldKey(d: Element): string {
+  let summary = "";
+  for (const c of Array.from(d.children)) if (c.tagName === "SUMMARY") { summary = c.textContent || ""; break; }
+  return d.className + "\n" + summary;
+}
+function foldKeeper(body: HTMLElement): { note: () => void; restore: () => void } {
+  let folds: Fold[] = [];
+  const box = () => body.querySelector(".fileview-md");
+  return {
+    note: () => {
+      const md = box();
+      if (md) folds = Array.from(md.querySelectorAll("details")).map((d) => ({ key: foldKey(d), open: d.hasAttribute("open") }));
+    },
+    restore: () => {
+      const md = box();
+      if (!md || !folds.length) return;
+      const byKey = new Map<string, boolean[]>();
+      for (const f of folds) { const q = byKey.get(f.key); if (q) q.push(f.open); else byKey.set(f.key, [f.open]); }
+      md.querySelectorAll("details").forEach((d) => {
+        const q = byKey.get(foldKey(d));
+        if (!q || !q.length) return;
+        if (q.shift()) d.setAttribute("open", ""); else d.removeAttribute("open");
+      });
+    },
+  };
+}
+
 // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md) activates from BOTH viewers'
 // bodies the same way: the click through each body's own listener, and Enter or Space through gateKeys, installed once
 // on the stable body (never on the placeholder, which every paint rebuilds; ui/CLAUDE.md, click-safe controls). The
@@ -2612,12 +2662,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     a.removeAttributeNS(XLINK_NS, "href");
   });
   if (doc && doc.kind === "url") {
-    box.querySelectorAll("img[src]").forEach((node) => {
-      const img = node as HTMLImageElement;
-      const src = img.getAttribute("src") || "";
-      const abs = resolveDocRelative(src, doc.href);
-      if (abs !== src) img.setAttribute("src", abs);
-    });
+    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
+    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
+    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
+    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
+    // (the Slice 4 review, round 2).
+    resolveFigureRefs(box, doc.href);
     box.querySelectorAll(LINK_SEL).forEach((node) => {
       const a = node as HTMLElement | SVGElement;
       const href = linkHref(a);
@@ -2793,6 +2843,39 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     }
     if (p === null) continue;
     el.setAttribute(ref.attr, p);
+  }
+}
+
+/** A URL document's figures resolve against where the document LIVES, through every attribute a figure fetches through
+ *  (figure-gate.ts figureRefs, the walk rewriteFigureSrcs takes for a file on disk): an img's `src` and `srcset`, a
+ *  `source`'s `src` and `srcset`, a video's `src` and `poster`, an audio's and a track's `src`, an svg `image`'s `href` and
+ *  `xlink:href`. Before this the URL kind resolved `img[src]` alone, and every other relative reference was left to the
+ *  browser, which resolves it against the PAGE (the Slice 4 review, round 2: `<video src="clip.mp4" poster="poster.png">`
+ *  in a document at /notes/note.md was fetched from the dashboard's root and 404'd; a `srcset` candidate the same). A
+ *  srcset is resolved candidate by candidate with its descriptors kept; an `xlink:href` is folded into `href` as
+ *  rewriteFigureSrcs folds it (`href` wins when both stand), so the element carries the one attribute every reader
+ *  agrees on. resolveDocRelative (md-links.ts) leaves a scheme, a `#fragment` and an empty value as written, so an
+ *  absolute figure is untouched and the gate judges it as before; a protocol-relative `//host/…` takes the document's
+ *  scheme, as the browser would give it against the document. No `data-fv-src`: that stamp is the comments panel's
+ *  pairing key and a URL document has no panel. Runs on the sanitized DOM, after DOMPurify, as the file kind's rewrite
+ *  does; the attribute is read and written, never the property, which is already resolved against the page. */
+function resolveFigureRefs(root: ParentNode, base: string): void {
+  for (const ref of figureRefs(root)) {
+    const el = ref.el;
+    if (ref.attr === "srcset") {
+      const cands = parseSrcset(ref.value);
+      let changed = false;
+      for (const c of cands) { const abs = resolveDocRelative(c.url, base); if (abs !== c.url) { c.url = abs; changed = true; } }
+      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      continue;
+    }
+    const abs = resolveDocRelative(ref.value, base);
+    if (ref.attr === "xlink:href") {
+      el.removeAttributeNS(XLINK_NS, "href");
+      if (!el.hasAttribute("href")) el.setAttribute("href", abs);
+      continue;
+    }
+    if (abs !== ref.value) el.setAttribute(ref.attr, abs);
   }
 }
 
