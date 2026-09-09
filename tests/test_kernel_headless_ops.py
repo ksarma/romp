@@ -270,11 +270,53 @@ def _mk_thread(parent, tsid, name):
 
 
 def _rm_thread(parent, tsid):
-    for f in (km.jd.STATE / "comments" / (parent + ".json"), km.jd.STATE / "sdk" / (tsid + ".json")):
+    for f in (km.jd.STATE / "comments" / (parent + ".json"), km.jd.STATE / "sdk" / (tsid + ".json"),
+              km.jd.STATE / "gone" / (tsid + ".json"), km.jd.STATE / "states" / (tsid + ".jsonl")):
         try:
             f.unlink()
         except OSError:
             pass
+
+
+def _reg_flipping_kill(tsid):
+    """A fake backend's kill with SdkBackend.kill's one durable effect: the reg's alive flag flips to False
+    (the record _confirmed_ended reads for a thread) before the CLI is shut down."""
+    reg_path = km.jd.STATE / "sdk" / (tsid + ".json")
+
+    def kill(sid):
+        if sid != tsid:
+            return True
+        reg = json.loads(reg_path.read_text())
+        reg["alive"] = False
+        tmp = reg_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(reg))
+        os.replace(tmp, reg_path)
+        return True
+    return kill
+
+
+def _thread_state(parent, tsid):
+    """Every durable record an ended thread leaves, by relative path (None = absent): the reg, the death
+    marker, the states rows and the parent's comment store."""
+    out = {}
+    for rel in ("sdk/%s.json" % tsid, "gone/%s.json" % tsid, "states/%s.jsonl" % tsid, "comments/%s.json" % parent):
+        f = km.jd.STATE / rel
+        out[rel] = f.read_bytes() if f.exists() else None
+    return out
+
+
+class _PinnedClock:
+    """The kernel's `time` binding with time() pinned, everything else the real module: two kill doors
+    stamping the same second leave byte-identical records."""
+
+    def __init__(self, real, t):
+        self._real, self._t = real, t
+
+    def time(self):
+        return self._t
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 def _far_kernel(status, body, ctype="application/json"):
@@ -283,10 +325,15 @@ def _far_kernel(status, body, ctype="application/json"):
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
     data = body.encode()
+    received = []          # (path, parsed body) per POST, so a test can pin what the hub forwarded
 
     class H(BaseHTTPRequestHandler):
         def do_POST(self):
-            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            try:
+                received.append((self.path.split("?")[0], json.loads(raw or b"{}")))
+            except ValueError:
+                received.append((self.path.split("?")[0], raw))
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -296,6 +343,7 @@ def _far_kernel(status, body, ctype="application/json"):
         def log_message(self, *a):
             pass
     srv = HTTPServer(("127.0.0.1", 0), H)
+    srv.received = received
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -400,7 +448,7 @@ class UnknownSessionRefused(_RouteServer):
         _register(THREAD_PARENT, "web-parent")
         _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
         km._pending_ops.clear()
-        deaths, sent = [], []
+        deaths, sent, comment_kills = [], [], []
         try:
             with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
                  mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
@@ -422,15 +470,19 @@ class UnknownSessionRefused(_RouteServer):
                 # the pusher's sweep serves that wish at the thread's settle: the sibling test below
                 code, resp = self._post("/end", {"name": THREAD_NAME, "when": "idle"})
                 self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
-                # an immediate /end reaches the backend's kill on the tsid
-                with mock.patch.object(km, "_confirmed_ended", lambda sid: True), \
-                     mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
-                     mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                # an immediate /end (`romp end self --now`) reaches the backend's kill on the tsid, the real
+                # gate reads the flipped reg, and the thread leaves the state every ended session leaves
+                # (_end_and_record): the death record, _comment_kill_all and the closed frame
+                fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+                with mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                     mock.patch.object(km, "_comment_kill_all", lambda sid, be: comment_kills.append(sid)), \
                      mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append((app, m))):
                     code, resp = self._post("/end", {"id": THREAD_TSID})
                 self.assertEqual((code, resp), (200, {"ok": True}))
                 fake.kill.assert_called_once_with(THREAD_TSID)
                 self.assertEqual(deaths, [THREAD_TSID])
+                self.assertEqual(comment_kills, [THREAD_TSID])
+                self.assertEqual(sent, [("chat", {"type": "closed", "id": THREAD_TSID})])
                 # a name that is NOT a thread still falls through to the 404
                 code, resp = self._post("/interrupt", {"name": self.GHOST})
                 self._assert_404(code, resp)
@@ -447,22 +499,16 @@ class UnknownSessionRefused(_RouteServer):
         # by the bare existence of its reg, and the wish was spent with no kill: the caller was told the
         # thread was closing while it kept running (review round 2, 2026-09-09). The sweep now reads the
         # reg's alive+threadOf as the owner's answer, waits on the thread's own transcript through its
-        # reg (discovery lists no threads, so _path_of is None for one), and kills at the settle. A
-        # thread's end is its CLI stopping, the way the thread-end paths end one: no session death
-        # record and no closed frame (it has no tab); the comment row stays, dormant, a reply revives it.
+        # reg (discovery lists no threads, so _path_of is None for one), and at the settle runs the one
+        # end routine the immediate arm runs (_end_and_record): the kill, the death record,
+        # _comment_kill_all and the closed frame, so the deferred and the immediate `romp end self` leave
+        # one state (review round 3: the sweep killed and wrote nothing else, and its comment promised a
+        # revive no code performed; the sibling test below diffs the two doors' state).
         fake = mock.Mock()
         fake.busy.return_value = None
         reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
-
-        def kill(sid):                      # the SDK backend's kill flips the reg's alive flag first
-            reg = json.loads(reg_path.read_text())
-            reg["alive"] = False
-            tmp = reg_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(reg))
-            os.replace(tmp, reg_path)
-            return True
-        fake.kill.side_effect = kill
-        working, parsed, deaths, sent = [True], [], [], []
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        working, parsed, deaths, sent, comment_kills = [True], [], [], [], []
         _register(THREAD_PARENT, "web-parent")
         _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
         try:
@@ -471,7 +517,7 @@ class UnknownSessionRefused(_RouteServer):
                  mock.patch.object(km, "_parse", lambda path, sid, now: parsed.append(path) or {"turns": []}), \
                  mock.patch.object(km, "_session_working", lambda turns: working[0]), \
                  mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
-                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: comment_kills.append(sid)), \
                  mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append((app, m))), \
                  mock.patch.object(km, "_push_soon", lambda *a, **k: None):
                 code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
@@ -491,12 +537,232 @@ class UnknownSessionRefused(_RouteServer):
                 self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "spent by the kill, not by inference")
                 self.assertFalse(json.loads(reg_path.read_text()).get("alive"))
                 self.assertIs(km._confirmed_ended(THREAD_TSID), True, "the flipped reg is the owner's answer")
-                self.assertEqual(deaths, [], "no session death record for a thread")
-                self.assertEqual(sent, [], "no closed frame: a thread has no tab")
+                self.assertEqual(deaths, [THREAD_TSID], "the death record the immediate arm writes")
+                self.assertEqual(comment_kills, [THREAD_TSID], "its own threads' teardown, as the immediate arm")
+                self.assertEqual(sent, [("chat", {"type": "closed", "id": THREAD_TSID})], "the closed frame too")
         finally:
             km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
             _rm_thread(THREAD_PARENT, THREAD_TSID)
             _unregister(THREAD_PARENT)
+
+    def test_both_end_doors_leave_a_thread_in_byte_identical_state(self):
+        # `romp end self` (deferred: the wish, served by the sweep at the settle) and `romp end self --now`
+        # (the immediate /end) from inside a comment thread run ONE routine, _end_and_record, so the
+        # durable state they leave is the same to the byte: the reg, the death marker, the states row,
+        # the comment row and the frames sent. Before round 3 the sweep's arm killed a thread and wrote
+        # none of the three records the immediate arm wrote, and a comment promised a dormant thread a
+        # reply would revive, which no code performed (review round 3, 2026-09-09). The real
+        # _record_death, _comment_kill_all and _confirmed_ended run; only the clock is pinned, so both
+        # doors stamp the same second.
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        frames = []
+
+        def reset():
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+            fake.kill.reset_mock()
+            del frames[:]
+        _register(THREAD_PARENT, "web-parent")
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: False), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: frames.append((app, m))), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None), \
+                 mock.patch.object(km, "time", _PinnedClock(km.time, 1000.0)):
+                # door one: the immediate arm
+                reset()
+                code, resp = self._post("/end", {"id": THREAD_TSID})
+                self.assertEqual((code, resp), (200, {"ok": True}))
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                now_state, now_frames = _thread_state(THREAD_PARENT, THREAD_TSID), list(frames)
+                # door two: the deferred arm, served by the sweep at the settle
+                reset()
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                km._end_on_idle_sweep(1000, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load(), "the wish is spent by the kill")
+                idle_state, idle_frames = _thread_state(THREAD_PARENT, THREAD_TSID), list(frames)
+            self.assertEqual(now_state, idle_state, "the two doors leave different durable state")
+            self.assertEqual(now_frames, idle_frames, "the two doors send different frames")
+            # and that shared state is the whole epilogue, not a shared nothing
+            self.assertEqual(json.loads(now_state["gone/%s.json" % THREAD_TSID]), {"t": 999, "by": "kill"})
+            self.assertEqual([json.loads(ln) for ln in now_state["states/%s.jsonl" % THREAD_TSID].splitlines()],
+                             [{"t": 999, "state": "idle"}])
+            self.assertIs(json.loads(now_state["sdk/%s.json" % THREAD_TSID])["alive"], False)
+            self.assertEqual(now_frames, [("chat", {"type": "closed", "id": THREAD_TSID})])
+            self.assertEqual(json.loads(now_state["comments/%s.json" % THREAD_PARENT])["threads"][0]["status"], "open",
+                             "neither door touches the comment row")
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_an_unreadable_reg_cannot_confirm_an_end_and_the_wish_stays_armed(self):
+        # _confirmed_ended's SDK partition read {} for a reg that exists but would not read (_thread_reg
+        # answers {} for a file that fails to parse and for a non-object body) and certified the thread
+        # dead: the sweep took its absent branch and spent the wish with no kill while the reg on disk
+        # still meant alive. An unreadable reg is no answer: None, the writer stands down, the wish stays
+        # armed, and it is served once the reg reads again (review round 3, 2026-09-09). A plain SDK
+        # session's unreadable reg answers None on the same path, where it used to answer True.
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        plain_reg = km.jd.STATE / "sdk" / "sid-q.json"
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        good = reg_path.read_text()
+        km._thread_reg_memo.clear()
+        km._thread_reg_failed.clear()
+        deaths = []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: False), \
+                 mock.patch.object(km, "_record_death", side_effect=lambda sid, t, kind: deaths.append(sid)), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", lambda app, m: None), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                for bad in (b"{not json", json.dumps([1, 2]).encode()):
+                    reg_path.write_bytes(bad)
+                    self.assertIsNone(km._confirmed_ended(THREAD_TSID), bad)
+                    km._end_on_idle_sweep(1000, {})
+                    fake.kill.assert_not_called()
+                    self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish stays armed: %r" % bad)
+                    self.assertEqual(deaths, [])
+                # the reg reads again: the wish is served as before
+                reg_path.write_text(good)
+                km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+                self.assertEqual(deaths, [THREAD_TSID])
+                # a plain SDK session on the same partition: unreadable is None, readable is the owner's answer
+                plain_reg.write_bytes(b"{not json")
+                self.assertIsNone(km._confirmed_ended("sid-q"))
+                plain_reg.write_text(json.dumps({"sid": "sid-q", "alive": False}))
+                self.assertIs(km._confirmed_ended("sid-q"), True)
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+            try:
+                plain_reg.unlink()
+            except OSError:
+                pass
+            km._thread_reg_memo.clear()
+            km._thread_reg_failed.clear()
+
+    def test_the_sweep_waits_for_a_threads_fork_to_land(self):
+        # while the reg carries forkOf, lastSid is the PARENT's transcript (sdk_backend.fork mints it so,
+        # and the CLI init that pins the thread's own fsid spends it), so the sweep parsed the parent's
+        # file and gated the thread's kill on the parent's turn: a settled parent killed the thread at
+        # once, a mid-turn parent held it. Reachable from outside (`romp end --when-idle <thread>` in that
+        # window). The sweep stands down on forkOf as _thread_messages does; the wish stays armed until
+        # the flip, the exact event, and then the settle-then-kill sequence runs (review round 3).
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.kill.side_effect = _reg_flipping_kill(THREAD_TSID)
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        reg = json.loads(reg_path.read_text())
+        reg["forkOf"], reg["lastSid"] = THREAD_PARENT, THREAD_PARENT
+        reg_path.write_text(json.dumps(reg))
+        parsed = []
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_parse", lambda path, sid, now: parsed.append(path) or {"turns": []}), \
+                 mock.patch.object(km, "_session_working", lambda turns: False), \
+                 mock.patch.object(km, "_record_death", lambda sid, t, kind: None), \
+                 mock.patch.object(km, "_comment_kill_all", lambda sid, be: None), \
+                 mock.patch.object(km, "_send_to_app", lambda app, m: None), \
+                 mock.patch.object(km, "_push_soon", lambda *a, **k: None):
+                code, resp = self._post("/end", {"id": THREAD_TSID, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                km._end_on_idle_sweep(1000, {})
+                km._end_on_idle_sweep(1001, {})
+                fake.kill.assert_not_called()
+                self.assertIn(THREAD_TSID, km._end_on_idle_load(), "the wish stays armed until the fork lands")
+                self.assertEqual(parsed, [], "the parent's transcript is never read for the thread")
+                # the init lands: forkOf is spent and lastSid is the thread's own fsid
+                reg.pop("forkOf")
+                reg["lastSid"] = THREAD_TSID
+                reg_path.write_text(json.dumps(reg))
+                km._end_on_idle_sweep(1002, {})
+                self.assertEqual(parsed, [km._thread_transcript_path(reg, THREAD_TSID)])
+                fake.kill.assert_called_once_with(THREAD_TSID)
+                self.assertNotIn(THREAD_TSID, km._end_on_idle_load())
+        finally:
+            km._end_on_idle_save(km._end_on_idle_load() - {THREAD_TSID})
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_send_the_backend_refuses_is_a_409_not_an_ok(self):
+        # a KNOWN sid the backend no longer holds (SdkBackend.send answers False when its reg is missing or
+        # reads alive=False: a dead SDK session by id, an ended comment thread by name or by id): the route
+        # folded that False into 200 ok:true queued:false, and `romp send` printed ok for a message nothing
+        # received (review round 3, 2026-09-09). The refusal is a 409 in the unknown-session refusal's
+        # shape, naming the caller's spelling; nothing is parked. The gate still admits the sid: it is
+        # known, it is just not running.
+        fake = mock.Mock()
+        fake.busy.return_value = None
+        fake.send.return_value = False
+        _register(THREAD_PARENT, "web-parent")
+        _mk_thread(THREAD_PARENT, THREAD_TSID, THREAD_NAME)
+        reg_path = km.jd.STATE / "sdk" / (THREAD_TSID + ".json")
+        reg = json.loads(reg_path.read_text())
+        reg["alive"] = False
+        reg_path.write_text(json.dumps(reg))
+        km._pending_ops.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km.Sessions, "live", staticmethod(lambda: {})), \
+                 mock.patch.object(km, "_compacting_now", lambda sid, **k: False), \
+                 mock.patch.object(km, "_working_now", lambda sid: False):
+                for who in ("sid-q", THREAD_NAME, THREAD_TSID):
+                    key = "name" if who == THREAD_NAME else "id"
+                    code, resp = self._post("/send", {key: who, "text": "hello"})
+                    self.assertEqual(code, 409, who)
+                    self.assertIs(resp.get("ok"), False, who)
+                    self.assertIn(who, resp.get("error", ""), "the reason names the caller's spelling")
+                    self.assertIn("not delivered", resp.get("error", ""), who)
+                self.assertEqual(fake.send.call_count, 3, "the backend was asked each time; it refused")
+                self.assertEqual(km._pending_ops, {}, "a refused send parks nothing")
+        finally:
+            km._pending_ops.clear()
+            _rm_thread(THREAD_PARENT, THREAD_TSID)
+            _unregister(THREAD_PARENT)
+
+    def test_a_remote_deferred_end_forwards_the_deferral(self):
+        # the remote arm forwarded {id} alone, so `romp end <far-sid> --when-idle` took the far kernel's
+        # immediate arm and killed at once while the rows promised a settle (review round 3, 2026-09-09).
+        # The validated field rides along, and only it: the caller's `name` key stays here, an immediate
+        # end forwards {id} as before, and /interrupt never carries it. Against a REAL far kernel on
+        # loopback, which records what it was sent; its deferred answer is relayed as is.
+        srv = _far_kernel(200, json.dumps({"ok": True, "deferred": True}))
+        remote = {"host": "TESTHOST", "local_port": srv.server_address[1], "token": "far-token"}
+        try:
+            with mock.patch.object(km, "_host_for_sid", lambda sid: remote):
+                code, resp = self._post("/end", {"name": self.GHOST, "when": "idle"})
+                self.assertEqual((code, resp), (200, {"ok": True, "deferred": True}))
+                self._post("/end", {"id": self.GHOST})
+                self._post("/end", {"id": self.GHOST, "when": "now"})
+                self._post("/interrupt", {"id": self.GHOST, "when": "idle"})
+        finally:
+            srv.shutdown()
+        self.assertEqual(srv.received, [("/end", {"id": self.GHOST, "when": "idle"}),
+                                        ("/end", {"id": self.GHOST}),
+                                        ("/end", {"id": self.GHOST}),
+                                        ("/interrupt", {"id": self.GHOST})])
 
     def test_the_refusal_path_scans_the_live_map_once(self):
         # _sid_of scans Sessions.live() once the names registry misses; a gate that scanned again forked

@@ -17120,8 +17120,10 @@ def _comment_seen(parent_sid, tid):
 
 def _comment_kill_all(parent_sid, be):
     """The parent session was ENDED — shut down its open threads' CLIs too, or they outlive the tab
-    that is their only surface as unreachable running processes. Store rows stay untouched: a
-    revived parent finds its threads dormant and a reply resumes them, history intact."""
+    that is their only surface as unreachable running processes. Store rows stay untouched, so the
+    exchange stays readable; a reply into an open row is refused while the reg reads alive=False
+    (SdkBackend.send needs an alive reg), and only a relayed row's reply resumes the CLI
+    (_comment_reply's merged arm)."""
     if not hasattr(be, "kill"):
         return
     for th in _load_comments(parent_sid).get("threads") or []:
@@ -18935,9 +18937,8 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": err}))
             sys.stderr.write("comment promote refused (%s, name %r): %s\n" % (sid[:8], str(msg["name"])[:80], err))   # T289
     elif t == "endSession":
-        sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
-        be.kill(sid)
-        # CORROBORATE before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
+        # the one end routine (_end_and_record, the /end route's and the end-on-idle sweep's), which
+        # CORROBORATES before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
         # (a kill-session timeout is swallowed and kill() returns True regardless), so a failed kill used
         # to broadcast a death that hadn't happened — every chat client dismissed the session while the
         # kernel kept listing it, and the next push re-drew it as the dead unclickable swirl. Ask the
@@ -18945,7 +18946,7 @@ def _drive(msg, client):
         # error→[] collapse certified a false death exactly when a wedged server also swallowed the
         # kill: unconfirmed → the honest signal is a warn to the asker, never a dismissal; the death
         # record and the comment-thread teardown belong to a death that actually, provably occurred.
-        ended = _confirmed_ended(sid)
+        ended = _end_and_record(sid, be, time.time(), "endSession WS op")
         if ended is not True:
             # TYPED and sid-bearing (2026-08-18): the bare warn told the closer to "Try again" while
             # its own closingTabs suppression hid the very tab to retry on for up to 15s, after which
@@ -18958,9 +18959,6 @@ def _drive(msg, client):
                                                if ended is False else
                                                ("Couldn't confirm “%s” ended — tmux isn't answering. Try again." % nm)}))
         else:
-            _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
-            _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
-            _send_to_app("chat", {"type": "closed", "id": sid})
             _confirm_close_now(sid)      # the kill IS the event: the fresh tab set rides it, not the next pusher cycle
         _push_soon()
     elif t == "renameSession" and msg.get("name"):
@@ -25982,7 +25980,8 @@ def _confirmed_ended(sid, fresh=False, scan=None):
     exist to prevent, precisely when it mattered. Tri-state:
       True  — ended, corroborated: absent from the merged map AND the owner answered (the SDK reg
               partition, which reads a comment thread's alive flag since the merge hides threads / the
-              headless zero / an answering alive_sids probe without it).
+              headless zero / an answering alive_sids probe without it). An SDK reg that exists but
+              will not read is no answer: None, below.
       False — still running: the merged map lists it, or the probe answered WITH it.
       None  — CANNOT CONFIRM (a real probe failure): the writer stands down — warn/ok:false, no
               death record, no comment-thread teardown, no `closed`; a retry after the probe
@@ -26010,6 +26009,14 @@ def _confirmed_ended(sid, fresh=False, scan=None):
         # listed is not certified dead by the existence of its reg (review round 2, 2026-09-09: the
         # end-on-idle sweep spent a thread's wish with no kill)
         reg = _thread_reg(sid)
+        if not reg:
+            # the reg exists (the stat above) but would not read, or is not a JSON object: _thread_reg answers
+            # {} for both, and {} used to certify the session dead by silence. Every writer stamps "sid", so a
+            # readable reg is never empty; this is a failed probe, the None verdict, and the writer stands
+            # down. Said here each time: _thread_reg logs once per episode (review round 3, 2026-09-09)
+            sys.stderr.write("kill-corroborate: the SDK reg for %s exists but would not read; treating as "
+                             "unconfirmed (no death record, no closed broadcast)\n" % sid)
+            return None
         return not (reg.get("alive") and reg.get("threadOf"))
     if not _TMUX.available():
         return True                              # headless: no server IS zero-alive (the boot pass's rule)
@@ -26060,6 +26067,31 @@ def _death_stamp_due(sid):
     return int((last or {}).get("t") or 0) > int(m.get("t") or 0)
 
 
+def _end_and_record(sid, be, now, via, fresh=False):
+    """The ONE end routine behind every intentional kill door: the dashboard's endSession op, POST /end
+    (`romp end <session>`, `romp end self --now`) and the end-on-idle sweep (`romp end self`, served at the
+    turn's settle). Kill; corroborate with the liveness owner (_confirmed_ended, never bare membership);
+    and on its affirmative answer leave the durable state an ended session leaves: the death record
+    (STATE/gone/<sid>.json plus the idle row), its comment threads' CLIs shut down (_comment_kill_all)
+    and the `closed` frame. A comment thread takes the same path as a plain session, so `romp end self`
+    and `romp end self --now` from inside one leave byte-identical state (review round 3, 2026-09-09:
+    the sweep's arm killed a thread and wrote none of the three while the immediate arm wrote all of
+    them, and its comment promised a dormant thread a reply would revive, which no code performed:
+    SdkBackend.send refuses an alive=False reg). Returns _confirmed_ended's verdict: True (ended and
+    recorded), False (still running) or None (the owner could not say); on either falsy verdict nothing
+    is written and the caller phrases its own refusal. `fresh` is the sweep's post-kill read (see
+    _confirmed_ended: a probe taken mid-cycle must never consult the cycle's snapshot)."""
+    sys.stderr.write("kill: %s via %s\n" % (sid, via))   # kill attribution (the user 2026-07-16)
+    be.kill(sid)
+    ended = _confirmed_ended(sid, fresh=True) if fresh else _confirmed_ended(sid)
+    if ended is not True:
+        return ended
+    _record_death(sid, int(now), "kill")
+    _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
+    _send_to_app("chat", {"type": "closed", "id": sid})
+    return True
+
+
 # SELF-CLOSE, deferred to idle (the user 2026-08-15: "close yourself after you've done this thing"
 # never worked — an agent could only kill its own process, which romp read as a CRASH and kept the
 # session visible as dormant). `romp end self` records the sid here; the sweep below gives it the
@@ -26088,9 +26120,9 @@ def _end_on_idle_sweep(now, tmux):
     written and the request stays armed; the sweep rides every pusher cycle, so a standing wedge
     retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently. A comment
     thread's wish (`romp end self` from inside one) is served here too: a thread is in no snapshot by
-    design, so its reg's alive flag stands for the owner's answer, its own transcript (through the reg)
-    for the settle, and its kill ends with no death record and no closed frame, the thread-end paths'
-    rule (review round 2, 2026-09-09)."""
+    design, so its reg's alive flag stands for the owner's answer and its own transcript (through the
+    reg) for the settle; its end is the same routine as the immediate arm's (_end_and_record), so the
+    deferred and the immediate `romp end self` leave one state (review rounds 2 and 3, 2026-09-09)."""
     reqs = _end_on_idle_load()
     if not reqs:
         return
@@ -26125,6 +26157,12 @@ def _end_on_idle_sweep(now, tmux):
                                  "alive — request kept for the next cycle\n" % sid)
             # None: _confirmed_ended already reported the failed probe; the request stands
             continue
+        if thread and reg.get("forkOf"):
+            # the fork has not landed: lastSid is still the PARENT's transcript (sdk_backend.fork mints the reg
+            # so, and the CLI init that pins the thread's own fsid pops forkOf), so reading it would gate this
+            # thread's kill on the parent's turn. The wish stays armed until that flip, the exact event, as
+            # _thread_messages stands down on the same field (review round 3, 2026-09-09)
+            continue
         try:
             # a thread's transcript is reached through its reg: discovery lists no threads, so _path_of
             # answers None for one, and an empty path parses as "not working", a kill on the first cycle
@@ -26135,31 +26173,24 @@ def _end_on_idle_sweep(now, tmux):
                 continue                             # the turn it asked from is still open — its end is the event
         except Exception:
             continue
-        sys.stderr.write("kill: %s via end-on-idle (self-close%s)\n" % (sid, ", a comment thread" if thread else ""))
-        be = Sessions.backend_for(sid)
-        be.kill(sid)
-        # fresh, own-scan corroboration — never the cycle snapshot, never _pass_scan's memo: this
-        # probe's evidence must POSTDATE the kill, and both of those predate it — the snapshot by
-        # construction (this branch's precondition is the sid being IN it, so a snapshot read
-        # answers "still running" unconditionally and the clean death below is unreachable). The
-        # ENTRY check above may read the snapshot: absence there is its precondition, so it falls
-        # through to fresh owner probes regardless. Kills are user-gesture rare — one owner scan
-        # per killed sid is fine. A confirmed kill spends the request THIS cycle; only one the
-        # owner genuinely denies stays armed to retry.
-        ended = _confirmed_ended(sid, fresh=True)
-        if ended is not True:                        # unconfirmed kill: record nothing, broadcast nothing,
+        # the one end routine (_end_and_record: the /end route's and the endSession op's), with a FRESH,
+        # own-scan corroboration, never the cycle snapshot, never _pass_scan's memo: the post-kill probe's
+        # evidence must POSTDATE the kill, and both of those predate it, the snapshot by construction
+        # (this branch's precondition is the sid being IN it, so a snapshot read answers "still running"
+        # unconditionally and the clean death is unreachable). The ENTRY check above may read the
+        # snapshot: absence there is its precondition, so it falls through to fresh owner probes
+        # regardless. Kills are user-gesture rare, so one owner scan per killed sid is fine. A confirmed
+        # kill spends the request THIS cycle; only one the owner genuinely denies stays armed to retry. A
+        # comment thread takes the same routine: death record, _comment_kill_all and the closed frame, the
+        # state the immediate arm leaves (review round 3, 2026-09-09)
+        ended = _end_and_record(sid, Sessions.backend_for(sid), now,
+                                "end-on-idle (self-close%s)" % (", a comment thread" if thread else ""), fresh=True)
+        if ended is not True:                        # unconfirmed kill: nothing recorded, nothing broadcast,
             sys.stderr.write("end-on-idle: %s kill unconfirmed (%s) — no death record, request "
                              "kept for the next cycle\n"
                              % (sid, "still running" if ended is False else "probe failed"))
             continue                                 # the armed request IS the retry
-        if not thread:
-            _record_death(sid, int(now), "kill")
-            _comment_kill_all(sid, be)
-            _send_to_app("chat", {"type": "closed", "id": sid})
-        # a thread's end is its CLI stopping, the way commentResolve and _comment_kill_all end one: no
-        # session death record and no closed frame (a thread has no tab); its comment row stays as it is,
-        # a dormant thread a reply revives. The push the spent wish triggers below re-reads the reg's flip
-        reqs.discard(sid); changed = True
+        reqs.discard(sid); changed = True            # the push below re-reads the flipped reg
     if changed:
         _end_on_idle_save(reqs)
         _push_soon()
@@ -57711,7 +57742,18 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     # "parked" is the FIFO arm; anything else is the backend's own send result (truthy when it
                     # went, falsy when refused) — so the compare, never truthiness, says which arm it took
-                    queued = _send_or_park(be, sid, body["text"]) == "parked"
+                    res = _send_or_park(be, sid, body["text"])
+                    if res is False:
+                        # the backend refused: a session it no longer holds (SdkBackend.send's _ensure answers
+                        # None for a missing or alive=False reg: a dead SDK session by id, an ended comment
+                        # thread by name or id). Said with a status and the reason, the unknown-session
+                        # refusal's shape, never folded into ok:true (review round 3, 2026-09-09: the route
+                        # answered 200 ok:true queued:false and `romp send` printed ok for a message nothing
+                        # received). Exactly False: tmux answers a nonce or True, and a fake may answer None
+                        return self._send(409, json.dumps({"ok": False, "error":
+                            "the session '%s' is not running; the message was not delivered" % body["who"]}),
+                            "application/json")
+                    queued = res == "parked"
                 # `queued` says which arm it took (the /compact route's shape): a sender that IS the
                 # target's open turn — an agent running `romp send <self> /clear` from its own Bash tool —
                 # read 'ok' otherwise and could not know the command waits for that turn to end (2026-09-03).
@@ -57761,7 +57803,15 @@ class Handler(BaseHTTPRequestHandler):
                     # discarding that here answered ok:true for a kill that never landed — a headless
                     # caller (`romp end web` against an attached host) walked away from a runaway
                     # session believing it dead. A dead far kernel is its own honest failure too.
-                    st, res, text = _remote_forward_answer(r, u.path, {"id": sid})
+                    fwd = {"id": sid}
+                    if u.path == "/end" and isinstance(b, dict) and b.get("when") == "idle":
+                        # the deferral rides to the kernel that serves it: forwarded as {id} alone, a far
+                        # `romp end <sid> --when-idle` took that kernel's immediate arm and killed at once
+                        # while the rows promised a settle. The validated field only, never the raw body:
+                        # the caller's `name` key stays here, and /interrupt carries nothing (review round
+                        # 3, 2026-09-09). The far deferred arm's `deferred: true` is relayed below as is
+                        fwd["when"] = "idle"
+                    st, res, text = _remote_forward_answer(r, u.path, fwd)
                     if st and st != 200:
                         # the far kernel answered no: relayed with its status and in its words, the far
                         # host named (_remote_refusal): its gate's JSON 404 with the reason, a text/plain
@@ -57792,14 +57842,13 @@ class Handler(BaseHTTPRequestHandler):
                     _audit_restart_request("end-on-idle", tag=str(sid), addr=str(self.client_address[0]))
                     return self._send(200, json.dumps({"ok": True, "deferred": True}), "application/json")
                 else:
-                    sys.stderr.write("kill: %s via /kill route\n" % sid)   # kill attribution (the user 2026-07-16)
-                    be.kill(sid)
-                    # corroborate like the WS endSession twin (2026-08-18): a kill the liveness owner
-                    # doesn't AFFIRMATIVELY confirm (_confirmed_ended — never bare _tmux_sessions()
-                    # membership, whose error→[] collapse would certify a false death) gets an honest
-                    # ok:false, no death record, no `closed` broadcast — a closed for a still-live sid
-                    # dismisses it on every client and re-draws as the dead swirl on the next push
-                    ended = _confirmed_ended(sid)
+                    # the one end routine (_end_and_record, the WS endSession twin's and the end-on-idle
+                    # sweep's): kill, then corroborate (2026-08-18) with the liveness owner, never bare
+                    # _tmux_sessions() membership, whose error→[] collapse would certify a false death. A
+                    # kill the owner doesn't AFFIRMATIVELY confirm gets an honest ok:false, no death record,
+                    # no `closed` broadcast: a closed for a still-live sid dismisses it on every client and
+                    # re-draws as the dead swirl on the next push
+                    ended = _end_and_record(sid, be, time.time(), "/kill route")
                     if ended is not True:
                         _push_soon()   # ack-fast (the 2026-08-30 wedge: request threads poke the pusher, never build inline)
                         return self._send(200, json.dumps({"ok": False,
@@ -57807,9 +57856,6 @@ class Handler(BaseHTTPRequestHandler):
                                                                     if ended is False else
                                                                     "couldn't confirm the end — tmux isn't answering; try again"}),
                                           "application/json")
-                    _record_death(sid, int(time.time()), "kill")
-                    _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
-                    _send_to_app("chat", {"type": "closed", "id": sid})
                 _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/new":
