@@ -27,7 +27,8 @@ const STYLES = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace('@im
 const PANE = fs.readFileSync(path.join(UI, "files-pane.css"), "utf8");
 
 const SID = "11111111-2222-3333-4444-555555555555";
-const DIR = "/tmp/TESTHOST/notes-api/docs/";
+const ROOT = "/tmp/TESTHOST/notes-api";
+const DIR = ROOT + "/docs/";
 const FILE_PATH = DIR + "folds.md";
 const URL_DOC = "http://romp.test/notes/folds.md";
 // the front matter (closed as authored), a callout folded shut, one folded open, and one folded shut around a heading a link names
@@ -55,10 +56,20 @@ function filesBundle(): string {
 // that answers value(), so Edit takes the body and Cancel hands it back without the real CodeMirror chunk's script
 const EDITOR_STUB = "window.__rompEditor={mount:function(host,o){var ta=document.createElement('textarea');ta.value=o.text;host.appendChild(ta);"
   + "return{value:function(){return ta.value;},destroy:function(){},focus:function(){}};}};";
-const FILES_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}\n${PANE}</style></head><body class=fileview-pane>
+// The pane's page. `panel`: the stub also answers the Comments panel's `fileComments` asks with a status whose file mtime is
+// window.__mtime (an empty sidecar, nothing tracked), so the panel opens and its poll (file-comments.ts tick: a HEAD of
+// /file each POLL_MS, askReload when the mtime moved) is what asks the viewer to reload after a session's edit; the
+// same-title leg drives the reload through it. The other legs keep the mute stub: no panel, no poll.
+function filesHtml(panel: boolean): string {
+  const status = panel ? 'if(m.type==="fileComments"){var root=' + JSON.stringify(ROOT) + ';var s={verb:"status",root:root,storePath:root+"/.trackchanges/"+m.path.slice(root.length+1)+".json",'
+    + 'trackedBy:null,agentTooling:"present",fileMtimeNs:String(window.__mtime),storeMtimeNs:null,configMtimeNs:null,store:null,hunks:[],'
+    + 'unsent:{comments:[],replies:[],accepted:0,rejected:0,watermark:null},log:[]};'
+    + 'setTimeout(function(){window.postMessage(Object.assign({type:"fileCommentsResult",reqId:m.reqId},s),"*");},0);}' : "";
+  return `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}\n${PANE}</style></head><body class=fileview-pane>
 <div id=files-empty></div>
-<script>window.__posts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};${EDITOR_STUB}</script>
+<script>window.__posts=[];window.__mtime="1";window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);${status}}}};${EDITOR_STUB}</script>
 <script src=/dist/files.js></script></body></html>`;
+}
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -72,9 +83,12 @@ async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise
 }
 
 type Opened = { page: any; errors: string[] };
+/** What the kernel would serve for the note: read live by the route, so a test moves the text and the mtime under the view. */
+type Disk = { text: string; mtime: string };
 /** A page of the Files pane with the bundle and the note served from memory: the note as a file document through the pane's
- *  relay, or as a URL document through openUrlView. */
-async function openNote(browser: any, js: string, how: "file" | "url"): Promise<Opened> {
+ *  relay, or as a URL document through openUrlView. With `disk` the page also carries the Comments panel's stub (filesHtml)
+ *  and serves the note from `disk`, mtime included, on GET and on the poll's HEAD alike. */
+async function openNote(browser: any, js: string, how: "file" | "url", disk?: Disk): Promise<Opened> {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 520 } });
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -82,11 +96,12 @@ async function openNote(browser: any, js: string, how: "file" | "url"): Promise<
   await ctx.route("**/*", (route: any) => {
     const u = new URL(route.request().url());
     if (u.host !== "romp.test") return route.fulfill({ status: 404, body: "" });
-    if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: FILES_HTML });
+    if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: filesHtml(disk !== undefined) });
     if (u.pathname === "/dist/files.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
     if (u.pathname === "/version") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ fileEditing: true }) });   // Edit's consent read (ensureEditingAllowed): editing is on, no dialog
     if (u.pathname === "/file" && u.searchParams.get("path") === FILE_PATH) {
-      return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body: NOTE });
+      const d = disk || { text: NOTE, mtime: "1" };
+      return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": d.mtime, "X-Romp-Text-Utf8": "1" }, body: d.text });
     }
     if (route.request().url() === URL_DOC) return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: NOTE });
     return route.fulfill({ status: 404, body: "" });
@@ -195,6 +210,81 @@ test("URL viewer: the folds stand as chosen across its Rendered/Raw switch", { t
     assert.deepEqual([sw.rawHadMd, sw.newBox], [false, true], "the URL viewer's switch painted a new box");
     assert.deepEqual(await folds(page), CHOSEN, "after Raw and Rendered the URL document's folds stand as the person left them");
     assert.deepEqual(await heights(page), chosenHeights);
+    assert.deepEqual(errors, [], "no page errors");
+    await page.context().close();
+  });
+});
+
+// Two folded callouts of ONE class and title (`> [!note]- Same title`; class and summary text were foldKeeper's whole key
+// before round 3), a paragraph between them, then a tip of another class, and the edits a session makes under the reader.
+const CALLOUT = (body: string) => ["> [!note]- Same title", "> " + body, ""];
+const NOTE_OF = (mid: string[], tip = true) => ["# Folds", "", "Para one.", "", ...mid, ...(tip ? ["> [!tip]- Tip", "> Tip body.", ""] : []), "Last para.", ""].join("\n");
+const BODY_A = "First body (A).", BODY_B = "Second body (B).", BODY_N = "New body (N).", BODY_B2 = "Second body (B), revised.";
+const SAME_V1 = NOTE_OF([...CALLOUT(BODY_A), "Middle para.", "", ...CALLOUT(BODY_B)]);
+const SAME_V2 = NOTE_OF(["Middle para.", "", ...CALLOUT(BODY_B)]);                       // A removed
+const SAME_V3 = NOTE_OF([...CALLOUT(BODY_N), "Middle para.", "", ...CALLOUT(BODY_B)]);   // a new same-titled callout where A was, ahead of B
+const SAME_V4 = NOTE_OF([...CALLOUT(BODY_N), "Middle para.", "", ...CALLOUT(BODY_B2)]);  // B's body rewritten
+const SAME_V5 = NOTE_OF([...CALLOUT(BODY_N), "Middle para.", "", ...CALLOUT(BODY_B2)], false);   // the tip, another class and title, removed
+const NOTE_CLS = "md-callout md-callout-note", TIP_CLS = "md-callout md-callout-tip";
+/** Every fold under the rendered box: its class, its first paragraph's words (what tells two same-titled folds apart) and whether it stands open. */
+const foldBodies = (page: any): Promise<Array<[string, string, boolean]>> => page.evaluate(() =>
+  Array.from(document.querySelectorAll("#romp-fileview .fileview-md details")).map((d) => {
+    const p = d.querySelector("p");
+    return [d.className, (p ? p.textContent || "" : "").trim(), d.hasAttribute("open")];
+  }));
+const noteSummary = (page: any, nth: number) => page.locator("#romp-fileview .fileview-md details.md-callout-note > summary").nth(nth);
+/** The Comments panel, opened through its bar control once the status answer showed it: its poll is the reload path under test. */
+async function openPanel(page: any): Promise<void> {
+  await page.waitForFunction(() => { const u = document.querySelector("#romp-fileview .fileview-fc") as HTMLElement | null; return !!u && !u.hidden; }, null, { timeout: 15000 });
+  await page.click("#romp-fileview .fileview-fc button");
+  await page.waitForSelector("#romp-fileview .fileview-aside", { timeout: 15000 });
+  await settle(page);
+}
+/** A session's edit on disk: the served text and mtime move (the status stub's mtime with them, so the status after the
+ *  reload agrees with the view and asks nothing more). The panel's poll HEADs the file, sees the mtime, asks the reload,
+ *  and the landing paints a new box; resolves when that box stands: a new box identity whose text carries `present`
+ *  and not `gone`. Event-driven, no fixed wait: the poll's own interval is what passes. */
+async function editOnDisk(page: any, disk: Disk, text: string, mtime: string, present: string, gone: string): Promise<void> {
+  const before = await boxId(page);
+  disk.text = text; disk.mtime = mtime;
+  await page.evaluate((m: string) => { (window as any).__mtime = m; }, mtime);
+  await page.waitForFunction(([id, want, lost]: [number, string, string]) => {
+    const md = document.querySelector("#romp-fileview .fileview-md") as any;
+    return !!md && md.__probeId !== id && md.textContent.includes(want) && (!lost || !md.textContent.includes(lost));
+  }, [before, present, gone] as [number, string, string], { timeout: 30000 });
+  await settle(page);
+}
+
+test("Files pane: across a reload the Comments panel's poll asked for, a fold keeps its own state when a fold of the same class and title is removed or inserted ahead of it, when its body is rewritten, and when a fold of another title goes", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const disk: Disk = { text: SAME_V1, mtime: "1" };
+    const { page, errors } = await openNote(browser, filesBundle(), "file", disk);
+    await openPanel(page);
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_A, false], [NOTE_CLS, BODY_B, false], [TIP_CLS, "Tip body.", false]], "authored: every fold shut");
+    await noteSummary(page, 0).click();
+    await settle(page);
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_A, true], [NOTE_CLS, BODY_B, false], [TIP_CLS, "Tip body.", false]], "the person opened A");
+
+    // a session removes A: B, which the person never touched, stays shut (before: B took A's open state, next in the queue the two shared)
+    await editOnDisk(page, disk, SAME_V2, "2", "Middle para.", BODY_A);
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_B, false], [TIP_CLS, "Tip body.", false]], "after the reload B stands shut, as the person left it; A's state left with A");
+
+    // the person opens B; a session inserts a new same-titled callout ahead of it: the new one shows as authored, B stays open
+    // (before: N took B's open and B, the fold the person opened, shut)
+    await noteSummary(page, 0).click();
+    await settle(page);
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_B, true], [TIP_CLS, "Tip body.", false]], "the person opened B");
+    await editOnDisk(page, disk, SAME_V3, "3", BODY_N, "");
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_N, false], [NOTE_CLS, BODY_B, true], [TIP_CLS, "Tip body.", false]], "N is new and shows as authored; B keeps the open the person gave it");
+
+    // a session rewrites B's body while the person reads it: the same fold by class and title, its state kept
+    await editOnDisk(page, disk, SAME_V4, "4", BODY_B2, BODY_B);
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_N, false], [NOTE_CLS, BODY_B2, true], [TIP_CLS, "Tip body.", false]], "B's rewritten body keeps B's state; N stays shut");
+
+    // a fold of another class and title removed: nothing moves
+    await editOnDisk(page, disk, SAME_V5, "5", "Last para.", "Tip body.");
+    assert.deepEqual(await foldBodies(page), [[NOTE_CLS, BODY_N, false], [NOTE_CLS, BODY_B2, true]], "the tip's removal moves neither same-titled fold");
+
     assert.deepEqual(errors, [], "no page errors");
     await page.context().close();
   });

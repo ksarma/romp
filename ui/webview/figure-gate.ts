@@ -17,7 +17,9 @@
 // renders (a `<mask>` reads the whole CSS shorthand, so `image-set("https://host/a.png" 1x)` fetches there as well). The
 // sanitizer keeps all eight (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only
 // style hook reads the `style` attribute alone. So the gate reads them as fetching attributes of the svg (paintRefs), with
-// a tokenizer that follows CSS Syntax's: comments skipped, escapes decoded (`\75 rl(` is `url(` to the browser, and
+// a tokenizer that follows CSS Syntax's: the value preprocessed first (a CRLF pair is one newline, so an escape's one
+// consumed whitespace eats the pair as the browser's does; read raw, `\75&#13;&#10;rl(` in an HTML block fetched on open,
+// review round 3), comments skipped, escapes decoded (`\75 rl(` is `url(` to the browser, and
 // `github.com\40 evil.test` is `github.com@evil.test`, so a reading of the text as written judged an allowed host
 // while the browser fetched another), a url token or a quoted string, in whatever function; every string is judged,
 // since gating a value the browser would have ignored costs one click and missing one it reads costs a request. The
@@ -112,7 +114,8 @@ export function paintRefs(root: ParentNode): FigureRef[] {
 /** Every fetching attribute the gate judges under a media root: figureRefs and, for an svg, paintRefs. */
 export function gateRefs(root: ParentNode): FigureRef[] { return figureRefs(root).concat(paintRefs(root)); }
 
-/** CSS's whitespace: a space, a tab, a newline (CR and FF are newlines after CSS's preprocessing). */
+/** CSS's whitespace: a space, a tab, a newline. After cssPreprocess every newline is one LF; CR and FF stay in the class
+ *  so a value that skipped the pass still reads its lone CR or FF as the one newline it is. */
 const CSS_WS = /[ \t\n\r\f]/;
 const CSS_HEX = /[0-9a-fA-F]/;
 /** A name code point: a letter, a digit, `_`, `-`, or any non-ASCII code point. */
@@ -129,14 +132,29 @@ function cssEscape(s: string, i: number): [string, number] {
   if (j < s.length && CSS_WS.test(s[j])) j++;
   return [cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? "\ufffd" : String.fromCodePoint(cp), j];
 }
-/** Every URL a CSS-valued attribute names, as CSS Syntax's tokenizer reads it: the url tokens (`url(` and an unquoted URL
- *  run to the `)` or to whitespace) and every quoted string (the `url("...")` form, an `image-set("...")` candidate, any
- *  other function's argument alike), with comments skipped and escapes decoded in function names, URLs and strings (so
- *  `\75 rl(` is `url(` and `github.com\40 evil.test` is `github.com@evil.test`, as the browser reads them). Judged on
- *  purpose beyond what the browser fetches: a string in a function that takes none, and a url token the browser refuses
- *  (a quote, a paren or inner whitespace before its `)`, read to that point). Gating such a value costs one click;
- *  missing a value the browser reads costs a request (measured 2026-09-09: every spelling above fetched). */
-export function cssUrls(value: string): string[] {
+/** CSS Syntax's preprocessing (section 3.3), run on the whole value before anything is tokenized: a CRLF pair, a lone CR
+ *  and a FF are each one LF; U+0000 and a lone surrogate are U+FFFD. The tokenizer's "one whitespace after a hex escape"
+ *  then eats a CRLF pair whole, as the browser's does, and a string ends at a CR or a FF as it does in the browser. Read
+ *  raw, the escape ate the CR and the LF ended the name at `u`, so `\75&#13;&#10;rl(https://host/p.svg#p)` in a note's
+ *  HTML block (the HTML parser keeps a character-reference CR LF in an attribute where it folds a literal pair to LF, and
+ *  the sanitizer passes the value) kept its fill and fetched the host on open with no placeholder, in both kinds (review
+ *  of Slice 4, round 3). The attribute itself stays as written: the browser preprocesses it the same way. Of the three
+ *  rules only the newline one can fire on a parsed attribute (the HTML parser has already made U+0000 and a lone
+ *  surrogate U+FFFD); the other two keep the reader exact on a value handed over any other way. */
+function cssPreprocess(value: string): string {
+  const newlines = value.replace(/\r\n|[\r\f]/g, "\n");
+  return newlines.replace(/\0|[\ud800-\udbff][\udc00-\udfff]|[\ud800-\udfff]/g, (m) => m.length === 2 ? m : "\ufffd");
+}
+/** Every URL a CSS-valued attribute names, as CSS Syntax's tokenizer reads it, the value preprocessed first (cssPreprocess):
+ *  the url tokens (`url(` and an unquoted URL run to the `)` or to whitespace) and every quoted string (the `url("...")`
+ *  form, an `image-set("...")` candidate, any other function's argument alike), with comments skipped and escapes decoded
+ *  in function names, URLs and strings (so `\75 rl(` is `url(` and `github.com\40 evil.test` is `github.com@evil.test`, as
+ *  the browser reads them). Judged on purpose beyond what the browser fetches: a string in a function that takes none, and
+ *  a url token the browser refuses (a quote, a paren or inner whitespace before its `)`, read to that point). Gating such a
+ *  value costs one click; missing a value the browser reads costs a request (measured 2026-09-09: every spelling above
+ *  fetched). */
+export function cssUrls(attrValue: string): string[] {
+  const value = cssPreprocess(attrValue);
   const out: string[] = [];
   const n = value.length;
   let i = 0;

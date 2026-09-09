@@ -7,7 +7,10 @@
 // (file-view-figures-gate-browser.test.ts's shape): on open, the one request that leaves the page is a paint reference to
 // github.com (the positive control: the recorder sees a paint fetch, and the allowed host loads), each svg naming another
 // host is a placeholder with the reference moved to `data-fv-gated-<name>`, in every spelling the browser reads (an escaped
-// function name, an escaped `@`, quotes, whitespace, upper case, a fallback colour, a filter list, a mask's image-set), on the
+// function name, an escaped `@`, quotes, whitespace, upper case, a fallback colour, a filter list, a mask's image-set, and an
+// escaped function name whose one consumed whitespace is a CRLF pair spelled `&#13;&#10;`, which the HTML parser keeps as CR LF
+// where it folds a literal pair: review round 3, the reader took the CR alone and the LF ended the name, so the rect kept its
+// fill and the host was fetched on open), on the
 // `<svg>` itself or on an element inside it; a local `url(#id)` is never gated and the same attributes on an HTML element are
 // left alone; one click restores the reference as written and the request follows, the other hosts still waiting; and a URL
 // document is gated the same. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented
@@ -44,6 +47,7 @@ const NOTE = [
   '<svg class="px-root" width="40" height="40" filter="url(https://root.test/p.svg#f)"><rect width="40" height="40" fill="red"/></svg>', "",
   SQ("px-group") + '<g fill="url(https://group.test/p.svg#p)"><rect width="40" height="40"/></g></svg>', "",
   SQ("px-escfn") + '<rect width="40" height="40" fill="\\75 rl(https://escfn.test/p.svg#p)"/></svg>', "",
+  SQ("px-crlf") + '<rect width="40" height="40" fill="\\75&#13;&#10;rl(https://crlf.test/p.svg#p)"/></svg>', "",
   SQ("px-escat") + '<rect width="40" height="40" fill="url(https://github.com\\40 escat.test/p.svg#p)"/></svg>', "",
   SQ("px-quoted") + '<rect width="40" height="40" fill="url(&quot;https://quoted.test/p.svg#p&quot;)"/></svg>', "",
   SQ("px-spaces") + '<rect width="40" height="40" fill="URL(   https://spaces.test/p.svg#p   ) red"/></svg>', "",
@@ -166,6 +170,7 @@ const GATED = [
   ["root.test", "svg", "px-root", "svg filter=url(https://root.test/p.svg#f)"],
   ["group.test", "svg", "px-group", "g fill=url(https://group.test/p.svg#p)"],
   ["escfn.test", "svg", "px-escfn", "rect fill=\\75 rl(https://escfn.test/p.svg#p)"],
+  ["crlf.test", "svg", "px-crlf", "rect fill=\\75\r\nrl(https://crlf.test/p.svg#p)"],
   ["escat.test", "svg", "px-escat", "rect fill=url(https://github.com\\40 escat.test/p.svg#p)"],
   ["quoted.test", "svg", "px-quoted", 'rect fill=url("https://quoted.test/p.svg#p")'],
   ["spaces.test", "svg", "px-spaces", "rect fill=URL(   https://spaces.test/p.svg#p   ) red"],
@@ -178,7 +183,7 @@ test("on open: no request leaves the page for an svg whose paint reference names
     await h.open();
     assert.deepEqual(h.foreign(), ["https://github.com/u/r/p.svg", "https://github.com/u/r/raw/main/gh.png"], "the two requests that left the page are github.com's: the paint reference (the recorder sees a paint fetch) and the picture");
     const gates: Gate[] = await h.page.evaluate(readGates);
-    assert.deepEqual(gates.map((g) => [g.hosts, g.tag, g.cls, g.gated]), GATED, "fourteen placeholders, one per svg naming another host, the paint attributes moved to data-fv-gated-<name> verbatim");
+    assert.deepEqual(gates.map((g) => [g.hosts, g.tag, g.cls, g.gated]), GATED, "fifteen placeholders, one per svg naming another host, the paint attributes moved to data-fv-gated-<name> verbatim (the CRLF pair included)");
     for (const g of gates) {
       assert.equal(g.host, g.hosts!.split(" ")[0]);
       assert.equal(g.label, "Image from " + g.host + (g.hosts!.includes(" ") ? " and 1 more host" : "") + ". Click to load.");
@@ -195,7 +200,7 @@ test("on open: no request leaves the page for an svg whose paint reference names
       ghfill: ["rect fill=url(https://github.com/u/r/p.svg#p)"], ghfillGated: false,
       local: ["rect fill=url(#g)", "rect stroke=red"], localGated: false,
       span: ["span fill=url(https://htmlfill.test/p.svg#p)", "span mask=url(https://htmlmask.test/p.svg#m)"], spanGated: false, spanText: "span",
-      placeholders: 14,
+      placeholders: 15,
     }, "the allowed host's reference stands and loaded; a fragment reference is the page's own; an HTML element's paint attributes fetch nothing and are left alone (no request for htmlfill.test above)");
   });
 });
@@ -219,8 +224,8 @@ test("one click on a placeholder restores the reference as written, the request 
     }));
     assert.deepEqual(after, {
       fill: ["rect fill=url(https://fill.test/p.svg#p)"], fillGated: false, fill2: ["rect fill=url(https://fill.test/q.svg#p)"], fill2Gated: false, fillShown: true,
-      placeholders: 12, gatedLeft: 12,
-    }, "both fill.test svgs restored in place and shown; twelve placeholders left, one moved-aside element each");
+      placeholders: 13, gatedLeft: 13,
+    }, "both fill.test svgs restored in place and shown; thirteen placeholders left, one moved-aside element each");
     const gained = h.foreign().filter((u) => !before.includes(u));
     assert.deepEqual(gained, ["https://fill.test/p.svg", "https://fill.test/q.svg"], "the clicked host's two references fetched, and nothing else: " + JSON.stringify(gained));
   });
@@ -236,13 +241,13 @@ test("a URL document is gated the same: no paint reference to an unlisted host l
     await h.settle();
     assert.deepEqual(h.foreign(), ["https://github.com/u/r/p.svg", "https://github.com/u/r/raw/main/gh.png"], "github.com alone left the page");
     const gates: Gate[] = await page.evaluate(readGates);
-    assert.deepEqual(gates.map((g) => [g.hosts, g.cls]), GATED.map((g) => [g[0], g[2]]), "the same fourteen placeholders as the file kind");
+    assert.deepEqual(gates.map((g) => [g.hosts, g.cls]), GATED.map((g) => [g[0], g[2]]), "the same fifteen placeholders as the file kind");
     const fetched = page.waitForRequest("https://stroke.test/p.svg", { timeout: 10000 });
     await page.click('#romp-fileview [data-act="fv-load"][data-fv-host="stroke.test"]');
     await fetched;
     await h.settle();
     assert.deepEqual(await page.evaluate(() => (window as any).__paints("svg.px-stroke")), ["rect fill=none", "rect stroke=url(https://stroke.test/p.svg#p)"], "restored as written");
-    assert.equal(await page.evaluate(() => document.querySelectorAll('#romp-fileview [data-act="fv-load"]').length), 13);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#romp-fileview [data-act="fv-load"]').length), 14);
   });
 });
 

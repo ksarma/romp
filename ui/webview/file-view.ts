@@ -2523,36 +2523,65 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
 // closed opened again, a fold a `#` click had just revealed (scrollToFragment, above) shut on the next paint, and the block
 // under the eye changed height under the reader's place, 72px open to 39px closed (the Slice 4 review; ui/CLAUDE.md: an
 // expand's state survives re-renders). Each viewer keeps one keeper: `note` reads every fold under the rendered box, in
-// order, before the swap, and `restore` re-applies each state after it to the fold with the same class and summary text,
-// in order. For an unchanged text that is the same fold by index; for a text a reload or an edit changed it follows the
-// fold past an insertion or a removal elsewhere in the note, and a fold whose title changed, or a new one, shows as
-// authored. A Raw paint has no folds and neither reads nor writes, so the state read when the rendered view left stands
-// until it is painted again. The state moves on the person's own clicks and the `#` reveal alone: no per-paint derivation,
-// no timer (CLAUDE.md, cards move on new information). md-config-fold-state-browser.test.ts drives the gestures.
-type Fold = { key: string; open: boolean };
+// order, before the swap, and `restore` re-applies each state after it to the fold it was read from, found in two passes.
+// The first pass matches a new fold to a noted one with the same class, summary text AND body text, in order; the second
+// matches what is left by class and summary text alone, in order. For an unchanged text the first pass finds every fold
+// by index. For a text a reload or an edit changed, a fold whose body a session rewrote while the person read it keeps
+// its state through the second pass, and a fold that stands as it was keeps its own even when a fold of the same class
+// and title was removed or inserted ahead of it: with class and title alone as the key, two `> [!note]- Same title`
+// callouts, or two untitled folded callouts of one type (whose generated title is the type, the common Obsidian shape),
+// shared one queue, so removing the first handed its state to the second, and a new one inserted ahead took the state of
+// the fold behind it (the Slice 4 review, round 3). A fold whose title changed, or a new one, shows as authored. Two
+// folds identical in class, title and body are told apart by order alone, and so are the leftovers of an edit that both
+// removes one same-titled fold and rewrites another's body. A Raw paint has no folds and neither reads nor writes, so the
+// state read when the rendered view left stands until it is painted again. The state moves on the person's own clicks
+// and the `#` reveal alone: no per-paint derivation, no timer (CLAUDE.md, cards move on new information).
+// md-config-fold-state-browser.test.ts drives the gestures, the same-title reloads included.
+type Fold = { key: string; body: string; open: boolean };
 function foldKey(d: Element): string {
   let summary = "";
   for (const c of Array.from(d.children)) if (c.tagName === "SUMMARY") { summary = c.textContent || ""; break; }
   return d.className + "\n" + summary;
 }
+/** The fold's body text: everything under it but its summary, which tells two same-titled folds apart. */
+function foldBody(d: Element): string {
+  let text = "";
+  for (const c of Array.from(d.childNodes)) if ((c as Element).tagName !== "SUMMARY") text += c.textContent || "";
+  return text;
+}
 function foldKeeper(body: HTMLElement): { note: () => void; restore: () => void } {
   let folds: Fold[] = [];
   const box = () => body.querySelector(".fileview-md");
+  const exactKey = (key: string, text: string) => key + "\u0000" + text;
   return {
     note: () => {
       const md = box();
-      if (md) folds = Array.from(md.querySelectorAll("details")).map((d) => ({ key: foldKey(d), open: d.hasAttribute("open") }));
+      if (md) folds = Array.from(md.querySelectorAll("details")).map((d) => ({ key: foldKey(d), body: foldBody(d), open: d.hasAttribute("open") }));
     },
     restore: () => {
       const md = box();
       if (!md || !folds.length) return;
-      const byKey = new Map<string, boolean[]>();
-      for (const f of folds) { const q = byKey.get(f.key); if (q) q.push(f.open); else byKey.set(f.key, [f.open]); }
-      md.querySelectorAll("details").forEach((d) => {
+      const now = Array.from(md.querySelectorAll("details"));
+      const taken = new Set<Fold>();                     // noted folds the first pass matched
+      const state = new Map<Element, boolean>();
+      // pass 1: the same fold, by class, title and body text, in order
+      const byExact = new Map<string, Fold[]>();
+      for (const f of folds) { const k = exactKey(f.key, f.body); const q = byExact.get(k); if (q) q.push(f); else byExact.set(k, [f]); }
+      for (const d of now) {
+        const q = byExact.get(exactKey(foldKey(d), foldBody(d)));
+        const f = q && q.shift();
+        if (f) { taken.add(f); state.set(d, f.open); }
+      }
+      // pass 2: the leftovers by class and title, in order: a fold whose body an edit changed keeps its state
+      const byKey = new Map<string, Fold[]>();
+      for (const f of folds) { if (taken.has(f)) continue; const q = byKey.get(f.key); if (q) q.push(f); else byKey.set(f.key, [f]); }
+      for (const d of now) {
+        if (state.has(d)) continue;
         const q = byKey.get(foldKey(d));
-        if (!q || !q.length) return;
-        if (q.shift()) d.setAttribute("open", ""); else d.removeAttribute("open");
-      });
+        const f = q && q.shift();
+        if (f) state.set(d, f.open);
+      }
+      state.forEach((open, d) => { if (open) d.setAttribute("open", ""); else d.removeAttribute("open"); });
     },
   };
 }

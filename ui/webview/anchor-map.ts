@@ -584,11 +584,13 @@ export function locateComment(source: string, anchor: Anchor, hintOffset?: numbe
 //
 // marked's tokens carry no positions and its `raw` strings index a PREPROCESSED text (CRLF and CR
 // normalized to LF, leading tabs expanded to four spaces), children of list items and blockquotes are
-// dedented / de-prefixed, and block-level `text` tokens double their interior newlines in `raw`. The walk
+// dedented / de-prefixed, block-level `text` tokens double their interior newlines in `raw`, and a
+// paragraph marked joined onto the one before it (sourceRaw) doubles the newline at the join. The walk
 // therefore runs over the normalized text N with a map back to source offsets, places every token by
-// verifying its raw (or, for block text, its text) at the assigned position, and maps child text through
-// a per-line "suffix of the raw line" view for list items and blockquotes. Only non-whitespace characters
-// are recorded: the renderer's own line breaks carry no text, so alignment and mapping ignore whitespace.
+// verifying its raw (or, for block text and a joined paragraph, its text) at the assigned position, and
+// maps child text through a per-line "suffix of the raw line" view for list items and blockquotes. Only
+// non-whitespace characters are recorded: the renderer's own line breaks carry no text, so alignment and
+// mapping ignore whitespace.
 
 class Refusal extends Error {}
 
@@ -606,9 +608,17 @@ class View {
   }
 }
 
+/** A lazy `===` or `--` line as marked's blockquote tokenizer guards it: up to three spaces, a run of `=` or `-`, spaces. */
+const SETEXT_LAZY_RE = /^ {0,3}(?:=+|-+) *$/;
 /** Child text of a list item or blockquote: line i of `text` is a suffix of line i of the raw view (the
- *  bullet, indentation, or `> ` prefix removed); raw lines past the text are blank. Anything else (a tab
- *  the lexer expanded after the marker, marked's setext protection) fails the suffix test and refuses. */
+ *  bullet, indentation, or `> ` prefix removed); raw lines past the text are blank. One more shape passes,
+ *  marked's setext protection: a quote's (or md-config.ts's callout's) lazy `===` or `--` line after another
+ *  line is prefixed with four spaces in `text`, so the nested lex reads a paragraph's text and not a
+ *  setext underline. The spaces are the tokenizer's, not the note's, and the emitter records no whitespace,
+ *  so they take the underline's own start and the underline's characters their raw offsets (the Slice 4
+ *  review, round 3: before this the callout or the quote refused whole, with the tab reason below, and a
+ *  selection on its body was sent to the Raw view). Anything else (a tab the lexer expanded after the
+ *  marker) fails the suffix test and refuses. */
 function suffixLineView(raw: View, text: string): View {
   const rawLines = raw.str.split("\n"), textLines = text.split("\n");
   if (textLines.length > rawLines.length) throw new Refusal("a block whose lines the mapping could not place");
@@ -616,11 +626,16 @@ function suffixLineView(raw: View, text: string): View {
   let rawLineStart = 0, ti = 0, endN = raw.n(0);
   for (let i = 0; i < textLines.length; i++) {
     const rl = rawLines[i], tl = textLines[i];
-    if (!rl.endsWith(tl)) throw new Refusal("a line that begins with a tab after its marker");
-    const off = rl.length - tl.length;
-    for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + off + k);
+    if (rl.endsWith(tl)) {
+      const off = rl.length - tl.length;
+      for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + off + k);
+    } else if (i > 0 && SETEXT_LAZY_RE.test(rl) && tl === "    " + rl.replace(/^ {0,3}/, "")) {
+      // marked's guard: four spaces the source does not hold, then the raw line less its indentation
+      const lead = rl.length - rl.replace(/^ {0,3}/, "").length;
+      for (let k = 0; k < tl.length; k++) map[ti + k] = raw.n(rawLineStart + lead + Math.max(0, k - 4));
+    } else throw new Refusal("a line that begins with a tab after its marker");
     ti += tl.length;
-    endN = raw.n(rawLineStart + off + tl.length);
+    endN = raw.n(rawLineStart + rl.length);
     if (i < textLines.length - 1) { map[ti] = raw.n(rawLineStart + rl.length); ti++; }
     rawLineStart += rl.length + 1;
   }
@@ -652,6 +667,39 @@ class Emitter {
   putHole(text: string, hole: number): void {
     for (const c of text) if (!isWs(c)) { this.chars += c; this.pos.push(-(hole + 1)); }
   }
+}
+
+/** A token's raw as the SOURCE holds it. That is `raw` for every token but a paragraph marked joined onto the one
+ *  before it: marked 12's block lexer (blockTokens) sets its lastParagraphClipped flag whenever any block extension's
+ *  start hint returned a position, however far below, and then joins the next paragraph onto the previous one with
+ *  `lastToken.raw += "\n" + token.raw` after the single newline between them was already moved onto the previous raw
+ *  by the space step, so the joined raw holds one newline per join the source does not; `text` gets one newline per
+ *  join and is the source's text. The paragraph regex itself stops early for its own reasons (a header-looking line
+ *  over a delimiter row the table tokenizer then rejects on the cell count, a lowercase `<prefix>` line the paragraph
+ *  rule's html lookahead stops at and the html tokenizer refuses, a bare `* ` or `1. ` bullet the list tokenizer
+ *  refuses as empty), so the join fires with a display formula anywhere later in the note (the math hint, the grammar's
+ *  one block hint; the callout's, which joined alike, went in round 3 of the review, md-config.ts), top level or
+ *  inside a quote's body (the Slice 4 review, rounds 2 and 3: the raw tiled nothing from there on, every later block's
+ *  span collapsed to the join's start, and every selection past it refused). The renderer emits the joined paragraph
+ *  as ONE element over `text`, so the mapping places it by `text` plus the trailing newlines the raw carries: the
+ *  answer is `text` + those newlines when the raw is exactly `text` with a newline doubled at each join (the only
+ *  discrepancy the join produces; a paragraph the regex read alone never holds a blank line), else `raw` unchanged,
+ *  and the usual placement then refuses whatever it cannot place. md-config-merged-paragraph.test.ts holds it over
+ *  every trigger shape and a fuzz of the join; the browser leg maps past the join over the real Files bundle. */
+function sourceRaw(t: Token): string {
+  if (t.type !== "paragraph") return t.raw;
+  const { raw, text } = t as Tokens.Paragraph;
+  if (raw.indexOf("\n\n") < 0) return raw;
+  let i = 0;
+  for (let j = 0; j < text.length; j++) {
+    if (raw[i] === text[j]) { i++; continue; }
+    // the doubled newline of a join: one more "\n" in raw right after the "\n" text and raw share
+    if (raw[i] === "\n" && j > 0 && text[j - 1] === "\n" && raw[i + 1] === text[j]) { i += 2; continue; }
+    return raw;
+  }
+  let trailing = 0;
+  for (; i < raw.length; i++, trailing++) if (raw[i] !== "\n") return raw;
+  return trailing ? text + "\n".repeat(trailing) : text;
 }
 
 // marked's escape() leaves an `&` alone when it begins an entity; the browser then decodes it to ONE
@@ -776,7 +824,7 @@ const DEF_RE = (): RegExp => Lexer.rules.block.gfm.def;
 /** Place `tokens`, which tile `view.str` from `p` (block-level; nested containers recurse). */
 function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
   for (const t of tokens) {
-    const raw = t.raw;
+    const raw = sourceRaw(t);   // a paragraph marked joined onto the one before: its text plus the trailing newlines
     if (t.type === "text") {
       // Block text (tight list items): `raw` doubles interior newlines; `text` is the source text, and
       // the raw's extra trailing newlines are the ones the lexer moved onto this token.
@@ -993,24 +1041,25 @@ function placeTokens(N: string): { placed: Placed[]; lexError: string | null } {
   let pos = 0;
   let broken: string | null = lexError;
   for (const t of tokens) {
-    if (broken === null && !N.startsWith(t.raw, pos)) {
+    const raw = sourceRaw(t);   // a paragraph marked joined onto the one before: its text plus the trailing newlines
+    if (broken === null && !N.startsWith(raw, pos)) {
       // a reference definition (never a token), else resync on the next raw and leave the gap unmapped
       for (;;) {
         const m = DEF_RE().exec(N.slice(pos));
         if (!m) break;
         pos += m[0].length;
-        if (N.startsWith(t.raw, pos)) break;
+        if (N.startsWith(raw, pos)) break;
       }
-      if (!N.startsWith(t.raw, pos)) {
-        const j = N.indexOf(t.raw, pos);
+      if (!N.startsWith(raw, pos)) {
+        const j = N.indexOf(raw, pos);
         if (j >= 0) pos = j; else broken = `a ${t.type} the mapping could not place`;
       }
     }
-    if (t.type === "space") { if (broken === null) pos += t.raw.length; continue; }
-    let textEndN = pos + t.raw.length;
-    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
-    placed.push({ t, startN: pos, endN: pos + t.raw.length, textEndN, broken });
-    if (broken === null) pos += t.raw.length;
+    if (t.type === "space") { if (broken === null) pos += raw.length; continue; }
+    let textEndN = pos + raw.length;
+    while (textEndN > pos && raw[textEndN - pos - 1] === "\n") textEndN--;
+    placed.push({ t, startN: pos, endN: pos + raw.length, textEndN, broken });
+    if (broken === null) pos += raw.length;
   }
   return { placed, lexError };
 }

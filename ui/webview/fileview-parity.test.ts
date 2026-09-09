@@ -59,8 +59,10 @@ const RULES = [
   ".md .md-callout-important, .fileview-md .md-callout-important {",
   ".md .md-callout-warning, .fileview-md .md-callout-warning, .md .md-callout-attention, .fileview-md .md-callout-attention, .md .md-callout-question, .fileview-md .md-callout-question, .md .md-callout-help, .fileview-md .md-callout-help, .md .md-callout-faq, .fileview-md .md-callout-faq {",
   ".md .md-callout-caution, .fileview-md .md-callout-caution, .md .md-callout-danger, .fileview-md .md-callout-danger, .md .md-callout-error, .fileview-md .md-callout-error, .md .md-callout-failure, .fileview-md .md-callout-failure, .md .md-callout-fail, .fileview-md .md-callout-fail, .md .md-callout-missing, .fileview-md .md-callout-missing, .md .md-callout-bug, .fileview-md .md-callout-bug {",
-  ".md mark:not(.cmt-hl), .fileview-md mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
-  ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", ".fileview-md .fv-gate > :not([data-fv-label]) {",
+  // the ==mark== rule keys on the renderer's class (a bare `.fileview-md mark` outranked the comment marks; the review round 3), and the gate's
+  // hide rule on the placeholder's data-act, the mark an author cannot write
+  ".md mark.md-mark, .fileview-md mark.md-mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
+  ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) {',
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

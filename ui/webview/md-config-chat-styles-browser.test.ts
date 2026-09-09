@@ -9,9 +9,10 @@
 // `.user-bubble.md`, and, for contrast, into `.fileview-md` on the same page. The computed styles are what the
 // assertions read: the chat's dress equals the viewer's (the shared rules are doubled `.md X, .fileview-md X`), the
 // comment highlight `mark.cmt-hl` keeps its own tint (its rule ties a `.md mark` rule on specificity and stands earlier
-// in the sheet, so the construct rule must skip it), and the bubble's mark and callout wear the white family the bubble's
-// other rules use. Both themes. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs
-// do. Synthetic text only.
+// in the sheet, so the construct rule keys on the renderer's own class, mark.md-mark, and never names it), a callout's
+// title reads in the body's ink (round 3: the tint tokens are rails and fills, unreadable as text for the hairline and
+// the caution red), and the bubble's mark and callout wear the white family the bubble's other rules use. Both themes.
+// Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -130,7 +131,8 @@ function assertViewerDress(chat: Dress, viewer: Dress, where: string): void {
   assert.notEqual(chat["blockquote.md-callout.md-callout-warning"]!.borderLeftColor, note.borderLeftColor, where + ": a warning is tinted apart from a note");
   const title = chat[".md-callout-note > .md-callout-title"]!;
   assert.equal(title.fontWeight, "600", where + ": the callout's title is bold");
-  assert.equal(title.color, note.borderLeftColor, where + ": the title takes the callout's tint");
+  assert.equal(title.color, chat[":scope > p"]!.color, where + ": the title reads in the body's ink; the callout's tint is its rail and wash (the tokens are not inks)");
+  assert.notEqual(title.color, note.borderLeftColor, where + ": the title is not painted in the rail's token");
   assert.equal(title.marginTop, "0px", where + ": the title sits on the callout's top edge, not a paragraph's margin");
   assert.equal(chat[".md-callout-note > p:not(.md-callout-title)"]!.fontWeight, "400", where + ": the callout's body stays regular");
   const fm = chat["details.md-frontmatter"]!, vfm = viewer["details.md-frontmatter"]!;
@@ -192,8 +194,10 @@ test("the person's own bubble: a ==mark== and a callout they typed wear the bubb
       const title = u[".md-callout-note > .md-callout-title"]!, quote = u["blockquote:not(.md-callout)"];
       assert.ok(title, theme + ": the typed callout rendered in the bubble");
       assert.equal(title.fontWeight, "600", theme + ": the bubble's callout title is bold");
-      assert.notEqual(title.color, a[".md-callout-note > .md-callout-title"]!.color, theme + ": the bubble's callout title is not the page's accent (the accent on the saturated fill)");
-      assert.match(title.color, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout title is in the white family");
+      assert.notEqual(title.color, a[".md-callout-note > .md-callout-title"]!.color, theme + ": the bubble's callout title is not the page's body ink (the page's grey on the saturated fill)");
+      assert.match(title.color, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout title is in the white family (the bubble's quote ink, inherited)");
+      const rail = u["blockquote.md-callout.md-callout-note"]!;
+      assert.match(rail.borderLeftColor, /^rgba\(255, 255, 255, /, theme + ": the bubble's callout rail is in the white family");
       assert.equal(quote, null, theme + ": (the fixture types no plain quote)");
     }
   });

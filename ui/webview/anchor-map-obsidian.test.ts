@@ -507,3 +507,42 @@ test("a formula the range does not hold stays outside the highlight, and a displ
   for (const m of marksUnder(box)) assert.notEqual(m.parentNode, box, "no mark is a top-level node (the block pairing reads the top-level children)");
   assert.deepEqual(box.childNodes.filter((n) => n.nodeType === 1).map((n) => (n as FakeElement).tagName).slice(15, 18), ["P", "SPAN", "P"]);
 });
+
+test("a lazy `===` or `--` line under a callout's or a quote's body line is that paragraph's text and maps to its own characters: marked's setext guard puts four spaces before it in the token's text, and the suffix view reads through them (before: the whole block refused, with a reason naming a tab)", () => {
+  // marked's blockquote tokenizer prefixes a lazy underline with four spaces so the nested lex reads a paragraph's text and not
+  // a setext heading; md-config.ts's callout borrows the preparation from the body's second line on. The spaces are the guard's,
+  // not the note's, so line i of the token's text is no longer a suffix of raw line i, and suffixLineView refused the block
+  // (the Slice 4 review, round 3: a selection on `body text here` was sent to the Raw view over a tab that was not there).
+  const mapIn = (box: FakeElement, source: string, text: string): MapResult => mapRenderedSelection(sel(point(box, text), point(box, text, true)), El(box), source);
+  const cases: Array<[string, string[], string]> = [
+    ["> [!note] Title\n> body text here\n===\n\nAfter para.\n", ["body text here", "===", "After para."], "a callout with a body line and a lazy ==="],
+    ["> [!note] Title\n> body text here\n--\n\nAfter para.\n", ["body text here", "--", "After para."], "the -- twin"],
+    ["> quote text here\n===\n\nAfter para.\n", ["quote text here", "===", "After para."], "a plain quote, the shape marked itself guards"],
+    ["> [!tip]- Folded\n> hidden body\n  === \n\nAfter para.\n", ["hidden body", "===", "After para."], "a folded callout, the underline indented and with a trailing space (the guard strips up to three spaces and keeps the rest)"],
+    ["> [!note] Title\n===\n\nAfter para.\n", ["===", "After para."], "the empty-body shape: the guard skips the body's first line (md-config.ts), so the text is a plain suffix"],
+    ["> [!note]\n> first\n> second\n--\n===\n\nAfter para.\n", ["first", "second", "--", "===", "After para."], "two lazy underlines, each guarded"],
+  ];
+  for (const [src, needles, why] of cases) {
+    const box = buildRendered(src);
+    for (const s of needles) {
+      const r = ok(mapIn(box, src, s), why + ": " + s);
+      const i = src.indexOf(s);
+      assert.deepEqual(r.range, { start: i, end: i + s.length }, why + ": " + s + " maps to its own offset");
+      assert.equal(r.quote, s, why);
+    }
+    // across the body line and its underline: one paragraph, and the quote is the source's text between (no four spaces in it)
+    const first = needles[0], under = needles[needles.length - 2];
+    const across = ok(mapRenderedSelection(sel(point(box, first), point(box, under, true)), El(box), src), why + ": across the underline");
+    assert.equal(across.quote, src.slice(src.indexOf(first), src.indexOf(under) + under.length), why + ": the source text between");
+    assert.ok(!across.quote.includes("    "), why + ": the guard's spaces are not in the quote");
+  }
+  // the guard is the ONE mismatch the view reads through: a tab after the marker still refuses the block (the nested lexer
+  // expands it to four spaces, so the paragraph's raw no longer starts the quote's text and the placement refuses), and the
+  // paragraph after the quote maps as before
+  const tabbed = "> quote\n>\t\tcode line\n\nAfter para.\n";
+  const tb = buildRendered(tabbed);
+  const refused = bad(mapIn(tb, tabbed, "quote"), "a tab after the marker");
+  assert.match(refused.reason, /could not place|a tab after its marker/);
+  const after = ok(mapIn(tb, tabbed, "After para."), "the paragraph after the refused quote");
+  assert.deepEqual(after.range, { start: tabbed.indexOf("After para."), end: tabbed.indexOf("After para.") + "After para.".length });
+});

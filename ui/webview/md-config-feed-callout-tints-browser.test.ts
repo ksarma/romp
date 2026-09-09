@@ -9,7 +9,9 @@
 // builds them (esbuild.js's webview config, in memory, the KaTeX @import inlined) and the fixture goes through the real
 // grammar (marked under applyMdConfig, then sanitizeMd), so the assertions read the computed dress of the elements the
 // renderer emits: every GitHub alert wears a 3px rail whose tint is not the body colour, the five tints differ, the
-// title takes the tint, and each type reads the SAME tint under feed.css as under styles.css (fileview-parity pins the
+// title reads in the body's ink (round 3 moved it off the tint: the tokens are rails and fills, and as text the hairline
+// and the caution red were unreadable; md-config-callout-title-ink-browser.test.ts holds the contrast), and each type
+// reads the SAME tint under feed.css as under styles.css (fileview-parity pins the
 // rules byte-equal; this pins the tokens they name resolving alike). Three themes: classic (a bare body), yatharth and
 // yatharth-light, the classes theme.ts applies. Skips LOUDLY without a playwright browser (CI installs none), as the
 // other browser legs do. Synthetic text only.
@@ -118,8 +120,8 @@ function assertDressed(s: Scene, where: string): void {
     assert.notEqual(d.tint, s.body, where + ": the " + t + " callout's rail is tinted, not the body colour");
     assert.notEqual(d.tint, s.plain.tint, where + ": the " + t + " callout's rail is not the plain quote's hairline");
     assert.notEqual(d.wash, TRANSPARENT, where + ": the " + t + " callout has its wash");
-    assert.equal(d.title, d.tint, where + ": the " + t + " callout's title takes the tint");
-    assert.notEqual(d.title, s.body, where + ": the " + t + " callout's title is not in the body colour");
+    assert.equal(d.title, s.body, where + ": the " + t + " callout's title reads in the body's ink (the tint is the rail and the wash)");
+    assert.notEqual(d.title, d.tint, where + ": the " + t + " callout's title is not painted in the rail's token");
   }
   const tints = ALERTS.map((t) => s.types[t]!.tint);
   assert.equal(new Set(tints).size, ALERTS.length, where + ": the five alerts wear five tints: " + tints.join(" | "));

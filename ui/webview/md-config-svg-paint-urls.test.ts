@@ -30,10 +30,14 @@ test("cssUrls: a url token in every spelling the browser fetches: plain, quoted,
   assert.equal(remoteHost("//pr.test/p.svg#p", BASE), "pr.test", "protocol-relative is a web address");
 });
 
-test("cssUrls decodes CSS escapes as the browser does: in the function name (\\75 rl( and u\\72 l( and a six-digit \\000075 are url(), in an unquoted URL (\\40 is @, so github.com\\40 evil.test fetches evil.test; \\69 inside the host; \\) stays in the URL) and in a string; a comment before the function is skipped", () => {
+test("cssUrls decodes CSS escapes as the browser does: in the function name (\\75 rl( and u\\72 l( and a six-digit \\000075 are url(), in an unquoted URL (\\40 is @, so github.com\\40 evil.test fetches evil.test; \\69 inside the host; \\) stays in the URL) and in a string; a comment before the function is skipped; the value is preprocessed first as CSS Syntax section 3.3 does (a CRLF pair, a CR and a FF are one newline each, U+0000 is U+FFFD), so an escape's one consumed whitespace eats a CRLF pair whole", () => {
   assert.deepEqual(cssUrls("\\75 rl(https://escfn.test/p.svg#p)"), ["https://escfn.test/p.svg#p"], "fetched: the escape and its one whitespace spell u");
   assert.deepEqual(cssUrls("u\\72 l(https://escfn2.test/p.svg#p)"), ["https://escfn2.test/p.svg#p"], "fetched");
   assert.deepEqual(cssUrls("\\000075rl(https://six.test/p.svg#p)"), ["https://six.test/p.svg#p"], "six hex digits end the escape without whitespace");
+  assert.deepEqual(cssUrls("\\75\r\nrl(https://crlf.test/p.svg#p)"), ["https://crlf.test/p.svg#p"], "fetched: the browser preprocesses a CRLF pair to one newline before tokenizing, so the escape consumes the pair (review of Slice 4, round 3: read raw, the escape ate the CR alone, the LF ended the name at `u`, and the value was not judged; an HTML block reaches this through &#13;&#10;, which the HTML parser keeps as CR LF where it folds a literal pair)");
+  assert.deepEqual(cssUrls("\\75\rrl(https://cr.test/p.svg#p)"), ["https://cr.test/p.svg#p"], "fetched: a lone CR is one newline");
+  assert.deepEqual(cssUrls("\\75\frl(https://ff.test/p.svg#p)"), ["https://ff.test/p.svg#p"], "fetched: a lone FF is one newline");
+  assert.deepEqual(cssUrls("url(https://nul.test/p\0.svg#p)"), ["https://nul.test/p\ufffd.svg#p"], "U+0000 is U+FFFD after preprocessing (the HTML parser has already made that swap in a parsed attribute; the reader agrees with it on a value handed over any other way)");
   assert.deepEqual(cssUrls('\\69 mage-set("https://escset.test/a.png" 1x)'), ["https://escset.test/a.png"], "fetched: an escaped image-set");
   const at = cssUrls("url(https://github.com\\40 escat.test/p.svg#p)");
   assert.deepEqual(at, ["https://github.com@escat.test/p.svg#p"], "fetched from escat.test: the text as written names the allowed host, the browser's reading names another");
@@ -69,6 +73,9 @@ test("cssUrls judges on purpose what the browser would refuse, so a bad spelling
   assert.deepEqual(cssUrls('"https://strfill.test/p.svg"'), ["https://strfill.test/p.svg"], "not fetched by the browser in a fill; judged");
   assert.deepEqual(cssUrls('"https://unterminated.test/a'), ["https://unterminated.test/a"]);
   assert.deepEqual(cssUrls('"https://nl.test/a\nb"'), ["https://nl.test/a"], "an unescaped newline ends a string (a bad string to the browser)");
+  assert.deepEqual(cssUrls('url("https://strcr.test/a\r) url(https://strcr2.test/p.svg#p)'), ["https://strcr.test/a", "https://strcr2.test/p.svg#p"], "a CR ends a string as a newline does (preprocessed), so the url token after it is read and judged; read raw, the string swallowed the rest of the value and the whole read as a same-origin path, neither gated nor fetched");
+  assert.deepEqual(cssUrls('url("https://strff.test/a\f) url(https://strff2.test/p.svg#p)'), ["https://strff.test/a", "https://strff2.test/p.svg#p"], "a FF the same");
+  assert.deepEqual(cssUrls('"https://crlfcont.test/\\\r\na"'), ["https://crlfcont.test/a"], "a backslash before a CRLF pair continues a string: the pair is one newline");
 });
 
 test("refUrls: a paint attribute's URLs are its tokens, a srcset's its candidates, any other attribute's the value itself; PAINT_ATTRS names the eight presentation attributes DOMPurify's svg profile keeps that take a url()", () => {

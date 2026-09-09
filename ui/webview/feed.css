@@ -1710,18 +1710,28 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md hr { border: none; border-top: 1px solid var(--box-border); margin: 1em 0; }
 /* The Obsidian constructs and the figure gate (Slice 4 of plans/markdown-viewer.md; md-config.ts renders the constructs,
    figure-gate.ts the gate). Byte-equal in both sheets (fileview-parity.test.ts). The front matter folds under a summary; a
-   footnote definition sits in place, small, its back link first; a callout is a blockquote with a bold title line, tinted by
-   its type through the page's own tokens (note and its kin the accent, tip green, important teal, warning amber, caution
-   red; any other type the hairline); a ==mark== is a soft wash of the heads-up amber; a wikilink that cannot resolve here
-   wears the dead link's dotted look; an embedded file is a chip; a gated figure is a dashed box naming its host, the media
-   hidden inside it until the click restores it. The small sizes reuse the ladder's 0.86em (kbd, the fold labels).
+   footnote definition sits in place, small, its back link first; a callout is a blockquote with a bold title line in the
+   body's ink, its rail and wash tinted by its type through the page's own tokens (note and its kin the accent, tip green,
+   important teal, warning amber, caution red; any other type the hairline); a ==mark== is a soft wash of the heads-up
+   amber; a wikilink that cannot resolve here wears the dead link's dotted look; an embedded file is a chip; a gated figure
+   is a dashed box naming its host, the media hidden inside it until the click restores it. The small sizes reuse the
+   ladder's 0.86em (kbd, the fold labels).
    The grammar sits on the marked singleton, so the chat's markdown bodies (.md: a reply, a notice, the person's bubble)
    render the constructs too (the build note's open ruling): each construct rule is doubled `.md X, .fileview-md X`, the
    idiom of the math source fallback and the wikilink below, so a callout in a reply is a titled block and not a plain
    quote with a stray first line, and a mark is this wash and not the browser's yellow-on-black (the slice's review round
-   1; md-config-chat-styles-browser.test.ts reads both). The chat's mark rule skips the comment highlight mark.cmt-hl,
-   whose own rule stands earlier in the sheet and ties `.md mark` on specificity. The embed chip and the gate are the
-   file kind's alone (an embed resolves only there; the chat's md() is not gated). */
+   1; md-config-chat-styles-browser.test.ts reads both). The mark rule keys on the class the renderer emits, mark.md-mark
+   (md-config.ts), so it names the ==mark== alone: a bare `.fileview-md mark` outranked the comments panel's own marks
+   (mark.fc-hl, mark.fc-presel and mark.fc-ins, single-class rules) and repainted every highlight in the Rendered view in
+   this wash, and `.md mark` ties the chat's comment highlight mark.cmt-hl on specificity (the review, rounds 1 and 3;
+   md-config-mark-classes-browser.test.ts reads the comment marks inside and outside the view). The title's tint tokens
+   are rails and fills, not inks (the hairline 1.4:1, the caution red 2.9:1 on the dark themes, the light theme's tip and
+   important under 2.2:1), so the title inherits the body's ink and the type shows on the rail and the wash (round 3;
+   md-config-callout-title-ink-browser.test.ts holds every title at 4.5:1). The gate's hide rule keys on the placeholder's
+   own mark, its data-act, which the sanitizer never lets an author write: keyed on the class it hid every child element
+   of an author's `span.fv-gate` around prose (round 3; md-config-gate-author-span-browser.test.ts); the box's chrome on
+   the class stays, the recorded call. The embed chip and the gate are the file kind's alone (an embed resolves only
+   there; the chat's md() is not gated). */
 .md details.md-frontmatter, .fileview-md details.md-frontmatter { margin: 0 0 0.8em; padding: 0.3em 0.6em; border: 1px solid var(--box-border); border-radius: 6px; font-size: 0.86em; color: var(--dim); }
 .md .md-frontmatter-head, .fileview-md .md-frontmatter-head { cursor: pointer; user-select: none; }
 .md details.md-frontmatter pre, .fileview-md details.md-frontmatter pre { margin: 0.4em 0 0.2em; padding: 0.4em 0.6em; font-size: inherit; }
@@ -1730,19 +1740,19 @@ a.fileview-gh-note { border-style: dashed; }
 .md .md-footnote, .fileview-md .md-footnote { margin: 0.5em 0; padding-left: 12px; border-left: 2px solid var(--box-border); font-size: 0.86em; color: var(--dim); }
 .md .md-fnback, .fileview-md .md-fnback { display: inline-block; min-width: 1.2em; margin-right: 0.3em; text-align: center; }
 .md .md-callout, .fileview-md .md-callout { --callout: var(--box-border); color: inherit; border-left: 3px solid var(--callout); border-radius: 0 6px 6px 0; padding: 0.4em 0.8em; background: color-mix(in srgb, var(--callout) 8%, transparent); }
-.md .md-callout-title, .fileview-md .md-callout-title { margin: 0 0 0.3em; font-weight: 600; color: var(--callout); }
+.md .md-callout-title, .fileview-md .md-callout-title { margin: 0 0 0.3em; font-weight: 600; color: inherit; }
 .md details.md-callout .md-callout-title, .fileview-md details.md-callout .md-callout-title { cursor: pointer; user-select: none; }
 .md .md-callout-note, .fileview-md .md-callout-note, .md .md-callout-info, .fileview-md .md-callout-info, .md .md-callout-abstract, .fileview-md .md-callout-abstract, .md .md-callout-summary, .fileview-md .md-callout-summary, .md .md-callout-tldr, .fileview-md .md-callout-tldr, .md .md-callout-todo, .fileview-md .md-callout-todo, .md .md-callout-quote, .fileview-md .md-callout-quote, .md .md-callout-cite, .fileview-md .md-callout-cite, .md .md-callout-example, .fileview-md .md-callout-example { --callout: var(--accent); }
 .md .md-callout-tip, .fileview-md .md-callout-tip, .md .md-callout-hint, .fileview-md .md-callout-hint, .md .md-callout-success, .fileview-md .md-callout-success, .md .md-callout-check, .fileview-md .md-callout-check, .md .md-callout-done, .fileview-md .md-callout-done { --callout: var(--st-awaitbg-bg); }
 .md .md-callout-important, .fileview-md .md-callout-important { --callout: var(--st-compacting-bg); }
 .md .md-callout-warning, .fileview-md .md-callout-warning, .md .md-callout-attention, .fileview-md .md-callout-attention, .md .md-callout-question, .fileview-md .md-callout-question, .md .md-callout-help, .fileview-md .md-callout-help, .md .md-callout-faq, .fileview-md .md-callout-faq { --callout: var(--warn); }
 .md .md-callout-caution, .fileview-md .md-callout-caution, .md .md-callout-danger, .fileview-md .md-callout-danger, .md .md-callout-error, .fileview-md .md-callout-error, .md .md-callout-failure, .fileview-md .md-callout-failure, .md .md-callout-fail, .fileview-md .md-callout-fail, .md .md-callout-missing, .fileview-md .md-callout-missing, .md .md-callout-bug, .fileview-md .md-callout-bug { --callout: var(--err); }
-.md mark:not(.cmt-hl), .fileview-md mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; padding: 0 0.15em; border-radius: 2px; }
+.md mark.md-mark, .fileview-md mark.md-mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; padding: 0 0.15em; border-radius: 2px; }
 .md .fv-wikilink, .fileview-md .fv-wikilink { color: inherit; opacity: 0.7; text-decoration: underline dotted; cursor: help; }
 .fileview-md a.fv-embed { display: inline-block; padding: 0.1em 0.5em; border: 1px solid var(--box-border); border-radius: 4px; }
 .fileview-md .fv-gate { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; min-width: 14em; min-height: 3.2em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--dim); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; cursor: pointer; }
 .fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible { border-color: var(--accent); color: var(--fg); }
-.fileview-md .fv-gate > :not([data-fv-label]) { display: none; }
+.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) { display: none; }
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));

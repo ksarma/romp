@@ -1169,7 +1169,8 @@ as built departs from the text above, why, and which test holds each rule:
    a reply between two rules whose body is `#` lines alone reads as a comment-only YAML mapping and folds, as pandoc,
    Jekyll and Obsidian read it; bash's `[[ -f x ]]`, Python's `[[1]]` and R's `lst[[1]]` are the dead span, text
    preserved). The sheets dress the constructs in the chat's `.md` bodies too: each construct rule is doubled `.md X,
-   .fileview-md X` in styles.css and feed.css (the chat's mark rule skips the comment highlight `mark.cmt-hl`; the
+   .fileview-md X` in styles.css and feed.css (the mark rule keys on the class the renderer emits, `mark.md-mark`, so
+   neither the chat's comment highlight `mark.cmt-hl` nor the panel's marks are its subject, the review round 3; the
    bubble takes the white family it wears elsewhere), so a callout in a reply is a titled block and a `==mark==` the
    amber wash, not the browser's yellow-on-black (the review round 1; md-config-chat-styles-browser.test.ts reads both
    themes). md-config.test.ts executes the grammar and the idempotence and pins who calls it; render-math.test.ts pins
@@ -1208,47 +1209,63 @@ as built departs from the text above, why, and which test holds each rule:
    the end of the note, and a match at the string's own start, one character into a line, cut `A $$x$$` in two
    (md-config-math-block-start.test.ts, whose bound holds the hint to one pass per call: a first cut that ran the
    block tokenizer at every candidate lexed a note of 1,500 rejected candidates in 13 s and never shipped). marked
-   calls every block hint before every paragraph on the whole remaining source, so a hint that scans the rest of the
-   note made the lex quadratic in the paragraph count (the review round 2: 8,000 one-line paragraphs 1.3 s on the
-   singleton against 34 ms with no hint, a 200 KB reply twice the base's time); the math hint's and the callout's
-   answers are remembered per lexer frame (md-block-start.ts memoBlockStart, exact because a frame's sources are
-   suffixes of one another and a nested body is a frame of its own), the math tokenizer's closer search too, and the
-   lex is linear in the paragraph count: 36 ms for those 8,000 paragraphs, 35 ms for 8,000 rejected `$$` lines where
-   the base took 736 (md-config-block-start-memo.test.ts holds the memoised lex equal to the plain one and the
-   singleton's lex linear). KaTeX's flagged text takes a theme token, `--math-err` (math.ts MATH_ERROR_COLOR, which
-   KaTeX writes into the span's inline style), declared in both theme blocks of both sheets at 4.5:1 or better on
-   `--bg`, overridden to black in the print block on `.fileview-md` (a custom property inherits, so it reaches the
-   flagged span and an unsupported command's glyphs inside a rendered formula alike; set on `.katex-error` alone,
-   those glyphs printed in the screen red) and to the bubble's own ink in the person's bubble (`currentColor`: the
-   page's red read at 1.67:1 and 1.28:1 on the two fills; the review round 2, md-config-math-inks-browser.test.ts), as
-   the source fallback prints; KaTeX's default #cc0000 read at 2.8:1 on the dark page
-   (md-config-math-error-colour.test.ts, theme-parity.test.ts). The heading ids are minted BEFORE the fill, as
-   sanitizeMd's caller pass (file-view.ts mintHeadingIds, md-sanitize.ts `own`): read after it, `# Ratio
-   $\frac{a}{b}$` slugged KaTeX's glyphs in layout order (md-ratio-ba) where GitHub's slug and the note's own links
-   spell md-ratio-fracab (md-config-fragment-landing-browser.test.ts). The Web Worker of the design note is NOT built:
-   VS Code's webview CSP has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run
-   over a paint (the comments panel and the reader's place would meet placeholders); the synchronous bounded fill of
-   Slice 1 stays, and the note stays a direction.
+   also joins two paragraphs its own regex separated (a header-looking line over a delimiter row with a different cell
+   count, a lowercase `<prefix>` line, a bare `* ` or `1. ` bullet, each interrupting the paragraph and then refused
+   by its tokenizer) whenever a block hint has a hit anywhere later in the note, with a newline in the raw the source
+   does not hold; the anchor map places such a paragraph by its `text`, which is the source's text, plus the raw's
+   trailing newlines (anchor-map.ts sourceRaw, in the block table and the walk, so a join inside a quote's body maps
+   too), so the join costs the map nothing (the review rounds 2 and 3: before it every block from the join to the end
+   of the note refused; md-config-merged-paragraph.test.ts, md-config-merged-paragraph-browser.test.ts). The joined
+   rendering, one `<p>` where bare marked gives two, is marked's own and GitHub's for those shapes, and it turns on a
+   `$$` further down the note (item 10). marked calls every block hint before every paragraph on the whole remaining
+   source, so a hint that scans the rest of the note made the lex quadratic in the paragraph count (the review round
+   2: 8,000 one-line paragraphs 1.3 s on the singleton against 34 ms with no hint, a 200 KB reply twice the base's
+   time); the math hint's answer is remembered per lexer frame (md-block-start.ts memoBlockStart, exact because a
+   frame's sources are suffixes of one another and a nested body is a frame of its own; the callout's hint, memoised
+   the same way in round 2, is gone since round 3, item 5), the math tokenizer's closer search too, and the lex is
+   linear in the paragraph count: 36 ms for those 8,000 paragraphs, 35 ms for 8,000 rejected `$$` lines where the base
+   took 736 (md-config-block-start-memo.test.ts holds the memoised lex equal to the plain one and the singleton's lex
+   linear). KaTeX's flagged text takes a theme token, `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into
+   the span's inline style), declared in both theme blocks of both sheets at 4.5:1 or better on `--bg`, overridden to
+   black in the print block on `.fileview-md` (a custom property inherits, so it reaches the flagged span and an
+   unsupported command's glyphs inside a rendered formula alike; set on `.katex-error` alone, those glyphs printed in
+   the screen red) and to the bubble's own ink in the person's bubble (`currentColor`: the page's red read at 1.67:1
+   and 1.28:1 on the two fills; the review round 2, md-config-math-inks-browser.test.ts), as the source fallback
+   prints; KaTeX's default #cc0000 read at 2.8:1 on the dark page (md-config-math-error-colour.test.ts,
+   theme-parity.test.ts). The heading ids are minted BEFORE the fill, as sanitizeMd's caller pass (file-view.ts
+   mintHeadingIds, md-sanitize.ts `own`): read after it, `# Ratio $\frac{a}{b}$` slugged KaTeX's glyphs in layout
+   order (md-ratio-ba) where GitHub's slug and the note's own links spell md-ratio-fracab
+   (md-config-fragment-landing-browser.test.ts). The Web Worker of the design note is NOT built: VS Code's webview CSP
+   has no `worker-src`, and an asynchronous fill changes when `fireRendered` and the seat run over a paint (the
+   comments panel and the reader's place would meet placeholders); the synchronous bounded fill of Slice 1 stays, and
+   the note stays a direction.
 3. *Front matter* renders as ONE element, `details.md-frontmatter` with a `summary` reading "Front matter" and the
    YAML in a `pre`, escaped text and never author HTML. The tokenizer fires only for the document's first token
    (`tokens === this.lexer.tokens && tokens.length === 0`: a quote's or a list item's body is lexed into a fresh
    array, so `> ---` inside a quote stays an hr; `state.top` is not that test), and only for a body that reads as a
-   YAML mapping (isYamlMapping: every left-margin line a `key:` line, a `- ` item under a key, a `#` comment or blank)
-   with no blank line after the opener (pandoc's rule), so a document that merely opens with a rule, a fence opening
-   with `---` or prose between two rules keeps its blocks (the review round 1: a reply bounded by rules folded its
-   first section into a closed block, and a `---` inside a fence closed the block early, so the fence's closer opened
-   a block that swallowed the rest). Its raw tiles the source from offset 0, trailing blank lines included, so the
-   block table's first span is `[0, 37]` where it was `[0, 3]` and `[4, 37]`, and the setext h2 the keys used to
-   become (with its minted `md-title-...` id) is gone. anchor-map.ts treats it as a hole block ("the front matter")
-   with the fold label a control; `tagOf` gives DETAILS. md-config.test.ts renders it (one element at the start, none
-   mid-document or inside a quote; the rule-bounded, fenced and YAML shapes); anchor-map-obsidian.test.ts holds the
-   block span from offset 0, the DETAILS tag, the hole's reason and the hr-without-YAML case. A fold's state survives
-   every paint: renderBody notes every `details` under `.fileview-md` before the swap and restores each after it,
-   keyed by class and summary text in order, in both viewers (file-view.ts foldKeeper; before it the Rendered/Raw
-   switch, a reload's landing, the editor's take and handback and a `#` reveal reset every fold to what the source
-   says; the review round 2, md-config-fold-state-browser.test.ts drives the gestures over the real Files bundle). A
-   body of `#` lines alone is a comment-only mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply
-   that shape is inside item 1's open ruling.
+   YAML mapping (isYamlMapping: every left-margin line a `key:` line, a `- ` item under a key, a `#` comment or blank;
+   a bare key begins with a letter or digit of any script, or an underscore, since ASCII alone rendered a vault whose
+   property names are in its own language, `Über:`, as the hr and the heading again: the review round 3) with no blank
+   line after the opener (pandoc's rule), so a document that merely opens with a rule, a fence opening with `---` or
+   prose between two rules keeps its blocks (the review round 1: a reply bounded by rules folded its first section
+   into a closed block, and a `---` inside a fence closed the block early, so the fence's closer opened a block that
+   swallowed the rest). Its raw tiles the source from offset 0, trailing blank lines included, so the block table's
+   first span is `[0, 37]` where it was `[0, 3]` and `[4, 37]`, and the setext h2 the keys used to become (with its
+   minted `md-title-...` id) is gone. anchor-map.ts treats it as a hole block ("the front matter") with the fold label
+   a control; `tagOf` gives DETAILS. md-config.test.ts renders it (one element at the start, none mid-document or
+   inside a quote; the rule-bounded, fenced and YAML shapes); anchor-map-obsidian.test.ts holds the block span from
+   offset 0, the DETAILS tag, the hole's reason and the hr-without-YAML case. A fold's state survives every paint:
+   renderBody notes every `details` under `.fileview-md` before the swap and restores each after it, in both viewers
+   (file-view.ts foldKeeper; before it the Rendered/Raw switch, a reload's landing, the editor's take and handback and
+   a `#` reveal reset every fold to what the source says; the review round 2, md-config-fold-state-browser.test.ts
+   drives the gestures over the real Files bundle). The match runs in two passes, each in document order: first by
+   class, summary text and body text, then the leftovers by class and summary text alone, so a fold a session's edit
+   rewrote keeps its state and a fold that stands as it was keeps its own when a fold of the same class and title was
+   removed or inserted ahead of it (the review round 3: with class and summary text as the whole key, two `> [!note]-
+   Same title` callouts shared one queue, and a reload the Comments panel's poll asked for after such an edit opened
+   the fold the person had left shut; the same leg drives that reload through the panel's poll). A body of `#` lines
+   alone is a comment-only mapping and folds, as pandoc, Jekyll and Obsidian read it; in a reply that shape is inside
+   item 1's open ruling.
 4. *Footnotes*, our own extension (marked-footnote is not installed and renders at the end, which breaks the 1:1 block
    pairing). `[^id]` renders `sup.md-fnref > a[href="#fn-id"][id="fnref-id"]` showing its number, and ONLY when the
    document defines the id (GitHub's rule; the lexer lexes every block before any inline text, so the definitions are
@@ -1260,13 +1277,16 @@ as built departs from the text above, why, and which test holds each rule:
    in the note and another definition, a list, a heading or a line a registered block extension's start hint names
    ends it (a four-space rule lost a wrapped definition's second line; md-config.ts clipAtBlockStarts applies the cut
    marked makes before its own paragraph, so a `$$` block on the line after `[^1]: text` is a display formula after
-   the note, where the borrowed paragraph rule ran over it: the review round 2). A duplicate definition keeps its
-   class and back link and drops its id, so `#fn-id` lands on the first. Numbering is by order of first reference,
-   kept on the lexer instance (one per parse, the anchor map's static lex included), and a definition nothing refers
-   to shows its marker as written (`[^id]:`) as a label with no back link, so every character the author wrote stays
-   in view: a regex class explained at a line start, `[^a-z]: matches anything but a lowercase letter`, is GFM's
-   definition shape, which GitHub drops whole, and the bare id ran into the text as a word (the review round 2). The
-   ids reach the DOM prefixed `user-content-` and the `#fn-id` hrefs land through fragmentTarget in the viewer
+   the note, where the borrowed paragraph rule ran over it: the review round 2). Block content inside a definition,
+   GitHub's four-space form (a fence, a list, a second paragraph indented four spaces), is not adopted: a
+   four-space-indented line is the paragraph's continuation, as marked's own paragraph reads it, so an indented fence
+   renders as a code span (the review round 3, open in item 10). A duplicate definition keeps its class and back link
+   and drops its id, so `#fn-id` lands on the first. Numbering is by order of first reference, kept on the lexer
+   instance (one per parse, the anchor map's static lex included), and a definition nothing refers to shows its marker
+   as written (`[^id]:`) as a label with no back link, so every character the author wrote stays in view: a regex
+   class explained at a line start, `[^a-z]: matches anything but a lowercase letter`, is GFM's definition shape,
+   which GitHub drops whole, and the bare id ran into the text as a word (the review round 2). The ids reach the DOM
+   prefixed `user-content-` and the `#fn-id` hrefs land through fragmentTarget in the viewer
    (md-config-obsidian-browser.test.ts clicks both ways over the Files bundle) and the chat's `#` delegate. A `[^n]:
    URL` line is a footnote now, where marked's `def` rule used to swallow it as a link reference (a note that used
    that form as a real link reference changes rendering). The shown number is a hole ("a footnote reference"); the
@@ -1279,19 +1299,32 @@ as built departs from the text above, why, and which test holds each rule:
    `[!WARNING]`, `[!CAUTION]` and Obsidian's `[!type] Title` with any type render `blockquote.md-callout` with a
    `p.md-callout-title` (the author's title, else the type capitalised) and the body lexed as blocks; `[!type]-` and
    `[!type]+` render a `details` closed or open with the title in its `summary`. Its extent is marked's own blockquote
-   rule, borrowed, so a lazy continuation line with no `>` stays inside the tinted block as GitHub keeps it, and the
-   start hint fires after a newline only (marked calls it on `src.slice(1)`, so a `^` alternative cut `a> [!note] b`
-   into a one-letter paragraph and a callout; the review round 1); its answer is remembered per lexer frame (item 2;
-   md-config.ts nextCallout hops over each `[!` with indexOf). The body takes marked's two blockquote preparations:
-   the marker's optional space may be a tab (`>\tbody` kept its tab and the nested lex made it indented code) and a
-   lazy `===` or `--` line is prefixed with four spaces so it stays a paragraph's text and not a setext underline (the
-   review round 2). The type rides in a class (`md-callout-note`), not the `data-callout` attribute the design named,
-   since the sanitizer drops every data attribute; the sheets tint by class through the page's own tokens (note and
-   its kin the accent, tip green, important teal, warning amber, caution red, any other type the hairline; feed.css's
-   `:root` declares the awaiting green and the compacting teal the tip and important tints read, which stood in its
-   light block alone, so on the two dark themes the feed page's tip and important callouts lost rail, wash and title
-   tint: the review round 2, feed-css-vars.test.ts reads the sheet with the light block cut out and
-   md-config-feed-callout-tints-browser.test.ts six callouts under both sheets and three themes). The title line is a
+   rule, borrowed, so a lazy continuation line with no `>` stays inside the tinted block as GitHub keeps it, and it
+   registers NO start hint (the review round 3): its marker line begins with `>`, a paragraph interrupt marked's own
+   rule knows, so a hint could shorten no paragraph, and the one round 1 gave it (after a newline only, since marked
+   calls a hint on `src.slice(1)` and a `^` alternative cut `a> [!note] b` into a one-letter paragraph and a callout;
+   round 2 memoised its answer per frame) set marked's clip flag for a `> [!` anywhere later in the source, which
+   joined a paragraph and its interrupt-rejected successor into one `<p>` with a raw that no longer tiled the source
+   (item 2). The marker line is spelled as marked spells a quote's, `>`, an optional space or tab, then up to three
+   spaces before `[!` (round 3: one space alone left `>\t[!NOTE]` and `>  [!note]` plain quotes where GitHub reads the
+   alert). The body takes marked's two blockquote preparations: the marker's optional space may be a tab (`>\tbody`
+   kept its tab and the nested lex made it indented code) and a lazy `===` or `--` line is prefixed with four spaces
+   so it stays a paragraph's text and not a setext underline (the review round 2), from the body's second line on: the
+   body's first line has no paragraph before it to underline, and guarded it was indented code reading `===` (round
+   3). The anchor map's suffix view reads through those four spaces, which hold no source position, so the body line
+   and its underline map to their own characters (anchor-map.ts suffixLineView; before, the callout or the quote
+   refused whole with a reason naming a tab; round 3, anchor-map-obsidian.test.ts). The type rides in a class
+   (`md-callout-note`), not the `data-callout` attribute the design named, since the sanitizer drops every data
+   attribute; the sheets tint by class through the page's own tokens (note and its kin the accent, tip green,
+   important teal, warning amber, caution red, any other type the hairline; feed.css's `:root` declares the awaiting
+   green and the compacting teal the tip and important tints read, which stood in its light block alone, so on the two
+   dark themes the feed page's tip and important callouts lost rail, wash and title tint: the review round 2,
+   feed-css-vars.test.ts reads the sheet with the light block cut out and md-config-feed-callout-tints-browser.test.ts
+   six callouts under both sheets and three themes). The title reads in the body's ink, bold, and the type shows on
+   the rail and the wash alone (the review round 3): the tint tokens are rails and fills, not inks (the hairline at
+   1.45:1 and the caution red at 2.91:1 on the dark themes, the light theme's tip and important under 2.2:1), so a
+   title in the rail token failed every custom type; md-config-callout-title-ink-browser.test.ts holds every title at
+   4.5:1 under both sheets and the three themes, and the bubble's title inherits its quote ink. The title line is a
    hole ("a callout's title", since the marker is not shown and a missing title is generated); the body maps as
    blocks. `tagOf` gives BLOCKQUOTE, or DETAILS for a folded one, whose open or closed state survives a paint (item 3,
    foldKeeper). A `#` target inside a folded callout, a closed `details`, is revealed before the scroll
@@ -1305,16 +1338,24 @@ as built departs from the text above, why, and which test holds each rule:
    folded one's hidden body too) and the title's refusal, the generated title included;
    md-config-fragment-landing-browser.test.ts lands a heading link, a `[[#Heading]]` wikilink and a footnote reference
    inside a shut fold.
-6. *`==mark==`* renders `<mark>` and maps by delimiter width like em and strong; the opener must touch its content, so
-   `a == b` in prose stays literal, and neither delimiter may touch a word on its outside (the run of `=` is exactly
-   two; the opener is refused after an ASCII letter, digit, underscore, closing bracket, quote or `=`, the characters
-   an operand ends in, and the closer before an ASCII letter, digit, underscore or `=`, which a right operand begins
-   with; ASCII only, so CJK prose with no space around a highlight is not refused), so `a==b and c==d`, `a===b`,
-   `len(a)==0 or len(b)==0`, `x[i]==y[j] and a[0]==b[0]`, `'a'==b and 'c'==d` and `f()==1 and g()==2` in a sentence or
-   a heading stay literal where the plain delimiter rule paired two comparisons into one highlight (the review round 1
-   guarded the opener against letters and digits, round 2 both ends against an operand). The recorded consequence: a
-   highlight running into a word, `==high==lighted`, is literal. md-config.test.ts renders it and keeps the
-   comparisons literal; anchor-map-obsidian.test.ts maps its text by the delimiters.
+6. *`==mark==`* renders `<mark class="md-mark">` and maps by delimiter width like em and strong; the opener must touch
+   its content, so `a == b` in prose stays literal, and neither delimiter may touch a word on its outside (the run of
+   `=` is exactly two; the opener is refused after an ASCII letter, digit, underscore, closing bracket, quote or `=`,
+   the characters an operand ends in, and the closer before an ASCII letter, digit, underscore or `=`, which a right
+   operand begins with; ASCII only, so CJK prose with no space around a highlight is not refused), so `a==b and c==d`,
+   `a===b`, `len(a)==0 or len(b)==0`, `x[i]==y[j] and a[0]==b[0]`, `'a'==b and 'c'==d` and `f()==1 and g()==2` in a
+   sentence or a heading stay literal where the plain delimiter rule paired two comparisons into one highlight (the
+   review round 1 guarded the opener against letters and digits, round 2 both ends against an operand). A highlight
+   holds no `==` (the review round 3): the first `==` after the opener is its closer, and a closer that touches a word
+   makes the text literal up to it, so `==high==lighted and ==more== end` highlights `more` alone and `if x ==0 or y
+   ==1 then ==done==` highlights `done` (round 2's lazy match ran on to the next `==` and rendered one highlight from
+   `high` to `more`, the second opener eaten); `==a == b==` is literal, the operator reading winning as everywhere in
+   the rule; the recorded consequence stands, `==high==lighted` alone is literal. The element's class is what both
+   sheets' rule keys on, `mark.md-mark` (a bare `.fileview-md mark` outranked the comments panel's single-class marks,
+   `.fc-hl`, `.fc-presel` and `.fc-ins`, so every highlight in the Rendered view wore the amber wash: round 3,
+   md-config-mark-classes-browser.test.ts compares the panel's marks inside the view with the same marks outside it,
+   and md-config-math-map-browser.test.ts reads their dress on the real fill). md-config.test.ts renders it and keeps
+   the comparisons literal; anchor-map-obsidian.test.ts maps its text by the delimiters.
 7. *Decision 2, wikilinks and embeds.* The renderer emits an anchor ONLY when the per-parse walkTokens of the file
    kind (file-view-links.ts viewerWalkTokens, run by mdBlock for the file kind alone) stamped the token `resolved`:
    `[[Note]]` becomes `<a href="Note.md">Note</a>` (`.md` appended unless the target names a file type Obsidian opens,
@@ -1330,16 +1371,19 @@ as built departs from the text above, why, and which test holds each rule:
    `![[img.png]](url)` its image: the tokenizer yields when `]]` is followed by `(` and marked's link rule reads the
    span, as GitHub renders them (the review round 2: the wikilink took `[[docs]]` and left `(url)` as prose, in a note
    a path link to a `docs.md` that does not exist); a span the link rule refuses, `[[Note]](see also)`, and adjacent
-   `[[A]][[B]]` stay wikilinks. Bash's `[[ -f x ]]`, Python's `[[1]]` and R's `lst[[1]]` in a reply are the dead span
-   too, text preserved and the title accurate: no character rule separates them from Obsidian's valid targets (`[[
-   Note ]]`, `[[1]]`), and a per-kind grammar would be a ruling of the open ruling's kind. `![[image.png]]` renders an
-   `<img>` when resolved, so rewriteFigureSrcs loads it from the file's folder and `![[image.png|300]]` sets its
-   width; `![[Note]]` is a link-shaped chip `a.fv-embed`; unresolved, an embed is the dead span too (an `<img
-   src="image.png">` in a reply would fetch from the page's own origin). An anchor's shown text is the source text at
-   `textOffset` in the raw, so the anchor map places it exactly (a dead span is never mapped: a reply is not, and the
-   URL kind keeps its place by blocks). The comments panel's embed grammar and the host's (`imageEmbeds` in
-   file-comments.ts and tools/file-comments-host.mjs) read the `![[...]]` form: it was a one-regex addition, so the
-   limit the design allowed for was not taken; file-comments-panel.test.ts and the host's tests hold both readers.
+   `[[A]][[B]]` stay wikilinks. A span that names neither a file nor a section, `[[ ]]`, `[[#]]`, `![[ ]]`, `[[a/]]`
+   or `[[ | ]]`, stays literal as `[[]]` does (the review round 3: in a file document it rendered `<a href="">`,
+   dressed as an external link that opened the page itself, or a path link to a nameless `a/.md`). Bash's `[[ -f x
+   ]]`, Python's `[[1]]` and R's `lst[[1]]` in a reply are the dead span too, text preserved and the title accurate:
+   no character rule separates them from Obsidian's valid targets (`[[ Note ]]`, `[[1]]`), and a per-kind grammar
+   would be a ruling of the open ruling's kind. `![[image.png]]` renders an `<img>` when resolved, so
+   rewriteFigureSrcs loads it from the file's folder and `![[image.png|300]]` sets its width; `![[Note]]` is a
+   link-shaped chip `a.fv-embed`; unresolved, an embed is the dead span too (an `<img src="image.png">` in a reply
+   would fetch from the page's own origin). An anchor's shown text is the source text at `textOffset` in the raw, so
+   the anchor map places it exactly (a dead span is never mapped: a reply is not, and the URL kind keeps its place by
+   blocks). The comments panel's embed grammar and the host's (`imageEmbeds` in file-comments.ts and
+   tools/file-comments-host.mjs) read the `![[...]]` form: it was a one-regex addition, so the limit the design
+   allowed for was not taken; file-comments-panel.test.ts and the host's tests hold both readers.
 8. *rewriteFigureSrcs* reads every attribute a figure fetches through (figure-gate.ts figureRefs): an img's `src` and
    `srcset`, a `source`'s `src` and `srcset`, a video's `src` and `poster`, an audio's and a track's `src`, an svg
    `image`'s or `feImage`'s `href` and `xlink:href`. A srcset is rewritten candidate by candidate with its descriptors
@@ -1386,39 +1430,44 @@ as built departs from the text above, why, and which test holds each rule:
    `romp:settings`): a host added restores its placeholders in place, a host removed applies at the file's next paint,
    which docs/reference.md says in those words (the review round 2). Nothing in the gate FINDS an element by class,
    since the sanitizer keeps an author's `class`: the placeholder by its `data-act`, its label by `data-fv-label`
-   (LABEL_MARK, which the sheets' hide rule keys on too), so an author's `<text class="fv-gate-label">` inside a gated
-   svg no longer takes the label's text and a `<span class="fv-gate">` around prose survives a click or a settings
-   event with its text (the review round 1; md-config-figure-gate-authored-browser.test.ts). The srcset parse breaks
-   on HTML's ASCII whitespace alone (a JS `\s` stopped at a no-break space, so `github.com<nbsp>@evil.test/x.png` read
-   as github.com to the gate while the browser fetched evil.test) and leaves parentheses at the first `)` as HTML's
+   (LABEL_MARK), and the sheets' hide rule keys on the placeholder's `data-act` and the label's mark, neither of which
+   the sanitizer lets an author write (round 3: keyed on the class it hid every child element, bold, a link or a code
+   span, of an author's `<span class="fv-gate">` around prose; the box's chrome on the class stays, the recorded call;
+   md-config-gate-author-span-browser.test.ts), so an author's `<text class="fv-gate-label">` inside a gated svg no
+   longer takes the label's text and a `<span class="fv-gate">` around prose survives a click or a settings event with
+   its text (the review round 1; md-config-figure-gate-authored-browser.test.ts). The srcset parse breaks on HTML's
+   ASCII whitespace alone (a JS `\s` stopped at a no-break space, so `github.com<nbsp>@evil.test/x.png` read as
+   github.com to the gate while the browser fetched evil.test) and leaves parentheses at the first `)` as HTML's
    descriptor tokenizer does, and every srcset under a judged root is written back in the gate's own spelling before
    the judgment, so the attribute the browser reads is the one the gate parsed. An inline svg's paint references are
    fetching attributes too (the review round 2: `fill`, `stroke`, `filter`, `clip-path`, `mask`, `marker-start`,
    `marker-mid` and `marker-end` take a CSS `url()`, DOMPurify's svg profile keeps all eight and its URI check passes
    `url(`, so a `url(https://host/p.svg#p)` on the svg or any element inside it fetched on open with no placeholder,
-   in both kinds; figure-gate.ts paintRefs reads them with a CSS Syntax tokenizer, cssUrls, that decodes escapes and
-   skips comments, since `\75 rl(` is `url(` and `github.com\40 evil.test` is `github.com@evil.test` to the browser,
-   judges every quoted string as well (a mask reads the CSS shorthand, so `image-set("https://host/a.png" 1x)`
-   fetches), and moves the attribute to `data-fv-gated-<name>`; rewriteFigureSrcs leaves them as written;
-   md-config-svg-paint-urls.test.ts and md-config-svg-paint-gate-browser.test.ts). The placeholder's text is skipped
-   by the anchor map (isControl) and by the reader's place (reader-place.ts noteText), so an html block holding a
-   gated figure at the top of the view keeps the place across a paint (its label had read against a parse of the
-   block's source that reads nothing, and the Raw switch seated nothing; md-config-figure-gate-place.test.ts and its
-   browser leg). The URL kind names the document's own host beside the list: the URL viewer fetches with `mode:
-   "same-origin"`, so that HOSTNAME is the page's, but the gate compares origins (remoteHost), so a figure on the
-   document's hostname under another scheme or port loads on open only through this arm (the gate leg's URL scene
-   holds it: fx-alt, fx-port). The chat's `md()` is not gated (recorded). Measured on open, DPR 1, the fixture of
-   file-view-figures-gate-browser: the one request that left the page was github.com's picture; `/file` served the
-   file and its `![](fig.png)`; six placeholders held remote.test's img, srcset, poster, picture, svg and second img
-   and one held other.test's. After the click on one remote.test placeholder: remote.test's img.png, img2.png,
-   poster.png and svg.png were fetched and `/file` served local.png; the 2x srcset candidate was not picked at DPR 1;
-   for the `<picture>`, Chromium took the fallback img rather than the source's srcset when both came back on an
-   element already in the document (the leg accepts either). A `<picture>` is gated whole, so its local fallback waits
-   with the remote source. The gear's row is a textarea, one host per line; gear.js holds a copy of the default list,
-   the host reading and the normaliser (it cannot import settings.ts), and gear-figure-hosts.test.ts holds them equal
-   to settings.ts's. figure-gate.test.ts covers the pure parts (the srcset parse, remoteHost, the allowed set, the
-   normaliser); settings.test.ts and md-config-figure-hosts.test.ts the field and its reading; docs/reference.md and
-   the guide's Figures paragraph describe it.
+   in both kinds; figure-gate.ts paintRefs reads them with a CSS Syntax tokenizer, cssUrls, that preprocesses the
+   value first as CSS Syntax's section 3.3 does (a CRLF pair, a lone CR or a FF is one newline: read raw,
+   `\75&#13;&#10;rl(` had the escape eat the CR and the LF end the name, so the fill fetched on open with no
+   placeholder; round 3), decodes escapes and skips comments, since `\75 rl(` is `url(` and `github.com\40 evil.test`
+   is `github.com@evil.test` to the browser, judges every quoted string as well (a mask reads the CSS shorthand, so
+   `image-set("https://host/a.png" 1x)` fetches), and moves the attribute to `data-fv-gated-<name>`; rewriteFigureSrcs
+   leaves them as written; md-config-svg-paint-urls.test.ts and md-config-svg-paint-gate-browser.test.ts). The
+   placeholder's text is skipped by the anchor map (isControl) and by the reader's place (reader-place.ts noteText),
+   so an html block holding a gated figure at the top of the view keeps the place across a paint (its label had read
+   against a parse of the block's source that reads nothing, and the Raw switch seated nothing;
+   md-config-figure-gate-place.test.ts and its browser leg). The URL kind names the document's own host beside the
+   list: the URL viewer fetches with `mode: "same-origin"`, so that HOSTNAME is the page's, but the gate compares
+   origins (remoteHost), so a figure on the document's hostname under another scheme or port loads on open only
+   through this arm (the gate leg's URL scene holds it: fx-alt, fx-port). The chat's `md()` is not gated (recorded).
+   Measured on open, DPR 1, the fixture of file-view-figures-gate-browser: the one request that left the page was
+   github.com's picture; `/file` served the file and its `![](fig.png)`; six placeholders held remote.test's img,
+   srcset, poster, picture, svg and second img and one held other.test's. After the click on one remote.test
+   placeholder: remote.test's img.png, img2.png, poster.png and svg.png were fetched and `/file` served local.png; the
+   2x srcset candidate was not picked at DPR 1; for the `<picture>`, Chromium took the fallback img rather than the
+   source's srcset when both came back on an element already in the document (the leg accepts either). A `<picture>`
+   is gated whole, so its local fallback waits with the remote source. The gear's row is a textarea, one host per
+   line; gear.js holds a copy of the default list, the host reading and the normaliser (it cannot import settings.ts),
+   and gear-figure-hosts.test.ts holds them equal to settings.ts's. figure-gate.test.ts covers the pure parts (the
+   srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
+   field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
 10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal. Slice
    5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed details is
    delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold reachable from plain
@@ -1427,7 +1476,15 @@ as built departs from the text above, why, and which test holds each rule:
    `.katex-display` element with a rule in both sheets, is a panel and CSS change; anchor-map-obsidian.test.ts pins
    the current shape); the chat's markdown fetches an svg paint reference on render as it fetches a chat `<img src>`,
    the gate being the viewer's (item 9); the callout body's trailing newlines are not trimmed as marked's blockquote
-   trims its text (the pins hold the current output).
+   trims its text (the pins hold the current output). Open after the review round 3: block content inside a footnote
+   definition (GitHub's four-space form: a fence, a list, a second paragraph) is not adopted and an indented fence
+   renders as a code span (item 4; taking it needs the callout's nested block lex for the definition and the anchor
+   map's walk over it, a plan change); marked's join of a paragraph and its interrupt-rejected successor renders one
+   `<p>` when a display formula stands anywhere later in the note and two without (marked's own join, GitHub's
+   rendering for those shapes; the map places both, item 2); a gated figure narrower than the placeholder's 14em
+   minimum box gets a box of the minimum's width, so a 50px icon's placeholder is wider than the icon and the text
+   below moves up by the difference after the click (the minimum is what lets the box name its host legibly; a box the
+   figure's width wraps the label to a dozen lines and overflows, measured in round 3).
 ### Slice 5: comments anchor on real notes
 
 Pair blocks inside an unclosed HTML container (a flattened walk); match code quotes raw; math tokens

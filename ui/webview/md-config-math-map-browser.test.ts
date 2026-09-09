@@ -18,7 +18,14 @@
 // definition maps its words. Read with real KaTeX glyph nodes and with real mouse gestures. Third (the review's round 2), the
 // highlight a comment across a formula paints: paintRendered wrapped the text nodes either side of the `.katex` root and nothing
 // else, so the passage `Inline $x^2$ math and` showed two ringed boxes with the rendered formula bare between them; now the
-// formula goes under one mark with the words beside it, and the panel's unpaint gives the paragraph back. Skips LOUDLY without a
+// formula goes under one mark with the words beside it, and the panel's unpaint gives the paragraph back. The dress that mark
+// wears is read too (the review's round 3): the panel's classes are single-class rules (.fc-hl, .fc-presel, .fc-ins, .fc-del),
+// and the slice's `==mark==` construct rule (`.fileview-md mark`, one class and a type) outranked them inside the viewer, so a
+// comment highlight painted as the construct's 35% amber wash with its padding and corners, the composer's pending target lost
+// its accent wash and an insertion's tint went amber, while the assertion here read only that SOME wash was painted and passed
+// either way. Now each element the panel paints in this view is compared, computed wash, padding, corner radius and ring, with
+// the same element outside any markdown surface (its own rule alone, the reference md-config-chat-styles-browser.test.ts reads
+// for mark.cmt-hl) and with the fixture's own `==marked text==` beside it, which it must not match. Skips LOUDLY without a
 // playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST
 // paths, a placeholder sid.
 import { test } from "node:test";
@@ -70,7 +77,7 @@ const BUILD = { bundle: true, write: false, format: "iife", platform: "browser",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
 /** The Files pane's bundle plus the anchor map's and the reader's place's exports, one module instance, for the reads over the page's own box. */
 function filesBundle(): string {
-  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, readPlace };\n';
+  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges, readPlace };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
@@ -208,9 +215,15 @@ function readLiveSelection(source: string) {
   return { text: s.toString(), anchor: where(s.anchorNode), anchorOffset: s.anchorOffset, focus: where(s.focusNode), result: probe.mapRenderedSelection(s, md, source) as MapOut };
 }
 /** The highlight over `Inline $x^2$ math and`, painted as the panel paints a comment's (paintRendered with the panel's class and
- *  data) over a real selection made across the formula: the marks, their children, their boxes and the wash; the map over the
- *  painted paragraph; then the panel's unpaint (file-comments.ts: every child of a mark back in its place, the parent normalized)
- *  and the paragraph after it; then the ranges a comment made in the Raw view carries (the formula at an edge, the formula alone). */
+ *  data) over a real selection made across the formula: the marks, their children, their boxes and the dress each wears (the
+ *  computed wash, padding, corner radius and ring); the map over the painted paragraph; then the panel's unpaint
+ *  (file-comments.ts unpaint(".fc-hl, .fc-presel"): its own marks by class, every child back in its place, the parent normalized)
+ *  and the paragraph after it; then the ranges a comment made in the Raw view carries (the formula at an edge, the formula alone).
+ *  The dress is read for every element the panel paints in this view: the highlight above, the composer's pending target
+ *  (fc-presel, the first Raw-made range), an insertion's tint (fc-ins) and a deletion's point (fc-del, a span) over a plain
+ *  paragraph, given back by unpaintChanges as the panel gives them back; beside two references on the same page, the fixture's
+ *  own `==marked text==` (the construct's dress) and the same four elements outside any markdown surface (each class's own rule
+ *  alone). */
 function readPaint(source: string) {
   const probe = (window as any).__rompProbe;
   const md = document.querySelector("#romp-fileview .fileview-md") as HTMLElement;
@@ -218,7 +231,11 @@ function readPaint(source: string) {
   const texts = (root: Node): Text[] => { const out: Text[] = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) out.push(n as Text); return out; };
   const shape = (n: Node): string[] => Array.from(n.childNodes).map((c) => c.nodeType === 3 ? "#text(" + (c as Text).data + ")" : (c as Element).tagName + "." + String((c as Element).className).split(" ")[0]);
   const box = (el: Element) => { const b = el.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height) }; };
-  const unpaint = () => { for (const m of Array.from(md.querySelectorAll("mark"))) { const par = m.parentNode!; while (m.firstChild) par.insertBefore(m.firstChild, m); par.removeChild(m); par.normalize(); } };
+  const dress = (el: Element | null) => { if (!el) return null; const cs = getComputedStyle(el); return { bg: cs.backgroundColor, padding: cs.padding, radius: cs.borderRadius, shadow: cs.boxShadow }; };
+  // the panel's own unpaint: its marks by class (never every mark, which would take the fixture's ==marked text== with them)
+  const unpaint = () => { for (const m of Array.from(md.querySelectorAll("mark.fc-hl, mark.fc-presel"))) { const par = m.parentNode!; while (m.firstChild) par.insertBefore(m.firstChild, m); par.removeChild(m); par.normalize(); } };
+  // the construct's mark, as the fixture renders it (whatever class the renderer gives it; never one of the panel's)
+  const construct = (Array.from(md.querySelectorAll("mark")) as HTMLElement[]).find((x) => x.textContent === "marked text" && !/(^|\s)fc-/.test(x.className)) || null;
   const mapAcross = (): MapOut => {
     const first = texts(p).find((t) => t.data.startsWith("Inline"))!, last = texts(p).find((t) => t.data.includes(" math and"))!;
     const s = window.getSelection()!; s.removeAllRanges();
@@ -230,20 +247,40 @@ function readPaint(source: string) {
   const mapped = mapAcross();
   const marks = (probe.paintRendered(md, source, mapped.range, "fc-hl", { act: "fcopen", id: "c6" }) || []) as HTMLElement[];
   const across = {
-    marks: marks.map((m) => ({ shape: shape(m), box: box(m), act: m.dataset.act, id: m.dataset.id, bg: getComputedStyle(m).backgroundColor, shadow: getComputedStyle(m).boxShadow })),
+    marks: marks.map((m) => ({ shape: shape(m), box: box(m), act: m.dataset.act, id: m.dataset.id, dress: dress(m) })),
     paragraph: shape(p), katexInMark: !!marks.length && katex.closest(".fc-hl") === marks[0], katexBox: box(katex), katexBefore,
     mappedPainted: mapAcross(),
   };
   unpaint();
   const after = { paragraph: shape(p), mapped: mapAcross(), katexBox: box(katex) };
   const raw: Record<string, string[][]> = {};
+  let presel: ReturnType<typeof dress> = null;
   for (const text of ["$x^2$ math and", "Inline $x^2$", "$x^2$"]) {
     const i = source.indexOf(text);
     const ms = (probe.paintRendered(md, source, { start: i, end: i + text.length }, "fc-presel") || []) as HTMLElement[];
     raw[text] = ms.map((m) => shape(m));
+    if (presel === null) presel = dress(ms[0] || null);
     unpaint();
   }
-  return { mapped: { ok: mapped.ok, quote: mapped.quote, range: mapped.range }, across, after, raw, final: shape(p) };
+  // the change marks over a plain paragraph, one at a time, each given back by unpaintChanges (the panel's own, before each repaint)
+  const plain = "Para after callout.";
+  const q = (Array.from(md.querySelectorAll(":scope > p")) as HTMLElement[]).find((x) => x.textContent === plain)!;
+  const qi = source.indexOf(plain);
+  const insMarks = (probe.paintRendered(md, source, { start: qi, end: qi + plain.length }, "fc-ins", { act: "fcchange", id: "h1" }) || []) as HTMLElement[];
+  const ins = { shape: shape(q), dress: dress(insMarks[0] || null) };
+  probe.unpaintChanges(md);
+  const point = probe.paintRenderedPoint(md, source, qi, "fc-del", { act: "fcchange", id: "h2" }, "old words") as HTMLElement | null;
+  const del = { shape: shape(q), dress: dress(point) };
+  probe.unpaintChanges(md);
+  const changes = { ins, del, after: shape(q) };
+  // the reference: the same four elements outside any markdown surface, each class's own rule alone
+  const ref = document.createElement("p");
+  ref.innerHTML = 'ref <mark class="fc-hl">a</mark> <mark class="fc-presel">b</mark> <mark class="fc-ins">c</mark> <span class="fc-del" data-fc-text="old words"></span>';
+  document.body.appendChild(ref);
+  const refDress = { "fc-hl": dress(ref.querySelector(".fc-hl")), "fc-presel": dress(ref.querySelector(".fc-presel")), "fc-ins": dress(ref.querySelector(".fc-ins")), "fc-del": dress(ref.querySelector(".fc-del")) };
+  ref.remove();
+  const viewer = { "fc-hl": across.marks[0] ? across.marks[0].dress : null, "fc-presel": presel, "fc-ins": ins.dress, "fc-del": del.dress };
+  return { mapped: { ok: mapped.ok, quote: mapped.quote, range: mapped.range }, across, after, raw, changes, dress: { viewer, ref: refDress, construct: dress(construct) }, final: shape(p) };
 }
 /** The reader's place at the body's top edge: readPlace's start, and the top-visible block (Rendered) or row (Raw) and its offset from the edge. */
 function readTop(source: string) {
@@ -376,7 +413,7 @@ test("a selection endpoint inside a control over the real DOM: inside a formula'
   });
 });
 
-test("a comment across an inline formula over the real Files bundle is ONE highlight holding the KaTeX root (before: two marks with the formula bare between them), the wash behind the formula, the map unchanged over the painted paragraph, the paragraph given back by the panel's unpaint, and a Raw-made range at or on the formula highlights it", { timeout: 180000 }, async (t) => {
+test("a comment across an inline formula over the real Files bundle is ONE highlight holding the KaTeX root (before: two marks with the formula bare between them), the panel's own wash behind the formula and not the ==mark== construct's (every element the panel paints wears its class's dress as it does outside any markdown surface), the map unchanged over the painted paragraph, the paragraph given back by the panel's unpaint, and a Raw-made range at or on the formula highlights it", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openFile(browser, filesBundle(), DIR + "report.md", { width: 900, height: 900 });
     const src = OBSIDIAN;
@@ -390,7 +427,21 @@ test("a comment across an inline formula over the real Files bundle is ONE highl
     assert.equal(r.across.katexInMark, true, "the .katex root's closest .fc-hl is the mark");
     assert.ok(m.box.left <= r.across.katexBox.left && m.box.right >= r.across.katexBox.right, "the mark's box spans the formula: " + JSON.stringify([m.box, r.across.katexBox]));
     assert.ok(Math.abs(r.across.katexBox.width - r.across.katexBefore.width) <= 1, "KaTeX's layout is unchanged under the mark: " + JSON.stringify([r.across.katexBefore, r.across.katexBox]));
-    assert.notEqual(m.bg, "rgba(0, 0, 0, 0)", "the wash is painted: " + m.bg); assert.notEqual(m.shadow, "none", "the ring is painted");
+    // the dress (the review's round 3): the panel's marks inside .fileview-md wear their own single-class rules, computed wash,
+    // padding, corner radius and ring, as the same elements do outside any markdown surface, and the comment wash is not the
+    // ==mark== construct's beside it. Before the fix the construct rule `.fileview-md mark` outranked .fc-hl, .fc-presel and .fc-ins
+    // (a type and a class against a class), so the highlight here was the 35% amber wash with the construct's em padding and 2px
+    // corners, identical to the fixture's `==marked text==`; the assertion that stood here read only that some wash was painted
+    assert.ok(r.dress.construct, "the fixture's ==marked text== rendered as a mark in the viewer");
+    assert.notEqual(r.dress.construct!.bg, "rgba(0, 0, 0, 0)", "the construct's wash is painted: " + JSON.stringify(r.dress.construct));
+    assert.notEqual(r.dress.ref["fc-hl"]!.bg, "rgba(0, 0, 0, 0)", "the highlight's own rule paints a wash: " + JSON.stringify(r.dress.ref["fc-hl"]));
+    assert.notEqual(r.dress.ref["fc-hl"]!.shadow, "none", "the highlight's own rule paints the ring");
+    for (const cls of ["fc-hl", "fc-presel", "fc-ins", "fc-del"] as const) {
+      assert.ok(r.dress.viewer[cls], cls + " was painted in the viewer");
+      assert.deepEqual(r.dress.viewer[cls], r.dress.ref[cls], cls + " inside .fileview-md wears its own dress, as outside any markdown surface (viewer, reference): " + JSON.stringify([r.dress.viewer[cls], r.dress.ref[cls]]));
+    }
+    for (const cls of ["fc-hl", "fc-presel", "fc-ins"] as const) assert.notEqual(r.dress.viewer[cls]!.bg, r.dress.construct!.bg, cls + "'s wash is not the ==mark== construct's: " + r.dress.construct!.bg);
+    assert.deepEqual([r.changes.ins.shape, r.changes.del.shape.length, r.changes.after], [["MARK.fc-ins"], 2, ["#text(Para after callout.)"]], "the insertion's tint over the plain paragraph, the deletion's point beside its text, and the paragraph given back: " + JSON.stringify(r.changes));
     assert.deepEqual(r.across.mappedPainted.range, r.mapped.range, "the map over the painted paragraph reads the same range: " + JSON.stringify(r.across.mappedPainted));
     assert.deepEqual(r.after.paragraph, ["#text(Inline )", "SPAN.katex", "#text( math and display:)"], "unpainted: the paragraph as rendered");
     assert.deepEqual(r.after.mapped.range, r.mapped.range, JSON.stringify(r.after.mapped));

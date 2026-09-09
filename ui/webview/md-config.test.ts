@@ -10,7 +10,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked, Lexer } from "marked";
-import { applyMdConfig, mdExtensions, resolveWikilink, calloutTitle, WIKILINK_DEAD_TITLE, FRONT_MATTER_LABEL, FOOTNOTE_ORPHAN_TITLE } from "./md-config";
+import { applyMdConfig, mdExtensions, resolveWikilink, calloutTitle, isYamlMapping, callout, WIKILINK_DEAD_TITLE, FRONT_MATTER_LABEL, FOOTNOTE_ORPHAN_TITLE, MARK_CLASS } from "./md-config";
 import { userMdHtml } from "./chat-md";
 
 const UI = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -83,8 +83,8 @@ test("callouts: GitHub's alerts and Obsidian's titled types render as one blockq
   assert.match(html("- item\n  > [!note]\n  > nested\n"), /<li>item\n?<blockquote class="md-callout md-callout-note">/, "inside a list item too, as any block (a tight list puts no newline before it)");
 });
 
-test("==mark== renders <mark> with inline content; the opener must touch its content, so a comparison in prose stays literal", () => {
-  assert.equal(html("a ==b **c**== d"), "<p>a <mark>b <strong>c</strong></mark> d</p>\n");
+test("==mark== renders <mark class=\"md-mark\"> with inline content; the opener must touch its content, so a comparison in prose stays literal", () => {
+  assert.equal(html("a ==b **c**== d"), "<p>a <mark class=\"md-mark\">b <strong>c</strong></mark> d</p>\n");
   assert.equal(html("x == y == z"), "<p>x == y == z</p>\n");
   assert.equal(html("`a ==b== c`"), "<p><code>a ==b== c</code></p>\n", "a code span is left alone");
 });
@@ -118,7 +118,7 @@ test("math: the placeholders KaTeX fills after the sanitize are the singleton's 
 
 test("the fixture renders every construct's element, once each, in order; the user-text instance renders each single-line snippet identically", () => {
   const out = html(FIXTURE);
-  const order = ['<details class="md-frontmatter">', "<h1>Heading One</h1>", '<sup class="md-fnref">', "<mark>marked text</mark>", "<del>struck</del>", "~single~",
+  const order = ['<details class="md-frontmatter">', "<h1>Heading One</h1>", '<sup class="md-fnref">', "<mark class=\"md-mark\">marked text</mark>", "<del>struck</del>", "~single~",
     '<div class="md-footnote" id="fn-1">', "<p>Para after footnote def.</p>", '<div class="md-footnote" id="fn-2">', '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Title</p>',
     '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note</p>', '<details class="md-callout md-callout-tip"><summary class="md-callout-title">Folded tip</summary>',
     '<span class="fv-wikilink fv-dead"', '<span class="md-math-inline">x^2</span>', '<div class="md-math-display">\\sum_i i</div>', "<h2>Heading Two</h2>", "<p>Last para.</p>"];
@@ -199,10 +199,10 @@ test("==mark== never opens inside a word or beside another =, so touching compar
   assert.equal(html("It returns true when a==b and false when c==d."), "<p>It returns true when a==b and false when c==d.</p>\n");
   assert.equal(html("Use a===b for identity and c===d for the other case."), "<p>Use a===b for identity and c===d for the other case.</p>\n");
   assert.equal(html("## Compare a==b vs c==d"), "<h2>Compare a==b vs c==d</h2>\n");
-  assert.equal(html("Set flag==true, then ==read== it."), "<p>Set flag==true, then <mark>read</mark> it.</p>\n");
-  assert.equal(html("This is ==important== text."), "<p>This is <mark>important</mark> text.</p>\n");
-  assert.equal(html("(==x==) and ==y==\n\n==z== at the start"), "<p>(<mark>x</mark>) and <mark>y</mark></p>\n<p><mark>z</mark> at the start</p>\n");
-  assert.equal(html("**bold ==in== bold**"), "<p><strong>bold <mark>in</mark> bold</strong></p>\n");
+  assert.equal(html("Set flag==true, then ==read== it."), "<p>Set flag==true, then <mark class=\"md-mark\">read</mark> it.</p>\n");
+  assert.equal(html("This is ==important== text."), "<p>This is <mark class=\"md-mark\">important</mark> text.</p>\n");
+  assert.equal(html("(==x==) and ==y==\n\n==z== at the start"), "<p>(<mark class=\"md-mark\">x</mark>) and <mark class=\"md-mark\">y</mark></p>\n<p><mark class=\"md-mark\">z</mark> at the start</p>\n");
+  assert.equal(html("**bold ==in== bold**"), "<p><strong>bold <mark class=\"md-mark\">in</mark> bold</strong></p>\n");
   assert.equal(userMdHtml("a==b and c==d"), "<p>a==b and c==d</p>\n");
 });
 
@@ -230,10 +230,10 @@ test("==mark== refuses an opener after a closing bracket, a quote or an undersco
     assert.equal(userMdHtml(s), html(s), "the user's bubble agrees: " + s);
   }
   assert.equal(html("## Check len(a)==0 or len(b)==0"), "<h2>Check len(a)==0 or len(b)==0</h2>\n");
-  assert.equal(html("(==x==) and [==y==] ==z==."), "<p>(<mark>x</mark>) and [<mark>y</mark>] <mark>z</mark>.</p>\n", "an opening bracket before the opener, punctuation after the closer");
-  assert.equal(html("これは==重要==です"), "<p>これは<mark>重要</mark>です</p>\n", "CJK prose puts no space around a highlight: neither guard is a letter rule");
+  assert.equal(html("(==x==) and [==y==] ==z==."), "<p>(<mark class=\"md-mark\">x</mark>) and [<mark class=\"md-mark\">y</mark>] <mark class=\"md-mark\">z</mark>.</p>\n", "an opening bracket before the opener, punctuation after the closer");
+  assert.equal(html("これは==重要==です"), "<p>これは<mark class=\"md-mark\">重要</mark>です</p>\n", "CJK prose puts no space around a highlight: neither guard is a letter rule");
   assert.equal(html("==high==lighted"), "<p>==high==lighted</p>\n", "a closer touching a word is a comparison's, not a highlight's");
-  assert.equal(html("a ==b==c== d"), "<p>a <mark>b==c</mark> d</p>\n", "the closer is the first `==` that touches no word");
+  assert.equal(html("a ==b==c== d"), "<p>a ==b==c== d</p>\n", "the first `==` after the opener is the closer, and this one touches a word: literal, never a highlight run on to the next `==` (round 3, below)");
 });
 
 test("a CommonMark link whose text is bracketed, `[[docs]](url)`, is marked's link in every kind, not a wikilink followed by a stray URL; a wikilink followed by anything marked's link rule refuses stays a wikilink", () => {
@@ -275,6 +275,126 @@ test("a footnote definition ends where the lexer's own paragraph would: a displa
   assert.deepEqual(Lexer.lex(rejected).map((t) => t.type), ["paragraph", "space", "footnoteDef", "paragraph"], "a line the block tokenizer refuses is a continuation line, as in a paragraph");
   assert.match(html(rejected), /text\n<span class="md-math-display">x<\/span> is inline here\.<\/div>/);
   assert.equal(Lexer.lex(rejected).map((t) => t.raw).join(""), rejected);
+});
+
+// ── the 2026-09-09 review of Slice 4, round 3: the grammar's edges, continued ─────────────────────
+const MARK = `<mark class="${MARK_CLASS}">`;
+test("the ==mark== element carries the class the sheets key on, so the viewer's rule names the ==mark== alone and the comment and change marks (mark.fc-hl, .fc-presel, .fc-ins, .fc-del) keep their own dress", () => {
+  assert.equal(MARK_CLASS, "md-mark");
+  assert.equal(html("a ==b== c"), `<p>a ${MARK}b</mark> c</p>\n`);
+  assert.equal(userMdHtml("a ==b== c"), html("a ==b== c"));
+  assert.equal((Lexer.lex("a ==b== c")[0] as { tokens: Array<{ type: string }> }).tokens[1].type, "mark", "the token is unchanged: the anchor map maps it by its delimiters as before");
+});
+
+test("front matter: a bare key may begin with a letter or digit of any script, as YAML allows and as Obsidian writes property names in the vault's language; what is not a mapping still lexes as blocks", () => {
+  for (const body of ["Über: x", "日本語: x", "title: x\nÜber: y", "étiquettes: [a, b]", "Заголовок: x", "título: x", "١: one"]) {
+    const src = "---\n" + body + "\n---\n\nProse\n";
+    assert.equal(html(src), `<details class="md-frontmatter"><summary class="md-frontmatter-head">Front matter</summary><pre>${body}</pre></details><p>Prose</p>\n`, body + ": folded (round 1's key check took an ASCII letter, digit or underscore alone, so this rendered as an hr and a setext heading of the keys, the slice's original defect)");
+    assert.deepEqual(Lexer.lex(src).map((t) => t.type), ["frontMatter", "paragraph"], body + ": the anchor map's lexer folds it too");
+    assert.ok(isYamlMapping(body), body);
+    assert.equal(userMdHtml(src), html(src), body + ": the user's bubble agrees");
+  }
+  // the negatives round 1 pinned hold: a line that opens with a YAML indicator, markup or punctuation is no key
+  for (const body of ["* item: x", "> quote: x", "+ item: x", "<div>: x", "$$: x", ": x", "@k: x", "%k: x", "- one\n- two", "Just a sentence.", "[link](x)"]) {
+    assert.doesNotMatch(html("---\n" + body + "\n---\n"), /md-frontmatter/, body);
+    assert.equal(isYamlMapping(body), false, body);
+  }
+  assert.equal(html("---\n\nÜber: x\n---\n"), "<hr>\n<h2>Über: x</h2>\n", "pandoc's rule stands: a blank line right after the opener makes it a rule");
+});
+
+test("==mark== holds no `==`: the first `==` after the opener is the closer, and a closer that touches a word makes the text literal instead of running the highlight on to a later `==`", () => {
+  const cases: Array<[string, string, string]> = [
+    ["==high==lighted and ==more== end", `<p>==high==lighted and ${MARK}more</mark> end</p>\n`, "a refused closer never extends to the next highlight (round 2 rendered one mark from `high` to `more`, eating the second opener)"],
+    ["x ==a==b ==c== d", `<p>x ==a==b ${MARK}c</mark> d</p>\n`, "the same with an operator between"],
+    ["if x ==0 or y ==1 then ==done==", `<p>if x ==0 or y ==1 then ${MARK}done</mark></p>\n`, "two comparisons and a highlight: the operators stay operators"],
+    ["Set a ==b and c ==d then ==read== it.", `<p>Set a ==b and c ==d then ${MARK}read</mark> it.</p>\n`, "the shape the rule's guards exist for: two comparisons never pair into one highlight"],
+    ["a ==b==c== d", "<p>a ==b==c== d</p>\n", "round 2's pin, re-aimed: the closer touches a word, so the text is literal"],
+    ["==a == b==", "<p>==a == b==</p>\n", "a spaced equality inside a highlight is not a highlight: a highlight holds no `==`, the operator reading winning as everywhere in this rule"],
+    ["==a ==b==", `<p>==a ${MARK}b</mark></p>\n`, "an opener-shaped `==` inside is a `==` too: the first candidate is literal, the second a highlight"],
+    ["==a=b== and ==x=y=z==", `<p>${MARK}a=b</mark> and ${MARK}x=y=z</mark></p>\n`, "a single `=` inside is text"],
+    ["==b **c**== d", `<p>${MARK}b <strong>c</strong></mark> d</p>\n`, "inline content inside"],
+    ["==重要==です and ==x==) then", `<p>${MARK}重要</mark>です and ${MARK}x</mark>) then</p>\n`, "CJK after the closer and punctuation after it are not words"],
+    ["==high==lighted", "<p>==high==lighted</p>\n", "round 2's recorded consequence holds"],
+  ];
+  for (const [src, want, why] of cases) {
+    assert.equal(html(src), want, why + ": " + src);
+    assert.equal(userMdHtml(src), want, "the user's bubble agrees: " + src);
+  }
+  const toks = (Lexer.lex("==high==lighted and ==more== end")[0] as { tokens: Array<{ type: string; raw: string }> }).tokens;
+  assert.deepEqual(toks.map((t) => [t.type, t.raw]), [["text", "==high==lighted and "], ["mark", "==more=="], ["text", " end"]], "the anchor map's lexer sees one mark, its raw the delimiters and the text between, and the raws tile the paragraph");
+});
+
+test("a lazy underline right under a callout's marker line is the body's first line: a paragraph's text, never indented code or a heading; the setext guard holds from the body's second line on", () => {
+  const head = '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">';
+  for (const u of ["===", "--", "="]) {
+    const src = `> [!note] Title\n${u}\n\nAfter.\n`;
+    assert.equal(html(src), `${head}Title</p><p>${u}</p>\n</blockquote><p>After.</p>\n`, u + ": round 2 guarded it with four spaces as marked's blockquote does, but the blockquote keeps its first line, so there the guarded line is a paragraph's continuation; the callout takes the marker line as the title and the guard alone made the body indented code");
+    assert.equal(userMdHtml(src), html(src), u + ": the user's bubble agrees");
+    assert.equal(html(`> [!note]\n${u}\n`), `${head}Note</p><p>${u}</p>\n</blockquote>`, u + " with no title");
+  }
+  assert.doesNotMatch(html("> [!note]\n-\n"), /<pre>|<h\d>/, "a lone `-` is a body of `-`, which marked lexes as it lexes that line at any body's start (an empty list item), never code");
+  assert.equal(html("> [!tip]- Folded\n===\n"), '<details class="md-callout md-callout-tip"><summary class="md-callout-title">Folded</summary><p>===</p>\n</details>', "a folded callout");
+  assert.match(html("- > [!note]\n  ===\n"), /<li><blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note<\/p><p>===<\/p>/, "inside a list item");
+  assert.match(html("> > [!note]\n> ===\n"), /<blockquote>\n<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note<\/p><p>===<\/p>/, "inside a quote");
+  assert.equal(html("> [!note]\n===\n--\n"), `${head}Note</p><p>===\n    --</p>\n</blockquote>`, "the body's second lazy line takes the guard: without it the first would be its setext heading");
+  assert.equal(html("> [!note] T\n> body\n===\n"), `${head}T</p><p>body\n    ===</p>\n</blockquote>`, "round 2's shape is unchanged: a body line before the underline");
+  assert.match(html("> [!note]\n> text\n> ===\n"), /<h1>text<\/h1>/, "a prefixed underline is the quote's own setext heading, as before");
+  // the anchor map's suffix view: line i of the text is a suffix of raw line i (no four spaces the source does not hold)
+  const tok = Lexer.lex("> [!note] Title\n===\n\nAfter.\n")[0] as { type: string; raw: string; text: string };
+  assert.equal(tok.type, "callout");
+  assert.equal(tok.text.split("\n")[1], "===");
+  tok.text.split("\n").forEach((line, i) => assert.ok(tok.raw.split("\n")[i].endsWith(line), "line " + i + " of the text is a suffix of the raw line: " + JSON.stringify(line)));
+});
+
+test("a callout's marker line takes marked's own marker spelling: `>`, an optional space or tab, then up to three spaces of indentation, as GitHub reads an alert; a tab or a fourth space past that is indented code inside the quote", () => {
+  const want = '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">T</p><p>body</p>\n</blockquote>';
+  for (const src of [">\t[!note] T\n>\tbody\n", ">  [!note] T\n> body\n", ">   [!note] T\n> body\n", ">    [!note] T\n> body\n", ">[!note] T\n> body\n", "> [!note] T\n> body\n"]) {
+    assert.equal(html(src), want, JSON.stringify(src) + " (round 2 let the body's marker take a tab, the recognition a space alone, so a note typed with tabs rendered a plain quote reading `[!note] T`)");
+    assert.equal(userMdHtml(src), html(src), "the user's bubble agrees: " + JSON.stringify(src));
+    const tok = Lexer.lex(src)[0] as { type: string; raw: string; text: string };
+    assert.equal(tok.type, "callout", JSON.stringify(src));
+    tok.text.split("\n").forEach((line, i) => assert.ok(tok.raw.split("\n")[i].endsWith(line), JSON.stringify(src) + ": line " + i + " of the text is a suffix of the raw line, the shape the anchor map reads"));
+  }
+  assert.equal(html(">\t[!NOTE]\n>\tThe body.\n"), '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Note</p><p>The body.</p>\n</blockquote>', "GitHub's alert, typed with tabs");
+  assert.equal(html("text\n>\t[!note] b\n> body"), '<p>text</p>\n<blockquote class="md-callout md-callout-note"><p class="md-callout-title">b</p><p>body</p>\n</blockquote>', "interrupts a paragraph as the space-marked one does");
+  for (const src of [">\t\t[!note] T\n", "> \t[!note] T\n", ">     [!note] T\n"]) assert.doesNotMatch(html(src), /md-callout/, JSON.stringify(src) + ": four columns of indentation after the marker is indented code, as marked reads it");
+});
+
+test("a callout has no start hint: its line is a blockquote, a built-in paragraph interrupt, so a hint could change nothing but marked's clip flag, which joined a paragraph and its interrupt-rejected successor into one <p> whenever a `> [!` stood anywhere later", () => {
+  assert.equal((callout as { start?: unknown }).start, undefined, "no hint: marked sets lastParagraphClipped for a hit anywhere in the remaining source and then joins the next paragraph onto the last with a newline the source does not hold");
+  const tail = '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">later</p></blockquote>';
+  const a = "Intro line\nColumn A\n|---|---|\n\nAfter.\n\n> [!note] later";
+  assert.equal(html(a), "<p>Intro line</p>\n<p>Column A\n|---|---|</p>\n<p>After.</p>\n" + tail, "a table header line over a delimiter row of another width: the table interrupt cuts the paragraph, the table tokenizer declines, and the two paragraphs are two, as on the base");
+  assert.equal(userMdHtml(a), "<p>Intro line</p>\n<p>Column A<br>|---|---|</p>\n<p>After.</p>\n" + tail, "the user's bubble too");
+  assert.equal(html("Para\n| a | b |\n|---|\n\nAfter\n\n> [!note] T"), '<p>Para</p>\n<p>| a | b |\n|---|</p>\n<p>After</p>\n<blockquote class="md-callout md-callout-note"><p class="md-callout-title">T</p></blockquote>');
+  const far = "Intro line\nColumn A\n|---|---|\n\nAfter.\n\nMore.\n\nStill more.\n\n> [!tip] far";
+  assert.equal(html(far), '<p>Intro line</p>\n<p>Column A\n|---|---|</p>\n<p>After.</p>\n<p>More.</p>\n<p>Still more.</p>\n<blockquote class="md-callout md-callout-tip"><p class="md-callout-title">far</p></blockquote>', "a callout several paragraphs later");
+  for (const src of [a, far]) {
+    const toks = Lexer.lex(src);
+    assert.equal(toks.map((t) => t.raw).join(""), src, "the raws tile the source (a joined paragraph carried a doubled newline, and the anchor map lost every block after it)");
+    assert.deepEqual(toks.filter((t) => t.type !== "space").map((t) => t.type).slice(0, 2), ["paragraph", "paragraph"]);
+  }
+  assert.equal(html("text\n> [!note] b\n> body"), '<p>text</p>\n<blockquote class="md-callout md-callout-note"><p class="md-callout-title">b</p><p>body</p>\n</blockquote>', "the callout still interrupts a paragraph at a line start, through the paragraph rule's own blockquote interrupt");
+  // every four-line note of the shapes: the raws tile the source
+  const lines = ["Intro line", "Column A", "|---|---|", "| a | b |", "|---|", "", "> [!note] T", "> body", "> quote", "- item", "# H", "After."];
+  let n = 0;
+  for (const a1 of lines) for (const b of lines) for (const c of lines) for (const d of lines) {
+    const src = [a1, b, c, d].join("\n") + "\n";
+    const toks = Lexer.lex(src);
+    assert.equal(toks.map((t) => t.raw).join(""), src, "the raws tile " + JSON.stringify(src));
+    n++;
+  }
+  assert.equal(n, lines.length ** 4);
+});
+
+test("a wikilink names a file or a section: `[[ ]]`, `[[#]]`, `![[ ]]`, `[[a/]]` and `[[ | ]]` name neither and stay literal, as `[[]]` does, in a file document and in a reply", () => {
+  for (const s of ["[[ ]]", "[[#]]", "![[ ]]", "[[a/]]", "![[a/]]", "[[ | ]]", "[[ #]]", "[[  #  ]]", "[[/]]", "[[a/#Sec]]", "[[]]"]) {
+    assert.equal(fileHtml("x " + s + " y"), "<p>x " + s + " y</p>\n", s + " in a file document (it rendered <a href=\"\">, which the link pass dressed as an external link that opened the page itself, or a path link to a `.md` with no name)");
+    assert.equal(html("x " + s + " y"), "<p>x " + s + " y</p>\n", s + " in a reply");
+    assert.deepEqual((Lexer.lex("x " + s + " y")[0] as { tokens: Array<{ type: string }> }).tokens.map((t) => t.type), ["text"], s + ": no token for the anchor map either");
+  }
+  assert.equal(fileHtml("[[#Heading]] [[Note#]] [[a/b]] [[ Note ]] ![[a/img.png]]"), '<p><a href="#Heading">#Heading</a> <a href="Note.md">Note#</a> <a href="a/b.md">a/b</a> <a href="Note.md"> Note </a> <img src="a/img.png" alt="a/img.png"></p>\n',
+    "a section link, a target with an empty fragment, a path, a padded title and a path embed still resolve");
 });
 
 test("source: who applies the one configuration, and what it holds", () => {

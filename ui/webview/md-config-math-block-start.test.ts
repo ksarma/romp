@@ -118,16 +118,19 @@ test("a note of candidate lines the tokenizer rejects lexes in the time of plain
   // What this bounds: the hint's own cost per call. A first cut of nextBlockMath ran the block tokenizer at every
   // candidate, each run scanning to the end of the note, and lexed 1,500 paragraphs whose second line opens with `$$`
   // and never closes in 13 s (round 1 of the Slice 4 review; it never shipped). The one-pass hint lexes the same note in
-  // about three times the time of plain prose, and one call over a whole note of 8,000 such paragraphs costs under a
-  // millisecond where the first cut cost hundreds. What it does NOT bound: marked calls every block start hint once per
-  // top-level paragraph on the source that remains (marked.esm.js, the paragraph branch of blockTokens), so the whole
-  // lex grows as the square of the paragraph count with any hint that scans the remainder, this one included: 8,000
-  // paragraphs lexed in 1.1 s plain and 3.7 s on this note against 21 ms with no hints (measured 2026-09-09). A hint
-  // that is linear over the whole lex needs a memo that survives across calls; until one lands, this test says nothing
-  // about it. The hint that shipped before round 1, a bare regex match, was faster than this one and wrong (tests 1 to
-  // 3 fail on it); this test does not tell those two apart and is not meant to. Each timing is the smallest of three
-  // runs, so one stall cannot fail a correct build; the bounds leave room for a loaded machine and are not benchmarks:
-  // the first cut was two orders of magnitude over both.
+  // the time of plain prose, and one call over a whole note of 8,000 such paragraphs costs a fraction of a millisecond
+  // (0.2 ms, measured 2026-09-09 at round 3) where the first cut scanned to the end of the note at each of the 8,000
+  // candidates. The second leg calls the hint with no lexer, so no frame and no memo: the finder alone, one scan. What
+  // it does NOT bound is the count of calls: marked calls every block start hint once per top-level paragraph on the
+  // source that remains (marked.esm.js, the paragraph branch of blockTokens), so with round 1's hint the whole lex grew
+  // as the square of the paragraph count: 8,000 paragraphs in 1.1 s plain and 3.7 s on this note against 21 ms with no
+  // hints. md-block-start.ts (round 2) memoises each hint's answer per lexer frame, so every later paragraph is answered
+  // from the first scan and the lex is linear: 8,000 paragraphs 38 ms plain, 53 ms on this note, 20 ms with no hints;
+  // md-config-block-start-memo.test.ts holds the linearity, this test the per-call cost. The hint that shipped before
+  // round 1, a bare regex match, was faster than this one and wrong: tests 1 to 5 fail on it, and so does the second
+  // leg here, which it answers with a line the tokenizer rejects. Each timing is the smallest of three runs, so one
+  // stall cannot fail a correct build; the bounds leave room for a loaded machine and are not benchmarks: the first cut
+  // was two orders of magnitude over prose.
   const fastest = (f: () => number): { ms: number; got: number } => {
     let got = 0; const runs: number[] = [];
     for (let i = 0; i < 3; i++) { const t0 = process.hrtime.bigint(); got = f(); runs.push(Number(process.hrtime.bigint() - t0) / 1e6); }

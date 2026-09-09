@@ -22,7 +22,6 @@
 import { marked, type MarkedExtension, type Token, type Tokens, type TokenizerAndRendererExtension } from "marked";
 import { mathBlock, mathInline, renderMathPlaceholders } from "./math";
 import { registerMdPostPass } from "./md-sanitize";
-import { memoBlockStart } from "./md-block-start";
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────────
 function escapeHtml(s: string): string {
@@ -94,13 +93,17 @@ export const delDoubleTilde = {
 // line, a `- ` item under a key, a `#` comment or blank, and an indented line belongs to the key above. Prose, a list or
 // a fence between two rules fails that and lexes as it always did; YAML as Obsidian, Jekyll and Hugo write it (comments,
 // nested values, a sequence under a key, a blank line between keys, a quoted key) passes. Not a YAML parser: a prose line
-// with a colon ("See: the notes") reads as a key, and GitHub, which does parse the block, folds that too.
+// with a colon ("See: the notes") reads as a key, and GitHub, which does parse the block, folds that too. A bare key begins
+// with a letter or digit of any script, or an underscore (round 3 of the review: the first cut took ASCII alone, so a vault
+// whose property names are in its own language, `Über:`, `日本語:`, rendered the original defect again, an hr and a setext
+// heading of the keys); a line opening with anything else, YAML's indicators (`-`, `*`, `>`, `$`, `:`) or markup among
+// them, is no key.
 export const FRONT_MATTER_CLASS = "md-frontmatter";
 export const FRONT_MATTER_HEAD_CLASS = "md-frontmatter-head";
 export const FRONT_MATTER_LABEL = "Front matter";
 export type FrontMatterToken = Tokens.Generic & { text: string };
 const FRONT_MATTER_RE = /^---[ \t]*\n(?:([\s\S]*?)\n)?---[ \t]*(?:\n+|$)/;
-const YAML_KEY_RE = /^(?:"[^"\n]*"|'[^'\n]*'|[A-Za-z0-9_][^:\n]*?)[ \t]*:(?:[ \t]|$)/;
+const YAML_KEY_RE = /^(?:"[^"\n]*"|'[^'\n]*'|[\p{L}\p{N}_][^:\n]*?)[ \t]*:(?:[ \t]|$)/u;
 /** Whether `body` reads as a YAML block mapping, the shape front matter takes (the section comment above). */
 export function isYamlMapping(body: string): boolean {
   let underKey = false;
@@ -239,41 +242,37 @@ export const footnoteDef: TokenizerAndRendererExtension = {
 // continuation lines with no `>`, to a blank line or another block, so a callout ends exactly where the quote it
 // displaces would have (the 2026-09-09 review: a regex that took `>` lines alone cut a wrapped alert at its first
 // unprefixed line and rendered the rest as a paragraph outside the tinted block, where GitHub keeps it inside). The
-// body is de-prefixed and lexed as blocks the way marked's blockquote lexes its own, its two preparations included: a
-// lazy `===` or `--` line is prefixed with four spaces first, so it is a paragraph's text and not a setext underline
-// (a `>`-prefixed one stays the quote's own heading; a `---` line is an hr, which ends the quote before it), and the
-// marker's optional space may be a tab (the 2026-09-09 review, round 2: `>\tbody` kept its tab, which the nested lex
-// expanded into indented code, and a lazy `===` made the line before it an h1 inside the callout, where the blockquote
-// kept both as text). The start hint looks for a marker after a newline only: marked calls it on `src.slice(1)`, so a
-// `^` alternative fired one character into a paragraph and cut `a> [!note] b` into a one-letter paragraph and a
-// callout (the same review). Its answer is remembered per lexer frame (md-block-start.ts memoBlockStart): marked calls
-// every block hint before EVERY paragraph on the whole remaining source, so a hint that scans the rest of the note
-// makes the lex quadratic in the paragraph count (round 2 of the review: 8,000 one-line paragraphs, 320 ms from this
-// hint alone once the math hint was memoised, 36 ms with the memo; md-config-block-start-memo.test.ts holds the
-// singleton's lex linear). Rendered as a <blockquote> so the sheets'
-// blockquote rules and the anchor map's BLOCKQUOTE tag hold; the type rides in a class (`md-callout-note`), never
-// a data attribute, since the sanitizer drops every data-* attribute (ALLOW_DATA_ATTR: false, for the reason in
+// marker line is spelled as marked spells a quote's: `>`, an optional space or tab, then up to three spaces of
+// indentation before `[!` (a tab or a fourth space past that is indented code inside the quote), which is how GitHub
+// reads an alert typed with tabs or two spaces (round 3 of the review: the recognition took one space alone, so
+// `>\t[!NOTE]` rendered a plain quote reading `[!NOTE]`). The body is de-prefixed and lexed as blocks the way marked's
+// blockquote lexes its own, its two preparations included: the marker's optional space may be a tab (round 2 of the
+// review: `>\tbody` kept its tab, which the nested lex expanded into indented code), and a lazy `===` or `--` line is
+// prefixed with four spaces first, so it is a paragraph's text and not a setext underline of the body line before it
+// (round 2: a lazy `===` made the line before it an h1 inside the callout, where the blockquote kept both as text; a
+// `>`-prefixed one stays the quote's own heading; a `---` line is an hr, which ends the quote before it). The guard
+// skips the body's FIRST line: marked's blockquote keeps its first line, so there a guarded line continues that
+// paragraph, but the callout takes the marker line as the title, and a lazy underline right under it has no paragraph
+// before it to underline; guarded, it was the body's whole first block, four spaces in, which is indented code (round
+// 3: `> [!note] Title` over `===` rendered a code block reading `===`). No start hint: the marker line begins with
+// `>`, a paragraph interrupt marked's own paragraph rule knows, so the paragraph before a callout already ends at its
+// line and a hint could shorten nothing (round 1's hint fired after a newline only, since marked calls a hint on
+// `src.slice(1)`; round 2 memoised its answer per frame, md-block-start.ts). What a hint did do (round 3) was set
+// marked's `lastParagraphClipped` for a hit ANYWHERE in the remaining source, and that flag joins the next paragraph
+// onto the last one, with a newline the source does not hold, whenever a built-in interrupt cut a paragraph and its
+// tokenizer then declined (a table header line over a delimiter row of another width): two paragraphs rendered as one
+// <p> in a reply, and their joined raw no longer tiled the source for the anchor map. The math hint stays: `$$` is no
+// built-in interrupt, so a paragraph would run over a display formula without it. Rendered as a <blockquote> so the
+// sheets' blockquote rules and the anchor map's BLOCKQUOTE tag hold; the type rides in a class (`md-callout-note`),
+// never a data attribute, since the sanitizer drops every data-* attribute (ALLOW_DATA_ATTR: false, for the reason in
 // md-sanitize.ts). The title is the author's, or the type with its first letter capitalised, as plain text.
 export const CALLOUT_CLASS = "md-callout";
 export const CALLOUT_TITLE_CLASS = "md-callout-title";
 export type CalloutToken = Tokens.Generic & { kind: string; fold: "" | "+" | "-"; title: string; text: string; tokens: Token[] };
-const CALLOUT_HEAD_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+([^\n]*?))?[ \t]*$/;
+const CALLOUT_HEAD_RE = /^ {0,3}>[ \t]? {0,3}\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+([^\n]*?))?[ \t]*$/;
+const CALLOUT_GATE_RE = /^ {0,3}>[ \t]? {0,3}\[!/;   // the head's opening: the tokenizer's cheap first test
 const QUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/gm;
 const SETEXT_GUARD_RE = /\n {0,3}((?:=+|-+) *)(?=\n|$)/g;   // marked's blockquote: "precede setext continuation with 4 spaces so it isn't a setext"
-const CALLOUT_MARK_TAIL = /\n {0,3}> ?\[!$/;   // the start hint's shape, anchored at the end of the slice nextCallout hands it
-/** Where the next callout marker begins: the index of the "\n" before a line that opens `> [!` after up to three spaces,
- *  or -1. The same answer as `/\n {0,3}> ?\[!/.exec(src)` gives (md-config-block-start-memo.test.ts holds the two equal),
- *  read by hopping over each `[!` with indexOf and reading its line's prefix back (at most six characters: the newline,
- *  three spaces, `>` and a space), since most paragraphs are followed by no `[!` at all and indexOf is the cheapest scan
- *  there is. Judged from the text at and after the answer alone, which is what memoBlockStart asks of a finder. */
-function nextCallout(src: string): number {
-  for (let i = src.indexOf("[!"); i >= 0; i = src.indexOf("[!", i + 2)) {
-    const from = i > 6 ? i - 6 : 0;
-    const m = CALLOUT_MARK_TAIL.exec(src.slice(from, i + 2));
-    if (m) return from + m.index;
-  }
-  return -1;
-}
 /** The title a callout shows: the author's, else its type capitalised (`note` reads "Note", `CAUTION` "Caution"). */
 export function calloutTitle(t: { kind: string; title: string }): string {
   if (t.title) return t.title;
@@ -284,16 +283,19 @@ export const callout: TokenizerAndRendererExtension = {
   name: "callout",
   level: "block",
   childTokens: ["tokens"],
-  start: memoBlockStart(nextCallout),
   tokenizer(this: LexerThis, src: string) {
-    if (!/^ {0,3}> ?\[!/.test(src)) return undefined;
+    if (!CALLOUT_GATE_RE.test(src)) return undefined;
     const q = blockRules(this.lexer).blockquote.exec(src);
     if (!q) return undefined;
     const raw = q[0];
     const nl = raw.indexOf("\n");
     const m = CALLOUT_HEAD_RE.exec(nl < 0 ? raw : raw.slice(0, nl));
     if (!m) return undefined;
-    const text = raw.replace(SETEXT_GUARD_RE, "\n    $1").replace(QUOTE_PREFIX_RE, "");   // the first line is never a lazy one, so line i of text is line i of raw de-prefixed
+    // the setext guard from the body's SECOND line on (the section comment): the marker line is never lazy, and the body's
+    // first line has no paragraph line before it to underline. Line i of text is line i of raw de-prefixed.
+    const nl2 = nl < 0 ? -1 : raw.indexOf("\n", nl + 1);
+    const guarded = nl2 < 0 ? raw : raw.slice(0, nl2) + raw.slice(nl2).replace(SETEXT_GUARD_RE, "\n    $1");
+    const text = guarded.replace(QUOTE_PREFIX_RE, "");
     const tnl = text.indexOf("\n");
     const body = tnl < 0 ? "" : text.slice(tnl + 1);
     const top = this.lexer.state.top;
@@ -326,9 +328,18 @@ export const callout: TokenizerAndRendererExtension = {
 // digits, so `len(a)==0 or len(b)==0`, `x[i]==y[j] and a[0]==b[0]`, `'a'==b and 'c'==d` and `f()==1 and g()==2` still
 // paired). The closer's guard makes a highlight that runs into a word, `==high==lighted`, literal; a comparison is the
 // far commoner shape in a reply. ASCII on purpose, both guards: CJK prose puts no space around a highlight, and a
-// letter rule there would refuse it.
+// letter rule there would refuse it. And the content holds no `==` (round 3 of the review): the first `==` after the
+// opener is the closer, and when that one touches a word the text is literal up to it and the lexer moves on, where
+// the lazy match ran on to the next `==` that touched no word, so `==high==lighted and ==more== end` rendered one
+// highlight from `high` to `more`, eating the second opener, and `if x ==0 or y ==1 then ==done==` one from `0` to
+// `done`, the operators inside it. A spaced equality inside a highlight, `==a == b==`, is literal for the same reason,
+// the operator reading winning as everywhere in this rule. The element carries a class, `md-mark`, so the sheets'
+// rule names the highlight alone and the comment and change marks the panel paints as <mark> elements (mark.fc-hl,
+// .fc-presel, .fc-ins, .fc-del; anchor-map.ts makeMark) keep their own dress (round 3: `.fileview-md mark` outranked
+// their single-class rules, so every comment highlight in the Rendered view wore the amber wash).
+export const MARK_CLASS = "md-mark";
 export type MarkToken = Tokens.Generic & { text: string; tokens: Token[] };
-const MARK_RE = /^==(?=[^\s=])([\s\S]*?[^\s=])==(?![A-Za-z0-9_=])/;
+const MARK_RE = /^==(?=[^\s=])((?:(?!==)[\s\S])*?[^\s=])==(?![A-Za-z0-9_=])/;
 const OPERAND_END_RE = /[A-Za-z0-9_=)\]'"]$/;
 export const mark: TokenizerAndRendererExtension = {
   name: "mark",
@@ -341,7 +352,7 @@ export const mark: TokenizerAndRendererExtension = {
     return { type: "mark", raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) } as MarkToken;
   },
   renderer(this: ParserThis, token) {
-    return `<mark>${this.parser.parseInline((token as MarkToken).tokens)}</mark>`;
+    return `<mark class="${MARK_CLASS}">${this.parser.parseInline((token as MarkToken).tokens)}</mark>`;
   },
 };
 
@@ -370,7 +381,10 @@ export const mark: TokenizerAndRendererExtension = {
 // CommonMark's link with the bracketed text `[docs]` (GitHub renders it so), `![[img.png]](url)` its image, and both
 // rendered as before this module (round 2 of the review: the wikilink took `[[docs]]` and left `(url)` as prose, a dead
 // span plus an autolinked URL in a reply, and in a note a path link to a `docs.md` that does not exist). A span the link
-// rule refuses, `[[Note]](see also)`, and adjacent wikilinks, `[[A]][[B]]`, stay wikilinks.
+// rule refuses, `[[Note]](see also)`, and adjacent wikilinks, `[[A]][[B]]`, stay wikilinks. A span that names neither a
+// file nor a section, `[[ ]]`, `[[#]]`, `![[ ]]`, a folder alone (`[[a/]]`) or an alias of nothing (`[[ | ]]`), is no
+// wikilink and stays literal as `[[]]` does (round 3 of the review: in a file document it rendered `<a href="">`, which
+// the link pass dressed as an external link that opened the page itself, and `[[a/]]` a path link to a nameless `a/.md`).
 export const WIKILINK_CLASS = "fv-wikilink";
 export const WIKILINK_EMBED_CLASS = "fv-embed";
 export const WIKILINK_DEAD_TITLE = "Not a link that opens here: a wikilink names a file beside the one it is written in, and this text is not a file";
@@ -399,6 +413,7 @@ export const wikilink: TokenizerAndRendererExtension = {
     const hash = inner.indexOf("#");
     const target = (hash >= 0 ? inner.slice(0, hash) : inner).trim();
     const frag = hash >= 0 ? inner.slice(hash + 1).trim() : "";
+    if (target ? !target.slice(target.lastIndexOf("/") + 1) : !frag) return undefined;   // names neither a file nor a section: literal (the section comment)
     let width: string | null = null, height: string | null = null;
     let text = alias === null ? inner : alias;
     if (embed && alias !== null && /^\d+(?:x\d+)?$/.test(alias)) {

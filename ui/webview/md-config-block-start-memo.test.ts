@@ -18,23 +18,22 @@ import { memoBlockStart } from "./md-block-start";
 applyMdConfig();
 type Ext = { start(this: unknown, src: string): number | undefined; tokenizer(this: unknown, src: string, tokens: unknown[]): { raw: string; text: string } | undefined };
 const ext = mathBlock as unknown as Ext;
-const calloutExt = callout as unknown as Ext;
 /** The extension's two functions called with no lexer: the plain path, no frame, no memo. */
 const plainStart = (src: string): number | undefined => ext.start.call({}, src);
 const plainTokenizer = (src: string): { raw: string; text: string } | undefined => ext.tokenizer.call({}, src, []);
 /** The token's two fields the lazy regex also produced, for the comparison with it. */
 const rawText = (t: { raw: string; text: string } | undefined): { raw: string; text: string } | undefined => (t ? { raw: t.raw, text: t.text } : undefined);
 
-/** The singleton's grammar on a fresh instance whose block hints (the math one and the callout's, every memoised hint the
- *  grammar registers) and math tokenizer run the plain path every time: each hint called with no lexer, so no frame and no
- *  memo. */
+/** The singleton's grammar on a fresh instance whose block hint (the math one, the one hint the grammar registers: the
+ *  callout has none, its `>` line being a paragraph interrupt marked's own rule knows, md-config.ts) and math tokenizer run
+ *  the plain path every time: the hint called with no lexer, so no frame and no memo. */
 function plainInstance(): Marked {
   const m = new Marked(...mdExtensions);
   m.setOptions({ gfm: true, breaks: false });
   const e = m.defaults.extensions as unknown as { startBlock: Array<(this: unknown, src: string) => number | undefined>; block: Array<(src: string, tokens: unknown[]) => unknown> };
   const ti = e.block.indexOf(ext.tokenizer as unknown as (src: string, tokens: unknown[]) => unknown);
-  assert.ok(e.startBlock.includes(ext.start) && e.startBlock.includes(calloutExt.start) && ti >= 0, "the instance carries the singleton's block hints and the math tokenizer");
-  assert.equal(e.startBlock.length, 2, "the grammar's block hints: the math one and the callout's (a new one needs a memo and a place here)");
+  assert.ok(e.startBlock.includes(ext.start) && ti >= 0, "the instance carries the singleton's block hint and the math tokenizer");
+  assert.equal(e.startBlock.length, 1, "the grammar's one block hint, the math one (a new one needs a memo and a place here; a construct whose line is already a paragraph interrupt takes none: a hint there only sets marked's clip flag, which joins paragraphs, md-config.ts callouts, round 3)");
   e.startBlock = e.startBlock.map((hint) => (src: string) => hint.call({}, src));
   e.block[ti] = plainTokenizer;
   return m;
@@ -97,23 +96,18 @@ test("the memoised lex is the plain lex: every three-line note of quotes, callou
   for (const [why, src] of [["tiny paragraphs", tiny(2000)], ["rejected candidates at every block start", prices(2000)], ["sparse math and quotes", sparse(2000)], ["a display block after every paragraph", equations(500)], ["quotes and list items with formulas and rejected lines in their bodies", nested]] as const) same(src, why);
 });
 
-test("the callout's finder is the regex hint it replaced, on every corpus string", () => {
-  // The hint's answer was `/\n {0,3}> ?\[!/.exec(src)`, a scan of the whole remaining source per paragraph; the finder
-  // hops over each `[!` with indexOf and reads the line's prefix back (md-config.ts nextCallout). The corpus: every
-  // prefix of up to four spaces or a tab, every quote marker spelling (none, `>`, one or two spaces, a tab), `[!` and
-  // its near misses, at the string's start, one character in, after a newline, after a blank line, and with a second
-  // marker later in the text (the first one wins), plus the shapes the round 1 fix named.
-  const hint = calloutExt.start;
-  const want = (src: string): number | undefined => { const m = /\n {0,3}> ?\[!/.exec(src); return m ? m.index : undefined; };
-  let n = 0;
-  const check = (src: string): void => { assert.equal(hint.call({}, src), want(src), "the finder differs from the regex on " + JSON.stringify(src)); n++; };
-  for (const lead of ["", "a", "\n", "\na", "text\n", "\n\n", "> quote\n"])
-    for (const pre of ["", " ", "  ", "   ", "    ", "\t"])
-      for (const q of ["", ">", "> ", ">  ", ">\t"])
-        for (const m of ["[!", "[", "!", "[!note] Title", "[![!", "x[!"])
-          for (const tail of ["", " tail\n", " tail\n  > [!later]\n", "\n\n>[!x"]) check(lead + pre + q + m + tail);
-  for (const s of ["a> [!note] b", "[!x", "\n[!x", "\n>[!", "\n    > [!x", "\n> [!a\n> [!b", "\n>\t[!t", "\n > [!\n", "no marker at all\n\nnone here"]) check(s);
-  assert.ok(n > 5000, "the corpus was walked: " + n);
+test("the callout registers no start hint: its line is a blockquote, an interrupt marked's paragraph rule already stops at, and a hint's one effect there was marked's clip flag", () => {
+  // Round 2 gave the callout a memoised finder (nextCallout, the regex `/\n {0,3}> ?\[!/` by indexOf) and this test held the
+  // two equal. Round 3 removed the hint: the paragraph rule's own blockquote interrupt ends a paragraph before a `>` line,
+  // so the hint could shorten no paragraph, and what it did do was set marked's lastParagraphClipped for a `> [!` anywhere
+  // later in the source, which joins a paragraph and its interrupt-rejected successor with a newline the source does not
+  // hold (md-config.ts, the callouts section; md-config.test.ts holds the renders).
+  assert.equal((callout as unknown as { start?: unknown }).start, undefined);
+  assert.deepEqual(marked.lexer("text\n> [!note] b\n> body\n").map((t) => t.type), ["paragraph", "callout"], "a callout still interrupts a paragraph, hint or none");
+  const src = "Intro line\nColumn A\n|---|---|\n\nAfter.\n\n> [!note] later\n";
+  const toks = marked.lexer(src);
+  assert.deepEqual(toks.filter((t) => t.type !== "space").map((t) => t.type), ["paragraph", "paragraph", "paragraph", "callout"], "the table interrupt cuts the first paragraph, the table tokenizer declines, and the two paragraphs stay two");
+  assert.equal(toks.map((t) => t.raw).join(""), src, "the raws tile the source");
 });
 
 test("the finder runs once per frame until its answer is consumed: counted on a probe extension", () => {
@@ -140,7 +134,7 @@ test("the finder runs once per frame until its answer is consumed: counted on a 
 });
 
 test("the math grammar lexes a note in time linear in its paragraph count: tiny paragraphs, and rejected `$$` lines at every block start", () => {
-  // Before the memo: 8,000 one-line paragraphs 1.0 s from the math hint alone (the callout's added 0.3 s), 8,000
+  // Before the memo: 8,000 one-line paragraphs 1.0 s from the math hint alone (the callout's, since removed, added 0.3 s), 8,000
   // `$$5 and $$10` lines 3.9 s (the hint's candidate walk, then the tokenizer's lazy scan to the end at every one of
   // them, the base's own 0.7 s). After: tens of milliseconds, four times the 2,000-paragraph note's. The bounds leave
   // room for a loaded machine: quadratic cost is sixteen times at four times the length.
@@ -156,9 +150,9 @@ test("the math grammar lexes a note in time linear in its paragraph count: tiny 
 });
 
 test("the whole grammar on the singleton lexes tiny paragraphs in time linear in their count: every block hint is bounded", () => {
-  // The singleton carries every block hint (the math one and the callout's), and a reply's md() pays them all: this
-  // is the finding's own shape (8,000 one-line paragraphs, 1.3 s on the singleton before the review). It holds only
-  // when EVERY block hint in the grammar is bounded, the callout's included.
+  // The singleton carries every block hint (the math one; the callout's went in round 3, its line being a paragraph
+  // interrupt already), and a reply's md() pays them all: this is the finding's own shape (8,000 one-line paragraphs,
+  // 1.3 s on the singleton before the review). It holds only when EVERY block hint in the grammar is bounded.
   const t2 = ms(() => marked.lexer(tiny(2000))), t8 = ms(() => marked.lexer(tiny(8000)));
   assert.ok(t8 < 400, `8,000 tiny paragraphs lexed in ${t8.toFixed(0)} ms on the singleton`);
   assert.ok(t8 < 10 * Math.max(t2, 2), `8,000 tiny paragraphs took ${t8.toFixed(0)} ms against ${t2.toFixed(0)} ms for 2,000 on the singleton: a block hint still scans per paragraph`);
