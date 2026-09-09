@@ -68,6 +68,8 @@ const MARKS = (() => {
 // the two rules, in the marks' own vocabulary: the dress on the classes, the switch on the attribute
 const DRESS = `.${MARKS.ins}::after, .${MARKS.del}::after`;
 const SWITCH = `.${MARKS.ins}[${CHIP_ATTR}]::after, .${MARKS.del}[${CHIP_ATTR}]::after`;
+// the print block's override of the pair's inks (styles.css's print block, byte-equal in feed.css)
+const PRINT = `.fileview-body .${MARKS.ins}::after, .fileview-body .${MARKS.del}::after`;
 
 test("the painter: one chip attribute, on the last of the two mark classes it paints", () => {
   assert.equal(CHIP_ATTR, "data-fc-chip");
@@ -108,9 +110,16 @@ test("both sheets: the chip's rules sit AFTER the panel block, the dress on the 
     // the switch: the painter's attribute turns the content on and sets NOTHING else — no size, so no resolver reads it
     const sw = ruleBody(tail, SWITCH, sheet);
     assert.equal(sw.trim(), `content: attr(${CHIP_ATTR});`, sheet + ": the attribute rule sets content only");
-    // no OTHER rule in the sheet gives these marks an ::after that would fight the pair
+    // no OTHER rule in the sheet gives these marks an ::after that would fight the pair, except the print block's override of
+    // the pair's inks (Slice 3 of plans/markdown-viewer.md, review round 2: the chip printed the dim ink on an accent wash on
+    // the white page), which recolours and sets no size and no content, and sits inside `@media print`
     const afters = rules(css).map((r) => r.head).filter((p) => p.includes("::after") && (/fc-(ins|del)/.test(p) || p.includes(CHIP_ATTR)));
-    assert.deepEqual(afters, [DRESS, SWITCH], sheet + ": the marks' two ::after rules and no other");
+    assert.deepEqual(afters, [DRESS, SWITCH, PRINT], sheet + ": the marks' two ::after rules, and the print block's override of their inks, and no other");
+    const printAt = css.indexOf("@media print {"); assert.ok(printAt > 0, sheet + ": a print block");
+    const pr = ruleBody(css.slice(printAt), PRINT, sheet);
+    assert.equal(decl(pr, "font-size"), null, sheet + ": the print override carries no size"); assert.equal(decl(pr, "content"), null, sheet + ": ...and no content");
+    assert.equal(decl(pr, "color"), "black", sheet + ": ...black ink"); assert.equal(decl(pr, "background"), "none", sheet + ": ...no wash"); assert.equal(decl(pr, "box-shadow"), "inset 0 0 0 1px black", sheet + ": ...a black ring");
+    assert.equal(css.indexOf(PRINT + " {"), css.indexOf(PRINT + " {", printAt), sheet + ": the override lives in the print block only");
   }
 });
 

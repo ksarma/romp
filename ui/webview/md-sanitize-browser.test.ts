@@ -271,7 +271,7 @@ test("a note's own HTML in the rendered file view: GitHub's rules, as the browse
       const classed = md.querySelector(".fx-classed") as HTMLElement;
       const classedPosition = getComputedStyle(classed).position;
       const classedAt0 = rect(classed), mdAt0 = rect(md);
-      // inside a paragraph, not a direct child: `.fileview-md > :where(:not(table))` caps a direct child at the prose measure
+      // inside a paragraph, not a direct child (a direct child once met the `.fileview-md > :where(:not(table))` measure cap; since Slice 3 of plans/markdown-viewer.md the root's padding is the measure and a direct child would fit the column anyway)
       const inject = document.createElement("div"); inject.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:red;"; (md.querySelector("p") as HTMLElement).appendChild(inject);
       const injectAt0 = rect(inject);
       const hitAt0 = hitClose();

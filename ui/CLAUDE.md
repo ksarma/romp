@@ -101,25 +101,41 @@ The dashboard re-renders on every kernel push (cycles at least 1.0 s apart
 under the pusher's minimum interval, except that a stream event or echo for
 the chat tab being watched pushes at once; a 0.5–3s backstop covers changes
 with no event, a tmux session's mid-turn output among them). A control whose action
-is hung on a DOM node that a re-render rebuilds gets destroyed mid-click — a
-native `click` needs mousedown AND mouseup on the same element, so a rebuild
-between them silently drops the click. That is the "had to click it several
-times" bug. Every interactive control MUST therefore:
+is hung on a DOM node that a re-render rebuilds gets destroyed mid-click: a
+native `click` fires on the nearest common ancestor of the mousedown and mouseup
+targets, and a pressed node that a rebuild removed before the mouseup has none,
+so the click is silently dropped. That is the "had to click it several times"
+bug. Every interactive control MUST therefore:
 
 1. **Be click-safe across re-renders.** Never attach the action to a node you
-   rebuild. Either:
-   - **Delegate** to a STABLE ancestor — the container fetched by id survives
-     `replaceChildren()`; only its children are swapped — and key the action off a
+   rebuild. Two techniques, each covering a different window; a surface that can
+   rebuild while a press is under way on it needs both.
+   - **Delegate** to a STABLE ancestor (the container fetched by id survives
+     `replaceChildren()`; only its children are swapped) and key the action off a
      `data-act` attribute. Use the shared helper `ui/webview/actions.ts`
      (`delegate(root, handlers)`), installed ONCE per root, never in a render
-     loop. This is the default for HTML lists (chat tab bar `#tabs`, Fleet
-     `#fleet-list`). A click whose original target was swapped mid-press still
-     bubbles to the stable ancestor, so it always lands.
-   - For full-canvas redraw surfaces (the SVG timeline) where threading every
-     action param through data-attrs is impractical, **defer the rebuild while a
-     pointer is pressed** over the surface and flush on `pointerup`/`pointercancel`
-     (event-based, not a time heuristic), so the pressed element survives the
-     click. See `ui/romp-timeline-view.js` `draw()`'s `_pointerHeld` guard.
+     loop. This is the default for HTML lists (chat tab bar `#tabs`, the sessions
+     list `#fleet-list`). It keeps the listener alive across every rebuild BETWEEN
+     clicks. It does not save a click whose pressed node a rebuild removed or
+     replaced DURING the press: the browser then dispatches no click to the
+     replacement, the removed node or any ancestor (at most one targeted at the
+     container itself, which names no control), so the action is lost. Probed
+     with real input events in headless Chromium 151 and Firefox 153
+     (2026-09-08). A release over a still-present sibling clicks their nearest
+     common ancestor, which routes to a control only when that ancestor is inside
+     one (a press on the ✕ inside a tab released over the tab's label).
+   - **Hold the rebuild while a press is under way** on the surface and flush it
+     after the release, on the press's own release events (`pressHold` in
+     `actions.ts` lists them; never a timer), a tick later so the click fires
+     against the still-present node first. This is what saves a press when the
+     rebuild comes from an event that is not the user's gesture: a kernel push, a
+     fetch landing, a document `pointerdown` listener that re-renders
+     synchronously. `#tabs` does this as well as delegating (`tabPointerHeld` in
+     `render.ts`), the Waiting pane holds its list (`waiting.ts`), the file
+     viewer's body holds a reload's landing through the shared helper
+     `pressHold(surface)`, and the SVG timeline, where threading every action
+     param through data-attrs is impractical, uses the hold alone
+     (`ui/romp-timeline-view.js` `draw()`'s `_pointerHeld` guard).
 2. **Always acknowledge the click immediately**, before any kernel round-trip —
    so the user never re-clicks because "nothing happened." `actions.ts`'s
    `flash()` adds a layout-safe `.romp-acted` press pulse on every delegated

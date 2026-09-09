@@ -7,11 +7,19 @@
 // narrower subset is a product change, not an optimization), and a labeled one still goes to its grammar.
 // Bounded: at most CAP entries and about BUDGET characters of output, oldest out first (a Map keeps
 // insertion order; a hit is re-inserted so it counts as newest). Very large sources are not cached at all.
+//
+// Auto-detection guesses among AUTO_LANGUAGES, the ten grammars the chat registers (render.ts), not among every
+// grammar on the core: the viewer registers six more (viewer-grammars.ts, decision 5 of plans/markdown-viewer.md) and
+// the chat bundle carries them through file-view.ts, so without the subset an unlabeled fence would be tokenized
+// against sixteen grammars, a slower tail and different guesses (Slice 3 of plans/markdown-viewer.md, 2026-09-08).
 export interface Highlighter {
   getLanguage(name: string): unknown;
   highlight(raw: string, opts: { language: string }): { value: string };
-  highlightAuto(raw: string): { value: string };
+  highlightAuto(raw: string, languageSubset?: readonly string[]): { value: string };
 }
+
+/** The grammars an unlabeled chat fence is guessed among: the ten render.ts registers, by their registered names. */
+export const AUTO_LANGUAGES: readonly string[] = ["bash", "python", "javascript", "typescript", "json", "xml", "css", "markdown", "diff", "yaml"];
 
 export const CAP = 256;               // entries
 export const BUDGET = 4_000_000;      // characters of highlighted HTML held, all entries together
@@ -31,7 +39,7 @@ export function highlightHtml(hl: Highlighter, lang: string | undefined, raw: st
     cache.map.delete(key); cache.map.set(key, hit);   // newest again
     return hit;
   }
-  const html = known ? hl.highlight(raw, { language: lang as string }).value : hl.highlightAuto(raw).value;
+  const html = known ? hl.highlight(raw, { language: lang as string }).value : hl.highlightAuto(raw, AUTO_LANGUAGES).value;
   if (raw.length <= MAX_RAW) {
     cache.map.set(key, html); cache.chars += html.length;
     while (cache.map.size > CAP || (cache.chars > BUDGET && cache.map.size > 1)) {

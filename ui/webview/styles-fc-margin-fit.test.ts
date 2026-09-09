@@ -127,7 +127,7 @@ function bundle(): string {
 function sheet(): string {
   const a = STYLES.indexOf(BLOCK_A), b = STYLES.indexOf(BLOCK_B);
   assert.ok(a >= 0 && b > a, "the file-comments block's markers in styles.css");
-  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), rule(".fileview-btn"), rule(".fileview-err"), STYLES.slice(a, b)].join("\n");
+  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), rule(".fileview-btn"), rule(".fileview-err"), STYLES.slice(a, b)].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel
 // mounts. The card is 1000px wide (the margin layout; the fold is width-only) and as tall as the leg asks — the review's

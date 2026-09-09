@@ -68,7 +68,7 @@ function sheet(): string {
     assert.ok(m, "a rule for " + sel + " in styles.css");
     return m![1];
   };
-  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), rule(".fileview-btn"), block(CHAT)].join("\n");
+  return [rule(".fileview"), rule(".fileview-body"), rule(".fileview-md"), rule(".fileview-md p"), rule(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), rule(".fileview-btn"), block(CHAT)].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts.
 // 1000 × 600: the finding's geometry (a 700px window's viewer), well under what the confirm or the Log wants

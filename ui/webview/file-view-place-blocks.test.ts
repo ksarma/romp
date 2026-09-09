@@ -16,9 +16,13 @@
 // recurring line falls to the depth rule). The fourth round refused a wrapper's one-element pairing too (a wrapper
 // closing at the document's end, or never closed, is paired to itself alone, holding every paragraph after it; the third
 // round trusted any one element), keeping a one-tag html block and any other block's one element, and pinned codeOf's
-// html `<pre>` exclusion here (the stand-in has no hit test, so a seat cannot reach it). The real thing is measured in
-// headless Chromium by file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts,
-// file-view-place-html-browser.test.ts and file-view-place-wrapper-end-browser.test.ts.
+// html `<pre>` exclusion here (the stand-in has no hit test, so a seat cannot reach it). The Slice 3 review's third
+// round pinned that the math fill's source fallback (a `$$` or `\[` block) is no code block to codeOf either, and that a
+// code element with no rows (the stand-in's fences, which nothing wraps) reads and seats no line whatever hit test the
+// document offers: the hit-test path Slice 2 read a code line with, kept in Slice 3 for that fallback, could never reach
+// it and went. The real thing is measured in headless Chromium by file-view-place-blocks-browser.test.ts,
+// file-view-place-edits-browser.test.ts, file-view-place-html-browser.test.ts and
+// file-view-place-wrapper-end-browser.test.ts.
 // The stand-in is the anchor-map suite's minimal tree (marked's output parsed into nodes, no jsdom) with a box per
 // element a test gives it; an element with no box reads as having no layout. Its DOMParser parses with the same
 // parser, so the trusted pairing reads as it does in a browser. Synthetic fixtures only.
@@ -47,6 +51,7 @@ class FakeElement extends FakeNode {
   getAttribute(n: string): string | null { return this.attrs.has(n) ? (this.attrs.get(n) as string) : null; }
   setAttribute(n: string, v: string): void { this.attrs.set(n, v); }
   appendChild(n: FakeNode): FakeNode { this.childNodes.push(n); n.parentNode = this; return n; }
+  contains(n: FakeNode | null): boolean { for (let p = n; p; p = p.parentNode) if (p === this) return true; return false; }
   get className(): string { return this.attrs.get("class") || ""; }
   matches(sel: string): boolean {
     const m = /^([a-z]+)?((?:\.[\w-]+)*)$/.exec(sel);
@@ -560,9 +565,56 @@ test("readPlace / seatPlace: a wrapper whose closing tag is the document's last 
   assert.equal(codeFor(FENCED)!.code.tagName, "CODE", "its code element");
   assert.equal(codeFor(INDENTED)!.skip, 0, "an indented block: no line skipped");
   assert.equal(codeFor(PARA(1)), null, "a paragraph is no code block");
+  // the math fill's source fallback (math.ts showSource: a top-level <pre><code class="md-math-src"> for a `$$` or `\[`
+  // display block KaTeX refused) is no code block either: its block opens with the math delimiter, not a fence or an
+  // indent, so the hit-test path that named it as its case (a code element with no rows) could never reach it
+  const mathPre = (src: string) => { const doc = new FakeDocument(); const pre = doc.createElement("pre"); const c = doc.createElement("code"); c.setAttribute("class", "md-math-src"); c.appendChild(doc.createTextNode(src)); pre.appendChild(c); return [El(pre)]; };
+  for (const src of ["$$\nE = mc^2\n$$", "\\[\nE = mc^2\n\\]", "   $$\nE = mc^2\n$$"]) assert.equal(codeOf(src, { start: 0, end: src.length }, mathPre(src)), null, "the math fill's source fallback is no code block: " + JSON.stringify(src.slice(0, 5)));
   // and the html <pre> still reads as its block: one element whose parse yields the tag with the same text
   const rk2 = rendered(docK, 100 - 1 * 48 - 20, 40);
   assert.equal(docK.slice(readPlace(H(rk2.body), docK)!.start, readPlace(H(rk2.body), docK)!.end), HTML_PRE, "the html <pre> block at the edge reads as its block");
+});
+
+test("readPlace / seatPlace, Rendered: a code element with no rows reads no line and seats none, whatever hit test and Range the document offers; the block keeps the depth rule", () => {
+  // The Slice 3 review, round 3: renderedLineAt kept Slice 2's hit test (caretRangeFromPoint on the code's first column,
+  // a one-character Range for the line's top) for "a code element with no rows, the math fill's source fallback", a block
+  // codeOf refuses (the test above); every fence and indented block file-view.ts builds is wrapped in rows, so the path
+  // was unreachable and went. The stand-in's fence is marked's output with nothing wrapped, a code element with no rows,
+  // and its document is given a hit test and a Range that answer line 2 of the code: neither may be consulted.
+  const doc = "# Report\n\n" + paras(1, 2) + "\n\n" + CODE + "\n\n" + paras(3, 4) + "\n";
+  const spans = sourceBlockSpans(doc);
+  const b = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === CODE);
+  assert.ok(b > 0, "the fixture holds the fence as one block");
+  const line2 = "    return x";
+  type HitDoc = { caretRangeFromPoint?: (x: number, y: number) => unknown; createRange?: () => unknown };
+  /** the fence 20px into the edge (its box 80..120 against the edge at 100), its code element wearing the same box and
+   *  no `.cl` rows; the document answers a hit test inside line 2 and a Range whose rect tops at 101 */
+  const scene = () => {
+    const r = rendered(doc, 100 - b * 48 - 20, 40);
+    const codeEl = r.blocks[b].querySelector("code")!;
+    assert.equal(codeEl.querySelectorAll(".cl").length, 0, "the stand-in's fence has no rows");
+    codeEl.box = r.blocks[b].box;
+    const text = codeEl.childNodes[0];
+    const calls = { hits: 0, ranges: 0 };
+    const hd = r.body.ownerDocument as unknown as HitDoc;
+    hd.caretRangeFromPoint = () => { calls.hits++; return { startContainer: text, startOffset: (text.textContent || "").indexOf(line2) + 2 }; };
+    hd.createRange = () => { calls.ranges++; return { setStart() { /* a stub */ }, setEnd() { /* a stub */ }, getClientRects: () => [{ top: 101, bottom: 115 }], getBoundingClientRect: () => ({ top: 101, bottom: 115, height: 14, width: 8 }) }; };
+    return { ...r, calls };
+  };
+  const a = scene();
+  const q = readPlace(H(a.body), doc)!;
+  assert.ok(q, "a place");
+  assert.equal(doc.slice(q.start, q.end), CODE, "the fence is the place");
+  assert.equal(q.top, -20, "partway in");
+  assert.equal(q.line, null, "no rows, no line: the depth rule (the hit test read line 2 here before)");
+  assert.deepEqual(a.calls, { hits: 0, ranges: 0 }, "the document's hit test and Range are not consulted on a read");
+  // a seat of a kept line into the rowless code element declines the line and keeps the depth: the block at -20 already,
+  // so the body does not move (before: the Range's 101 seated the line, 6px down)
+  const c = scene();
+  const place: Place = { ...q, line: { start: doc.indexOf(line2), end: doc.indexOf(line2) + line2.length, top: -5 } };
+  assert.equal(seatPlace(H(c.body), doc, place), true, "seated");
+  assert.equal(c.body.scrollTop, 0, "the depth rule: the same block at the same depth moves nothing");
+  assert.deepEqual(c.calls, { hits: 0, ranges: 0 }, "the document's hit test and Range are not consulted on a seat");
 });
 
 test("readPlace / seatPlace, Raw: the row at the edge is kept with its block, and a reload seats the row where it was: lines inserted above it inside the block, lines deleted below it; the row itself rewritten, or a row whose text recurs, falls to the block's depth rule", () => {

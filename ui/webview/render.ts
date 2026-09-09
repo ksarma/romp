@@ -2,6 +2,7 @@ import { marked } from "marked";
 import { sanitizeMd, userContentTarget } from "./md-sanitize";   // the one sanitizer every markdown surface shares, and the lookup for a message's own `#` links (md-sanitize.ts)
 import hljs from "highlight.js/lib/core";
 import { highlightHtml } from "./highlight-cache";
+import { wrapCodeLines, addCopyBtn } from "./code-block";   // the per-line rows and the Copy button, shared with the viewer's mdBlock (code-block.ts)
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
 import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
@@ -1211,61 +1212,8 @@ function highlight(container: HTMLElement, lineNos = true) {
   });
 }
 
-// Copy text to the clipboard, falling back to a hidden-textarea execCommand when the async Clipboard API
-// is unavailable (it needs a secure context — localhost counts, but stay safe). Returns whether it copied.
-function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
-  }
-  return Promise.resolve(fallbackCopy(text));
-}
-function fallbackCopy(text: string): boolean {
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.top = "-9999px"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
-}
-
-// An automatic "Copy" button parked top-right of every rendered code block (the user 2026-06-22). The RAW
-// source is captured at highlight time and closed over — the on-screen markup adds a line-number gutter and
-// drops the newline joins, so copying its textContent would be wrong. Faint until the block is hovered;
-// flips to a green "Copied" for ~1.2s on success. Idempotent (highlight can re-run on a re-render).
-function addCopyBtn(pre: HTMLElement, raw: string) {
-  if (pre.querySelector(":scope > .code-copy")) return;
-  pre.classList.add("has-copy");
-  const btn = el("button", "code-copy") as HTMLButtonElement;
-  btn.type = "button"; btn.textContent = "Copy"; btn.title = "copy this code block";
-  btn.addEventListener("click", (ev) => {
-    ev.preventDefault(); ev.stopPropagation();
-    copyText(raw).then((ok) => {
-      btn.textContent = ok ? "Copied" : "Copy failed";
-      btn.classList.toggle("copied", ok);
-      window.setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1200);
-    });
-  });
-  pre.appendChild(btn);
-}
-
-// Wrap each logical line of (hljs-highlighted) code in <span class=cl><span class=ct>…</span></span>,
-// re-opening any hljs span that straddles a newline so the markup stays valid. A CSS counter on .cl
-// draws the subtle line numbers; .ct holds the wrapping content (the user 2026-06-16).
-function wrapCodeLines(code: HTMLElement) {
-  const lines = code.innerHTML.split("\n");
-  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();   // a trailing newline isn't a blank line
-  let open: string[] = [];
-  code.innerHTML = lines.map((ln) => {
-    const prefix = open.join("");
-    const re = /<span[^>]*>|<\/span>/g; let m; const stack = open.slice();
-    while ((m = re.exec(ln))) { if (m[0] === "</span>") stack.pop(); else stack.push(m[0]); }
-    const suffix = "</span>".repeat(Math.max(0, stack.length));
-    open = stack;
-    return `<span class="cl"><span class="ct">${prefix}${ln}${suffix}</span></span>`;
-  }).join("");
-}
+// copyText, addCopyBtn and wrapCodeLines live in code-block.ts since Slice 3 of plans/markdown-viewer.md (2026-09-08):
+// the viewer's mdBlock (file-view.ts) dresses its fences the same way, and file-view.ts cannot import this module.
 
 function dot(kind: "green" | "ring" | "user" | "red" | "romp" | "working" | "tag"): HTMLElement { return el("span", "dot " + kind); }
 

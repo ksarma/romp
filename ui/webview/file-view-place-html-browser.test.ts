@@ -246,12 +246,24 @@ test("in a browser, the real module: an html <pre> block keeps the depth rule ac
     const HTML_PRE = "<pre>\n" + Array.from({ length: 40 }, (_, i) => `html line ${i + 1}: some words in a preformatted html block`).join("\n") + "\n</pre>";
     const FENCED = "```text\n" + Array.from({ length: 40 }, (_, i) => `fenced line ${i + 1}: some words in a fenced code block`).join("\n") + "\n```";
     const DOC = "# Report\n\n" + paras(1, 20) + "\n\n" + HTML_PRE + "\n\n" + paras(21, 30) + "\n\n" + FENCED + "\n\n" + paras(31, 60) + "\n";
-    /** The line of the given <pre> under the body's top edge, through the browser's hit test: 1-based, with its text. */
+    /** The line of the given <pre> under the body's top edge, through the browser's hit test: 1-based, with its text. A
+     *  fenced block is cut into per-line rows since Slice 3 of plans/markdown-viewer.md (code-block.ts): its first column
+     *  is the line-number gutter, so the hit test lands on the first text column and the line is the row under the caret;
+     *  the html <pre> has no rows and is read by its text's newlines. */
     const lineAtEdge = (page: any, holds: string) => page.evaluate((h: string) => {
       const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
       const pre = Array.from(document.querySelectorAll(".fileview-md > pre")).find((p) => (p.textContent || "").includes(h))!;
       const root = pre.querySelector("code") || pre; const cr = root.getBoundingClientRect();
-      const r = (document as any).caretRangeFromPoint(cr.left + 2, br.top + 1);
+      const rows = Array.from(root.querySelectorAll(":scope > .cl"));
+      const ct = root.querySelector(":scope > .cl > .ct"); const x = (ct ? ct.getBoundingClientRect().left : cr.left) + 2;
+      const r = (document as any).caretRangeFromPoint(x, br.top + 1);
+      if (rows.length) {
+        const n: Node = r.startContainer;
+        let row: Element | null = n.nodeType === 3 ? (n.parentElement as Element).closest(".cl") : (n as Element).closest(".cl");
+        if (!row && n === root) row = (root.childNodes[r.startOffset] as Element | undefined) || null;
+        const line = row ? rows.indexOf(row) : -1;
+        return { line: line + 1, text: (row ? row.textContent || "" : "").trim(), preTop: Math.round((pre.getBoundingClientRect().top - br.top) * 10) / 10 };
+      }
       let acc = 0, off = -1;
       const walk = (n: Node): boolean => { if (n === r.startContainer) { off = acc + (n.nodeType === 3 ? r.startOffset : 0); return true; } if (n.nodeType === 3) { acc += (n as Text).data.length; return false; } for (const c of Array.from(n.childNodes)) if (walk(c)) return true; return false; };
       walk(root);
@@ -277,11 +289,23 @@ test("in a browser, the real module: a Rendered code block of long lines in a 38
   await inBrowser(t, async (browser) => {
     const LINES = Array.from({ length: 120 }, (_, i) => (i === 0 ? "def f1(x):  # line 1 of a long code block" : `    return x + ${i + 1}  # ` + "a long trailing comment that wraps in a narrow pane ".repeat(3).trim()));
     const DOC = "# Report\n\n" + paras(1, 10) + "\n\n```python\n" + LINES.join("\n") + "\n```\n\n" + paras(11, 20) + "\n";
-    /** The top of the first character of code line `n` (1-based), from the body's top edge. */
+    /** The top of the first character of code line `n` (1-based), from the body's top edge: the first text node of row
+     *  `n - 1` since Slice 3 cut every fence into per-line rows (code-block.ts), else the character after the (n - 1)th
+     *  newline of the code's text. */
     const firstCharTop = (page: any, n: number): Promise<number> => page.evaluate((k: number) => {
       const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
       const code = document.querySelector(".fileview-md > pre code")!;
-      const texts: Text[] = []; const walk = (nd: Node) => { for (const c of Array.from(nd.childNodes)) { if (c.nodeType === 3) texts.push(c as Text); else walk(c); } }; walk(code);
+      const texts: Text[] = []; const walk = (nd: Node) => { for (const c of Array.from(nd.childNodes)) { if (c.nodeType === 3) texts.push(c as Text); else walk(c); } };
+      const rows = Array.from(code.querySelectorAll(":scope > .cl"));
+      if (rows.length) {
+        if (!rows[k - 1]) return NaN;
+        walk(rows[k - 1]);
+        const t = texts.find((x) => x.data.length > 0);
+        if (!t) return NaN;
+        const rg = document.createRange(); rg.setStart(t, 0); rg.setEnd(t, 1);
+        return rg.getClientRects()[0].top - br.top;
+      }
+      walk(code);
       let seen = 0;
       for (let i = 0; i < texts.length; i++) {
         const d = texts[i].data;
