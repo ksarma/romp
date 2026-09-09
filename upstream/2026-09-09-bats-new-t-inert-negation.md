@@ -4,7 +4,7 @@ status: candidate
 where: tests/romp.bats, the `new -t` refusal test
 added: 2026-09-09
 pr:
-tier: fix
+tier: docs
 offered:
 closed:
 ---

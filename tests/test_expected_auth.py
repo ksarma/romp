@@ -27,6 +27,10 @@ the per-init apiKeySource mismatch line was a permanent false alarm. The mechani
     live merge forwards authLive and authPicked, which it had dropped since the field was born. The
     defaults file behind the declaration read is parsed once per file identity, since the read is per
     row.
+  * The three remedies a contradicting init files name the helper, Claude Code's apiKeyHelper or the
+    login, and the manager's environment, and no longer a key in service.env (romp reads no key from a
+    file since 2026-09-08; the 2026-09-09 fold's review found the parenthetical dropped with no test
+    that failed before the drop). Each branch is driven and its sentence pinned exactly.
 
 Synthetic sids/paths only; no real key material or session data.
 """
@@ -137,6 +141,59 @@ class DeclarationInvertsTheMismatch(_Declared):
                             and "Check the login (claude /login) and the manager's environment" in t
                             for t in texts),
                         "no declaration → the launch-intent comparison, verbatim: %r" % texts)
+
+    def test_every_remedy_names_the_helper_or_the_login_and_never_a_key_file(self):
+        # The three remedies ended in "(or service.env, where your installation allows a key in a file)"
+        # until the 2026-09-09 fold's round 5 (review finding F4): romp reads no key from a file since
+        # 2026-09-08, so the parenthetical sent the reader to a source that no longer exists. Every branch
+        # of the check is driven here and its remedy pinned exactly as the row's tail (the ring row's text
+        # is the logged line verbatim, so nothing follows the remedy): a declaration contradicted, in both
+        # its wordings (the env word and the remembered pick); an explicit key pick that launched with
+        # nothing injected and landed on the login; and the launch-intent comparison, both directions.
+        RETIRED = "service.env, where your installation allows a key in a file"
+        HELPER = "Check the helper and the manager's environment."
+        PICK = "Check Claude Code's apiKeyHelper (romp injected nothing) and the manager's environment."
+        LOGIN = "Check the login (claude /login) and the manager's environment."
+
+        def filed(sess, source):
+            before = self._problem_texts()
+            self.be._note_auth_source(sess, source)
+            new = [t for t in self._problem_texts() if t not in before and "billing the" in t]
+            self.assertEqual(len(new), 1, "one billing row per contradicting init: %r" % new)
+            return new[0]
+
+        rows = []
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        s = self._sess(31)
+        s._launched_keyed = False
+        rows.append((filed(s, "none"), "ROMP_EXPECTED_AUTH=key", HELPER))
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        s = self._sess(32)
+        s._launched_keyed = False
+        rows.append((filed(s, "apiKeyHelper"), "ROMP_EXPECTED_AUTH=login", HELPER))
+        os.environ.pop("ROMP_EXPECTED_AUTH", None)
+        s = self._sess(33, auth="key")                  # the pick meant Claude Code's own key
+        s._launched_keyed = False
+        s._launched_unkeyed_pick = True
+        rows.append((filed(s, "none"), "launched for the API key", PICK))
+        s = self._sess(34)
+        s._launched_keyed = False
+        rows.append((filed(s, "apiKeyHelper"), "launched for the login", LOGIN))
+        s = self._sess(35)
+        s._launched_keyed = True
+        rows.append((filed(s, "none"), "launched for the API key", LOGIN))
+        sb.write_sdk_default(Path(self.d), auth="login")   # written last: the env word is inert after it
+        s = self._sess(36)
+        s._launched_keyed = False
+        rows.append((filed(s, "apiKeyHelper"), "the remembered Billing pick is login", HELPER))
+
+        for text, lead, remedy in rows:
+            self.assertIn(lead, text)
+            self.assertTrue(text.endswith(" " + remedy),
+                            "the remedy is the row's last sentence, exactly: %r" % text)
+            self.assertNotIn(RETIRED, text)
+            self.assertNotIn("service.env", text, "no remedy sends the reader to a key file: %r" % text)
+        self.assertEqual({r for _, _, r in rows}, {HELPER, PICK, LOGIN}, "all three remedies were driven")
 
 
 class AllKeyedUsageLineHonorsTheDeclaration(_Declared):
