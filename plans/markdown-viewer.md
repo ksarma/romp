@@ -1257,8 +1257,23 @@ as built departs from the text above, why, and which test holds each rule:
    target too, where the same markdown, a plain blockquote on main, painted clean; a whitespace-only text node with a
    block-level box beside it on either side is skipped whatever its parent (anchor-map.ts BLOCK_BOXES,
    `.katex-display` among them; anchor-map-obsidian.test.ts, and md-config-fold-paint-browser.test.ts measures every
-   fold's height and every block's place unchanged over the real bundle). anchor-map-obsidian.test.ts and the browser
-   leg select across the formula and get the TeX between. The fill's two fallback shapes, KaTeX's `span.katex-error`
+   fold's height and every block's place unchanged over the real bundle). Round 9 finished that rule in four places:
+   BLOCK_BOXES is derived, every tag the sanitizer keeps that Chromium lays out as a block or a table's part, where
+   round 8's hand-written list lacked `center`, `dir`, `menu` and `search` and named `form` and `fieldset`, which the
+   sanitizer strips (md-config-paint-whitespace-browser.test.ts reads the set off DOMPurify's allowlist and the
+   computed display and holds the shipped set equal to it); a node at the edge of a block-level parent, no sibling on
+   that side, is the block's leading or trailing white space and is skipped whatever stands on its other side, `pre`
+   excepted, since the "\n" between an author's `<figure>` or `<details>` and its `<img>` was ringed, on main too; a
+   `<br>` beside the node counts as a block does, since the "\n" between two `<br>`s was ringed on the blank line; and
+   the neighbour reads step over the DOM's sibling pointers, since indexing the parent's child list per whitespace node
+   had made a paint quadratic in a paragraph's inline children (one mark across 3,000 links 850 ms in Chromium against
+   27 before round 8 and 32 with the pointers; md-config-paint-whitespace.test.ts counts the child-list reads over a
+   stand-in that offers the pointers, 9,995 for 1,999 children against 2,009,993 indexed, and the browser leg times
+   5,000 links once against 500 ten times as equal work with the source table warm, the median pair ratio 1.1 against
+   8.7 indexed, bounded at 3). Every shape is driven through paintRendered from the paragraph before the html block to
+   the paragraph after (anchor-map-obsidian.test.ts and the browser leg), which round 8 had recorded as not paintable.
+   anchor-map-obsidian.test.ts and the browser leg select across the formula and get the TeX between. The fill's two
+   fallback shapes, KaTeX's `span.katex-error`
    on TeX it cannot parse and the belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts
    FORMULA_CLASSES), so a display fallback keeps the 1:1 pairing and an inline one maps around; before that a display
    fallback took no element and every block after it paired one early, and the reader's place was a block off (the
@@ -1655,7 +1670,13 @@ as built departs from the text above, why, and which test holds each rule:
    generated title too, text the source does not hold; painting a hole at the edge would paint tables and code blocks
    there as well, and never painting generated text would make the title a control, which changes
    mapRenderedSelection's refusal of an endpoint inside it (item 5; anchor-map-obsidian.test.ts's refusal test), so
-   the rule for holes is Slice 5's, with its painter items.
+   the rule for holes is Slice 5's, with its painter items. Open after the review round 9: the panel's unpaint
+   (file-comments.ts unpaint, main's path, which the slice leaves as it is) normalizes a mark's parent once per mark,
+   so unwrapping the marks of one paragraph costs the square of its inline children where the paint costs their count:
+   9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469, 999 marks over 500 links in 3.6
+   and 5.5 (headless Chromium, the medians of five); normalizing each parent once after the loop unwraps the 9,999 in
+   11 ms (md-config-paint-whitespace-browser.test.ts's timing leg does so on its own copy, so the paint alone is
+   timed), a panel change for Slice 5's painter items.
 
 ### Slice 5: comments anchor on real notes
 

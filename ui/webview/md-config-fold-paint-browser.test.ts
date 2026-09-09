@@ -3,10 +3,17 @@
 // after the fold. marked leaves a "\n" text node after each block inside the details, the node it leaves between blocks
 // everywhere; the painter skipped such a node by its PARENT's tag from a list of block containers, DETAILS not among them,
 // so the panel wrapped each such node as a mark of its own: an empty ringed box on a line between the blocks (the sheet's
-// 2px side padding and inset ring on an inline box, 4 x 18 px), the details 22 px taller per mark and everything below
-// moved down, on every paint pass; a closed fold showed the box the moment a card's quote button opened it. On main the
-// same markdown is a plain blockquote and painted clean (the Slice 4 review, round 8). Now a whitespace-only text node with
-// a block-level sibling on either side is skipped whatever its parent is (anchor-map.ts skipBlockWs).
+// 2px side padding and inset ring on an inline box), the details taller per mark and everything below moved down, on every
+// paint pass; a closed fold showed the box the moment a card's quote button opened it. The figures follow the prose's font.
+// In this leg's scene (a 14px/1.5 sans-serif body that sets neither --fs nor --font-doc, so .fileview-md's font-size and
+// font-family are invalid at computed-value time and the prose stays 14px on 21px lines) the box is 4 x 16 px and a fold
+// grows 21 to 28 px per mark: the fail-before actual is `DETAILS.md-callout "\n" 4x16`, and with the mark assertions
+// stripped the fold 'Two paragraphs' is 95.19 px unpainted against 123.19 painted. The 4 x 18 px and 22 px per mark that
+// anchor-map.ts skipBlockWs quotes are the viewer's own prose (13px x 1.15 in its sans), a different font. On main the same
+// markdown is a plain blockquote and painted clean (the Slice 4 review, round 8). Now a whitespace-only text node with a
+// block-level sibling on either side is skipped whatever its parent is (anchor-map.ts skipBlockWs); since round 9 so is one
+// at the edge of a block-level parent or beside a `<br>`, and the block set is derived from the sanitizer's allowlist
+// (md-config-paint-whitespace-browser.test.ts).
 // Over the REAL file-comments.ts bundle in headless Chromium, mounted as md-config-goto-closed-details-browser.test.ts
 // mounts it, the markdown parsed by the one configuration (md-config.ts applyMdConfig) so the folds are the viewer's own.
 // The measure: the layout of the note with every fold open, read before the panel paints and after, must be the same box

@@ -80,6 +80,10 @@ type DNode = {
   nodeType: number;
   parentNode: DNode | null;
   childNodes: ArrayLike<DNode>;
+  /** The DOM's sibling pointers, when the node offers them (a browser's Node does; a test's stand-in may not): a step to a
+   *  neighbour in constant time, where indexing the parent's child list costs its length (besideNonWs, follows). */
+  previousSibling?: DNode | null;
+  nextSibling?: DNode | null;
 };
 type DText = DNode & { data: string; splitText(offset: number): DText };
 type DElement = DNode & {
@@ -1450,19 +1454,44 @@ function nthNonWs(node: DNode, k: number): { t: DText; off: number } | null {
 }
 
 const BLOCK_CONTAINERS = new Set(["UL", "OL", "LI", "BLOCKQUOTE", "DIV", "TABLE", "THEAD", "TBODY", "TR", "SECTION", "ARTICLE", "BODY"]);
-/** The elements the browser lays out as block-level boxes (display block, list-item, table or a table's parts), among the tags
- *  marked emits and the sanitizer lets an author write; and KaTeX's display root, the one span the sheets lay out as a block
- *  (`.katex-display`). A whitespace-only text node with one of these beside it renders nothing (white space at a line's edge is
- *  collapsed away, and between two blocks it makes no line at all), so a mark around it would be the only thing giving it a box. */
-const BLOCK_BOXES = new Set([
-  "P", "DIV", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "HR", "H1", "H2", "H3", "H4", "H5", "H6",
-  "TABLE", "CAPTION", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
+/** Every tag the sanitizer keeps (DOMPurify's html profile less MD_FORBID_TAGS, md-sanitize.ts) that Chromium lays out as a
+ *  block-level box or a table or one of a table's parts (display block, list-item, table, table-caption, table-column, the
+ *  row and column groups, table-row, table-cell), the document's own `html` and `body`, which the parser never places in a
+ *  fragment, left out. Read that way, not hand-picked: an author's html block can hold any element the sanitizer lets
+ *  through, so the list is the sanitizer's, not CommonMark's html-block tag list (an `<hgroup>` is not on that list and
+ *  stands inside an author's `<details>` all the same). The Slice 4 review's round 8 wrote the list by hand and left out
+ *  `center`, `dir`, `menu` and `search`, kept by the sanitizer and blocks in Chromium, while naming `form` and `fieldset`,
+ *  which the sanitizer strips (round 9; md-config-paint-whitespace-browser.test.ts derives the set from the sanitizer's
+ *  own allowlist and the browser's computed display and holds it equal to this one). A whitespace-only text node with one
+ *  of these beside it renders nothing (white space at a line's edge is collapsed away, and between two blocks it makes no
+ *  line at all), so a mark around it would be the only thing giving it a box. KaTeX's display root, the one span the sheets
+ *  lay out as a block (`.katex-display`), is read by its class (isBlockBox). Exported for the test alone. */
+export const BLOCK_BOXES: ReadonlySet<string> = new Set([
+  "P", "DIV", "UL", "OL", "LI", "MENU", "DIR", "BLOCKQUOTE", "PRE", "HR", "CENTER", "SEARCH", "HGROUP", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "CAPTION", "COLGROUP", "COL", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
   "DETAILS", "SUMMARY", "FIGURE", "FIGCAPTION", "DL", "DT", "DD",
-  "SECTION", "ARTICLE", "ASIDE", "NAV", "HEADER", "FOOTER", "MAIN", "ADDRESS", "FORM", "FIELDSET",
+  "SECTION", "ARTICLE", "ASIDE", "NAV", "HEADER", "FOOTER", "MAIN", "ADDRESS",
 ]);
 const isBlockBox = (n: DNode): boolean => isElement(n) && (BLOCK_BOXES.has(n.tagName.toUpperCase()) || hasClass(n, "katex-display"));
-/** The nearest sibling of `t` on the side `dir` (-1 before, 1 after) that is not a whitespace-only text node; null at the parent's edge. */
+/** An element on whose either side white space renders nothing: a block-level box (isBlockBox), or a `<br>`, since the white
+ *  space before a line break is its line's trailing space and the white space after it the next line's leading space, and
+ *  the browser collapses both away (a paragraph's `line one<br>\n<br>\nline three` has such a node between the two breaks,
+ *  which a mark around it made an empty ringed box on the blank line; the Slice 4 review, round 9). */
+const isLineEdge = (n: DNode): boolean => isBlockBox(n) || (isElement(n) && n.tagName.toUpperCase() === "BR");
+/** The nearest sibling of `t` on the side `dir` (-1 before, 1 after) that is not a whitespace-only text node; null at the
+ *  parent's edge. A step at a time over the node's own sibling pointers when it has them (a browser's Node: constant time a
+ *  step), else by the index of `t` in its parent's child list (the tests' stand-ins). Indexing every time made a paint
+ *  quadratic in a paragraph's inline children: each space between two inline elements is a whitespace-only node skipBlockWs
+ *  reads both neighbours of, and each read scanned the paragraph's child list from the start, so one mark across a paragraph
+ *  of 3,000 links cost 850 ms in Chromium against 27 ms before the neighbour rule; with the pointers 32 ms (the Slice 4
+ *  review, round 9; md-config-paint-whitespace.test.ts counts the child-list reads, its browser leg times equal work). */
 function besideNonWs(t: DNode, dir: -1 | 1): DNode | null {
+  const key = dir < 0 ? "previousSibling" : "nextSibling";
+  let n = t[key];
+  if (n !== undefined) {
+    while (n && isText(n) && stripWs(n.data) === "") n = n[key];
+    return n === undefined ? null : n;
+  }
   const p = t.parentNode;
   if (!p) return null;
   const kids = p.childNodes;
@@ -1470,30 +1499,40 @@ function besideNonWs(t: DNode, dir: -1 | 1): DNode | null {
   for (let k = 0; k < kids.length; k++) if (kids[k] === t) { i = k; break; }
   if (i < 0) return null;
   for (let k = i + dir; k >= 0 && k < kids.length; k += dir) {
-    const n = kids[k];
-    if (isText(n) && stripWs(n.data) === "") continue;
-    return n;
+    const c = kids[k];
+    if (isText(c) && stripWs(c.data) === "") continue;
+    return c;
   }
   return null;
 }
-/** Whitespace-only text between block elements: marking it would paint a stray blob. Two readings, either enough: the node's
- *  parent is a block container (BLOCK_CONTAINERS, main's rule), or a block-level box stands beside it on either side, any
- *  whitespace-only siblings between them looked past (BLOCK_BOXES). The parent's tag alone missed the "\n" text nodes marked
- *  leaves between the blocks inside a folded callout's `details` (md-config.ts: `<details><summary>..</summary><p>..</p>\n<p>..
- *  </p>\n</details>`), DETAILS not being on the list, so a comment across two body paragraphs of a fold, or from a fold's last
- *  block into the block after it, wrapped each such node as a mark of its own: an empty ringed box on a line between the blocks
- *  (4 x 18 px in Chromium), the details 22 px taller per mark and everything below moved down, on every paint pass and in the
- *  composer's pending target; a closed fold showed the box the moment a card's quote button opened it. The same markdown was
- *  a plain blockquote on main and painted clean; an author's `<details>`, `<dl>` and `<figure>` showed the box there too (the
- *  Slice 4 review, round 8; anchor-map-obsidian.test.ts, md-config-fold-paint-browser.test.ts over the real bundle). A
- *  whitespace-only text node between two INLINE elements in a paragraph is the passage's own space and is still painted. */
+/** Whitespace-only text between block elements: marking it would paint a stray blob. Three readings, any one enough: the
+ *  node's parent is a block container (BLOCK_CONTAINERS, main's rule); a block-level box or a `<br>` stands beside it on either
+ *  side, any whitespace-only siblings between them looked past (isLineEdge over BLOCK_BOXES); or it stands at the edge of a
+ *  parent that is itself a block-level box, no non-whitespace sibling on that side, the block's leading or trailing white
+ *  space, which the browser collapses away whatever stands on the node's other side (an author's `<figure>\n<img>\n
+ *  <figcaption>` has its image beside such a node at both edges) but not under `pre`, where white space is preserved. The
+ *  parent's tag alone missed the "\n" text nodes marked leaves between the blocks inside a folded callout's `details`
+ *  (md-config.ts: `<details><summary>..</summary><p>..</p>\n<p>..</p>\n</details>`), DETAILS not being on the list, so a
+ *  comment across two body paragraphs of a fold, or from a fold's last block into the block after it, wrapped each such node
+ *  as a mark of its own: an empty ringed box on a line between the blocks (4 x 18 px in the viewer), the details 22 px taller
+ *  per mark and everything below moved down, on every paint pass and in the composer's pending target; a closed fold showed
+ *  the box the moment a card's quote button opened it. The same markdown was a plain blockquote on main and painted clean
+ *  (the Slice 4 review, round 8; anchor-map-obsidian.test.ts, md-config-fold-paint-browser.test.ts over the real bundle).
+ *  Round 8's neighbour rule alone still ringed the node between an author's `<figure>` or `<details>` and its `<img>` (the
+ *  parent's edge, an inline neighbour), the one beside a `<center>`, `<menu>`, `<dir>` or `<search>` (tags its list lacked)
+ *  and the one between two `<br>`s, each pre-existing on main (round 9; anchor-map-obsidian.test.ts and
+ *  md-config-paint-whitespace-browser.test.ts drive an author's figure, details and center with an image, the four tags and
+ *  the double break through paintRendered from the paragraph before to the paragraph after). A whitespace-only text node
+ *  between two INLINE elements in a paragraph is the passage's own space, rendered, and is still painted. */
 const skipBlockWs = (t: DText): boolean => {
   if (stripWs(t.data) !== "") return false;
   const p = t.parentNode;
   if (!p || !isElement(p)) return false;
-  if (BLOCK_CONTAINERS.has(p.tagName.toUpperCase())) return true;
+  const ptag = p.tagName.toUpperCase();
+  if (BLOCK_CONTAINERS.has(ptag)) return true;
+  const edge = ptag !== "PRE" && isBlockBox(p);
   const before = besideNonWs(t, -1), after = besideNonWs(t, 1);
-  return (!!before && isBlockBox(before)) || (!!after && isBlockBox(after));
+  return (before === null ? edge : isLineEdge(before)) || (after === null ? edge : isLineEdge(after));
 };
 
 /** A formula element (FORMULA_CLASSES) that stands in a line of text: KaTeX's inline layout, its flag on TeX it could not parse,
@@ -1523,6 +1562,7 @@ function highlightUnits(root: DNode, from: DNode = root, out: DNode[] = []): DNo
 function follows(a: DNode, b: DNode): boolean {
   const p = a.parentNode;
   if (!p || b.parentNode !== p) return false;
+  if (a.nextSibling !== undefined) return a.nextSibling === b;   // the DOM's pointer, constant time (besideNonWs's note)
   const kids = p.childNodes;
   for (let i = 0; i < kids.length; i++) if (kids[i] === a) return kids[i + 1] === b;
   return false;

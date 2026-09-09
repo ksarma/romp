@@ -54,9 +54,12 @@ const LINEAR_BOUND = 3;             // the large lex against the eight small one
 const ABSOLUTE_MS = 1500;           // the large note's median; the cold first run may take twice that
 /** Holds `lex` linear in the paragraph count on `note`'s shape: the LARGE-paragraph note lexed once against the SMALL
  *  one lexed SMALL_RUNS times, the same paragraphs on either side, so a linear lex takes about as long on each (the ratio
- *  measured 1.0 to 1.1 alone) and a quadratic one eight times as long on the large note (7.5 to 7.8 on the pre-memo
- *  sources at 205f5f3d, no pair under 7.3). The two sides are timed back to back, PAIRS times over, and the median of
- *  the pair ratios is bounded at LINEAR_BOUND, under half the quadratic measurement. Equal work is what holds the ratio
+ *  measured 1.0 to 1.1 alone) and a quadratic one eight times as long on the large note. Measured on the pre-memo sources
+ *  at 205f5f3d (git archive of ui/webview with HEAD's md-block-start.ts copied in): these two legs, with the absolute
+ *  guard disabled so the ratio assertion is the one that fires, medians 7.33 to 7.50 over seven runs (review rounds 8
+ *  and 9), least pair 6.91, one pair at 10.41 under a load burst; a probe of the helper's shape over the same sources,
+ *  medians 7.48 to 7.75, no pair under 7.34. The two sides are timed back to back, PAIRS times over, and the median of
+ *  the pair ratios is bounded at LINEAR_BOUND, under half the least quadratic pair. Equal work is what holds the ratio
  *  under contention: the review round 7 timed one small lex against one large one, bounded at three times their
  *  paragraph ratio (24), and a CPU quota (eight test workers in a 400% cgroup scope, the shape of a runner with a CPU
  *  limit) or nice-19 starvation under other load inflated that ratio three times, steadily across every pair, because
