@@ -37,6 +37,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pageHtml, frames, REPORT, SID, ORIGIN, STATUS, MT, requireCjs, EXT } from "../ui/webview/real-viewer-leg";
+import { shellPage } from "../ui/webview/shell-drag-leg";
 
 // ── options ─────────────────────────────────────────────────────────────────────────────────────────
 type Opts = {
@@ -47,6 +48,8 @@ type Opts = {
   viewport: { width: number; height: number }; cpuThrottle: number; cpuProfile: boolean; samplingUs: number;
   timeoutS: number; label: string; outDir: string; interactions: Set<string>; tree: string;
   paneJs: string; paneCss: string;   // files whose text is inlined into the pane page after the harness (a stub, a sheet variant): analyst's knobs
+  shell: "mirror" | "real";           // mirror: this file's copy of the pane row, grows written per frame; real: kernel.py's landing script, a synthetic pointer drag
+  shellKernel: string;                // the kernel.py the real shell is extracted from (default <tree>/kernel/kernel.py)
 };
 const SIZES: Record<string, number> = { small: 300, medium: 3000, large: 15000 };
 const VARIANTS: Record<string, Partial<Opts>> = {
@@ -64,7 +67,7 @@ export function parseOpts(argv: string[]): Opts {
     viewport: { width: 1600, height: 900 }, cpuThrottle: 1, cpuProfile: false, samplingUs: 1000,
     timeoutS: 240, label: "", outDir: path.join(process.env.HOME || "", ".local", "state", "romp-perf", "viewer-resize"),
     interactions: new Set(["mount", "scroll", "drag", "big", "nudge", "add"]), tree: path.resolve(EXT, ".."),
-    paneJs: "", paneCss: "",
+    paneJs: "", paneCss: "", shell: "mirror", shellKernel: "",
   };
   const num = (v: string, name: string): number => { const n = Number(v); if (!Number.isFinite(n)) throw new Error(`--${name} needs a number, got ${v}`); return n; };
   let variantSet = false;
@@ -114,6 +117,8 @@ export function parseOpts(argv: string[]): Opts {
       case "interactions": o.interactions = new Set(v.split(",").map((s) => s.trim()).filter(Boolean)); break;
       case "pane-js": o.paneJs = v; break;
       case "pane-css": o.paneCss = v; break;
+      case "shell": if (v !== "mirror" && v !== "real") throw new Error("--shell mirror|real"); o.shell = v; break;
+      case "shell-kernel": o.shellKernel = path.resolve(v); break;
       case "tree": break;   // consumed by the launcher; the tree under test is the cwd's (real-viewer-leg.ts)
       case "help": break;
       default: throw new Error(`unknown option --${k}`);
@@ -123,6 +128,7 @@ export function parseOpts(argv: string[]): Opts {
   // a variant's table count is per 15000 lines (the large size); a smaller document keeps the same density, at least one
   if (!("tables" in rest) && o.tables > 0) o.tables = Math.max(1, Math.round((o.tables * o.lines) / 15000));
   if (!variantSet) o.variant = "mixed";
+  if (!o.shellKernel) o.shellKernel = path.join(o.tree, "kernel", "kernel.py");
   if (!o.add) o.interactions.delete("add");
   if (o.panel === "closed") o.interactions.delete("add");
   return o;
@@ -265,6 +271,32 @@ window.__sweep = function (w0, w1, steps, settle) {
   });
 };
 </script></body></html>`;
+}
+/** The REAL shell: kernel.py's pane row and landing script (shell-drag-leg.ts), the viewer's pane as the Files pane, and a
+ *  `__sweep` with the mirror's contract that drives gv-d the way a pointer does: mousedown on the gutter in the first frame,
+ *  one mousemove per animation frame (the fastest cadence Chromium delivers mousemove at), mouseup in the last step's
+ *  frame, then the settle frames. What each move costs is the landing script's business: per-move grow writes (the shell
+ *  before 2026-09-09) or a ghost line and one write at release. `py` is the kernel.py text the shell comes from. */
+export function realShellHtml(py: string, w0: number, viewportW: number): string {
+  return shellPage({ py, viewportW, filesW: w0, filesSrc: PANE_URL, script: `
+window.__loaf = [];
+try { new PerformanceObserver(function (list) { list.getEntries().forEach(function (e) { window.__loaf.push({ start: e.startTime, dur: e.duration, block: e.blockingDuration, scripts: (e.scripts || []).map(function (s) { return { url: String(s.sourceURL || "").split("/").pop(), fn: s.sourceFunctionName, inv: s.invoker, type: s.invokerType, dur: s.duration }; }) }); }); }).observe({ type: "long-animation-frame", buffered: true }); } catch (e) {}
+// the Files pane sits RIGHT of gv-d and the chat pane left of it, so a pointer dx of (w0 - w) gives Files the width w
+window.__sweep = function (w0, w1, steps, settle) {
+  return new Promise(function (res) {
+    var ts = []; var i = 0; var g = window.__gutter();
+    function step(t) {
+      ts.push(t);
+      if (i === 0) window.__mouse("mousedown", g.x, g.y);
+      if (i <= steps) window.__mouse("mousemove", g.x + (w0 - Math.round(w0 + (w1 - w0) * i / steps)), g.y);
+      if (i === steps) window.__mouse("mouseup", g.x + (w0 - w1), g.y);
+      i++;
+      if (i < steps + 1 + settle) requestAnimationFrame(step); else res(ts);
+    }
+    requestAnimationFrame(step);
+  });
+};
+` });
 }
 /** The pane: the leg's page (styles.css + files-pane.css under body.fileview-pane, the viewer bundle, the file table, the
  *  status-answering poster) plus what the bench needs: HEAD answers for the poll's three targets from a table (so the
@@ -411,7 +443,9 @@ export async function main(argv: string[]): Promise<number> {
     const page = await browser.newPage({ viewport: o.viewport });
     page.on("pageerror", (e: Error) => errors.push(e.message));
     page.on("console", (m: any) => { if (m.type() === "error") consoleErrors.push(String(m.text()).slice(0, 300)); });
-    const shell = shellHtml(o.w0, o.viewport.width);
+    const shellPy = o.shell === "real" ? fs.readFileSync(o.shellKernel, "utf8") : "";
+    const shell = o.shell === "real" ? realShellHtml(shellPy, o.w0, o.viewport.width) : shellHtml(o.w0, o.viewport.width);
+    result.shell = o.shell; result.shell_drag = o.shell === "real" ? (shellPy.includes("gv-ghost") ? "ghost" : "live") : "mirror-live";
     // --pane-css / --pane-js: a sheet variant or a stub, inlined AFTER the viewer bundle and the harness, before any open
     const inject = (o.paneCss ? "<style>" + fs.readFileSync(o.paneCss, "utf8") + "</style>" : "") + (o.paneJs ? "<script>" + fs.readFileSync(o.paneJs, "utf8").replace(/<\/script/gi, "<\\/script") + "</script>" : "");
     const pane = paneHtml(doc.text, status, storePath, configPath, inject); paneText = pane;
@@ -602,7 +636,7 @@ export async function main(argv: string[]): Promise<number> {
   // the one-line summary
   const f = (x: unknown) => (typeof x === "number" ? String(x) : "-");
   const m = inter.mount as any, s = inter.scroll as any, d = inter.drag as any, b = inter.big as any, n = inter.nudge as any, a = inter.add as any;
-  const parts = [`viewer-resize-bench ${id}`, `tree=${git.rev}${git.dirty ? "+" + git.dirty : ""}`, `lines=${doc.stats.lines} variant=${o.variant} comments=${o.comments} hunks=${o.hunks} panel=${o.panel}`];
+  const parts = [`viewer-resize-bench ${id}`, `tree=${git.rev}${git.dirty ? "+" + git.dirty : ""}`, `shell=${result.shell_drag}`, `lines=${doc.stats.lines} variant=${o.variant} comments=${o.comments} hunks=${o.hunks} panel=${o.panel}`];
   if (result.timed_out) parts.push(`TIMEOUT at ${result.timeout_phase} after ${o.timeoutS}s`);
   if (errors.length) parts.push(`errors=${errors.length}`);
   if (m) parts.push(`nodes=${f(m.document?.nodes)} mount: render=${f(m.open_to_rendered_ms)}ms paint=${f(m.open_to_first_paint_ms)}ms layouts=${f(m.document?.layouts)}/${f(m.document?.layout_ms)}ms` + (m.panel ? ` cards=${f(m.click_to_cards_placed_ms)}ms (${f(m.cards_found)} cards, ${f(m.marks_found)} marks, layouts=${f(m.panel.layouts)}/${f(m.panel.layout_ms)}ms)` : ""));
