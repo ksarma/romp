@@ -6,14 +6,16 @@
 // sources are suffixes of one another, plus the same memo for the math tokenizer's closer search. These tests hold the
 // memoised lex equal to the plain one on every shape that exercises the frames (quotes, callouts, list items, rejected
 // and accepted candidates), the two-step block tokenizer equal to the lazy regex it replaced, the finder called once per
-// frame, and the lex linear in the paragraph count. Synthetic notes only.
+// frame (on a probe extension, and on the math hint itself through the frame it writes), and the lex linear in the
+// paragraph count, timed as the median ratio of paired runs so a loaded machine cannot fail a linear lex. Synthetic notes
+// only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { Marked, marked } from "marked";
 import type { TokenizerAndRendererExtension } from "marked";
 import { applyMdConfig, callout, mdExtensions } from "./md-config";
 import { mathBlock, mathInline } from "./math";
-import { memoBlockStart } from "./md-block-start";
+import { frameOf, memoBlockStart } from "./md-block-start";
 
 applyMdConfig();
 type Ext = { start(this: unknown, src: string): number | undefined; tokenizer(this: unknown, src: string, tokens: unknown[]): { raw: string; text: string } | undefined };
@@ -43,12 +45,32 @@ const prices = (n: number): string => Array.from({ length: n }, (_, i) => `$$5 a
 const sparse = (n: number): string => Array.from({ length: n }, (_, i) =>
   i % 50 === 0 ? `$$\n\\sum_{k=0}^{${i}} k\n$$\n\n` : i % 50 === 25 ? `> quoted line ${i}\n\n` : `Prose line ${i} with $x_${i}$ inline.\n\n`).join("");
 const equations = (n: number): string => Array.from({ length: n }, (_, i) => `Equation ${i} follows.\n$$\nE_${i} = m c^2\n$$\n\n`).join("");
-/** Milliseconds for `fn`, the least of three runs after a warm-up: a bound on the work, not a benchmark. */
-function ms(fn: () => unknown): number {
-  fn();
-  let best = Infinity;
-  for (let i = 0; i < 3; i++) { const t0 = process.hrtime.bigint(); fn(); best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6); }
-  return best;
+/** Milliseconds for one run of `fn`. */
+const once = (fn: () => unknown): number => { const t0 = process.hrtime.bigint(); fn(); return Number(process.hrtime.bigint() - t0) / 1e6; };
+const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+const SMALL = 2000, LARGE = 16000, PAIRS = 7;
+const LINEAR_BOUND = 3 * (LARGE / SMALL);   // 24: three times the linear ratio (8), well under the quadratic one (64)
+const ABSOLUTE_MS = 1500;                   // the large note's median; the cold first run may take twice that
+/** Holds `lex` linear in the paragraph count on `note`'s shape: the LARGE-paragraph note against the SMALL one, eight
+ *  times the paragraphs, so a linear lex takes about eight times as long (nine measured, the allocation grows too) and a
+ *  quadratic one sixty-four (sixty measured on the pre-memo sources). The two are timed back to back, PAIRS times over,
+ *  and the median of the pair ratios is bounded at three times the linear expectation. A ratio of two timings taken
+ *  under the same load is what a loaded machine or a parallel suite cannot move much, and the median of seven pairs
+ *  discards a burst that lands on one: under thirty-two busy processes on sixteen cores the medians measured 5 to 11,
+ *  one pair in 126 over 24. The earlier bound, ten times a small timing taken first (the least of three runs), failed
+ *  once in eight full suites when the large lex alone carried the load (round 7, the merge audit). An absolute bound
+ *  stays as the coarse guard: the large note lexes in tens of milliseconds (250 under that load), where the quadratic
+ *  lex took four to sixteen seconds. Not a benchmark. */
+function linear(lex: (src: string) => unknown, note: (n: number) => string, what: string): void {
+  const small = note(SMALL), large = note(LARGE);
+  lex(small);
+  const first = once(() => lex(large));
+  assert.ok(first < 2 * ABSOLUTE_MS, `${what}: ${LARGE.toLocaleString("en-US")} paragraphs took ${first.toFixed(0)} ms on the first run, a quadratic lex's seconds`);
+  const ratios: number[] = [], larges: number[] = [], smalls: number[] = [];
+  for (let i = 0; i < PAIRS; i++) { const s = once(() => lex(small)), l = once(() => lex(large)); smalls.push(s); larges.push(l); ratios.push(l / s); }
+  const shown = `${LARGE.toLocaleString("en-US")} paragraphs ${median(larges).toFixed(0)} ms against ${median(smalls).toFixed(1)} ms for ${SMALL.toLocaleString("en-US")}, pair ratios ${ratios.map((r) => r.toFixed(1)).join(" ")}`;
+  assert.ok(median(larges) < ABSOLUTE_MS, `${what}: ${shown}: over a second for a lex of tens of milliseconds`);
+  assert.ok(median(ratios) < LINEAR_BOUND, `${what}: ${shown}: not linear`);
 }
 
 test("the two-step block tokenizer is the lazy regex it replaced, on every candidate of the corpus", () => {
@@ -136,16 +158,13 @@ test("the finder runs once per frame until its answer is consumed: counted on a 
 test("the math grammar lexes a note in time linear in its paragraph count: tiny paragraphs, and rejected `$$` lines at every block start", () => {
   // Before the memo: 8,000 one-line paragraphs 1.0 s from the math hint alone (the callout's, since removed, added 0.3 s), 8,000
   // `$$5 and $$10` lines 3.9 s (the hint's candidate walk, then the tokenizer's lazy scan to the end at every one of
-  // them, the base's own 0.7 s). After: tens of milliseconds, four times the 2,000-paragraph note's. The bounds leave
-  // room for a loaded machine: quadratic cost is sixteen times at four times the length.
+  // them, the base's own 0.7 s), and 16,000 of either four times that. After: tens of milliseconds, eight times the
+  // 2,000-paragraph note's. The prices leg is the one pin on the tokenizer's closer memo (math.ts, closersLeft): the
+  // hint's count is held exactly by the frame test below, the tokenizer's rescans only by this timing.
   const m = new Marked({ extensions: [mathBlock, mathInline] });
   m.setOptions({ gfm: true, breaks: false });
-  const t2 = ms(() => m.lexer(tiny(2000))), t8 = ms(() => m.lexer(tiny(8000)));
-  assert.ok(t8 < 400, `8,000 tiny paragraphs lexed in ${t8.toFixed(0)} ms`);
-  assert.ok(t8 < 10 * Math.max(t2, 2), `8,000 tiny paragraphs took ${t8.toFixed(0)} ms against ${t2.toFixed(0)} ms for 2,000: not linear`);
-  const p2 = ms(() => m.lexer(prices(2000))), p8 = ms(() => m.lexer(prices(8000)));
-  assert.ok(p8 < 400, `8,000 rejected \`$$\` lines lexed in ${p8.toFixed(0)} ms`);
-  assert.ok(p8 < 10 * Math.max(p2, 2), `8,000 rejected \`$$\` lines took ${p8.toFixed(0)} ms against ${p2.toFixed(0)} ms for 2,000: not linear`);
+  linear((src) => m.lexer(src), tiny, "tiny paragraphs");
+  linear((src) => m.lexer(src), prices, "rejected `$$` lines");
   assert.equal(m.lexer(prices(8000)).map((t) => t.raw).join(""), prices(8000), "the raws tile the source");
 });
 
@@ -153,7 +172,43 @@ test("the whole grammar on the singleton lexes tiny paragraphs in time linear in
   // The singleton carries every block hint (the math one; the callout's went in round 3, its line being a paragraph
   // interrupt already), and a reply's md() pays them all: this is the finding's own shape (8,000 one-line paragraphs,
   // 1.3 s on the singleton before the review). It holds only when EVERY block hint in the grammar is bounded.
-  const t2 = ms(() => marked.lexer(tiny(2000))), t8 = ms(() => marked.lexer(tiny(8000)));
-  assert.ok(t8 < 400, `8,000 tiny paragraphs lexed in ${t8.toFixed(0)} ms on the singleton`);
-  assert.ok(t8 < 10 * Math.max(t2, 2), `8,000 tiny paragraphs took ${t8.toFixed(0)} ms against ${t2.toFixed(0)} ms for 2,000 on the singleton: a block hint still scans per paragraph`);
+  linear((src) => marked.lexer(src), tiny, "tiny paragraphs on the singleton");
+});
+
+test("the math hint's own finder runs once per frame on the singleton's grammar, counted through the frame it writes", () => {
+  // The probe test above counts memoBlockStart's calls to a probe's finder; this one counts the math hint's, the same
+  // fact the two timing tests measure end to end, held exactly and at no risk from a loaded machine. marked calls the
+  // block hints in registration order before every paragraph, with the lexer as `this.lexer`, so a probe hint registered
+  // after the grammar reads the frame right after the math hint has written it. The frame is a Map keyed by each
+  // memoised hint's finder, and every finder call stores a fresh answer object (md-block-start.ts, memoBlockStart), so
+  // the distinct answers the probe has seen are the finder's calls; a memo that came to reuse its object would fail the
+  // accepted-blocks count below, loudly, and this comment says what to update.
+  const answers = new Set<unknown>(), keysPerCall = new Set<number>();
+  let hints = 0;
+  const probe: TokenizerAndRendererExtension = {
+    name: "probe", level: "block",
+    start(this: { lexer?: unknown } | undefined) {
+      const frame = frameOf(this && this.lexer);
+      assert.ok(frame, "the probe hint is called inside a frame");
+      hints++;
+      let keys = 0;
+      for (const [k, v] of frame) if (typeof k === "function") { keys++; answers.add(v); }
+      keysPerCall.add(keys);
+      return undefined;
+    },
+    tokenizer() { return undefined; },
+    renderer() { return ""; },
+  };
+  const m = new Marked(...mdExtensions, { extensions: [probe] });
+  m.setOptions({ gfm: true, breaks: false });
+  const count = (src: string): { finds: number; hints: number; blocks: number } => {
+    answers.clear(); keysPerCall.clear(); hints = 0;
+    const blocks = m.lexer(src).filter((t) => t.type === "mathBlock").length;
+    assert.deepEqual([...keysPerCall], [1], "the grammar's one memoised hint, the math one, has its answer in the frame at every paragraph");
+    return { finds: answers.size, hints, blocks };
+  };
+  assert.deepEqual(count(tiny(8000)), { finds: 1, hints: 8000, blocks: 0 }, "8,000 paragraphs and no candidate: the hint is asked before each, the finder scans once");
+  assert.deepEqual(count(prices(8000)), { finds: 1, hints: 8000, blocks: 0 }, "8,000 rejected candidates: one scan, then the remembered none");
+  assert.deepEqual(count(equations(500) + "After the last one.\n"), { finds: 501, hints: 501, blocks: 500 }, "one scan per accepted block, each invalidated as its block is consumed, then the none");
+  assert.deepEqual(count("> P1\n>\n> P2\n>\n> P3\n\nP4\n\nP5\n"), { finds: 2, hints: 5, blocks: 0 }, "a blockquote's body is its own frame: one scan for it, one for the top level");
 });

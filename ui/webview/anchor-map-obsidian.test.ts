@@ -486,6 +486,30 @@ test("a range made in the Raw view that starts or ends at a formula, or holds th
   }
 });
 
+test("a range holding a formula alone reads the top-level block the formula sits under and no other: the formula-only highlight costs its own block, not the document (before: a walk of the whole root per mark)", () => {
+  // The Comments panel re-paints every mark on every paint pass, so a walk of every node under the rendered root per mark
+  // costs marks x nodes; main's M1 (2026-09-09) scoped wrapBetween to the blocks a mark touches, and anchor-map.test.ts pins
+  // that for a text range. The formula-only path (a comment made in the Raw view on `$x^2$` alone) still read
+  // highlightUnits(root): 40 such marks over a 26k-node document were 142 ms a pass against 6.9 ms for 40 text marks on the
+  // same paragraphs (the Slice 4 review, round 7). The bound, as main's: childNodes is read only under the formula's block.
+  const box = buildRendered(FIX);
+  const blocks = box.childNodes.filter((n) => n.nodeType === 1) as FakeElement[];
+  const p = topEl(box, 15);
+  assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( math and display:)"]);
+  // the index is built once per root and source (it walks everything then); a first paint on another block pays it
+  const warm = paintRendered(El(box), FIX, rangeOf(FIX, "Para after display math."), "fc-hl") as unknown as FakeElement[];
+  assert.equal(warm.length, 1);
+  const reads = new Map<FakeElement, number>();
+  for (const b of blocks) {
+    const kids = b.childNodes;
+    Object.defineProperty(b, "childNodes", { configurable: true, get() { reads.set(b, (reads.get(b) || 0) + 1); return kids; } });
+  }
+  const marks = paintRendered(El(box), FIX, rangeOf(FIX, "$x^2$"), "fc-presel") as unknown as FakeElement[];
+  assert.deepEqual(marks.map((m) => shape(m)), [["SPAN.katex"]], "the formula alone is the highlight");
+  const touched = blocks.filter((b) => reads.has(b));
+  assert.deepEqual(touched, [p], "only the formula's block was read; read: " + touched.length + " of " + blocks.length);
+});
+
 test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and no mark stands at the top level", () => {
   const box = buildRendered(FIX);
   const p = topEl(box, 15);

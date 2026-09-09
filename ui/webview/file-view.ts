@@ -2588,13 +2588,17 @@ function scrollToFragment(box: HTMLElement, fragment: string): boolean {
 // a same-titled fold with a body of its own did around them: inserted or removed ahead of them, between them or after
 // them, it pairs by title in the second pass or shows as authored. When their count changed, a session filled one in,
 // added one or removed one, the whole key falls to the second pass and its order, whose k-th noted state of that title
-// goes to the k-th new fold of that title. So the fold the person reads keeps its state exactly when the number of twins
-// AHEAD of it is what it was: after a fill anywhere (the count and the order stand, so every fold keeps its own state,
-// the filled one included) and after a twin added or removed BEHIND it. A twin added or removed AHEAD of it shifts the
-// states by one, the fold the person reads taking the state of the twin that stood where it now stands: three identical
-// `> [!note]- Todo` placeholders, the second open, the first deleted by a session, paint the new first (the fold the
-// person was reading) shut and the new second open; and the open twin itself removed hands its open to the twin behind
-// it, if any. Three folds byte-identical in class, title and body give no content rule anything to decide on, so those
+// goes to the k-th new fold of that title. So the fold the person reads keeps its state through a fill anywhere (the
+// count and the order stand, so every fold keeps its own state, the filled one included) and through a twin added or
+// removed BEHIND it when the same write adds or removes no fold of its title ahead of it. A twin added or removed AHEAD
+// of it shifts the states by one, the fold the person reads taking the state of the twin that stood where it now stands,
+// or the authored state when none did (the last twin, with one added ahead of it): three identical `> [!note]- Todo`
+// placeholders, the second open, the first deleted by a session, paint the new first (the fold the person was reading)
+// shut and the new second open; and the open twin itself removed hands its open to the twin behind it, if any. Once the
+// twins' count changed, the title queue holds every same-titled fold the first pass left unpaired, so a same-titled fold
+// with a body of its own removed or added AHEAD of them in the same write shifts the states the same way, the number of
+// twins ahead unchanged (the Slice 4 review, round 7). Three folds byte-identical in class, title and body give no
+// content rule anything to decide on, so those
 // are order-only cases, accepted (the Slice 4 review, round 6). Paired in the first pass anyway, as before round 4, the
 // one fold still carrying the shared body took the queue's first state whichever fold that was, so the two placeholders
 // swapped states when the person read the second while a session wrote into the first (the Slice 4 review, round 4).

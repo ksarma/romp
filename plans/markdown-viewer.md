@@ -1163,8 +1163,10 @@ as built departs from the text above, why, and which test holds each rule:
    keeps `Lexer.lex` and sees every token the renderer rendered, whichever module loaded first (measured 2026-09-08:
    an instance's extensions never reach the static lexer). The eight test copies of the viewer's configuration
    (anchor-map.test.ts and its six siblings, file-comments-rendered-point-browser) call `applyMdConfig()`, and the
-   four probe bundles (md-sanitize-postpass, -chat-links, -chat-schemeless, -chat-modified-click) arm the singleton
-   the same way. The consequence, flagged to the person as an open ruling: the constructs render in chat replies too.
+   five probe bundles (md-sanitize-postpass, -chat-links, -chat-schemeless, -chat-modified-click and -anchor-map) arm
+   the singleton the same way (the first four had registered the chat's extensions beside the viewer's options,
+   -anchor-map the viewer's options alone; this count read four until the review round 7). The consequence, flagged
+   to the person as an open ruling: the constructs render in chat replies too.
    A wikilink there is the dotted dead span showing the source as written (no directory), a reply opening with a `---`
    block that reads as YAML folds as front matter (item 3), `> [!NOTE]` in agent output becomes a titled block, `[^1]`
    with a definition and `==text==` render (two more shapes of the same ruling, from the review round 2: a section of
@@ -1223,7 +1225,12 @@ as built departs from the text above, why, and which test holds each rule:
    md-config.ts and katex; the viewer imports nothing from render.ts, code-block.test.ts). Production sizes, raw and
    gzip, before and after: files.js 495,838 / 148,117 to 866,609 / 240,946 (+370,771 / +92,829); feed.js 777,513 /
    231,906 to 1,150,102 / 325,693 (+372,589 / +93,787); render.js 1,494,823 / 428,911 to 1,511,207 / 433,636 (+16,384
-   / +4,725, the new extensions). KaTeX is 348,919 bytes of each viewer bundle. feed.css imports
+   / +4,725, the new extensions). KaTeX is 348,919 bytes of each viewer bundle. Its DOM is decision 1's other cost,
+   measured in the review round 7 on the freeze bench's medium note (3,000 lines, 162 inline and 52 display formulas):
+   214 `.katex` roots hold about 8,000 more elements, the mount is 160 to 200 ms slower to first paint, the panel's
+   cards placement and a comment add 20 to 25% slower, and the one reflow at a divider release or a resize reads one
+   vsync longer; the drag itself moves a ghost line and lays the pane out once at release, and math-free every number
+   is within noise of main. feed.css imports
    `katex/dist/katex.min.css` as styles.css does (esbuild inlines it and emits the fonts once, the same hashed names)
    and gains the `.katex-display` twin (parity head). md-sanitize-viewer-math-browser flips to the positive: the Files
    pane renders the same three KaTeX roots as the chat page; md-config-obsidian-browser's second test opens the feed
@@ -1235,11 +1242,25 @@ as built departs from the text above, why, and which test holds each rule:
    (text and inline formulas) in one mark, and a formula whose TeX the range holds is included even at the range's
    edge or alone, so a comment on `Inline $x^2$ math and` is one box and not two with the formula bare between them; a
    display formula, a block of its own, is never wrapped (the review round 2; anchor-map-obsidian.test.ts,
-   md-config-math-map-browser.test.ts). anchor-map-obsidian.test.ts and the browser leg select across the formula and
+   md-config-math-map-browser.test.ts). A mark reads the top-level blocks it touches and no other, the covered
+   formulas' among them: on the text path since the fork's Files pane freeze fixes met the slice (their scoped walk
+   kept, the formulas' blocks added to it) and, since the review round 7, on the formula-only path too
+   (paintRendered's `unitsUnder`, shared with wrapBetween; 40 formula-only marks over a 26k-node document read 142 ms
+   a pass against 6.4 ms scoped). A run of whitespace-only text nodes between blocks, the pair the sanitizer leaves
+   where a block-level comment or a `<style>` stood, is never a mark of its own (round 7: wrapRuns skipped one such
+   node alone and ringed the pair as an empty box between the blocks, which moved everything below down 30 px on every
+   fresh Rendered paint; anchor-map.test.ts and anchor-map-obsidian.test.ts hold both). anchor-map-obsidian.test.ts
+   and the browser leg select across the formula and
    get the TeX between. The fill's two fallback shapes, KaTeX's `span.katex-error` on TeX it cannot parse and the
    belt's `code.md-math-src` past a bound, are controls like `.katex` (anchor-map.ts FORMULA_CLASSES), so a display
    fallback keeps the 1:1 pairing and an inline one maps around; before that a display fallback took no element and
-   every block after it paired one early, and the reader's place was a block off (the review round 1). A selection
+   every block after it paired one early, and the reader's place was a block off (the review round 1). The control
+   list keys on class tokens the sanitizer lets an author write, as Slice 3's `code-copy` did: a hand-typed span
+   wearing `katex`, `katex-error`, `md-math-src`, `md-fnback`, `md-frontmatter-head` or `fv-gate` is a control too,
+   its text skipped, so a quote covering it is refused with the Raw view offered while a comment on the prose beside
+   it paints (Slice 1's note records the shape for the math markup); the collision is tolerated, as item 9's is, since
+   only the fills could mark their own elements and marked's renderer emits `md-fnback` and `md-frontmatter-head`
+   before the sanitizer, with reader-place.ts's list mirroring this one (the review round 7). A selection
    endpoint inside a formula's glyphs is the formula touched ("touches a formula", the Raw view offered at the
    formula's line); the edge that selects none of it maps the prose beside it; an endpoint inside another control (a
    back link's label, the fold label, a gate's label) stands at the control's edge, so a triple-click on a footnote
@@ -1274,7 +1295,11 @@ as built departs from the text above, why, and which test holds each rule:
    body is a frame of its own; the callout's hint, memoised the same way in round 2, is gone since round 3, item 5),
    the math tokenizer's closer search too, and the lex is linear in the paragraph count: 36 ms for those 8,000
    paragraphs, 35 ms for 8,000 rejected `$$` lines where the base took 736 (md-config-block-start-memo.test.ts holds
-   the memoised lex equal to the plain one and the singleton's lex linear). KaTeX's flagged text takes a theme token,
+   the memoised lex equal to the plain one and the singleton's lex linear: since the review round 7 as the median of
+   seven paired ratios of a 16,000-paragraph note to a 2,000-paragraph one, bounded at 24 where a linear lex measures
+   9 and the pre-memo one 60, with a 1,500 ms guard on the large note's median, and the math hint's own finder counted
+   once per frame through the frame it writes; the earlier bound, ten times a small timing taken first, failed under a
+   parallel suite's load on the merge audit). KaTeX's flagged text takes a theme token,
    `--math-err` (math.ts MATH_ERROR_COLOR, which KaTeX writes into the span's inline style), declared in both theme
    blocks of both sheets at 4.5:1 or better on `--bg`, overridden to black in the print block on `.fileview-md` (a
    custom property inherits, so it reaches the flagged span and an unsupported command's glyphs inside a rendered
@@ -1315,7 +1340,9 @@ as built departs from the text above, why, and which test holds each rule:
    of that title to the first new fold of that title, so the twin the person reads keeps its state through a fill
    anywhere and through a twin added or removed behind it; a twin added or removed AHEAD of it shifts its state by one
    (an identical one, whose arrival or departure changes the key's count; a same-titled fold with a body of its own
-   leaves the twins paired in the first pass): three identical `> [!note]- Todo` twins, the middle one open, the first
+   leaves the twins paired in the first pass while their count stands; once it changed, one removed or added ahead of
+   them in the same write shifts their states the same way, the review round 7): three identical `> [!note]- Todo`
+   twins, the middle one open, the first
    removed, and the person's twin is now the first, takes the first noted state, shut, and the one below it opens, the
    content having nothing to tell identical twins apart, the limit the review round 6 states here and in foldKeeper's
    header; the review round 5: round 4's rule, one noted fold and one new fold only, sent untouched twins whole to the

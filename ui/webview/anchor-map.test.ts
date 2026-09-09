@@ -847,6 +847,28 @@ test("Rendered paint: a range over several blocks wraps each block's text and no
   assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("Key points: Cache the rendered notes for five minutes."));
 });
 
+test("Rendered paint: a run of adjacent whitespace-only text nodes between blocks (the two the sanitizer leaves where a block-level comment stood) is never wrapped: no mark at the top level, the two nodes as rendered", () => {
+  // marked emits a block-level HTML comment between two blocks as `</blockquote>\n<!-- ... -->\n\n<p>`, and DOMPurify removes
+  // the comment node and leaves the "\n" and the "\n\n" as two ADJACENT text nodes under .fileview-md (the parser here does
+  // the same; a <style> between two blocks leaves the same pair). wrapRuns skipped a whitespace-only run only when it was ONE
+  // node, so a comment across the two blocks wrapped the pair in a mark of its own: a ringed box on a line between the
+  // blocks, 4 x 18 px in Chromium, and everything below moved down by its height, back on every fresh Rendered paint (the
+  // Slice 4 review, round 7). Main's wrapSlices skipped every such node on its own.
+  const source = "> A quoted line before a block comment.\n\n<!-- a block comment between two blocks -->\n\nParagraph after the block comment with words.\n";
+  const { box } = buildRendered(source);
+  const kids = box.childNodes.slice();
+  const tag = (n: FakeNode) => n.nodeType === 3 ? JSON.stringify((n as FakeText).data) : (n as FakeElement).tagName;
+  const isWsText = (n: FakeNode) => n.nodeType === 3 && stripWs((n as FakeText).data) === "";
+  assert.ok(kids.some((n, i) => i > 0 && isWsText(n) && isWsText(kids[i - 1])), "the fixture holds two adjacent whitespace-only text nodes at the top level: " + kids.map(tag).join(" | "));
+  const start = source.indexOf("A quoted"), end = source.indexOf("with words.") + "with words.".length;
+  const marks = paintRendered(El(box), source, { start, end }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length >= 2, "both blocks' text painted: " + JSON.stringify(marks && marks.map((m) => m.textContent)));
+  for (const m of marks) assert.notEqual(stripWs(m.textContent), "", "no whitespace-only mark: " + JSON.stringify(m.textContent));
+  for (const m of marks) assert.notEqual(m.parentNode, box, "no mark stands at the top level: " + JSON.stringify(m.textContent));
+  assert.ok(box.childNodes.length === kids.length && kids.every((n, i) => box.childNodes[i] === n), "the top-level children are as rendered, the two whitespace nodes among them: " + box.childNodes.map(tag).join(" | "));
+  assert.equal(stripWs(marks.map((m) => m.textContent).join("")), stripWs("A quoted line before a block comment. Paragraph after the block comment with words."));
+});
+
 test("Rendered paint reads the top-level blocks a range touches and no other: a mark costs its own blocks, not the document", () => {
   // The Comments panel re-paints every mark on every paint pass, so a walk of the whole rendered root per mark
   // (textNodes(root) in wrapBetween) cost marks x nodes: 466 marks over a 24k-node document were 1.1 s of a 1.4 s

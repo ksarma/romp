@@ -1488,20 +1488,37 @@ function follows(a: DNode, b: DNode): boolean {
   for (let i = 0; i < kids.length; i++) if (kids[i] === a) return kids[i + 1] === b;
   return false;
 }
+/** The highlight units (highlightUnits) under the top-level children of `root` in `tops` (each one a child of `root`,
+ *  topChildOf's result) and under the children between them, in document order: what a mark reads instead of the whole of
+ *  `root`, so it costs the blocks it touches (wrapBetween's docstring has the numbers). Both highlight paths read through
+ *  this: wrapBetween for a passage of text, paintRendered for a range holding formulas alone. None when `tops` is empty. */
+function unitsUnder(root: DNode, tops: Set<DNode>): DNode[] {
+  if (tops.size === 1) return highlightUnits(root, Array.from(tops)[0]);
+  const kids = root.childNodes;
+  let k0 = -1, k1 = -1, seen = 0;
+  for (let k = 0; k < kids.length && seen < tops.size; k++) if (tops.has(kids[k])) { if (k0 < 0) k0 = k; k1 = k; seen++; }
+  const all: DNode[] = [];
+  for (let k = k0; k0 >= 0 && k <= k1; k++) highlightUnits(root, kids[k], all);
+  return all;
+}
 /** Wrap `units` (a contiguous slice of highlightUnits, its edge text nodes already cut to the range) in marks: one mark per run
  *  of adjacent siblings, so the text on both sides of an inline formula and the formula itself are ONE box when they stand
  *  side by side in their paragraph, and a formula inside an emphasis goes under the emphasis's own mark with the text beside it
  *  there. Before this each text node took a mark of its own and a formula none, so a comment across `Inline $x^2$ math and`
  *  showed two ringed boxes with the rendered formula bare between them, and a reader could not tell from the page whether the
  *  formula was part of the passage (the quote holds its TeX; the Slice 4 review). Whitespace-only text between block elements
- *  is skipped as before (skipBlockWs). The panel's unpaint moves every child of a mark back in its place and normalizes the
- *  parent (file-comments.ts), so a formula under a mark returns to where it stood. */
+ *  is skipped as before (skipBlockWs), a run of several such nodes with it. The panel's unpaint moves every child of a mark
+ *  back in its place and normalizes the parent (file-comments.ts), so a formula under a mark returns to where it stood. */
 function wrapRuns(units: DNode[], className: string, data?: Record<string, string>): DElement[] {
   const marks: DElement[] = [];
   let run: DNode[] = [];
-  // never an empty mark: a run of text alone that is all empty (an edge cut that left nothing), or the one whitespace-only
-  // node between block elements, is skipped
-  const skip = (r: DNode[]): boolean => r.every(isText) && (r.every((t) => !(t as DText).data.length) || (r.length === 1 && skipBlockWs(r[0] as DText)));
+  // never an empty mark: a run of text alone whose every node is empty (an edge cut that left nothing) or whitespace-only
+  // between block elements is skipped, however many nodes the run has. The sanitizer leaves TWO adjacent whitespace nodes
+  // under the root where it removed a block-level comment or a <style> between two blocks, and a rule that skipped the one
+  // such node alone wrapped the pair as a mark of its own: a ringed box on a line between the blocks, everything below moved
+  // down by its height, back on every fresh Rendered paint (the Slice 4 review, round 7; main's wrapSlices skipped each
+  // such node on its own).
+  const skip = (r: DNode[]): boolean => r.every((u) => isText(u) && (!u.data.length || skipBlockWs(u)));
   const flush = () => {
     if (run.length && !skip(run)) marks.push(wrapRun(run, className, data));
     run = [];
@@ -1531,16 +1548,7 @@ function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; o
   // (a formula before the start or after the end of the text extends the highlight to itself, so its block is read too)
   const tops = new Set<DNode>([ts, te]);
   for (const f of formulas) { const tf = topChildOf(root, f); if (tf) tops.add(tf); }
-  let all: DNode[];
-  if (tops.size === 1) all = highlightUnits(root, ts);
-  else {
-    const kids = root.childNodes;
-    let k0 = -1, k1 = -1;
-    for (let k = 0; k < kids.length; k++) if (tops.has(kids[k])) { if (k0 < 0) k0 = k; k1 = k; }
-    if (k0 < 0) return [];
-    all = [];
-    for (let k = k0; k <= k1; k++) highlightUnits(root, kids[k], all);
-  }
+  const all = unitsUnder(root, tops);
   let i0 = all.indexOf(s.t), i1 = all.indexOf(e.t);
   if (i0 < 0 || i1 < 0 || i1 < i0) return [];
   let a = s.off, b = e.off;
@@ -1688,8 +1696,13 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       if (marks.length) return marks as unknown as Element[];
     }
   } else if (formulas.length) {
-    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight
-    const all = highlightUnits(root);
+    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight,
+    // read from the top-level children they sit under (unitsUnder), as wrapBetween reads its units. A walk of the whole root
+    // here cost marks x nodes for such marks after main's M1 had scoped the text path: 40 formula-only marks over a 26k-node
+    // document were 142 ms a pass against 6.9 ms for 40 text marks on the same paragraphs (the Slice 4 review, round 7).
+    const tops = new Set<DNode>();
+    for (const f of formulas) { const tf = topChildOf(root, f); if (tf) tops.add(tf); }
+    const all = unitsUnder(root, tops);
     const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
     if (at.length) {
       const marks = wrapRuns(all.slice(Math.min(...at), Math.max(...at) + 1), className, data);
